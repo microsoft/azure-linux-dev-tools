@@ -15,13 +15,10 @@ import (
 
 // CountCommitsTouchingFile returns the number of commits that touched relPath
 // in the git repository rooted at repoDir, plus the timestamp of the most
-// recent such commit (zero when no commits found). When since is non-zero,
-// commits older than that are excluded.
+// recent such commit (zero when no commits found).
 //
-// Both the cutoff and the returned timestamp are on the committer-date axis:
-// 'git log --since' filters by committer date, and we format with %ct so the
-// returned latest matches the same axis the filter used (an author-date %at
-// could otherwise predate the cutoff for rebased/cherry-picked commits).
+// The returned timestamp is on the committer-date axis: we format with %ct so
+// it matches the order 'git log' walks (newest committer-date first).
 //
 // Shells out to 'git log -- <path>' because go-git's PathFilter walks the
 // entire commit graph in-process and is prohibitively slow on large repos
@@ -31,13 +28,8 @@ func CountCommitsTouchingFile(
 	ctx context.Context,
 	cmdFactory opctx.CmdFactory,
 	repoDir, relPath string,
-	since time.Time,
 ) (count int, latest time.Time, err error) {
 	args := []string{"log", "--format=%ct"}
-
-	if !since.IsZero() {
-		args = append(args, "--since="+since.Format(time.RFC3339))
-	}
 
 	args = append(args, "--", relPath)
 

@@ -38,9 +38,6 @@ azldev component history [flags]
 
   # Drill into a single component (auto-expands customization details)
   azldev component history bash
-
-  # Last 30 days only (720h)
-  azldev component history -a --since=720h
 ```
 
 ### Options
@@ -52,7 +49,6 @@ azldev component history [flags]
   -h, --help                          help for history
       --include-bare                  Include components with zero customizations in the output. By default they are hidden -- their config inherits everything from defaults, and computing their git metrics is the dominant cost on large projects.
       --shared string                 How to report rows for components that share a TOML file with others: show (keep row, count is coarse), omit (drop row). (default "show")
-      --since string                  Only count commits newer than this (Go duration syntax, e.g. 720h). Empty = all history. Note: toml-commits filter on commit date; fingerprint-changes filter on author date.
   -s, --spec-path stringArray         Spec path
 ```
 

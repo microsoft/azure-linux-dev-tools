@@ -280,11 +280,6 @@
        "description": "How to report rows for components that share a TOML file with others: show (keep row, count is coarse), omit (drop row).",
        "type": "string"
       },
-      "since": {
-       "default": "",
-       "description": "Only count commits newer than this (Go duration syntax, e.g. 720h). Empty = all history. Note: toml-commits filter on commit date; fingerprint-changes filter on author date.",
-       "type": "string"
-      },
       "spec-path": {
        "description": "Spec path",
        "type": "string"

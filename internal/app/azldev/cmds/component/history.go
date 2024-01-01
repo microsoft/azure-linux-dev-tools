@@ -17,9 +17,6 @@ import (
 // HistoryOptions holds options for the component history command.
 type HistoryOptions struct {
 	ComponentFilter components.ComponentFilter
-	// Since limits how far back to count commits. Accepts Go duration syntax
-	// like "720h" (= 30d). Empty means "all history".
-	Since string
 	// SharedTomlMode controls how toml-commit counts are reported for
 	// components that share their source TOML file with at least one other
 	// component:
@@ -49,7 +46,6 @@ func historyOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
 // NewHistoryCmd constructs a [cobra.Command] for the "component history" CLI subcommand.
 func NewHistoryCmd() *cobra.Command {
 	options := &HistoryOptions{
-		Since:          "",
 		SharedTomlMode: sharedTomlModeShow,
 	}
 
@@ -80,10 +76,7 @@ hand-picking entries to document.`,
   azldev component history -a -O json
 
   # Drill into a single component (auto-expands customization details)
-  azldev component history bash
-
-  # Last 30 days only (720h)
-  azldev component history -a --since=720h`,
+  azldev component history bash`,
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
 			options.ComponentFilter.ComponentNamePatterns = append(args, options.ComponentFilter.ComponentNamePatterns...)
 
@@ -116,9 +109,6 @@ hand-picking entries to document.`,
 
 	components.AddComponentFilterOptionsToCommand(cmd, &options.ComponentFilter)
 
-	cmd.Flags().StringVar(&options.Since, "since", "",
-		"Only count commits newer than this (Go duration syntax, e.g. 720h). Empty = all history. "+
-			"Note: toml-commits filter on commit date; fingerprint-changes filter on author date.")
 	cmd.Flags().StringVar(&options.SharedTomlMode, "shared", sharedTomlModeShow,
 		"How to report rows for components that share a TOML file with others: "+
 			"show (keep row, count is coarse), omit (drop row).")
@@ -284,11 +274,6 @@ func ComponentHistory(env *azldev.Env, options *HistoryOptions) ([]HistoryResult
 	// don't block reporting.
 	options.ComponentFilter.SkipLockValidation = true
 
-	since, err := parseSince(options.Since)
-	if err != nil {
-		return nil, err
-	}
-
 	resolver := components.NewResolver(env)
 
 	comps, err := resolver.FindComponents(&options.ComponentFilter)
@@ -323,7 +308,7 @@ func ComponentHistory(env *azldev.Env, options *HistoryOptions) ([]HistoryResult
 	// In real projects (e.g., azurelinux) thousands of components share a
 	// single components.toml; without this we'd re-run the same `git log`
 	// thousands of times.
-	tomlCache, err := precomputeTomlMetricsForStubs(workerEnv, env, ctx, stubs, since)
+	tomlCache, err := precomputeTomlMetricsForStubs(workerEnv, env, ctx, stubs)
 	if err != nil {
 		return nil, err
 	}
@@ -346,7 +331,7 @@ func ComponentHistory(env *azldev.Env, options *HistoryOptions) ([]HistoryResult
 			// ctx is identical (parmap derives it from workerEnv) and
 			// unused here. Mirrors how render.go does this.
 			return buildHistoryResult( //nolint:contextcheck // env carries the ctx
-				workerEnv, stub, ctx, tomlSharing, tomlCache, since, options.SharedTomlMode, explicit,
+				workerEnv, stub, ctx, tomlSharing, tomlCache, options.SharedTomlMode, explicit,
 			)
 		},
 	)
@@ -451,24 +436,4 @@ func validateSharedTomlMode(mode string) error {
 			"invalid --shared value %#q (want one of: %s, %s)",
 			mode, sharedTomlModeShow, sharedTomlModeOmit)
 	}
-}
-
-// parseSince converts the user-supplied --since string into a cutoff timestamp.
-// Returns a zero time when raw is empty (i.e., no filtering).
-func parseSince(raw string) (time.Time, error) {
-	if raw == "" {
-		return time.Time{}, nil
-	}
-
-	dur, err := time.ParseDuration(raw)
-	if err != nil {
-		return time.Time{}, fmt.Errorf(
-			"parsing --since %#q (Go duration syntax, e.g. 720h):\n%w", raw, err)
-	}
-
-	if dur <= 0 {
-		return time.Time{}, fmt.Errorf("--since must be a positive duration, got %#q", raw)
-	}
-
-	return time.Now().Add(-dur), nil
 }

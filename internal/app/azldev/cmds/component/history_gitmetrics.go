@@ -89,15 +89,15 @@ type tomlMetrics struct {
 // components.toml file, and without de-duplicating we'd re-run the same
 // `git log` thousands of times.
 //
-// Paths that resolve outside the repo are skipped. Failures are likewise
-// tolerated -- the affected component just shows a zero count, same as
-// if the file had no history.
+// Paths that resolve outside the repo are skipped. A `git log` failure is
+// cached as a per-path error (not a fatal one) so [populateTomlMetrics] can
+// surface a warning, keeping it distinguishable from a genuine zero-commit
+// history.
 func precomputeTomlMetricsForStubs(
 	workerEnv *azldev.Env,
 	env *azldev.Env,
 	ctx *historyContext,
 	stubs []historyStub,
-	since time.Time,
 ) (map[string]tomlMetrics, error) {
 	uniqueRelPaths := collectUniqueTomlRelPathsFromStubs(ctx.repoRoot, stubs)
 	if len(uniqueRelPaths) == 0 {
@@ -116,7 +116,7 @@ func precomputeTomlMetricsForStubs(
 		func(done, _ int) { progressEvent.SetProgress(int64(done), total) },
 		func(_ context.Context, relPath string) tomlMetrics {
 			count, latest, err := git.CountCommitsTouchingFile( //nolint:contextcheck // env carries the ctx
-				workerEnv, workerEnv, ctx.repoRoot, relPath, since,
+				workerEnv, workerEnv, ctx.repoRoot, relPath,
 			)
 			if err != nil {
 				// Cache the failure rather than failing the whole command --
@@ -188,7 +188,6 @@ func buildHistoryResult(
 	ctx *historyContext,
 	tomlSharing map[string]int,
 	tomlCache map[string]tomlMetrics,
-	since time.Time,
 	sharedMode string,
 	explicit bool,
 ) HistoryResult {
@@ -199,7 +198,7 @@ func buildHistoryResult(
 	}
 
 	populateTomlMetrics(stub.component, ctx, tomlSharing, tomlCache, sharedMode, explicit, &result)
-	populateLockMetrics(env, stub.component, ctx, since, &result)
+	populateLockMetrics(env, stub.component, ctx, &result)
 
 	return result
 }
@@ -285,7 +284,6 @@ func populateLockMetrics(
 	env *azldev.Env,
 	comp components.Component,
 	ctx *historyContext,
-	since time.Time,
 	result *HistoryResult,
 ) {
 	name := comp.GetName()
@@ -359,9 +357,8 @@ func populateLockMetrics(
 		return
 	}
 
-	filtered := filterChangesSince(fingerprintChanges, since)
-	result.FingerprintChanges = len(filtered)
-	result.FingerprintChangeDetails = toFingerprintChanges(filtered)
+	result.FingerprintChanges = len(fingerprintChanges)
+	result.FingerprintChangeDetails = toFingerprintChanges(fingerprintChanges)
 }
 
 // toFingerprintChanges copies each [sources.FingerprintChange] into the
@@ -387,30 +384,4 @@ func toFingerprintChanges(changes []sources.FingerprintChange) []FingerprintChan
 	}
 
 	return out
-}
-
-// filterChangesSince returns the subset of changes with a timestamp strictly
-// greater than since (matching 'git log --since', which excludes the boundary
-// second, so the toml-commit and fingerprint-change metrics agree on the
-// cutoff edge). When since is zero, the input slice is returned unchanged. The
-// returned slice retains the input ordering (oldest first, per
-// [sources.FindFingerprintChanges]).
-func filterChangesSince(changes []sources.FingerprintChange, since time.Time) []sources.FingerprintChange {
-	if since.IsZero() {
-		return changes
-	}
-
-	cutoff := since.Unix()
-
-	filtered := make([]sources.FingerprintChange, 0, len(changes))
-
-	for _, change := range changes {
-		// Strict '>' mirrors 'git log --since', which excludes the boundary
-		// second, so the two metrics agree on the cutoff edge.
-		if change.Timestamp > cutoff {
-			filtered = append(filtered, change)
-		}
-	}
-
-	return filtered
 }
