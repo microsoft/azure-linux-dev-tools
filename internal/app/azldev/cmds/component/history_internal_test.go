@@ -8,10 +8,40 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/stretchr/testify/assert"
 )
+
+// TestHasExplicitComponentSelection pins the NEW-1 fix: only an exact name or
+// spec path is "explicit". A glob pattern selects broadly and must not defeat
+// --include-bare / --shared=omit (it carries no more intent than -a).
+func TestHasExplicitComponentSelection(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		filter components.ComponentFilter
+		want   bool
+	}{
+		{"exact name", components.ComponentFilter{ComponentNamePatterns: []string{"curl"}}, true},
+		{"spec path", components.ComponentFilter{SpecPaths: []string{"specs/curl/curl.spec"}}, true},
+		{"star glob", components.ComponentFilter{ComponentNamePatterns: []string{"*"}}, false},
+		{"prefix glob", components.ComponentFilter{ComponentNamePatterns: []string{"lib*"}}, false},
+		{"char-class glob", components.ComponentFilter{ComponentNamePatterns: []string{"cur[lp]"}}, false},
+		{"question glob", components.ComponentFilter{ComponentNamePatterns: []string{"cur?"}}, false},
+		{"glob plus exact", components.ComponentFilter{ComponentNamePatterns: []string{"*", "curl"}}, true},
+		{"nothing", components.ComponentFilter{}, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, hasExplicitComponentSelection(&tc.filter))
+		})
+	}
+}
 
 // TestCustomizationCollectorsCoverEveryFingerprintableField pins the
 // "customization vs upstream" split to the existing fingerprint:"-"
@@ -41,11 +71,12 @@ import (
 func TestCustomizationCollectorsCoverEveryFingerprintableField(t *testing.T) {
 	t.Parallel()
 
-	// Structs walked here are those whose individual fingerprintable
-	// fields each map to distinct collector logic in
-	// [collectCustomizations]. Adding a new sub-struct that should be
-	// walked per-field (rather than treated as an opaque unit) means
-	// adding it here too.
+	// Structs walked here are those we want field-level drift detection on,
+	// so adding a fingerprintable field forces a conscious decision about
+	// surfacing it. A walked field need not map to a *distinct* Kind:
+	// DistroReference's two fields both fold into spec.upstream-distro, and
+	// SourceFileReference's Hash/HashType fold into the file's entry. Adding
+	// a new sub-struct that should get this scrutiny means adding it here.
 	walkedStructs := []reflect.Type{
 		reflect.TypeFor[projectconfig.ComponentConfig](),
 		reflect.TypeFor[projectconfig.ComponentBuildConfig](),
@@ -99,11 +130,12 @@ func TestCustomizationCollectorsCoverEveryFingerprintableField(t *testing.T) {
 		"ComponentRenderConfig.SkipFileFilter": "render.skip-file-filter",
 
 		// SourceFileReference -- Filename and the ReplaceUpstream toggle each get
-		// their own Kind; Hash/HashType travel with the filename entry (the file's
-		// presence is the customization signal, not its checksum).
+		// their own Kind. Hash/HashType are deliberately NOT emitted as output:
+		// the file's *presence* is the customization signal, and a checksum-only
+		// change is still caught by toml-commits / fingerprint-changes.
 		"SourceFileReference.Filename":        "source-files",
-		"SourceFileReference.Hash":            "source-files (file entry represents the file; hash travels with it)",
-		"SourceFileReference.HashType":        "source-files (ditto Hash)",
+		"SourceFileReference.Hash":            "not emitted (checksum change caught via toml-commits/fingerprint)",
+		"SourceFileReference.HashType":        "not emitted (ditto Hash)",
 		"SourceFileReference.ReplaceUpstream": "source-files.replace-upstream",
 	}
 

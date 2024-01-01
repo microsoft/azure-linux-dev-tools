@@ -6,6 +6,7 @@ package component
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
@@ -136,11 +137,22 @@ hand-picking entries to document.`,
 }
 
 // CustomizationItem captures one user-authored customization on a component.
-// Kind names use the overlay type for overlay items (e.g. "spec-remove-tag",
-// "patch-add") and the structured TOML path for other items
-// (e.g. "build.with", "spec.upstream-commit"). Value is a short summary
-// suitable for table cells; Description is the human-readable rationale
-// from the config (overlay.description, check.skip_reason, etc.).
+//
+// Kind is a dotted-namespace string forming part of the JSON wire contract
+// (downstream `jq`/`gjson` consumers key on it). It is either an overlay
+// type emitted verbatim (e.g. "spec-remove-tag", "patch-add") or a fixed
+// token derived from the structured TOML path. The fixed set:
+//
+//	build.with, build.without, build.defines, build.undefines,
+//	build.check.skip, spec.source-type, spec.upstream-commit,
+//	spec.upstream-name, spec.upstream-distro, release.calculation,
+//	render.skip-file-filter, packages, source-files,
+//	source-files.replace-upstream
+//
+// Adding a Kind is non-breaking; renaming or removing one is breaking.
+// Value is a short summary suitable for table cells; Description is the
+// human-readable rationale from the config (overlay.description,
+// check.skip_reason, etc.).
 type CustomizationItem struct {
 	Kind        string `json:"kind"`
 	Value       string `json:"value,omitempty"`
@@ -159,8 +171,10 @@ type HistoryResult struct {
 	Name string `json:"name"`
 
 	// TomlCommits is the number of commits touching the component's source
-	// TOML file. Zero (and SharedToml=true) when shared-mode = "omit" and the
-	// component shares its TOML with another component.
+	// TOML file. When shared-mode = "omit" and the component shares its TOML
+	// with another component, the count is suppressed to zero (with
+	// SharedToml=true) -- unless the component was named explicitly, which
+	// always reports the real count.
 	TomlCommits int `json:"tomlCommits"`
 
 	// SharedToml is true when at least one other component anywhere in the
@@ -416,14 +430,26 @@ func buildHistoryStubs(
 // hasExplicitComponentSelection reports whether the user pinpointed
 // individual components (vs asking for everything, a group, or relying on
 // no-criteria defaults). Used by [ComponentHistory] to override
-// --include-bare in the explicit case so that
-// `azldev component history nano` always returns a row for nano.
+// --include-bare (and the --shared=omit count suppression) in the explicit
+// case so that `azldev component history nano` always returns a row for nano
+// with its real count.
 //
-// Group selection (--component-group) is intentionally NOT treated as
-// explicit -- groups can contain hundreds of components and the bare
-// filter's perf rationale still applies there.
+// Only an *exact* name (or a spec path) counts as explicit. A glob pattern
+// (e.g. -p '*') can select the whole project, so it carries no more intent
+// than -a or --component-group and must not defeat those filters' perf
+// rationale. Wildcard detection mirrors the resolver (see
+// [components.Resolver]).
+//
+// Group selection (--component-group) is likewise NOT treated as explicit --
+// groups can contain hundreds of components.
 func hasExplicitComponentSelection(filter *components.ComponentFilter) bool {
-	return len(filter.ComponentNamePatterns) > 0 || len(filter.SpecPaths) > 0
+	for _, pattern := range filter.ComponentNamePatterns {
+		if !strings.ContainsAny(pattern, "*?[") {
+			return true
+		}
+	}
+
+	return len(filter.SpecPaths) > 0
 }
 
 // validateSharedTomlMode rejects unrecognized --shared values.
