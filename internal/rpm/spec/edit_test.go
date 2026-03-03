@@ -1150,10 +1150,9 @@ func TestHasSection(t *testing.T) {
 
 func TestGetHighestPatchTagNumber(t *testing.T) {
 	tests := []struct {
-		name        string
-		input       string
-		packageName string
-		expected    int
+		name     string
+		input    string
+		expected int
 	}{
 		{
 			name:     "no patch tags",
@@ -1181,16 +1180,9 @@ func TestGetHighestPatchTagNumber(t *testing.T) {
 			expected: 1,
 		},
 		{
-			name:        "patches in sub-package are isolated",
-			input:       "Name: test\nPatch0: main.patch\n\n%package devel\nPatch1: devel.patch\n",
-			packageName: "devel",
-			expected:    1,
-		},
-		{
-			name:        "main package with sub-package present",
-			input:       "Name: test\nPatch0: main.patch\n\n%package devel\nPatch5: devel.patch\n",
-			packageName: "",
-			expected:    0,
+			name:     "scans across all packages",
+			input:    "Name: test\nPatch0: main.patch\n\n%package devel\nPatch5: devel.patch\n",
+			expected: 5,
 		},
 	}
 
@@ -1199,7 +1191,7 @@ func TestGetHighestPatchTagNumber(t *testing.T) {
 			specFile, err := spec.OpenSpec(strings.NewReader(testCase.input))
 			require.NoError(t, err)
 
-			result, err := specFile.GetHighestPatchTagNumber(testCase.packageName)
+			result, err := specFile.GetHighestPatchTagNumber()
 			require.NoError(t, err)
 			assert.Equal(t, testCase.expected, result)
 		})
@@ -1281,7 +1273,6 @@ func TestRemovePatchEntry(t *testing.T) {
 	tests := []struct {
 		name            string
 		input           string
-		packageName     string
 		pattern         string
 		expectedOutput  string
 		expectedFailure bool
@@ -1337,6 +1328,20 @@ func TestRemovePatchEntry(t *testing.T) {
 			pattern:        "*.patch",
 			expectedOutput: "Name: test\n",
 		},
+		{
+			name: "removes matching patches across all packages",
+			input: "Name: test\nPatch0: CVE-001.patch\nPatch1: keep.patch\n\n%package devel\n" +
+				"Summary: Dev\nPatch2: CVE-002.patch\nPatch3: also-keep.patch\n",
+			pattern:        "CVE-*.patch",
+			expectedOutput: "Name: test\nPatch1: keep.patch\n\n%package devel\nSummary: Dev\nPatch3: also-keep.patch\n",
+		},
+		{
+			name:            "no match across multiple packages returns error",
+			input:           "Name: test\nPatch0: keep.patch\n\n%package devel\nSummary: Dev\nPatch1: also-keep.patch\n",
+			pattern:         "nonexistent.patch",
+			expectedFailure: true,
+			errorContains:   "no patches matching",
+		},
 	}
 
 	for _, testCase := range tests {
@@ -1344,7 +1349,7 @@ func TestRemovePatchEntry(t *testing.T) {
 			specFile, err := spec.OpenSpec(strings.NewReader(testCase.input))
 			require.NoError(t, err)
 
-			err = specFile.RemovePatchEntry(testCase.packageName, testCase.pattern)
+			err = specFile.RemovePatchEntry(testCase.pattern)
 			if testCase.expectedFailure {
 				require.Error(t, err)
 
@@ -1387,6 +1392,107 @@ func TestParsePatchTagNumber(t *testing.T) {
 			num, ok := spec.ParsePatchTagNumber(testCase.tag)
 			assert.Equal(t, testCase.expectedNum, num)
 			assert.Equal(t, testCase.expectedOK, ok)
+		})
+	}
+}
+
+func TestVisitTags(t *testing.T) {
+	input := `Name: main-pkg
+Version: 1.0
+Patch0: main.patch
+
+%package devel
+Summary: Development files
+Patch1: devel.patch
+
+%package -n other
+Summary: Other package
+Patch2: other.patch
+`
+
+	tests := []struct {
+		name         string
+		expectedTags []string
+	}{
+		{
+			name:         "visits tags across all packages",
+			expectedTags: []string{"Name", "Version", "Patch0", "Summary", "Patch1", "Summary", "Patch2"},
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			sf, err := spec.OpenSpec(strings.NewReader(input))
+			require.NoError(t, err)
+
+			var tags []string
+
+			err = sf.VisitTags(func(tagLine *spec.TagLine, _ *spec.Context) error {
+				tags = append(tags, tagLine.Tag)
+
+				return nil
+			})
+			require.NoError(t, err)
+			assert.Equal(t, testCase.expectedTags, tags)
+		})
+	}
+}
+
+func TestVisitTagsPackage(t *testing.T) {
+	input := `Name: main-pkg
+Version: 1.0
+Patch0: main.patch
+
+%package devel
+Summary: Development files
+Patch1: devel.patch
+
+%package -n other
+Summary: Other package
+Patch2: other.patch
+`
+
+	tests := []struct {
+		name         string
+		packageName  string
+		expectedTags []string
+	}{
+		{
+			name:         "global package only",
+			packageName:  "",
+			expectedTags: []string{"Name", "Version", "Patch0"},
+		},
+		{
+			name:         "devel sub-package only",
+			packageName:  "devel",
+			expectedTags: []string{"Summary", "Patch1"},
+		},
+		{
+			name:         "other sub-package only",
+			packageName:  "other",
+			expectedTags: []string{"Summary", "Patch2"},
+		},
+		{
+			name:         "non-existing package returns no tags",
+			packageName:  "nonexistent",
+			expectedTags: nil,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			sf, err := spec.OpenSpec(strings.NewReader(input))
+			require.NoError(t, err)
+
+			var tags []string
+
+			err = sf.VisitTagsPackage(testCase.packageName, func(tagLine *spec.TagLine, _ *spec.Context) error {
+				tags = append(tags, tagLine.Tag)
+
+				return nil
+			})
+			require.NoError(t, err)
+			assert.Equal(t, testCase.expectedTags, tags)
 		})
 	}
 }

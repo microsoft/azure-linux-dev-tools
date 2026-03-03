@@ -50,7 +50,7 @@ func (s *Spec) UpdateExistingTag(packageName string, tag string, value string) (
 
 	var updated bool
 
-	err = s.VisitTags(packageName, func(tagLine *TagLine, ctx *Context) error {
+	err = s.VisitTagsPackage(packageName, func(tagLine *TagLine, ctx *Context) error {
 		if strings.ToLower(tagLine.Tag) != tagToCompareAgainst {
 			return nil
 		}
@@ -100,17 +100,11 @@ func (s *Spec) RemoveTag(packageName string, tag string, value string) (err erro
 	return nil
 }
 
-// VisitTags iterates over all tag lines in the given package, calling the visitor function
-// for each one. The visitor receives the parsed [TagLine] and the mutation [Context]. This
-// extracts the common target-type / package / tag-type filtering that many tag-oriented
-// methods need.
-func (s *Spec) VisitTags(packageName string, visitor func(tagLine *TagLine, ctx *Context) error) error {
+// VisitTags iterates over all tag lines across all packages, calling the visitor function
+// for each one. The visitor receives the parsed [TagLine] and the mutation [Context].
+func (s *Spec) VisitTags(visitor func(tagLine *TagLine, ctx *Context) error) error {
 	return s.Visit(func(ctx *Context) error {
 		if ctx.Target.TargetType != SectionLineTarget {
-			return nil
-		}
-
-		if ctx.CurrentSection.Package != packageName {
 			return nil
 		}
 
@@ -127,13 +121,27 @@ func (s *Spec) VisitTags(packageName string, visitor func(tagLine *TagLine, ctx 
 	})
 }
 
+// VisitTagsPackage iterates over all tag lines in the given package, calling the visitor
+// function for each one. The visitor receives the parsed [TagLine] and the mutation [Context].
+// This extracts the common target-type / package / tag-type filtering that many tag-oriented
+// methods need.
+func (s *Spec) VisitTagsPackage(packageName string, visitor func(tagLine *TagLine, ctx *Context) error) error {
+	return s.VisitTags(func(tagLine *TagLine, ctx *Context) error {
+		if ctx.CurrentSection.Package != packageName {
+			return nil
+		}
+
+		return visitor(tagLine, ctx)
+	})
+}
+
 // RemoveTagsMatching removes all tags in the given package for which the provided matcher
 // function returns true. The matcher receives the tag name and value as arguments. Returns
 // the number of tags removed. If no matching tags were found, returns 0 and no error.
 func (s *Spec) RemoveTagsMatching(packageName string, matcher func(tag, value string) bool) (int, error) {
 	removed := 0
 
-	err := s.VisitTags(packageName, func(tagLine *TagLine, ctx *Context) error {
+	err := s.VisitTagsPackage(packageName, func(tagLine *TagLine, ctx *Context) error {
 		if !matcher(tagLine.Tag, tagLine.Value) {
 			return nil
 		}
@@ -600,7 +608,7 @@ func (s *Spec) AddPatchEntry(packageName, filename string) error {
 		return s.AppendLinesToSection("%patchlist", "", []string{filename})
 	}
 
-	highest, err := s.GetHighestPatchTagNumber(packageName)
+	highest, err := s.GetHighestPatchTagNumber()
 	if err != nil {
 		return fmt.Errorf("failed to scan for existing patch tags:\n%w", err)
 	}
@@ -610,24 +618,13 @@ func (s *Spec) AddPatchEntry(packageName, filename string) error {
 
 // RemovePatchEntry removes all references to patches matching the given pattern from the spec.
 // The pattern is a glob pattern (supporting doublestar syntax) matched against PatchN tag values
-// and %patchlist entries. Returns an error if no references matched the pattern.
-func (s *Spec) RemovePatchEntry(packageName, pattern string) error {
-	slog.Debug("Removing patch entry from spec", "package", packageName, "pattern", pattern)
+// and %patchlist entries across all packages. Returns an error if no references matched the pattern.
+func (s *Spec) RemovePatchEntry(pattern string) error {
+	slog.Debug("Removing patch entry from spec", "pattern", pattern)
 
 	totalRemoved := 0
 
-	tagsRemoved, err := s.RemoveTagsMatching(packageName, func(tag, value string) bool {
-		if _, ok := ParsePatchTagNumber(tag); !ok {
-			return false
-		}
-
-		matched, matchErr := doublestar.Match(pattern, value)
-		if matchErr != nil {
-			return false
-		}
-
-		return matched
-	})
+	tagsRemoved, err := s.removePatchTagsMatching(pattern)
 	if err != nil {
 		return fmt.Errorf("failed to remove matching patch tags:\n%w", err)
 	}
@@ -653,6 +650,33 @@ func (s *Spec) RemovePatchEntry(packageName, pattern string) error {
 	}
 
 	return nil
+}
+
+// removePatchTagsMatching removes all PatchN tags across all packages whose values match the
+// given glob pattern. Returns the number of tags removed.
+func (s *Spec) removePatchTagsMatching(pattern string) (int, error) {
+	removed := 0
+
+	err := s.VisitTags(func(tagLine *TagLine, ctx *Context) error {
+		if _, ok := ParsePatchTagNumber(tagLine.Tag); !ok {
+			return nil
+		}
+
+		matched, matchErr := doublestar.Match(pattern, tagLine.Value)
+		if matchErr != nil {
+			return fmt.Errorf("failed to match glob pattern %#q against %#q:\n%w", pattern, tagLine.Value, matchErr)
+		}
+
+		if matched {
+			ctx.RemoveLine()
+
+			removed++
+		}
+
+		return nil
+	})
+
+	return removed, err
 }
 
 // removePatchlistEntriesMatching removes lines from the %patchlist section whose trimmed content
@@ -692,13 +716,13 @@ func (s *Spec) removePatchlistEntriesMatching(pattern string) (int, error) {
 }
 
 // GetHighestPatchTagNumber scans the spec for all PatchN tags (where N is a decimal number)
-// in the given package and returns the highest N found. Returns -1 if no numeric patch tags
+// across all packages and returns the highest N found. Returns -1 if no numeric patch tags
 // exist. Tags with non-numeric suffixes (e.g., macro-based names like Patch%{n}) are silently
 // skipped.
-func (s *Spec) GetHighestPatchTagNumber(packageName string) (int, error) {
+func (s *Spec) GetHighestPatchTagNumber() (int, error) {
 	highest := -1
 
-	err := s.VisitTags(packageName, func(tagLine *TagLine, _ *Context) error {
+	err := s.VisitTags(func(tagLine *TagLine, _ *Context) error {
 		num, isPatchTag := ParsePatchTagNumber(tagLine.Tag)
 		if isPatchTag && num > highest {
 			highest = num

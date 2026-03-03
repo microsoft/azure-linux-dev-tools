@@ -173,7 +173,7 @@ func ApplySpecOverlay(overlay projectconfig.ComponentOverlay, openedSpec *spec.S
 			return fmt.Errorf("failed to add patch entry to spec:\n%w", err)
 		}
 	case projectconfig.ComponentOverlayRemovePatch:
-		err := openedSpec.RemovePatchEntry(overlay.PackageName, overlay.Filename)
+		err := openedSpec.RemovePatchEntry(overlay.Filename)
 		if err != nil {
 			return fmt.Errorf("failed to remove patch entry from spec:\n%w", err)
 		}
