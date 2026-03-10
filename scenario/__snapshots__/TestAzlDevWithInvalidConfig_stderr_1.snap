@@ -1,0 +1,14 @@
+Parse error: /workdir/azldev.toml
+1| invalid{
+ |        ~ expected character =
+
+##:##:## ERR Error loading configuration, execution may fail later; err="error loading project configuration:\nfailed to load project configuration:\nproject config file \"/workdir/azldev.toml\" contains invalid data:\ntoml: expected character ="
+##:##:## WRN !!! Unable to find and load valid Azure Linux project configuration.
+
+Please either use the -C option to specify a path to the root directory of your Azure Linux project/repo, or else run this tool from within a directory tree that contains an 'azldev.toml' file at its root.
+
+Most commands will not function correctly without a valid configuration.
+
+------------------------------------------------------------------
+
+##:##:## ERR Error: a valid project and configuration are required to execute this command

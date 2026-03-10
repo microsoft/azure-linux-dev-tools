@@ -1,0 +1,40 @@
+Azure Linux Dev Tool (azldev) manages Azure Linux projects, components,
+images, and builds. It provides a unified CLI for the full development
+workflow: creating projects, importing and building RPM packages,
+customizing images, and more.
+
+Run azldev from the root of an Azure Linux project (where azldev.toml
+lives), or use -C to point to one.
+
+[1;4;92;4mU[0m[1;4;92;4ms[0m[1;4;92;4ma[0m[1;4;92;4mg[0m[1;4;92;4me[0m[1;4;92;4m:[0m
+  [1;3mazldev[0m [command]
+
+Primary commands:
+  [1;36mcomponent[0m    Manage components
+  [1;36mconfig[0m       Manage tool configuration
+  [1;36mdocs[0m         Documentation commands
+  [1;36mimage[0m        Manage Azure Linux images
+  [1;36mproject[0m      Manage Azure Linux projects
+
+Meta commands:
+  [1;36mcompletion[0m   Generate the autocompletion script for the specified shell
+  [1;36mhelp[0m         Help about any command
+  [1;36mversion[0m      Print the CLI version
+
+[1;4;92;4mF[0m[1;4;92;4ml[0m[1;4;92;4ma[0m[1;4;92;4mg[0m[1;4;92;4ms[0m[1;4;92;4m:[0m
+  [1;36m-y,[0m [1;36m--accept-all[0m                accept all prompts
+      [1;36m--color[0m [3;38;2;68;68;68mmode[0m                output colorization mode {always, auto, never} (default auto)
+      [1;36m--config-file[0m [3;38;2;68;68;68mstringArray[0m   additional TOML config file(s) to merge (may be repeated)
+  [1;36m-n,[0m [1;36m--dry-run[0m                   dry run only (do not take action)
+  [1;36m-h,[0m [1;36m--help[0m                      help for azldev
+      [1;36m--network-retries[0m [3;38;2;68;68;68mint[0m       maximum number of attempts for network operations (minimum 1) (default 3)
+      [1;36m--no-default-config[0m         disable default configuration
+  [1;36m-O,[0m [1;36m--output-format[0m [3;38;2;68;68;68mfmt[0m         output format {csv, json, markdown, table} (default table)
+      [1;36m--permissive-config[0m         do not fail on unknown fields in TOML config files
+  [1;36m-C,[0m [1;36m--project[0m [3;38;2;68;68;68mstring[0m            path to Azure Linux project
+  [1;36m-q,[0m [1;36m--quiet[0m                     only enable minimal output
+  [1;36m-v,[0m [1;36m--verbose[0m                   enable verbose output
+      [1;36m--version[0m                   version for azldev
+
+Use "[1;3mazldev[0m [command] --help" for more information about a command.
+

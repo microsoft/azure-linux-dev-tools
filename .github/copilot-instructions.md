@@ -1,4 +1,4 @@
-# azure-linux-dev-tools
+# azldev-preview - AZL Dev Tool Preview
 
 Follow the existing code style and conventions for similar code. Refer to all of the documents listed below:
 - [CONTRIBUTING.md](../CONTRIBUTING.md) for general human and AI agent guidelines.

@@ -1,0 +1,5 @@
+##:##:## WRN No Azure Linux project found; some commands will not be available.
+##:##:## INF Registering tool name=component-list description="List components in this project"
+##:##:## INF Registering tool name=config-generate-schema description="Generates JSON schema for validating .toml config files"
+##:##:## INF Registered MCP tools count=2
+##:##:## INF Starting MCP server

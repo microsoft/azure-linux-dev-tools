@@ -22,8 +22,12 @@ func TestInstantiateApp(t *testing.T) {
 			t,
 			topLevelCommandNames,
 			[]string{
+				"advanced",
+				"component",
 				"config",
 				"docs",
+				"image",
+				"project",
 				"version",
 			},
 		)

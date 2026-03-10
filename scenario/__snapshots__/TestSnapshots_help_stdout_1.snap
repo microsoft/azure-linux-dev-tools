@@ -1,0 +1,40 @@
+Azure Linux Dev Tool (azldev) manages Azure Linux projects, components,
+images, and builds. It provides a unified CLI for the full development
+workflow: creating projects, importing and building RPM packages,
+customizing images, and more.
+
+Run azldev from the root of an Azure Linux project (where azldev.toml
+lives), or use -C to point to one.
+
+Usage:
+  azldev [command]
+
+Primary commands:
+  component   Manage components
+  config      Manage tool configuration
+  docs        Documentation commands
+  image       Manage Azure Linux images
+  project     Manage Azure Linux projects
+
+Meta commands:
+  completion  Generate the autocompletion script for the specified shell
+  help        Help about any command
+  version     Print the CLI version
+
+Flags:
+  -y, --accept-all                accept all prompts
+      --color mode                output colorization mode {always, auto, never} (default auto)
+      --config-file stringArray   additional TOML config file(s) to merge (may be repeated)
+  -n, --dry-run                   dry run only (do not take action)
+  -h, --help                      help for azldev
+      --network-retries int       maximum number of attempts for network operations (minimum 1) (default 3)
+      --no-default-config         disable default configuration
+  -O, --output-format fmt         output format {csv, json, markdown, table} (default table)
+      --permissive-config         do not fail on unknown fields in TOML config files
+  -C, --project string            path to Azure Linux project
+  -q, --quiet                     only enable minimal output
+  -v, --verbose                   enable verbose output
+      --version                   version for azldev
+
+Use "azldev [command] --help" for more information about a command.
+

@@ -1,0 +1,12 @@
+'$schema' = 'https://raw.githubusercontent.com/microsoft/azure-linux-dev-tools/refs/heads/main/schemas/azldev.schema.json'
+
+[project]
+description = 'simple'
+log-dir = 'build/logs'
+work-dir = 'build/work'
+output-dir = 'out'
+
+[component-groups]
+[component-groups.default]
+specs = ['**/*.spec']
+excluded-paths = ['build/**', 'out/**']

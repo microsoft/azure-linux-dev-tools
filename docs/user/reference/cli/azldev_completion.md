@@ -23,6 +23,7 @@ See each sub-command's help for details on how to use the generated script.
       --color mode                output colorization mode {always, auto, never} (default auto)
       --config-file stringArray   additional TOML config file(s) to merge (may be repeated)
   -n, --dry-run                   dry run only (do not take action)
+      --network-retries int       maximum number of attempts for network operations (minimum 1) (default 3)
       --no-default-config         disable default configuration
   -O, --output-format fmt         output format {csv, json, markdown, table} (default table)
       --permissive-config         do not fail on unknown fields in TOML config files

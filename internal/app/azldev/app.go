@@ -21,6 +21,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/retry"
 	"github.com/muesli/termenv"
 	"github.com/samber/lo"
 	slogmulti "github.com/samber/slog-multi"
@@ -166,6 +167,8 @@ lives), or use -C to point to one.`,
 	app.cmd.PersistentFlags().StringArrayVar(&app.configFiles, "config-file", nil,
 		"additional TOML config file(s) to merge (may be repeated)")
 	app.cmd.PersistentFlags().BoolVarP(&app.dryRun, "dry-run", "n", false, "dry run only (do not take action)")
+	app.cmd.PersistentFlags().IntVar(&app.networkRetries, "network-retries", retry.DefaultMaxAttempts,
+		"maximum number of attempts for network operations (minimum 1)")
 	app.cmd.PersistentFlags().VarP(&app.reportFormat, "output-format", "O",
 		"output format {csv, json, markdown, table}")
 	app.cmd.PersistentFlags().Var(&app.colorMode, "color",

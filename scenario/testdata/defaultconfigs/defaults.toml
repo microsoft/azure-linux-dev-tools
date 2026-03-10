@@ -1,0 +1,5 @@
+# Include distro config.
+includes = ["distros/**/*.distro.toml"]
+
+[project]
+default-distro = { name = "azurelinux", version = "3.0" }

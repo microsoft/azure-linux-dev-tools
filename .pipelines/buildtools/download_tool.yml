@@ -1,0 +1,43 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+name: Download azldev tool
+trigger: none
+
+resources:
+  repositories:
+    - repository: templates
+      type: git
+      name: OneBranch.Pipelines/GovernedTemplates
+      ref: refs/heads/main
+
+variables:
+  - group: "Agent pools (DEV)"
+
+extends:
+  template: v2/OneBranch.NonOfficial.CrossPlat.yml@templates
+  parameters:
+    featureFlags:
+      runOnHost: true
+    stages:
+    - stage: DownloadStage
+      jobs:
+        - job: DownloadJob
+          strategy:
+            matrix:
+              x86_64:
+                poolName: $(DEV_AMD64_Managed_AZL3)
+                arch: 'x86_64'
+              aarch64:
+                poolName: $(DEV_ARM64_Managed_AZL3)
+                arch: 'aarch64'
+          pool:
+            type: linux
+            name: $(poolName)
+          variables:
+            ob_outputDirectory: '$(Build.SourcesDirectory)/ToBePublished'
+            ob_artifactBaseName: 'drop_download_$(arch)_$(System.JobAttempt)'
+          steps:
+          - template: templates/azldev_download_use_job.yml@self
+            parameters:
+              arch: '$(arch)'

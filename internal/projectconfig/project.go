@@ -54,18 +54,8 @@ func (cfg *ProjectConfig) Validate() error {
 	return nil
 }
 
-// Type of a project.
-type ProjectType string
-
-const (
-	// A project that uses the classic Azure Linux toolkit (<= AZL3.0).
-	ProjectTypeClassicToolkit ProjectType = "classic-toolkit"
-)
-
 // Basic information regarding a project.
 type ProjectInfo struct {
-	// Type of this project.
-	Type ProjectType `toml:"type,omitempty" json:"type,omitempty" validate:"omitempty,oneof='classic-toolkit'" jsonschema:"enum=classic-toolkit,enum=,title=Project Type,description=Type of the project"`
 	// Human-readable description of this project.
 	Description string `toml:"description,omitempty" json:"description,omitempty" jsonschema:"title=Description,description=Human readable project description"`
 

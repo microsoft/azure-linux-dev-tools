@@ -137,7 +137,6 @@ func TestLoadAndResolveProjectConfig_EmptyFile(t *testing.T) {
 	assert.Empty(t, config.Project.Description)
 	assert.Empty(t, config.Project.LogDir)
 	assert.Empty(t, config.Project.OutputDir)
-	assert.Empty(t, config.Project.Type)
 	assert.Empty(t, config.Project.WorkDir)
 }
 
@@ -233,7 +232,6 @@ description = "my project"
 log-dir = "artifacts/logs"
 work-dir = "artifacts/work"
 output-dir = "out"
-type = "classic-toolkit"
 `
 
 	configDir := filepath.Dir(testConfigPath)
@@ -249,7 +247,6 @@ type = "classic-toolkit"
 	assert.Equal(t, filepath.Join(configDir, "artifacts/logs"), config.Project.LogDir)
 	assert.Equal(t, filepath.Join(configDir, "artifacts/work"), config.Project.WorkDir)
 	assert.Equal(t, filepath.Join(configDir, "out"), config.Project.OutputDir)
-	assert.Equal(t, ProjectTypeClassicToolkit, config.Project.Type)
 }
 
 func TestLoadAndResolveProjectConfig_Includes(t *testing.T) {

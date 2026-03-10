@@ -1,0 +1,11 @@
+[project]
+description = 'simple'
+log-dir = '/workdir/build/logs'
+work-dir = '/workdir/build/work'
+output-dir = '/workdir/out'
+
+[component-groups]
+[component-groups.default]
+specs = ['/workdir/**/*.spec']
+excluded-paths = ['/workdir/build/**', '/workdir/out/**']
+

@@ -1,0 +1,7 @@
+previewFeatures:
+- input-image-oci
+
+os:
+  packages:
+    install:
+    - jq

@@ -1,0 +1,366 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+package component
+
+import (
+	"errors"
+	"fmt"
+	"path/filepath"
+
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/componentbuilder"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/workdir"
+	"github.com/microsoft/azure-linux-dev-tools/internal/buildenv"
+	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/defers"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/localrepo"
+	"github.com/spf13/cobra"
+)
+
+type ComponentBuildOptions struct {
+	ComponentFilter components.ComponentFilter
+
+	ContinueOnError   bool
+	NoCheck           bool
+	SourcePackageOnly bool
+	BuildEnvPolicy    BuildEnvPreservePolicy
+
+	LocalRepoPaths           []string
+	LocalRepoWithPublishPath string
+
+	// MockConfigOpts is an optional set of key-value config options that will be passed through
+	// to mock as --config-opts key=value arguments.
+	MockConfigOpts map[string]string
+}
+
+// ComponentBuildResults summarizes the results of building a single component.
+type ComponentBuildResults struct {
+	// Names of the component that was built.
+	ComponentName string `json:"componentName"`
+
+	// Absolute paths to any source RPMs built by the operation.
+	SRPMPaths []string `json:"srpmPaths" table:"SRPM Paths"`
+
+	// Absolute paths to any RPMs built by the operation.
+	RPMPaths []string `json:"rpmPaths" table:"RPM Paths"`
+}
+
+func buildOnAppInit(_ *azldev.App, parent *cobra.Command) {
+	parent.AddCommand(NewBuildCmd())
+}
+
+func NewBuildCmd() *cobra.Command {
+	// Fill out options defaults.
+	options := &ComponentBuildOptions{
+		BuildEnvPolicy: BuildEnvPreserveOnFailure,
+	}
+
+	cmd := &cobra.Command{
+		Use:   "build",
+		Short: "Build packages for components",
+		Long: `Build RPM packages for one or more components using mock.
+
+This command fetches upstream sources (applying any configured overlays),
+creates an SRPM, and invokes mock to produce binary RPMs. Built packages
+are placed in the project's output directory.
+
+Use --local-repo-with-publish to build a chain of dependent components:
+each component's RPMs are published to a local repository that subsequent
+builds can consume.`,
+		Example: `  # Build a single component
+  azldev component build -p curl
+
+  # Build all components, continuing past failures
+  azldev component build -a -k
+
+  # Build SRPM only (skip binary RPM build)
+  azldev component build -p curl --srpm-only
+
+  # Chain-build dependent components with a local repo
+  azldev component build --local-repo-with-publish ./base/out -p liba -p libb`,
+		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
+			options.ComponentFilter.ComponentNamePatterns = append(options.ComponentFilter.ComponentNamePatterns, args...)
+
+			return SelectAndBuildComponents(env, options)
+		}),
+		ValidArgsFunction: components.GenerateComponentNameCompletions,
+	}
+
+	components.AddComponentFilterOptionsToCommand(cmd, &options.ComponentFilter)
+	cmd.Flags().BoolVarP(&options.ContinueOnError, "continue-on-error", "k", false,
+		"Continue building when some components fail")
+	cmd.Flags().BoolVar(&options.NoCheck, "no-check", false, "Skip package %check tests")
+	cmd.Flags().BoolVar(&options.SourcePackageOnly, "srpm-only", false, "Build SRPM (source RPM) *only*")
+	cmd.Flags().Var(&options.BuildEnvPolicy, "preserve-buildenv",
+		fmt.Sprintf("Preserve build environment {%s, %s, %s}",
+			BuildEnvPreserveOnFailure,
+			BuildEnvPreserveAlways,
+			BuildEnvPreserveNever,
+		))
+	cmd.Flags().StringArrayVar(&options.LocalRepoPaths, "local-repo", []string{},
+		"Paths to local repositories to include during build (can be specified multiple times)")
+	cmd.Flags().StringVar(&options.LocalRepoWithPublishPath, "local-repo-with-publish", "",
+		"Path to local repository to include during build and publish built RPMs to")
+	cmd.Flags().StringToStringVar(&options.MockConfigOpts, "mock-config-opt", nil,
+		"Pass a configuration option through to mock (key=value, can be specified multiple times)")
+
+	// Mark flags as mutually exclusive.
+	cmd.MarkFlagsMutuallyExclusive("srpm-only", "local-repo-with-publish")
+
+	return cmd
+}
+
+func SelectAndBuildComponents(env *azldev.Env, options *ComponentBuildOptions,
+) ([]ComponentBuildResults, error) {
+	// Validate options before doing any work.
+	if err := validateBuildOptions(env, options); err != nil {
+		return nil, err
+	}
+
+	var comps *components.ComponentSet
+
+	resolver := components.NewResolver(env)
+
+	comps, err := resolver.FindComponents(&options.ComponentFilter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve components:\n%w", err)
+	}
+
+	if comps.Len() == 0 {
+		return nil, errors.New(
+			"no components were selected by the command-line options you provided; please add " +
+				"or adjust options to select a valid set of components that you would like to build",
+		)
+	}
+
+	return BuildComponents(env, comps, options)
+}
+
+func BuildComponents(
+	env *azldev.Env, components *components.ComponentSet, options *ComponentBuildOptions,
+) ([]ComponentBuildResults, error) {
+	if env.WorkDir() == "" {
+		return nil, errors.New("can't build packages without valid work dir")
+	}
+
+	if env.OutputDir() == "" {
+		return nil, errors.New("can't build packages without valid output dir")
+	}
+
+	workDirFactory, err := workdir.NewFactory(env.FS(), env.WorkDir(), env.ConstructionTime())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create work dir factory:\n%w", err)
+	}
+
+	results := make([]ComponentBuildResults, 0, components.Len())
+
+	for _, component := range components.Components() {
+		componentResults, buildErr := BuildComponent(env, component, workDirFactory, options)
+		if buildErr != nil {
+			buildErr = fmt.Errorf("failed to build %q:\n%w", component.GetName(), buildErr)
+		}
+
+		err = errors.Join(err, buildErr)
+		if err != nil && !options.ContinueOnError {
+			return results, err
+		}
+
+		results = append(results, componentResults)
+	}
+
+	return results, err
+}
+
+func BuildComponent(
+	env *azldev.Env,
+	component components.Component,
+	workDirFactory *workdir.Factory,
+	options *ComponentBuildOptions,
+) (results ComponentBuildResults, err error) {
+	sourceManager, err := sourceproviders.NewSourceManager(env)
+	if err != nil {
+		return ComponentBuildResults{},
+			fmt.Errorf("failed to setup source retrieval manager for component %q:\n%w", component.GetName(), err)
+	}
+
+	var buildEnv buildenv.RPMAwareBuildEnv
+
+	buildEnv, err = workdir.MkComponentBuildEnvironment(env, workDirFactory, component.GetConfig(), "build",
+		options.MockConfigOpts)
+	if err != nil {
+		return ComponentBuildResults{},
+			fmt.Errorf("failed to create build environment for component %q:\n%w", component.GetName(), err)
+	}
+
+	// Clean up the build environment before we return (unless we were asked not to do so).
+	defer defers.HandleDeferError(func() error {
+		if !options.BuildEnvPolicy.ShouldPreserve(err == nil) {
+			return buildEnv.Destroy(env)
+		}
+
+		return nil
+	}, &err)
+
+	sourcePreparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env)
+	if err != nil {
+		return ComponentBuildResults{},
+			fmt.Errorf("failed to create source preparer for component %q:\n%w", component.GetName(), err)
+	}
+
+	builder := componentbuilder.New(env, env.FS(), env, sourcePreparer, buildEnv, workDirFactory)
+
+	// Combine both local repo paths for use during build (both are used as dependencies).
+	allLocalRepoPaths := append([]string{}, options.LocalRepoPaths...)
+	if options.LocalRepoWithPublishPath != "" {
+		allLocalRepoPaths = append(allLocalRepoPaths, options.LocalRepoWithPublishPath)
+	}
+
+	results, err = buildComponentUsingBuilder(
+		env, component, builder, allLocalRepoPaths,
+		options.SourcePackageOnly, options.NoCheck,
+		options.LocalRepoWithPublishPath,
+	)
+	if err != nil {
+		return results, err
+	}
+
+	return results, nil
+}
+
+func buildComponentUsingBuilder(
+	env *azldev.Env,
+	component components.Component,
+	builder *componentbuilder.Builder,
+	localRepoPaths []string,
+	sourcePackageOnly, noCheck bool,
+	localRepoWithPublishPath string,
+) (results ComponentBuildResults, err error) {
+	// Compose the path to the output dir.
+	outputDir := env.OutputDir()
+
+	// Make sure we have a final output dir.
+	err = fileutils.MkdirAll(env.FS(), outputDir)
+	if err != nil {
+		return results, fmt.Errorf("failed to ensure dir %q exists: %w", outputDir, err)
+	}
+
+	buildEvent := env.StartEvent("Building packages with mock", "component", component.GetName())
+
+	defer buildEvent.End()
+
+	//
+	// Build the SRPM.
+	//
+
+	outputSourcePackagePath, err := builder.BuildSourcePackage(env, component, localRepoPaths, outputDir)
+	if err != nil {
+		return results, fmt.Errorf("failed to build SRPM for %q:\n%w", component.GetName(), err)
+	}
+
+	// Start filling out results.
+	results.ComponentName = component.GetName()
+	results.SRPMPaths = []string{outputSourcePackagePath}
+
+	// Short circuit if we were asked only to build the SRPM.
+	if sourcePackageOnly {
+		return results, nil
+	}
+
+	//
+	// Build the RPM.
+	//
+
+	results.RPMPaths, err = builder.BuildBinaryPackage(
+		env, component, outputSourcePackagePath, localRepoPaths, outputDir, noCheck,
+	)
+	if err != nil {
+		return results, fmt.Errorf("failed to build RPM for %q: %w", component.GetName(), err)
+	}
+
+	// Publish built RPMs to local repo with publish enabled.
+	if localRepoWithPublishPath != "" && len(results.RPMPaths) > 0 {
+		publishErr := publishToLocalRepo(env, results.RPMPaths, localRepoWithPublishPath)
+		if publishErr != nil {
+			return results, fmt.Errorf("failed to publish RPMs for %q:\n%w", component.GetName(), publishErr)
+		}
+	}
+
+	return results, nil
+}
+
+// validateBuildOptions validates the build options before any work is done.
+func validateBuildOptions(env *azldev.Env, options *ComponentBuildOptions) error {
+	// Check for overlap between --local-repo and --local-repo-with-publish.
+	// (Check config errors before tool availability for better UX.)
+	if err := checkLocalRepoPathOverlap(options.LocalRepoPaths, options.LocalRepoWithPublishPath); err != nil {
+		return err
+	}
+
+	// If we have a repo to publish to, create and initialize it.
+	// This checks for createrepo_c availability and initializes the repo metadata
+	// so it can be used as a dependency source during builds.
+	if options.LocalRepoWithPublishPath != "" {
+		_, err := localrepo.NewPublisher(env, options.LocalRepoWithPublishPath, true)
+		if err != nil {
+			return fmt.Errorf("failed to initialize publish repository:\n%w", err)
+		}
+	}
+
+	return nil
+}
+
+// checkLocalRepoPathOverlap checks that the path doesn't appear in both --local-repo and --local-repo-with-publish.
+func checkLocalRepoPathOverlap(localRepoPaths []string, localRepoWithPublishPath string) error {
+	// If no publish path is specified, there's no overlap.
+	if localRepoWithPublishPath == "" {
+		return nil
+	}
+
+	// Normalize the publish path for comparison.
+	absPublishPath, err := filepath.Abs(localRepoWithPublishPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve absolute path for %#q:\n%w", localRepoWithPublishPath, err)
+	}
+
+	// Check if the publish path appears in local repo paths.
+	for _, repoPath := range localRepoPaths {
+		absPath, err := filepath.Abs(repoPath)
+		if err != nil {
+			return fmt.Errorf("failed to resolve absolute path for %#q:\n%w", repoPath, err)
+		}
+
+		if absPath == absPublishPath {
+			return fmt.Errorf(
+				"path %#q appears in both --local-repo and --local-repo-with-publish; "+
+					"use --local-repo-with-publish only for repos you want to both read from and publish to",
+				localRepoWithPublishPath,
+			)
+		}
+	}
+
+	return nil
+}
+
+// publishToLocalRepo publishes the given RPMs to the specified local repo.
+func publishToLocalRepo(env *azldev.Env, rpmPaths []string, repoPath string) error {
+	publisher, err := localrepo.NewPublisher(env, repoPath, false)
+	if err != nil {
+		return fmt.Errorf("failed to create publisher for %#q:\n%w", repoPath, err)
+	}
+
+	// Ensure the repo directory exists.
+	if err := publisher.EnsureRepoExists(); err != nil {
+		return fmt.Errorf("ensuring local repo exists:\n%w", err)
+	}
+
+	// Publish RPMs and update repo metadata.
+	if err := publisher.PublishRPMs(env, rpmPaths); err != nil {
+		return fmt.Errorf("failed to publish to %#q:\n%w", repoPath, err)
+	}
+
+	return nil
+}

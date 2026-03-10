@@ -62,7 +62,6 @@ func TestNewEnv(t *testing.T) {
 	assert.Equal(t, testLogDir, env.LogsDir())
 	assert.Equal(t, testOutputDir, env.OutputDir())
 	assert.Equal(t, config, env.Config())
-	assert.False(t, env.ClassicToolkitPresent())
 
 	// Note that we can't find the distro.
 	_, _, err := env.Distro()

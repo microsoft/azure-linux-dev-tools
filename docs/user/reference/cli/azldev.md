@@ -22,6 +22,7 @@ lives), or use -C to point to one.
       --config-file stringArray   additional TOML config file(s) to merge (may be repeated)
   -n, --dry-run                   dry run only (do not take action)
   -h, --help                      help for azldev
+      --network-retries int       maximum number of attempts for network operations (minimum 1) (default 3)
       --no-default-config         disable default configuration
   -O, --output-format fmt         output format {csv, json, markdown, table} (default table)
       --permissive-config         do not fail on unknown fields in TOML config files
@@ -32,8 +33,12 @@ lives), or use -C to point to one.
 
 ### SEE ALSO
 
+* [azldev advanced](azldev_advanced.md)	 - Advanced operations
 * [azldev completion](azldev_completion.md)	 - Generate the autocompletion script for the specified shell
+* [azldev component](azldev_component.md)	 - Manage components
 * [azldev config](azldev_config.md)	 - Manage tool configuration
 * [azldev docs](azldev_docs.md)	 - Documentation commands
+* [azldev image](azldev_image.md)	 - Manage Azure Linux images
+* [azldev project](azldev_project.md)	 - Manage Azure Linux projects
 * [azldev version](azldev_version.md)	 - Print the CLI version
 

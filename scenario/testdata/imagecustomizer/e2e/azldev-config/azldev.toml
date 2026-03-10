@@ -1,0 +1,10 @@
+'$schema' = 'https://raw.githubusercontent.com/microsoft/azure-linux-dev-tools/refs/heads/main/schemas/azldev.schema.json'
+
+[project]
+description = 'azldev-project'
+log-dir = '/build/logs'
+work-dir = '/build/work'
+output-dir = 'out'
+
+[tools.imageCustomizer]
+containerTag = "mcr.microsoft.com/azurelinux/imagecustomizer:1"

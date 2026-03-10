@@ -185,11 +185,3 @@ func (e *TestEnv) FS() opctx.FS {
 func (e *TestEnv) OSEnv() opctx.OSEnv {
 	return e.TestOSEnv
 }
-
-// Simulates the presence of a classic Azure Linux toolkit.
-func (e *TestEnv) EnableClassicToolkit(t *testing.T) {
-	t.Helper()
-
-	require.NoError(t, e.FS().MkdirAll(filepath.Join(e.Env.ProjectDir(), "toolkit"), fileperms.PrivateDir))
-	require.True(t, e.Env.ClassicToolkitPresent())
-}

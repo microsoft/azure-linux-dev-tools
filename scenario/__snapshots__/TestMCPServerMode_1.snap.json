@@ -1,0 +1,395 @@
+{
+ "id": 1,
+ "jsonrpc": "2.0",
+ "result": {
+  "tools": [
+   {
+    "annotations": {
+     "destructiveHint": true,
+     "idempotentHint": false,
+     "openWorldHint": true,
+     "readOnlyHint": false
+    },
+    "description": "List components in this project",
+    "inputSchema": {
+     "properties": {
+      "accept-all": {
+       "default": false,
+       "description": "accept all prompts",
+       "type": "boolean"
+      },
+      "all-components": {
+       "default": false,
+       "description": "Include all components",
+       "type": "boolean"
+      },
+      "color": {
+       "description": "output colorization mode {always, auto, never}",
+       "type": "string"
+      },
+      "component": {
+       "description": "Component name pattern",
+       "type": "string"
+      },
+      "component-group": {
+       "description": "Component group name",
+       "type": "string"
+      },
+      "config-file": {
+       "description": "additional TOML config file(s) to merge (may be repeated)",
+       "type": "string"
+      },
+      "dry-run": {
+       "default": false,
+       "description": "dry run only (do not take action)",
+       "type": "boolean"
+      },
+      "network-retries": {
+       "default": 3,
+       "description": "maximum number of attempts for network operations (minimum 1)",
+       "type": "number"
+      },
+      "no-default-config": {
+       "default": false,
+       "description": "disable default configuration",
+       "type": "boolean"
+      },
+      "output-format": {
+       "description": "output format {csv, json, markdown, table}",
+       "type": "string"
+      },
+      "permissive-config": {
+       "default": false,
+       "description": "do not fail on unknown fields in TOML config files",
+       "type": "boolean"
+      },
+      "project": {
+       "default": "",
+       "description": "path to Azure Linux project",
+       "type": "string"
+      },
+      "quiet": {
+       "default": false,
+       "description": "only enable minimal output",
+       "type": "boolean"
+      },
+      "spec-path": {
+       "description": "Spec path",
+       "type": "string"
+      },
+      "verbose": {
+       "default": false,
+       "description": "enable verbose output",
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "project"
+     ],
+     "type": "object"
+    },
+    "name": "component-list"
+   },
+   {
+    "annotations": {
+     "destructiveHint": true,
+     "idempotentHint": false,
+     "openWorldHint": true,
+     "readOnlyHint": false
+    },
+    "description": "Dump the current configuration",
+    "inputSchema": {
+     "properties": {
+      "accept-all": {
+       "default": false,
+       "description": "accept all prompts",
+       "type": "boolean"
+      },
+      "color": {
+       "description": "output colorization mode {always, auto, never}",
+       "type": "string"
+      },
+      "config-file": {
+       "description": "additional TOML config file(s) to merge (may be repeated)",
+       "type": "string"
+      },
+      "dry-run": {
+       "default": false,
+       "description": "dry run only (do not take action)",
+       "type": "boolean"
+      },
+      "format": {
+       "description": "Output format {json, toml}",
+       "type": "string"
+      },
+      "network-retries": {
+       "default": 3,
+       "description": "maximum number of attempts for network operations (minimum 1)",
+       "type": "number"
+      },
+      "no-default-config": {
+       "default": false,
+       "description": "disable default configuration",
+       "type": "boolean"
+      },
+      "output-format": {
+       "description": "output format {csv, json, markdown, table}",
+       "type": "string"
+      },
+      "permissive-config": {
+       "default": false,
+       "description": "do not fail on unknown fields in TOML config files",
+       "type": "boolean"
+      },
+      "project": {
+       "default": "",
+       "description": "path to Azure Linux project",
+       "type": "string"
+      },
+      "quiet": {
+       "default": false,
+       "description": "only enable minimal output",
+       "type": "boolean"
+      },
+      "verbose": {
+       "default": false,
+       "description": "enable verbose output",
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "project"
+     ],
+     "type": "object"
+    },
+    "name": "config-dump"
+   },
+   {
+    "annotations": {
+     "destructiveHint": true,
+     "idempotentHint": false,
+     "openWorldHint": true,
+     "readOnlyHint": false
+    },
+    "description": "Generates JSON schema for validating .toml config files",
+    "inputSchema": {
+     "properties": {
+      "accept-all": {
+       "default": false,
+       "description": "accept all prompts",
+       "type": "boolean"
+      },
+      "color": {
+       "description": "output colorization mode {always, auto, never}",
+       "type": "string"
+      },
+      "config-file": {
+       "description": "additional TOML config file(s) to merge (may be repeated)",
+       "type": "string"
+      },
+      "dry-run": {
+       "default": false,
+       "description": "dry run only (do not take action)",
+       "type": "boolean"
+      },
+      "network-retries": {
+       "default": 3,
+       "description": "maximum number of attempts for network operations (minimum 1)",
+       "type": "number"
+      },
+      "no-default-config": {
+       "default": false,
+       "description": "disable default configuration",
+       "type": "boolean"
+      },
+      "output-format": {
+       "description": "output format {csv, json, markdown, table}",
+       "type": "string"
+      },
+      "permissive-config": {
+       "default": false,
+       "description": "do not fail on unknown fields in TOML config files",
+       "type": "boolean"
+      },
+      "project": {
+       "default": "",
+       "description": "path to Azure Linux project",
+       "type": "string"
+      },
+      "quiet": {
+       "default": false,
+       "description": "only enable minimal output",
+       "type": "boolean"
+      },
+      "verbose": {
+       "default": false,
+       "description": "enable verbose output",
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "project"
+     ],
+     "type": "object"
+    },
+    "name": "config-generate-schema"
+   },
+   {
+    "annotations": {
+     "destructiveHint": true,
+     "idempotentHint": false,
+     "openWorldHint": true,
+     "readOnlyHint": false
+    },
+    "description": "Generates Markdown (.md) docs for this tool",
+    "inputSchema": {
+     "properties": {
+      "accept-all": {
+       "default": false,
+       "description": "accept all prompts",
+       "type": "boolean"
+      },
+      "color": {
+       "description": "output colorization mode {always, auto, never}",
+       "type": "string"
+      },
+      "config-file": {
+       "description": "additional TOML config file(s) to merge (may be repeated)",
+       "type": "string"
+      },
+      "dry-run": {
+       "default": false,
+       "description": "dry run only (do not take action)",
+       "type": "boolean"
+      },
+      "force": {
+       "default": false,
+       "description": "delete and recreate the output directory if it already exists",
+       "type": "boolean"
+      },
+      "include-hidden": {
+       "default": false,
+       "description": "include hidden commands in the generated docs",
+       "type": "boolean"
+      },
+      "network-retries": {
+       "default": 3,
+       "description": "maximum number of attempts for network operations (minimum 1)",
+       "type": "number"
+      },
+      "no-default-config": {
+       "default": false,
+       "description": "disable default configuration",
+       "type": "boolean"
+      },
+      "output-dir": {
+       "default": "",
+       "description": "directory markdown files will be written to",
+       "type": "string"
+      },
+      "output-format": {
+       "description": "output format {csv, json, markdown, table}",
+       "type": "string"
+      },
+      "permissive-config": {
+       "default": false,
+       "description": "do not fail on unknown fields in TOML config files",
+       "type": "boolean"
+      },
+      "project": {
+       "default": "",
+       "description": "path to Azure Linux project",
+       "type": "string"
+      },
+      "quiet": {
+       "default": false,
+       "description": "only enable minimal output",
+       "type": "boolean"
+      },
+      "verbose": {
+       "default": false,
+       "description": "enable verbose output",
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "output-dir",
+      "project"
+     ],
+     "type": "object"
+    },
+    "name": "docs-markdown"
+   },
+   {
+    "annotations": {
+     "destructiveHint": true,
+     "idempotentHint": false,
+     "openWorldHint": true,
+     "readOnlyHint": false
+    },
+    "description": "List images in this project",
+    "inputSchema": {
+     "properties": {
+      "accept-all": {
+       "default": false,
+       "description": "accept all prompts",
+       "type": "boolean"
+      },
+      "color": {
+       "description": "output colorization mode {always, auto, never}",
+       "type": "string"
+      },
+      "config-file": {
+       "description": "additional TOML config file(s) to merge (may be repeated)",
+       "type": "string"
+      },
+      "dry-run": {
+       "default": false,
+       "description": "dry run only (do not take action)",
+       "type": "boolean"
+      },
+      "network-retries": {
+       "default": 3,
+       "description": "maximum number of attempts for network operations (minimum 1)",
+       "type": "number"
+      },
+      "no-default-config": {
+       "default": false,
+       "description": "disable default configuration",
+       "type": "boolean"
+      },
+      "output-format": {
+       "description": "output format {csv, json, markdown, table}",
+       "type": "string"
+      },
+      "permissive-config": {
+       "default": false,
+       "description": "do not fail on unknown fields in TOML config files",
+       "type": "boolean"
+      },
+      "project": {
+       "default": "",
+       "description": "path to Azure Linux project",
+       "type": "string"
+      },
+      "quiet": {
+       "default": false,
+       "description": "only enable minimal output",
+       "type": "boolean"
+      },
+      "verbose": {
+       "default": false,
+       "description": "enable verbose output",
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "project"
+     ],
+     "type": "object"
+    },
+    "name": "image-list"
+   }
+  ]
+ }
+}

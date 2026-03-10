@@ -264,22 +264,6 @@ func (env *Env) OutputDir() string {
 	return env.outputDir
 }
 
-// Returns whether an Azure Linux <= 3.0 toolkit is present in the project directory.
-func (env *Env) ClassicToolkitPresent() bool {
-	if env.classicToolkitDir == "" {
-		return false
-	}
-
-	_, err := env.FS().Stat(env.classicToolkitDir)
-
-	return err == nil
-}
-
-// If one is present, returns the file path to the classic Azure Linux toolkit directory.
-func (env *Env) ClassicToolkitDir() string {
-	return env.classicToolkitDir
-}
-
 // Enables or disables "accept all prompts" mode.
 func (env *Env) SetAcceptAllPrompts(acceptAllPrompts bool) {
 	env.acceptAllPrompts = acceptAllPrompts
