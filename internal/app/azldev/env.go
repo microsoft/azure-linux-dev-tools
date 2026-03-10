@@ -5,20 +5,27 @@ package azldev
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 
 	"github.com/charmbracelet/gum/confirm"
 	"github.com/mattn/go-isatty"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
+	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 )
 
 // Parameters used to construct an [Env].
 type EnvOptions struct {
 	// Path to the project's root directory.
 	ProjectDir string
+
+	// The loaded configuration for the project.
+	Config *projectconfig.ProjectConfig
 
 	// Injected dependencies.
 	DryRunnable   opctx.DryRunnable
@@ -28,7 +35,7 @@ type EnvOptions struct {
 
 // Constructs default [EnvOptions].
 func NewEnvOptions() EnvOptions {
-	return EnvOptions{ProjectDir: ""}
+	return EnvOptions{ProjectDir: "", Config: nil}
 }
 
 // Ensure that Env implements [opctx.Ctx].
@@ -68,6 +75,9 @@ type Env struct {
 	fsFactory     opctx.FileSystemFactory
 	osEnvFactory  opctx.OSEnvFactory
 
+	// Deserialized project-specific configuration.
+	config *projectconfig.ProjectConfig
+
 	// Top-level context.
 	//nolint:containedctx // We embed a context so we don't have to pass it *and* the env around everywhere.
 	ctx context.Context
@@ -80,6 +90,17 @@ type Env struct {
 func NewEnv(ctx context.Context, options EnvOptions) *Env {
 	var workDir, logDir, outputDir string
 
+	if options.Config != nil {
+		workDir = options.Config.Project.WorkDir
+		logDir = options.Config.Project.LogDir
+		outputDir = options.Config.Project.OutputDir
+	}
+
+	var classicToolkitDir string
+	if options.ProjectDir != "" {
+		classicToolkitDir = filepath.Join(options.ProjectDir, "toolkit")
+	}
+
 	return &Env{
 		// Context
 		ctx: ctx,
@@ -91,7 +112,10 @@ func NewEnv(ctx context.Context, options EnvOptions) *Env {
 		outputDir:  outputDir,
 
 		// NOTE: This is hardcoded for now, but should be removed or factored out in the future.
-		classicToolkitDir: "",
+		classicToolkitDir: classicToolkitDir,
+
+		// Loaded configuration
+		config: options.Config,
 
 		// Injected dependencies.
 		cmdFactory:    options.Interfaces.CmdFactory,
@@ -289,6 +313,72 @@ func (env *Env) ReportFile() io.Writer {
 // Sets the writer to be used for writing result reports.
 func (env *Env) SetReportFile(reportFile io.Writer) {
 	env.reportFile = reportFile
+}
+
+// Resolves the environment's default "distro" -- i.e., the distro that is being built in and against.
+// On success, returns back the definition of the distro as well as the definition of the specific
+// version of the distro.
+func (env *Env) Distro() (
+	distroDef projectconfig.DistroDefinition, distroVersionDef projectconfig.DistroVersionDefinition, err error,
+) {
+	if env.config == nil {
+		return distroDef, distroVersionDef, errors.New("can't resolve distro: no project config loaded")
+	}
+
+	if env.config.Project.DefaultDistro.Name == "" {
+		return distroDef, distroVersionDef, errors.New("no default distro selected in project config")
+	}
+
+	return env.ResolveDistroRef(env.config.Project.DefaultDistro)
+}
+
+// ResolveDistroRef resolves a distro reference to the actual distro definition and version.
+func (env *Env) ResolveDistroRef(distroRef projectconfig.DistroReference) (
+	distroDef projectconfig.DistroDefinition, distroVersionDef projectconfig.DistroVersionDefinition, err error,
+) {
+	var distroFound bool
+
+	//
+	// Look up the distro in the project config.
+	//
+
+	if env.config == nil {
+		return distroDef, distroVersionDef, errors.New("can't resolve distro: no project config loaded")
+	}
+
+	if distroDef, distroFound = env.config.Distros[distroRef.Name]; !distroFound {
+		return distroDef, distroVersionDef, fmt.Errorf("distro '%s' not found in project config", distroRef.Name)
+	}
+
+	//
+	// We have the distro; figure out which version we want to look up. If one was not specified in the
+	// reference, then inherit the default version from the distro definition.
+	//
+
+	version := distroRef.Version
+	if version == "" {
+		version = distroDef.DefaultVersion
+	}
+
+	if version == "" {
+		return distroDef, distroVersionDef, errors.New("no distro version selected in project config")
+	}
+
+	var distroVersionFound bool
+
+	if distroVersionDef, distroVersionFound = distroDef.Versions[version]; !distroVersionFound {
+		return distroDef, distroVersionDef,
+			fmt.Errorf("distro version '%s' not found in distro '%s'", version, distroRef.Name)
+	}
+
+	return distroDef, distroVersionDef, nil
+}
+
+// Returns the loaded project configuration. Note that the configuration may include raw
+// data that hasn't yet been resolved. For querying resolved component configuration, the
+// [components] package should be used instead.
+func (env *Env) Config() *projectconfig.ProjectConfig {
+	return env.config
 }
 
 // Deadline implements the [context.Context] interface.

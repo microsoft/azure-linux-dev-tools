@@ -1,0 +1,2 @@
+[tools.imageCustomizer]
+containerTag = "mcr.microsoft.com/azurelinux/imagecustomizer:1"

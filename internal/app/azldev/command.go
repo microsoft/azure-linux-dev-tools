@@ -7,7 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"os"
 
+	"github.com/charmbracelet/x/term"
+	"github.com/mattn/go-isatty"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/reflectable"
 	"github.com/spf13/cobra"
 )
 
@@ -52,7 +57,7 @@ func RunFunc(innerFunc CmdFuncType) cobraRunFuncType {
 		}
 
 		return innerFunc(env)
-	})
+	}, true)
 }
 
 // Returns a function usable by an azldev command as a [cobra.Command] 'RunE' function. Rejects all
@@ -67,7 +72,7 @@ func RunFuncWithoutRequiredConfig(innerFunc CmdFuncType) cobraRunFuncType {
 		}
 
 		return innerFunc(env)
-	})
+	}, false)
 }
 
 // Returns a function usable by an azldev command as a `cobra.Command` 'RunE' function.
@@ -76,7 +81,7 @@ func RunFuncWithoutRequiredConfig(innerFunc CmdFuncType) cobraRunFuncType {
 // the opaque result value returned by the inner function. Fails early if no
 // project/configuration was loaded.
 func RunFuncWithExtraArgs(innerFunc CmdWithExtraArgsFuncType) cobraRunFuncType {
-	return runFuncInternal(innerFunc)
+	return runFuncInternal(innerFunc, true)
 }
 
 // Returns a function usable by an azldev command as a [cobra.Command] 'RunE' function.
@@ -85,10 +90,10 @@ func RunFuncWithExtraArgs(innerFunc CmdWithExtraArgsFuncType) cobraRunFuncType {
 // the opaque result value returned by the inner function. Does *not* require valid
 // project/configuration to have been loaded.
 func RunFuncWithoutRequiredConfigWithExtraArgs(innerFunc CmdWithExtraArgsFuncType) cobraRunFuncType {
-	return runFuncInternal(innerFunc)
+	return runFuncInternal(innerFunc, false)
 }
 
-func runFuncInternal(innerFunc CmdWithExtraArgsFuncType) cobraRunFuncType {
+func runFuncInternal(innerFunc CmdWithExtraArgsFuncType, requireConfig bool) cobraRunFuncType {
 	return func(command *cobra.Command, args []string) error {
 		// If we got down here, then make sure we don't display usage unless we are certain
 		// it's a usage error.
@@ -97,6 +102,19 @@ func runFuncInternal(innerFunc CmdWithExtraArgsFuncType) cobraRunFuncType {
 		env, err := GetEnvFromCommand(command)
 		if err != nil {
 			return err
+		}
+
+		if requireConfig && (env.Config() == nil || env.ProjectDir() == "") {
+			slog.Warn(
+				"!!! Unable to find and load valid Azure Linux project configuration.\n\n" +
+					"Please either use the -C option to specify a path to the root directory " +
+					"of your Azure Linux project/repo, or else run this tool from within a directory " +
+					"tree that contains an 'azldev.toml' file at its root.\n\n" +
+					"Most commands will not function correctly without a valid configuration.\n\n" +
+					"------------------------------------------------------------------\n",
+			)
+
+			return errors.New("a valid project and configuration are required to execute this command")
 		}
 
 		results, err := innerFunc(env, args)
@@ -147,7 +165,72 @@ func ExportAsMCPTool(cmd *cobra.Command) {
 
 // Displays the results of a command in the appropriate format to stdout.
 func reportResults(env *Env, results interface{}) error {
-	return reportResultsAsJSON(env, results)
+	switch env.defaultReportFormat {
+	case ReportFormatMarkdown:
+		return reportResultsViaReflectable(env, results, reflectable.FormatMarkdown)
+	case ReportFormatCSV:
+		return reportResultsViaReflectable(env, results, reflectable.FormatCSV)
+	case ReportFormatJSON:
+		return reportResultsAsJSON(env, results)
+	case ReportFormatTable:
+		fallthrough
+	default:
+		return reportResultsViaReflectable(env, results, reflectable.FormatTable)
+	}
+}
+
+func reportResultsViaReflectable(env *Env, results interface{}, format reflectable.Format) (err error) {
+	// Don't bother formatting well-known simple values that aren't meaningful to humans.
+	if results == nil || results == true || results == false {
+		return nil
+	}
+
+	options := createReflectableOptions(env, format)
+
+	formatted, err := reflectable.FormatValue(options, results)
+	if err != nil {
+		return fmt.Errorf("failed to format results:\n%w", err)
+	}
+
+	// Only write to stdout if we have something to write. This avoids an unnecessary
+	// bare newline being printed when there are no results to report.
+	if formatted != "" {
+		fmt.Fprintf(env.ReportFile(), "%s\n", formatted)
+	}
+
+	return nil
+}
+
+// createReflectableOptions computes the set of options that we should use for formatting.
+func createReflectableOptions(env *Env, format reflectable.Format) *reflectable.Options {
+	options := reflectable.NewOptions().WithFormat(format)
+	tty := isatty.IsTerminal(os.Stdout.Fd())
+	color := false
+
+	// Figure out if we should ask reflectable to use color.
+	switch env.ColorMode() {
+	case ColorModeAlways:
+		color = true
+	case ColorModeNever:
+		break
+	case ColorModeAuto:
+		fallthrough
+	default:
+		color = tty
+	}
+
+	options = options.WithColor(color)
+
+	// If we know that stdout is a terminal, then try to auto-fit within the terminal
+	// width. In all other cases, don't constrain the table width.
+	if tty {
+		terminalWidth, _, _ := term.GetSize(os.Stdout.Fd())
+		if terminalWidth != 0 {
+			options = options.WithMaxTableWidth(terminalWidth)
+		}
+	}
+
+	return options
 }
 
 // Displays the results of a command to stdout in JSON format.

@@ -4,13 +4,13 @@
 package azldev
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"os/user"
 	"strconv"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/externalcmd"
 	"github.com/spf13/afero"
 )
 
@@ -26,7 +26,8 @@ type SystemInterfaces struct {
 
 // DefaultCmdFactory returns a default [opctx.CmdFactory] that uses the [exec.Cmd] command execution facilities.
 func DefaultCmdFactory(dryRunInfo opctx.DryRunnable, eventListener opctx.EventListener) (opctx.CmdFactory, error) {
-	return nil, errors.New("not yet implemented")
+	//nolint:wrapcheck // We are intentionally just forwarding the call.
+	return externalcmd.NewCmdFactory(dryRunInfo, eventListener)
 }
 
 // DefaultFileSystemFactory returns a default [opctx.FileSystemFactory] that uses the OS file system.

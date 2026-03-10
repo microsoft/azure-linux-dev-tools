@@ -43,6 +43,24 @@ func TestRunFunc(t *testing.T) {
 	}
 }
 
+func TestRunFunc_WithoutValidProjectOrConfig(t *testing.T) {
+	// Construct a temporary test environment just to reuse its options and system interfaces.
+	options := azldev.NewEnvOptions()
+	options.Interfaces = testutils.NewTestEnv(t).TestInterfaces
+
+	env := azldev.NewEnv(t.Context(), options)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(env)
+
+	runFunc := azldev.RunFunc(func(env *azldev.Env) (results interface{}, err error) {
+		return results, nil
+	})
+
+	err := runFunc(cmd, []string{})
+	assert.Error(t, err)
+}
+
 func TestRunFunc_ResultsAsJSON(t *testing.T) {
 	runFunc := azldev.RunFunc(func(env *azldev.Env) (interface{}, error) {
 		return []string{"a", "b", "c"}, nil
@@ -64,6 +82,27 @@ func TestRunFunc_ResultsAsJSON(t *testing.T) {
   "c"
 ]
 `
+			assert.Equal(t, expected, reportOutput.String())
+		}
+	}
+}
+
+func TestRunFunc_ResultsAsCSV(t *testing.T) {
+	runFunc := azldev.RunFunc(func(env *azldev.Env) (interface{}, error) {
+		return "a", nil
+	})
+
+	env := testutils.NewTestEnv(t)
+	env.Env.SetDefaultReportFormat(azldev.ReportFormatCSV)
+
+	reportOutput := new(strings.Builder)
+	env.Env.SetReportFile(reportOutput)
+
+	if assert.NotNil(t, runFunc) {
+		err := runFunc(testCmd(env.Env), []string{})
+
+		if assert.NoError(t, err) {
+			expected := "a\n"
 			assert.Equal(t, expected, reportOutput.String())
 		}
 	}

@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/config"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/docs"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/version"
 )
@@ -28,6 +29,7 @@ func InstantiateApp() *azldev.App {
 
 	// Give top level command packages an opportunity to register their commands (or in some cases,
 	// request post-init callbacks).
+	config.OnAppInit(app)
 	docs.OnAppInit(app)
 	version.OnAppInit(app)
 

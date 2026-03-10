@@ -11,7 +11,9 @@ import (
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
+	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewEnv(t *testing.T) {
@@ -21,6 +23,14 @@ func TestNewEnv(t *testing.T) {
 		testWorkDir     = "/non/existent/work"
 		testOutputDir   = "/non/existent/output"
 	)
+
+	config := &projectconfig.ProjectConfig{
+		Project: projectconfig.ProjectInfo{
+			LogDir:    testLogDir,
+			WorkDir:   testWorkDir,
+			OutputDir: testOutputDir,
+		},
+	}
 
 	ctx, cancelFunc := context.WithCancel(t.Context())
 	defer cancelFunc()
@@ -32,6 +42,7 @@ func TestNewEnv(t *testing.T) {
 	options.EventListener = testEnv.EventListener
 	options.Interfaces = testEnv.TestInterfaces
 	options.ProjectDir = testProjectRoot
+	options.Config = config
 
 	env := azldev.NewEnv(ctx, options)
 
@@ -47,7 +58,15 @@ func TestNewEnv(t *testing.T) {
 
 	// Confirm that our parameters were appropriately wrapped.
 	assert.Equal(t, testProjectRoot, env.ProjectDir())
+	assert.Equal(t, testWorkDir, env.WorkDir())
+	assert.Equal(t, testLogDir, env.LogsDir())
+	assert.Equal(t, testOutputDir, env.OutputDir())
+	assert.Equal(t, config, env.Config())
 	assert.False(t, env.ClassicToolkitPresent())
+
+	// Note that we can't find the distro.
+	_, _, err := env.Distro()
+	require.Error(t, err)
 
 	// Confirm that the context is the right one.
 	cancelFunc()

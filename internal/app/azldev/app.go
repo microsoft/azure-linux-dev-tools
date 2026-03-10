@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -18,13 +19,18 @@ import (
 	"github.com/lmittmann/tint"
 	"github.com/mattn/go-isatty"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
+	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/muesli/termenv"
 	"github.com/samber/lo"
+	slogmulti "github.com/samber/slog-multi"
 	"github.com/spf13/cobra"
 	"go.szostok.io/version"
 	"golang.org/x/sys/unix"
 )
+
+// Default name of the verbose log file.
+const defaultLogFilename = "azldev.log"
 
 // Type of a callback function that can be registered for invocation after the application
 // has loaded configuration, but before it fully parses command-line arguments.
@@ -259,6 +265,27 @@ func (a *App) Execute(args []string) int {
 
 	defer os.RemoveAll(earlyTempDirPath)
 
+	// If config loading fails--either because of missing config, or because of an error with the found
+	// config--we proceed onward anyway but without config. This lets the user at least get correct
+	// usage information, query the tool's version, etc. If the user attempts to run a command that
+	// requires configuration, then execution will stop just before running the command.
+	if err = a.initializeProjectConfig(envOptions, earlyTempDirPath); err != nil {
+		// Present an error, but move on.
+		slog.Error("Error loading configuration, execution may fail later;", "err", err)
+	}
+
+	if err = a.reInitLoggingWithLogFile(envOptions); err != nil {
+		slog.Error("Error initializing file logging.", "err", err)
+
+		return 1
+	}
+
+	if err = a.setCmdFactory(envOptions); err != nil {
+		slog.Error("Error setting command factory.", "err", err)
+
+		return 1
+	}
+
 	//
 	// Set up root context and allocate a cancellation channel.
 	//
@@ -304,6 +331,37 @@ func (a *App) Execute(args []string) int {
 	return a.dispatchToCommand(env, args)
 }
 
+func (*App) setCmdFactory(envOptions *EnvOptions) error {
+	cmdFactory, err := DefaultCmdFactory(envOptions.DryRunnable, envOptions.EventListener)
+	if err != nil {
+		return fmt.Errorf("error creating command factory:\n%w", err)
+	}
+
+	envOptions.Interfaces.CmdFactory = cmdFactory
+
+	return nil
+}
+
+// Once the config is loaded, we may need to re-initialize logging
+// to log to a file in the configured log directory.
+func (a *App) reInitLoggingWithLogFile(envOptions *EnvOptions) error {
+	if envOptions.Config == nil || envOptions.Config.Project.LogDir == "" {
+		return nil
+	}
+
+	logger, err := a.initFileLogging(envOptions.Config.Project.LogDir)
+	if err != nil {
+		return fmt.Errorf("error re-initializing file logging:\n%w", err)
+	}
+
+	err = setEventListener(logger, envOptions)
+	if err != nil {
+		return fmt.Errorf("error re-setting event listener:\n%w", err)
+	}
+
+	return nil
+}
+
 func (a *App) initializeEnvOptions() *EnvOptions {
 	envOptions := NewEnvOptions()
 	envOptions.Interfaces.FileSystemFactory = a.fsFactory
@@ -311,6 +369,27 @@ func (a *App) initializeEnvOptions() *EnvOptions {
 	envOptions.DryRunnable = NewAppDryRunnable(a.dryRun)
 
 	return &envOptions
+}
+
+// This is responsible for finding the project root, finding and processing the configuration file.
+func (a *App) initializeProjectConfig(envOptions *EnvOptions, earlyTempDirPath string) error {
+	projectDir, config, err := a.findAndLoadConfig(
+		envOptions.DryRunnable,
+		earlyTempDirPath,
+		a.configFiles,
+	)
+
+	if errors.Is(err, projectconfig.ErrConfigFileNotFound) {
+		// Notify the user, but move on.
+		slog.Info("No Azure Linux project found; some commands will not be available.")
+	} else if err != nil {
+		return fmt.Errorf("error loading project configuration:\n%w", err)
+	}
+
+	envOptions.ProjectDir = projectDir
+	envOptions.Config = config
+
+	return nil
 }
 
 // We cancel on normal exit from this function, as well as when a SIGINT or SIGTERM is received.
@@ -327,6 +406,10 @@ func (*App) setupSignalHandling(cancel context.CancelFunc) {
 }
 
 func (a *App) handlePostInitCallbacks(env *Env) error {
+	if env.Config() == nil {
+		return nil
+	}
+
 	err := a.callPostInitCallbacks(env)
 	if err != nil {
 		return fmt.Errorf("error during post-config initialization:\n%w", err)
@@ -401,6 +484,38 @@ func (a *App) handParsePrefixedFlags(arg string) {
 	}
 }
 
+// Initializes the configuration for the azldev CLI. This includes finding the project.
+// loading configuration, etc.
+func (a *App) findAndLoadConfig(dryRunnable opctx.DryRunnable, tempDirPath string, extraConfigFiles []string) (
+	projectDir string, config *projectconfig.ProjectConfig, err error,
+) {
+	// If no explicit project dir was specified, then fall back to the current working directory.
+	referenceDir := a.explicitProjectDir
+	if referenceDir == "" {
+		referenceDir, err = a.osEnvFactory.OSEnv().Getwd()
+		if err != nil {
+			return projectDir, config, fmt.Errorf("failed to get working directory:\n%w", err)
+		}
+	}
+
+	// Rely on projectconfig package to find all relevant configuration files (including defaults) and
+	// load them into a single project configuration object.
+	projectDir, config, err = projectconfig.LoadProjectConfig(
+		dryRunnable,
+		a.fsFactory.FS(),
+		referenceDir,
+		a.disableDefaultConfig,
+		tempDirPath,
+		extraConfigFiles,
+		a.permissiveConfigParsing,
+	)
+	if err != nil {
+		return projectDir, config, fmt.Errorf("failed to load project configuration:\n%w", err)
+	}
+
+	return projectDir, config, nil
+}
+
 // Initializes stdio-only logging.
 func (a *App) initStdioLogging() *slog.Logger {
 	logger := slog.New(a.createStdioLogHandler())
@@ -443,6 +558,45 @@ func (a *App) getLogLevel() slog.Level {
 	default:
 		return slog.LevelInfo
 	}
+}
+
+// Initializes file logging, creating a log file in the specified directory.
+// Will not update [slog]'s default logger in case of an error.
+func (a *App) initFileLogging(logDir string) (*slog.Logger, error) {
+	if logDir == "" {
+		return nil, errors.New("log dir path cannot be empty when initializing logging")
+	}
+
+	fs := a.fsFactory.FS()
+
+	err := fileutils.MkdirAll(fs, logDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to ensure log dir %#q exists:\n%w", logDir, err)
+	}
+
+	// Create the log file anew.
+	logFilePath := filepath.Join(logDir, defaultLogFilename)
+
+	logFile, err := fs.Create(logFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create log file at %#q:\n%w", logFilePath, err)
+	}
+
+	// We log with the configured verbosity level to
+	// standard I/O and *also* log everything up to debug messages to the log file.
+	// The slogmulti package allows us to fan out log messages to multiple handlers
+	// (with different level filters).
+	logger := slog.New(slogmulti.Fanout(
+		a.createStdioLogHandler(),
+		slog.NewTextHandler(logFile, &slog.HandlerOptions{Level: slog.LevelDebug})),
+	)
+
+	logger.Debug("Enabled file logging", "path", logFilePath)
+
+	// Set the process-global default logger.
+	slog.SetDefault(logger)
+
+	return logger, nil
 }
 
 // Invokes all registered post-init callbacks. Fails early if any callback returns an error.

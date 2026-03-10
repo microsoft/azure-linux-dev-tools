@@ -13,7 +13,9 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
+	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/require"
 	"github.com/thejerf/slogassert"
@@ -23,7 +25,8 @@ import (
 // an [azldev.Env] constructed with injected dependencies that redirect
 // filesystem and OS environmental access to included test objects.
 type TestEnv struct {
-	Env *azldev.Env
+	Env    *azldev.Env
+	Config *projectconfig.ProjectConfig
 
 	TestInterfaces azldev.SystemInterfaces
 
@@ -53,6 +56,8 @@ func NewTestEnv(t *testing.T) *TestEnv {
 
 	testEnv := newTestEnv(testMockConfigPath)
 
+	populateTestProjectFiles(t, testEnv, testProjectDir, testMockConfigPath)
+
 	setCmdFactory(testEnv)
 
 	setEnvDependencies(t, testEnv)
@@ -64,8 +69,9 @@ func NewTestEnv(t *testing.T) *TestEnv {
 
 // newTestEnv creates a new [TestEnv] with a test project config
 // and mock implementations of [opctx.FS] and [opctx.OSEnv].
-func newTestEnv(_ string) *TestEnv {
+func newTestEnv(testMockConfigPath string) *TestEnv {
 	return &TestEnv{
+		Config:           constructProjectConfig(testMockConfigPath),
 		CommandsExecuted: [][]string{},
 		TestFS:           afero.NewMemMapFs(),
 		TestOSEnv:        testctx.NewTestOSEnv(),
@@ -97,6 +103,22 @@ func setUpEventListener(t *testing.T, testEnv *TestEnv) {
 	testEnv.EventListener = testEventListener
 }
 
+// populateTestProjectFiles creates simple mock config and project files
+// in the test project directory.
+func populateTestProjectFiles(t *testing.T, testEnv *TestEnv, testProjectDir string, testMockConfigPath string) {
+	t.Helper()
+
+	// Create the project dir.
+	require.NoError(t, testEnv.TestOSEnv.Chdir(testProjectDir))
+
+	// Create an empty mock config file.
+	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, testMockConfigPath, []byte{}, fileperms.PrivateFile))
+
+	// Create an empty project (.toml) config file.
+	_, err := testEnv.TestFS.Create(filepath.Join(testProjectDir, projectconfig.DefaultConfigFileName))
+	require.NoError(t, err)
+}
+
 // setEnv sets the [azldev.Env] for the test environment, using the provided
 // project directory and the test environment's configuration.
 func setEnv(t *testing.T, testEnv *TestEnv, testProjectDir string) {
@@ -107,6 +129,7 @@ func setEnv(t *testing.T, testEnv *TestEnv, testProjectDir string) {
 	envOptions.EventListener = testEnv.EventListener
 	envOptions.Interfaces = testEnv.TestInterfaces
 	envOptions.ProjectDir = testProjectDir
+	envOptions.Config = testEnv.Config
 
 	testEnv.Env = azldev.NewEnv(t.Context(), envOptions)
 }
@@ -126,6 +149,31 @@ func setCmdFactory(testEnv *TestEnv) {
 
 		return "", nil
 	}
+}
+
+// Construct a [projectconfig.ProjectConfig].
+func constructProjectConfig(testMockConfigPath string) *projectconfig.ProjectConfig {
+	config := projectconfig.NewProjectConfig()
+	config.Project.WorkDir = "/work"
+	config.Project.LogDir = "/logs"
+	config.Project.OutputDir = "/output"
+	config.Project.DefaultDistro.Name = "test-distro"
+	config.Project.DefaultDistro.Version = "1.0"
+
+	distro := projectconfig.DistroDefinition{
+		Versions:         make(map[string]projectconfig.DistroVersionDefinition),
+		LookasideBaseURI: "https://example.com/lookaside/$pkg/$filename/$hashtype/$hash/$filename",
+		DistGitBaseURI:   "https://example.com/upstream/$pkg.git",
+	}
+
+	distro.Versions["1.0"] = projectconfig.DistroVersionDefinition{
+		MockConfigPath: testMockConfigPath,
+		DistGitBranch:  "main",
+	}
+
+	config.Distros["test-distro"] = distro
+
+	return &config
 }
 
 // FS implements the [opctx.FileSystemFactory] interface.
