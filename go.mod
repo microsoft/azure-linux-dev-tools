@@ -16,7 +16,7 @@ require (
 	github.com/mattn/go-isatty v0.0.20
 	github.com/muesli/termenv v0.16.0
 	github.com/opencontainers/selinux v1.13.1
-	github.com/samber/lo v1.52.0
+	github.com/samber/lo v1.53.0
 	github.com/spf13/afero v1.15.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
@@ -24,7 +24,7 @@ require (
 	github.com/thejerf/slogassert v0.3.4
 	go.szostok.io/version v1.2.0
 	go.uber.org/mock v0.6.0
-	golang.org/x/sys v0.41.0
+	golang.org/x/sys v0.42.0
 )
 
 require (
