@@ -1,0 +1,11 @@
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        # TODO(gh): Policies for this repo previously blocked us from using these
+        # actions with a pinned hash. They were allow-listed here, but should be
+        # shifted to pinned hashes.
+        golangci/golangci-lint-action: any
+        marocchino/sticky-pull-request-comment: any
+        irongut/CodeCoverageSummary: any
+        amannn/action-semantic-pull-request: any

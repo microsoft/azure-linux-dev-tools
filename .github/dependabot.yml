@@ -1,0 +1,67 @@
+version: 2
+updates:
+  # GitHub actions - take version updates weekly
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      dependabot-github-actions:
+        applies-to: version-updates
+        patterns:
+          - "*"
+
+  # Main go.mod - take minor- and patch-level version updates weekly
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      # Take weekly version updates to dependencies, but only include minor- and patch-level updates.
+      dependabot-gomod-minor:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+      dependabot-gomod-major:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - "major"
+
+  # Tools go.mod files
+  - package-ecosystem: "gomod"
+    directories:
+      - "/tools/*"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      # Take weekly security updates to all dependencies.
+      dependabot-gomod-tools-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      # Take weekly version updates to the *tools* themselves, but only include only minor- and patch-level updates.
+      dependabot-gomod-tools-upgrades:
+        applies-to: version-updates
+        patterns:
+          # We list all tools.
+          - "github.com/AlekSi/gocov-xml"
+          - "github.com/axw/gocov/gocov"
+          - "github.com/editorconfig-checker/editorconfig-checker/v3"
+          - "github.com/golangci/golangci-lint/v2/cmd/golangci-lint"
+          - "github.com/google/go-licenses/v2"
+          - "go.uber.org/mock/mockgen"
+          - "golang.org/x/tools/cmd/stringer"
+        update-types:
+          - "minor"
+          - "patch"

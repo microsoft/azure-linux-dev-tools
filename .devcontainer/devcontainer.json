@@ -1,0 +1,57 @@
+{
+  "name": "AZL Dev 3.0",
+  "build": {
+    "dockerfile": "Dockerfile.AZL-3.0",
+    "context": "."
+  },
+  "runArgs": ["--privileged"],
+  // Features to add to the dev container. More info: https://containers.dev/features.
+  "features": {},
+  // Configure tool-specific properties.
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "davidanson.vscode-markdownlint",
+        "github.copilot-chat",
+        "github.copilot",
+        "github.vscode-pull-request-github",
+        "golang.go",
+        "ms-vscode.vscode-json",
+        "redhat.vscode-yaml"
+      ],
+      "settings": {
+        "go.gopath": "/home/azldev/go",
+        "go.lintTool": "golangci-lint-v2",
+        "go.toolsManagement.checkForUpdates": "local",
+        "go.useLanguageServer": true,
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "terminal.integrated.profiles.linux": {
+          "bash": {
+            "path": "/bin/bash",
+            "args": [
+              "-l"
+            ]
+          }
+        }
+      }
+    }
+  },
+  // Use 'forwardPorts' to make a list of ports inside the container available locally.
+  "forwardPorts": [],
+  // Use 'postCreateCommand' to run commands after the container is created.
+  "postCreateCommand": "sudo /usr/local/bin/start-docker.sh && go version && mage --version && mage installcompletions",
+  // Configure container user
+  "remoteUser": "azldev",
+  // Mount the workspace
+  "workspaceFolder": "/workspace",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+  // Environment variables
+  "remoteEnv": {
+    "GOPATH": "/home/azldev/go"
+  },
+  // Lifecycle scripts
+  "initializeCommand": "echo 'Initializing dev container...'",
+  "onCreateCommand": "echo 'Container created successfully'",
+  "updateContentCommand": "echo 'Updating container content...'",
+  "postStartCommand": "echo 'Container started. Ready for development!'"
+}

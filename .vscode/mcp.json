@@ -1,0 +1,24 @@
+{
+    "servers": {
+        "azldev-mage-builder": {
+            "type": "stdio",
+            "command": "go",
+            "args": [
+                "run",
+                "-C",
+                "./magefiles/magemcp/",
+                "magemcp.go",
+                "${workspaceFolder}"
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        "run-azldev-from-out-bin": {
+            "type": "stdio",
+            "command": "bash",
+            "args": [
+                ".vscode/run-azldev-mcp.sh"
+            ],
+            "cwd": "${workspaceFolder}"
+        }
+    }
+}

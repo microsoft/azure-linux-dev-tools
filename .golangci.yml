@@ -1,0 +1,219 @@
+version: "2"
+
+linters:
+  enable:
+    - arangolint
+    - asasalint
+    - asciicheck
+    - bidichk
+    - bodyclose
+    - canonicalheader
+    - containedctx
+    - contextcheck
+    - copyloopvar
+    - cyclop
+    - decorder
+    - dogsled
+    - dupl
+    - dupword
+    - durationcheck
+    - embeddedstructfieldcheck
+    - errcheck
+    - errchkjson
+    - errname
+    - errorlint
+    - exhaustive
+    - exptostd
+    - fatcontext
+    - forbidigo
+    - forcetypeassert
+    - funcorder
+    - funlen
+    - ginkgolinter
+    - gocheckcompilerdirectives
+    - gochecknoglobals
+    - gochecknoinits
+    - gochecksumtype
+    - gocognit
+    - goconst
+    - gocritic
+    - gocyclo
+    - godoclint
+    - godot
+    - godox
+    - goheader
+    - gomoddirectives
+    - gomodguard
+    - goprintffuncname
+    - gosec
+    - gosmopolitan
+    - govet
+    - grouper
+    - iface
+    - importas
+    - inamedparam
+    - ineffassign
+    - interfacebloat
+    - intrange
+    - iotamixing
+    - lll
+    - loggercheck
+    - maintidx
+    - makezero
+    - mirror
+    - misspell
+    - mnd
+    - musttag
+    - nakedret
+    - nestif
+    - nilerr
+    - nilnesserr
+    - nilnil
+    - nlreturn
+    - noctx
+    - noinlineerr
+    - nolintlint
+    - nosprintfhostport
+    - perfsprint
+    - prealloc
+    - predeclared
+    - promlinter
+    - protogetter
+    - reassign
+    - recvcheck
+    - revive
+    - rowserrcheck
+    - sloglint
+    - spancheck
+    - sqlclosecheck
+    - staticcheck
+    - tagalign
+    - tagliatelle
+    - testableexamples
+    - testifylint
+    - testpackage
+    - thelper
+    - tparallel
+    - unconvert
+    - unparam
+    - unqueryvet
+    - unused
+    - usestdlibvars
+    - usetesting
+    - varnamelen
+    - wastedassign
+    - whitespace
+    - wrapcheck
+    - wsl_v5
+    - zerologlint
+
+  disable:
+    - depguard # We will need to configure the allowed dependencies before enabling this
+    - embeddedstructfieldcheck # Would require extensive struct reorganization
+    - err113 # We're okay with dynamic errors for most cases; no way to only disable that check.
+    - exhaustruct # We don't require explicitly initializing each field of a struct at construction time.
+    - funcorder # Would require extensive code reorganization
+    - godoclint # Would require updating all function documentation comments
+    - ireturn # We are philosophically opposed to banning interface returns.
+    - noinlineerr # We prefer inline error handling for readability
+    - nonamedreturns # We *intentionally* like named returns.
+    - paralleltest # We're not going to add t.Parallel() to every test for now.
+
+  settings:
+    cyclop:
+      max-complexity: 15
+
+    forbidigo:
+      forbid:
+        - pattern: '^exec\.Command$'
+          msg: "exec.CommandContext must be used instead (with a valid ctx.Context)"
+
+    funlen:
+      lines: 80
+
+    goheader:
+      template: |-
+        Copyright (c) Microsoft Corporation.
+        Licensed under the MIT License.
+
+    gosec:
+      excludes:
+        - G204  # Audit use of command execution
+
+    revive:
+      rules:
+        - name: empty-block
+          disabled: true # Allow empty blocks for readability.
+        - name: exported
+          disabled: false # Enable revive checks on package-exported functions and types.
+          arguments:
+            - disableStutteringCheck # For now, disable the check against a package symbol being prefixed with the package name.
+            - checkPublicInterface
+        - name: package-comments
+          disabled: false # Enable revive checks on package comments.
+
+    tagalign:
+      order:
+        - toml
+        - json
+        - table
+        - validate
+        - jsonschema
+
+    tagliatelle:
+      case:
+        rules:
+          json: camel
+
+    varnamelen:
+      ignore-decls:
+        - fs opctx.FS # 'fs' is a reasonable variable for an `FS`
+
+    wrapcheck:
+      extra-ignore-sigs:
+        - .PrintAndReturnError( # This function wraps errors and returns them, so we need to ignore it since it looks like an unwrapped error
+
+  exclusions:
+    presets:
+      # TODO: gradually remove these exclusions as we can.
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+
+    rules:
+      # Don't complain about long lines that may contain struct tags; they can't be wrapped.
+      - linters:
+          - lll
+        source: '`[^`]*`\s*$'
+
+      # Don't complain about forbidden functions in our magefiles
+      - linters:
+          - forbidigo
+        path: magefiles
+
+      # Don't complain about missing public function comments in our magefiles
+      - linters:
+          - revive
+        path: magefiles
+        text: .*should have comment.*
+
+      # We don't worry about error wrapping tests.
+      - linters:
+          - wrapcheck
+        path: '(.+)_test\.go'
+
+      - linters:
+          # Allow long tests, particularly for data-driven ones.
+          - funlen
+          - gocognit
+          - cyclop
+        path: '(.+)_test\.go'
+
+# TODO: enable all formatters we know about (including golines)
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - gofumpt
+    - goimports

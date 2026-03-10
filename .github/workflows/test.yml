@@ -1,0 +1,63 @@
+name: "Run tests"
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+  schedule:
+    # Run every night at 3:15am PST (11:15am UTC)
+    - cron: '15 11 * * *'
+
+# Cancel in-progress runs of this workflow if a new run is triggered.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  unit-tests:
+    name: "Unit tests"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Get go tools
+        uses: ./.github/getgotools
+      - name: Run tests
+        run: |
+          mage -v unit
+
+  scenario-tests:
+    name: "Scenario tests"
+    strategy:
+      matrix:
+        host: [ubuntu-latest]
+    runs-on: ${{ matrix.host }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Get go tools
+        uses: ./.github/getgotools
+
+      - name: Disable unix_chkpwd policy
+        run: |
+          # We disable the unix-chkpwd AppArmor profile to avoid errors running
+          # containerized tests. We also need to purge a few packages to avoid
+          # profile conflicts.
+          set -euxo pipefail
+          sudo apt-get purge firefox passt
+          sudo systemctl reload apparmor.service
+          sudo apt-get install apparmor-utils
+          sudo aa-disable /usr/sbin/unix_chkpwd
+
+      - name: Run tests
+        run: |
+          mage -v scenario

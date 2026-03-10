@@ -1,0 +1,72 @@
+name: Copilot Issue
+description: Create an issue to be assigned to GitHub Copilot for automated resolution.
+title: "[Copilot] "
+labels: ["copilot"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Copilot Issue Instructions
+
+        This issue will be assigned to GitHub Copilot for automated resolution. Please provide clear information about the changes needed.
+
+        **Note**: Copilot will follow the guidelines in the [CONTRIBUTING.md](../../CONTRIBUTING.md) file. In case of any conflicts between the guidelines in this template and the CONTRIBUTING.md file, the CONTRIBUTING.md file takes precedence.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Issue Description
+      description: Clearly describe what needs to be changed or fixed.
+      placeholder: Describe the problem or feature request in detail.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_changes
+    attributes:
+      label: Expected Changes
+      description: Describe what changes you expect Copilot to make.
+      placeholder: List the specific changes you want to see implemented.
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Guidelines for Copilot
+
+        The following guidelines, along with those in the [CONTRIBUTING.md](../../CONTRIBUTING.md) file, will be included in every Copilot issue:
+
+        ### Documentation Requirements
+        - Document all changes made in your PR description in a clear and concise manner
+        - Update existing repository documentation files if the changes affect documented behavior
+        - Include code comments for complex logic when necessary
+
+        ### Coding Standards
+        - Stick strictly to the existing coding conventions in this repository
+        - Follow established Go language practices and conventions:
+          - Use proper error handling patterns
+          - Follow Go naming conventions (e.g., CamelCase for exported names)
+          - Write concise, readable code with appropriate comments
+          - Use Go idioms and standard library functions where appropriate
+        - Organize imports according to Go best practices
+        - Ensure code passes golangci-lint checks
+
+        ### Quality Standards
+        - Make minimal, focused changes to achieve the required functionality
+        - Write or update tests for new or modified code
+        - Ensure backward compatibility unless explicitly instructed otherwise
+        - Follow programming best practices:
+          - Keep functions small and focused on a single task
+          - Use appropriate error handling
+          - Avoid code duplication
+          - Use meaningful variable and function names
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Additional Context
+      description: Any additional information that might help Copilot complete the task.
+      placeholder: Include links to related code, examples, or other resources that might help.
+    validations:
+      required: false

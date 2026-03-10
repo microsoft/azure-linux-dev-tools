@@ -1,0 +1,52 @@
+name: "Check devcontainer build"
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+  schedule:
+    # Run every night at 3:15am PST (11:15am UTC)
+    - cron: '15 11 * * *'
+
+# Cancel in-progress runs of this workflow if a new run is triggered.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  devcontainer:
+    name: "Devcontainer build"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Disable unix_chkpwd policy
+        run: |
+          # We disable the unix-chkpwd AppArmor profile to avoid errors building the container.
+          # We also need to purge a few packages to avoid profile conflicts.
+          set -euxo pipefail
+          sudo apt-get purge firefox passt
+          sudo systemctl reload apparmor.service
+          sudo apt-get install apparmor-utils
+          sudo aa-disable /usr/sbin/unix_chkpwd
+
+      - name: Install devcontainer CLI
+        run: |
+          sudo npm install -g @devcontainers/cli
+
+      - name: Build devcontainer
+        timeout-minutes: 10
+        run: |
+          echo "Building devcontainer..."
+          devcontainer build --workspace-folder . --image-name azldev-devcontainer:test
+          echo "Running devcontainer to verify it works..."
+          devcontainer up --workspace-folder .
+
+          echo "Devcontainer built successfully!"

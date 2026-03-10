@@ -1,0 +1,46 @@
+name: "Ensure generated code is up-to-date"
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+  schedule:
+    # Run every night at 3:15am PST (11:15am UTC)
+    - cron: '15 11 * * *'
+
+# Cancel in-progress runs of this workflow if a new run is triggered.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  check-generated-code:
+    name: Check generated code
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Get go tools
+        uses: ./.github/getgotools
+
+      - name: Run code generation
+        run: |
+          mage -v generate
+
+      - name: Check for changes
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git diff
+            echo "::error::Generated code is not up to date - see changes above. Please run 'mage generate' locally and commit the changes."
+            exit 1
+          else
+            echo "Generated code is up to date."
+          fi

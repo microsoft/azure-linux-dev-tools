@@ -1,0 +1,49 @@
+FROM mcr.microsoft.com/azurelinux/base/core:3.0
+
+# Install required packages
+RUN tdnf -y update && \
+    tdnf -y install ca-certificates dnf dnf-utils which gh git golang gawk tar shadow-utils sudo tree bash-completion moby-engine moby-cli build-essential && \
+    tdnf clean all
+
+# Define the 'll' alias for all users
+RUN echo 'alias ll="ls -lah"' >> /etc/profile.d/aliases.sh && \
+    chmod +x /etc/profile.d/aliases.sh && \
+    echo '. /etc/profile.d/aliases.sh' >> /etc/bash.bashrc
+
+# Create the 'azldev' user
+RUN useradd -m azldev && \
+    echo "azldev ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/azldev && \
+    chmod 0440 /etc/sudoers.d/azldev && \
+    groupadd -f docker && \
+    usermod -aG docker azldev
+
+# Copy Docker daemon configuration
+COPY daemon.json /etc/docker/daemon.json
+
+# Copy Docker start script
+COPY start-docker.sh /usr/local/bin/start-docker.sh
+
+USER azldev
+
+# Set the Go environment
+ENV PATH="/home/azldev/go/bin:${PATH}"
+ENV CGO_ENABLED=1
+
+# Install "mage"
+RUN go install github.com/magefile/mage@latest
+
+# Install other Go tools for VS Code debugging and Go development
+RUN go install github.com/cweill/gotests/gotests@latest && \
+    go install github.com/fatih/gomodifytags@latest && \
+    go install github.com/go-delve/delve/cmd/dlv@latest && \
+    go install github.com/haya14busa/goplay/cmd/goplay@latest && \
+    go install github.com/josharian/impl@latest && \
+    go install golang.org/x/tools/gopls@latest && \
+    go install honnef.co/go/tools/cmd/staticcheck@latest && \
+    curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.1.6
+
+# Set the default shell to bash
+SHELL ["/bin/bash", "-c"]
+
+# Verify the alias works in interactive sessions
+CMD ["/bin/bash"]

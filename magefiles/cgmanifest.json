@@ -1,0 +1,56 @@
+{
+    "$schema": "https://json.schemastore.org/component-detection-manifest.json",
+    "version": 1,
+    "registrations": [
+        {
+            "component": {
+                "type": "go",
+                "developmentDependency": true,
+                "go": {
+                    "name":     "github.com/magefile/mage",
+                    "version":  "v1.15.0"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "developmentDependency": true,
+                "go": {
+                    "name":     "github.com/AlekSi/gocov-xml",
+                    "version":  "v1.1.0"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "developmentDependency": true,
+                "go": {
+                    "name":     "github.com/axw/gocov",
+                    "version":  "v1.2.1"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "developmentDependency": true,
+                "go": {
+                    "name":     "github.com/google/go-licenses/v2",
+                    "version":  "v2.0.0"
+                }
+            }
+        },
+        {
+            "component": {
+                "type": "go",
+                "developmentDependency": true,
+                "go": {
+                    "name":     "github.com/golangci/golangci-lint/cmd/golangci-lint",
+                    "version":  "v1.63.4"
+                }
+            }
+        }
+    ]
+}
