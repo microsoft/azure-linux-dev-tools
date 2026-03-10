@@ -31,7 +31,7 @@ jobs:
     permissions:
       pull-requests: write # Needed to post comments on PR
     steps:
-      - uses: amannn/action-semantic-pull-request@v5
+      - uses: amannn/action-semantic-pull-request@v6
         id: lint_pr_title
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
