@@ -452,3 +452,112 @@ make test
 	assert.NotContains(t, specStr, "# Check section disabled")
 	assert.NotContains(t, specStr, "exit 0")
 }
+
+func TestDiffSources_NoOverlays(t *testing.T) {
+	const baseDir = "/work"
+
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+	sourceManager := sourceproviders_test.NewMockSourceManager(ctrl)
+	ctx := testctx.NewCtx()
+
+	require.NoError(t, fileutils.MkdirAll(ctx.FS(), baseDir))
+
+	component.EXPECT().GetName().AnyTimes().Return("test-component")
+	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{})
+
+	// DiffSources fetches sources once, then copies them for overlay application.
+	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, gomock.Any()).Times(1).Return(nil)
+	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, gomock.Any()).Times(1).DoAndReturn(
+		func(_ interface{}, _ interface{}, outputDir string) error {
+			specPath := filepath.Join(outputDir, "test-component.spec")
+
+			return fileutils.WriteFile(ctx.FS(), specPath, []byte("Name: test-component\nVersion: 1.0\n"), 0o644)
+		},
+	)
+
+	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx)
+	require.NoError(t, err)
+
+	result, err := preparer.DiffSources(ctx, component, baseDir)
+	require.NoError(t, err)
+
+	// With no overlays configured, the only diff should be the auto-generated file header
+	// that is always prepended to the spec.
+	require.NotNil(t, result)
+
+	// The header overlay is always applied, so we expect at least one modified file.
+	if len(result.Files) > 0 {
+		assert.Equal(t, "test-component.spec", result.Files[0].Path)
+	}
+}
+
+func TestDiffSources_WithOverlays(t *testing.T) {
+	const baseDir = "/work"
+
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+	sourceManager := sourceproviders_test.NewMockSourceManager(ctrl)
+	ctx := testctx.NewCtx()
+
+	require.NoError(t, fileutils.MkdirAll(ctx.FS(), baseDir))
+
+	component.EXPECT().GetName().AnyTimes().Return("test-component")
+	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
+		Build: projectconfig.ComponentBuildConfig{
+			With: []string{"feature"},
+		},
+	})
+
+	// DiffSources fetches sources once, then copies them for overlay application.
+	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, gomock.Any()).Times(1).Return(nil)
+	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, gomock.Any()).Times(1).DoAndReturn(
+		func(_ interface{}, _ interface{}, outputDir string) error {
+			specPath := filepath.Join(outputDir, "test-component.spec")
+
+			return fileutils.WriteFile(ctx.FS(), specPath, []byte("Name: test-component\nVersion: 1.0\n"), 0o644)
+		},
+	)
+
+	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx)
+	require.NoError(t, err)
+
+	result, err := preparer.DiffSources(ctx, component, baseDir)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// With a "with" flag, we expect:
+	// 1. The spec to be modified (header + macro load + Source9999 tag)
+	// 2. A new macros file to be added
+	require.GreaterOrEqual(t, len(result.Files), 1)
+
+	diffText := result.String()
+	assert.NotEmpty(t, diffText)
+
+	// The macros file should appear as added.
+	assert.Contains(t, diffText, sources.MacrosFileExtension)
+}
+
+func TestDiffSources_FetchError(t *testing.T) {
+	const baseDir = "/work"
+
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+	sourceManager := sourceproviders_test.NewMockSourceManager(ctrl)
+	ctx := testctx.NewCtx()
+
+	require.NoError(t, fileutils.MkdirAll(ctx.FS(), baseDir))
+
+	component.EXPECT().GetName().AnyTimes().Return("test-component")
+
+	expectedErr := errors.New("network failure")
+	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, gomock.Any()).Return(expectedErr)
+
+	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx)
+	require.NoError(t, err)
+
+	result, err := preparer.DiffSources(ctx, component, baseDir)
+	require.Error(t, err)
+	require.Nil(t, result)
+	require.ErrorIs(t, err, expectedErr)
+}

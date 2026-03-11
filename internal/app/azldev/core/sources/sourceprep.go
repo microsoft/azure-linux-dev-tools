@@ -16,6 +16,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/dirdiff"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/samber/lo"
@@ -41,6 +42,11 @@ type SourcePreparer interface {
 	// relied on to be present implicitly within the build root, or expressed via BuildRequires or DynamicBuildRequires
 	// in the component's spec file and any defaults from the macros used to interpret the spec file.
 	PrepareSources(ctx context.Context, component components.Component, outputDir string, applyOverlays bool) error
+
+	// DiffSources computes a unified diff showing the changes that overlays apply to a component's sources.
+	// The component's sources are fetched once into a subdirectory of baseDir, then copied to a second
+	// subdirectory where overlays are applied in-place. The diff between the two subdirectories is returned.
+	DiffSources(ctx context.Context, component components.Component, baseDir string) (*dirdiff.DiffResult, error)
 }
 
 // Standard implementation of the [SourcePreparer] interface.
@@ -125,6 +131,70 @@ func (p *sourcePreparerImpl) PrepareSources(
 	}
 
 	return nil
+}
+
+// DiffSources implements the [SourcePreparer] interface.
+// It fetches the component's sources once, copies them to a second directory, applies overlays
+// to the copy, then diffs the two trees. This avoids fetching the sources twice.
+func (p *sourcePreparerImpl) DiffSources(
+	ctx context.Context, component components.Component, baseDir string,
+) (result *dirdiff.DiffResult, err error) {
+	event := p.eventListener.StartEvent("Computing overlay diff", "component", component.GetName())
+	defer event.End()
+
+	// Create temp dirs for sources prepared without and with overlays.
+	originalDir, err := fileutils.MkdirTemp(p.fs, baseDir, "original-")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp dir for original sources:\n%w", err)
+	}
+
+	defer fileutils.RemoveAllAndUpdateErrorIfNil(p.fs, originalDir, &err)
+
+	// Prepare sources without applying overlays, to get the original tree.
+	if err := p.PrepareSources(ctx, component, originalDir, false /* applyOverlays */); err != nil {
+		return nil, err
+	}
+
+	// Copy the fetched sources to a separate directory for in-place overlay application.
+	// This avoids a second network fetch.
+	overlaidDir, err := fileutils.MkdirTemp(p.fs, baseDir, "overlaid-")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp dir for overlaid sources:\n%w", err)
+	}
+
+	defer fileutils.RemoveAllAndUpdateErrorIfNil(p.fs, overlaidDir, &err)
+
+	if err := fileutils.CopyDirRecursive(
+		p.dryRunnable, p.fs, originalDir, overlaidDir,
+		fileutils.CopyDirOptions{CopyFileOptions: fileutils.CopyFileOptions{PreserveFileMode: true}},
+	); err != nil {
+		return nil, fmt.Errorf("failed to copy sources for component %#q:\n%w", component.GetName(), err)
+	}
+
+	// Apply overlays in-place to the copied directory only.
+	var macrosFileName string
+
+	macrosFilePath, err := p.writeMacrosFile(component, overlaidDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to write macros file for component %#q:\n%w", component.GetName(), err)
+	}
+
+	if macrosFilePath != "" {
+		macrosFileName = filepath.Base(macrosFilePath)
+	}
+
+	if err := p.postProcessSources(component, overlaidDir, macrosFileName); err != nil {
+		return nil, fmt.Errorf("failed to post-process sources for component %#q:\n%w", component.GetName(), err)
+	}
+
+	// Diff the original tree against the overlaid tree.
+	result, err = dirdiff.DiffDirs(p.fs, originalDir, overlaidDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to diff source trees for component %#q:\n%w",
+			component.GetName(), err)
+	}
+
+	return result, nil
 }
 
 // writeMacrosFile writes a macros file containing the resolved macros for a component.
