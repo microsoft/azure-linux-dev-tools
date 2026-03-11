@@ -53,6 +53,9 @@ type DistroDefinition struct {
 	// Published artifact information
 	PackageRepositories []PackageRepository `toml:"repos,omitempty" json:"repos,omitempty" jsonschema:"title=Package Repositories,description=List of package repository definitions"`
 
+	// When true, source file downloads will not fall back to configured origins if the lookaside cache fails.
+	DisableOrigins bool `toml:"disable-origins,omitempty" json:"disableOrigins,omitempty" jsonschema:"title=Disable origins,description=When true only allow source files from the lookaside cache and do not fall back to configured origins"`
+
 	// Versions: maps version => definition
 	Versions map[string]DistroVersionDefinition `toml:"versions,omitempty" json:"versions,omitempty" jsonschema:"title=Versions,description=Mapping of distro version definitions"`
 }

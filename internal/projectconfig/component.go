@@ -38,6 +38,7 @@ const (
 )
 
 // Origin describes where a source file comes from and how to retrieve it.
+// When omitted from a source file reference, the file will be resolved via the lookaside cache.
 type Origin struct {
 	// Type indicates how the source file should be acquired.
 	Type OriginType `toml:"type" json:"type" jsonschema:"required,enum=download,title=Origin type,description=Type of origin for this source file"`
@@ -59,8 +60,8 @@ type SourceFileReference struct {
 	// Type of hash used by Hash (e.g., "sha256", "sha512").
 	HashType fileutils.HashType `toml:"hash-type,omitempty" json:"hashType,omitempty"`
 
-	// Type of origin for this source file (e.g., URI, custom).
-	Origin Origin `toml:"origin" json:"origin"`
+	// Origin for this source file. When omitted, the file is resolved via the lookaside cache.
+	Origin Origin `toml:"origin,omitempty" json:"origin,omitempty"`
 }
 
 // Defines a component group. Component groups are logical groupings of components (see [ComponentConfig]).

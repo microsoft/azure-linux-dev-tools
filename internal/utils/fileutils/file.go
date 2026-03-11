@@ -4,7 +4,10 @@
 package fileutils
 
 import (
+	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
@@ -48,4 +51,33 @@ func Exists(fs opctx.FS, path string) (bool, error) {
 func DirExists(fs opctx.FS, path string) (bool, error) {
 	//nolint:wrapcheck // We are intentionally a pass-through.
 	return afero.DirExists(fs, path)
+}
+
+// ValidateFilename ensures a filename is safe for use as a destination path.
+// It rejects filenames that could escape the destination directory via path traversal.
+func ValidateFilename(filename string) error {
+	if filename == "" {
+		return errors.New("filename cannot be empty")
+	}
+
+	// Reject special directory entries.
+	if filename == "." || filename == ".." {
+		return fmt.Errorf("filename %#q is not a valid file name", filename)
+	}
+
+	// Check for absolute paths
+	if filepath.IsAbs(filename) {
+		return fmt.Errorf("filename %#q cannot be an absolute path", filename)
+	}
+
+	cleaned := filepath.Clean(filename)
+	if cleaned != filename {
+		return fmt.Errorf("filename %#q contains path traversal elements", filename)
+	}
+
+	if filepath.Base(filename) != filename {
+		return fmt.Errorf("filename %#q must be a simple filename without directory components", filename)
+	}
+
+	return nil
 }

@@ -73,3 +73,31 @@ func TestGlob(t *testing.T) {
 		assert.Empty(t, matches)
 	})
 }
+
+func TestValidateFilename(t *testing.T) {
+	tests := []struct {
+		name          string
+		filename      string
+		expectedError string
+	}{
+		{name: "valid simple filename", filename: "source.tar.gz"},
+		{name: "empty", filename: "", expectedError: "cannot be empty"},
+		{name: "dot", filename: ".", expectedError: "not a valid file name"},
+		{name: "dotdot", filename: "..", expectedError: "not a valid file name"},
+		{name: "absolute path", filename: "/etc/passwd", expectedError: "cannot be an absolute path"},
+		{name: "path traversal", filename: "../escape.tar.gz", expectedError: "without directory components"},
+		{name: "directory component", filename: "subdir/file.tar.gz", expectedError: "without directory components"},
+		{name: "dot prefix traversal", filename: "./file.tar.gz", expectedError: "path traversal"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := fileutils.ValidateFilename(tc.filename)
+			if tc.expectedError != "" {
+				assert.ErrorContains(t, err, tc.expectedError)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}

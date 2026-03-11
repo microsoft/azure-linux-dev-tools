@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"strings"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
@@ -55,8 +56,49 @@ type SourceManager interface {
 	FetchComponent(ctx context.Context, component components.Component, destDirPath string) error
 }
 
-// DefaultDistroResolver is a function type that returns the project's default distro definition.
-type DefaultDistroResolver func() (projectconfig.DistroDefinition, projectconfig.DistroVersionDefinition, error)
+// ResolvedDistro holds the fully resolved distro configuration for a component.
+// This is resolved once at the call site and passed through the source manager
+// to providers, so each consumer can derive only what it needs.
+type ResolvedDistro struct {
+	// Ref is the effective distro reference (component override or project default).
+	// Contains the snapshot time used for commit selection.
+	Ref projectconfig.DistroReference
+
+	// Definition is the resolved distro definition containing base URIs.
+	Definition projectconfig.DistroDefinition
+
+	// Version is the resolved distro version definition containing branch info.
+	Version projectconfig.DistroVersionDefinition
+}
+
+// ResolveDistro resolves the effective distro for a component, falling back to
+// the project's default distro when the component doesn't specify one.
+// Returns an error if no effective distro can be resolved.
+func ResolveDistro(env *azldev.Env, component components.Component) (ResolvedDistro, error) {
+	ref := component.GetConfig().Spec.UpstreamDistro
+	if ref.Name == "" {
+		ref = env.Config().Project.DefaultDistro
+	}
+
+	if ref.Name == "" {
+		return ResolvedDistro{}, fmt.Errorf(
+			"no distro configured for component %#q"+
+				" (set upstream-distro on the component or default-distro on the project)",
+			component.GetName(),
+		)
+	}
+
+	distroDef, distroVersionDef, err := env.ResolveDistroRef(ref)
+	if err != nil {
+		return ResolvedDistro{}, fmt.Errorf("failed to resolve distro %#q:\n%w", ref.Name, err)
+	}
+
+	return ResolvedDistro{
+		Ref:        ref,
+		Definition: distroDef,
+		Version:    distroVersionDef,
+	}, nil
+}
 
 type sourceManager struct {
 	// Upstream component providers (can have multiple, e.g., different RPM repos)
@@ -72,17 +114,17 @@ type sourceManager struct {
 	retryConfig retry.Config
 
 	// Dependencies extracted from environment
-	dryRunnable           opctx.DryRunnable
-	eventListener         opctx.EventListener
-	cmdFactory            opctx.CmdFactory
-	fs                    opctx.FS
-	distroResolver        DistroResolver
-	defaultDistroResolver DefaultDistroResolver
+	dryRunnable      opctx.DryRunnable
+	eventListener    opctx.EventListener
+	cmdFactory       opctx.CmdFactory
+	fs               opctx.FS
+	lookasideBaseURI string
+	disableOrigins   bool
 }
 
 var _ SourceManager = (*sourceManager)(nil)
 
-func NewSourceManager(env *azldev.Env) (SourceManager, error) {
+func NewSourceManager(env *azldev.Env, distro ResolvedDistro) (SourceManager, error) {
 	if env == nil {
 		return nil, errors.New("environment cannot be nil")
 	}
@@ -102,8 +144,8 @@ func NewSourceManager(env *azldev.Env) (SourceManager, error) {
 		eventListener:              env,
 		cmdFactory:                 env,
 		fs:                         env.FS(),
-		distroResolver:             env.ResolveDistroRef,
-		defaultDistroResolver:      env.Distro,
+		lookasideBaseURI:           distro.Definition.LookasideBaseURI,
+		disableOrigins:             distro.Definition.DisableOrigins,
 	}
 
 	// Create lookaside downloader for fetching source tarballs
@@ -113,10 +155,7 @@ func NewSourceManager(env *azldev.Env) (SourceManager, error) {
 	}
 
 	// Create component providers
-	err = manager.createComponentProviders()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create source manager component providers:\n%w", err)
-	}
+	manager.createComponentProviders(distro)
 
 	// Ensure at least one provider was created successfully
 	if len(manager.upstreamComponentProviders) == 0 &&
@@ -128,20 +167,22 @@ func NewSourceManager(env *azldev.Env) (SourceManager, error) {
 }
 
 // createComponentProviders creates all component providers we may need.
-func (m *sourceManager) createComponentProviders() error {
-	// Create Git component provider with all required dependencies
-	gitProvider, err := m.createGitContentsProvider()
+// Failures are logged as warnings rather than propagated, so that local-only
+// builds can proceed. Upstream fetches will fail at runtime with a clear error
+// if no providers were registered.
+func (m *sourceManager) createComponentProviders(distro ResolvedDistro) {
+	// Create Fedora component provider with all required dependencies
+	fedoraProvider, err := m.createFedoraContentsProvider(distro)
 	if err != nil {
-		slog.Warn("Failed to setup Git component provider", "error", err)
+		slog.Warn("Failed to setup Fedora component provider; upstream component fetches will not be available",
+			"error", err)
 
-		return fmt.Errorf("configuration for cloning components from Git failed:\n%w", err)
+		return
 	}
 
-	m.upstreamComponentProviders = append(m.upstreamComponentProviders, gitProvider)
+	m.upstreamComponentProviders = append(m.upstreamComponentProviders, fedoraProvider)
 
-	slog.Debug("Registered Git component provider")
-
-	return nil
+	slog.Debug("Registered Fedora component provider")
 }
 
 func (m *sourceManager) FetchFiles(
@@ -164,7 +205,7 @@ func (m *sourceManager) FetchFiles(
 	for i := range sourceFiles {
 		fileRef := &sourceFiles[i]
 
-		err := m.fetchSourceFile(ctx, httpDownloader, fileRef, destDirPath)
+		err := m.fetchSourceFile(ctx, httpDownloader, component, fileRef, destDirPath)
 		if err != nil {
 			return fmt.Errorf("failed to fetch source file %#q:\n%w", fileRef.Filename, err)
 		}
@@ -173,19 +214,17 @@ func (m *sourceManager) FetchFiles(
 	return nil
 }
 
-// fetchSourceFile downloads a source file from its configured URL.
+// fetchSourceFile downloads a source file, trying the lookaside cache first and falling
+// back to the configured origin. When disable-origins is set, fallback is disabled.
 func (m *sourceManager) fetchSourceFile(
 	ctx context.Context,
 	httpDownloader downloader.Downloader,
+	component components.Component,
 	fileRef *projectconfig.SourceFileReference,
 	destDirPath string,
 ) error {
-	if fileRef.Origin.Uri == "" {
-		return fmt.Errorf("no URL configured for source file \n%#q", fileRef.Filename)
-	}
-
 	// Validate filename to prevent path traversal vulnerabilities
-	if err := validateFilename(fileRef.Filename); err != nil {
+	if err := fileutils.ValidateFilename(fileRef.Filename); err != nil {
 		return fmt.Errorf("invalid source file reference:\n%w", err)
 	}
 
@@ -204,41 +243,141 @@ func (m *sourceManager) fetchSourceFile(
 		return nil
 	}
 
+	// Phase 1: Try lookaside cache if hash info is available
+	if fileRef.Hash != "" && fileRef.HashType != "" {
+		lookasideErr := m.tryLookasideDownload(ctx, httpDownloader, component, fileRef, destPath)
+		if lookasideErr == nil {
+			return nil
+		}
+
+		slog.Debug("Lookaside cache download failed",
+			"filename", fileRef.Filename,
+			"error", lookasideErr)
+	}
+
+	// Phase 2: Fall back to configured origin (not allowed when disable-origins is set)
+	if m.disableOrigins {
+		return fmt.Errorf("source file %#q not found in lookaside cache and disable-origins is enabled in the distro config",
+			fileRef.Filename)
+	}
+
+	if fileRef.Origin.Type == "" {
+		return fmt.Errorf("source file %#q not found in lookaside cache and no origin configured",
+			fileRef.Filename)
+	}
+
+	return m.downloadFromOrigin(ctx, httpDownloader, fileRef, destPath)
+}
+
+// tryLookasideDownload attempts to download a source file from the lookaside cache.
+// Returns nil on success, or an error if the download fails.
+func (m *sourceManager) tryLookasideDownload(
+	ctx context.Context,
+	httpDownloader downloader.Downloader,
+	component components.Component,
+	fileRef *projectconfig.SourceFileReference,
+	destPath string,
+) error {
+	if m.lookasideBaseURI == "" {
+		return errors.New("no lookaside cache configured")
+	}
+
+	packageName := resolvePackageName(component)
+
+	sourceURL, err := fedorasource.BuildLookasideURL(m.lookasideBaseURI, packageName, fileRef.Filename,
+		strings.ToUpper(string(fileRef.HashType)), fileRef.Hash)
+	if err != nil {
+		return fmt.Errorf("failed to build lookaside URL for %#q:\n%w", fileRef.Filename, err)
+	}
+
+	slog.Info("Downloading source file from lookaside cache...",
+		"filename", fileRef.Filename,
+		"url", sourceURL)
+
+	err = m.downloadAndValidate(ctx, httpDownloader, sourceURL, destPath, fileRef)
+	if err != nil {
+		return fmt.Errorf("lookaside cache download failed for %#q:\n%w", fileRef.Filename, err)
+	}
+
+	return nil
+}
+
+// downloadFromOrigin downloads a source file using its configured origin.
+func (m *sourceManager) downloadFromOrigin(
+	ctx context.Context,
+	httpDownloader downloader.Downloader,
+	fileRef *projectconfig.SourceFileReference,
+	destPath string,
+) error {
 	switch fileRef.Origin.Type {
 	case projectconfig.OriginTypeURI:
-		slog.Info("Downloading source file from URL",
+		if fileRef.Origin.Uri == "" {
+			return fmt.Errorf("no URI configured for source file %#q with origin type %#q",
+				fileRef.Filename, fileRef.Origin.Type)
+		}
+
+		slog.Info("Downloading source file from origin URL...",
 			"filename", fileRef.Filename,
 			"origin", fileRef.Origin.Uri,
 			"destination", destPath)
 
-		err = retry.Do(ctx, m.retryConfig, func() error {
-			// Remove any partially written file from a prior failed attempt.
-			_ = m.fs.Remove(destPath)
-
-			downloadErr := httpDownloader.Download(ctx, fileRef.Origin.Uri, destPath)
-			if downloadErr != nil {
-				return fmt.Errorf("failed to download %#q from %#q:\n%w",
-					fileRef.Filename, fileRef.Origin.Uri, downloadErr)
-			}
-
-			if fileRef.Hash != "" && fileRef.HashType != "" {
-				hashErr := fileutils.ValidateFileHash(m.dryRunnable, m.fs, fileRef.HashType, destPath, fileRef.Hash)
-				if hashErr != nil {
-					return fmt.Errorf("hash validation failed for %#q:\n%w", fileRef.Filename, hashErr)
-				}
-			}
-
-			return nil
-		})
+		err := m.downloadAndValidate(ctx, httpDownloader, fileRef.Origin.Uri, destPath, fileRef)
 		if err != nil {
 			return fmt.Errorf("failed to retrieve source file %#q:\n%w", fileRef.Filename, err)
 		}
 
+		return nil
+
 	default:
-		return fmt.Errorf("unsupported origin type %#q for source file %#q", fileRef.Origin.Type, fileRef.Filename)
+		return fmt.Errorf("unsupported origin type %#q for source file %#q",
+			fileRef.Origin.Type, fileRef.Filename)
+	}
+}
+
+// downloadAndValidate downloads a file from the given URL with retries, optionally
+// validating its hash. On failure, any partial file is cleaned up.
+func (m *sourceManager) downloadAndValidate(
+	ctx context.Context,
+	httpDownloader downloader.Downloader,
+	sourceURL string,
+	destPath string,
+	fileRef *projectconfig.SourceFileReference,
+) error {
+	err := retry.Do(ctx, m.retryConfig, func() error {
+		_ = m.fs.Remove(destPath)
+
+		downloadErr := httpDownloader.Download(ctx, sourceURL, destPath)
+		if downloadErr != nil {
+			return fmt.Errorf("failed to download %#q from %#q:\n%w",
+				fileRef.Filename, sourceURL, downloadErr)
+		}
+
+		if fileRef.Hash != "" && fileRef.HashType != "" {
+			hashErr := fileutils.ValidateFileHash(m.dryRunnable, m.fs, fileRef.HashType, destPath, fileRef.Hash)
+			if hashErr != nil {
+				return fmt.Errorf("hash validation failed for %#q:\n%w", fileRef.Filename, hashErr)
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		_ = m.fs.Remove(destPath)
+
+		return fmt.Errorf("download failed:\n%w", err)
 	}
 
 	return nil
+}
+
+// resolvePackageName determines the package name to use for lookaside lookups.
+// It uses the component's upstream name if set, otherwise falls back to the component name.
+func resolvePackageName(component components.Component) string {
+	if upstreamName := component.GetConfig().Spec.UpstreamName; upstreamName != "" {
+		return upstreamName
+	}
+
+	return component.GetName()
 }
 
 func (m *sourceManager) FetchComponent(ctx context.Context, component components.Component, destDirPath string) error {
@@ -279,60 +418,6 @@ func (m *sourceManager) fetchLocalComponent(
 	return nil
 }
 
-// resolveLookasideURI finds a lookaside base URI for the component.
-// It checks the component's upstream distro first, then falls back to the project default.
-// Each distro is followed up the chain until one with a lookaside URI is found.
-func (m *sourceManager) resolveLookasideURI(component components.Component) string {
-	// Try component's upstream distro first
-	if ref := component.GetConfig().Spec.UpstreamDistro; ref.Name != "" {
-		if uri := m.getLookasideURIFromDistroChain(ref); uri != "" {
-			return uri
-		}
-	}
-
-	// Fall back to project's default distro
-	if m.defaultDistroResolver == nil {
-		return ""
-	}
-
-	distroDef, distroVersionDef, err := m.defaultDistroResolver()
-	if err != nil {
-		return ""
-	}
-
-	return m.getLookasideURIFromDistro(distroDef, distroVersionDef)
-}
-
-// getLookasideURIFromDistroChain resolves a distro reference and follows the chain
-// to find a lookaside URI.
-func (m *sourceManager) getLookasideURIFromDistroChain(ref projectconfig.DistroReference) string {
-	distroDef, distroVersionDef, err := m.distroResolver(ref)
-	if err != nil {
-		return ""
-	}
-
-	return m.getLookasideURIFromDistro(distroDef, distroVersionDef)
-}
-
-// getLookasideURIFromDistro returns the lookaside URI from the distro, or follows
-// the upstream chain if the distro doesn't have one.
-func (m *sourceManager) getLookasideURIFromDistro(
-	distroDef projectconfig.DistroDefinition,
-	distroVersionDef projectconfig.DistroVersionDefinition,
-) string {
-	if distroDef.LookasideBaseURI != "" {
-		return distroDef.LookasideBaseURI
-	}
-
-	// Follow upstream chain
-	upstreamRef := distroVersionDef.DefaultComponentConfig.Spec.UpstreamDistro
-	if upstreamRef.Name == "" {
-		return ""
-	}
-
-	return m.getLookasideURIFromDistroChain(upstreamRef)
-}
-
 // downloadLookasideSources downloads source tarballs from a lookaside cache for the given component.
 // It resolves the appropriate lookaside URI from the distro configuration and uses the component's
 // upstream name (if set) as the package name for the lookaside lookup.
@@ -344,18 +429,13 @@ func (m *sourceManager) downloadLookasideSources(
 		return nil
 	}
 
-	lookasideURI := m.resolveLookasideURI(component)
-	if lookasideURI == "" {
+	if m.lookasideBaseURI == "" {
 		return nil
 	}
 
-	// Determine the package name to use for the lookaside lookup
-	packageName := component.GetName()
-	if upstreamName := component.GetConfig().Spec.UpstreamName; upstreamName != "" {
-		packageName = upstreamName
-	}
+	packageName := resolvePackageName(component)
 
-	err := m.lookasideDownloader.ExtractSourcesFromRepo(ctx, destDirPath, packageName, lookasideURI)
+	err := m.lookasideDownloader.ExtractSourcesFromRepo(ctx, destDirPath, packageName, m.lookasideBaseURI, nil)
 	if err != nil {
 		return fmt.Errorf("failed to extract sources from lookaside cache:\n%w", err)
 	}
@@ -413,7 +493,7 @@ func (m *sourceManager) createLookasideDownloader() error {
 	return nil
 }
 
-func (m *sourceManager) createGitContentsProvider() (*FedoraSourcesProviderImpl, error) {
+func (m *sourceManager) createFedoraContentsProvider(distro ResolvedDistro) (*FedoraSourcesProviderImpl, error) {
 	gitProvider, err := git.NewGitProviderImpl(m.eventListener, m.cmdFactory)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create git provider:\n%w", err)
@@ -428,31 +508,7 @@ func (m *sourceManager) createGitContentsProvider() (*FedoraSourcesProviderImpl,
 		m.dryRunnable,
 		gitProvider,
 		m.lookasideDownloader,
-		m.distroResolver,
+		distro,
 		m.retryConfig,
 	)
-}
-
-// validateFilename ensures a filename is safe for use as a destination path.
-// It rejects filenames that could escape the destination directory via path traversal.
-func validateFilename(filename string) error {
-	if filename == "" {
-		return errors.New("filename cannot be empty")
-	}
-
-	// Check for absolute paths
-	if filepath.IsAbs(filename) {
-		return fmt.Errorf("filename %#q cannot be an absolute path", filename)
-	}
-
-	cleaned := filepath.Clean(filename)
-	if cleaned != filename {
-		return fmt.Errorf("filename %#q contains path traversal elements", filename)
-	}
-
-	if filepath.Base(filename) != filename {
-		return fmt.Errorf("filename %#q must be a simple filename without directory components", filename)
-	}
-
-	return nil
 }

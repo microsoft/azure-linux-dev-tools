@@ -45,15 +45,15 @@ func (m *MockFedoraSourceDownloader) EXPECT() *MockFedoraSourceDownloaderMockRec
 }
 
 // ExtractSourcesFromRepo mocks base method.
-func (m *MockFedoraSourceDownloader) ExtractSourcesFromRepo(ctx context.Context, repoDir, packageName, lookasideBaseURI string) error {
+func (m *MockFedoraSourceDownloader) ExtractSourcesFromRepo(ctx context.Context, repoDir, packageName, lookasideBaseURI string, skipFilenames []string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ExtractSourcesFromRepo", ctx, repoDir, packageName, lookasideBaseURI)
+	ret := m.ctrl.Call(m, "ExtractSourcesFromRepo", ctx, repoDir, packageName, lookasideBaseURI, skipFilenames)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // ExtractSourcesFromRepo indicates an expected call of ExtractSourcesFromRepo.
-func (mr *MockFedoraSourceDownloaderMockRecorder) ExtractSourcesFromRepo(ctx, repoDir, packageName, lookasideBaseURI any) *gomock.Call {
+func (mr *MockFedoraSourceDownloaderMockRecorder) ExtractSourcesFromRepo(ctx, repoDir, packageName, lookasideBaseURI, skipFilenames any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExtractSourcesFromRepo", reflect.TypeOf((*MockFedoraSourceDownloader)(nil).ExtractSourcesFromRepo), ctx, repoDir, packageName, lookasideBaseURI)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExtractSourcesFromRepo", reflect.TypeOf((*MockFedoraSourceDownloader)(nil).ExtractSourcesFromRepo), ctx, repoDir, packageName, lookasideBaseURI, skipFilenames)
 }

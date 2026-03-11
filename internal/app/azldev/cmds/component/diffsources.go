@@ -86,7 +86,13 @@ func DiffComponentSources(env *azldev.Env, options *DiffSourcesOptions) (interfa
 	event := env.StartEvent("Diffing sources", "component", component.GetName())
 	defer event.End()
 
-	sourceManager, err := sourceproviders.NewSourceManager(env)
+	// Resolve the effective distro for this component before creating the source manager.
+	distro, err := sourceproviders.ResolveDistro(env, component)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve distro for component %q:\n%w", component.GetName(), err)
+	}
+
+	sourceManager, err := sourceproviders.NewSourceManager(env, distro)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create source manager:\n%w", err)
 	}

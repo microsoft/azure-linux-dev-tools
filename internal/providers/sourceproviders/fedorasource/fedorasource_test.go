@@ -110,7 +110,7 @@ func TestExtractSourcesFromRepo(t *testing.T) {
 		return afero.WriteFile(ctx.FS(), destPath, []byte("test patch content"), testFilePerms)
 	})
 
-	err = extractor.ExtractSourcesFromRepo(context.Background(), testRepoDir, testPackageName, testLookasideURI)
+	err = extractor.ExtractSourcesFromRepo(context.Background(), testRepoDir, testPackageName, testLookasideURI, nil)
 	require.NoError(t, err)
 }
 
@@ -123,13 +123,13 @@ func TestExtractSourcesFromRepoValidation(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("empty repo dir", func(t *testing.T) {
-		err := extractor.ExtractSourcesFromRepo(context.Background(), "", testPackageName, testLookasideURI)
+		err := extractor.ExtractSourcesFromRepo(context.Background(), "", testPackageName, testLookasideURI, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "repository directory cannot be empty")
 	})
 
 	t.Run("empty lookaside URI", func(t *testing.T) {
-		err := extractor.ExtractSourcesFromRepo(context.Background(), testRepoDir, testPackageName, "")
+		err := extractor.ExtractSourcesFromRepo(context.Background(), testRepoDir, testPackageName, "", nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "lookaside base URI cannot be empty")
 	})
@@ -138,7 +138,9 @@ func TestExtractSourcesFromRepoValidation(t *testing.T) {
 		require.NoError(t, ctx.FS().MkdirAll(testEmptyRepoDir, 0o755))
 
 		// Missing sources file is valid - it means no external sources to download
-		err := extractor.ExtractSourcesFromRepo(context.Background(), testEmptyRepoDir, testPackageName, testLookasideURI)
+		err := extractor.ExtractSourcesFromRepo(
+			context.Background(), testEmptyRepoDir, testPackageName, testLookasideURI, nil,
+		)
 		require.NoError(t, err)
 	})
 }
@@ -158,7 +160,7 @@ func TestExtractSourcesFromRepoDownloadFailure(t *testing.T) {
 	mockDownloader.EXPECT().Download(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(downloadErr)
 
-	err = extractor.ExtractSourcesFromRepo(context.Background(), testRepoDir, testPackageName, testLookasideURI)
+	err = extractor.ExtractSourcesFromRepo(context.Background(), testRepoDir, testPackageName, testLookasideURI, nil)
 	require.Error(t, err)
 	require.ErrorIs(t, err, downloadErr)
 	assert.Contains(t, err.Error(), "failed to download sources")
@@ -182,7 +184,7 @@ func TestExtractSourcesFromRepoHashMismatch(t *testing.T) {
 			return afero.WriteFile(ctx.FS(), destPath, []byte("wrong content"), testFilePerms)
 		})
 
-	err = extractor.ExtractSourcesFromRepo(context.Background(), testRepoDir, testPackageName, testLookasideURI)
+	err = extractor.ExtractSourcesFromRepo(context.Background(), testRepoDir, testPackageName, testLookasideURI, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "hash mismatch")
 }
@@ -267,28 +269,75 @@ func TestParseSourcesFile(t *testing.T) {
 	})
 }
 
-func TestVerifyFedoraLookasideBaseURI(t *testing.T) {
-	t.Run("valid URI with all placeholders", func(t *testing.T) {
-		err := verifyFedoraLookasideBaseURI("https://example.com/$hashtype/$hash/$pkg/$filename")
-		require.NoError(t, err)
-	})
+func TestBuildLookasideURL(t *testing.T) {
+	tests := []struct {
+		name          string
+		template      string
+		pkg           string
+		filename      string
+		hashType      string
+		hash          string
+		expected      string
+		expectedError string
+	}{
+		{
+			name:     "standard template",
+			template: "https://example.com/repo/pkgs/$pkg/$filename/$hashtype/$hash/$filename",
+			pkg:      "my-pkg",
+			filename: "source.tar.gz",
+			hashType: "SHA512",
+			hash:     "abc123",
+			expected: "https://example.com/repo/pkgs/my-pkg/source.tar.gz/sha512/abc123/source.tar.gz",
+		},
+		{
+			name:     "different placeholder order",
+			template: "https://example.com/$hashtype/$hash/$pkg/$filename",
+			pkg:      "test-pkg",
+			filename: "file.tar.gz",
+			hashType: "SHA256",
+			hash:     "def456",
+			expected: "https://example.com/sha256/def456/test-pkg/file.tar.gz",
+		},
+		{
+			name:     "template without filename placeholder",
+			template: "https://example.com/$pkg/$hashtype/$hash",
+			pkg:      "my-pkg",
+			filename: "source.tar.gz",
+			hashType: "SHA512",
+			hash:     "abc123",
+			expected: "https://example.com/my-pkg/sha512/abc123",
+		},
+		{
+			name:          "packageName containing placeholder",
+			template:      "https://example.com/$pkg/$filename/$hashtype/$hash",
+			pkg:           "evil-$filename-pkg",
+			filename:      "source.tar.gz",
+			hashType:      "SHA512",
+			hash:          "abc123",
+			expectedError: "ambiguous substitution",
+		},
+		{
+			name:          "fileName containing placeholder",
+			template:      "https://example.com/$pkg/$filename/$hashtype/$hash",
+			pkg:           "my-pkg",
+			filename:      "$hash-source.tar.gz",
+			hashType:      "SHA512",
+			hash:          "abc123",
+			expectedError: "ambiguous substitution",
+		},
+	}
 
-	t.Run("missing placeholder returns error", func(t *testing.T) {
-		tests := []struct {
-			uri     string
-			missing string
-		}{
-			{"https://example.com/$hash/$pkg/$filename", "$hashtype"},
-			{"https://example.com/$hashtype/$hash/$filename", "$pkg"},
-			{"https://example.com/$hashtype/$hash/$pkg/", "$filename"},
-		}
-
-		for _, tc := range tests {
-			t.Run(tc.missing, func(t *testing.T) {
-				err := verifyFedoraLookasideBaseURI(tc.uri)
-				require.Error(t, err, "URI %q should fail for missing %s", tc.uri, tc.missing)
-				assert.Contains(t, err.Error(), tc.missing)
-			})
-		}
-	})
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			result, err := BuildLookasideURL(
+				testCase.template, testCase.pkg, testCase.filename, testCase.hashType, testCase.hash,
+			)
+			if testCase.expectedError != "" {
+				assert.ErrorContains(t, err, testCase.expectedError)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, testCase.expected, result)
+			}
+		})
+	}
 }

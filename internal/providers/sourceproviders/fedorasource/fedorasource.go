@@ -22,8 +22,12 @@ import (
 
 type FedoraSourceDownloader interface {
 	// ExtractSourcesFromRepo processes a git repository by downloading any required
-	// lookaside cache files into the repository directory.
-	ExtractSourcesFromRepo(ctx context.Context, repoDir string, packageName string, lookasideBaseURI string) error
+	// lookaside cache files into the repository directory. Files whose names appear
+	// in skipFilenames are not downloaded (e.g., files already fetched separately).
+	ExtractSourcesFromRepo(
+		ctx context.Context, repoDir string, packageName string,
+		lookasideBaseURI string, skipFilenames []string,
+	) error
 }
 
 // FedoraSourceDownloaderImpl is an implementation of GitRepoExtractor.
@@ -107,7 +111,7 @@ func NewFedoraRepoExtractorImpl(
 // ExtractSourcesFromRepo processes the git repository by downloading any required
 // lookaside cache files into the repository directory.
 func (g *FedoraSourceDownloaderImpl) ExtractSourcesFromRepo(
-	ctx context.Context, repoDir string, packageName string, lookasideBaseURI string,
+	ctx context.Context, repoDir string, packageName string, lookasideBaseURI string, skipFileNames []string,
 ) error {
 	if repoDir == "" {
 		return errors.New("repository directory cannot be empty")
@@ -115,10 +119,6 @@ func (g *FedoraSourceDownloaderImpl) ExtractSourcesFromRepo(
 
 	if lookasideBaseURI == "" {
 		return errors.New("lookaside base URI cannot be empty")
-	}
-
-	if err := verifyFedoraLookasideBaseURI(lookasideBaseURI); err != nil {
-		return err
 	}
 
 	repoDirExists, err := fileutils.Exists(g.fileSystem, repoDir)
@@ -152,7 +152,12 @@ func (g *FedoraSourceDownloaderImpl) ExtractSourcesFromRepo(
 		return fmt.Errorf("failed to parse sources file at %#q:\n%w", sourcesFilePath, err)
 	}
 
-	err = g.downloadAndVerifySources(ctx, sourceFiles, repoDir)
+	skipSet := make(map[string]bool, len(skipFileNames))
+	for _, name := range skipFileNames {
+		skipSet[name] = true
+	}
+
+	err = g.downloadAndVerifySources(ctx, sourceFiles, repoDir, skipSet)
 	if err != nil {
 		return fmt.Errorf("failed to download sources:\n%w", err)
 	}
@@ -164,9 +169,17 @@ func (g *FedoraSourceDownloaderImpl) downloadAndVerifySources(
 	ctx context.Context,
 	sourceFiles []sourceFileInfo,
 	repoDir string,
+	skipSet map[string]bool,
 ) error {
 	sourcesTotal := len(sourceFiles)
 	for sourceIndex, sourceFile := range sourceFiles {
+		if skipSet[sourceFile.fileName] {
+			slog.Debug("File already provided, skipping lookaside download",
+				"fileName", sourceFile.fileName)
+
+			continue
+		}
+
 		destFilePath := filepath.Join(repoDir, sourceFile.fileName)
 
 		exists, err := fileutils.Exists(g.fileSystem, destFilePath)
@@ -268,11 +281,10 @@ func parseSourcesFile(content string, packageName string, lookasideBaseURI strin
 			hashType = "MD5"
 		}
 
-		sourceURI := lookasideBaseURI
-		sourceURI = strings.ReplaceAll(sourceURI, "$pkg", packageName)
-		sourceURI = strings.ReplaceAll(sourceURI, "$filename", fileName)
-		sourceURI = strings.ReplaceAll(sourceURI, "$hashtype", strings.ToLower(hashType))
-		sourceURI = strings.ReplaceAll(sourceURI, "$hash", hash)
+		sourceURI, err := BuildLookasideURL(lookasideBaseURI, packageName, fileName, hashType, hash)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build lookaside URL at line %d:\n%w", lineNum+1, err)
+		}
 
 		sourceFiles = append(sourceFiles, sourceFileInfo{
 			fileName:     fileName,
@@ -285,14 +297,42 @@ func parseSourcesFile(content string, packageName string, lookasideBaseURI strin
 	return sourceFiles, nil
 }
 
-func verifyFedoraLookasideBaseURI(lookasideBaseURI string) error {
-	// Check for placeholder variables in the lookaside URI
-	requiredPlaceholders := []string{"$pkg", "$filename", "$hashtype", "$hash"}
-	for _, placeholder := range requiredPlaceholders {
-		if !strings.Contains(lookasideBaseURI, placeholder) {
-			return fmt.Errorf("lookaside base URI is missing required placeholder: %s", placeholder)
+// Lookaside URI template placeholders supported by [BuildLookasideURL].
+const (
+	// PlaceholderPkg is replaced with the package name.
+	PlaceholderPkg = "$pkg"
+	// PlaceholderFilename is replaced with the source file name.
+	PlaceholderFilename = "$filename"
+	// PlaceholderHashType is replaced with the lowercase hash algorithm (e.g., "sha512").
+	PlaceholderHashType = "$hashtype"
+	// PlaceholderHash is replaced with the hash value.
+	PlaceholderHash = "$hash"
+)
+
+// BuildLookasideURL constructs a lookaside cache URL by substituting placeholders in the
+// URI template with the provided values. Supported placeholders are [PlaceholderPkg],
+// [PlaceholderFilename], [PlaceholderHashType], and [PlaceholderHash].
+// Placeholders not present in the template are simply ignored.
+//
+// Returns an error if any of the provided values contain a placeholder string, as this
+// would cause ambiguous substitution results depending on replacement order.
+func BuildLookasideURL(template, packageName, fileName, hashType, hash string) (string, error) {
+	// allPlaceholders lists all supported lookaside URI template placeholders.
+	allPlaceholders := []string{PlaceholderPkg, PlaceholderFilename, PlaceholderHashType, PlaceholderHash}
+
+	for _, v := range []string{packageName, fileName, hashType, hash} {
+		for _, p := range allPlaceholders {
+			if strings.Contains(v, p) {
+				return "", fmt.Errorf("value %#q contains placeholder %s, which would cause ambiguous substitution", v, p)
+			}
 		}
 	}
 
-	return nil
+	uri := template
+	uri = strings.ReplaceAll(uri, PlaceholderPkg, packageName)
+	uri = strings.ReplaceAll(uri, PlaceholderFilename, fileName)
+	uri = strings.ReplaceAll(uri, PlaceholderHashType, strings.ToLower(hashType))
+	uri = strings.ReplaceAll(uri, PlaceholderHash, hash)
+
+	return uri, nil
 }

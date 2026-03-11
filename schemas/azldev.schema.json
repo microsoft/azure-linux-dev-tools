@@ -352,6 +352,11 @@
           "title": "Package Repositories",
           "description": "List of package repository definitions"
         },
+        "disable-origins": {
+          "type": "boolean",
+          "title": "Disable origins",
+          "description": "When true only allow source files from the lookaside cache and do not fall back to configured origins"
+        },
         "versions": {
           "additionalProperties": {
             "$ref": "#/$defs/DistroVersionDefinition"
@@ -578,8 +583,7 @@
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "filename",
-        "origin"
+        "filename"
       ]
     },
     "SpecSource": {

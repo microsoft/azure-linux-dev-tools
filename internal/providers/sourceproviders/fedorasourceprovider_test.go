@@ -34,19 +34,18 @@ const (
 	testUpstreamCommit = "abc1234def5678"
 )
 
-// mockDistroResolver returns a mock distro resolver that returns the default test distro config.
+// testResolvedDistro returns a [sourceproviders.ResolvedDistro] matching the test constants.
 // Note: This uses testGitServerURL which is set up by TestMain in testmain_test.go.
-func mockDistroResolver() sourceproviders.DistroResolver {
-	return func(distroRef projectconfig.DistroReference) (
-		projectconfig.DistroDefinition, projectconfig.DistroVersionDefinition, error,
-	) {
-		return projectconfig.DistroDefinition{
-				DistGitBaseURI:   distGitBaseURI,
-				LookasideBaseURI: testGitServerURL + "/$pkg/$filename/$hashtype/$hash/$filename",
-			},
-			projectconfig.DistroVersionDefinition{
-				DistGitBranch: branch,
-			}, nil
+func testResolvedDistro() sourceproviders.ResolvedDistro {
+	return sourceproviders.ResolvedDistro{
+		Ref: projectconfig.DistroReference{Name: "test-distro"},
+		Definition: projectconfig.DistroDefinition{
+			DistGitBaseURI:   distGitBaseURI,
+			LookasideBaseURI: testGitServerURL + "/$pkg/$filename/$hashtype/$hash/$filename",
+		},
+		Version: projectconfig.DistroVersionDefinition{
+			DistGitBranch: branch,
+		},
 	}
 }
 
@@ -62,7 +61,7 @@ func TestNewGitContentsProviderImpl(t *testing.T) {
 			env.DryRunnable,
 			mockGitProvider,
 			mockExtractor,
-			mockDistroResolver(),
+			testResolvedDistro(),
 			retry.Disabled(),
 		)
 		require.NoError(t, err)
@@ -75,7 +74,7 @@ func TestNewGitContentsProviderImpl(t *testing.T) {
 			env.DryRunnable,
 			mockGitProvider,
 			mockExtractor,
-			mockDistroResolver(),
+			testResolvedDistro(),
 			retry.Disabled(),
 		)
 		require.Error(t, err)
@@ -88,7 +87,7 @@ func TestNewGitContentsProviderImpl(t *testing.T) {
 			nil,
 			mockGitProvider,
 			mockExtractor,
-			mockDistroResolver(),
+			testResolvedDistro(),
 			retry.Disabled(),
 		)
 		require.Error(t, err)
@@ -101,7 +100,7 @@ func TestNewGitContentsProviderImpl(t *testing.T) {
 			env.DryRunnable,
 			nil,
 			mockExtractor,
-			mockDistroResolver(),
+			testResolvedDistro(),
 			retry.Disabled(),
 		)
 		require.Error(t, err)
@@ -114,24 +113,11 @@ func TestNewGitContentsProviderImpl(t *testing.T) {
 			env.DryRunnable,
 			mockGitProvider,
 			nil,
-			mockDistroResolver(),
+			testResolvedDistro(),
 			retry.Disabled(),
 		)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "downloader cannot be nil")
-	})
-
-	t.Run("nil distro resolver fails", func(t *testing.T) {
-		_, err := sourceproviders.NewFedoraSourcesProviderImpl(
-			env.FS(),
-			env.DryRunnable,
-			mockGitProvider,
-			mockExtractor,
-			nil,
-			retry.Disabled(),
-		)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "distro resolver cannot be nil")
 	})
 }
 
@@ -188,7 +174,7 @@ func TestGetComponentFromGit(t *testing.T) {
 			env.DryRunnable,
 			mockGitProvider,
 			realExtractor,
-			mockDistroResolver(),
+			testResolvedDistro(),
 			retry.Disabled(),
 		)
 		require.NoError(t, err)
@@ -226,6 +212,88 @@ func TestGetComponentFromGit(t *testing.T) {
 		assert.Equal(t, "tarball content", string(tarballContent))
 	})
 
+	t.Run("existing file in destination skips lookaside download", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+
+		httpDownloader, err := downloader.NewHTTPDownloader(
+			env.DryRunnable,
+			env.EventListener,
+			env.FS(),
+		)
+		require.NoError(t, err)
+
+		realExtractor, err := fedorasource.NewFedoraRepoExtractorImpl(
+			env.DryRunnable,
+			env.FS(),
+			httpDownloader,
+			retry.Disabled(),
+		)
+		require.NoError(t, err)
+
+		mockGitProvider := git_test.NewMockGitProvider(ctrl)
+
+		// The sources file references a file with a DIFFERENT hash than what exists.
+		// This simulates an Azure Linux-signed binary that differs from the upstream version.
+		differentHash := "aaaa" + testHash[4:]
+
+		mockGitProvider.EXPECT().
+			Clone(gomock.Any(), repoURL, gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, _ string, cloneDir string, _ ...git.GitOptions) error {
+				specPath := cloneDir + "/" + testPackageName + ".spec"
+				if writeErr := fileutils.WriteFile(
+					env.FS(), specPath,
+					[]byte("Name: "+testPackageName+"\nVersion: 1.0"),
+					fileperms.PublicFile,
+				); writeErr != nil {
+					return writeErr
+				}
+
+				// Sources file references testFileName with a different hash that would 404
+				sourcesPath := cloneDir + "/sources"
+				sourcesContent := testHashType + " (" + testFileName + ") = " + differentHash
+
+				return fileutils.WriteFile(env.FS(), sourcesPath, []byte(sourcesContent), fileperms.PublicFile)
+			})
+
+		const testDestDir = "/output-preexisting"
+
+		provider, err := sourceproviders.NewFedoraSourcesProviderImpl(
+			env.FS(),
+			env.DryRunnable,
+			mockGitProvider,
+			realExtractor,
+			testResolvedDistro(),
+			retry.Disabled(),
+		)
+		require.NoError(t, err)
+
+		mockComponent := components_testutils.NewMockComponent(ctrl)
+		mockComponent.EXPECT().GetName().AnyTimes().Return(testPackageName)
+		mockComponent.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
+			Name: testPackageName,
+			SourceFiles: []projectconfig.SourceFileReference{
+				{Filename: testFileName},
+			},
+		})
+
+		// Pre-populate destination with the file — simulating a prior FetchFiles download
+		err = fileutils.MkdirAll(env.FS(), testDestDir)
+		require.NoError(t, err)
+
+		preExistingContent := []byte("azure-linux-signed-binary")
+		err = fileutils.WriteFile(env.FS(), testDestDir+"/"+testFileName, preExistingContent, fileperms.PublicFile)
+		require.NoError(t, err)
+
+		// Should succeed — the file is in skipFilenames so the 404 lookaside download is skipped
+		err = provider.GetComponent(context.Background(), mockComponent, testDestDir)
+		require.NoError(t, err)
+
+		// Verify the pre-existing file was preserved (not overwritten by git repo version)
+		content, err := fileutils.ReadFile(env.FS(), testDestDir+"/"+testFileName)
+		require.NoError(t, err)
+		assert.Equal(t, preExistingContent, content)
+	})
+
 	t.Run("successful extraction without lookaside sources", func(t *testing.T) {
 		ctrl := gomock.NewController(t)
 
@@ -260,7 +328,7 @@ func TestGetComponentFromGit(t *testing.T) {
 			env.DryRunnable,
 			mockGitProvider,
 			realExtractor,
-			mockDistroResolver(),
+			testResolvedDistro(),
 			retry.Disabled(),
 		)
 		require.NoError(t, err)
@@ -291,7 +359,7 @@ func TestGetComponentFromGit(t *testing.T) {
 			env.DryRunnable,
 			mockGitProvider,
 			mockExtractor,
-			mockDistroResolver(),
+			testResolvedDistro(),
 			retry.Disabled(),
 		)
 		require.NoError(t, err)
@@ -324,7 +392,7 @@ func TestGetComponentFromGit(t *testing.T) {
 			env.DryRunnable,
 			mockGitProvider,
 			mockExtractor,
-			mockDistroResolver(),
+			testResolvedDistro(),
 			retry.Disabled(),
 		)
 		require.NoError(t, err)
@@ -353,7 +421,7 @@ func TestGetComponentFromGit(t *testing.T) {
 			env.DryRunnable,
 			mockGitProvider,
 			mockExtractor,
-			mockDistroResolver(),
+			testResolvedDistro(),
 			retry.Disabled(),
 		)
 		require.NoError(t, err)
@@ -372,7 +440,7 @@ func TestGetComponentFromGit(t *testing.T) {
 		// But extractor fails - note it receives the component name, not destDir
 		extractorError := errors.New("extraction failed")
 		mockExtractor.EXPECT().
-			ExtractSourcesFromRepo(gomock.Any(), gomock.Any(), testPackageName, gomock.Any()).
+			ExtractSourcesFromRepo(gomock.Any(), gomock.Any(), testPackageName, gomock.Any(), gomock.Any()).
 			Return(extractorError)
 
 		err = provider.GetComponent(context.Background(), mockComponent, destDir)
@@ -390,7 +458,7 @@ func TestGetComponentFromGit(t *testing.T) {
 			env.DryRunnable,
 			mockGitProvider,
 			mockExtractor,
-			mockDistroResolver(),
+			testResolvedDistro(),
 			retry.Disabled(),
 		)
 		require.NoError(t, err)
@@ -424,7 +492,7 @@ func TestGetComponentFromGit(t *testing.T) {
 
 		// Extractor succeeds
 		mockExtractor.EXPECT().
-			ExtractSourcesFromRepo(gomock.Any(), gomock.Any(), upstreamName, gomock.Any()).
+			ExtractSourcesFromRepo(gomock.Any(), gomock.Any(), upstreamName, gomock.Any(), gomock.Any()).
 			Return(nil)
 
 		err = provider.GetComponent(context.Background(), mockComponent, destDir)
@@ -453,7 +521,7 @@ func TestGetComponentFromGit(t *testing.T) {
 			env.DryRunnable,
 			mockGitProvider,
 			mockExtractor,
-			mockDistroResolver(),
+			testResolvedDistro(),
 			retry.Disabled(),
 		)
 		require.NoError(t, err)
@@ -478,13 +546,21 @@ func TestGetComponentFromGit(t *testing.T) {
 
 		// Extractor succeeds
 		mockExtractor.EXPECT().
-			ExtractSourcesFromRepo(gomock.Any(), gomock.Any(), upstreamName, gomock.Any()).
+			ExtractSourcesFromRepo(gomock.Any(), gomock.Any(), upstreamName, gomock.Any(), gomock.Any()).
 			Return(nil)
 
 		err = provider.GetComponent(context.Background(), mockComponent, destDir)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to rename fetched spec file")
 	})
+}
+
+// testResolvedDistroWithSnapshot returns a [sourceproviders.ResolvedDistro] with the given snapshot time.
+func testResolvedDistroWithSnapshot(snapshot string) sourceproviders.ResolvedDistro {
+	distro := testResolvedDistro()
+	distro.Ref.Snapshot = snapshot
+
+	return distro
 }
 
 func TestCheckoutTargetCommit(t *testing.T) {
@@ -499,13 +575,13 @@ func TestCheckoutTargetCommit(t *testing.T) {
 		snapshotTime, _ := time.Parse(time.RFC3339, snapshotTimeStr)
 		snapshotCommitHash := "snapshot789abc"
 
-		// Create provider
+		// Create provider with snapshot time baked into the resolved distro
 		provider, err := sourceproviders.NewFedoraSourcesProviderImpl(
 			env.FS(),
 			env.DryRunnable,
 			mockGitProvider,
 			mockExtractor,
-			mockDistroResolver(),
+			testResolvedDistroWithSnapshot(snapshotTimeStr),
 			retry.Disabled(),
 		)
 		require.NoError(t, err)
@@ -514,12 +590,6 @@ func TestCheckoutTargetCommit(t *testing.T) {
 		mockComponent.EXPECT().GetName().AnyTimes().Return(testPackageName)
 		mockComponent.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
 			Name: testPackageName,
-			Spec: projectconfig.SpecSource{
-				UpstreamDistro: projectconfig.DistroReference{
-					Name:     "fedora",
-					Snapshot: snapshotTimeStr,
-				},
-			},
 		})
 
 		// Clone succeeds
@@ -543,7 +613,7 @@ func TestCheckoutTargetCommit(t *testing.T) {
 
 		// Extractor succeeds
 		mockExtractor.EXPECT().
-			ExtractSourcesFromRepo(gomock.Any(), gomock.Any(), testPackageName, gomock.Any()).
+			ExtractSourcesFromRepo(gomock.Any(), gomock.Any(), testPackageName, gomock.Any(), gomock.Any()).
 			Return(nil)
 
 		err = provider.GetComponent(context.Background(), mockComponent, destDir)
@@ -561,7 +631,7 @@ func TestCheckoutTargetCommit(t *testing.T) {
 			env.DryRunnable,
 			mockGitProvider,
 			mockExtractor,
-			mockDistroResolver(),
+			testResolvedDistro(),
 			retry.Disabled(),
 		)
 		require.NoError(t, err)
@@ -586,7 +656,7 @@ func TestCheckoutTargetCommit(t *testing.T) {
 
 		// Extractor succeeds
 		mockExtractor.EXPECT().
-			ExtractSourcesFromRepo(gomock.Any(), gomock.Any(), testPackageName, gomock.Any()).
+			ExtractSourcesFromRepo(gomock.Any(), gomock.Any(), testPackageName, gomock.Any(), gomock.Any()).
 			Return(nil)
 
 		err = provider.GetComponent(context.Background(), mockComponent, destDir)
@@ -606,7 +676,7 @@ func TestCheckoutTargetCommit(t *testing.T) {
 			env.DryRunnable,
 			mockGitProvider,
 			mockExtractor,
-			mockDistroResolver(),
+			testResolvedDistroWithSnapshot(snapshotTimeStr),
 			retry.Disabled(),
 		)
 		require.NoError(t, err)
@@ -615,13 +685,6 @@ func TestCheckoutTargetCommit(t *testing.T) {
 		mockComponent.EXPECT().GetName().AnyTimes().Return(testPackageName)
 		mockComponent.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
 			Name: testPackageName,
-			Spec: projectconfig.SpecSource{
-				UpstreamDistro: projectconfig.DistroReference{
-					Name:     "test-distro",
-					Version:  "1",
-					Snapshot: snapshotTimeStr,
-				},
-			},
 		})
 
 		// Clone succeeds
@@ -655,7 +718,7 @@ func TestCheckoutTargetCommit(t *testing.T) {
 			env.DryRunnable,
 			mockGitProvider,
 			mockExtractor,
-			mockDistroResolver(),
+			testResolvedDistroWithSnapshot(snapshotTimeStr),
 			retry.Disabled(),
 		)
 		require.NoError(t, err)
@@ -664,13 +727,6 @@ func TestCheckoutTargetCommit(t *testing.T) {
 		mockComponent.EXPECT().GetName().AnyTimes().Return(testPackageName)
 		mockComponent.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
 			Name: testPackageName,
-			Spec: projectconfig.SpecSource{
-				UpstreamDistro: projectconfig.DistroReference{
-					Name:     "test-distro",
-					Version:  "1",
-					Snapshot: snapshotTimeStr,
-				},
-			},
 		})
 
 		// Clone succeeds
@@ -705,7 +761,7 @@ func TestCheckoutTargetCommit(t *testing.T) {
 			env.DryRunnable,
 			mockGitProvider,
 			mockExtractor,
-			mockDistroResolver(),
+			testResolvedDistroWithSnapshot("invalid-date-format"),
 			retry.Disabled(),
 		)
 		require.NoError(t, err)
@@ -714,13 +770,6 @@ func TestCheckoutTargetCommit(t *testing.T) {
 		mockComponent.EXPECT().GetName().AnyTimes().Return(testPackageName)
 		mockComponent.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
 			Name: testPackageName,
-			Spec: projectconfig.SpecSource{
-				UpstreamDistro: projectconfig.DistroReference{
-					Name:     "test-distro",
-					Version:  "1",
-					Snapshot: "invalid-date-format", // Bad format
-				},
-			},
 		})
 
 		// Clone succeeds
@@ -749,7 +798,7 @@ func TestCheckoutTargetCommit_UpstreamCommit(t *testing.T) {
 			env.DryRunnable,
 			mockGitProvider,
 			mockExtractor,
-			mockDistroResolver(),
+			testResolvedDistro(),
 			retry.Disabled(),
 		)
 		require.NoError(t, err)
@@ -782,7 +831,7 @@ func TestCheckoutTargetCommit_UpstreamCommit(t *testing.T) {
 
 		// Extractor succeeds
 		mockExtractor.EXPECT().
-			ExtractSourcesFromRepo(gomock.Any(), gomock.Any(), testPackageName, gomock.Any()).
+			ExtractSourcesFromRepo(gomock.Any(), gomock.Any(), testPackageName, gomock.Any(), gomock.Any()).
 			Return(nil)
 
 		err = provider.GetComponent(context.Background(), mockComponent, destDir)
@@ -802,7 +851,7 @@ func TestCheckoutTargetCommit_UpstreamCommit(t *testing.T) {
 			env.DryRunnable,
 			mockGitProvider,
 			mockExtractor,
-			mockDistroResolver(),
+			testResolvedDistroWithSnapshot(snapshotTimeStr),
 			retry.Disabled(),
 		)
 		require.NoError(t, err)
@@ -813,10 +862,6 @@ func TestCheckoutTargetCommit_UpstreamCommit(t *testing.T) {
 			Name: testPackageName,
 			Spec: projectconfig.SpecSource{
 				UpstreamCommit: upstreamCommitHash,
-				UpstreamDistro: projectconfig.DistroReference{
-					Name:     "fedora",
-					Snapshot: snapshotTimeStr,
-				},
 			},
 		})
 
@@ -838,7 +883,7 @@ func TestCheckoutTargetCommit_UpstreamCommit(t *testing.T) {
 
 		// Extractor succeeds
 		mockExtractor.EXPECT().
-			ExtractSourcesFromRepo(gomock.Any(), gomock.Any(), testPackageName, gomock.Any()).
+			ExtractSourcesFromRepo(gomock.Any(), gomock.Any(), testPackageName, gomock.Any(), gomock.Any()).
 			Return(nil)
 
 		err = provider.GetComponent(context.Background(), mockComponent, destDir)
@@ -857,7 +902,7 @@ func TestCheckoutTargetCommit_UpstreamCommit(t *testing.T) {
 			env.DryRunnable,
 			mockGitProvider,
 			mockExtractor,
-			mockDistroResolver(),
+			testResolvedDistro(),
 			retry.Disabled(),
 		)
 		require.NoError(t, err)

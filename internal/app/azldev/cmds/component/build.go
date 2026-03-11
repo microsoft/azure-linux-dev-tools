@@ -181,7 +181,14 @@ func BuildComponent(
 	workDirFactory *workdir.Factory,
 	options *ComponentBuildOptions,
 ) (results ComponentBuildResults, err error) {
-	sourceManager, err := sourceproviders.NewSourceManager(env)
+	// Resolve the effective distro for this component before creating the source manager.
+	distro, err := sourceproviders.ResolveDistro(env, component)
+	if err != nil {
+		return ComponentBuildResults{},
+			fmt.Errorf("failed to resolve distro for component %q:\n%w", component.GetName(), err)
+	}
+
+	sourceManager, err := sourceproviders.NewSourceManager(env, distro)
 	if err != nil {
 		return ComponentBuildResults{},
 			fmt.Errorf("failed to setup source retrieval manager for component %q:\n%w", component.GetName(), err)

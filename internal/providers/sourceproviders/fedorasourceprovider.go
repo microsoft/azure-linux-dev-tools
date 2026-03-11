@@ -14,26 +14,23 @@ import (
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
-	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/git"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/retry"
 )
 
-// DistroResolver is a function type that resolves a distro reference to its definition and version.
-type DistroResolver func(distroRef projectconfig.DistroReference) (
-	projectconfig.DistroDefinition, projectconfig.DistroVersionDefinition, error,
-)
-
-// FedoraSourcesProviderImpl implements ComponentSourceProvider for Git repositories.
+// FedoraSourcesProviderImpl implements [ComponentSourceProvider] for Git repositories.
 type FedoraSourcesProviderImpl struct {
-	fs             opctx.FS
-	dryRunnable    opctx.DryRunnable
-	gitProvider    git.GitProvider
-	downloader     fedorasource.FedoraSourceDownloader
-	distroResolver DistroResolver
-	retryConfig    retry.Config
+	fs               opctx.FS
+	dryRunnable      opctx.DryRunnable
+	gitProvider      git.GitProvider
+	downloader       fedorasource.FedoraSourceDownloader
+	distroGitBaseURI string
+	distroGitBranch  string
+	lookasideBaseURI string
+	snapshotTime     string
+	retryConfig      retry.Config
 }
 
 var _ ComponentSourceProvider = (*FedoraSourcesProviderImpl)(nil)
@@ -43,7 +40,7 @@ func NewFedoraSourcesProviderImpl(
 	dryRunnable opctx.DryRunnable,
 	gitProvider git.GitProvider,
 	downloader fedorasource.FedoraSourceDownloader,
-	distroResolver DistroResolver,
+	distro ResolvedDistro,
 	retryCfg retry.Config,
 ) (*FedoraSourcesProviderImpl, error) {
 	if fs == nil {
@@ -62,17 +59,28 @@ func NewFedoraSourcesProviderImpl(
 		return nil, errors.New("downloader cannot be nil")
 	}
 
-	if distroResolver == nil {
-		return nil, errors.New("distro resolver cannot be nil")
+	if distro.Definition.DistGitBaseURI == "" {
+		return nil, errors.New("resolved distro must specify a dist-git base URI")
+	}
+
+	if distro.Version.DistGitBranch == "" {
+		return nil, errors.New("resolved distro must specify a dist-git branch")
+	}
+
+	if distro.Definition.LookasideBaseURI == "" {
+		return nil, errors.New("resolved distro must specify a lookaside base URI")
 	}
 
 	return &FedoraSourcesProviderImpl{
-		fs:             fs,
-		dryRunnable:    dryRunnable,
-		gitProvider:    gitProvider,
-		downloader:     downloader,
-		distroResolver: distroResolver,
-		retryConfig:    retryCfg,
+		fs:               fs,
+		dryRunnable:      dryRunnable,
+		gitProvider:      gitProvider,
+		downloader:       downloader,
+		distroGitBaseURI: distro.Definition.DistGitBaseURI,
+		distroGitBranch:  distro.Version.DistGitBranch,
+		lookasideBaseURI: distro.Definition.LookasideBaseURI,
+		snapshotTime:     distro.Ref.Snapshot,
+		retryConfig:      retryCfg,
 	}, nil
 }
 
@@ -96,20 +104,14 @@ func (g *FedoraSourcesProviderImpl) GetComponent(
 		return errors.New("destination path cannot be empty")
 	}
 
-	// Resolve the distro configuration for this component
-	effectiveDistroRef, distroGitBaseURI, distroGitBranch, lookasideBaseURI, err := g.resolveDistroConfig(component)
-	if err != nil {
-		return fmt.Errorf("failed to resolve distro configuration for component %#q:\n%w", componentName, err)
-	}
-
-	gitRepoURL := strings.ReplaceAll(distroGitBaseURI, "$pkg", upstreamNameToUse)
+	gitRepoURL := strings.ReplaceAll(g.distroGitBaseURI, "$pkg", upstreamNameToUse)
 
 	slog.Info("Getting component from git repo",
 		"component", componentName,
 		"upstreamComponent", upstreamNameToUse,
-		"branch", distroGitBranch,
+		"branch", g.distroGitBranch,
 		"upstreamCommit", component.GetConfig().Spec.UpstreamCommit,
-		"snapshot", effectiveDistroRef.Snapshot)
+		"snapshot", g.snapshotTime)
 
 	// Clone to a temp directory first, then copy files to destination.
 	tempDir, err := fileutils.MkdirTempInTempDir(g.fs, "azldev-clone-")
@@ -125,27 +127,36 @@ func (g *FedoraSourcesProviderImpl) GetComponent(
 		_ = g.fs.RemoveAll(tempDir)
 		_ = fileutils.MkdirAll(g.fs, tempDir)
 
-		return g.gitProvider.Clone(ctx, gitRepoURL, tempDir, git.WithGitBranch(distroGitBranch))
+		return g.gitProvider.Clone(ctx, gitRepoURL, tempDir, git.WithGitBranch(g.distroGitBranch))
 	})
 	if err != nil {
 		return fmt.Errorf("failed to clone git repository %#q:\n%w", gitRepoURL, err)
 	}
 
+	// Collect filenames from source-files config so the lookaside extractor can skip them.
+	// These files were already fetched by FetchFiles and take precedence over upstream versions.
+	sourceFiles := component.GetConfig().SourceFiles
+
+	skipFileNames := make([]string, len(sourceFiles))
+	for i := range sourceFiles {
+		skipFileNames[i] = sourceFiles[i].Filename
+	}
+
 	// Process the cloned repo: checkout target commit, extract sources, copy to destination.
-	return g.processClonedRepo(ctx, effectiveDistroRef, component.GetConfig().Spec.UpstreamCommit,
-		tempDir, upstreamNameToUse, componentName, lookasideBaseURI, destDirPath)
+	return g.processClonedRepo(ctx, component.GetConfig().Spec.UpstreamCommit,
+		tempDir, upstreamNameToUse, componentName, destDirPath, skipFileNames)
 }
 
 // processClonedRepo handles the post-clone steps: checking out the target commit,
 // extracting lookaside sources, renaming spec files, and copying to the destination.
 func (g *FedoraSourcesProviderImpl) processClonedRepo(
 	ctx context.Context,
-	effectiveDistroRef projectconfig.DistroReference,
 	upstreamCommit string,
-	tempDir, upstreamName, componentName, lookasideBaseURI, destDirPath string,
+	tempDir, upstreamName, componentName, destDirPath string,
+	skipFilenames []string,
 ) error {
 	// Checkout the appropriate commit based on component/distro config
-	if err := g.checkoutTargetCommit(ctx, effectiveDistroRef, upstreamCommit, tempDir); err != nil {
+	if err := g.checkoutTargetCommit(ctx, upstreamCommit, tempDir); err != nil {
 		return fmt.Errorf("failed to checkout target commit:\n%w", err)
 	}
 
@@ -155,8 +166,12 @@ func (g *FedoraSourcesProviderImpl) processClonedRepo(
 			tempDir, err)
 	}
 
-	// Extract sources from repo (downloads lookaside files into the temp dir)
-	if err := g.downloader.ExtractSourcesFromRepo(ctx, tempDir, upstreamName, lookasideBaseURI); err != nil {
+	// Extract sources from repo (downloads lookaside files into the temp dir).
+	// Files in skipFilenames are not downloaded — they were already fetched by FetchFiles.
+	err := g.downloader.ExtractSourcesFromRepo(
+		ctx, tempDir, upstreamName, g.lookasideBaseURI, skipFilenames,
+	)
+	if err != nil {
 		return fmt.Errorf("failed to extract sources from git repository:\n%w", err)
 	}
 
@@ -200,37 +215,13 @@ func (g *FedoraSourcesProviderImpl) renameSpecIfNeeded(dir, upstreamName, compon
 	return nil
 }
 
-// resolveDistroConfig resolves the distro configuration for a component.
-// The component's upstream-distro reference is used directly, as it already has
-// defaults applied from the distro's default-component-config.
-// Returns the distro reference plus resolved URIs and branch.
-func (g *FedoraSourcesProviderImpl) resolveDistroConfig(
-	component components.Component,
-) (distroRef projectconfig.DistroReference, distroGitBaseURI, distroGitBranch, lookasideBaseURI string, err error) {
-	distroRef = component.GetConfig().Spec.UpstreamDistro
-
-	slog.Debug("Resolving distro configuration for component",
-		"component", component.GetName(),
-		"distroRef", distroRef,
-	)
-
-	// Resolve the distro reference
-	distroDef, distroVersionDef, err := g.distroResolver(distroRef)
-	if err != nil {
-		return distroRef, "", "", "", fmt.Errorf("failed to resolve distro reference %#q:\n%w", distroRef.Name, err)
-	}
-
-	return distroRef, distroDef.DistGitBaseURI, distroVersionDef.DistGitBranch, distroDef.LookasideBaseURI, nil
-}
-
 // checkoutTargetCommit determines the appropriate commit to use and checks it out.
 // Priority order:
 //  1. Explicit upstream commit hash - specified per-component via upstream-commit
-//  2. Upstream distro snapshot - snapshot time from the effective distro reference
+//  2. Upstream distro snapshot - snapshot time from the provider's resolved distro
 //  3. Default - use current HEAD (no checkout needed)
 func (g *FedoraSourcesProviderImpl) checkoutTargetCommit(
 	ctx context.Context,
-	effectiveDistroRef projectconfig.DistroReference,
 	upstreamCommit string,
 	repoDir string,
 ) error {
@@ -246,11 +237,11 @@ func (g *FedoraSourcesProviderImpl) checkoutTargetCommit(
 		return nil
 	}
 
-	// Case 2: Effective distro reference has snapshot time configured
-	if snapshotStr := effectiveDistroRef.Snapshot; snapshotStr != "" {
-		snapshotDateTime, err := time.Parse(time.RFC3339, snapshotStr)
+	// Case 2: Provider has a snapshot time configured from the resolved distro
+	if g.snapshotTime != "" {
+		snapshotDateTime, err := time.Parse(time.RFC3339, g.snapshotTime)
 		if err != nil {
-			return fmt.Errorf("invalid snapshot time %#q:\n%w", snapshotStr, err)
+			return fmt.Errorf("invalid snapshot time %#q:\n%w", g.snapshotTime, err)
 		}
 
 		commitHash, err := g.gitProvider.GetCommitHashBeforeDate(ctx, repoDir, snapshotDateTime)
