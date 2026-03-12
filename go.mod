@@ -39,7 +39,7 @@ require (
 	github.com/opencontainers/selinux v1.13.1
 	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/pmezard/go-difflib v1.0.0
-	github.com/samber/lo v1.52.0
+	github.com/samber/lo v1.53.0
 	github.com/samber/slog-multi v1.7.1
 	github.com/shirou/gopsutil v3.21.11+incompatible
 	github.com/spf13/afero v1.15.0
@@ -51,7 +51,7 @@ require (
 	github.com/ulikunitz/xz v0.5.15
 	go.szostok.io/version v1.2.0
 	go.uber.org/mock v0.6.0
-	golang.org/x/sys v0.41.0
+	golang.org/x/sys v0.42.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
