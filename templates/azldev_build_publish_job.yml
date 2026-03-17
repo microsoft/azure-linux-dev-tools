@@ -1,0 +1,71 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+parameters:
+  arch: ''
+  publish_path: ''
+
+steps:
+  - bash: |
+      set -e
+      sudo tdnf install -y golang
+    displayName: "ensure latest version of golang"
+
+  - bash: |
+      export GOPATH=$(go env GOPATH)
+      export PATH=$PATH:${GOPATH}/bin
+      echo "##vso[task.setvariable variable=GOPATH]$GOPATH"
+      echo "##vso[task.setvariable variable=PATH]$PATH"
+    displayName: 'configure path variables'
+
+  - bash: |
+      set -e
+      go install github.com/magefile/mage@latest
+      mage build
+      mage install
+    displayName: 'mage build and install'
+
+  - bash: |
+      set -e
+      mage -v unit
+      mage -v scenario
+    displayName: 'run mage tests'
+
+  - bash: |
+      set -e
+      azldev --version
+      azldev version --output-format=json
+    displayName: 'azldev version check'
+
+  - bash: |
+      set -e
+      # Login to cblmargh-identity
+      az login --identity --client-id 7bf2e2c3-009a-460e-90d4-eff987a8d71d
+      echo $(System.AccessToken) | az devops login --organization https://dev.azure.com/mariner-org/
+      az account show
+    displayName: 'az login'
+
+  - bash: |
+      set -e
+      ORG_URL="https://dev.azure.com/mariner-org/"
+      FEED_NAME="azldev-preview-feed"
+      PACKAGE_NAME="azldev-preview-pkg-${{ parameters.arch }}"
+      PACKAGE_PATH="$GOPATH/bin/azldev"
+      TIMESTAMP_YEAR_MONTH=$(date +"%y%m")
+      PUBLISH_VERSION="0.$TIMESTAMP_YEAR_MONTH.$(Build.BuildId)"
+      az artifacts universal publish \
+        --organization "$ORG_URL" \
+        --project "mariner" \
+        --scope "project" \
+        --feed "$FEED_NAME" \
+        --name "$PACKAGE_NAME" \
+        --version $PUBLISH_VERSION \
+        --description "Automated publish of azldev for ${{ parameters.arch }}" \
+        --path "$PACKAGE_PATH"
+    displayName: 'publish to universal artifact feed'
+
+  - bash: |
+      AZLDEV_PUBLISH_PATH="${{ parameters.publish_path }}"
+      mkdir -pv $AZLDEV_PUBLISH_PATH
+      cp -v $GOPATH/bin/azldev $AZLDEV_PUBLISH_PATH
+    displayName: 'azldev build artifact publish'
