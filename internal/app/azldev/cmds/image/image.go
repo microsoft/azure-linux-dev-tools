@@ -26,4 +26,5 @@ can be customized using Azure Linux Image Customizer.`,
 	customizeOnAppInit(app, cmd)
 	injectFilesOnAppInit(app, cmd)
 	listOnAppInit(app, cmd)
+	testOnAppInit(app, cmd)
 }

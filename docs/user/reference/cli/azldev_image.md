@@ -42,4 +42,5 @@ can be customized using Azure Linux Image Customizer.
 * [azldev image customize](azldev_image_customize.md)	 - Customizes a pre-built Azure Linux image
 * [azldev image inject-files](azldev_image_inject-files.md)	 - Injects files into a partition based on an inject-files.yaml file
 * [azldev image list](azldev_image_list.md)	 - List images in this project
+* [azldev image test](azldev_image_test.md)	 - Run tests against an Azure Linux image
 
