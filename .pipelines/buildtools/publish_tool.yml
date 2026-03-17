@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-name: Build azldev tool
+name: publish azldev tool to azure artifacts feed
 trigger: none
 
 resources:

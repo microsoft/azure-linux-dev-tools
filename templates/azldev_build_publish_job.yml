@@ -48,14 +48,14 @@ steps:
   - bash: |
       set -e
       ORG_URL="https://dev.azure.com/mariner-org/"
-      FEED_NAME="azldev-preview-feed"
-      PACKAGE_NAME="azldev-preview-pkg-${{ parameters.arch }}"
+      FEED_NAME="azldev-feed-proto-anphel"
+      PACKAGE_NAME="azldev-pkg-${{ parameters.arch }}"
       PACKAGE_PATH="$GOPATH/bin/azldev"
       TIMESTAMP_YEAR_MONTH=$(date +"%y%m")
       PUBLISH_VERSION="0.$TIMESTAMP_YEAR_MONTH.$(Build.BuildId)"
       az artifacts universal publish \
         --organization "$ORG_URL" \
-        --project "mariner" \
+        --project "azl" \
         --scope "project" \
         --feed "$FEED_NAME" \
         --name "$PACKAGE_NAME" \
