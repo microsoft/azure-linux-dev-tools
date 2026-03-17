@@ -19,6 +19,9 @@ extends:
   parameters:
     featureFlags:
       runOnHost: true
+      golang:
+        internalModuleProxy:
+          enabled: true
     stages:
     - stage: BuildStage
       jobs:
