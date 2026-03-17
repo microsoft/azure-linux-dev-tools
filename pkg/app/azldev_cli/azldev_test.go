@@ -1,18 +1,18 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-package main_test
+package azldev_cli_test
 
 import (
 	"testing"
 
-	main "github.com/microsoft/azure-linux-dev-tools/cmd/azldev"
+	azldev_cli "github.com/microsoft/azure-linux-dev-tools/pkg/app/azldev_cli"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestInstantiateApp(t *testing.T) {
-	app := main.InstantiateApp()
+	app := azldev_cli.InstantiateApp()
 	if assert.NotNil(t, app) {
 		topLevelCommandNames, err := app.CommandNames()
 		require.NoError(t, err)

@@ -4,42 +4,9 @@
 package main
 
 import (
-	"os"
-
-	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
-	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/advanced"
-	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/component"
-	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/config"
-	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/docs"
-	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/image"
-	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/project"
-	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/version"
+	"github.com/microsoft/azure-linux-dev-tools/pkg/app/azldev_cli"
 )
 
 func main() {
-	// Instantiate the main CLI app instance.
-	app := InstantiateApp()
-
-	// Execute! We'll get back an exit code that we will exit with.
-	ret := app.Execute(os.Args[1:])
-
-	os.Exit(ret)
-}
-
-// Constructs a new instance of the main CLI application, with all subcommands registered.
-func InstantiateApp() *azldev.App {
-	// Instantiate the main CLI application.
-	app := azldev.NewApp(azldev.DefaultFileSystemFactory(), azldev.DefaultOSEnvFactory())
-
-	// Give top level command packages an opportunity to register their commands (or in some cases,
-	// request post-init callbacks).
-	advanced.OnAppInit(app)
-	component.OnAppInit(app)
-	config.OnAppInit(app)
-	docs.OnAppInit(app)
-	image.OnAppInit(app)
-	project.OnAppInit(app)
-	version.OnAppInit(app)
-
-	return app
+	azldev_cli.Main()
 }
