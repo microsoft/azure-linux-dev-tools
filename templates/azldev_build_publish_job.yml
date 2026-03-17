@@ -39,8 +39,9 @@ steps:
 
   - bash: |
       set -e
-      # Login to cblmargh-identity
-      az login --identity --client-id 7bf2e2c3-009a-460e-90d4-eff987a8d71d
+      # Login to anphel-azldev-feed-umi
+      az login --identity --client-id fbcdf84f-35f9-4ba1-8d5f-35fb684f14ed
+      #az login --identity --client-id 7bf2e2c3-009a-460e-90d4-eff987a8d71d
       echo $(System.AccessToken) | az devops login --organization https://dev.azure.com/mariner-org/
       az account show
     displayName: 'az login'
