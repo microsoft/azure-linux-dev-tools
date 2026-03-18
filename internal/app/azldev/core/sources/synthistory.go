@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -154,17 +155,7 @@ func findArrayOfTablesOverlays(lines []string, componentName string) []OverlayLi
 	for lineIdx := 0; lineIdx < len(lines); lineIdx++ {
 		trimmed := strings.TrimSpace(lines[lineIdx])
 
-		matched := false
-
-		for _, header := range expectedHeaders {
-			if trimmed == header {
-				matched = true
-
-				break
-			}
-		}
-
-		if !matched {
+		if !slices.Contains(expectedHeaders, trimmed) {
 			continue
 		}
 
@@ -205,16 +196,9 @@ func findInlineArrayOverlays(lines []string, componentName string) []OverlayLine
 	sectionStart := -1
 
 	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		for _, hdr := range sectionHeaders {
-			if trimmed == hdr {
-				sectionStart = i
+		if slices.Contains(sectionHeaders, strings.TrimSpace(line)) {
+			sectionStart = i
 
-				break
-			}
-		}
-
-		if sectionStart >= 0 {
 			break
 		}
 	}
@@ -315,7 +299,6 @@ func MapOverlaysToCommits(
 
 	// Map each overlay to its blame commit hash using the header line of its TOML block.
 	commitOverlays := make(map[string][]projectconfig.ComponentOverlay)
-	commitLineRef := make(map[string]int) // hash → representative line (for fallback metadata)
 
 	for _, lineRange := range lineRanges {
 		if lineRange.StartLine < 1 || lineRange.StartLine > len(blame.Entries) {
@@ -328,16 +311,7 @@ func MapOverlaysToCommits(
 		entry := blame.Entries[lineRange.StartLine-1]
 		hash := entry.CommitHash
 
-		if lineRange.Index >= len(overlays) {
-			return nil, fmt.Errorf("overlay line range index %d exceeds overlay slice length %d",
-				lineRange.Index, len(overlays))
-		}
-
 		commitOverlays[hash] = append(commitOverlays[hash], overlays[lineRange.Index])
-
-		if _, exists := commitLineRef[hash]; !exists {
-			commitLineRef[hash] = lineRange.StartLine
-		}
 	}
 
 	// Build groups with full commit metadata from the project repository.
@@ -348,17 +322,7 @@ func MapOverlaysToCommits(
 	for hash, overlayList := range commitOverlays {
 		meta, err := resolveCommitMetadata(repo, hash, commitCache)
 		if err != nil {
-			slog.Warn("Failed to resolve commit metadata, using blame data as fallback",
-				"commitHash", hash, "error", err)
-
-			// Fallback to blame entry data when the commit object cannot be retrieved.
-			entry := blame.Entries[commitLineRef[hash]-1]
-			meta = &CommitMetadata{
-				Hash:      hash,
-				Author:    entry.Author,
-				Timestamp: entry.Timestamp,
-				Message:   "Apply overlays from commit " + truncateHash(hash),
-			}
+			return nil, fmt.Errorf("failed to resolve commit metadata for %#q:\n%w", hash, err)
 		}
 
 		groups = append(groups, OverlayCommitGroup{
@@ -505,12 +469,7 @@ func (p *sourcePreparerImpl) buildOverlayGroups(
 		return nil, nil
 	}
 
-	groups, err := MapOverlaysToCommits(projectRepo, config.Overlays, lineRanges, blame)
-	if err != nil {
-		return nil, fmt.Errorf("failed to map overlays to commits:\n%w", err)
-	}
-
-	return groups, nil
+	return MapOverlaysToCommits(projectRepo, config.Overlays, lineRanges, blame)
 }
 
 // resolveConfigFilePath extracts and validates the source config file path from the component config.
@@ -582,11 +541,7 @@ func (p *sourcePreparerImpl) commitOverlaysToRepo(
 		return nil
 	}
 
-	if err := CommitSyntheticHistory(sourcesRepo, groups, applyFn); err != nil {
-		return fmt.Errorf("failed to commit synthetic history:\n%w", err)
-	}
-
-	return nil
+	return CommitSyntheticHistory(sourcesRepo, groups, applyFn)
 }
 
 // resolveCommitMetadata retrieves full commit metadata from the repository, using a cache
@@ -645,16 +600,6 @@ func findRepoRoot(startDir string) (string, error) {
 
 		dir = parent
 	}
-}
-
-// truncateHash returns the first 12 characters of a commit hash for display purposes.
-func truncateHash(hash string) string {
-	const shortHashLen = 12
-	if len(hash) > shortHashLen {
-		return hash[:shortHashLen]
-	}
-
-	return hash
 }
 
 // unixToTime converts a Unix timestamp to a [time.Time] in UTC.

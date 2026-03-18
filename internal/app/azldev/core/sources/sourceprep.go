@@ -208,42 +208,27 @@ func (p *sourcePreparerImpl) applySystemOverlays(
 		return fmt.Errorf("failed to get absolute path for spec %#q:\n%w", specPath, err)
 	}
 
-	// Macro-load overlays.
+	// Collect all system overlays in application order: macros, check-skip, file header.
+	var systemOverlays []projectconfig.ComponentOverlay
+
 	if macrosFileName != "" {
 		macroOverlays, macroErr := synthesizeMacroLoadOverlays(macrosFileName)
 		if macroErr != nil {
 			return fmt.Errorf("failed to compute macros load overlays:\n%w", macroErr)
 		}
 
-		for _, overlay := range macroOverlays {
-			if applyErr := ApplyOverlayToSources(
-				p.dryRunnable, p.fs, overlay, sourcesDirPath, absSpecPath,
-			); applyErr != nil {
-				return fmt.Errorf("failed to apply system overlay to sources for component %#q:\n%w",
-					component.GetName(), applyErr)
-			}
-		}
+		systemOverlays = append(systemOverlays, macroOverlays...)
 	}
 
-	// Check-skip overlays.
-	checkSkipOverlays := synthesizeCheckSkipOverlays(component.GetConfig().Build.Check)
-	for _, overlay := range checkSkipOverlays {
+	systemOverlays = append(systemOverlays, synthesizeCheckSkipOverlays(component.GetConfig().Build.Check)...)
+	systemOverlays = append(systemOverlays, generateFileHeaderOverlay()...)
+
+	for _, overlay := range systemOverlays {
 		if applyErr := ApplyOverlayToSources(
 			p.dryRunnable, p.fs, overlay, sourcesDirPath, absSpecPath,
 		); applyErr != nil {
-			return fmt.Errorf("failed to apply check skip overlay to sources for component %#q:\n%w",
-				component.GetName(), applyErr)
-		}
-	}
-
-	// File header overlays.
-	headerOverlays := generateFileHeaderOverlay()
-	for _, overlay := range headerOverlays {
-		if applyErr := ApplyOverlayToSources(
-			p.dryRunnable, p.fs, overlay, sourcesDirPath, absSpecPath,
-		); applyErr != nil {
-			return fmt.Errorf("failed to apply file header overlay to sources for component %#q:\n%w",
-				component.GetName(), applyErr)
+			return fmt.Errorf("failed to apply %#q system overlay for component %#q:\n%w",
+				overlay.Type, component.GetName(), applyErr)
 		}
 	}
 
@@ -421,26 +406,7 @@ func (p *sourcePreparerImpl) postProcessSources(
 		return fmt.Errorf("failed to get absolute path for %#q:\n%w", specPath, err)
 	}
 
-	// Compute any synthetic overlays required to load the macros file, if one was written.
-	if macrosFileName != "" {
-		macroOverlays, macroErr := synthesizeMacroLoadOverlays(macrosFileName)
-		if macroErr != nil {
-			return fmt.Errorf("failed to compute macros load overlays:\n%w", macroErr)
-		}
-
-		// Apply those overlays *first*, in sequence.
-		for _, overlay := range macroOverlays {
-			err = ApplyOverlayToSources(p.dryRunnable, p.fs, overlay, sourcesDirPath, absSpecPath)
-			if err != nil {
-				return fmt.Errorf("failed to apply system overlay to sources for component %#q:\n%w", component.GetName(), err)
-			}
-		}
-	}
-
-	// Get the file header overlay.
-	headerOverlay := generateFileHeaderOverlay()
-
-	// Apply all overlays in sequence.
+	// Apply all user-defined overlays in sequence.
 	for _, overlay := range component.GetConfig().Overlays {
 		err = ApplyOverlayToSources(p.dryRunnable, p.fs, overlay, sourcesDirPath, absSpecPath)
 		if err != nil {
@@ -451,24 +417,8 @@ func (p *sourcePreparerImpl) postProcessSources(
 		}
 	}
 
-	// Apply check skip overlay if configured.
-	checkSkipOverlays := synthesizeCheckSkipOverlays(component.GetConfig().Build.Check)
-	for _, overlay := range checkSkipOverlays {
-		err = ApplyOverlayToSources(p.dryRunnable, p.fs, overlay, sourcesDirPath, absSpecPath)
-		if err != nil {
-			return fmt.Errorf("failed to apply check skip overlay to sources for component %#q:\n%w", component.GetName(), err)
-		}
-	}
-
-	// Finally, apply the file header overlay.
-	for _, overlay := range headerOverlay {
-		err = ApplyOverlayToSources(p.dryRunnable, p.fs, overlay, sourcesDirPath, absSpecPath)
-		if err != nil {
-			return fmt.Errorf("failed to apply file header overlay to sources for component %#q:\n%w", component.GetName(), err)
-		}
-	}
-
-	return nil
+	// Apply system overlays (macros, check-skip, header) after user overlays.
+	return p.applySystemOverlays(component, sourcesDirPath, macrosFileName)
 }
 
 func synthesizeMacroLoadOverlays(macrosFileName string) ([]projectconfig.ComponentOverlay, error) {
