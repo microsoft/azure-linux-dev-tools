@@ -13,7 +13,7 @@ import (
 	"strings"
 	"unicode"
 
-<<<<<<< HEAD
+	gogit "github.com/go-git/go-git/v5"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
@@ -21,15 +21,6 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/dirdiff"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
-=======
-	"github.com/gim-home/azldev-preview/internal/app/azldev/core/components"
-	"github.com/gim-home/azldev-preview/internal/global/opctx"
-	"github.com/gim-home/azldev-preview/internal/projectconfig"
-	"github.com/gim-home/azldev-preview/internal/providers/sourceproviders"
-	"github.com/gim-home/azldev-preview/internal/utils/fileperms"
-	"github.com/gim-home/azldev-preview/internal/utils/fileutils"
-	gogit "github.com/go-git/go-git/v5"
->>>>>>> 3865cc2 (Simplified git repo history creation process)
 	"github.com/samber/lo"
 	"go.szostok.io/version"
 )

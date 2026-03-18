@@ -11,10 +11,17 @@ import (
 	"strings"
 	"testing"
 
+<<<<<<< HEAD
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/dirdiff"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
+=======
+	"github.com/gim-home/azldev-preview/internal/global/testctx"
+	"github.com/gim-home/azldev-preview/internal/utils/dirdiff"
+	"github.com/gim-home/azldev-preview/internal/utils/fileperms"
+	"github.com/gim-home/azldev-preview/internal/utils/fileutils"
+>>>>>>> 37113ab (feat: add azldev comp diff-sources (#508))
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
