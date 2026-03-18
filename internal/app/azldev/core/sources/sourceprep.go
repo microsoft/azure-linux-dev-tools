@@ -157,12 +157,13 @@ func (p *sourcePreparerImpl) applyOverlaysToSources(
 	return nil
 }
 
-// applyOverlaysWithHistory applies user-defined overlays as attributed synthetic git
-// commits in the upstream repository, then applies system overlays (macros, check-skip,
-// header) outside of the synthetic history so they don't pollute blame attribution.
+// applyOverlaysWithHistory applies all overlays (user-defined and system-generated) to the
+// component sources, then attempts to record the changes as synthetic git history.
 //
-// When the sources directory does not contain a git repository (e.g. local or unspecified
-// spec sources), the function falls back to applying overlays sequentially without history.
+// Overlay application is fully decoupled from git history generation: overlays are always
+// applied first, then the changes are optionally committed. If the sources directory does
+// not contain a git repository (e.g. local or unspecified spec sources), overlays are still
+// applied but no synthetic history is created.
 func (p *sourcePreparerImpl) applyOverlaysWithHistory(
 	_ context.Context, component components.Component, sourcesDirPath, macrosFileName string,
 ) error {
@@ -175,55 +176,88 @@ func (p *sourcePreparerImpl) applyOverlaysWithHistory(
 		return err
 	}
 
-	config := component.GetConfig()
-	if len(config.Overlays) == 0 {
-		slog.Debug("No overlays defined; skipping synthetic history generation",
-			"component", component.GetName())
+	// Collect all overlays in application order. This ensures every change is
+	// captured in the synthetic history, including build configuration changes.
+	allOverlays := p.collectOverlays(component, macrosFileName)
 
-		return p.applySystemOverlays(component, sourcesDirPath, absSpecPath, macrosFileName)
+	if len(allOverlays) == 0 {
+		return nil
 	}
 
-	// Try the synthetic history path. If it succeeds, apply system overlays and return.
-	if err := p.trySyntheticHistory(component, config, sourcesDirPath, absSpecPath); err == nil {
-		return p.applySystemOverlays(component, sourcesDirPath, absSpecPath, macrosFileName)
-	}
-
-	// Synthetic history was not possible; apply user overlays sequentially.
-	if err := p.applyOverlayList(config.Overlays, sourcesDirPath, absSpecPath); err != nil {
+	// Apply all overlays to the working tree.
+	if err := p.applyOverlayList(allOverlays, sourcesDirPath, absSpecPath); err != nil {
 		return fmt.Errorf("failed to apply overlays for component %#q:\n%w", component.GetName(), err)
 	}
 
-	return p.applySystemOverlays(component, sourcesDirPath, absSpecPath, macrosFileName)
+	// Record the changes as synthetic git history. This is required for rpmautospec
+	// release numbering and delta builds, so failure here is fatal.
+	if err := p.trySyntheticHistory(component, sourcesDirPath); err != nil {
+		return fmt.Errorf("failed to generate synthetic history for component %#q:\n%w",
+			component.GetName(), err)
+	}
+
+	return nil
 }
 
-// trySyntheticHistory attempts to apply user-defined overlays as synthetic git commits.
-// Returns nil on success, or a non-nil error if the synthetic history path is not available
-// (e.g. no .git directory, no resolvable blame groups). The caller should fall back to
-// sequential overlay application when this returns an error.
+// collectOverlays gathers all overlays for a component into a single ordered slice:
+// component overlays first, followed by macros-load, check-skip, and file-header overlays.
+func (p *sourcePreparerImpl) collectOverlays(
+	component components.Component, macrosFileName string,
+) []projectconfig.ComponentOverlay {
+	config := component.GetConfig()
+
+	var allOverlays []projectconfig.ComponentOverlay
+
+	allOverlays = append(allOverlays, config.Overlays...)
+
+	if macrosFileName != "" {
+		macroOverlays, err := synthesizeMacroLoadOverlays(macrosFileName)
+		if err != nil {
+			slog.Warn("Failed to compute macros load overlays; skipping",
+				"component", component.GetName(), "error", err)
+		} else {
+			allOverlays = append(allOverlays, macroOverlays...)
+		}
+	}
+
+	allOverlays = append(allOverlays, synthesizeCheckSkipOverlays(config.Build.Check)...)
+	allOverlays = append(allOverlays, generateFileHeaderOverlay()...)
+
+	return allOverlays
+}
+
+// trySyntheticHistory attempts to create synthetic git commits on top of the upstream
+// repository. All file changes must already be present in the working tree before calling
+// this function — it only handles staging and committing.
+//
+// Returns nil when there is no .git directory (legitimate for local/unspecified specs).
+// Returns a non-nil error if a .git directory exists but history generation fails.
 func (p *sourcePreparerImpl) trySyntheticHistory(
 	component components.Component,
-	config *projectconfig.ComponentConfig,
-	sourcesDirPath, absSpecPath string,
+	sourcesDirPath string,
 ) error {
 	// Check for an upstream git repository in the sources directory. Local and
-	// unspecified spec sources won't have a .git directory.
+	// unspecified spec sources won't have a .git directory — that's expected.
 	gitDirPath := filepath.Join(sourcesDirPath, ".git")
-	if _, err := p.fs.Stat(gitDirPath); err != nil {
-		slog.Debug("No .git directory in sources; falling back to standard overlay path",
-			"component", component.GetName(),
-			"sourcesDirPath", sourcesDirPath)
 
-		return fmt.Errorf("no .git directory in sources dir %#q:\n%w", sourcesDirPath, err)
+	hasGitDir, err := fileutils.Exists(p.fs, gitDirPath)
+	if err != nil || !hasGitDir {
+		slog.Debug("No .git directory in sources; skipping synthetic history",
+			"component", component.GetName())
+
+		return nil //nolint:nilerr // Missing .git is expected for local/unspecified specs.
 	}
 
-	// Resolve the project repository and blame the config file to produce overlay groups.
-	groups, err := buildOverlayGroups(config, component.GetName())
+	config := component.GetConfig()
+
+	// Build commit metadata from Affects commits and dirty state.
+	commits, err := buildSyntheticCommits(config, component.GetName())
 	if err != nil {
-		return fmt.Errorf("failed to build overlay groups:\n%w", err)
+		return fmt.Errorf("failed to build synthetic commits:\n%w", err)
 	}
 
-	if len(groups) == 0 {
-		return errors.New("no overlay groups resolved")
+	if len(commits) == 0 {
+		return errors.New("no synthetic commits resolved")
 	}
 
 	// Open the upstream git repository where synthetic commits will be recorded.
@@ -232,12 +266,7 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 		return fmt.Errorf("failed to open upstream repository at %#q:\n%w", sourcesDirPath, err)
 	}
 
-	// Build the overlay-application callback using the shared helper.
-	applyFn := func(overlays []projectconfig.ComponentOverlay) error {
-		return p.applyOverlayList(overlays, sourcesDirPath, absSpecPath)
-	}
-
-	if err := CommitSyntheticHistory(sourcesRepo, groups, applyFn); err != nil {
+	if err := CommitSyntheticHistory(sourcesRepo, commits); err != nil {
 		return fmt.Errorf("failed to commit synthetic history:\n%w", err)
 	}
 

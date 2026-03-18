@@ -18,16 +18,23 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 )
 
+// AffectsPrefix is the commit message marker used to associate a project repository
+// commit with a component. Developers include "Affects: <component-name>" anywhere
+// in a commit message to indicate the commit pertains to that component.
+const AffectsPrefix = "Affects: "
+
 var (
 	// ErrNoGitRepository is returned when no enclosing git repository can be found.
 	ErrNoGitRepository = errors.New("no git repository found")
 
-	// ErrNoOverlaysToCommit is returned when there are no overlay groups to commit.
-	ErrNoOverlaysToCommit = errors.New("no overlays to commit")
+	// ErrNoOverlaysToCommit is returned when there are no synthetic commits to create.
+	ErrNoOverlaysToCommit = errors.New("no synthetic commits to create")
 )
 
-// IsRepoDirty reports whether the given go-git repository has uncommitted changes
-// (modified, added, deleted, or untracked files) in its working tree.
+// IsRepoDirty reports whether the given go-git repository has staged changes
+// in its index. Unstaged modifications and untracked files are intentionally
+// ignored so the developer must explicitly stage changes to trigger an extra
+// synthetic commit.
 func IsRepoDirty(repo *gogit.Repository) (bool, error) {
 	worktree, err := repo.Worktree()
 	if err != nil {
@@ -39,7 +46,13 @@ func IsRepoDirty(repo *gogit.Repository) (bool, error) {
 		return false, fmt.Errorf("failed to get worktree status:\n%w", err)
 	}
 
-	return !status.IsClean(), nil
+	for _, fileStatus := range status {
+		if fileStatus.Staging != gogit.Unmodified && fileStatus.Staging != gogit.Untracked {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 // CommitMetadata holds full metadata for a commit in the project repository.
@@ -50,20 +63,6 @@ type CommitMetadata struct {
 	Timestamp   int64
 	Message     string
 }
-
-// OverlayCommitGroup groups overlays that originate from the same git commit in the project
-// configuration repository. During synthetic history generation, all overlays in a group are
-// applied together and recorded as a single commit.
-type OverlayCommitGroup struct {
-	// Commit holds metadata from the originating commit in the project repository.
-	Commit CommitMetadata
-	// Overlays contains the overlay definitions to apply as part of this synthetic commit.
-	Overlays []projectconfig.ComponentOverlay
-}
-
-// OverlayApplyFunc is a callback that applies a batch of overlays to the component sources.
-// It is called once per [OverlayCommitGroup] during synthetic history generation.
-type OverlayApplyFunc func(overlays []projectconfig.ComponentOverlay) error
 
 // FindAffectsCommits walks the git log from HEAD and returns metadata for all commits
 // whose message contains "Affects: <componentName>". Results are sorted chronologically
@@ -79,12 +78,12 @@ func FindAffectsCommits(repo *gogit.Repository, componentName string) ([]CommitM
 		return nil, fmt.Errorf("failed to iterate commit log:\n%w", err)
 	}
 
-	marker := "Affects: " + componentName
+	marker := strings.ToLower(AffectsPrefix + componentName)
 
 	var matches []CommitMetadata
 
 	err = commitIter.ForEach(func(commit *object.Commit) error {
-		if strings.Contains(commit.Message, marker) {
+		if strings.Contains(strings.ToLower(commit.Message), marker) {
 			matches = append(matches, CommitMetadata{
 				Hash:        commit.Hash.String(),
 				Author:      commit.Author.Name,
@@ -106,20 +105,17 @@ func FindAffectsCommits(repo *gogit.Repository, componentName string) ([]CommitM
 	return matches, nil
 }
 
-// CommitSyntheticHistory creates synthetic commits in the provided git repository, one per
-// [OverlayCommitGroup]. For each group the applyFn callback is invoked to mutate the working
-// tree, then all changes are staged and committed with the group's metadata.
+// CommitSyntheticHistory stages all pending working tree changes and creates synthetic
+// commits in the provided git repository. The first commit captures all file changes;
+// subsequent commits are created as empty commits to preserve the commit count for
+// rpmautospec release numbering. Overlay application must happen before calling this
+// function — it only handles the git history.
 func CommitSyntheticHistory(
 	repo *gogit.Repository,
-	groups []OverlayCommitGroup,
-	applyFn OverlayApplyFunc,
+	commits []CommitMetadata,
 ) error {
-	if len(groups) == 0 {
+	if len(commits) == 0 {
 		return ErrNoOverlaysToCommit
-	}
-
-	if applyFn == nil {
-		return errors.New("applyFn callback is required")
 	}
 
 	worktree, err := repo.Worktree()
@@ -127,54 +123,48 @@ func CommitSyntheticHistory(
 		return fmt.Errorf("failed to get worktree:\n%w", err)
 	}
 
-	for groupIdx, group := range groups {
+	// Stage all working tree changes once — overlays have already been applied.
+	if err := worktree.AddWithOptions(&gogit.AddOptions{All: true}); err != nil {
+		return fmt.Errorf("failed to stage changes:\n%w", err)
+	}
+
+	for commitIdx, commitMeta := range commits {
 		slog.Info("Creating synthetic commit",
-			"commit", groupIdx+1,
-			"total", len(groups),
-			"originalHash", group.Commit.Hash,
-			"overlayCount", len(group.Overlays),
+			"commit", commitIdx+1,
+			"total", len(commits),
+			"projectHash", commitMeta.Hash,
 		)
 
-		// Apply the overlay batch to the working tree.
-		if err := applyFn(group.Overlays); err != nil {
-			return fmt.Errorf("failed to apply overlays for synthetic commit %d (original %s):\n%w",
-				groupIdx+1, group.Commit.Hash, err)
-		}
-
-		// Stage all changes (modified, added, and deleted files).
-		if err := worktree.AddWithOptions(&gogit.AddOptions{All: true}); err != nil {
-			return fmt.Errorf("failed to stage changes for synthetic commit %d:\n%w", groupIdx+1, err)
-		}
-
-		// Create the synthetic commit preserving author attribution from the project repo.
-		message := fmt.Sprintf("[azldev] %s\n\nOriginal commit: %s",
-			group.Commit.Message, group.Commit.Hash)
+		message := fmt.Sprintf("[azldev] %s\n\nProject commit: %s",
+			commitMeta.Message, commitMeta.Hash)
 
 		_, err := worktree.Commit(message, &gogit.CommitOptions{
+			AllowEmptyCommits: commitIdx > 0,
 			Author: &object.Signature{
-				Name:  group.Commit.Author,
-				Email: group.Commit.AuthorEmail,
-				When:  unixToTime(group.Commit.Timestamp),
+				Name:  commitMeta.Author,
+				Email: commitMeta.AuthorEmail,
+				When:  unixToTime(commitMeta.Timestamp),
 			},
 		})
 		if err != nil {
-			return fmt.Errorf("failed to create synthetic commit %d:\n%w", groupIdx+1, err)
+			return fmt.Errorf("failed to create synthetic commit %d:\n%w", commitIdx+1, err)
 		}
 	}
 
 	slog.Info("Synthetic history generation complete",
-		"commitsCreated", len(groups))
+		"commitsCreated", len(commits))
 
 	return nil
 }
 
-// buildOverlayGroups resolves the project repository from the component's config file, walks
-// the git log for commits containing "Affects: <componentName>", and produces a single
-// [OverlayCommitGroup] that applies all overlays under the most recent matching commit's
-// attribution. Returns nil groups when no matching commits are found.
-func buildOverlayGroups(
+// buildSyntheticCommits resolves the project repository from the component's config file,
+// walks the git log for commits containing "Affects: <componentName>", and returns the
+// matching commit metadata sorted chronologically. An additional local-changes entry is
+// appended when the project repo has staged changes. Returns nil when no matching commits
+// are found and the repo is clean.
+func buildSyntheticCommits(
 	config *projectconfig.ComponentConfig, componentName string,
-) ([]OverlayCommitGroup, error) {
+) ([]CommitMetadata, error) {
 	configFilePath, err := resolveConfigFilePath(config, componentName)
 	if err != nil {
 		return nil, err
@@ -190,64 +180,45 @@ func buildOverlayGroups(
 		return nil, fmt.Errorf("failed to find Affects commits for component %#q:\n%w", componentName, err)
 	}
 
-	if len(affectsCommits) == 0 {
-		slog.Warn("No commits with Affects marker found for component; "+
-			"falling back to standard overlay processing",
-			"component", componentName)
+	slog.Info("Found commits affecting component",
+		"component", componentName,
+		"commitCount", len(affectsCommits))
 
-		return nil, nil
-	}
+	commits := make([]CommitMetadata, 0, len(affectsCommits)+1)
 
-	// Use the most recent Affects commit for the synthetic commit's author attribution.
-	latestCommit := affectsCommits[len(affectsCommits)-1]
+	// Create one synthetic commit per Affects commit, preserving each commit's
+	// original message and author attribution in the upstream history.
+	commits = append(commits, affectsCommits...)
 
-	// Build a commit message listing all matching commits for traceability.
-	var hashList strings.Builder
-
-	for _, c := range affectsCommits {
-		fmt.Fprintf(&hashList, "\n- %s %s", c.Hash, firstLine(c.Message))
-	}
-
-	syntheticMeta := CommitMetadata{
-		Hash:        latestCommit.Hash,
-		Author:      latestCommit.Author,
-		AuthorEmail: latestCommit.AuthorEmail,
-		Timestamp:   latestCommit.Timestamp,
-		Message: fmt.Sprintf("Apply overlays for %s\n\nDerived from %d project commit(s):%s",
-			componentName, len(affectsCommits), hashList.String()),
-	}
-
-	groups := []OverlayCommitGroup{
-		{
-			Commit:   syntheticMeta,
-			Overlays: config.Overlays,
-		},
-	}
-
-	// When the project repo has uncommitted changes the developer is iterating
-	// locally. Append an extra overlay commit so rpmautospec sees a new commit
+	// When the project repo has staged changes the developer is iterating
+	// locally. Append an extra commit so rpmautospec sees a new commit
 	// and assigns a fresh release number instead of colliding with the last build.
 	dirty, err := IsRepoDirty(projectRepo)
 	if err != nil {
 		slog.Warn("Could not determine project repo dirty state; skipping local-changes commit",
 			"error", err)
 	} else if dirty {
-		slog.Info("Project repo has uncommitted changes; adding local-changes synthetic commit",
+		slog.Info("Project repo has staged changes; adding local-changes synthetic commit",
 			"component", componentName)
 
-		groups = append(groups, OverlayCommitGroup{
-			Commit: CommitMetadata{
-				Hash:        "local",
-				Author:      "local",
-				AuthorEmail: "local@dev",
-				Timestamp:   time.Now().Unix(),
-				Message:     "Local uncommitted changes for " + componentName,
-			},
-			Overlays: config.Overlays,
+		commits = append(commits, CommitMetadata{
+			Hash:        "local",
+			Author:      "local",
+			AuthorEmail: "local@dev",
+			Timestamp:   time.Now().Unix(),
+			Message:     "Local uncommitted changes for " + componentName,
 		})
 	}
 
-	return groups, nil
+	if len(commits) == 0 {
+		slog.Warn("No commits with Affects marker found and repo is clean; "+
+			"falling back to standard overlay processing",
+			"component", componentName)
+
+		return nil, nil
+	}
+
+	return commits, nil
 }
 
 // resolveConfigFilePath extracts and validates the source config file path from the component config.
@@ -317,13 +288,4 @@ func findRepoRoot(startDir string) (string, error) {
 // unixToTime converts a Unix timestamp to a [time.Time] in UTC.
 func unixToTime(unix int64) time.Time {
 	return time.Unix(unix, 0).UTC()
-}
-
-// firstLine returns the first line of s (the subject line of a commit message).
-func firstLine(s string) string {
-	if idx := strings.IndexByte(s, '\n'); idx >= 0 {
-		return s[:idx]
-	}
-
-	return s
 }

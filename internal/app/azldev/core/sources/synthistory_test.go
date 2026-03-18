@@ -13,7 +13,6 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/storage/memory"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
-	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -185,6 +184,27 @@ func TestFindAffectsCommits_AffectsInSubject(t *testing.T) {
 	assert.Equal(t, "Alice", results[0].Author)
 }
 
+func TestFindAffectsCommits_CaseInsensitive(t *testing.T) {
+	repo := createInMemoryRepo(t)
+
+	addCommit(t, repo,
+		"Bump release\n\nAffects: Kernel",
+		"Alice", "alice@example.com",
+		time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC))
+
+	addCommit(t, repo,
+		"Fix CVE\n\nAFFECTS: KERNEL",
+		"Bob", "bob@example.com",
+		time.Date(2025, 2, 1, 10, 0, 0, 0, time.UTC))
+
+	// Search with lowercase component name should match both.
+	results, err := sources.FindAffectsCommits(repo, "kernel")
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+	assert.Equal(t, "Alice", results[0].Author)
+	assert.Equal(t, "Bob", results[1].Author)
+}
+
 func TestIsRepoDirty_CleanRepo(t *testing.T) {
 	repo := createInMemoryRepo(t)
 
@@ -193,16 +213,16 @@ func TestIsRepoDirty_CleanRepo(t *testing.T) {
 
 	dirty, err := sources.IsRepoDirty(repo)
 	require.NoError(t, err)
-	assert.False(t, dirty, "repo with no uncommitted changes should be clean")
+	assert.False(t, dirty, "repo with no staged changes should be clean")
 }
 
-func TestIsRepoDirty_ModifiedFile(t *testing.T) {
+func TestIsRepoDirty_UnstagedModification(t *testing.T) {
 	repo := createInMemoryRepo(t)
 
 	addCommit(t, repo, "initial", "Alice", "alice@example.com",
 		time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC))
 
-	// Modify a tracked file without committing.
+	// Modify a tracked file without staging.
 	worktree, err := repo.Worktree()
 	require.NoError(t, err)
 
@@ -215,7 +235,7 @@ func TestIsRepoDirty_ModifiedFile(t *testing.T) {
 
 	dirty, err := sources.IsRepoDirty(repo)
 	require.NoError(t, err)
-	assert.True(t, dirty, "repo with modified file should be dirty")
+	assert.False(t, dirty, "unstaged modifications should not count as dirty")
 }
 
 func TestIsRepoDirty_UntrackedFile(t *testing.T) {
@@ -224,7 +244,7 @@ func TestIsRepoDirty_UntrackedFile(t *testing.T) {
 	addCommit(t, repo, "initial", "Alice", "alice@example.com",
 		time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC))
 
-	// Create an untracked file.
+	// Create an untracked file (not staged).
 	worktree, err := repo.Worktree()
 	require.NoError(t, err)
 
@@ -237,7 +257,32 @@ func TestIsRepoDirty_UntrackedFile(t *testing.T) {
 
 	dirty, err := sources.IsRepoDirty(repo)
 	require.NoError(t, err)
-	assert.True(t, dirty, "repo with untracked file should be dirty")
+	assert.False(t, dirty, "untracked files should not count as dirty")
+}
+
+func TestIsRepoDirty_StagedChanges(t *testing.T) {
+	repo := createInMemoryRepo(t)
+
+	addCommit(t, repo, "initial", "Alice", "alice@example.com",
+		time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC))
+
+	// Modify a file and stage it.
+	worktree, err := repo.Worktree()
+	require.NoError(t, err)
+
+	f, err := worktree.Filesystem.Create("file-946684800000000000.txt")
+	require.NoError(t, err)
+
+	_, err = f.Write([]byte("staged content"))
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	_, err = worktree.Add("file-946684800000000000.txt")
+	require.NoError(t, err)
+
+	dirty, err := sources.IsRepoDirty(repo)
+	require.NoError(t, err)
+	assert.True(t, dirty, "repo with staged changes should be dirty")
 }
 
 func TestCommitSyntheticHistory(t *testing.T) {
@@ -251,7 +296,7 @@ func TestCommitSyntheticHistory(t *testing.T) {
 	worktree, err := repo.Worktree()
 	require.NoError(t, err)
 
-	// Create an initial file.
+	// Create an initial file (upstream).
 	file, err := memFS.Create("package.spec")
 	require.NoError(t, err)
 
@@ -271,60 +316,34 @@ func TestCommitSyntheticHistory(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Define overlay groups.
-	groups := []sources.OverlayCommitGroup{
-		{
-			Commit: sources.CommitMetadata{
-				Hash:        "abc123def456",
-				Author:      "Alice",
-				AuthorEmail: "alice@example.com",
-				Timestamp:   time.Date(2025, 1, 10, 10, 0, 0, 0, time.UTC).Unix(),
-				Message:     "Apply patch fix",
-			},
-			Overlays: []projectconfig.ComponentOverlay{
-				{Type: projectconfig.ComponentOverlayAddPatch},
-			},
-		},
-		{
-			Commit: sources.CommitMetadata{
-				Hash:        "789abc012def",
-				Author:      "Bob",
-				AuthorEmail: "bob@example.com",
-				Timestamp:   time.Date(2025, 2, 20, 14, 0, 0, 0, time.UTC).Unix(),
-				Message:     "Bump release",
-			},
-			Overlays: []projectconfig.ComponentOverlay{
-				{Type: projectconfig.ComponentOverlaySetSpecTag},
-			},
-		},
-	}
-
-	// applyFn simulates overlay application by modifying the spec file.
-	callCount := 0
-	applyFn := func(overlays []projectconfig.ComponentOverlay) error {
-		callCount++
-
-		specFile, createErr := memFS.Create("package.spec")
-		if createErr != nil {
-			return createErr
-		}
-
-		// Write different content each call so the worktree has changes to commit.
-		content := fmt.Sprintf("Name: package\nVersion: 1.0\n# overlay applied (call %d)\n", callCount)
-		_, createErr = specFile.Write([]byte(content))
-
-		closeErr := specFile.Close()
-
-		if createErr != nil {
-			return createErr
-		}
-
-		return closeErr
-	}
-
-	err = sources.CommitSyntheticHistory(repo, groups, applyFn)
+	// Simulate overlay application by modifying the working tree before committing.
+	specFile, err := memFS.Create("package.spec")
 	require.NoError(t, err)
-	assert.Equal(t, 2, callCount, "applyFn should be called once per group")
+
+	_, err = specFile.Write([]byte("Name: package\nVersion: 1.0\n# overlays applied\n"))
+	require.NoError(t, err)
+	require.NoError(t, specFile.Close())
+
+	// Define synthetic commits.
+	commits := []sources.CommitMetadata{
+		{
+			Hash:        "abc123def456",
+			Author:      "Alice",
+			AuthorEmail: "alice@example.com",
+			Timestamp:   time.Date(2025, 1, 10, 10, 0, 0, 0, time.UTC).Unix(),
+			Message:     "Apply patch fix",
+		},
+		{
+			Hash:        "789abc012def",
+			Author:      "Bob",
+			AuthorEmail: "bob@example.com",
+			Timestamp:   time.Date(2025, 2, 20, 14, 0, 0, 0, time.UTC).Unix(),
+			Message:     "Bump release",
+		},
+	}
+
+	err = sources.CommitSyntheticHistory(repo, commits)
+	require.NoError(t, err)
 
 	// Verify the commit log has 3 commits: upstream + 2 synthetic.
 	head, err := repo.Head()
@@ -333,36 +352,108 @@ func TestCommitSyntheticHistory(t *testing.T) {
 	commitIter, err := repo.Log(&gogit.LogOptions{From: head.Hash()})
 	require.NoError(t, err)
 
-	var commits []*object.Commit
+	var logCommits []*object.Commit
 
 	err = commitIter.ForEach(func(c *object.Commit) error {
-		commits = append(commits, c)
+		logCommits = append(logCommits, c)
 
 		return nil
 	})
 	require.NoError(t, err)
 
-	assert.Len(t, commits, 3, "should have upstream + 2 synthetic commits")
+	require.Len(t, logCommits, 3, "should have upstream + 2 synthetic commits")
 
-	// Most recent commit (Bob's).
-	assert.Contains(t, commits[0].Message, "Bump release")
-	assert.Equal(t, "Bob", commits[0].Author.Name)
-	assert.Equal(t, "bob@example.com", commits[0].Author.Email)
+	// Most recent commit (Bob's) — empty commit.
+	assert.Contains(t, logCommits[0].Message, "Bump release")
+	assert.Equal(t, "Bob", logCommits[0].Author.Name)
+	assert.Equal(t, "bob@example.com", logCommits[0].Author.Email)
 
-	// Second commit (Alice's).
-	assert.Contains(t, commits[1].Message, "Apply patch fix")
-	assert.Equal(t, "Alice", commits[1].Author.Name)
+	// Second commit (Alice's) — has the actual file changes.
+	assert.Contains(t, logCommits[1].Message, "Apply patch fix")
+	assert.Equal(t, "Alice", logCommits[1].Author.Name)
 
 	// Original upstream commit.
-	assert.Equal(t, "upstream: initial", commits[2].Message)
+	assert.Equal(t, "upstream: initial", logCommits[2].Message)
 }
 
-func TestCommitSyntheticHistory_EmptyGroups(t *testing.T) {
+func TestCommitSyntheticHistory_SingleCommit(t *testing.T) {
+	memFS := memfs.New()
+	storer := memory.NewStorage()
+
+	repo, err := gogit.Init(storer, memFS)
+	require.NoError(t, err)
+
+	worktree, err := repo.Worktree()
+	require.NoError(t, err)
+
+	file, err := memFS.Create("package.spec")
+	require.NoError(t, err)
+
+	_, err = file.Write([]byte("Name: package\n"))
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+
+	_, err = worktree.Add("package.spec")
+	require.NoError(t, err)
+
+	_, err = worktree.Commit("upstream: initial", &gogit.CommitOptions{
+		Author: &object.Signature{
+			Name:  "Upstream",
+			Email: "upstream@fedora.org",
+			When:  time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC),
+		},
+	})
+	require.NoError(t, err)
+
+	// Modify working tree (simulates overlay application).
+	specFile, err := memFS.Create("package.spec")
+	require.NoError(t, err)
+
+	_, err = specFile.Write([]byte("Name: package\n# modified\n"))
+	require.NoError(t, err)
+	require.NoError(t, specFile.Close())
+
+	commits := []sources.CommitMetadata{
+		{
+			Hash:        "abc123",
+			Author:      "Alice",
+			AuthorEmail: "alice@example.com",
+			Timestamp:   time.Date(2025, 1, 10, 10, 0, 0, 0, time.UTC).Unix(),
+			Message:     "Fix build",
+		},
+	}
+
+	err = sources.CommitSyntheticHistory(repo, commits)
+	require.NoError(t, err)
+
+	// Verify working tree changes are in the single synthetic commit.
+	head, err := repo.Head()
+	require.NoError(t, err)
+
+	headCommit, err := repo.CommitObject(head.Hash())
+	require.NoError(t, err)
+
+	assert.Contains(t, headCommit.Message, "Fix build")
+	assert.Equal(t, "Alice", headCommit.Author.Name)
+
+	// Verify file content was committed.
+	tree, err := headCommit.Tree()
+	require.NoError(t, err)
+
+	entry, err := tree.File("package.spec")
+	require.NoError(t, err)
+
+	content, err := entry.Contents()
+	require.NoError(t, err)
+	assert.Contains(t, content, "# modified")
+}
+
+func TestCommitSyntheticHistory_EmptyCommits(t *testing.T) {
 	repo := createInMemoryRepo(t)
 
 	addCommit(t, repo, "initial", "Test", "test@example.com",
 		time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 
-	err := sources.CommitSyntheticHistory(repo, nil, nil)
+	err := sources.CommitSyntheticHistory(repo, nil)
 	assert.ErrorIs(t, err, sources.ErrNoOverlaysToCommit)
 }
