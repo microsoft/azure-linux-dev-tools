@@ -409,6 +409,22 @@ func TestMapOverlaysToCommits_MismatchedCounts(t *testing.T) {
 	assert.ErrorIs(t, err, sources.ErrLineRangeOverlayMismatch)
 }
 
+func TestMapOverlaysToCommits_NilBlame(t *testing.T) {
+	repo, _ := createTestRepo(t, "config.toml", "content", "init")
+
+	overlays := []projectconfig.ComponentOverlay{
+		{Type: projectconfig.ComponentOverlayAddPatch},
+	}
+
+	lineRanges := []sources.OverlayLineRange{
+		{StartLine: 1, EndLine: 1, Index: 0},
+	}
+
+	_, err := sources.MapOverlaysToCommits(repo, overlays, lineRanges, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "blame result cannot be nil")
+}
+
 func TestCommitSyntheticHistory(t *testing.T) {
 	// Create an in-memory repo with an initial commit (simulating upstream).
 	memFS := memfs.New()

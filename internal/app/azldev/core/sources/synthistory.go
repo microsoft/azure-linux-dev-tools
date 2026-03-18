@@ -4,7 +4,6 @@
 package sources
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -19,7 +18,7 @@ import (
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
+	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 )
@@ -171,6 +170,10 @@ func findArrayOfTablesOverlays(lines []string, componentName string) []OverlayLi
 			}
 		}
 
+		for endLineExclusive > lineIdx+1 && strings.TrimSpace(lines[endLineExclusive-1]) == "" {
+			endLineExclusive--
+		}
+
 		ranges = append(ranges, OverlayLineRange{
 			StartLine: startLine,
 			EndLine:   endLineExclusive,
@@ -290,6 +293,10 @@ func MapOverlaysToCommits(
 		return nil, nil
 	}
 
+	if blame == nil {
+		return nil, errors.New("blame result cannot be nil")
+	}
+
 	if len(lineRanges) != len(overlays) {
 		return nil, fmt.Errorf(
 			"%w: found %d line ranges but component has %d overlays",
@@ -297,21 +304,40 @@ func MapOverlaysToCommits(
 		)
 	}
 
-	// Map each overlay to its blame commit hash using the header line of its TOML block.
+	// Map each overlay to a blame commit hash derived from the full TOML block range
+	// (StartLine..EndLine)
 	commitOverlays := make(map[string][]projectconfig.ComponentOverlay)
 
 	for _, lineRange := range lineRanges {
-		if lineRange.StartLine < 1 || lineRange.StartLine > len(blame.Entries) {
+		if lineRange.StartLine < 1 ||
+			lineRange.EndLine < 1 ||
+			lineRange.StartLine > lineRange.EndLine ||
+			lineRange.StartLine > len(blame.Entries) {
 			return nil, fmt.Errorf(
-				"overlay at index %d has start line %d, but blame has only %d lines",
-				lineRange.Index, lineRange.StartLine, len(blame.Entries),
+				"overlay at index %d has line range [%d, %d], but blame has only %d lines",
+				lineRange.Index, lineRange.StartLine, lineRange.EndLine, len(blame.Entries),
 			)
 		}
 
-		entry := blame.Entries[lineRange.StartLine-1]
-		hash := entry.CommitHash
+		// Clamp EndLine to the blame length. TOML blocks at EOF may extend past the
+		// last blamed line when the file has a trailing newline that git blame omits.
+		endLine := min(lineRange.EndLine, len(blame.Entries))
 
-		commitOverlays[hash] = append(commitOverlays[hash], overlays[lineRange.Index])
+		// Attribute the overlay to the most recent commit that touched any line in
+		// the block.
+		var selectedHash string
+
+		var latestTimestamp int64
+
+		for i := lineRange.StartLine; i <= endLine; i++ {
+			entry := blame.Entries[i-1]
+			if entry.Timestamp > latestTimestamp {
+				latestTimestamp = entry.Timestamp
+				selectedHash = entry.CommitHash
+			}
+		}
+
+		commitOverlays[selectedHash] = append(commitOverlays[selectedHash], overlays[lineRange.Index])
 	}
 
 	// Build groups with full commit metadata from the project repository.
@@ -349,6 +375,10 @@ func CommitSyntheticHistory(
 ) error {
 	if len(groups) == 0 {
 		return ErrNoOverlaysToCommit
+	}
+
+	if applyFn == nil {
+		return errors.New("applyFn callback is required")
 	}
 
 	worktree, err := repo.Worktree()
@@ -397,48 +427,11 @@ func CommitSyntheticHistory(
 	return nil
 }
 
-// generateSyntheticHistory creates synthetic git history for a component by:
-//  1. Blaming the component's source TOML config file to discover overlay origins
-//  2. Mapping overlays to their originating project-repo commits
-//  3. Applying overlays grouped by commit and recording synthetic commits in the upstream repo
-//
-// This preserves the upstream git history and appends overlay changes as attributed commits.
-// It is called from [sourcePreparerImpl.PrepareSources] when the generate-history flag is set.
-func (p *sourcePreparerImpl) generateSyntheticHistory(
-	_ context.Context,
-	component components.Component,
-	sourcesDirPath string,
-) error {
-	event := p.eventListener.StartEvent("Generating synthetic git history", "component", component.GetName())
-	defer event.End()
-
-	config := component.GetConfig()
-	if len(config.Overlays) == 0 {
-		slog.Debug("No overlays defined; skipping synthetic history generation",
-			"component", component.GetName())
-
-		return nil
-	}
-
-	// Resolve the project repository and blame the config file to produce overlay groups.
-	groups, err := p.buildOverlayGroups(config, component.GetName())
-	if err != nil {
-		return err
-	}
-
-	if len(groups) == 0 {
-		return nil
-	}
-
-	// Apply grouped overlays as synthetic commits in the upstream repo.
-	return p.commitOverlaysToRepo(component, sourcesDirPath, groups)
-}
-
 // buildOverlayGroups resolves the project repository from the component's config file, blames
 // the config to attribute lines to commits, and maps overlays to [OverlayCommitGroup] values
 // sorted chronologically. Returns nil groups when overlay line ranges cannot be located.
-func (p *sourcePreparerImpl) buildOverlayGroups(
-	config *projectconfig.ComponentConfig, componentName string,
+func buildOverlayGroups(
+	fs opctx.FS, config *projectconfig.ComponentConfig, componentName string,
 ) ([]OverlayCommitGroup, error) {
 	configFilePath, err := resolveConfigFilePath(config, componentName)
 	if err != nil {
@@ -455,7 +448,7 @@ func (p *sourcePreparerImpl) buildOverlayGroups(
 		return nil, fmt.Errorf("failed to blame config file %#q:\n%w", relConfigPath, err)
 	}
 
-	configContent, err := fileutils.ReadFile(p.fs, configFilePath)
+	configContent, err := fileutils.ReadFile(fs, configFilePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file %#q:\n%w", configFilePath, err)
 	}
@@ -507,41 +500,6 @@ func openProjectRepo(configFilePath string) (*gogit.Repository, string, error) {
 	}
 
 	return projectRepo, relConfigPath, nil
-}
-
-// commitOverlaysToRepo opens the upstream git repository in sourcesDirPath, applies the
-// overlay groups as synthetic commits, and returns any error encountered.
-func (p *sourcePreparerImpl) commitOverlaysToRepo(
-	component components.Component, sourcesDirPath string, groups []OverlayCommitGroup,
-) error {
-	sourcesRepo, err := gogit.PlainOpen(sourcesDirPath)
-	if err != nil {
-		return fmt.Errorf("failed to open upstream repository at %#q:\n%w", sourcesDirPath, err)
-	}
-
-	specPath, err := findSpecInDir(p.fs, component, sourcesDirPath)
-	if err != nil {
-		return fmt.Errorf("failed to find spec in sources dir %#q:\n%w", sourcesDirPath, err)
-	}
-
-	absSpecPath, err := filepath.Abs(specPath)
-	if err != nil {
-		return fmt.Errorf("failed to get absolute path for spec %#q:\n%w", specPath, err)
-	}
-
-	applyFn := func(overlays []projectconfig.ComponentOverlay) error {
-		for _, overlay := range overlays {
-			if applyErr := ApplyOverlayToSources(
-				p.dryRunnable, p.fs, overlay, sourcesDirPath, absSpecPath,
-			); applyErr != nil {
-				return fmt.Errorf("failed to apply %#q overlay:\n%w", overlay.Type, applyErr)
-			}
-		}
-
-		return nil
-	}
-
-	return CommitSyntheticHistory(sourcesRepo, groups, applyFn)
 }
 
 // resolveCommitMetadata retrieves full commit metadata from the repository, using a cache

@@ -43,7 +43,6 @@ azldev component build [flags]
   -p, --component stringArray            Component name pattern
   -g, --component-group stringArray      Component group name
   -k, --continue-on-error                Continue building when some components fail
-      --generate-history                 Generate synthetic git history from overlay blame metadata
   -h, --help                             help for build
       --local-repo stringArray           Paths to local repositories to include during build (can be specified multiple times)
       --local-repo-with-publish string   Path to local repository to include during build and publish built RPMs to

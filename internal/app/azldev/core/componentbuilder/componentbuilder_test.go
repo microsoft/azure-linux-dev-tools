@@ -51,7 +51,7 @@ func setupBuilder(t *testing.T) *componentBuilderTestParams {
 	sourceManager := sourceproviders_test.NewMockSourceManager(ctrl)
 
 	// Configure the source manager to create a spec file when FetchComponent is called.
-	sourceManager.EXPECT().FetchComponent(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().DoAndReturn(
+	sourceManager.EXPECT().FetchComponent(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().DoAndReturn(
 		func(
 			_ context.Context, component components.Component,
 			outputDir string, _ ...sourceproviders.FetchComponentOption,

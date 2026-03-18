@@ -57,7 +57,7 @@ func TestPrepareSources_Success(t *testing.T) {
 	component.EXPECT().GetName().AnyTimes().Return("test-component")
 	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{})
 	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil)
-	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir).DoAndReturn(
+	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).DoAndReturn(
 		func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
 			// Create the expected spec file.
 			return fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte("# test spec"), 0o644)
@@ -116,7 +116,7 @@ func TestPrepareSources_WritesMacrosFile(t *testing.T) {
 		},
 	})
 	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil)
-	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir).DoAndReturn(
+	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).DoAndReturn(
 		func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
 			// Create the expected spec file.
 			specPath := filepath.Join(outputDir, "my-package.spec")
@@ -366,7 +366,7 @@ func TestPrepareSources_CheckSkip(t *testing.T) {
 		},
 	})
 	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil)
-	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir).DoAndReturn(
+	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).DoAndReturn(
 		func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
 			// Create the expected spec file with a %check section.
 			specContent := `Name: test-component
@@ -423,7 +423,7 @@ func TestPrepareSources_CheckSkipDisabled(t *testing.T) {
 		},
 	})
 	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil)
-	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir).DoAndReturn(
+	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).DoAndReturn(
 		func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
 			// Create the expected spec file with a %check section.
 			specContent := `Name: test-component
