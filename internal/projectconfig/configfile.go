@@ -49,6 +49,17 @@ type ConfigFile struct {
 	dir        string `toml:"-" validate:"dir"`
 }
 
+// SourcePath returns the absolute path to the config file on disk.
+func (f ConfigFile) SourcePath() string {
+	return f.sourcePath
+}
+
+// Dir returns the directory containing the config file; relative paths within the config
+// are resolved against this directory.
+func (f ConfigFile) Dir() string {
+	return f.dir
+}
+
 // Validates the format and internal consistency of the config file. Semantic errors are reported.
 func (f ConfigFile) Validate() error {
 	err := validator.New().Struct(f)

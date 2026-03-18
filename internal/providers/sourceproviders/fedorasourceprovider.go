@@ -85,8 +85,10 @@ func NewFedoraSourcesProviderImpl(
 }
 
 func (g *FedoraSourcesProviderImpl) GetComponent(
-	ctx context.Context, component components.Component, destDirPath string,
+	ctx context.Context, component components.Component, destDirPath string, opts ...FetchComponentOption,
 ) (err error) {
+	resolved := resolveFetchComponentOptions(opts)
+
 	componentName := component.GetName()
 	if componentName == "" {
 		return errors.New("component name cannot be empty")
@@ -144,7 +146,11 @@ func (g *FedoraSourcesProviderImpl) GetComponent(
 
 	// Process the cloned repo: checkout target commit, extract sources, copy to destination.
 	return g.processClonedRepo(ctx, component.GetConfig().Spec.UpstreamCommit,
+<<<<<<< HEAD
+		tempDir, upstreamNameToUse, componentName, destDirPath, skipFileNames, resolved)
+=======
 		tempDir, upstreamNameToUse, componentName, destDirPath, skipFileNames)
+>>>>>>> d9f58c4 (fix(source preparation): Source Files Download Ordering (#501))
 }
 
 // processClonedRepo handles the post-clone steps: checking out the target commit,
@@ -154,16 +160,23 @@ func (g *FedoraSourcesProviderImpl) processClonedRepo(
 	upstreamCommit string,
 	tempDir, upstreamName, componentName, destDirPath string,
 	skipFilenames []string,
+<<<<<<< HEAD
+	opts FetchComponentOptions,
+=======
+>>>>>>> d9f58c4 (fix(source preparation): Source Files Download Ordering (#501))
 ) error {
 	// Checkout the appropriate commit based on component/distro config
 	if err := g.checkoutTargetCommit(ctx, upstreamCommit, tempDir); err != nil {
 		return fmt.Errorf("failed to checkout target commit:\n%w", err)
 	}
 
-	// Delete the .git directory so it's not copied to destination.
-	if err := g.fs.RemoveAll(filepath.Join(tempDir, ".git")); err != nil {
-		return fmt.Errorf("failed to remove .git directory from cloned repository at %#q:\n%w",
-			tempDir, err)
+	// Delete the .git directory so it's not copied to destination, unless the caller
+	// requested that it be preserved (e.g., for synthetic history generation).
+	if !opts.PreserveGitDir {
+		if err := g.fs.RemoveAll(filepath.Join(tempDir, ".git")); err != nil {
+			return fmt.Errorf("failed to remove .git directory from cloned repository at %#q:\n%w",
+				tempDir, err)
+		}
 	}
 
 	// Extract sources from repo (downloads lookaside files into the temp dir).
