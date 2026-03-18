@@ -36,6 +36,7 @@ azldev component prepare-sources [flags]
   -p, --component stringArray         Component name pattern
   -g, --component-group stringArray   Component group name
       --force                         delete and recreate the output directory if it already exists
+      --generate-history              Generate synthetic git history from overlay blame metadata
   -h, --help                          help for prepare-sources
   -o, --output-dir string             output directory
       --skip-overlays                 skip applying overlays to prepared sources

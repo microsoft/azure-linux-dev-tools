@@ -21,6 +21,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/buildenv"
 	"github.com/microsoft/azure-linux-dev-tools/internal/buildenv/buildenv_testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/sourceproviders_test"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
@@ -51,7 +52,10 @@ func setupBuilder(t *testing.T) *componentBuilderTestParams {
 
 	// Configure the source manager to create a spec file when FetchComponent is called.
 	sourceManager.EXPECT().FetchComponent(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().DoAndReturn(
-		func(ctx context.Context, component components.Component, outputDir string) error {
+		func(
+			_ context.Context, component components.Component,
+			outputDir string, _ ...sourceproviders.FetchComponentOption,
+		) error {
 			// Create the expected spec file.
 			specPath := filepath.Join(outputDir, component.GetName()+".spec")
 

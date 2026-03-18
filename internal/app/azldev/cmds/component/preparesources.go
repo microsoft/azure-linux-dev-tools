@@ -18,9 +18,10 @@ import (
 type PrepareSourcesOptions struct {
 	ComponentFilter components.ComponentFilter
 
-	OutputDir    string
-	SkipOverlays bool
-	Force        bool
+	OutputDir       string
+	SkipOverlays    bool
+	Force           bool
+	GenerateHistory bool
 }
 
 func prepareOnAppInit(_ *azldev.App, sourceCmd *cobra.Command) {
@@ -66,6 +67,8 @@ Only one component may be selected at a time.`,
 
 	cmd.Flags().BoolVar(&options.SkipOverlays, "skip-overlays", false, "skip applying overlays to prepared sources")
 	cmd.Flags().BoolVar(&options.Force, "force", false, "delete and recreate the output directory if it already exists")
+	cmd.Flags().BoolVar(&options.GenerateHistory, "generate-history", false,
+		"Generate synthetic git history from overlay blame metadata")
 
 	return cmd
 }
@@ -114,7 +117,12 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 		return err
 	}
 
-	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env)
+	var prepOpts []sources.SourcePreparerOption
+	if options.GenerateHistory {
+		prepOpts = append(prepOpts, sources.WithGenerateHistory())
+	}
+
+	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, prepOpts...)
 	if err != nil {
 		return fmt.Errorf("failed to create source preparer:\n%w", err)
 	}

@@ -51,18 +51,32 @@ type SourcePreparer interface {
 
 // Standard implementation of the [SourcePreparer] interface.
 type sourcePreparerImpl struct {
-	sourceManager sourceproviders.SourceManager
-	fs            opctx.FS
-	eventListener opctx.EventListener
-	dryRunnable   opctx.DryRunnable
+	sourceManager   sourceproviders.SourceManager
+	fs              opctx.FS
+	eventListener   opctx.EventListener
+	dryRunnable     opctx.DryRunnable
+	generateHistory bool
 }
 
-// NewPreparer creates a new [SourcePreparer] instance. All arguments are required.
+// SourcePreparerOption is a functional option for configuring a [SourcePreparer].
+type SourcePreparerOption func(*sourcePreparerImpl)
+
+// WithGenerateHistory returns a [SourcePreparerOption] that enables synthetic git history
+// generation from overlay blame metadata during source preparation.
+func WithGenerateHistory() SourcePreparerOption {
+	return func(p *sourcePreparerImpl) {
+		p.generateHistory = true
+	}
+}
+
+// NewPreparer creates a new [SourcePreparer] instance. All positional arguments are required.
+// Optional [SourcePreparerOption] values may be passed to configure additional behavior.
 func NewPreparer(
 	sourceManager sourceproviders.SourceManager,
 	fs opctx.FS,
 	eventListener opctx.EventListener,
 	dryRunnable opctx.DryRunnable,
+	opts ...SourcePreparerOption,
 ) (SourcePreparer, error) {
 	if sourceManager == nil {
 		return nil, errors.New("source manager cannot be nil")
@@ -80,12 +94,18 @@ func NewPreparer(
 		return nil, errors.New("dry runnable interface cannot be nil")
 	}
 
-	return &sourcePreparerImpl{
+	impl := &sourcePreparerImpl{
 		sourceManager: sourceManager,
 		fs:            fs,
 		eventListener: eventListener,
 		dryRunnable:   dryRunnable,
-	}, nil
+	}
+
+	for _, opt := range opts {
+		opt(impl)
+	}
+
+	return impl, nil
 }
 
 // PrepareSources implements the [SourcePreparer] interface.
@@ -99,34 +119,131 @@ func (p *sourcePreparerImpl) PrepareSources(
 			component.GetName(), err)
 	}
 
+	// Determine whether we should preserve the upstream .git directory. This is required
+	// when generating synthetic history so that overlay commits can be appended on top of
+	// the upstream commit log.
+	var fetchOpts []sourceproviders.FetchComponentOption
+	if p.generateHistory && applyOverlays {
+		fetchOpts = append(fetchOpts, sourceproviders.WithPreserveGitDir())
+	}
+
 	// Use the source manager to fetch the component (spec file and sidecar files).
-	err = p.sourceManager.FetchComponent(ctx, component, outputDir)
+	err = p.sourceManager.FetchComponent(ctx, component, outputDir, fetchOpts...)
 	if err != nil {
 		return fmt.Errorf("failed to fetch sources for component %#q:\n%w",
 			component.GetName(), err)
 	}
 
-	if applyOverlays {
-		// Emit computed macros to a macros file in the output directory.
-		// If the build configuration produces no macros, no file is written and
-		// macrosFileName will be empty, signaling postProcessSources to skip
-		// injecting the macro load directive and Source9999 tag.
-		var macrosFileName string
+	if !applyOverlays {
+		return nil
+	}
 
-		macrosFilePath, err := p.writeMacrosFile(component, outputDir)
-		if err != nil {
-			return fmt.Errorf("failed to write macros file for component %#q:\n%w",
-				component.GetName(), err)
-		}
+	return p.applyOverlaysToSources(ctx, component, outputDir)
+}
 
-		if macrosFilePath != "" {
-			macrosFileName = filepath.Base(macrosFilePath)
-		}
+// applyOverlaysToSources writes the macros file and then applies overlays using either the
+// synthetic history path or the standard postProcessSources path.
+func (p *sourcePreparerImpl) applyOverlaysToSources(
+	ctx context.Context, component components.Component, outputDir string,
+) error {
+	// Emit computed macros to a macros file in the output directory.
+	// If the build configuration produces no macros, no file is written and
+	// macrosFileName will be empty, signaling postProcessSources to skip
+	// injecting the macro load directive and Source9999 tag.
+	var macrosFileName string
 
-		// Apply any postprocessing to the sources in-place, in the output directory.
+	macrosFilePath, err := p.writeMacrosFile(component, outputDir)
+	if err != nil {
+		return fmt.Errorf("failed to write macros file for component %#q:\n%w",
+			component.GetName(), err)
+	}
+
+	if macrosFilePath != "" {
+		macrosFileName = filepath.Base(macrosFilePath)
+	}
+
+	// When synthetic history is enabled, apply user-defined overlays as attributed
+	// commits in the upstream git repo, then apply system overlays separately.
+	// Otherwise, fall through to the standard postProcessSources path.
+	if p.generateHistory {
+		err = p.prepareSourcesWithSyntheticHistory(ctx, component, outputDir, macrosFileName)
+	} else {
 		err = p.postProcessSources(component, outputDir, macrosFileName)
-		if err != nil {
-			return fmt.Errorf("failed to post-process sources for component %q:\n%w", component.GetName(), err)
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to post-process sources for component %q:\n%w", component.GetName(), err)
+	}
+
+	return nil
+}
+
+// prepareSourcesWithSyntheticHistory applies overlays via synthetic git history and then
+// applies system overlays (macros, check-skip, header) as a final commit.
+func (p *sourcePreparerImpl) prepareSourcesWithSyntheticHistory(
+	ctx context.Context, component components.Component, sourcesDirPath, macrosFileName string,
+) error {
+	// Generate synthetic commits from user-defined overlays.
+	if err := p.generateSyntheticHistory(ctx, component, sourcesDirPath); err != nil {
+		return fmt.Errorf("failed to generate synthetic history:\n%w", err)
+	}
+
+	// Apply system overlays (macros, check-skip, header) outside of synthetic history so
+	// they do not pollute the blamed commit attribution.
+	return p.applySystemOverlays(component, sourcesDirPath, macrosFileName)
+}
+
+// applySystemOverlays applies the macros-load, check-skip, and file-header overlays that
+// are synthesized at build time rather than defined in the project TOML config.
+func (p *sourcePreparerImpl) applySystemOverlays(
+	component components.Component, sourcesDirPath, macrosFileName string,
+) error {
+	specPath, err := findSpecInDir(p.fs, component, sourcesDirPath)
+	if err != nil {
+		return fmt.Errorf("failed to find spec in sources dir %#q:\n%w", sourcesDirPath, err)
+	}
+
+	absSpecPath, err := filepath.Abs(specPath)
+	if err != nil {
+		return fmt.Errorf("failed to get absolute path for spec %#q:\n%w", specPath, err)
+	}
+
+	// Macro-load overlays.
+	if macrosFileName != "" {
+		macroOverlays, macroErr := synthesizeMacroLoadOverlays(macrosFileName)
+		if macroErr != nil {
+			return fmt.Errorf("failed to compute macros load overlays:\n%w", macroErr)
+		}
+
+		for _, overlay := range macroOverlays {
+			if applyErr := ApplyOverlayToSources(
+				p.dryRunnable, p.fs, overlay, sourcesDirPath, absSpecPath,
+			); applyErr != nil {
+				return fmt.Errorf("failed to apply system overlay to sources for component %#q:\n%w",
+					component.GetName(), applyErr)
+			}
+		}
+	}
+
+	// Check-skip overlays.
+	checkSkipOverlays := synthesizeCheckSkipOverlays(component.GetConfig().Build.Check)
+	for _, overlay := range checkSkipOverlays {
+		if applyErr := ApplyOverlayToSources(
+			p.dryRunnable, p.fs, overlay, sourcesDirPath, absSpecPath,
+		); applyErr != nil {
+			return fmt.Errorf("failed to apply check skip overlay to sources for component %#q:\n%w",
+				component.GetName(), applyErr)
+		}
+	}
+
+	// File header overlays.
+	headerOverlays := generateFileHeaderOverlay()
+	for _, overlay := range headerOverlays {
+		if applyErr := ApplyOverlayToSources(
+			p.dryRunnable, p.fs, overlay, sourcesDirPath, absSpecPath,
+		); applyErr != nil {
+			return fmt.Errorf("failed to apply file header overlay to sources for component %#q:\n%w",
+				component.GetName(), applyErr)
 		}
 	}
 

@@ -27,6 +27,7 @@ type ComponentBuildOptions struct {
 	ContinueOnError   bool
 	NoCheck           bool
 	SourcePackageOnly bool
+	GenerateHistory   bool
 	BuildEnvPolicy    BuildEnvPreservePolicy
 
 	LocalRepoPaths           []string
@@ -107,6 +108,8 @@ builds can consume.`,
 		"Path to local repository to include during build and publish built RPMs to")
 	cmd.Flags().StringToStringVar(&options.MockConfigOpts, "mock-config-opt", nil,
 		"Pass a configuration option through to mock (key=value, can be specified multiple times)")
+	cmd.Flags().BoolVar(&options.GenerateHistory, "generate-history", false,
+		"Generate synthetic git history from overlay blame metadata")
 
 	// Mark flags as mutually exclusive.
 	cmd.MarkFlagsMutuallyExclusive("srpm-only", "local-repo-with-publish")
@@ -212,7 +215,12 @@ func BuildComponent(
 		return nil
 	}, &err)
 
-	sourcePreparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env)
+	var prepOpts []sources.SourcePreparerOption
+	if options.GenerateHistory {
+		prepOpts = append(prepOpts, sources.WithGenerateHistory())
+	}
+
+	sourcePreparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, prepOpts...)
 	if err != nil {
 		return ComponentBuildResults{},
 			fmt.Errorf("failed to create source preparer for component %q:\n%w", component.GetName(), err)
