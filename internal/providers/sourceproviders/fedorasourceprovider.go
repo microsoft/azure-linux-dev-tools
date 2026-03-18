@@ -146,7 +146,11 @@ func (g *FedoraSourcesProviderImpl) GetComponent(
 
 	// Process the cloned repo: checkout target commit, extract sources, copy to destination.
 	return g.processClonedRepo(ctx, component.GetConfig().Spec.UpstreamCommit,
+<<<<<<< HEAD
 		tempDir, upstreamNameToUse, componentName, destDirPath, skipFileNames, resolved)
+=======
+		tempDir, upstreamNameToUse, componentName, destDirPath, skipFileNames)
+>>>>>>> d9f58c4 (fix(source preparation): Source Files Download Ordering (#501))
 }
 
 // processClonedRepo handles the post-clone steps: checking out the target commit,
@@ -156,7 +160,10 @@ func (g *FedoraSourcesProviderImpl) processClonedRepo(
 	upstreamCommit string,
 	tempDir, upstreamName, componentName, destDirPath string,
 	skipFilenames []string,
+<<<<<<< HEAD
 	opts FetchComponentOptions,
+=======
+>>>>>>> d9f58c4 (fix(source preparation): Source Files Download Ordering (#501))
 ) error {
 	// Checkout the appropriate commit based on component/distro config
 	if err := g.checkoutTargetCommit(ctx, upstreamCommit, tempDir); err != nil {
