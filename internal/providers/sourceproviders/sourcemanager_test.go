@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"testing"
 
-<<<<<<< HEAD
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components/components_testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/specs/specs_testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
@@ -17,15 +16,6 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
-=======
-	"github.com/gim-home/azldev-preview/internal/app/azldev/core/components/components_testutils"
-	"github.com/gim-home/azldev-preview/internal/app/azldev/core/specs/specs_testutils"
-	"github.com/gim-home/azldev-preview/internal/app/azldev/core/testutils"
-	"github.com/gim-home/azldev-preview/internal/projectconfig"
-	"github.com/gim-home/azldev-preview/internal/providers/sourceproviders"
-	"github.com/gim-home/azldev-preview/internal/utils/fileperms"
-	"github.com/gim-home/azldev-preview/internal/utils/fileutils"
->>>>>>> d9f58c4 (fix(source preparation): Source Files Download Ordering (#501))
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
