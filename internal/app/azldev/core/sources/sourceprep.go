@@ -217,7 +217,7 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 	}
 
 	// Resolve the project repository and blame the config file to produce overlay groups.
-	groups, err := buildOverlayGroups(p.fs, config, component.GetName())
+	groups, err := buildOverlayGroups(config, component.GetName())
 	if err != nil {
 		return fmt.Errorf("failed to build overlay groups:\n%w", err)
 	}
