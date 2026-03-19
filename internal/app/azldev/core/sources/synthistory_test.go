@@ -219,15 +219,15 @@ func TestIsRepoDirty_CleanRepo(t *testing.T) {
 func TestIsRepoDirty_UnstagedModification(t *testing.T) {
 	repo := createInMemoryRepo(t)
 
-	addCommit(t, repo, "initial", "Alice", "alice@example.com",
-		time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC))
+	when := time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC)
+	addCommit(t, repo, "initial", "Alice", "alice@example.com", when)
 
 	// Modify a tracked file without staging.
 	worktree, err := repo.Worktree()
 	require.NoError(t, err)
 
-	f, err := worktree.Filesystem.Create("file-946684800000000000.txt")
-	require.NoError(t, err)
+	fileName := fmt.Sprintf("file-%d.txt", when.UnixNano())
+	f, err := worktree.Filesystem.Create(fileName)
 
 	_, err = f.Write([]byte("modified content"))
 	require.NoError(t, err)
