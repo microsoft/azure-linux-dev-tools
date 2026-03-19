@@ -210,11 +210,13 @@ func (p *sourcePreparerImpl) collectOverlays(
 	if macrosFileName != "" {
 		macroOverlays, err := synthesizeMacroLoadOverlays(macrosFileName)
 		if err != nil {
-			slog.Warn("Failed to compute macros load overlays; skipping",
+			slog.Error("Failed to compute macros load overlays",
 				"component", component.GetName(), "error", err)
-		} else {
-			allOverlays = append(allOverlays, macroOverlays...)
+
+			panic(fmt.Sprintf("failed to compute macros load overlays for component %q: %v", component.GetName(), err))
 		}
+
+		allOverlays = append(allOverlays, macroOverlays...)
 	}
 
 	allOverlays = append(allOverlays, synthesizeCheckSkipOverlays(config.Build.Check)...)
@@ -238,11 +240,15 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 	gitDirPath := filepath.Join(sourcesDirPath, ".git")
 
 	hasGitDir, err := fileutils.Exists(p.fs, gitDirPath)
-	if err != nil || !hasGitDir {
+	if err != nil {
+		return fmt.Errorf("failed to check for .git directory at %#q:\n%w", gitDirPath, err)
+	}
+
+	if !hasGitDir {
 		slog.Debug("No .git directory in sources; skipping synthetic history",
 			"component", component.GetName())
 
-		return nil //nolint:nilerr // Missing .git is expected for local/unspecified specs.
+		return nil
 	}
 
 	config := component.GetConfig()

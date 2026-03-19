@@ -59,7 +59,12 @@ func WithPreserveGitDir() FetchComponentOption {
 // resolveFetchComponentOptions applies all functional options and returns the resolved options.
 func resolveFetchComponentOptions(opts []FetchComponentOption) FetchComponentOptions {
 	var resolved FetchComponentOptions
+
 	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+
 		opt(&resolved)
 	}
 

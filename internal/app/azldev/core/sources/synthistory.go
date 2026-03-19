@@ -78,12 +78,34 @@ func FindAffectsCommits(repo *gogit.Repository, componentName string) ([]CommitM
 		return nil, fmt.Errorf("failed to iterate commit log:\n%w", err)
 	}
 
-	marker := strings.ToLower(AffectsPrefix + componentName)
-
 	var matches []CommitMetadata
 
 	err = commitIter.ForEach(func(commit *object.Commit) error {
-		if strings.Contains(strings.ToLower(commit.Message), marker) {
+		found := false
+
+		for _, line := range strings.Split(commit.Message, "\n") {
+			trimmed := strings.TrimSpace(line)
+			lowerTrimmed := strings.ToLower(trimmed)
+
+			lowerPrefix := strings.ToLower(AffectsPrefix)
+			if !strings.HasPrefix(lowerTrimmed, lowerPrefix) {
+				continue
+			}
+			// Extract the component name after the "Affects: " prefix, preserving original
+			// casing but trimming surrounding whitespace, and compare case-insensitively.
+			if len(trimmed) < len(AffectsPrefix) {
+				continue
+			}
+
+			component := strings.TrimSpace(trimmed[len(AffectsPrefix):])
+			if strings.HasPrefix(strings.ToLower(component), strings.ToLower(componentName)) {
+				found = true
+
+				break
+			}
+		}
+
+		if found {
 			matches = append(matches, CommitMetadata{
 				Hash:        commit.Hash.String(),
 				Author:      commit.Author.Name,
