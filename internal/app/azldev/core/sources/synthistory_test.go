@@ -228,6 +228,7 @@ func TestIsRepoDirty_UnstagedModification(t *testing.T) {
 
 	fileName := fmt.Sprintf("file-%d.txt", when.UnixNano())
 	f, err := worktree.Filesystem.Create(fileName)
+	require.NoError(t, err)
 
 	_, err = f.Write([]byte("modified content"))
 	require.NoError(t, err)
