@@ -167,11 +167,24 @@ func buildSyntheticCommits(
 ) ([]CommitMetadata, error) {
 	configFilePath, err := resolveConfigFilePath(config, componentName)
 	if err != nil {
-		return nil, err
+		// No config file reference means this component can't have Affects commits.
+		slog.Debug("Cannot resolve config file for synthetic commits; skipping",
+			"component", componentName, "error", err)
+
+		return nil, nil
 	}
 
 	projectRepo, _, err := openProjectRepo(configFilePath)
 	if err != nil {
+		// Project config may not live inside a git repo (e.g. scenario tests,
+		// CI environments). This is expected — skip synthetic history gracefully.
+		if errors.Is(err, ErrNoGitRepository) {
+			slog.Debug("Project config is not inside a git repository; skipping synthetic commits",
+				"component", componentName)
+
+			return nil, nil
+		}
+
 		return nil, err
 	}
 

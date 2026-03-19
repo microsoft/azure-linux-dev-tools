@@ -125,15 +125,14 @@ func (p *sourcePreparerImpl) PrepareSources(
 	return p.applyOverlaysToSources(ctx, component, outputDir)
 }
 
-// applyOverlaysToSources writes the macros file and then applies overlays using either the
-// synthetic history path or the standard postProcessSources path.
+// applyOverlaysToSources writes the macros file and then applies all overlays and
+// records synthetic git history.
 func (p *sourcePreparerImpl) applyOverlaysToSources(
 	ctx context.Context, component components.Component, outputDir string,
 ) error {
 	// Emit computed macros to a macros file in the output directory.
 	// If the build configuration produces no macros, no file is written and
-	// macrosFileName will be empty, signaling postProcessSources to skip
-	// injecting the macro load directive and Source9999 tag.
+	// macrosFileName will be empty.
 	var macrosFileName string
 
 	macrosFilePath, err := p.writeMacrosFile(component, outputDir)
@@ -146,12 +145,10 @@ func (p *sourcePreparerImpl) applyOverlaysToSources(
 		macrosFileName = filepath.Base(macrosFilePath)
 	}
 
-	// Apply user-defined overlays as attributed synthetic git commits, then apply
-	// system overlays separately. If synthetic history cannot be generated (e.g. no
-	// git repo available), applyOverlaysWithHistory falls back to the standard path.
+	// Apply all overlays and record synthetic git history.
 	err = p.applyOverlaysWithHistory(ctx, component, outputDir, macrosFileName)
 	if err != nil {
-		return fmt.Errorf("failed to post-process sources for component %q:\n%w", component.GetName(), err)
+		return fmt.Errorf("failed to apply overlays for component %#q:\n%w", component.GetName(), err)
 	}
 
 	return nil
@@ -257,7 +254,10 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 	}
 
 	if len(commits) == 0 {
-		return errors.New("no synthetic commits resolved")
+		slog.Debug("No synthetic commits to create; skipping history generation",
+			"component", component.GetName())
+
+		return nil
 	}
 
 	// Open the upstream git repository where synthetic commits will be recorded.
@@ -271,29 +271,6 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 	}
 
 	return nil
-}
-
-// applySystemOverlays applies the macros-load, check-skip, and file-header overlays that
-// are synthesized at build time rather than defined in the project TOML config.
-func (p *sourcePreparerImpl) applySystemOverlays(
-	component components.Component, sourcesDirPath, absSpecPath, macrosFileName string,
-) error {
-	// Collect all system overlays in application order: macros, check-skip, file header.
-	var systemOverlays []projectconfig.ComponentOverlay
-
-	if macrosFileName != "" {
-		macroOverlays, macroErr := synthesizeMacroLoadOverlays(macrosFileName)
-		if macroErr != nil {
-			return fmt.Errorf("failed to compute macros load overlays:\n%w", macroErr)
-		}
-
-		systemOverlays = append(systemOverlays, macroOverlays...)
-	}
-
-	systemOverlays = append(systemOverlays, synthesizeCheckSkipOverlays(component.GetConfig().Build.Check)...)
-	systemOverlays = append(systemOverlays, generateFileHeaderOverlay()...)
-
-	return p.applyOverlayList(systemOverlays, sourcesDirPath, absSpecPath)
 }
 
 // DiffSources implements the [SourcePreparer] interface.
@@ -335,19 +312,8 @@ func (p *sourcePreparerImpl) DiffSources(
 	}
 
 	// Apply overlays in-place to the copied directory only.
-	var macrosFileName string
-
-	macrosFilePath, err := p.writeMacrosFile(component, overlaidDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to write macros file for component %#q:\n%w", component.GetName(), err)
-	}
-
-	if macrosFilePath != "" {
-		macrosFileName = filepath.Base(macrosFilePath)
-	}
-
-	if err := p.postProcessSources(component, overlaidDir, macrosFileName); err != nil {
-		return nil, fmt.Errorf("failed to post-process sources for component %#q:\n%w", component.GetName(), err)
+	if err := p.applyOverlaysToSources(ctx, component, overlaidDir); err != nil {
+		return nil, fmt.Errorf("failed to apply overlays for component %#q:\n%w", component.GetName(), err)
 	}
 
 	// Diff the original tree against the overlaid tree.
