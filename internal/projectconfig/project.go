@@ -26,6 +26,14 @@ type ProjectConfig struct {
 	// Configuration for tools used by azldev.
 	Tools ToolsConfig `toml:"tools,omitempty" json:"tools,omitempty" jsonschema:"title=Tools configuration,description=Configuration for tools used by azldev"`
 
+	// DefaultPackageConfig is the project-wide default applied to every binary package before any
+	// package-group or component-level config is considered. It is the lowest-priority layer in the
+	// package config resolution order.
+	DefaultPackageConfig PackageConfig `toml:"default-package-config,omitempty" json:"defaultPackageConfig,omitempty" jsonschema:"title=Default package config,description=Project-wide default applied to all binary packages before group and component overrides"`
+
+	// Definitions of package groups for publish-time routing of binary packages.
+	PackageGroups map[string]PackageGroupConfig `toml:"package-groups,omitempty" json:"packageGroups,omitempty" jsonschema:"title=Package groups,description=Mapping of package group names to configurations for publish-time routing"`
+
 	// Root config file path; not serialized.
 	RootConfigFilePath string `toml:"-" json:"-"`
 	// Map from component names to groups they belong to; not serialized.
@@ -41,6 +49,7 @@ func NewProjectConfig() ProjectConfig {
 		Images:            make(map[string]ImageConfig),
 		Distros:           make(map[string]DistroDefinition),
 		GroupsByComponent: make(map[string][]string),
+		PackageGroups:     make(map[string]PackageGroupConfig),
 	}
 }
 
