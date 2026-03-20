@@ -25,6 +25,8 @@ var (
 	ErrDuplicateComponentGroups = errors.New("duplicate component group")
 	// ErrDuplicateImages is returned when duplicate conflicting image definitions are found.
 	ErrDuplicateImages = errors.New("duplicate image")
+	// ErrDuplicatePackageGroups is returned when duplicate conflicting package group definitions are found.
+	ErrDuplicatePackageGroups = errors.New("duplicate package group")
 )
 
 // Loads and resolves the project configuration files located at the given path. Referenced include files
@@ -39,6 +41,7 @@ func loadAndResolveProjectConfig(
 		Images:            make(map[string]ImageConfig),
 		Distros:           make(map[string]DistroDefinition),
 		GroupsByComponent: make(map[string][]string),
+		PackageGroups:     make(map[string]PackageGroupConfig),
 	}
 
 	for _, configFilePath := range configFilePaths {
@@ -113,6 +116,14 @@ func mergeConfigFile(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
 	}
 
 	if err := mergeTools(resolvedCfg, loadedCfg); err != nil {
+		return err
+	}
+
+	if err := mergeDefaultPackageConfig(resolvedCfg, loadedCfg); err != nil {
+		return err
+	}
+
+	if err := mergePackageGroups(resolvedCfg, loadedCfg); err != nil {
 		return err
 	}
 
@@ -208,6 +219,32 @@ func mergeTools(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
 		if err != nil {
 			return err
 		}
+	}
+
+	return nil
+}
+
+// mergeDefaultPackageConfig merges the project-level default package config from a loaded
+// config file into the resolved config.
+func mergeDefaultPackageConfig(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
+	if loadedCfg.DefaultPackageConfig != nil {
+		if err := resolvedCfg.DefaultPackageConfig.MergeUpdatesFrom(loadedCfg.DefaultPackageConfig); err != nil {
+			return fmt.Errorf("failed to merge project default package config:\n%w", err)
+		}
+	}
+
+	return nil
+}
+
+// mergePackageGroups merges package group definitions from a loaded config file into
+// the resolved config. Duplicate package group names are not allowed.
+func mergePackageGroups(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
+	for groupName, group := range loadedCfg.PackageGroups {
+		if _, ok := resolvedCfg.PackageGroups[groupName]; ok {
+			return fmt.Errorf("%w: %#q", ErrDuplicatePackageGroups, groupName)
+		}
+
+		resolvedCfg.PackageGroups[groupName] = group
 	}
 
 	return nil
