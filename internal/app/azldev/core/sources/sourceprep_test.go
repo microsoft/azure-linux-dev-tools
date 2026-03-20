@@ -13,6 +13,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/sourceproviders_test"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/stretchr/testify/assert"
@@ -56,8 +57,8 @@ func TestPrepareSources_Success(t *testing.T) {
 	component.EXPECT().GetName().AnyTimes().Return("test-component")
 	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{})
 	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil)
-	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir).DoAndReturn(
-		func(_ interface{}, _ interface{}, outputDir string) error {
+	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).DoAndReturn(
+		func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
 			// Create the expected spec file.
 			return fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte("# test spec"), 0o644)
 		},
@@ -115,8 +116,8 @@ func TestPrepareSources_WritesMacrosFile(t *testing.T) {
 		},
 	})
 	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil)
-	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir).DoAndReturn(
-		func(_ interface{}, _ interface{}, outputDir string) error {
+	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).DoAndReturn(
+		func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
 			// Create the expected spec file.
 			specPath := filepath.Join(outputDir, "my-package.spec")
 
@@ -365,8 +366,8 @@ func TestPrepareSources_CheckSkip(t *testing.T) {
 		},
 	})
 	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil)
-	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir).DoAndReturn(
-		func(_ interface{}, _ interface{}, outputDir string) error {
+	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).DoAndReturn(
+		func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
 			// Create the expected spec file with a %check section.
 			specContent := `Name: test-component
 Version: 1.0
@@ -422,8 +423,8 @@ func TestPrepareSources_CheckSkipDisabled(t *testing.T) {
 		},
 	})
 	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil)
-	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir).DoAndReturn(
-		func(_ interface{}, _ interface{}, outputDir string) error {
+	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).DoAndReturn(
+		func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
 			// Create the expected spec file with a %check section.
 			specContent := `Name: test-component
 Version: 1.0
@@ -469,7 +470,7 @@ func TestDiffSources_NoOverlays(t *testing.T) {
 	// DiffSources fetches sources once, then copies them for overlay application.
 	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, gomock.Any()).Times(1).Return(nil)
 	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, gomock.Any()).Times(1).DoAndReturn(
-		func(_ interface{}, _ interface{}, outputDir string) error {
+		func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
 			specPath := filepath.Join(outputDir, "test-component.spec")
 
 			return fileutils.WriteFile(ctx.FS(), specPath, []byte("Name: test-component\nVersion: 1.0\n"), 0o644)
@@ -512,7 +513,7 @@ func TestDiffSources_WithOverlays(t *testing.T) {
 	// DiffSources fetches sources once, then copies them for overlay application.
 	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, gomock.Any()).Times(1).Return(nil)
 	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, gomock.Any()).Times(1).DoAndReturn(
-		func(_ interface{}, _ interface{}, outputDir string) error {
+		func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
 			specPath := filepath.Join(outputDir, "test-component.spec")
 
 			return fileutils.WriteFile(ctx.FS(), specPath, []byte("Name: test-component\nVersion: 1.0\n"), 0o644)

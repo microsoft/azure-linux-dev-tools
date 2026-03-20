@@ -37,6 +37,7 @@ azldev component prepare-sources [flags]
   -g, --component-group stringArray   Component group name
       --force                         delete and recreate the output directory if it already exists
   -h, --help                          help for prepare-sources
+      --no-git                        Allow preparing sources without a project git repository (skips synthetic commit history)
   -o, --output-dir string             output directory
       --skip-overlays                 skip applying overlays to prepared sources
   -s, --spec-path stringArray         Spec path

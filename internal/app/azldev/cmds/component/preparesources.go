@@ -20,6 +20,7 @@ type PrepareSourcesOptions struct {
 
 	OutputDir    string
 	SkipOverlays bool
+	NoGitRepo    bool
 	Force        bool
 }
 
@@ -65,6 +66,8 @@ Only one component may be selected at a time.`,
 	_ = cmd.MarkFlagDirname("output-dir")
 
 	cmd.Flags().BoolVar(&options.SkipOverlays, "skip-overlays", false, "skip applying overlays to prepared sources")
+	cmd.Flags().BoolVar(&options.NoGitRepo, "no-git", false,
+		"Allow preparing sources without a project git repository (skips synthetic commit history)")
 	cmd.Flags().BoolVar(&options.Force, "force", false, "delete and recreate the output directory if it already exists")
 
 	return cmd
@@ -114,7 +117,12 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 		return err
 	}
 
-	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env)
+	var preparerOpts []sources.PreparerOption
+	if options.NoGitRepo {
+		preparerOpts = append(preparerOpts, sources.WithNoGitRepo())
+	}
+
+	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, preparerOpts...)
 	if err != nil {
 		return fmt.Errorf("failed to create source preparer:\n%w", err)
 	}

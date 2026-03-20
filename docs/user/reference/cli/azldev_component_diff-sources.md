@@ -21,6 +21,7 @@ azldev component diff-sources [flags]
   -p, --component stringArray         Component name pattern
   -g, --component-group stringArray   Component group name
   -h, --help                          help for diff-sources
+      --no-git                        Allow diffing sources without a project git repository (skips synthetic commit history)
       --output-file string            write the diff output to a file instead of stdout
   -s, --spec-path stringArray         Spec path
 ```

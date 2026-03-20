@@ -48,6 +48,7 @@ azldev component build [flags]
       --local-repo-with-publish string   Path to local repository to include during build and publish built RPMs to
       --mock-config-opt stringToString   Pass a configuration option through to mock (key=value, can be specified multiple times) (default [])
       --no-check                         Skip package %check tests
+      --no-git                           Allow building without a project git repository (skips synthetic commit history)
       --preserve-buildenv policy         Preserve build environment {on-failure, always, never} (default on-failure)
   -s, --spec-path stringArray            Spec path
       --srpm-only                        Build SRPM (source RPM) *only*
