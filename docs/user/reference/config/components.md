@@ -12,6 +12,8 @@ A component definition tells azldev where to find the spec file, how to customiz
 | Overlays | `overlays` | array of [Overlay](overlays.md) | No | Modifications to apply to the spec and/or source files |
 | Build config | `build` | [BuildConfig](#build-configuration) | No | Build-time options (macros, conditionals, check config) |
 | Source files | `source-files` | array of [SourceFileReference](#source-file-references) | No | Additional source files to download for this component |
+| Default package config | `default-package-config` | [PackageConfig](package-groups.md#package-config) | No | Default configuration applied to all binary packages produced by this component; overrides project defaults and package-group defaults |
+| Package overrides | `packages` | map of string → [PackageConfig](package-groups.md#package-config) | No | Exact per-package configuration overrides; highest priority in the resolution order |
 
 ### Bare Components
 
@@ -190,6 +192,58 @@ The `hints` field provides non-essential metadata about how or when to build a c
 hints = { expensive = true }
 ```
 
+## Package Configuration
+
+Components can customize the publish configuration for the binary packages they produce. There are two fields for this, applied at different levels of specificity.
+
+### Default Package Config
+
+The `default-package-config` field provides a component-level default that applies to **all** binary packages produced by this component. It overrides any matching [package groups](package-groups.md) but is itself overridden by the `packages` map.
+
+```toml
+[components.curl.default-package-config.publish]
+channel = "base"
+```
+
+### Per-Package Overrides
+
+The `[components.<name>.packages.<pkgname>]` map lets you override config for a **specific** binary package by its exact name. This is the highest-priority layer and overrides all inherited defaults:
+
+```toml
+# Override just one subpackage
+[components.curl.packages.curl-devel.publish]
+channel = "devel"
+```
+
+### Resolution Order
+
+For each binary package produced by a component, the effective config is assembled in this order (later layers win):
+
+1. Project `default-package-config`
+2. Matching `package-groups`, in alphabetical group name order
+3. Component `default-package-config`
+4. Component `packages.<exact-name>` (highest priority)
+
+See [Package Groups](package-groups.md#resolution-order) for the full details.
+
+### Example
+
+```toml
+[components.curl]
+
+# Route all curl packages to "base" by default ...
+[components.curl.default-package-config.publish]
+channel = "base"
+
+# ... but put curl-devel in the "devel" channel
+[components.curl.packages.curl-devel.publish]
+channel = "devel"
+
+# Don't publish the minimal build at all
+[components.curl.packages.curl-minimal.publish]
+channel = "none"
+```
+
 ## Source File References
 
 The `[[components.<name>.source-files]]` array defines additional source files that azldev should download before building. These are files not available in the dist-git repository or lookaside cache — typically binaries, pre-built artifacts, or files from custom hosting.
@@ -313,5 +367,6 @@ lines = ["cp -vf %{shimdirx64}/$(basename %{shimefix64}) %{shimefix64} ||:"]
 - [Config File Structure](config-file.md) — top-level config file layout
 - [Distros](distros.md) — distro definitions and `default-component-config` inheritance
 - [Component Groups](component-groups.md) — grouping components with shared defaults
+- [Package Groups](package-groups.md) — project-level package groups and full resolution order
 - [Configuration System](../../explanation/config-system.md) — inheritance and merge behavior
 - [JSON Schema](../../../../schemas/azldev.schema.json) — machine-readable schema
