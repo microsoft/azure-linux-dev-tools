@@ -54,6 +54,11 @@
        "description": "disable default configuration",
        "type": "boolean"
       },
+      "no-git": {
+       "default": false,
+       "description": "Allow diffing sources without a project git repository (skips synthetic commit history)",
+       "type": "boolean"
+      },
       "output-file": {
        "default": "",
        "description": "write the diff output to a file instead of stdout",

@@ -26,6 +26,7 @@ type DiffSourcesOptions struct {
 	ComponentFilter components.ComponentFilter
 
 	OutputFile string
+	NoGitRepo  bool
 }
 
 func diffSourcesOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
@@ -54,6 +55,8 @@ overlays to the copy and displays the resulting diff between the two trees.`,
 
 	cmd.Flags().StringVar(&options.OutputFile, "output-file", "",
 		"write the diff output to a file instead of stdout")
+	cmd.Flags().BoolVar(&options.NoGitRepo, "no-git", false,
+		"Allow diffing sources without a project git repository (skips synthetic commit history)")
 
 	azldev.ExportAsMCPTool(cmd)
 
@@ -63,7 +66,11 @@ overlays to the copy and displays the resulting diff between the two trees.`,
 // DiffComponentSources computes the diff between original and overlaid sources for a single component.
 // When color is enabled and the output format is not JSON, the returned value is a pre-colorized
 // string. Otherwise it is [*dirdiff.DiffResult] for structured output.
-func DiffComponentSources(env *azldev.Env, options *DiffSourcesOptions) (interface{}, error) {
+//
+//nolint:funlen // sequential setup steps for a single operation; splitting would obscure the flow.
+func DiffComponentSources(
+	env *azldev.Env, options *DiffSourcesOptions,
+) (interface{}, error) {
 	resolver := components.NewResolver(env)
 
 	comps, err := resolver.FindComponents(&options.ComponentFilter)
@@ -97,7 +104,12 @@ func DiffComponentSources(env *azldev.Env, options *DiffSourcesOptions) (interfa
 		return nil, fmt.Errorf("failed to create source manager:\n%w", err)
 	}
 
-	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env)
+	var preparerOpts []sources.PreparerOption
+	if options.NoGitRepo {
+		preparerOpts = append(preparerOpts, sources.WithNoGitRepo())
+	}
+
+	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, preparerOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create source preparer:\n%w", err)
 	}

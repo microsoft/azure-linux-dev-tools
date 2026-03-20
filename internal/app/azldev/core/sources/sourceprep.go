@@ -11,9 +11,11 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 	"unicode"
 
 	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
@@ -51,20 +53,40 @@ type SourcePreparer interface {
 	DiffSources(ctx context.Context, component components.Component, baseDir string) (*dirdiff.DiffResult, error)
 }
 
+// PreparerOption is a functional option for configuring a [SourcePreparer].
+type PreparerOption func(*sourcePreparerImpl)
+
+// WithNoGitRepo returns a [PreparerOption] that allows the source preparer to
+// operate without a project git repository. When set, a missing project git
+// repository produces a warning instead of an error. Without this option, a
+// missing project repository is treated as a fatal error so developers are
+// aware that synthetic history generation is being silently skipped.
+func WithNoGitRepo() PreparerOption {
+	return func(p *sourcePreparerImpl) {
+		p.noGitRepo = true
+	}
+}
+
 // Standard implementation of the [SourcePreparer] interface.
 type sourcePreparerImpl struct {
 	sourceManager sourceproviders.SourceManager
 	fs            opctx.FS
 	eventListener opctx.EventListener
 	dryRunnable   opctx.DryRunnable
+
+	// noGitRepo, when true, allows source preparation to proceed without a
+	// project git repository instead of returning an error.
+	noGitRepo bool
 }
 
-// NewPreparer creates a new [SourcePreparer] instance. All arguments are required.
+// NewPreparer creates a new [SourcePreparer] instance. All positional arguments
+// are required. Optional behavior can be configured via [PreparerOption] values.
 func NewPreparer(
 	sourceManager sourceproviders.SourceManager,
 	fs opctx.FS,
 	eventListener opctx.EventListener,
 	dryRunnable opctx.DryRunnable,
+	opts ...PreparerOption,
 ) (SourcePreparer, error) {
 	if sourceManager == nil {
 		return nil, errors.New("source manager cannot be nil")
@@ -87,6 +109,12 @@ func NewPreparer(
 		fs:            fs,
 		eventListener: eventListener,
 		dryRunnable:   dryRunnable,
+	}
+
+	for _, opt := range opts {
+		if opt != nil {
+			opt(impl)
+		}
 	}
 
 	return impl, nil
@@ -122,6 +150,13 @@ func (p *sourcePreparerImpl) PrepareSources(
 		return nil
 	}
 
+	// Record the changes as synthetic git history. This is required for rpmautospec
+	// release numbering and delta builds, so failure here is fatal.
+	if err := p.trySyntheticHistory(component, outputDir); err != nil {
+		return fmt.Errorf("failed to generate synthetic history for component %#q:\n%w",
+			component.GetName(), err)
+	}
+
 	return p.applyOverlaysToSources(ctx, component, outputDir)
 }
 
@@ -146,22 +181,18 @@ func (p *sourcePreparerImpl) applyOverlaysToSources(
 	}
 
 	// Apply all overlays and record synthetic git history.
-	err = p.applyOverlaysWithHistory(ctx, component, outputDir, macrosFileName)
-	if err != nil {
+	if err := p.applyOverlays(ctx, component, outputDir, macrosFileName); err != nil {
 		return fmt.Errorf("failed to apply overlays for component %#q:\n%w", component.GetName(), err)
 	}
 
 	return nil
 }
 
-// applyOverlaysWithHistory applies all overlays (user-defined and system-generated) to the
-// component sources, then attempts to record the changes as synthetic git history.
-//
-// Overlay application is fully decoupled from git history generation: overlays are always
-// applied first, then the changes are optionally committed. If the sources directory does
-// not contain a git repository (e.g. local or unspecified spec sources), overlays are still
-// applied but no synthetic history is created.
-func (p *sourcePreparerImpl) applyOverlaysWithHistory(
+// applyOverlays applies all overlays (user-defined and system-generated) to the
+// component sources. Overlay application is decoupled from git history generation:
+// overlays modify the working tree; synthetic history is recorded separately by
+// [trySyntheticHistory].
+func (p *sourcePreparerImpl) applyOverlays(
 	_ context.Context, component components.Component, sourcesDirPath, macrosFileName string,
 ) error {
 	event := p.eventListener.StartEvent("Applying overlays", "component", component.GetName())
@@ -186,18 +217,11 @@ func (p *sourcePreparerImpl) applyOverlaysWithHistory(
 		return fmt.Errorf("failed to apply overlays for component %#q:\n%w", component.GetName(), err)
 	}
 
-	// Record the changes as synthetic git history. This is required for rpmautospec
-	// release numbering and delta builds, so failure here is fatal.
-	if err := p.trySyntheticHistory(component, sourcesDirPath); err != nil {
-		return fmt.Errorf("failed to generate synthetic history for component %#q:\n%w",
-			component.GetName(), err)
-	}
-
 	return nil
 }
 
 // collectOverlays gathers all overlays for a component into a single ordered slice:
-// component overlays first, followed by macros-load, check-skip, and file-header overlays.
+// user overlays first, followed by macros-load, check-skip, and file-header overlays.
 func (p *sourcePreparerImpl) collectOverlays(
 	component components.Component, macrosFileName string,
 ) []projectconfig.ComponentOverlay {
@@ -225,37 +249,64 @@ func (p *sourcePreparerImpl) collectOverlays(
 	return allOverlays
 }
 
-// trySyntheticHistory attempts to create synthetic git commits on top of the upstream
-// repository. All file changes must already be present in the working tree before calling
-// this function — it only handles staging and committing.
+// initSourcesRepo initializes a new git repository in sourcesDirPath, stages all files,
+// and creates an initial commit. This is used for components that don't have an upstream
+// dist-git so that Affects commits can still be layered on top.
+func initSourcesRepo(sourcesDirPath string) (*gogit.Repository, error) {
+	slog.Info("Initializing git repository for sources", "path", sourcesDirPath)
+
+	repo, err := gogit.PlainInit(sourcesDirPath, false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize git repository at %#q:\n%w", sourcesDirPath, err)
+	}
+
+	worktree, err := repo.Worktree()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get worktree:\n%w", err)
+	}
+
+	if err := worktree.AddWithOptions(&gogit.AddOptions{All: true}); err != nil {
+		return nil, fmt.Errorf("failed to stage files:\n%w", err)
+	}
+
+	_, err = worktree.Commit("Initial sources", &gogit.CommitOptions{
+		Author: &object.Signature{
+			Name:  "azldev",
+			Email: "azldev@microsoft.com",
+			When:  time.Now().UTC(),
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create initial commit:\n%w", err)
+	}
+
+	return repo, nil
+}
+
+// trySyntheticHistory attempts to create synthetic git commits on top of the
+// component's sources directory. If no .git directory exists, one is initialized
+// with an initial commit so Affects commits can be layered on uniformly for all
+// component types.
 //
-// Returns nil when there is no .git directory (legitimate for local/unspecified specs).
-// Returns a non-nil error if a .git directory exists but history generation fails.
+// Returns nil when there are no Affects commits to apply.
+// Returns a non-nil error if history generation fails.
 func (p *sourcePreparerImpl) trySyntheticHistory(
 	component components.Component,
 	sourcesDirPath string,
 ) error {
-	// Check for an upstream git repository in the sources directory. Local and
-	// unspecified spec sources won't have a .git directory — that's expected.
-	gitDirPath := filepath.Join(sourcesDirPath, ".git")
-
-	hasGitDir, err := fileutils.Exists(p.fs, gitDirPath)
-	if err != nil {
-		return fmt.Errorf("failed to check for .git directory at %#q:\n%w", gitDirPath, err)
-	}
-
-	if !hasGitDir {
-		slog.Debug("No .git directory in sources; skipping synthetic history",
-			"component", component.GetName())
-
-		return nil
-	}
-
 	config := component.GetConfig()
 
-	// Build commit metadata from Affects commits and dirty state.
+	// Build commit metadata from Affects commits.
 	commits, err := buildSyntheticCommits(config, component.GetName())
 	if err != nil {
+		if errors.Is(err, ErrNoGitRepository) && p.noGitRepo {
+			slog.Warn("Project config is not inside a git repository; "+
+				"skipping synthetic commits because --no-git was specified",
+				"component", component.GetName())
+
+			return nil
+		}
+
 		return fmt.Errorf("failed to build synthetic commits:\n%w", err)
 	}
 
@@ -266,10 +317,27 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 		return nil
 	}
 
-	// Open the upstream git repository where synthetic commits will be recorded.
+	// Check for an existing git repository in the sources directory.
+	gitDirPath := filepath.Join(sourcesDirPath, ".git")
+
+	hasGitDir, err := fileutils.Exists(p.fs, gitDirPath)
+	if err != nil {
+		return fmt.Errorf("failed to check for .git directory at %#q:\n%w", gitDirPath, err)
+	}
+
+	if !hasGitDir {
+		slog.Info("No .git directory in sources; initializing repository",
+			"component", component.GetName())
+
+		if _, err := initSourcesRepo(sourcesDirPath); err != nil {
+			return fmt.Errorf("failed to initialize sources repository:\n%w", err)
+		}
+	}
+
+	// Open the git repository where synthetic commits will be recorded.
 	sourcesRepo, err := gogit.PlainOpen(sourcesDirPath)
 	if err != nil {
-		return fmt.Errorf("failed to open upstream repository at %#q:\n%w", sourcesDirPath, err)
+		return fmt.Errorf("failed to open sources repository at %#q:\n%w", sourcesDirPath, err)
 	}
 
 	if err := CommitSyntheticHistory(sourcesRepo, commits); err != nil {

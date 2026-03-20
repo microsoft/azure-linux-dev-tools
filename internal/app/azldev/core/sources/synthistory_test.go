@@ -184,7 +184,7 @@ func TestFindAffectsCommits_AffectsInSubject(t *testing.T) {
 	assert.Equal(t, "Alice", results[0].Author)
 }
 
-func TestFindAffectsCommits_CaseInsensitive(t *testing.T) {
+func TestFindAffectsCommits_CaseSensitive(t *testing.T) {
 	repo := createInMemoryRepo(t)
 
 	addCommit(t, repo,
@@ -197,12 +197,22 @@ func TestFindAffectsCommits_CaseInsensitive(t *testing.T) {
 		"Bob", "bob@example.com",
 		time.Date(2025, 2, 1, 10, 0, 0, 0, time.UTC))
 
-	// Search with lowercase component name should match both.
+	addCommit(t, repo,
+		"Upstream fix\n\nAffects: kernel",
+		"Charlie", "charlie@example.com",
+		time.Date(2025, 3, 1, 10, 0, 0, 0, time.UTC))
+
+	// Matching is case-sensitive: searching for "kernel" only matches the exact-case commit.
 	results, err := sources.FindAffectsCommits(repo, "kernel")
 	require.NoError(t, err)
-	require.Len(t, results, 2)
+	require.Len(t, results, 1)
+	assert.Equal(t, "Charlie", results[0].Author)
+
+	// Searching for "Kernel" matches only Alice's commit (exact case on component name).
+	results, err = sources.FindAffectsCommits(repo, "Kernel")
+	require.NoError(t, err)
+	require.Len(t, results, 1)
 	assert.Equal(t, "Alice", results[0].Author)
-	assert.Equal(t, "Bob", results[1].Author)
 }
 
 func TestIsRepoDirty_CleanRepo(t *testing.T) {

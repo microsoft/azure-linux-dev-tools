@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -18,10 +19,10 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 )
 
-// AffectsPrefix is the commit message marker used to associate a project repository
-// commit with a component. Developers include "Affects: <component-name>" anywhere
-// in a commit message to indicate the commit pertains to that component.
-const AffectsPrefix = "Affects: "
+// affectsRegexPattern is the regex pattern prefix used to match an [AffectsPrefix] marker
+// line in a commit message. It is combined with a quoted component name to form the full
+// match expression.
+const affectsRegexPattern = `(?m)^\s*Affects:\s*`
 
 var (
 	// ErrNoGitRepository is returned when no enclosing git repository can be found.
@@ -80,32 +81,10 @@ func FindAffectsCommits(repo *gogit.Repository, componentName string) ([]CommitM
 
 	var matches []CommitMetadata
 
+	re := regexp.MustCompile(affectsRegexPattern + regexp.QuoteMeta(componentName) + `\b`)
+
 	err = commitIter.ForEach(func(commit *object.Commit) error {
-		found := false
-
-		for _, line := range strings.Split(commit.Message, "\n") {
-			trimmed := strings.TrimSpace(line)
-			lowerTrimmed := strings.ToLower(trimmed)
-
-			lowerPrefix := strings.ToLower(AffectsPrefix)
-			if !strings.HasPrefix(lowerTrimmed, lowerPrefix) {
-				continue
-			}
-			// Extract the component name after the "Affects: " prefix, preserving original
-			// casing but trimming surrounding whitespace, and compare case-insensitively.
-			if len(trimmed) < len(AffectsPrefix) {
-				continue
-			}
-
-			component := strings.TrimSpace(trimmed[len(AffectsPrefix):])
-			if strings.HasPrefix(strings.ToLower(component), strings.ToLower(componentName)) {
-				found = true
-
-				break
-			}
-		}
-
-		if found {
+		if re.MatchString(commit.Message) {
 			matches = append(matches, CommitMetadata{
 				Hash:        commit.Hash.String(),
 				Author:      commit.Author.Name,
@@ -181,9 +160,9 @@ func CommitSyntheticHistory(
 
 // buildSyntheticCommits resolves the project repository from the component's config file,
 // walks the git log for commits containing "Affects: <componentName>", and returns the
-// matching commit metadata sorted chronologically. An additional local-changes entry is
-// appended when the project repo has staged changes. Returns nil when no matching commits
-// are found and the repo is clean.
+// matching commit metadata sorted chronologically.
+//
+// Returns nil when no matching commits are found.
 func buildSyntheticCommits(
 	config *projectconfig.ComponentConfig, componentName string,
 ) ([]CommitMetadata, error) {
@@ -198,15 +177,6 @@ func buildSyntheticCommits(
 
 	projectRepo, _, err := openProjectRepo(configFilePath)
 	if err != nil {
-		// Project config may not live inside a git repo (e.g. scenario tests,
-		// CI environments). This is expected — skip synthetic history gracefully.
-		if errors.Is(err, ErrNoGitRepository) {
-			slog.Debug("Project config is not inside a git repository; skipping synthetic commits",
-				"component", componentName)
-
-			return nil, nil
-		}
-
 		return nil, err
 	}
 
@@ -219,34 +189,14 @@ func buildSyntheticCommits(
 		"component", componentName,
 		"commitCount", len(affectsCommits))
 
-	commits := make([]CommitMetadata, 0, len(affectsCommits)+1)
+	commits := make([]CommitMetadata, 0, len(affectsCommits))
 
 	// Create one synthetic commit per Affects commit, preserving each commit's
 	// original message and author attribution in the upstream history.
 	commits = append(commits, affectsCommits...)
 
-	// When the project repo has staged changes the developer is iterating
-	// locally. Append an extra commit so rpmautospec sees a new commit
-	// and assigns a fresh release number instead of colliding with the last build.
-	dirty, err := IsRepoDirty(projectRepo)
-	if err != nil {
-		slog.Warn("Could not determine project repo dirty state; skipping local-changes commit",
-			"error", err)
-	} else if dirty {
-		slog.Info("Project repo has staged changes; adding local-changes synthetic commit",
-			"component", componentName)
-
-		commits = append(commits, CommitMetadata{
-			Hash:        "local",
-			Author:      "local",
-			AuthorEmail: "local@dev",
-			Timestamp:   time.Now().Unix(),
-			Message:     "Local uncommitted changes for " + componentName,
-		})
-	}
-
 	if len(commits) == 0 {
-		slog.Warn("No commits with Affects marker found and repo is clean; "+
+		slog.Warn("No commits with Affects marker found; "+
 			"falling back to standard overlay processing",
 			"component", componentName)
 
