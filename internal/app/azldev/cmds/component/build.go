@@ -6,7 +6,6 @@ package component
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	rpmlib "github.com/cavaliergopher/rpm"
@@ -16,6 +15,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/workdir"
 	"github.com/microsoft/azure-linux-dev-tools/internal/buildenv"
+	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/defers"
@@ -313,7 +313,7 @@ func buildComponentUsingBuilder(
 	}
 
 	// Enrich each RPM with its binary package name and resolved publish channel.
-	results.RPMs, err = resolveRPMResults(env, results.RPMPaths, component.GetConfig())
+	results.RPMs, err = resolveRPMResults(env.FS(), results.RPMPaths, env.Config(), component.GetConfig())
 	if err != nil {
 		return results, fmt.Errorf("failed to resolve publish channels for %q:\n%w", component.GetName(), err)
 	}
@@ -389,17 +389,15 @@ func checkLocalRepoPathOverlap(localRepoPaths []string, localRepoWithPublishPath
 }
 
 // resolveRPMResults builds an [RPMResult] for each RPM path, extracting the binary package
-// name from the filename and resolving its publish channel from the project config (if available).
+// name from the RPM headers and resolving its publish channel from the project config (if available).
 // When no project config is loaded, the Channel field is left empty.
 func resolveRPMResults(
-	env *azldev.Env, rpmPaths []string, compConfig *projectconfig.ComponentConfig,
+	fs opctx.FS, rpmPaths []string, proj *projectconfig.ProjectConfig, compConfig *projectconfig.ComponentConfig,
 ) ([]RPMResult, error) {
-	proj := env.Config()
-
 	rpmResults := make([]RPMResult, 0, len(rpmPaths))
 
 	for _, rpmPath := range rpmPaths {
-		pkgName, err := packageNameFromRPMFilename(rpmPath)
+		pkgName, err := packageNameFromRPM(fs, rpmPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to determine package name:\n%w", err)
 		}
@@ -424,11 +422,11 @@ func resolveRPMResults(
 	return rpmResults, nil
 }
 
-// packageNameFromRPMFilename extracts the binary package name from an RPM file by reading
+// packageNameFromRPM extracts the binary package name from an RPM file by reading
 // its headers. Reading the Name tag directly from the RPM metadata is authoritative and
 // handles all valid package names regardless of naming conventions.
-func packageNameFromRPMFilename(rpmPath string) (pkgName string, err error) {
-	rpmFile, err := os.Open(rpmPath)
+func packageNameFromRPM(fs opctx.FS, rpmPath string) (pkgName string, err error) {
+	rpmFile, err := fs.Open(rpmPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to open RPM %#q:\n%w", rpmPath, err)
 	}

@@ -241,7 +241,7 @@ func mergeDefaultPackageConfig(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile
 func mergePackageGroups(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
 	for groupName, group := range loadedCfg.PackageGroups {
 		if _, ok := resolvedCfg.PackageGroups[groupName]; ok {
-			return fmt.Errorf("%w: %s", ErrDuplicatePackageGroups, groupName)
+			return fmt.Errorf("%w: %#q", ErrDuplicatePackageGroups, groupName)
 		}
 
 		resolvedCfg.PackageGroups[groupName] = group
