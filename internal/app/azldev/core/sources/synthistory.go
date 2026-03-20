@@ -32,30 +32,6 @@ var (
 	ErrNoOverlaysToCommit = errors.New("no synthetic commits to create")
 )
 
-// IsRepoDirty reports whether the given go-git repository has staged changes
-// in its index. Unstaged modifications and untracked files are intentionally
-// ignored so the developer must explicitly stage changes to trigger an extra
-// synthetic commit.
-func IsRepoDirty(repo *gogit.Repository) (bool, error) {
-	worktree, err := repo.Worktree()
-	if err != nil {
-		return false, fmt.Errorf("failed to get worktree:\n%w", err)
-	}
-
-	status, err := worktree.Status()
-	if err != nil {
-		return false, fmt.Errorf("failed to get worktree status:\n%w", err)
-	}
-
-	for _, fileStatus := range status {
-		if fileStatus.Staging != gogit.Unmodified && fileStatus.Staging != gogit.Untracked {
-			return true, nil
-		}
-	}
-
-	return false, nil
-}
-
 // CommitMetadata holds full metadata for a commit in the project repository.
 type CommitMetadata struct {
 	Hash        string
