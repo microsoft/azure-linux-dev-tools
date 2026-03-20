@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -150,6 +151,10 @@ func (p *sourcePreparerImpl) PrepareSources(
 		return nil
 	}
 
+	if err := p.applyOverlaysToSources(ctx, component, outputDir); err != nil {
+		return fmt.Errorf("failed to apply overlays for component %#q:\n%w", component.GetName(), err)
+	}
+
 	// Record the changes as synthetic git history. This is required for rpmautospec
 	// release numbering and delta builds, so failure here is fatal.
 	if err := p.trySyntheticHistory(component, outputDir); err != nil {
@@ -157,7 +162,7 @@ func (p *sourcePreparerImpl) PrepareSources(
 			component.GetName(), err)
 	}
 
-	return p.applyOverlaysToSources(ctx, component, outputDir)
+	return nil
 }
 
 // applyOverlaysToSources writes the macros file and then applies all overlays and
@@ -206,7 +211,10 @@ func (p *sourcePreparerImpl) applyOverlays(
 
 	// Collect all overlays in application order. This ensures every change is
 	// captured in the synthetic history, including build configuration changes.
-	allOverlays := p.collectOverlays(component, macrosFileName)
+	allOverlays, err := p.collectOverlays(component, macrosFileName)
+	if err != nil {
+		return fmt.Errorf("failed to collect overlays for component %#q:\n%w", component.GetName(), err)
+	}
 
 	if len(allOverlays) == 0 {
 		return nil
@@ -224,7 +232,7 @@ func (p *sourcePreparerImpl) applyOverlays(
 // user overlays first, followed by macros-load, check-skip, and file-header overlays.
 func (p *sourcePreparerImpl) collectOverlays(
 	component components.Component, macrosFileName string,
-) []projectconfig.ComponentOverlay {
+) ([]projectconfig.ComponentOverlay, error) {
 	config := component.GetConfig()
 
 	var allOverlays []projectconfig.ComponentOverlay
@@ -234,10 +242,7 @@ func (p *sourcePreparerImpl) collectOverlays(
 	if macrosFileName != "" {
 		macroOverlays, err := synthesizeMacroLoadOverlays(macrosFileName)
 		if err != nil {
-			slog.Error("Failed to compute macros load overlays",
-				"component", component.GetName(), "error", err)
-
-			panic(fmt.Sprintf("failed to compute macros load overlays for component %q: %v", component.GetName(), err))
+			return nil, fmt.Errorf("failed to compute macros load overlays:\n%w", err)
 		}
 
 		allOverlays = append(allOverlays, macroOverlays...)
@@ -246,7 +251,7 @@ func (p *sourcePreparerImpl) collectOverlays(
 	allOverlays = append(allOverlays, synthesizeCheckSkipOverlays(config.Build.Check)...)
 	allOverlays = append(allOverlays, generateFileHeaderOverlay()...)
 
-	return allOverlays
+	return allOverlays, nil
 }
 
 // initSourcesRepo initializes a new git repository in sourcesDirPath, stages all files,
@@ -318,14 +323,18 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 	}
 
 	// Check for an existing git repository in the sources directory.
+	// Use os.Stat rather than p.fs because go-git's PlainInit/PlainOpen always
+	// operate on the real OS filesystem — the check must use the same source of
+	// truth to avoid disagreement when p.fs is an in-memory FS (e.g. unit tests).
 	gitDirPath := filepath.Join(sourcesDirPath, ".git")
 
-	hasGitDir, err := fileutils.Exists(p.fs, gitDirPath)
-	if err != nil {
-		return fmt.Errorf("failed to check for .git directory at %#q:\n%w", gitDirPath, err)
+	_, statErr := os.Stat(gitDirPath)
+
+	if statErr != nil && !os.IsNotExist(statErr) {
+		return fmt.Errorf("failed to check for .git directory at %#q:\n%w", gitDirPath, statErr)
 	}
 
-	if !hasGitDir {
+	if os.IsNotExist(statErr) {
 		slog.Info("No .git directory in sources; initializing repository",
 			"component", component.GetName())
 
