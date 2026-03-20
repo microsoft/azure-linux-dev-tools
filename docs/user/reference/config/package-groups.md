@@ -43,7 +43,7 @@ The `[package-groups.<name>.default-package-config]` section defines the configu
 | Description | `description` | string | No | Human-readable note about this package's configuration |
 | Publish settings | `publish` | [PublishConfig](#publish-config) | No | Publishing settings for matched packages |
 
-### PublishConfig Fields
+### Publish Config
 
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
