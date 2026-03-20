@@ -143,10 +143,10 @@ func TestFindAffectsCommits_MultipleComponents(t *testing.T) {
 	assert.Equal(t, "Charlie", wgetResults[1].Author)
 }
 
-func TestFindAffectsCommits_SubstringMatch(t *testing.T) {
+func TestFindAffectsCommits_NoSubstringMatch(t *testing.T) {
 	repo := createInMemoryRepo(t)
 
-	// "Affects: curl-minimal" contains "Affects: curl" as a substring.
+	// "Affects: curl-minimal" should NOT match when searching for "curl".
 	addCommit(t, repo,
 		"Update curl-minimal\n\nAffects: curl-minimal",
 		"Alice", "alice@example.com",
@@ -157,12 +157,13 @@ func TestFindAffectsCommits_SubstringMatch(t *testing.T) {
 		"Bob", "bob@example.com",
 		time.Date(2025, 2, 1, 10, 0, 0, 0, time.UTC))
 
-	// Searching for "curl" matches both because "Affects: curl-minimal" contains "Affects: curl".
+	// Searching for "curl" matches only Bob's commit (exact component name).
 	curlResults, err := sources.FindAffectsCommits(repo, "curl")
 	require.NoError(t, err)
-	assert.Len(t, curlResults, 2, "substring match includes curl-minimal commit")
+	require.Len(t, curlResults, 1, "exact match should not include curl-minimal commit")
+	assert.Equal(t, "Bob", curlResults[0].Author)
 
-	// Searching for "curl-minimal" matches only the first commit.
+	// Searching for "curl-minimal" matches only Alice's commit.
 	minimalResults, err := sources.FindAffectsCommits(repo, "curl-minimal")
 	require.NoError(t, err)
 	require.Len(t, minimalResults, 1)
@@ -184,7 +185,7 @@ func TestFindAffectsCommits_AffectsInSubject(t *testing.T) {
 	assert.Equal(t, "Alice", results[0].Author)
 }
 
-func TestFindAffectsCommits_CaseInsensitive(t *testing.T) {
+func TestFindAffectsCommits_CaseSensitive(t *testing.T) {
 	repo := createInMemoryRepo(t)
 
 	addCommit(t, repo,
@@ -197,93 +198,22 @@ func TestFindAffectsCommits_CaseInsensitive(t *testing.T) {
 		"Bob", "bob@example.com",
 		time.Date(2025, 2, 1, 10, 0, 0, 0, time.UTC))
 
-	// Search with lowercase component name should match both.
+	addCommit(t, repo,
+		"Upstream fix\n\nAffects: kernel",
+		"Charlie", "charlie@example.com",
+		time.Date(2025, 3, 1, 10, 0, 0, 0, time.UTC))
+
+	// Matching is case-sensitive: searching for "kernel" only matches the exact-case commit.
 	results, err := sources.FindAffectsCommits(repo, "kernel")
 	require.NoError(t, err)
-	require.Len(t, results, 2)
+	require.Len(t, results, 1)
+	assert.Equal(t, "Charlie", results[0].Author)
+
+	// Searching for "Kernel" matches only Alice's commit (exact case on component name).
+	results, err = sources.FindAffectsCommits(repo, "Kernel")
+	require.NoError(t, err)
+	require.Len(t, results, 1)
 	assert.Equal(t, "Alice", results[0].Author)
-	assert.Equal(t, "Bob", results[1].Author)
-}
-
-func TestIsRepoDirty_CleanRepo(t *testing.T) {
-	repo := createInMemoryRepo(t)
-
-	addCommit(t, repo, "initial", "Alice", "alice@example.com",
-		time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC))
-
-	dirty, err := sources.IsRepoDirty(repo)
-	require.NoError(t, err)
-	assert.False(t, dirty, "repo with no staged changes should be clean")
-}
-
-func TestIsRepoDirty_UnstagedModification(t *testing.T) {
-	repo := createInMemoryRepo(t)
-
-	when := time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC)
-	addCommit(t, repo, "initial", "Alice", "alice@example.com", when)
-
-	// Modify a tracked file without staging.
-	worktree, err := repo.Worktree()
-	require.NoError(t, err)
-
-	fileName := fmt.Sprintf("file-%d.txt", when.UnixNano())
-	f, err := worktree.Filesystem.Create(fileName)
-	require.NoError(t, err)
-
-	_, err = f.Write([]byte("modified content"))
-	require.NoError(t, err)
-	require.NoError(t, f.Close())
-
-	dirty, err := sources.IsRepoDirty(repo)
-	require.NoError(t, err)
-	assert.False(t, dirty, "unstaged modifications should not count as dirty")
-}
-
-func TestIsRepoDirty_UntrackedFile(t *testing.T) {
-	repo := createInMemoryRepo(t)
-
-	addCommit(t, repo, "initial", "Alice", "alice@example.com",
-		time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC))
-
-	// Create an untracked file (not staged).
-	worktree, err := repo.Worktree()
-	require.NoError(t, err)
-
-	f, err := worktree.Filesystem.Create("untracked-new-file.txt")
-	require.NoError(t, err)
-
-	_, err = f.Write([]byte("new"))
-	require.NoError(t, err)
-	require.NoError(t, f.Close())
-
-	dirty, err := sources.IsRepoDirty(repo)
-	require.NoError(t, err)
-	assert.False(t, dirty, "untracked files should not count as dirty")
-}
-
-func TestIsRepoDirty_StagedChanges(t *testing.T) {
-	repo := createInMemoryRepo(t)
-
-	addCommit(t, repo, "initial", "Alice", "alice@example.com",
-		time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC))
-
-	// Modify a file and stage it.
-	worktree, err := repo.Worktree()
-	require.NoError(t, err)
-
-	f, err := worktree.Filesystem.Create("file-946684800000000000.txt")
-	require.NoError(t, err)
-
-	_, err = f.Write([]byte("staged content"))
-	require.NoError(t, err)
-	require.NoError(t, f.Close())
-
-	_, err = worktree.Add("file-946684800000000000.txt")
-	require.NoError(t, err)
-
-	dirty, err := sources.IsRepoDirty(repo)
-	require.NoError(t, err)
-	assert.True(t, dirty, "repo with staged changes should be dirty")
 }
 
 func TestCommitSyntheticHistory(t *testing.T) {

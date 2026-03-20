@@ -51,6 +51,7 @@ azldev component build [flags]
       --preserve-buildenv policy         Preserve build environment {on-failure, always, never} (default on-failure)
   -s, --spec-path stringArray            Spec path
       --srpm-only                        Build SRPM (source RPM) *only*
+      --with-git                         Create a dist-git repository with synthetic commit history (requires a project git repository)
 ```
 
 ### Options inherited from parent commands

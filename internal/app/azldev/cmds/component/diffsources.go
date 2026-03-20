@@ -63,6 +63,7 @@ overlays to the copy and displays the resulting diff between the two trees.`,
 // DiffComponentSources computes the diff between original and overlaid sources for a single component.
 // When color is enabled and the output format is not JSON, the returned value is a pre-colorized
 // string. Otherwise it is [*dirdiff.DiffResult] for structured output.
+
 func DiffComponentSources(env *azldev.Env, options *DiffSourcesOptions) (interface{}, error) {
 	resolver := components.NewResolver(env)
 
