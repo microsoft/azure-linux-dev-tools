@@ -739,6 +739,21 @@ packages = ["curl-devel", ""]
 	assert.Contains(t, err.Error(), "must not be empty")
 }
 
+func TestLoadAndResolveProjectConfig_PackageGroups_DuplicatePackageWithinGroup(t *testing.T) {
+	const configContents = `
+[package-groups.my-group]
+packages = ["curl-devel", "wget2-devel", "curl-devel"]
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "curl-devel")
+	assert.Contains(t, err.Error(), "more than once")
+}
+
 func TestLoadAndResolveProjectConfig_PackageGroups_DuplicatePackageAcrossGroups(t *testing.T) {
 	const configContents = `
 [package-groups.group-a]

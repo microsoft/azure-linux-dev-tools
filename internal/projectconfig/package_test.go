@@ -34,6 +34,16 @@ func TestPackageGroupConfig_Validate(t *testing.T) {
 		assert.Contains(t, err.Error(), "packages[1]")
 		assert.Contains(t, err.Error(), "must not be empty")
 	})
+
+	t.Run("duplicate package name within group is invalid", func(t *testing.T) {
+		group := projectconfig.PackageGroupConfig{
+			Packages: []string{"curl-devel", "wget2-devel", "curl-devel"},
+		}
+		err := group.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "curl-devel")
+		assert.Contains(t, err.Error(), "more than once")
+	})
 }
 
 func TestPackageConfig_MergeUpdatesFrom(t *testing.T) {

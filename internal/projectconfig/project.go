@@ -68,14 +68,15 @@ func (cfg *ProjectConfig) Validate() error {
 }
 
 // validatePackageGroupMembership checks that no binary package name appears in more than one
-// package group. A package should belong to exactly one group to keep routing unambiguous.
+// package group. A packagemay belong to at most one group to keep routing unambiguous, but it
+// may also be left ungrouped.
 func validatePackageGroupMembership(groups map[string]PackageGroupConfig) error {
 	// Track which group each package name was first seen in.
 	seenIn := make(map[string]string, len(groups))
 
 	for groupName, group := range groups {
 		for _, pkg := range group.Packages {
-			if firstGroup, already := seenIn[pkg]; already {
+			if firstGroup, already := seenIn[pkg]; already && firstGroup != groupName {
 				return fmt.Errorf(
 					"package %#q appears in both package-group %#q and %#q; a package may only belong to one group",
 					pkg, firstGroup, groupName,

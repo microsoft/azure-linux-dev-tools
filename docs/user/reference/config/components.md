@@ -239,7 +239,7 @@ channel = "rpm-base"
 [components.curl.packages.libcurl-devel.publish]
 channel = "rpm-devel"
 
-# Don't publish the minimal build at all
+# Signal to downstream tooling that this package should not be published
 [components.curl.packages.libcurl-minimal.publish]
 channel = "none"
 ```

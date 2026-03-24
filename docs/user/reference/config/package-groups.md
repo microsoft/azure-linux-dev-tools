@@ -43,7 +43,7 @@ The `[package-groups.<name>.default-package-config]` section defines the configu
 
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
-| Channel | `channel` | string | No | Publish channel for this package. **Use `"none"` to skip publishing entirely.** |
+| Channel | `channel` | string | No | Publish channel for this package. Use `"none"` to signal to downstream tooling that this package should not be published. |
 
 ## Resolution Order
 

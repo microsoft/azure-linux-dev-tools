@@ -14,9 +14,10 @@ import (
 // The zero value means the channel is inherited from a higher-priority config layer.
 type PackagePublishConfig struct {
 	// Channel identifies the publish channel for this package.
-	// The special value "none" means the package should not be published.
+	// The special value "none" is a convention meaning the package should not be published;
+	// azldev records this value in build results but enforcement is left to downstream tooling.
 	// When empty, the value is inherited from the next layer in the resolution order.
-	Channel string `toml:"channel,omitempty" json:"channel,omitempty" jsonschema:"title=Channel,description=Publish channel for this package; 'none' skips publishing entirely"`
+	Channel string `toml:"channel,omitempty" json:"channel,omitempty" jsonschema:"title=Channel,description=Publish channel for this package; use 'none' to signal to downstream tooling that this package should not be published"`
 }
 
 // PackageConfig holds all configuration applied to a single binary package.
@@ -53,12 +54,20 @@ type PackageGroupConfig struct {
 	DefaultPackageConfig PackageConfig `toml:"default-package-config,omitempty" json:"defaultPackageConfig,omitempty" jsonschema:"title=Default package config,description=Configuration inherited by all packages in this group"`
 }
 
-// Validate checks that all package names in the group are non-empty.
+// Validate checks that all package names in the group are non-empty and unique within the group.
 func (g *PackageGroupConfig) Validate() error {
+	seen := make(map[string]struct{}, len(g.Packages))
+
 	for i, pkg := range g.Packages {
 		if pkg == "" {
 			return fmt.Errorf("packages[%d] must not be empty", i)
 		}
+
+		if _, duplicate := seen[pkg]; duplicate {
+			return fmt.Errorf("package %#q appears more than once in the packages list", pkg)
+		}
+
+		seen[pkg] = struct{}{}
 	}
 
 	return nil
