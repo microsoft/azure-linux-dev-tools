@@ -733,3 +733,56 @@ func (s *Spec) GetHighestPatchTagNumber() (int, error) {
 
 	return highest, err
 }
+
+// RemoveSection removes an entire section from the spec, including its header line and all
+// body lines. The section is identified by name and optional package qualifier. Returns
+// [ErrSectionNotFound] if the section doesn't exist.
+func (s *Spec) RemoveSection(sectionName, packageName string) error {
+	slog.Debug("Removing section from spec", "section", sectionName, "package", packageName)
+
+	if sectionName == "" {
+		return errors.New("cannot remove the global/preamble section")
+	}
+
+	// Find the start and end line numbers for the section.
+	startLine := -1
+	endLine := -1
+
+	err := s.Visit(func(ctx *Context) error {
+		if startLine >= 0 && endLine >= 0 {
+			// Already found the section boundaries.
+			return nil
+		}
+
+		if ctx.Target.TargetType == SectionStartTarget {
+			if ctx.CurrentSection.SectName == sectionName && ctx.CurrentSection.Package == packageName {
+				startLine = ctx.CurrentLineNum
+			}
+		}
+
+		if ctx.Target.TargetType == SectionEndTarget {
+			if ctx.CurrentSection.SectName == sectionName && ctx.CurrentSection.Package == packageName {
+				endLine = ctx.CurrentLineNum
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to scan spec for section %#q (package=%#q):\n%w", sectionName, packageName, err)
+	}
+
+	if startLine < 0 {
+		return fmt.Errorf("section %#q (package=%#q) not found:\n%w", sectionName, packageName, ErrSectionNotFound)
+	}
+
+	// endLine is the virtual end marker at the start of the next section (or EOF).
+	// We remove rawLines[startLine..endLine-1] inclusive.
+	if endLine < 0 {
+		endLine = len(s.rawLines)
+	}
+
+	s.RemoveLines(startLine, endLine)
+
+	return nil
+}

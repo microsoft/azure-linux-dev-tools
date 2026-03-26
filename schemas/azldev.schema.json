@@ -190,6 +190,7 @@
             "spec-prepend-lines",
             "spec-append-lines",
             "spec-search-replace",
+            "spec-remove-section",
             "patch-add",
             "patch-remove",
             "file-prepend-lines",

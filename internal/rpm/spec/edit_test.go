@@ -1496,3 +1496,147 @@ Patch2: other.patch
 		})
 	}
 }
+
+func TestRemoveSection(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		sectionName    string
+		packageName    string
+		expectedOutput string
+		errorExpected  bool
+		errorContains  string
+	}{
+		{
+			name: "removes section with no package qualifier",
+			input: `Name: test
+Version: 1.0
+
+%generate_buildrequires
+%cargo_generate_buildrequires
+
+%build
+make
+`,
+			sectionName: "%generate_buildrequires",
+			expectedOutput: `Name: test
+Version: 1.0
+
+%build
+make
+`,
+		},
+		{
+			name: "removes section with package qualifier",
+			input: `Name: test
+
+%files
+/usr/bin/test
+
+%files devel
+/usr/include/test.h
+
+%files libs
+/usr/lib/libtest.so
+`,
+			sectionName: "%files",
+			packageName: "devel",
+			expectedOutput: `Name: test
+
+%files
+/usr/bin/test
+
+%files libs
+/usr/lib/libtest.so
+`,
+		},
+		{
+			name: "removes section at end of file",
+			input: `Name: test
+
+%build
+make
+
+%check
+make check
+`,
+			sectionName: "%check",
+			expectedOutput: `Name: test
+
+%build
+make
+
+`,
+		},
+		{
+			name: "fails when section does not exist",
+			input: `Name: test
+Version: 1.0
+
+%build
+make
+`,
+			sectionName:   "%check",
+			errorExpected: true,
+			errorContains: "not found",
+		},
+		{
+			name: "rejects removing global section",
+			input: `Name: test
+Version: 1.0
+`,
+			sectionName:   "",
+			errorExpected: true,
+			errorContains: "global",
+		},
+		{
+			name: "removes section with -n package syntax",
+			input: `Name: test
+
+%files
+/usr/bin/test
+
+%files -n other-pkg
+/usr/bin/other
+
+%build
+make
+`,
+			sectionName: "%files",
+			packageName: "other-pkg",
+			expectedOutput: `Name: test
+
+%files
+/usr/bin/test
+
+%build
+make
+`,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			specFile, err := spec.OpenSpec(strings.NewReader(testCase.input))
+			require.NoError(t, err)
+
+			err = specFile.RemoveSection(testCase.sectionName, testCase.packageName)
+
+			if testCase.errorExpected {
+				require.Error(t, err)
+
+				if testCase.errorContains != "" {
+					assert.Contains(t, err.Error(), testCase.errorContains)
+				}
+
+				return
+			}
+
+			require.NoError(t, err)
+
+			var buf bytes.Buffer
+			require.NoError(t, specFile.Serialize(&buf))
+			assert.Equal(t, testCase.expectedOutput, buf.String())
+		})
+	}
+}

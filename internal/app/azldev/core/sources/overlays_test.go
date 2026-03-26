@@ -1177,3 +1177,72 @@ func TestApplyRemovePatchOverlay(t *testing.T) {
 		require.Error(t, err)
 	})
 }
+
+func TestApplyRemoveSectionOverlay(t *testing.T) {
+	t.Run("removes section from spec", func(t *testing.T) {
+		specContent := `Name: test
+Version: 1.0
+
+%generate_buildrequires
+%cargo_generate_buildrequires
+
+%build
+make
+`
+		overlay := projectconfig.ComponentOverlay{
+			Type:        projectconfig.ComponentOverlayRemoveSection,
+			SectionName: "%generate_buildrequires",
+		}
+
+		result, err := applyOverlayToSpecContents(t, overlay, specContent)
+		require.NoError(t, err)
+
+		assert.NotContains(t, result, "%generate_buildrequires")
+		assert.NotContains(t, result, "%cargo_generate_buildrequires")
+		assert.Contains(t, result, "%build")
+		assert.Contains(t, result, "make")
+	})
+
+	t.Run("removes section scoped by package", func(t *testing.T) {
+		specContent := `Name: test
+
+%files
+/usr/bin/test
+
+%files devel
+/usr/include/test.h
+
+%files libs
+/usr/lib/libtest.so
+`
+		overlay := projectconfig.ComponentOverlay{
+			Type:        projectconfig.ComponentOverlayRemoveSection,
+			SectionName: "%files",
+			PackageName: "devel",
+		}
+
+		result, err := applyOverlayToSpecContents(t, overlay, specContent)
+		require.NoError(t, err)
+
+		assert.Contains(t, result, "/usr/bin/test")
+		assert.NotContains(t, result, "/usr/include/test.h")
+		assert.Contains(t, result, "/usr/lib/libtest.so")
+	})
+
+	t.Run("fails when section does not exist", func(t *testing.T) {
+		specContent := `Name: test
+Version: 1.0
+
+%build
+make
+`
+		overlay := projectconfig.ComponentOverlay{
+			Type:        projectconfig.ComponentOverlayRemoveSection,
+			SectionName: "%check",
+		}
+
+		_, err := applyOverlayToSpecContents(t, overlay, specContent)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
