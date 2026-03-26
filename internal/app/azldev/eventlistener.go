@@ -16,13 +16,14 @@ import (
 type appEventListener struct {
 	eventLevel  int
 	eventLogger *slog.Logger
+	quiet       bool
 }
 
 // Ensure [appEventListener] implements [opctx.EventListener].
 var _ opctx.EventListener = &appEventListener{}
 
 // NewEventListener creates a new event listener for the environment.
-func NewEventListener(eventLogger *slog.Logger) (*appEventListener, error) {
+func NewEventListener(eventLogger *slog.Logger, quiet bool) (*appEventListener, error) {
 	if eventLogger == nil {
 		return nil, errors.New("event logger cannot be nil")
 	}
@@ -30,6 +31,7 @@ func NewEventListener(eventLogger *slog.Logger) (*appEventListener, error) {
 	return &appEventListener{
 		eventLevel:  0,
 		eventLogger: eventLogger,
+		quiet:       quiet,
 	}, nil
 }
 
@@ -37,7 +39,7 @@ func NewEventListener(eventLogger *slog.Logger) (*appEventListener, error) {
 //
 //nolint:ireturn,nolintlint // We need to return an interface because of the interface definition.
 func (el *appEventListener) StartEvent(name string, args ...any) opctx.Event {
-	if name != "" {
+	if !el.quiet && name != "" {
 		const spacesPerLevel = 2
 
 		prefix := strings.Repeat(" ", el.eventLevel*spacesPerLevel)
@@ -51,6 +53,7 @@ func (el *appEventListener) StartEvent(name string, args ...any) opctx.Event {
 	return &event{
 		parentEventListener: el,
 		name:                name,
+		quiet:               el.quiet,
 	}
 }
 
