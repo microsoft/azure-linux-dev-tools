@@ -39,12 +39,15 @@ func NewEventListener(eventLogger *slog.Logger, quiet bool) (*appEventListener, 
 //
 //nolint:ireturn,nolintlint // We need to return an interface because of the interface definition.
 func (el *appEventListener) StartEvent(name string, args ...any) opctx.Event {
-	if !el.quiet && name != "" {
+	if name != "" {
 		const spacesPerLevel = 2
 
 		prefix := strings.Repeat(" ", el.eventLevel*spacesPerLevel)
 
-		fmt.Fprintf(os.Stderr, "\r")
+		if !el.quiet {
+			fmt.Fprintf(os.Stderr, "\r")
+		}
+
 		el.eventLogger.Info(prefix+name, args...)
 	}
 

@@ -1,5 +1,0 @@
-# Ignore build log and work dirs
-build/
-
-# Ignore build output
-out/
