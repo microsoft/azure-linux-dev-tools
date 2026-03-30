@@ -40,6 +40,7 @@ components defined in the project configuration.
 * [azldev](azldev.md)	 - 🐧 Azure Linux Dev Tool
 * [azldev component add](azldev_component_add.md)	 - Add component(s) to this project
 * [azldev component build](azldev_component_build.md)	 - Build packages for components
+* [azldev component diff-identity](azldev_component_diff-identity.md)	 - Compare two identity files and report changed components
 * [azldev component diff-sources](azldev_component_diff-sources.md)	 - Show the diff that overlays apply to a component's sources
 * [azldev component identity](azldev_component_identity.md)	 - Compute identity fingerprints for components
 * [azldev component list](azldev_component_list.md)	 - List components in this project
