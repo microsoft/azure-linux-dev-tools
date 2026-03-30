@@ -96,6 +96,18 @@ description: "Instructions for working on the azldev Go codebase. IMPORTANT: Alw
     }
     ```
 
+## Component Fingerprinting — `fingerprint:"-"` Tags
+
+Structs in `internal/projectconfig/` are hashed by `hashstructure.Hash()` to detect component changes. Fields **included by default** (safe: false positive > false negative).
+
+When adding a new field to a fingerprinted struct, ask: **"Does changing this field change the build output?"**
+- **Yes** (build flags, spec source, defines, etc.) → do nothing, included automatically.
+- **No** (human docs, scheduling hints, CI policy, metadata, back-references) → add `fingerprint:"-"` to the struct tag and register the exclusion in `expectedExclusions` in `internal/projectconfig/fingerprint_test.go`.
+
+If a parent struct field is already excluded (e.g. `Failure ComponentBuildFailureConfig ... fingerprint:"-"`), do **not** also tag the inner struct's fields — `hashstructure` skips the entire subtree.
+
+Run `mage unit` to verify — the guard test will catch unregistered exclusions or missing tags.
+
 ### Cmdline Returns
 
 CLI commands should return meaningful structured results. azldev has output formatting helpers to facilitate this (for example, `RunFunc*` wrappers handle formatting, so callers typically should not call `reflectable.FormatValue` directly).

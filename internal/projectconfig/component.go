@@ -49,7 +49,7 @@ type Origin struct {
 // SourceFileReference encapsulates a reference to a specific source file artifact.
 type SourceFileReference struct {
 	// Reference to the component to which the source file belongs.
-	Component ComponentReference `toml:"-" json:"-"`
+	Component ComponentReference `toml:"-" json:"-" fingerprint:"-"`
 
 	// Name of the source file; must be non-empty.
 	Filename string `toml:"filename" json:"filename"`
@@ -61,7 +61,7 @@ type SourceFileReference struct {
 	HashType fileutils.HashType `toml:"hash-type,omitempty" json:"hashType,omitempty" jsonschema:"enum=SHA256,enum=SHA512,title=Hash type,description=Hash algorithm used for the hash value"`
 
 	// Origin for this source file. When omitted, the file is resolved via the lookaside cache.
-	Origin Origin `toml:"origin,omitempty" json:"origin,omitempty"`
+	Origin Origin `toml:"origin,omitempty" json:"origin,omitempty" fingerprint:"-"`
 }
 
 // Defines a component group. Component groups are logical groupings of components (see [ComponentConfig]).
@@ -111,11 +111,11 @@ func (g ComponentGroupConfig) WithAbsolutePaths(referenceDir string) ComponentGr
 // Defines a component.
 type ComponentConfig struct {
 	// The component's name; not actually present in serialized files.
-	Name string `toml:"-" json:"name" table:",sortkey"`
+	Name string `toml:"-" json:"name" table:",sortkey" fingerprint:"-"`
 
 	// Reference to the source config file that this definition came from; not present
 	// in serialized files.
-	SourceConfigFile *ConfigFile `toml:"-" json:"-" table:"-"`
+	SourceConfigFile *ConfigFile `toml:"-" json:"-" table:"-" fingerprint:"-"`
 
 	// RenderedSpecDir is the output directory for this component's rendered spec files.
 	// Derived at resolve time from the project's rendered-specs-dir setting; not present
