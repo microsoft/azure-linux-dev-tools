@@ -25,6 +25,7 @@ components defined in the project configuration.`,
 	app.AddTopLevelCommand(cmd)
 	addOnAppInit(app, cmd)
 	buildOnAppInit(app, cmd)
+	diffIdentityOnAppInit(app, cmd)
 	diffSourcesOnAppInit(app, cmd)
 	listOnAppInit(app, cmd)
 	prepareOnAppInit(app, cmd)
