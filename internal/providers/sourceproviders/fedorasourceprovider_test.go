@@ -169,6 +169,14 @@ func TestGetComponentFromGit(t *testing.T) {
 				return fileutils.WriteFile(env.FS(), sourcesPath, []byte(sourcesContent), fileperms.PublicFile)
 			})
 
+		mockGitProvider.EXPECT().
+			GetCurrentCommit(gomock.Any(), gomock.Any()).
+			Return("head123abc", nil)
+
+		mockGitProvider.EXPECT().
+			Checkout(gomock.Any(), gomock.Any(), "head123abc").
+			Return(nil)
+
 		provider, err := sourceproviders.NewFedoraSourcesProviderImpl(
 			env.FS(),
 			env.DryRunnable,
@@ -255,6 +263,14 @@ func TestGetComponentFromGit(t *testing.T) {
 				return fileutils.WriteFile(env.FS(), sourcesPath, []byte(sourcesContent), fileperms.PublicFile)
 			})
 
+		mockGitProvider.EXPECT().
+			GetCurrentCommit(gomock.Any(), gomock.Any()).
+			Return("head123abc", nil)
+
+		mockGitProvider.EXPECT().
+			Checkout(gomock.Any(), gomock.Any(), "head123abc").
+			Return(nil)
+
 		const testDestDir = "/output-preexisting"
 
 		provider, err := sourceproviders.NewFedoraSourcesProviderImpl(
@@ -322,6 +338,14 @@ func TestGetComponentFromGit(t *testing.T) {
 
 				return fileutils.WriteFile(env.FS(), specPath, []byte("Name: "+testPackageName), fileperms.PublicFile)
 			})
+
+		mockGitProvider.EXPECT().
+			GetCurrentCommit(gomock.Any(), gomock.Any()).
+			Return("head123abc", nil)
+
+		mockGitProvider.EXPECT().
+			Checkout(gomock.Any(), gomock.Any(), "head123abc").
+			Return(nil)
 
 		provider, err := sourceproviders.NewFedoraSourcesProviderImpl(
 			env.FS(),
@@ -437,6 +461,14 @@ func TestGetComponentFromGit(t *testing.T) {
 			Clone(gomock.Any(), repoURL, gomock.Any(), gomock.Any()).
 			Return(nil)
 
+		mockGitProvider.EXPECT().
+			GetCurrentCommit(gomock.Any(), gomock.Any()).
+			Return("head123abc", nil)
+
+		mockGitProvider.EXPECT().
+			Checkout(gomock.Any(), gomock.Any(), "head123abc").
+			Return(nil)
+
 		// But extractor fails - note it receives the component name, not destDir
 		extractorError := errors.New("extraction failed")
 		mockExtractor.EXPECT().
@@ -490,6 +522,14 @@ func TestGetComponentFromGit(t *testing.T) {
 				)
 			})
 
+		mockGitProvider.EXPECT().
+			GetCurrentCommit(gomock.Any(), gomock.Any()).
+			Return("head123abc", nil)
+
+		mockGitProvider.EXPECT().
+			Checkout(gomock.Any(), gomock.Any(), "head123abc").
+			Return(nil)
+
 		// Extractor succeeds
 		mockExtractor.EXPECT().
 			ExtractSourcesFromRepo(gomock.Any(), gomock.Any(), upstreamName, gomock.Any(), gomock.Any()).
@@ -542,6 +582,14 @@ func TestGetComponentFromGit(t *testing.T) {
 		upstreamRepoURL := "https://example.com/" + upstreamName + ".git"
 		mockGitProvider.EXPECT().
 			Clone(gomock.Any(), upstreamRepoURL, gomock.Any(), gomock.Any()).
+			Return(nil)
+
+		mockGitProvider.EXPECT().
+			GetCurrentCommit(gomock.Any(), gomock.Any()).
+			Return("head123abc", nil)
+
+		mockGitProvider.EXPECT().
+			Checkout(gomock.Any(), gomock.Any(), "head123abc").
 			Return(nil)
 
 		// Extractor succeeds
@@ -652,7 +700,17 @@ func TestCheckoutTargetCommit(t *testing.T) {
 				return fileutils.WriteFile(env.FS(), specPath, []byte("Name: "+testPackageName), fileperms.PublicFile)
 			})
 
-		// Should NOT call GetCommitHashBeforeDate or Checkout - uses HEAD from clone
+		headCommitHash := "head123abc"
+
+		// GetCurrentCommit is called to resolve HEAD
+		mockGitProvider.EXPECT().
+			GetCurrentCommit(gomock.Any(), gomock.Any()).
+			Return(headCommitHash, nil)
+
+		// Then checkout that commit
+		mockGitProvider.EXPECT().
+			Checkout(gomock.Any(), gomock.Any(), headCommitHash).
+			Return(nil)
 
 		// Extractor succeeds
 		mockExtractor.EXPECT().
@@ -700,7 +758,7 @@ func TestCheckoutTargetCommit(t *testing.T) {
 
 		err = provider.GetComponent(context.Background(), mockComponent, destDir)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to get commit hash for snapshot time")
+		assert.Contains(t, err.Error(), "resolving commit for snapshot time")
 		assert.ErrorIs(t, err, hashError)
 	})
 
@@ -747,7 +805,7 @@ func TestCheckoutTargetCommit(t *testing.T) {
 
 		err = provider.GetComponent(context.Background(), mockComponent, destDir)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to checkout snapshot commit")
+		assert.Contains(t, err.Error(), "failed to checkout commit")
 		assert.ErrorIs(t, err, checkoutError)
 	})
 
@@ -929,7 +987,7 @@ func TestCheckoutTargetCommit_UpstreamCommit(t *testing.T) {
 
 		err = provider.GetComponent(context.Background(), mockComponent, destDir)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to checkout upstream commit")
+		assert.Contains(t, err.Error(), "failed to checkout commit")
 		assert.ErrorIs(t, err, checkoutError)
 	})
 }

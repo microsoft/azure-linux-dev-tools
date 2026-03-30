@@ -221,54 +221,142 @@ func (g *FedoraSourcesProviderImpl) renameSpecIfNeeded(dir, upstreamName, compon
 	return nil
 }
 
-// checkoutTargetCommit determines the appropriate commit to use and checks it out.
-// Priority order:
-//  1. Explicit upstream commit hash - specified per-component via upstream-commit
-//  2. Upstream distro snapshot - snapshot time from the provider's resolved distro
-//  3. Default - use current HEAD (no checkout needed)
+// checkoutTargetCommit resolves the effective commit via [resolveEffectiveCommitHash]
+// and checks it out in the cloned repository.
 func (g *FedoraSourcesProviderImpl) checkoutTargetCommit(
 	ctx context.Context,
 	upstreamCommit string,
 	repoDir string,
 ) error {
-	// Case 1: Explicit upstream commit hash specified per-component
-	if upstreamCommit != "" {
-		slog.Info("Using explicit upstream commit hash",
-			"commitHash", upstreamCommit)
-
-		if err := g.gitProvider.Checkout(ctx, repoDir, upstreamCommit); err != nil {
-			return fmt.Errorf("failed to checkout upstream commit %#q:\n%w", upstreamCommit, err)
-		}
-
-		return nil
+	commitHash, err := g.resolveEffectiveCommitHash(ctx, repoDir, upstreamCommit, slog.LevelInfo)
+	if err != nil {
+		return err
 	}
 
-	// Case 2: Provider has a snapshot time configured from the resolved distro
+	if err := g.gitProvider.Checkout(ctx, repoDir, commitHash); err != nil {
+		return fmt.Errorf("failed to checkout commit %#q:\n%w", commitHash, err)
+	}
+
+	return nil
+}
+
+// ResolveSourceIdentity implements [SourceIdentityProvider] by resolving the upstream
+// commit hash for the component. All resolution priority logic is in
+// [resolveEffectiveCommitHash], called via [resolveCommit].
+func (g *FedoraSourcesProviderImpl) ResolveSourceIdentity(
+	ctx context.Context,
+	component components.Component,
+) (string, error) {
+	if component.GetName() == "" {
+		return "", errors.New("component name cannot be empty")
+	}
+
+	upstreamName := component.GetConfig().Spec.UpstreamName
+	if upstreamName == "" {
+		upstreamName = component.GetName()
+	}
+
+	gitRepoURL := strings.ReplaceAll(g.distroGitBaseURI, "$pkg", upstreamName)
+
+	return g.resolveCommit(ctx, gitRepoURL, upstreamName, component.GetConfig().Spec.UpstreamCommit)
+}
+
+// resolveCommit determines the effective commit via [resolveEffectiveCommitHash].
+// For pinned commits (case 1), it returns immediately without cloning. For snapshot
+// and HEAD cases, it performs a metadata-only clone to resolve the commit hash.
+func (g *FedoraSourcesProviderImpl) resolveCommit(
+	ctx context.Context, gitRepoURL string, upstreamName string, upstreamCommit string,
+) (string, error) {
+	// Case 1: Explicit upstream commit hash specified per-component
+	if upstreamCommit != "" {
+		return g.resolveEffectiveCommitHash(ctx, "", upstreamCommit, slog.LevelDebug)
+	}
+
+	// Cases 2 & 3: need a metadata-only clone to resolve snapshot or HEAD commit.
+	tempDir, err := fileutils.MkdirTempInTempDir(g.fs, "azldev-identity-snapshot-")
+	if err != nil {
+		return "", fmt.Errorf("creating temp directory for snapshot clone:\n%w", err)
+	}
+
+	defer func() {
+		if removeErr := g.fs.RemoveAll(tempDir); removeErr != nil {
+			slog.Debug("Failed to clean up snapshot clone temp directory",
+				"path", tempDir, "error", removeErr)
+		}
+	}()
+
+	// Clone a single branch to resolve the snapshot commit. We use a full
+	// (non-shallow) clone because not all git servers support --shallow-since
+	// (e.g., Pagure returns "the remote end hung up unexpectedly").
+	err = retry.Do(ctx, g.retryConfig, func() error {
+		_ = g.fs.RemoveAll(tempDir)
+		_ = fileutils.MkdirAll(g.fs, tempDir)
+
+		return g.gitProvider.Clone(ctx, gitRepoURL, tempDir,
+			git.WithGitBranch(g.distroGitBranch),
+			git.WithMetadataOnly(),
+			git.WithQuiet(),
+		)
+	})
+	if err != nil {
+		return "", fmt.Errorf("partial clone for identity of %#q:\n%w", upstreamName, err)
+	}
+
+	commitHash, err := g.resolveEffectiveCommitHash(ctx, tempDir, "", slog.LevelDebug)
+	if err != nil {
+		return "", fmt.Errorf("resolving commit for %#q:\n%w", upstreamName, err)
+	}
+
+	return commitHash, nil
+}
+
+// resolveEffectiveCommitHash is the single source of truth for which commit a
+// component should use from a cloned repository.
+//
+// Priority:
+//  1. Explicit upstream commit hash (pinned per-component).
+//  2. Snapshot time — commit immediately before the snapshot date.
+//  3. Default — current HEAD.
+func (g *FedoraSourcesProviderImpl) resolveEffectiveCommitHash(
+	ctx context.Context,
+	repoDir string,
+	upstreamCommit string,
+	logLevel slog.Level,
+) (string, error) {
+	// Case 1: Explicit upstream commit hash specified per-component.
+	if upstreamCommit != "" {
+		slog.Log(ctx, logLevel, "Using explicit upstream commit hash", "commitHash", upstreamCommit)
+
+		return upstreamCommit, nil
+	}
+
+	// Case 2: Provider has a snapshot time configured from the resolved distro.
 	if g.snapshotTime != "" {
 		snapshotDateTime, err := time.Parse(time.RFC3339, g.snapshotTime)
 		if err != nil {
-			return fmt.Errorf("invalid snapshot time %#q:\n%w", g.snapshotTime, err)
+			return "", fmt.Errorf("invalid snapshot time %#q:\n%w", g.snapshotTime, err)
 		}
 
 		commitHash, err := g.gitProvider.GetCommitHashBeforeDate(ctx, repoDir, snapshotDateTime)
 		if err != nil {
-			return fmt.Errorf("failed to get commit hash for snapshot time %s:\n%w",
+			return "", fmt.Errorf("resolving commit for snapshot time %s:\n%w",
 				snapshotDateTime.Format(time.RFC3339), err)
 		}
 
-		slog.Info("Using upstream distro snapshot time",
+		slog.Log(ctx, logLevel, "Using upstream distro snapshot time",
 			"snapshotDateTime", snapshotDateTime.Format(time.RFC3339),
 			"commitHash", commitHash)
 
-		if err := g.gitProvider.Checkout(ctx, repoDir, commitHash); err != nil {
-			return fmt.Errorf("failed to checkout snapshot commit %#q:\n%w", commitHash, err)
-		}
-
-		return nil
+		return commitHash, nil
 	}
 
-	// Case 3: Default - use current HEAD (already checked out by clone)
-	slog.Info("Using current HEAD (no snapshot time configured)")
+	// Case 3: Default — use current HEAD.
+	commitHash, err := g.gitProvider.GetCurrentCommit(ctx, repoDir)
+	if err != nil {
+		return "", fmt.Errorf("resolving current HEAD commit:\n%w", err)
+	}
 
-	return nil
+	slog.Log(ctx, logLevel, "Using current HEAD", "commitHash", commitHash)
+
+	return commitHash, nil
 }
