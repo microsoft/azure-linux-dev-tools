@@ -161,3 +161,71 @@ func TestCloneNonExistentRepo(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), errMsgCloneFailed)
 }
+
+func TestGetCurrentCommit(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	cmdFactory, err := externalcmd.NewCmdFactory(
+		opctx_test.NewNoOpMockDryRunnable(ctrl),
+		opctx_test.NewNoOpMockEventListener(ctrl),
+	)
+	require.NoError(t, err)
+
+	provider, err := git.NewGitProviderImpl(opctx_test.NewNoOpMockEventListener(ctrl), cmdFactory)
+	require.NoError(t, err)
+
+	destDir := filepath.Join(t.TempDir(), testRepoSubDir)
+
+	err = provider.Clone(context.Background(), testRepoURL, destDir)
+	require.NoError(t, err)
+
+	commitHash, err := provider.GetCurrentCommit(t.Context(), destDir)
+	require.NoError(t, err)
+
+	// A full SHA-1 hash is 40 hex characters.
+	assert.Len(t, commitHash, 40)
+	assert.Regexp(t, `^[0-9a-f]{40}$`, commitHash)
+}
+
+func TestGetCurrentCommitEmptyRepoDir(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	provider, err := git.NewGitProviderImpl(
+		opctx_test.NewMockEventListener(ctrl),
+		opctx_test.NewMockCmdFactory(ctrl),
+	)
+	require.NoError(t, err)
+
+	_, err = provider.GetCurrentCommit(context.Background(), "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "repository directory cannot be empty")
+}
+
+func TestCloneWithMetadataOnly(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	cmdFactory, err := externalcmd.NewCmdFactory(
+		opctx_test.NewNoOpMockDryRunnable(ctrl),
+		opctx_test.NewNoOpMockEventListener(ctrl),
+	)
+	require.NoError(t, err)
+
+	provider, err := git.NewGitProviderImpl(opctx_test.NewNoOpMockEventListener(ctrl), cmdFactory)
+	require.NoError(t, err)
+
+	destDir := filepath.Join(t.TempDir(), testRepoSubDir)
+
+	err = provider.Clone(
+		t.Context(),
+		testRepoURL,
+		destDir,
+		git.WithMetadataOnly(),
+	)
+
+	require.NoError(t, err)
+
+	// Git metadata should exist.
+	assert.DirExists(t, filepath.Join(destDir, testGitDir))
+	// --no-checkout means the working tree file should NOT be present.
+	assert.NoFileExists(t, filepath.Join(destDir, testRepoReadmeFile))
+}
