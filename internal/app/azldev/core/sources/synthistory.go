@@ -140,7 +140,7 @@ func buildSyntheticCommits(
 		return nil, nil
 	}
 
-	projectRepo, err := openProjectRepo(configFilePath)
+	projectRepo, err := OpenProjectRepo(configFilePath)
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +208,7 @@ func resolveConfigFilePath(config *projectconfig.ComponentConfig, componentName 
 
 // openProjectRepo finds and opens the git repository containing configFilePath by
 // walking up the directory tree.
-func openProjectRepo(configFilePath string) (*gogit.Repository, error) {
+func OpenProjectRepo(configFilePath string) (*gogit.Repository, error) {
 	repo, err := gogit.PlainOpenWithOptions(filepath.Dir(configFilePath), &gogit.PlainOpenOptions{
 		DetectDotGit: true,
 	})
