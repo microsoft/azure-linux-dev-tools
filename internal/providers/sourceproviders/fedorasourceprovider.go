@@ -272,3 +272,93 @@ func (g *FedoraSourcesProviderImpl) checkoutTargetCommit(
 
 	return nil
 }
+
+// ResolveSourceIdentity implements [SourceIdentityProvider] by resolving the upstream
+// commit hash for the component. Resolution priority matches [checkoutTargetCommit]:
+//  1. Explicit upstream commit hash (pinned per-component) — returned directly.
+//  2. Snapshot time — shallow clone + rev-list to find the commit at the snapshot date.
+//  3. Default — query HEAD of the dist-git branch via ls-remote.
+func (g *FedoraSourcesProviderImpl) ResolveSourceIdentity(
+	ctx context.Context,
+	component components.Component,
+) (string, error) {
+	// Case 1: Explicit upstream commit hash — no network call needed.
+	if pinnedCommit := component.GetConfig().Spec.UpstreamCommit; pinnedCommit != "" {
+		slog.Debug("Using pinned upstream commit for identity",
+			"component", component.GetName(),
+			"commit", pinnedCommit)
+
+		return pinnedCommit, nil
+	}
+
+	// Case 2: Need to resolve the commit for the snapshot time or current HEAD
+	upstreamName := component.GetConfig().Spec.UpstreamName
+	if upstreamName == "" {
+		upstreamName = component.GetName()
+	}
+
+	gitRepoURL := strings.ReplaceAll(g.distroGitBaseURI, "$pkg", upstreamName)
+
+	return g.resolveCommit(ctx, gitRepoURL, upstreamName)
+}
+
+// resolveCommit clones the branch and determines the effective commit, either
+// at the snapshot time, or at the latest commit if no snapshot time is configured.
+func (g *FedoraSourcesProviderImpl) resolveCommit(
+	ctx context.Context, gitRepoURL string, upstreamName string,
+) (string, error) {
+	tempDir, err := fileutils.MkdirTempInTempDir(g.fs, "azldev-identity-snapshot-")
+	if err != nil {
+		return "", fmt.Errorf("creating temp directory for snapshot clone:\n%w", err)
+	}
+
+	defer func() {
+		if removeErr := g.fs.RemoveAll(tempDir); removeErr != nil {
+			slog.Debug("Failed to clean up snapshot clone temp directory",
+				"path", tempDir, "error", removeErr)
+		}
+	}()
+
+	// Clone a single branch to resolve the snapshot commit. We use a full
+	// (non-shallow) clone because not all git servers support --shallow-since
+	// (e.g., Pagure returns "the remote end hung up unexpectedly").
+	err = retry.Do(ctx, g.retryConfig, func() error {
+		_ = g.fs.RemoveAll(tempDir)
+		_ = fileutils.MkdirAll(g.fs, tempDir)
+
+		return g.gitProvider.Clone(ctx, gitRepoURL, tempDir,
+			git.WithGitBranch(g.distroGitBranch),
+			git.WithMetadataOnly(),
+			git.WithQuiet(),
+		)
+	})
+	if err != nil {
+		return "", fmt.Errorf("partial clone for identity of %#q:\n%w", upstreamName, err)
+	}
+
+	var commitHash string
+	if g.snapshotTime != "" {
+		snapshotDateTime, parseErr := time.Parse(time.RFC3339, g.snapshotTime)
+		if parseErr != nil {
+			return "", fmt.Errorf("invalid snapshot time %#q:\n%w", g.snapshotTime, parseErr)
+		}
+
+		commitHash, err = g.gitProvider.GetCommitHashBeforeDate(ctx, tempDir, snapshotDateTime)
+		if err != nil {
+			return "", fmt.Errorf("resolving snapshot commit for %#q at %s:\n%w",
+				upstreamName, snapshotDateTime.Format(time.RFC3339), err)
+		}
+	} else {
+		commitHash, err = g.gitProvider.GetCurrentCommit(ctx, tempDir)
+		if err != nil {
+			return "", fmt.Errorf("resolving current commit for %#q:\n%w", upstreamName, err)
+		}
+	}
+
+	slog.Debug("Resolved snapshot commit for identity",
+		"component", upstreamName,
+		"snapshot", g.snapshotTime,
+		"commit", commitHash)
+
+	return commitHash, nil
+}

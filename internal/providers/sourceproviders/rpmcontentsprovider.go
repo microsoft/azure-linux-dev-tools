@@ -5,8 +5,11 @@ package sourceproviders
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/rpmprovider"
@@ -72,4 +75,29 @@ func (r *RPMContentsProviderImpl) GetComponent(
 	}
 
 	return nil
+}
+
+// ResolveSourceIdentity implements [SourceIdentityProvider] by downloading the source RPM
+// and computing its SHA256 hash. This is a heavyweight operation since it requires a full
+// RPM download.
+func (r *RPMContentsProviderImpl) ResolveSourceIdentity(
+	ctx context.Context,
+	component components.Component,
+) (identity string, err error) {
+	rpmReader, err := r.rpmProvider.GetRPM(ctx, component.GetName(), nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to get RPM for identity of component %#q:\n%w",
+			component.GetName(), err)
+	}
+
+	defer defers.HandleDeferError(rpmReader.Close, &err)
+
+	hasher := sha256.New()
+
+	if _, err := io.Copy(hasher, rpmReader); err != nil {
+		return "", fmt.Errorf("failed to hash RPM for component %#q:\n%w",
+			component.GetName(), err)
+	}
+
+	return "sha256:" + hex.EncodeToString(hasher.Sum(nil)), nil
 }
