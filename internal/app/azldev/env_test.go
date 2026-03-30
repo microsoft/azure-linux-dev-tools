@@ -115,3 +115,20 @@ func TestEnvConstructionTime(t *testing.T) {
 	// Make sure it appears to be a valid time that's before or at *now*.
 	assert.LessOrEqual(t, testEnv.Env.ConstructionTime(), time.Now())
 }
+
+func TestEnvWithCancel(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+	original := testEnv.Env
+
+	child, cancel := original.WithCancel()
+	defer cancel()
+
+	// Child should share config and project dir with original.
+	assert.Equal(t, original.ProjectDir(), child.ProjectDir())
+	assert.Equal(t, original.Config(), child.Config())
+
+	// Cancelling the child should not cancel the original.
+	cancel()
+	require.Error(t, child.Err())
+	assert.NoError(t, original.Err())
+}
