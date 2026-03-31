@@ -310,6 +310,15 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 		return nil
 	}
 
+	// Bump the static Release tag before staging changes. For specs using
+	// %autorelease this is a no-op; rpmautospec resolves releases from git
+	// history automatically. For static releases the leading integer is
+	// incremented by the number of synthetic commits so that every project
+	// commit that affects the component produces a unique release number.
+	if err := p.tryBumpStaticRelease(component, sourcesDirPath, len(commits)); err != nil {
+		return fmt.Errorf("failed to apply release bump:\n%w", err)
+	}
+
 	// Check for an existing git repository in the sources directory.
 	// Use os.Stat rather than p.fs because go-git's PlainInit/PlainOpen always
 	// operate on the real OS filesystem — the check must use the same source of
