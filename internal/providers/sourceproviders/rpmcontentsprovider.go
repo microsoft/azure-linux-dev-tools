@@ -84,6 +84,10 @@ func (r *RPMContentsProviderImpl) ResolveSourceIdentity(
 	ctx context.Context,
 	component components.Component,
 ) (identity string, err error) {
+	if component.GetName() == "" {
+		return "", errors.New("component name cannot be empty")
+	}
+
 	rpmReader, err := r.rpmProvider.GetRPM(ctx, component.GetName(), nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to get RPM for identity of component %#q:\n%w",

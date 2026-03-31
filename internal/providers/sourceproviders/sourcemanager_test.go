@@ -16,6 +16,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -368,4 +369,141 @@ func TestSourceManager_FetchFiles_Errors(t *testing.T) {
 			require.Contains(t, err.Error(), testCase.expectedError)
 		})
 	}
+}
+
+func TestSourceManager_ResolveSourceIdentity_EmptyComponentName(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+
+	component.EXPECT().GetName().Return("")
+
+	sourceManager, err := sourceproviders.NewSourceManager(env.Env, testDefaultDistro())
+	require.NoError(t, err)
+
+	_, err = sourceManager.ResolveSourceIdentity(t.Context(), component)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "component name is empty")
+}
+
+func TestSourceManager_ResolveSourceIdentity_LocalNoSpecPath(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+
+	componentConfig := &projectconfig.ComponentConfig{
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeLocal,
+		},
+	}
+
+	component.EXPECT().GetName().AnyTimes().Return("test-component")
+	component.EXPECT().GetConfig().AnyTimes().Return(componentConfig)
+
+	sourceManager, err := sourceproviders.NewSourceManager(env.Env, testDefaultDistro())
+	require.NoError(t, err)
+
+	_, err = sourceManager.ResolveSourceIdentity(t.Context(), component)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no spec path configured")
+}
+
+func TestSourceManager_ResolveSourceIdentity_LocalSuccess(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+
+	specContent := []byte("Name: test\nVersion: 1.0\n")
+	require.NoError(t, fileutils.WriteFile(env.TestFS, "/specs/test.spec", specContent, fileperms.PrivateFile))
+
+	componentConfig := &projectconfig.ComponentConfig{
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeLocal,
+			Path:       "/specs/test.spec",
+		},
+	}
+
+	component.EXPECT().GetName().AnyTimes().Return("test-component")
+	component.EXPECT().GetConfig().AnyTimes().Return(componentConfig)
+
+	sourceManager, err := sourceproviders.NewSourceManager(env.Env, testDefaultDistro())
+	require.NoError(t, err)
+
+	identity, err := sourceManager.ResolveSourceIdentity(t.Context(), component)
+	require.NoError(t, err)
+	assert.Contains(t, identity, "sha256:")
+}
+
+func TestSourceManager_ResolveSourceIdentity_UpstreamNoProviders(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+
+	// Clear the distro so no upstream providers are registered.
+	emptyDistro := sourceproviders.ResolvedDistro{}
+
+	componentConfig := &projectconfig.ComponentConfig{
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeUpstream,
+		},
+	}
+
+	component.EXPECT().GetName().AnyTimes().Return("test-component")
+	component.EXPECT().GetConfig().AnyTimes().Return(componentConfig)
+
+	sourceManager, err := sourceproviders.NewSourceManager(env.Env, emptyDistro)
+	require.NoError(t, err)
+
+	_, err = sourceManager.ResolveSourceIdentity(t.Context(), component)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no upstream providers configured")
+}
+
+func TestSourceManager_ResolveSourceIdentity_UpstreamAllProvidersFail(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+
+	componentConfig := &projectconfig.ComponentConfig{
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeUpstream,
+		},
+	}
+
+	component.EXPECT().GetName().AnyTimes().Return("test-component")
+	component.EXPECT().GetConfig().AnyTimes().Return(componentConfig)
+
+	// Make git commands fail so all providers return errors.
+	env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+		return errors.New("simulated git failure")
+	}
+
+	sourceManager, err := sourceproviders.NewSourceManager(env.Env, testDefaultDistro())
+	require.NoError(t, err)
+
+	_, err = sourceManager.ResolveSourceIdentity(t.Context(), component)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to resolve source identity")
+}
+
+func TestSourceManager_ResolveSourceIdentity_UnknownSourceType(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+
+	componentConfig := &projectconfig.ComponentConfig{
+		Spec: projectconfig.SpecSource{
+			SourceType: "unknown-type",
+		},
+	}
+
+	component.EXPECT().GetName().AnyTimes().Return("test-component")
+	component.EXPECT().GetConfig().AnyTimes().Return(componentConfig)
+
+	sourceManager, err := sourceproviders.NewSourceManager(env.Env, testDefaultDistro())
+	require.NoError(t, err)
+
+	_, err = sourceManager.ResolveSourceIdentity(t.Context(), component)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no identity provider for source type")
 }
