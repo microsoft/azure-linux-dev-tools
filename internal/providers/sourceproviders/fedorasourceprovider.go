@@ -337,6 +337,7 @@ func (g *FedoraSourcesProviderImpl) resolveCommit(
 	}
 
 	var commitHash string
+
 	if g.snapshotTime != "" {
 		snapshotDateTime, parseErr := time.Parse(time.RFC3339, g.snapshotTime)
 		if parseErr != nil {
