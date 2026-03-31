@@ -6,6 +6,7 @@ package sourceproviders
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path/filepath"
@@ -18,11 +19,11 @@ import (
 
 // ResolveLocalSourceIdentity computes a SHA256 hash over all files in the given
 // spec directory (spec file + sidecar files like patches and scripts).
-// Files are sorted by path for determinism. Returns an empty string if specDir
-// is empty or contains no files.
+// Files are sorted by path for determinism. Returns an empty string if the
+// directory contains no files.
 func ResolveLocalSourceIdentity(filesystem opctx.FS, specDir string) (string, error) {
 	if specDir == "" {
-		return "", nil
+		return "", errors.New("spec directory cannot be empty")
 	}
 
 	// Collect all files in the spec directory.

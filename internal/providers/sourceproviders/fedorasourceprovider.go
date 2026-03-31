@@ -276,12 +276,17 @@ func (g *FedoraSourcesProviderImpl) checkoutTargetCommit(
 // ResolveSourceIdentity implements [SourceIdentityProvider] by resolving the upstream
 // commit hash for the component. Resolution priority matches [checkoutTargetCommit]:
 //  1. Explicit upstream commit hash (pinned per-component) — returned directly.
-//  2. Snapshot time — shallow clone + rev-list to find the commit at the snapshot date.
-//  3. Default — query HEAD of the dist-git branch via ls-remote.
+//  2. Snapshot time — perform a metadata-only clone of the dist-git branch and use the
+//     local git history to find the commit immediately before the snapshot date.
+//  3. Default — perform a metadata-only clone of the dist-git branch and use its current HEAD.
 func (g *FedoraSourcesProviderImpl) ResolveSourceIdentity(
 	ctx context.Context,
 	component components.Component,
 ) (string, error) {
+	if component.GetName() == "" {
+		return "", errors.New("component name cannot be empty")
+	}
+
 	// Case 1: Explicit upstream commit hash — no network call needed.
 	if pinnedCommit := component.GetConfig().Spec.UpstreamCommit; pinnedCommit != "" {
 		slog.Debug("Using pinned upstream commit for identity",

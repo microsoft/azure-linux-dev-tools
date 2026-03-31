@@ -32,9 +32,8 @@ import (
 // --- ResolveLocalSourceIdentity tests ---
 
 func TestResolveLocalSourceIdentity_EmptyDir(t *testing.T) {
-	identity, err := sourceproviders.ResolveLocalSourceIdentity(afero.NewMemMapFs(), "")
-	require.NoError(t, err)
-	assert.Empty(t, identity)
+	_, err := sourceproviders.ResolveLocalSourceIdentity(afero.NewMemMapFs(), "")
+	require.Error(t, err)
 }
 
 func TestResolveLocalSourceIdentity_Deterministic(t *testing.T) {

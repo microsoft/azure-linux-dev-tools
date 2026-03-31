@@ -472,12 +472,12 @@ func (m *sourceManager) ResolveSourceIdentity(
 
 	switch sourceType {
 	case projectconfig.SpecSourceTypeLocal, projectconfig.SpecSourceTypeUnspecified:
-		specDir := ""
-		if component.GetConfig().Spec.Path != "" {
-			specDir = filepath.Dir(component.GetConfig().Spec.Path)
+		specPath := component.GetConfig().Spec.Path
+		if specPath == "" {
+			return "", fmt.Errorf("component %#q has no spec path configured", component.GetName())
 		}
 
-		return ResolveLocalSourceIdentity(m.fs, specDir)
+		return ResolveLocalSourceIdentity(m.fs, filepath.Dir(specPath))
 
 	case projectconfig.SpecSourceTypeUpstream:
 		return m.resolveUpstreamSourceIdentity(ctx, component)
