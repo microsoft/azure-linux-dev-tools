@@ -68,7 +68,7 @@ func (cfg *ProjectConfig) Validate() error {
 }
 
 // validatePackageGroupMembership checks that no binary package name appears in more than one
-// package group. A packagemay belong to at most one group to keep routing unambiguous, but it
+// package group. A package may belong to at most one group to keep routing unambiguous, but it
 // may also be left ungrouped.
 func validatePackageGroupMembership(groups map[string]PackageGroupConfig) error {
 	// Track which group each package name was first seen in.

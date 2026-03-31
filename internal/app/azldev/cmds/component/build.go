@@ -323,7 +323,7 @@ func buildComponentUsingBuilder(
 	// Enrich each RPM with its binary package name and resolved publish channel.
 	results.RPMs, err = resolveRPMResults(env.FS(), results.RPMPaths, env.Config(), component.GetConfig())
 	if err != nil {
-		return results, fmt.Errorf("failed to resolve publish channels for %q:\n%w", component.GetName(), err)
+		return results, fmt.Errorf("failed to resolve publish channels for %#q:\n%w", component.GetName(), err)
 	}
 
 	// Populate the parallel Channels slice for table display.

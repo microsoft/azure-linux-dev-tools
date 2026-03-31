@@ -2,7 +2,9 @@
 
 The `[project]` section defines metadata and directory layout for an azldev project. It is typically defined in a project-level config file (e.g., `base/project.toml`) rather than the root `azldev.toml`.
 
-## Field Reference
+## `[project]` Field Reference
+
+The following fields are nested under the `[project]` TOML section:
 
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
@@ -11,8 +13,8 @@ The `[project]` section defines metadata and directory layout for an azldev proj
 | Work directory | `work-dir` | string | No | Path to the temporary working directory for build artifacts (relative to this config file) |
 | Output directory | `output-dir` | string | No | Path to the directory where final build outputs (RPMs, SRPMs) are placed (relative to this config file) |
 | Default distro | `default-distro` | [DistroReference](distros.md#distro-references) | No | The default distro and version to use when building components |
-| Default package config | `default-package-config` | [PackageConfig](package-groups.md#package-config) | No | Project-wide default applied to every binary package before group and component overrides |
-| Package groups | `package-groups` | map of string → [PackageGroupConfig](package-groups.md) | No | Named groups of binary packages with shared configuration |
+
+> **Note:** `[default-package-config]` and `[package-groups]` are **top-level** TOML sections — they are not nested under `[project]`. They are documented in the sections below.
 
 ## Directory Paths
 
@@ -37,7 +39,7 @@ Components inherit their spec source and build environment from the default dist
 
 ## Default Package Config
 
-The `[default-package-config]` section defines the lowest-priority configuration layer applied to every binary package produced by any component in the project. It is overridden by [package groups](package-groups.md), [component-level defaults](components.md#package-configuration), and explicit per-package overrides.
+The `[default-package-config]` section is a **top-level** TOML section (not nested under `[project]`). It defines the lowest-priority configuration layer applied to every binary package produced by any component in the project. It is overridden by [package groups](package-groups.md), [component-level defaults](components.md#package-configuration), and explicit per-package overrides.
 
 The most common use is to set a project-wide default publish channel:
 
@@ -50,7 +52,7 @@ See [Package Groups](package-groups.md#resolution-order) for the full resolution
 
 ## Package Groups
 
-The `[package-groups.<name>]` section defines named groups of binary packages. Each group lists its members explicitly in the `packages` field and provides a `default-package-config` that is applied to all listed packages.
+The `[package-groups.<name>]` section is a **top-level** TOML section (not nested under `[project]`). It defines named groups of binary packages. Each group lists its members explicitly in the `packages` field and provides a `default-package-config` that is applied to all listed packages.
 
 This is currently used to route different types of packages (e.g., `-devel`, `-debuginfo`) to different publish channels, though groups can also carry other future configuration.
 
