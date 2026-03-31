@@ -211,6 +211,20 @@ func (env *Env) Context() context.Context {
 	return env.ctx
 }
 
+// WithCancel returns a shallow copy of the [Env] with a child [context.Context]
+// derived from [context.WithCancel]. The returned [Env] shares all features
+// (FS, config, event listener, cmd factory, etc.) with the original but has an
+// independently cancellable context. The caller must call the returned
+// [context.CancelFunc] when done. Useful when performing parallel operations
+// that benefit from early cancellation on error.
+func (env *Env) WithCancel() (*Env, context.CancelFunc) {
+	childCtx, cancel := context.WithCancel(env.ctx)
+	childEnv := *env
+	childEnv.ctx = childCtx
+
+	return &childEnv, cancel
+}
+
 // ConfirmAutoResolution prompts the user to confirm auto-resolution of a problem. The provided
 // text is displayed to the user as explanation.
 func (env *Env) ConfirmAutoResolution(text string) bool {

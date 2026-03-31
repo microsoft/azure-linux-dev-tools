@@ -37,6 +37,18 @@ type FileSourceProvider interface {
 	GetFiles(ctx context.Context, fileRefs []projectconfig.SourceFileReference, destDirPath string) error
 }
 
+// SourceIdentityProvider resolves a reproducible identity string for a component's source.
+// The identity changes whenever the source content would change — the exact representation
+// depends on the source type (e.g., a commit hash for dist-git, a content hash for local files).
+//
+// Consumers should treat the returned string as opaque; it is only meaningful for equality
+// comparison between two runs.
+type SourceIdentityProvider interface {
+	// ResolveSourceIdentity returns a deterministic identity string for the component's source.
+	// Returns an error if the identity cannot be determined (e.g., network failure for upstream sources).
+	ResolveSourceIdentity(ctx context.Context, component components.Component) (string, error)
+}
+
 // FetchComponentOptions holds optional parameters for component fetching operations.
 type FetchComponentOptions struct {
 	// PreserveGitDir, when true, instructs the provider to keep the upstream .git directory
@@ -72,9 +84,10 @@ func resolveFetchComponentOptions(opts []FetchComponentOption) FetchComponentOpt
 }
 
 // ComponentSourceProvider is an abstract interface implemented by a source provider that can retrieve the
-// full file contents of a given component.
+// full file contents of a given component or calculate an identity.
 type ComponentSourceProvider interface {
 	Provider
+	SourceIdentityProvider
 
 	// GetComponent retrieves the `.spec` for the specified component along with any sidecar
 	// files stored along with it, placing the fetched files in the provided directory.
@@ -96,6 +109,11 @@ type SourceManager interface {
 		ctx context.Context, component components.Component, destDirPath string,
 		opts ...FetchComponentOption,
 	) error
+
+	// ResolveSourceIdentity returns a deterministic identity string for the component's source.
+	// For local components, this is a content hash of the spec directory.
+	// For upstream components, this is the resolved commit hash from the dist-git provider.
+	ResolveSourceIdentity(ctx context.Context, component components.Component) (string, error)
 }
 
 // ResolvedDistro holds the fully resolved distro configuration for a component.
@@ -441,6 +459,55 @@ func (m *sourceManager) FetchComponent(
 
 	return fmt.Errorf("spec for component %#q not found in any configured provider",
 		component.GetName())
+}
+
+func (m *sourceManager) ResolveSourceIdentity(
+	ctx context.Context, component components.Component,
+) (string, error) {
+	if component.GetName() == "" {
+		return "", errors.New("component name is empty")
+	}
+
+	sourceType := component.GetConfig().Spec.SourceType
+
+	switch sourceType {
+	case projectconfig.SpecSourceTypeLocal, projectconfig.SpecSourceTypeUnspecified:
+		specPath := component.GetConfig().Spec.Path
+		if specPath == "" {
+			return "", fmt.Errorf("component %#q has no spec path configured", component.GetName())
+		}
+
+		return ResolveLocalSourceIdentity(m.fs, filepath.Dir(specPath))
+
+	case projectconfig.SpecSourceTypeUpstream:
+		return m.resolveUpstreamSourceIdentity(ctx, component)
+	}
+
+	return "", fmt.Errorf("no identity provider for source type %#q on component %#q",
+		sourceType, component.GetName())
+}
+
+func (m *sourceManager) resolveUpstreamSourceIdentity(
+	ctx context.Context, component components.Component,
+) (string, error) {
+	if len(m.upstreamComponentProviders) == 0 {
+		return "", fmt.Errorf("no upstream providers configured for component %#q",
+			component.GetName())
+	}
+
+	var lastError error
+
+	for _, provider := range m.upstreamComponentProviders {
+		identity, err := provider.ResolveSourceIdentity(ctx, component)
+		if err == nil {
+			return identity, nil
+		}
+
+		lastError = err
+	}
+
+	return "", fmt.Errorf("failed to resolve source identity for upstream component %#q:\n%w",
+		component.GetName(), lastError)
 }
 
 func (m *sourceManager) fetchLocalComponent(

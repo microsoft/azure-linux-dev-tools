@@ -13,7 +13,7 @@ type CheckConfig struct {
 	// Skip indicates whether the %check section should be disabled for this component.
 	Skip bool `toml:"skip,omitempty" json:"skip,omitempty" jsonschema:"title=Skip check,description=Disables the %check section by prepending 'exit 0' when set to true"`
 	// SkipReason provides a required justification when Skip is true.
-	SkipReason string `toml:"skip_reason,omitempty" json:"skipReason,omitempty" jsonschema:"title=Skip reason,description=Required justification for skipping the %check section"`
+	SkipReason string `toml:"skip_reason,omitempty" json:"skipReason,omitempty" jsonschema:"title=Skip reason,description=Required justification for skipping the %check section" fingerprint:"-"`
 }
 
 // Validate checks that required fields are set when Skip is true.
@@ -43,9 +43,9 @@ type ComponentBuildConfig struct {
 	// Check section configuration.
 	Check CheckConfig `toml:"check,omitempty" json:"check,omitempty" jsonschema:"title=Check configuration,description=Configuration for the %check section"`
 	// Failure configuration and policy for this component's build.
-	Failure ComponentBuildFailureConfig `toml:"failure,omitempty" json:"failure,omitempty" jsonschema:"title=Build failure configuration,description=Configuration and policy regarding build failures for this component."`
+	Failure ComponentBuildFailureConfig `toml:"failure,omitempty" json:"failure,omitempty" jsonschema:"title=Build failure configuration,description=Configuration and policy regarding build failures for this component." fingerprint:"-"`
 	// Hints for how or when to build the component; must not be required for correctness of builds.
-	Hints ComponentBuildHints `toml:"hints,omitempty" json:"hints,omitempty" jsonschema:"title=Build hints,description=Non-essential hints for how or when to build the component."`
+	Hints ComponentBuildHints `toml:"hints,omitempty" json:"hints,omitempty" jsonschema:"title=Build hints,description=Non-essential hints for how or when to build the component." fingerprint:"-"`
 }
 
 // ComponentBuildFailureConfig encapsulates configuration and policy regarding a component's
@@ -53,9 +53,9 @@ type ComponentBuildConfig struct {
 type ComponentBuildFailureConfig struct {
 	// Expected indicates that this component is expected to fail building. This is intended to be used as a temporary
 	// marker for components that are expected to fail until they can be fixed.
-	Expected bool `toml:"expected,omitempty" json:"expected,omitempty" jsonschema:"title=Expected failure,description=Indicates that this component is expected to fail building."`
+	Expected bool `toml:"expected,omitempty" json:"expected,omitempty" jsonschema:"title=Expected failure,description=Indicates that this component is expected to fail building." fingerprint:"-"`
 	// ExpectedReason provides a required justification when Expected is true.
-	ExpectedReason string `toml:"expected-reason,omitempty" json:"expectedReason,omitempty" jsonschema:"title=Expected failure reason,description=Required justification for why this component is expected to fail building."`
+	ExpectedReason string `toml:"expected-reason,omitempty" json:"expectedReason,omitempty" jsonschema:"title=Expected failure reason,description=Required justification for why this component is expected to fail building." fingerprint:"-"`
 }
 
 // ComponentBuildHints encapsulates non-essential hints for how or when to build a component.
@@ -63,7 +63,7 @@ type ComponentBuildFailureConfig struct {
 // or optimizations.
 type ComponentBuildHints struct {
 	// Expensive indicates that building this component is relatively expensive compared to the rest of the distro.
-	Expensive bool `toml:"expensive,omitempty" json:"expensive,omitempty" jsonschema:"title=Expensive to build,description=Indicates that building this component is expensive and should be carefully considered when scheduling."`
+	Expensive bool `toml:"expensive,omitempty" json:"expensive,omitempty" jsonschema:"title=Expensive to build,description=Indicates that building this component is expensive and should be carefully considered when scheduling." fingerprint:"-"`
 }
 
 // Validate checks that the build configuration is valid.

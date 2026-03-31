@@ -24,6 +24,8 @@ type GitProvider interface {
 	Checkout(ctx context.Context, repoDir string, commitHash string) error
 	// GetCommitHashBeforeDate returns the commit hash at or before the specified date in the repository.
 	GetCommitHashBeforeDate(ctx context.Context, repoDir string, dateTime time.Time) (string, error)
+	// GetCurrentCommit returns the current commit hash of the repository at the given directory, regardless of the date.
+	GetCurrentCommit(ctx context.Context, repoDir string) (string, error)
 }
 
 type GitProviderImpl struct {
@@ -33,7 +35,20 @@ type GitProviderImpl struct {
 
 var _ GitProvider = (*GitProviderImpl)(nil)
 
-type GitOptions func() []string
+// GitOptions is a functional option that configures a clone operation.
+// Options may add CLI arguments and/or request post-clone actions.
+type GitOptions func(opts *cloneOptions)
+
+// cloneOptions holds the resolved configuration for a clone operation,
+// including any post-clone actions.
+type cloneOptions struct {
+	// args are the CLI arguments to pass to 'git clone'.
+	args []string
+	// quiet suppresses event emission during the clone. Use this for
+	// internal clones (e.g., identity resolution) that run concurrently
+	// and would otherwise produce misleading nested output.
+	quiet bool
+}
 
 func NewGitProviderImpl(eventListener opctx.EventListener, cmdFactory opctx.CmdFactory) (*GitProviderImpl, error) {
 	if eventListener == nil {
@@ -64,13 +79,10 @@ func (g *GitProviderImpl) Clone(ctx context.Context, repoURL, destDir string, op
 		return errors.New("destination directory cannot be empty")
 	}
 
-	args := []string{"clone"}
+	// Resolve options into args and post-clone actions.
+	resolved := resolveCloneOptions(options)
 
-	// Add options before URL and destination
-	for _, opt := range options {
-		args = append(args, opt()...)
-	}
-
+	args := append([]string{"clone"}, resolved.args...)
 	args = append(args, repoURL, destDir)
 
 	cmd := exec.CommandContext(ctx, "git", args...)
@@ -80,9 +92,10 @@ func (g *GitProviderImpl) Clone(ctx context.Context, repoURL, destDir string, op
 		return fmt.Errorf("failed to create git command:\n%w", err)
 	}
 
-	event := g.eventListener.StartEvent("Cloning git repo", "repoURL", repoURL)
-
-	defer event.End()
+	if !resolved.quiet {
+		event := g.eventListener.StartEvent("Cloning git repo", "repoURL", repoURL)
+		defer event.End()
+	}
 
 	err = wrappedCmd.Run(ctx)
 	if err != nil {
@@ -163,9 +176,49 @@ func (g *GitProviderImpl) GetCommitHashBeforeDate(
 	return output, nil
 }
 
-// WithGitBranch returns a GitOptions that specifies the branch to clone.
+// GetCurrentCommit returns the current commit hash of the repository at the given directory, regardless of the date.
+func (g *GitProviderImpl) GetCurrentCommit(ctx context.Context, repoDir string) (string, error) {
+	// Pass zero time to get the current commit
+	return g.GetCommitHashBeforeDate(ctx, repoDir, time.Time{})
+}
+
+// resolveCloneOptions collects all [GitOptions] into a [cloneOptions] struct.
+func resolveCloneOptions(options []GitOptions) cloneOptions {
+	var resolved cloneOptions
+
+	for _, opt := range options {
+		if opt == nil {
+			continue
+		}
+
+		opt(&resolved)
+	}
+
+	return resolved
+}
+
+// WithGitBranch returns a [GitOptions] that specifies the branch to clone.
 func WithGitBranch(branch string) GitOptions {
-	return func() []string {
-		return []string{"--branch", branch}
+	return func(opts *cloneOptions) {
+		opts.args = append(opts.args, "--branch", branch)
+	}
+}
+
+// WithQuiet returns a [GitOptions] that suppresses event emission during
+// the clone. Use this for internal operations (e.g., identity resolution)
+// that run concurrently and would produce misleading nested log output.
+func WithQuiet() GitOptions {
+	return func(opts *cloneOptions) {
+		opts.quiet = true
+	}
+}
+
+// WithMetadataOnly returns a [GitOptions] that performs a blobless partial clone
+// (--filter=blob:none --no-checkout). Only git metadata is fetched; no working-tree
+// files are checked out.
+func WithMetadataOnly() GitOptions {
+	return func(opts *cloneOptions) {
+		opts.args = append(opts.args, "--filter=blob:none")
+		opts.args = append(opts.args, "--no-checkout")
 	}
 }

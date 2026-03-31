@@ -36,6 +36,7 @@ require (
 	github.com/magefile/mage v1.16.1
 	github.com/mark3labs/mcp-go v0.45.0
 	github.com/mattn/go-isatty v0.0.20
+	github.com/mitchellh/hashstructure/v2 v2.0.2
 	github.com/muesli/termenv v0.16.0
 	github.com/nxadm/tail v1.4.11
 	github.com/opencontainers/selinux v1.13.1
