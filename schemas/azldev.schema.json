@@ -126,6 +126,19 @@
           "type": "array",
           "title": "Source files",
           "description": "Source files to download for this component"
+        },
+        "default-package-config": {
+          "$ref": "#/$defs/PackageConfig",
+          "title": "Default package config",
+          "description": "Default configuration applied to all binary packages produced by this component"
+        },
+        "packages": {
+          "additionalProperties": {
+            "$ref": "#/$defs/PackageConfig"
+          },
+          "type": "object",
+          "title": "Package overrides",
+          "description": "Per-package configuration overrides keyed by exact binary package name"
         }
       },
       "additionalProperties": false,
@@ -315,6 +328,19 @@
           "$ref": "#/$defs/ToolsConfig",
           "title": "Tools configuration",
           "description": "Configuration for tools used by azldev"
+        },
+        "default-package-config": {
+          "$ref": "#/$defs/PackageConfig",
+          "title": "Default package config",
+          "description": "Project-wide default applied to all binary packages before group and component overrides"
+        },
+        "package-groups": {
+          "additionalProperties": {
+            "$ref": "#/$defs/PackageGroupConfig"
+          },
+          "type": "object",
+          "title": "Package groups",
+          "description": "Definitions of package groups for shared binary package configuration"
         }
       },
       "additionalProperties": false,
@@ -510,6 +536,52 @@
       "required": [
         "type"
       ]
+    },
+    "PackageConfig": {
+      "properties": {
+        "publish": {
+          "$ref": "#/$defs/PackagePublishConfig",
+          "title": "Publish settings",
+          "description": "Publishing settings for this binary package"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "PackageGroupConfig": {
+      "properties": {
+        "description": {
+          "type": "string",
+          "title": "Description",
+          "description": "Human-readable description of this package group"
+        },
+        "packages": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Packages",
+          "description": "Explicit list of binary package names that are members of this group"
+        },
+        "default-package-config": {
+          "$ref": "#/$defs/PackageConfig",
+          "title": "Default package config",
+          "description": "Configuration inherited by all packages in this group"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "PackagePublishConfig": {
+      "properties": {
+        "channel": {
+          "type": "string",
+          "title": "Channel",
+          "description": "Publish channel for this package; use 'none' to signal to downstream tooling that this package should not be published"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
     },
     "PackageRepository": {
       "properties": {

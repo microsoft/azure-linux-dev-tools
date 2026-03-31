@@ -43,6 +43,14 @@ type ConfigFile struct {
 	// Configuration for tools used by azldev.
 	Tools *ToolsConfig `toml:"tools,omitempty" jsonschema:"title=Tools configuration,description=Configuration for tools used by azldev"`
 
+	// DefaultPackageConfig is the project-wide default package configuration applied before any
+	// package-group or component-level config is considered.
+	DefaultPackageConfig *PackageConfig `toml:"default-package-config,omitempty" jsonschema:"title=Default package config,description=Project-wide default applied to all binary packages before group and component overrides"`
+
+	// Definitions of package groups. Groups allow shared configuration
+	// to be applied to sets of binary packages.
+	PackageGroups map[string]PackageGroupConfig `toml:"package-groups,omitempty" jsonschema:"title=Package groups,description=Definitions of package groups for shared binary package configuration"`
+
 	// Internal fields used to track the origin of the config file; `dir` is the directory
 	// that the config file's relative paths are based from.
 	sourcePath string `toml:"-"`
@@ -65,6 +73,13 @@ func (f ConfigFile) Validate() error {
 	err := validator.New().Struct(f)
 	if err != nil {
 		return fmt.Errorf("config file error:\n%w", err)
+	}
+
+	// Validate package group configurations.
+	for groupName, group := range f.PackageGroups {
+		if err := group.Validate(); err != nil {
+			return fmt.Errorf("invalid package group %#q:\n%w", groupName, err)
+		}
 	}
 
 	// Validate overlay configurations for each component.

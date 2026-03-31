@@ -8,12 +8,15 @@ import (
 	"fmt"
 	"path/filepath"
 
+	rpmlib "github.com/cavaliergopher/rpm"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/componentbuilder"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/workdir"
 	"github.com/microsoft/azure-linux-dev-tools/internal/buildenv"
+	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
+	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/defers"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
@@ -38,6 +41,20 @@ type ComponentBuildOptions struct {
 	MockConfigOpts map[string]string
 }
 
+// RPMResult encapsulates a single binary RPM produced by a component build,
+// together with the resolved publish channel for that package.
+type RPMResult struct {
+	// Path is the absolute path to the RPM file.
+	Path string `json:"path" table:"Path"`
+
+	// PackageName is the binary package name extracted from the RPM header tag (e.g., "libcurl-devel").
+	PackageName string `json:"packageName" table:"Package"`
+
+	// Channel is the resolved publish channel from project config.
+	// Empty when no channel is configured for this package.
+	Channel string `json:"channel" table:"Channel"`
+}
+
 // ComponentBuildResults summarizes the results of building a single component.
 type ComponentBuildResults struct {
 	// Names of the component that was built.
@@ -48,6 +65,13 @@ type ComponentBuildResults struct {
 
 	// Absolute paths to any RPMs built by the operation.
 	RPMPaths []string `json:"rpmPaths" table:"RPM Paths"`
+
+	// RPMChannels holds the resolved publish channel for each RPM, parallel to [RPMPaths].
+	// Empty string means no channel was configured for that package.
+	RPMChannels []string `json:"rpmChannels" table:"Channels"`
+
+	// RPMs contains enriched per-RPM information including the resolved publish channel.
+	RPMs []RPMResult `json:"rpms" table:"-"`
 }
 
 func buildOnAppInit(_ *azldev.App, parent *cobra.Command) {
@@ -296,6 +320,18 @@ func buildComponentUsingBuilder(
 		return results, fmt.Errorf("failed to build RPM for %q: %w", component.GetName(), err)
 	}
 
+	// Enrich each RPM with its binary package name and resolved publish channel.
+	results.RPMs, err = resolveRPMResults(env.FS(), results.RPMPaths, env.Config(), component.GetConfig())
+	if err != nil {
+		return results, fmt.Errorf("failed to resolve publish channels for %q:\n%w", component.GetName(), err)
+	}
+
+	// Populate the parallel Channels slice for table display.
+	results.RPMChannels = make([]string, len(results.RPMs))
+	for rpmIdx, rpm := range results.RPMs {
+		results.RPMChannels[rpmIdx] = rpm.Channel
+	}
+
 	// Publish built RPMs to local repo with publish enabled.
 	if localRepoWithPublishPath != "" && len(results.RPMPaths) > 0 {
 		publishErr := publishToLocalRepo(env, results.RPMPaths, localRepoWithPublishPath)
@@ -358,6 +394,59 @@ func checkLocalRepoPathOverlap(localRepoPaths []string, localRepoWithPublishPath
 	}
 
 	return nil
+}
+
+// resolveRPMResults builds an [RPMResult] for each RPM path, extracting the binary package
+// name from the RPM headers and resolving its publish channel from the project config (if available).
+// When no project config is loaded, the Channel field is left empty.
+func resolveRPMResults(
+	fs opctx.FS, rpmPaths []string, proj *projectconfig.ProjectConfig, compConfig *projectconfig.ComponentConfig,
+) ([]RPMResult, error) {
+	rpmResults := make([]RPMResult, 0, len(rpmPaths))
+
+	for _, rpmPath := range rpmPaths {
+		pkgName, err := packageNameFromRPM(fs, rpmPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to determine package name:\n%w", err)
+		}
+
+		rpmResult := RPMResult{
+			Path:        rpmPath,
+			PackageName: pkgName,
+		}
+
+		if proj != nil {
+			pkgConfig, err := projectconfig.ResolvePackageConfig(pkgName, compConfig, proj)
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve package config for %#q:\n%w", pkgName, err)
+			}
+
+			rpmResult.Channel = pkgConfig.Publish.Channel
+		}
+
+		rpmResults = append(rpmResults, rpmResult)
+	}
+
+	return rpmResults, nil
+}
+
+// packageNameFromRPM extracts the binary package name from an RPM file by reading
+// its headers. Reading the Name tag directly from the RPM metadata is authoritative and
+// handles all valid package names regardless of naming conventions.
+func packageNameFromRPM(fs opctx.FS, rpmPath string) (string, error) {
+	rpmFile, err := fs.Open(rpmPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to open RPM %#q:\n%w", rpmPath, err)
+	}
+
+	defer rpmFile.Close()
+
+	pkg, err := rpmlib.Read(rpmFile)
+	if err != nil {
+		return "", fmt.Errorf("failed to read RPM headers from %#q:\n%w", rpmPath, err)
+	}
+
+	return pkg.Name(), nil
 }
 
 // publishToLocalRepo publishes the given RPMs to the specified local repo.

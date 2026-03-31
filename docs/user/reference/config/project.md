@@ -11,6 +11,8 @@ The `[project]` section defines metadata and directory layout for an azldev proj
 | Work directory | `work-dir` | string | No | Path to the temporary working directory for build artifacts (relative to this config file) |
 | Output directory | `output-dir` | string | No | Path to the directory where final build outputs (RPMs, SRPMs) are placed (relative to this config file) |
 | Default distro | `default-distro` | [DistroReference](distros.md#distro-references) | No | The default distro and version to use when building components |
+| Default package config | `default-package-config` | [PackageConfig](package-groups.md#package-config) | No | Project-wide default applied to every binary package before group and component overrides |
+| Package groups | `package-groups` | map of string → [PackageGroupConfig](package-groups.md) | No | Named groups of binary packages with shared configuration |
 
 ## Directory Paths
 
@@ -33,6 +35,27 @@ default-distro = { name = "azurelinux", version = "4.0" }
 
 Components inherit their spec source and build environment from the default distro's configuration unless they override it explicitly. See [Configuration Inheritance](../../explanation/config-system.md#configuration-inheritance) for details.
 
+## Default Package Config
+
+The `[default-package-config]` section defines the lowest-priority configuration layer applied to every binary package produced by any component in the project. It is overridden by [package groups](package-groups.md), [component-level defaults](components.md#package-configuration), and explicit per-package overrides.
+
+The most common use is to set a project-wide default publish channel:
+
+```toml
+[default-package-config.publish]
+channel = "rpm-base"
+```
+
+See [Package Groups](package-groups.md#resolution-order) for the full resolution order.
+
+## Package Groups
+
+The `[package-groups.<name>]` section defines named groups of binary packages. Each group lists its members explicitly in the `packages` field and provides a `default-package-config` that is applied to all listed packages.
+
+This is currently used to route different types of packages (e.g., `-devel`, `-debuginfo`) to different publish channels, though groups can also carry other future configuration.
+
+See [Package Groups](package-groups.md) for the full field reference.
+
 ## Example
 
 ```toml
@@ -42,10 +65,22 @@ log-dir = "build/logs"
 work-dir = "build/work"
 output-dir = "out"
 default-distro = { name = "azurelinux", version = "4.0" }
+
+[default-package-config.publish]
+channel = "base"
+
+[package-groups.devel-packages]
+description = "Development subpackages"
+packages = ["curl-devel", "curl-static", "wget2-devel"]
+
+[package-groups.devel-packages.default-package-config.publish]
+channel = "devel"
 ```
 
 ## Related Resources
 
 - [Config File Structure](config-file.md) — top-level config file layout
 - [Distros](distros.md) — distro definitions referenced by `default-distro`
+- [Package Groups](package-groups.md) — full reference for `package-groups` and package config resolution
+- [Components](components.md) — per-component package config overrides
 - [Configuration System](../../explanation/config-system.md) — how project config merges with other files
