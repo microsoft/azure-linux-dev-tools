@@ -58,8 +58,8 @@ type IdentityOptions struct {
 }
 
 // ComputeIdentity computes the fingerprint for a component from its resolved config
-// and additional context. The fs parameter is used to read spec file and overlay
-// source file contents for hashing.
+// and additional context. The fs parameter is used to read overlay source file
+// contents for hashing; spec content identity is provided via opts.SourceIdentity.
 func ComputeIdentity(
 	fs opctx.FS,
 	component projectconfig.ComponentConfig,
