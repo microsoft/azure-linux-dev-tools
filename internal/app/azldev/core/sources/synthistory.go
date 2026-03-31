@@ -206,7 +206,7 @@ func resolveConfigFilePath(config *projectconfig.ComponentConfig, componentName 
 	return configFilePath, nil
 }
 
-// openProjectRepo finds and opens the git repository containing configFilePath by
+// OpenProjectRepo finds and opens the git repository containing configFilePath by
 // walking up the directory tree.
 func OpenProjectRepo(configFilePath string) (*gogit.Repository, error) {
 	repo, err := gogit.PlainOpenWithOptions(filepath.Dir(configFilePath), &gogit.PlainOpenOptions{
