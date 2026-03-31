@@ -368,6 +368,26 @@ func TestComputeIdentity_SourceFileOriginExcluded(t *testing.T) {
 	assert.Equal(t, fp1, fp2, "changing source file origin URL must NOT change fingerprint")
 }
 
+func TestComputeIdentity_SourceFileNoHash_Error(t *testing.T) {
+	ctx := newTestFS(t, map[string]string{
+		"/specs/test.spec": "Name: testpkg\nVersion: 1.0",
+	})
+
+	comp := baseComponent()
+	comp.SourceFiles = []projectconfig.SourceFileReference{
+		{
+			Filename: "source.tar.gz",
+			Origin:   projectconfig.Origin{Type: "download", Uri: "https://example.com/source.tar.gz"},
+		},
+	}
+	distro := baseDistroRef()
+
+	_, err := fingerprint.ComputeIdentity(ctx.FS(), comp, distro, fingerprint.IdentityOptions{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "source.tar.gz")
+	assert.Contains(t, err.Error(), "no hash")
+}
+
 func TestComputeIdentity_InputsBreakdown(t *testing.T) {
 	ctx := newTestFS(t, map[string]string{
 		"/specs/test.spec":   "Name: testpkg\nVersion: 1.0",

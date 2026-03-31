@@ -73,7 +73,18 @@ func ComputeIdentity(
 		DistroVersion:      distroRef.Version,
 	}
 
-	// 1. Hash the resolved config struct (excluding fingerprint:"-" fields).
+	// 1. Verify all source files have a hash. Without a hash the fingerprint
+	//    cannot detect content changes, so we refuse to compute one.
+	for i := range component.SourceFiles {
+		if component.SourceFiles[i].Hash == "" {
+			return nil, fmt.Errorf(
+				"source file %#q has no hash; cannot compute a deterministic fingerprint",
+				component.SourceFiles[i].Filename,
+			)
+		}
+	}
+
+	// 2. Hash the resolved config struct (excluding fingerprint:"-" fields).
 	configHash, err := hashstructure.Hash(component, hashstructure.FormatV2, &hashstructure.HashOptions{
 		TagName: hashstructureTagName,
 	})
@@ -83,7 +94,7 @@ func ComputeIdentity(
 
 	inputs.ConfigHash = configHash
 
-	// 2. Hash overlay source file contents.
+	// 3. Hash overlay source file contents.
 	overlayHashes, err := hashOverlayFiles(fs, component.Overlays)
 	if err != nil {
 		return nil, fmt.Errorf("hashing overlay files:\n%w", err)
@@ -91,7 +102,7 @@ func ComputeIdentity(
 
 	inputs.OverlayFileHashes = overlayHashes
 
-	// 3. Combine all inputs into the overall fingerprint.
+	// 4. Combine all inputs into the overall fingerprint.
 	return &ComponentIdentity{
 		Fingerprint: combineInputs(inputs),
 		Inputs:      inputs,
