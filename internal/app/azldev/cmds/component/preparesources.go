@@ -6,6 +6,7 @@ package component
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
@@ -115,6 +116,11 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 	// Pre-flight check: detect non-empty output directory before any work.
 	if err := CheckOutputDir(env, options); err != nil {
 		return err
+	}
+
+	if options.SkipOverlays && options.WithGitRepo {
+		slog.Warn("--with-git has no effect when --skip-overlays is set; " +
+			"synthetic history requires overlays to be applied")
 	}
 
 	var preparerOpts []sources.PreparerOption
