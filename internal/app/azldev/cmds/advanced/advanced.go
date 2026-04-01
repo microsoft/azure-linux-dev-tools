@@ -23,6 +23,7 @@ output but fully supported.`,
 	}
 
 	app.AddTopLevelCommand(cmd)
+	ctToolsOnAppInit(app, cmd)
 	mcpOnAppInit(app, cmd)
 	mockOnAppInit(app, cmd)
 	wgetOnAppInit(app, cmd)

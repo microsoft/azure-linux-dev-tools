@@ -1,0 +1,30 @@
+[distros.testdistro.versions.'1.0-dev']
+description = "Test Distro 1.0-dev"
+release-ver = "1.0"
+environment-prefix = "td1-dev"
+rpm-macro-dist = ".td1-dev"
+rpm-macro-dist-bootstrap = ".td1-dev~bootstrap"
+
+[[distros.testdistro.versions.'1.0-dev'.git-source-repos.'main']]
+ref = "https://example.com/main.git"
+default-branch = "main"
+default-koji-rpms-target = "td1-dev-rpms-target"
+koji-targets = "base"
+parent-prefix = "td1-dev"
+
+[[distros.testdistro.versions.'1.0-dev'.git-source-repos.'proprietary']]
+ref = "https://example.com/prop.git"
+default-branch = "main"
+default-koji-rpms-target = "td1-dev-prop-rpms-target"
+koji-targets = "prop"
+repo-prefix = "prop"
+parent-prefix = "td1-dev"
+
+[[distros.testdistro.versions.'1.0-dev'.build-channels.'default-rpm']]
+koji-target = "td1-dev-rpms-target"
+
+[[distros.testdistro.versions.'1.0-dev'.build-channels.'prop-rpm']]
+koji-target = "td1-dev-prop-rpms-target"
+
+[[distros.testdistro.versions.'1.0-dev'.publish-channels.'rpm-base']]
+publish-resource = "dev-rpms-base"

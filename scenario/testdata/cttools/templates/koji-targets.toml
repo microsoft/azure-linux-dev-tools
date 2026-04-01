@@ -1,0 +1,39 @@
+[[koji-targets-templates.base.'bootstrap-rpms-target']]
+output-tag = "bootstrap-rpms-tag"
+build-roots = [
+    {"type" = "srpm-build", "value" = "srpm"},
+    {"type" = "build", "value" = "rpm"},
+]
+mock-options-base = "rpm"
+mock-dist-tag = "rpm-macro-dist-bootstrap"
+external-repos = [
+    {"name" = "fedora-external", "url" = "https://fedora.example.com/$arch/os/", "merge-mode" = "bare"},
+]
+
+[[koji-targets-templates.base.'rpms-target']]
+output-tag = "rpms-tag"
+parent-tag = "bootstrap-rpms-tag"
+build-roots = [
+    {"type" = "srpm-build", "value" = "srpm"},
+    {"type" = "build", "value" = "rpm"},
+]
+mock-options-base = "rpm"
+mock-dist-tag = "rpm-macro-dist"
+
+[[koji-targets-templates.prop.'bootstrap-rpms-target']]
+output-tag = "bootstrap-rpms-tag"
+parent-tag = "bootstrap-rpms-tag"
+build-roots = [
+    {"type" = "build", "value" = "rpm"},
+]
+mock-options-base = "rpm"
+mock-dist-tag = "rpm-macro-dist-bootstrap"
+
+[[koji-targets-templates.prop.'rpms-target']]
+output-tag = "rpms-tag"
+parent-tag = "rpms-tag"
+build-roots = [
+    {"type" = "build", "value" = "rpm"},
+]
+mock-options-base = "rpm"
+mock-dist-tag = "rpm-macro-dist"

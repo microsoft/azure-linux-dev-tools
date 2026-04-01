@@ -6,6 +6,7 @@
 package scenario_tests
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/scenario/internal/cmdtest"
 	"github.com/microsoft/azure-linux-dev-tools/scenario/internal/snapshot"
 	"github.com/microsoft/azure-linux-dev-tools/scenario/internal/testhelpers"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -162,4 +164,94 @@ excluded-paths = ['build/**', 'out/**']
 	test := cmdtest.NewScenarioTest("config", "dump", "--no-default-config").AddFileContents("azldev.toml", strings.NewReader(config)).InContainer()
 
 	snapshot.TestSnapshottableCmd(t, test)
+}
+
+// Tests that `azldev advanced ct-tools config-dump` parses, resolves, and outputs
+// a fully merged distro configuration as valid JSON.
+func TestCTToolsConfigDump(t *testing.T) {
+	t.Parallel()
+
+	if testing.Short() {
+		t.Skip("skipping long test")
+	}
+
+	// Use the self-contained test config under scenario/testdata/cttools/.
+	configPath, err := filepath.Abs("testdata/cttools/distro.toml")
+	require.NoError(t, err)
+
+	test := cmdtest.NewScenarioTest(
+		"advanced", "ct-tools", "config-dump",
+		"--config", configPath,
+		"--environment", "ct-test",
+		"--format", "json",
+	).Locally()
+
+	results, err := test.Run(t)
+	require.NoError(t, err)
+	require.Zero(t, results.ExitCode, "stderr: %s", results.Stderr)
+
+	// Parse the JSON output and verify structure.
+	var config map[string]any
+	require.NoError(t, json.Unmarshal([]byte(results.Stdout), &config))
+
+	// Verify top-level keys.
+	assert.Contains(t, config, "distros")
+	assert.Contains(t, config, "koji-targets-templates")
+	assert.Contains(t, config, "mock-options-templates")
+	assert.Contains(t, config, "build-root-templates")
+	assert.Contains(t, config, "environments")
+
+	// Verify distro was loaded.
+	distros, ok := config["distros"].(map[string]any)
+	require.True(t, ok)
+	assert.Contains(t, distros, "testdistro")
+
+	// Verify environment was filtered to ct-test only.
+	envs, ok := config["environments"].(map[string]any)
+	require.True(t, ok)
+	assert.Len(t, envs, 1)
+	assert.Contains(t, envs, "ct-test")
+
+	// Verify template resolution produced resolved-koji-targets.
+	td := distros["testdistro"].(map[string]any)
+	versions := td["versions"].(map[string]any)
+	v1 := versions["1.0-dev"].(map[string]any)
+	repos := v1["git-source-repos"].(map[string]any)
+	mainRepos := repos["main"].([]any)
+	mainRepo := mainRepos[0].(map[string]any)
+
+	resolved, ok := mainRepo["resolved-koji-targets"].([]any)
+	require.True(t, ok)
+	assert.NotEmpty(t, resolved, "resolved-koji-targets should not be empty")
+
+	// Verify a resolved target has the expected prefix.
+	first := resolved[0].(map[string]any)
+	name, ok := first["name"].(string)
+	require.True(t, ok)
+	assert.Contains(t, name, "td1-dev-")
+}
+
+// Tests that `azldev advanced ct-tools config-dump` outputs valid YAML.
+func TestCTToolsConfigDumpYAML(t *testing.T) {
+	t.Parallel()
+
+	if testing.Short() {
+		t.Skip("skipping long test")
+	}
+
+	configPath, err := filepath.Abs("testdata/cttools/distro.toml")
+	require.NoError(t, err)
+
+	test := cmdtest.NewScenarioTest(
+		"advanced", "ct-tools", "config-dump",
+		"--config", configPath,
+		"--environment", "ct-test",
+		"--format", "yaml",
+	).Locally()
+
+	results, err := test.Run(t)
+	require.NoError(t, err)
+	require.Zero(t, results.ExitCode, "stderr: %s", results.Stderr)
+	assert.Contains(t, results.Stdout, "testdistro")
+	assert.Contains(t, results.Stdout, "ct-test")
 }
