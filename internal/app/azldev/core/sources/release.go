@@ -84,6 +84,25 @@ func BumpStaticRelease(releaseValue string, commitCount int) (string, error) {
 	return fmt.Sprintf("%d%s", newRelease, suffix), nil
 }
 
+// HasUserReleaseOverlay reports whether the given overlay list contains an overlay
+// that explicitly sets or updates the Release tag. This is used to determine whether
+// a user has configured the component to handle a non-standard Release value
+// (e.g. one using a custom macro like %{pkg_release}).
+func HasUserReleaseOverlay(overlays []projectconfig.ComponentOverlay) bool {
+	for _, overlay := range overlays {
+		if !strings.EqualFold(overlay.Tag, "Release") {
+			continue
+		}
+
+		if overlay.Type == projectconfig.ComponentOverlaySetSpecTag ||
+			overlay.Type == projectconfig.ComponentOverlayUpdateSpecTag {
+			return true
+		}
+	}
+
+	return false
+}
+
 // tryBumpStaticRelease checks whether the component's spec uses %autorelease.
 // If not, it bumps the static Release tag by commitCount and applies the change
 // as an overlay to the spec file in-place. This ensures that components with static
@@ -92,6 +111,10 @@ func BumpStaticRelease(releaseValue string, commitCount int) (string, error) {
 //
 // When the spec uses %autorelease, this function is a no-op because rpmautospec
 // already resolves the release number from git history.
+//
+// When the Release tag uses a non-standard value (not %autorelease and not a leading
+// integer, e.g. %{pkg_release}), the component must define an explicit overlay that
+// sets the Release tag. If no such overlay exists, an error is returned.
 func (p *sourcePreparerImpl) tryBumpStaticRelease(
 	component components.Component,
 	sourcesDirPath string,
@@ -115,10 +138,22 @@ func (p *sourcePreparerImpl) tryBumpStaticRelease(
 		return nil
 	}
 
+	// Skip static release bump if the user has defined an explicit overlay for the Release tag.
+	if HasUserReleaseOverlay(component.GetConfig().Overlays) {
+		slog.Debug("Component has an explicit Release overlay; skipping static release bump",
+			"component", component.GetName())
+
+		return nil
+	}
+
 	newRelease, err := BumpStaticRelease(releaseValue, commitCount)
 	if err != nil {
-		return fmt.Errorf("failed to bump release for component %#q:\n%w",
-			component.GetName(), err)
+		// The Release tag does not start with an integer (e.g. %{pkg_release})
+		// and the user did not provide an explicit overlay to set it.
+		return fmt.Errorf(
+			"component %#q has a non-standard Release tag value %#q that cannot be auto-bumped; "+
+				"add a \"spec-set-tag\" overlay for the Release tag in the component configuration",
+			component.GetName(), releaseValue)
 	}
 
 	slog.Info("Bumping static release",
