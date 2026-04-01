@@ -150,10 +150,6 @@ func buildSyntheticCommits(
 		return nil, fmt.Errorf("failed to find Affects commits for component %#q:\n%w", componentName, err)
 	}
 
-	slog.Info("Found commits affecting component",
-		"component", componentName,
-		"commitCount", len(affectsCommits))
-
 	if len(affectsCommits) == 0 {
 		slog.Info("No commits with Affects marker found; "+
 			"creating default commit",
@@ -162,6 +158,10 @@ func buildSyntheticCommits(
 		return []CommitMetadata{
 			defaultOverlayCommit(projectRepo, componentName),
 		}, nil
+	} else {
+		slog.Info("Found commits affecting component",
+			"component", componentName,
+			"commitCount", len(affectsCommits))
 	}
 
 	return affectsCommits, nil
