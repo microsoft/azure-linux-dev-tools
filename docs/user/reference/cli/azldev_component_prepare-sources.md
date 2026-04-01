@@ -40,6 +40,7 @@ azldev component prepare-sources [flags]
   -o, --output-dir string             output directory
       --skip-overlays                 skip applying overlays to prepared sources
   -s, --spec-path stringArray         Spec path
+      --with-git                      Create a dist-git repository with synthetic commit history (requires a project git repository)
 ```
 
 ### Options inherited from parent commands

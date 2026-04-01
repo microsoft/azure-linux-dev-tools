@@ -14,6 +14,7 @@ import (
 	reflect "reflect"
 
 	components "github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
+	sourceproviders "github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -42,17 +43,22 @@ func (m *MockSourceManager) EXPECT() *MockSourceManagerMockRecorder {
 }
 
 // FetchComponent mocks base method.
-func (m *MockSourceManager) FetchComponent(ctx context.Context, component components.Component, destDirPath string) error {
+func (m *MockSourceManager) FetchComponent(ctx context.Context, component components.Component, destDirPath string, opts ...sourceproviders.FetchComponentOption) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FetchComponent", ctx, component, destDirPath)
+	varargs := []any{ctx, component, destDirPath}
+	for _, a := range opts {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "FetchComponent", varargs...)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // FetchComponent indicates an expected call of FetchComponent.
-func (mr *MockSourceManagerMockRecorder) FetchComponent(ctx, component, destDirPath any) *gomock.Call {
+func (mr *MockSourceManagerMockRecorder) FetchComponent(ctx, component, destDirPath any, opts ...any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchComponent", reflect.TypeOf((*MockSourceManager)(nil).FetchComponent), ctx, component, destDirPath)
+	varargs := append([]any{ctx, component, destDirPath}, opts...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchComponent", reflect.TypeOf((*MockSourceManager)(nil).FetchComponent), varargs...)
 }
 
 // FetchFiles mocks base method.

@@ -93,3 +93,18 @@ func (mr *MockGitProviderMockRecorder) GetCommitHashBeforeDate(ctx, repoDir, dat
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetCommitHashBeforeDate", reflect.TypeOf((*MockGitProvider)(nil).GetCommitHashBeforeDate), ctx, repoDir, dateTime)
 }
+
+// GetCurrentCommit mocks base method.
+func (m *MockGitProvider) GetCurrentCommit(ctx context.Context, repoDir string) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetCurrentCommit", ctx, repoDir)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetCurrentCommit indicates an expected call of GetCurrentCommit.
+func (mr *MockGitProviderMockRecorder) GetCurrentCommit(ctx, repoDir any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetCurrentCommit", reflect.TypeOf((*MockGitProvider)(nil).GetCurrentCommit), ctx, repoDir)
+}

@@ -197,6 +197,11 @@ func (s *Spec) RemoveLine(lineNumber int) {
 	s.rawLines = slices.Delete(s.rawLines, lineNumber, lineNumber+1)
 }
 
+// RemoveLines removes the lines in the specified (0-indexed) line number range [startLineNumber, endLineNumber).
+func (s *Spec) RemoveLines(startLineNumber int, endLineNumber int) {
+	s.rawLines = slices.Delete(s.rawLines, startLineNumber, endLineNumber)
+}
+
 // InsertLinesAt inserts the provided lines just before the specified (0-indexed) line number.
 func (s *Spec) InsertLinesAt(insertedLines []string, lineNumber int) {
 	s.rawLines = slices.Insert(s.rawLines, lineNumber, insertedLines...)

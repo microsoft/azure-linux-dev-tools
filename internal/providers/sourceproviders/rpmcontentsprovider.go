@@ -46,7 +46,7 @@ func NewRPMContentsProviderImpl(
 // GetComponent downloads the source RPM for a component and extracts its contents
 // in the provided destination path.
 func (r *RPMContentsProviderImpl) GetComponent(
-	ctx context.Context, component components.Component, destDirPath string,
+	ctx context.Context, component components.Component, destDirPath string, _ ...FetchComponentOption,
 ) (err error) {
 	if component.GetName() == "" {
 		return errors.New("component name cannot be empty")

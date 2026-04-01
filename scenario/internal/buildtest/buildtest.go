@@ -34,7 +34,9 @@ func NewBuildTest(
 	componentName string,
 	options ...projecttest.ProjectTestOption,
 ) *BuildTest {
-	projectTest := projecttest.NewProjectTest(project, []string{"component", "build", componentName}, options...)
+	projectTest := projecttest.NewProjectTest(
+		project, []string{"component", "build", componentName}, options...,
+	)
 
 	return &BuildTest{
 		inner: projectTest,

@@ -359,6 +359,32 @@ func TestComponentOverlay_Validate(t *testing.T) {
 			errorExpected: true,
 			errorContains: "invalid glob pattern",
 		},
+		// spec-remove-section tests
+		{
+			name: "spec-remove-section valid with section only",
+			overlay: projectconfig.ComponentOverlay{
+				Type:        projectconfig.ComponentOverlayRemoveSection,
+				SectionName: "%generate_buildrequires",
+			},
+			errorExpected: false,
+		},
+		{
+			name: "spec-remove-section valid with section and package",
+			overlay: projectconfig.ComponentOverlay{
+				Type:        projectconfig.ComponentOverlayRemoveSection,
+				SectionName: "%files",
+				PackageName: "devel",
+			},
+			errorExpected: false,
+		},
+		{
+			name: "spec-remove-section missing section",
+			overlay: projectconfig.ComponentOverlay{
+				Type: projectconfig.ComponentOverlayRemoveSection,
+			},
+			errorExpected: true,
+			errorContains: "section",
+		},
 	}
 
 	for _, testCase := range testCases {
@@ -390,6 +416,7 @@ func TestComponentOverlay_ModifiesSpec(t *testing.T) {
 		projectconfig.ComponentOverlayPrependSpecLines,
 		projectconfig.ComponentOverlayAppendSpecLines,
 		projectconfig.ComponentOverlaySearchAndReplaceInSpec,
+		projectconfig.ComponentOverlayRemoveSection,
 		projectconfig.ComponentOverlayAddPatch,
 		projectconfig.ComponentOverlayRemovePatch,
 	}

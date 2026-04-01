@@ -561,3 +561,240 @@ includes = ["*non-existent*.toml"]
 	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
 	require.NoError(t, err)
 }
+
+func TestLoadAndResolveProjectConfig_DefaultPackageConfig(t *testing.T) {
+	const configContents = `
+[default-package-config.publish]
+channel = "base"
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.NoError(t, err)
+
+	assert.Equal(t, "base", config.DefaultPackageConfig.Publish.Channel)
+}
+
+func TestLoadAndResolveProjectConfig_DefaultPackageConfig_MergedAcrossFiles(t *testing.T) {
+	// First file sets a channel; second file overrides it.
+	testFiles := []struct {
+		path     string
+		contents string
+	}{
+		{testConfigPath, `
+includes = ["extra.toml"]
+
+[default-package-config.publish]
+channel = "base"
+`},
+		{"/project/extra.toml", `
+[default-package-config.publish]
+channel = "stable"
+`},
+	}
+
+	ctx := testctx.NewCtx()
+	for _, f := range testFiles {
+		require.NoError(t, fileutils.MkdirAll(ctx.FS(), filepath.Dir(f.path)))
+		require.NoError(t, fileutils.WriteFile(ctx.FS(), f.path, []byte(f.contents), fileperms.PrivateFile))
+	}
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testFiles[0].path)
+	require.NoError(t, err)
+
+	// The later-loaded file wins.
+	assert.Equal(t, "stable", config.DefaultPackageConfig.Publish.Channel)
+}
+
+func TestLoadAndResolveProjectConfig_DefaultPackageConfig_MergedAcrossTopLevelFiles(t *testing.T) {
+	// Two separate top-level config files; the second one overrides the first.
+	const (
+		configContents1 = `
+[default-package-config.publish]
+channel = "first"
+`
+		configContents2 = `
+[default-package-config.publish]
+channel = "second"
+`
+	)
+
+	configPath1 := testConfigPath
+	configPath2 := filepath.Join("/project", "extra.toml")
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath1, []byte(configContents1), fileperms.PrivateFile))
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath2, []byte(configContents2), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, configPath1, configPath2)
+	require.NoError(t, err)
+
+	assert.Equal(t, "second", config.DefaultPackageConfig.Publish.Channel)
+}
+
+func TestLoadAndResolveProjectConfig_PackageGroups(t *testing.T) {
+	const configContents = `
+[package-groups.devel-packages]
+description = "Development subpackages"
+packages = ["curl-devel", "wget2-devel"]
+
+[package-groups.devel-packages.default-package-config.publish]
+channel = "devel"
+
+[package-groups.debug-packages]
+description = "Debug info packages"
+packages = ["curl-debuginfo", "curl-debugsource"]
+
+[package-groups.debug-packages.default-package-config.publish]
+channel = "none"
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.NoError(t, err)
+
+	require.Len(t, config.PackageGroups, 2)
+
+	if assert.Contains(t, config.PackageGroups, "devel-packages") {
+		g := config.PackageGroups["devel-packages"]
+		assert.Equal(t, "Development subpackages", g.Description)
+		assert.Equal(t, []string{"curl-devel", "wget2-devel"}, g.Packages)
+		assert.Equal(t, "devel", g.DefaultPackageConfig.Publish.Channel)
+	}
+
+	if assert.Contains(t, config.PackageGroups, "debug-packages") {
+		g := config.PackageGroups["debug-packages"]
+		assert.Equal(t, "Debug info packages", g.Description)
+		assert.Equal(t, []string{"curl-debuginfo", "curl-debugsource"}, g.Packages)
+		assert.Equal(t, "none", g.DefaultPackageConfig.Publish.Channel)
+	}
+}
+
+func TestLoadAndResolveProjectConfig_DuplicatePackageGroups(t *testing.T) {
+	testFiles := []struct {
+		path     string
+		contents string
+	}{
+		{testConfigPath, `
+includes = ["extra.toml"]
+
+[package-groups.devel-packages]
+packages = ["curl-devel"]
+`},
+		{"/project/extra.toml", `
+[package-groups.devel-packages]
+packages = ["wget2-devel"]
+`},
+	}
+
+	ctx := testctx.NewCtx()
+	for _, f := range testFiles {
+		require.NoError(t, fileutils.MkdirAll(ctx.FS(), filepath.Dir(f.path)))
+		require.NoError(t, fileutils.WriteFile(ctx.FS(), f.path, []byte(f.contents), fileperms.PrivateFile))
+	}
+
+	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testFiles[0].path)
+	require.ErrorIs(t, err, ErrDuplicatePackageGroups)
+}
+
+func TestLoadAndResolveProjectConfig_DuplicatePackageGroupsAcrossTopLevelFiles(t *testing.T) {
+	const (
+		configContents1 = `
+[package-groups.devel-packages]
+packages = ["curl-devel"]
+`
+		configContents2 = `
+[package-groups.devel-packages]
+packages = ["wget2-devel"]
+`
+	)
+
+	configPath1 := testConfigPath
+	configPath2 := filepath.Join("/project", "extra.toml")
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath1, []byte(configContents1), fileperms.PrivateFile))
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath2, []byte(configContents2), fileperms.PrivateFile))
+
+	_, err := loadAndResolveProjectConfig(ctx.FS(), false, configPath1, configPath2)
+	require.ErrorIs(t, err, ErrDuplicatePackageGroups)
+}
+
+func TestLoadAndResolveProjectConfig_PackageGroups_EmptyPackageName(t *testing.T) {
+	const configContents = `
+[package-groups.bad-group]
+packages = ["curl-devel", ""]
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "packages[1]")
+	assert.Contains(t, err.Error(), "must not be empty")
+}
+
+func TestLoadAndResolveProjectConfig_PackageGroups_DuplicatePackageWithinGroup(t *testing.T) {
+	const configContents = `
+[package-groups.my-group]
+packages = ["curl-devel", "wget2-devel", "curl-devel"]
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "curl-devel")
+	assert.Contains(t, err.Error(), "more than once")
+}
+
+func TestLoadAndResolveProjectConfig_PackageGroups_DuplicatePackageAcrossGroups(t *testing.T) {
+	const configContents = `
+[package-groups.group-a]
+packages = ["curl-devel", "wget2-devel"]
+
+[package-groups.group-b]
+packages = ["wget2-devel", "bash-devel"]
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "wget2-devel")
+	assert.Contains(t, err.Error(), "may only belong to one group")
+}
+
+func TestLoadAndResolveProjectConfig_ComponentDefaultPackageConfig(t *testing.T) {
+	const configContents = `
+[components.curl]
+
+[components.curl.default-package-config.publish]
+channel = "base"
+
+[components.curl.packages.curl-devel.publish]
+channel = "devel"
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.NoError(t, err)
+
+	if assert.Contains(t, config.Components, "curl") {
+		comp := config.Components["curl"]
+		assert.Equal(t, "base", comp.DefaultPackageConfig.Publish.Channel)
+
+		if assert.Contains(t, comp.Packages, "curl-devel") {
+			assert.Equal(t, "devel", comp.Packages["curl-devel"].Publish.Channel)
+		}
+	}
+}

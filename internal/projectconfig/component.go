@@ -128,6 +128,14 @@ type ComponentConfig struct {
 
 	// Source file references for this component.
 	SourceFiles []SourceFileReference `toml:"source-files,omitempty" json:"sourceFiles,omitempty" table:"-" jsonschema:"title=Source files,description=Source files to download for this component"`
+
+	// Default configuration applied to all binary packages produced by this component.
+	// Takes precedence over package-group defaults; overridden by explicit Packages entries.
+	DefaultPackageConfig PackageConfig `toml:"default-package-config,omitempty" json:"defaultPackageConfig,omitempty" table:"-" jsonschema:"title=Default package config,description=Default configuration applied to all binary packages produced by this component"`
+
+	// Per-package configuration overrides, keyed by exact binary package name.
+	// Takes precedence over DefaultPackageConfig and package-group defaults.
+	Packages map[string]PackageConfig `toml:"packages,omitempty" json:"packages,omitempty" table:"-" jsonschema:"title=Package overrides,description=Per-package configuration overrides keyed by exact binary package name"`
 }
 
 // Mutates the component config, updating it with overrides present in other.
@@ -147,11 +155,13 @@ func (c *ComponentConfig) WithAbsolutePaths(referenceDir string) *ComponentConfi
 	// the SourceConfigFile, as we *do* want to alias that pointer, sharing it across
 	// all configs that came from that source config file.
 	result := &ComponentConfig{
-		Name:             c.Name,
-		SourceConfigFile: c.SourceConfigFile,
-		Spec:             deep.MustCopy(c.Spec),
-		Build:            deep.MustCopy(c.Build),
-		SourceFiles:      deep.MustCopy(c.SourceFiles),
+		Name:                 c.Name,
+		SourceConfigFile:     c.SourceConfigFile,
+		Spec:                 deep.MustCopy(c.Spec),
+		Build:                deep.MustCopy(c.Build),
+		SourceFiles:          deep.MustCopy(c.SourceFiles),
+		DefaultPackageConfig: deep.MustCopy(c.DefaultPackageConfig),
+		Packages:             deep.MustCopy(c.Packages),
 	}
 
 	// Fix up paths.

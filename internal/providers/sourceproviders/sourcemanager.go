@@ -37,6 +37,40 @@ type FileSourceProvider interface {
 	GetFiles(ctx context.Context, fileRefs []projectconfig.SourceFileReference, destDirPath string) error
 }
 
+// FetchComponentOptions holds optional parameters for component fetching operations.
+type FetchComponentOptions struct {
+	// PreserveGitDir, when true, instructs the provider to keep the upstream .git directory
+	// in the fetched component sources instead of deleting it. This is required for building
+	// synthetic git history from overlay blame metadata.
+	PreserveGitDir bool
+}
+
+// FetchComponentOption is a functional option for configuring component fetch behavior.
+type FetchComponentOption func(*FetchComponentOptions)
+
+// WithPreserveGitDir returns a [FetchComponentOption] that instructs the provider to preserve
+// the upstream .git directory in the fetched component sources.
+func WithPreserveGitDir() FetchComponentOption {
+	return func(o *FetchComponentOptions) {
+		o.PreserveGitDir = true
+	}
+}
+
+// resolveFetchComponentOptions applies all functional options and returns the resolved options.
+func resolveFetchComponentOptions(opts []FetchComponentOption) FetchComponentOptions {
+	var resolved FetchComponentOptions
+
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+
+		opt(&resolved)
+	}
+
+	return resolved
+}
+
 // ComponentSourceProvider is an abstract interface implemented by a source provider that can retrieve the
 // full file contents of a given component.
 type ComponentSourceProvider interface {
@@ -44,7 +78,10 @@ type ComponentSourceProvider interface {
 
 	// GetComponent retrieves the `.spec` for the specified component along with any sidecar
 	// files stored along with it, placing the fetched files in the provided directory.
-	GetComponent(ctx context.Context, component components.Component, destDirPath string) error
+	GetComponent(
+		ctx context.Context, component components.Component, destDirPath string,
+		opts ...FetchComponentOption,
+	) error
 }
 
 // SourceManager is an abstract interface for a facility that can fetch arbitrary component sources.
@@ -53,7 +90,12 @@ type SourceManager interface {
 	FetchFiles(ctx context.Context, component components.Component, destDirPath string) error
 
 	// FetchComponent fetches an entire upstream component, including its `.spec` file and any sidecar files.
-	FetchComponent(ctx context.Context, component components.Component, destDirPath string) error
+	// Optional [FetchComponentOption] values may be passed to control provider behavior (e.g., preserving
+	// the upstream .git directory).
+	FetchComponent(
+		ctx context.Context, component components.Component, destDirPath string,
+		opts ...FetchComponentOption,
+	) error
 }
 
 // ResolvedDistro holds the fully resolved distro configuration for a component.
@@ -380,7 +422,9 @@ func resolvePackageName(component components.Component) string {
 	return component.GetName()
 }
 
-func (m *sourceManager) FetchComponent(ctx context.Context, component components.Component, destDirPath string) error {
+func (m *sourceManager) FetchComponent(
+	ctx context.Context, component components.Component, destDirPath string, opts ...FetchComponentOption,
+) error {
 	if component.GetName() == "" {
 		return errors.New("component name is empty")
 	}
@@ -392,7 +436,7 @@ func (m *sourceManager) FetchComponent(ctx context.Context, component components
 		return m.fetchLocalComponent(ctx, component, destDirPath)
 
 	case projectconfig.SpecSourceTypeUpstream:
-		return m.fetchUpstreamComponent(ctx, component, destDirPath)
+		return m.fetchUpstreamComponent(ctx, component, destDirPath, opts...)
 	}
 
 	return fmt.Errorf("spec for component %#q not found in any configured provider",
@@ -444,7 +488,7 @@ func (m *sourceManager) downloadLookasideSources(
 }
 
 func (m *sourceManager) fetchUpstreamComponent(
-	ctx context.Context, component components.Component, destDirPath string,
+	ctx context.Context, component components.Component, destDirPath string, opts ...FetchComponentOption,
 ) error {
 	if len(m.upstreamComponentProviders) == 0 {
 		return fmt.Errorf("no upstream component origins configured for component %#q",
@@ -455,7 +499,7 @@ func (m *sourceManager) fetchUpstreamComponent(
 
 	// Try each upstream component provider, until one succeeds
 	for _, provider := range m.upstreamComponentProviders {
-		err := provider.GetComponent(ctx, component, destDirPath)
+		err := provider.GetComponent(ctx, component, destDirPath, opts...)
 		if err == nil {
 			slog.Debug("Successfully fetched upstream component",
 				"component", component.GetName(),
