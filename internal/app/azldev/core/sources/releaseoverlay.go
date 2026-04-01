@@ -18,7 +18,7 @@ import (
 
 // autoreleasePattern matches the %autorelease macro invocation in a Release tag value.
 // This covers both the bare form (%autorelease) and the braced form (%{autorelease}).
-var autoreleasePattern = regexp.MustCompile(`%\{?autorelease\}?`)
+var autoreleasePattern = regexp.MustCompile(`%(\{autorelease\}|autorelease($|\s))`)
 
 // staticReleasePattern matches a leading integer in a static Release tag value,
 // followed by an optional suffix (e.g. "%{?dist}").
@@ -39,15 +39,11 @@ func GetReleaseTagValue(fs opctx.FS, specPath string) (string, error) {
 		return "", fmt.Errorf("failed to parse spec %#q:\n%w", specPath, err)
 	}
 
-	var (
-		releaseValue string
-		found        bool
-	)
+	var releaseValue string
 
 	err = openedSpec.VisitTagsPackage("", func(tagLine *spec.TagLine, _ *spec.Context) error {
 		if strings.EqualFold(tagLine.Tag, "Release") {
 			releaseValue = tagLine.Value
-			found = true
 		}
 
 		return nil
@@ -56,7 +52,7 @@ func GetReleaseTagValue(fs opctx.FS, specPath string) (string, error) {
 		return "", fmt.Errorf("failed to visit tags in spec %#q:\n%w", specPath, err)
 	}
 
-	if !found {
+	if releaseValue == "" {
 		return "", fmt.Errorf("release tag not found in spec %#q:\n%w", specPath, spec.ErrNoSuchTag)
 	}
 
