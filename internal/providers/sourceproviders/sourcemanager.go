@@ -44,9 +44,9 @@ type FileSourceProvider interface {
 // Consumers should treat the returned string as opaque; it is only meaningful for equality
 // comparison between two runs.
 type SourceIdentityProvider interface {
-	// ResolveSourceIdentity returns a deterministic identity string for the component's source.
+	// ResolveIdentity returns a deterministic identity string for the component's source.
 	// Returns an error if the identity cannot be determined (e.g., network failure for upstream sources).
-	ResolveSourceIdentity(ctx context.Context, component components.Component) (string, error)
+	ResolveIdentity(ctx context.Context, component components.Component) (string, error)
 }
 
 // FetchComponentOptions holds optional parameters for component fetching operations.
@@ -498,7 +498,7 @@ func (m *sourceManager) resolveUpstreamSourceIdentity(
 	var lastError error
 
 	for _, provider := range m.upstreamComponentProviders {
-		identity, err := provider.ResolveSourceIdentity(ctx, component)
+		identity, err := provider.ResolveIdentity(ctx, component)
 		if err == nil {
 			return identity, nil
 		}

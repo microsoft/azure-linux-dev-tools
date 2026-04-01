@@ -240,10 +240,10 @@ func (g *FedoraSourcesProviderImpl) checkoutTargetCommit(
 	return nil
 }
 
-// ResolveSourceIdentity implements [SourceIdentityProvider] by resolving the upstream
+// ResolveIdentity implements [SourceIdentityProvider] by resolving the upstream
 // commit hash for the component. All resolution priority logic is in
 // [resolveEffectiveCommitHash], called via [resolveCommit].
-func (g *FedoraSourcesProviderImpl) ResolveSourceIdentity(
+func (g *FedoraSourcesProviderImpl) ResolveIdentity(
 	ctx context.Context,
 	component components.Component,
 ) (string, error) {

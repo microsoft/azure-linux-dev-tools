@@ -94,9 +94,9 @@ func TestResolveLocalSourceIdentity_SidecarFileChangesIdentity(t *testing.T) {
 	assert.NotEqual(t, identity1, identity2, "adding a sidecar file must change identity")
 }
 
-// --- FedoraSourcesProviderImpl.ResolveSourceIdentity tests ---
+// --- FedoraSourcesProviderImpl.ResolveIdentity tests ---
 
-func TestFedoraProvider_ResolveSourceIdentity(t *testing.T) {
+func TestFedoraProvider_ResolveIdentity(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockGitProvider := git_test.NewMockGitProvider(ctrl)
 
@@ -122,7 +122,7 @@ func TestFedoraProvider_ResolveSourceIdentity(t *testing.T) {
 			Return(expectedCommit, nil)
 
 		comp := newMockComp(ctrl, testPackageName)
-		identity, resolveErr := provider.ResolveSourceIdentity(t.Context(), comp)
+		identity, resolveErr := provider.ResolveIdentity(t.Context(), comp)
 		require.NoError(t, resolveErr)
 		assert.Equal(t, expectedCommit, identity)
 	})
@@ -133,7 +133,7 @@ func TestFedoraProvider_ResolveSourceIdentity(t *testing.T) {
 			Return(errors.New("network error"))
 
 		comp := newMockComp(ctrl, testPackageName)
-		_, resolveErr := provider.ResolveSourceIdentity(t.Context(), comp)
+		_, resolveErr := provider.ResolveIdentity(t.Context(), comp)
 		require.Error(t, resolveErr)
 		assert.Contains(t, resolveErr.Error(), testPackageName)
 	})
@@ -149,13 +149,13 @@ func TestFedoraProvider_ResolveSourceIdentity(t *testing.T) {
 		})
 
 		// No LsRemoteHead expectation — the pinned commit should be returned directly.
-		identity, resolveErr := provider.ResolveSourceIdentity(t.Context(), comp)
+		identity, resolveErr := provider.ResolveIdentity(t.Context(), comp)
 		require.NoError(t, resolveErr)
 		assert.Equal(t, pinnedCommit, identity)
 	})
 }
 
-func TestFedoraProvider_ResolveSourceIdentity_Snapshot(t *testing.T) {
+func TestFedoraProvider_ResolveIdentity_Snapshot(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockGitProvider := git_test.NewMockGitProvider(ctrl)
 
@@ -185,7 +185,7 @@ func TestFedoraProvider_ResolveSourceIdentity_Snapshot(t *testing.T) {
 			Return(expectedCommit, nil)
 
 		comp := newMockComp(ctrl, testPackageName)
-		identity, resolveErr := provider.ResolveSourceIdentity(t.Context(), comp)
+		identity, resolveErr := provider.ResolveIdentity(t.Context(), comp)
 		require.NoError(t, resolveErr)
 		assert.Equal(t, expectedCommit, identity)
 	})
@@ -201,15 +201,15 @@ func TestFedoraProvider_ResolveSourceIdentity_Snapshot(t *testing.T) {
 		})
 
 		// No Clone/Deepen/GetCommitHashBeforeDate expectations — pinned commit is returned directly.
-		identity, resolveErr := provider.ResolveSourceIdentity(t.Context(), comp)
+		identity, resolveErr := provider.ResolveIdentity(t.Context(), comp)
 		require.NoError(t, resolveErr)
 		assert.Equal(t, pinnedCommit, identity)
 	})
 }
 
-// --- RPMContentsProviderImpl.ResolveSourceIdentity tests ---
+// --- RPMContentsProviderImpl.ResolveIdentity tests ---
 
-func TestRPMProvider_ResolveSourceIdentity(t *testing.T) {
+func TestRPMProvider_ResolveIdentity(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	t.Run("hashes downloaded RPM", func(t *testing.T) {
@@ -224,7 +224,7 @@ func TestRPMProvider_ResolveSourceIdentity(t *testing.T) {
 		require.NoError(t, provErr)
 
 		comp := newMockComp(ctrl, "test-pkg")
-		identity, resolveErr := provider.ResolveSourceIdentity(t.Context(), comp)
+		identity, resolveErr := provider.ResolveIdentity(t.Context(), comp)
 		require.NoError(t, resolveErr)
 		assert.Equal(t, "sha256:"+sha256Hex(rpmContent), identity)
 	})
@@ -240,7 +240,7 @@ func TestRPMProvider_ResolveSourceIdentity(t *testing.T) {
 		require.NoError(t, provErr)
 
 		comp := newMockComp(ctrl, "test-pkg")
-		_, resolveErr := provider.ResolveSourceIdentity(t.Context(), comp)
+		_, resolveErr := provider.ResolveIdentity(t.Context(), comp)
 		require.Error(t, resolveErr)
 		assert.Contains(t, resolveErr.Error(), "test-pkg")
 	})

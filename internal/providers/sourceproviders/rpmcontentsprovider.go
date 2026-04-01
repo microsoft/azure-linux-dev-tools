@@ -77,10 +77,10 @@ func (r *RPMContentsProviderImpl) GetComponent(
 	return nil
 }
 
-// ResolveSourceIdentity implements [SourceIdentityProvider] by downloading the source RPM
+// ResolveIdentity implements [SourceIdentityProvider] by downloading the source RPM
 // and computing its SHA256 hash. This is a heavyweight operation since it requires a full
 // RPM download.
-func (r *RPMContentsProviderImpl) ResolveSourceIdentity(
+func (r *RPMContentsProviderImpl) ResolveIdentity(
 	ctx context.Context,
 	component components.Component,
 ) (identity string, err error) {
