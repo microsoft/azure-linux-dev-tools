@@ -4,45 +4,55 @@
 package cttools_test
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/cttools"
+	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestLoadConfig_SimpleFile(t *testing.T) {
-	dir := t.TempDir()
+const testConfigDir = "/testconfig"
 
-	writeFile(t, filepath.Join(dir, "main.toml"), `
+func TestLoadConfig_SimpleFile(t *testing.T) {
+	ctx := testctx.NewCtx()
+	mainPath := filepath.Join(testConfigDir, "main.toml")
+
+	require.NoError(t, fileutils.MkdirAll(ctx.FS(), testConfigDir))
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), mainPath, []byte(`
 [distros.testdistro]
 description = "Test Distro"
-`)
+`), fileperms.PrivateFile))
 
-	config, err := cttools.LoadConfig(filepath.Join(dir, "main.toml"))
+	config, err := cttools.LoadConfig(ctx.FS(), mainPath)
 	require.NoError(t, err)
 	require.Contains(t, config.Distros, "testdistro")
 	assert.Equal(t, "Test Distro", config.Distros["testdistro"].Description)
 }
 
 func TestLoadConfig_IncludeResolution(t *testing.T) {
-	dir := t.TempDir()
+	ctx := testctx.NewCtx()
 
-	writeFile(t, filepath.Join(dir, "main.toml"), `
+	require.NoError(t, fileutils.MkdirAll(ctx.FS(), testConfigDir))
+
+	mainPath := filepath.Join(testConfigDir, "main.toml")
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), mainPath, []byte(`
 include = ["sub.toml"]
 
 [distros.testdistro]
 description = "Test Distro"
-`)
+`), fileperms.PrivateFile))
 
-	writeFile(t, filepath.Join(dir, "sub.toml"), `
+	subPath := filepath.Join(testConfigDir, "sub.toml")
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), subPath, []byte(`
 [mock-options-templates.rpm]
 options = ["opt1", "opt2"]
-`)
+`), fileperms.PrivateFile))
 
-	config, err := cttools.LoadConfig(filepath.Join(dir, "main.toml"))
+	config, err := cttools.LoadConfig(ctx.FS(), mainPath)
 	require.NoError(t, err)
 
 	require.Contains(t, config.Distros, "testdistro")
@@ -51,30 +61,34 @@ options = ["opt1", "opt2"]
 }
 
 func TestLoadConfig_NestedIncludes(t *testing.T) {
-	dir := t.TempDir()
+	ctx := testctx.NewCtx()
+	subDir := filepath.Join(testConfigDir, "sub")
 
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sub"), 0o755))
+	require.NoError(t, fileutils.MkdirAll(ctx.FS(), subDir))
 
-	writeFile(t, filepath.Join(dir, "main.toml"), `
+	mainPath := filepath.Join(testConfigDir, "main.toml")
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), mainPath, []byte(`
 include = ["sub/mid.toml"]
 
 [distros.d]
 description = "D"
-`)
+`), fileperms.PrivateFile))
 
-	writeFile(t, filepath.Join(dir, "sub", "mid.toml"), `
+	midPath := filepath.Join(subDir, "mid.toml")
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), midPath, []byte(`
 include = ["leaf.toml"]
 
 [mock-options-templates.rpm]
 options = ["a"]
-`)
+`), fileperms.PrivateFile))
 
-	writeFile(t, filepath.Join(dir, "sub", "leaf.toml"), `
+	leafPath := filepath.Join(subDir, "leaf.toml")
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), leafPath, []byte(`
 [build-root-templates.srpm]
 packages = ["bash"]
-`)
+`), fileperms.PrivateFile))
 
-	config, err := cttools.LoadConfig(filepath.Join(dir, "main.toml"))
+	config, err := cttools.LoadConfig(ctx.FS(), mainPath)
 	require.NoError(t, err)
 
 	require.Contains(t, config.Distros, "d")
@@ -84,25 +98,27 @@ packages = ["bash"]
 }
 
 func TestLoadConfig_GlobIncludes(t *testing.T) {
-	dir := t.TempDir()
+	ctx := testctx.NewCtx()
+	tmplDir := filepath.Join(testConfigDir, "templates")
 
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, "templates"), 0o755))
+	require.NoError(t, fileutils.MkdirAll(ctx.FS(), tmplDir))
 
-	writeFile(t, filepath.Join(dir, "main.toml"), `
+	mainPath := filepath.Join(testConfigDir, "main.toml")
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), mainPath, []byte(`
 include = ["templates/*.toml"]
-`)
+`), fileperms.PrivateFile))
 
-	writeFile(t, filepath.Join(dir, "templates", "mock.toml"), `
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), filepath.Join(tmplDir, "mock.toml"), []byte(`
 [mock-options-templates.rpm]
 options = ["opt1"]
-`)
+`), fileperms.PrivateFile))
 
-	writeFile(t, filepath.Join(dir, "templates", "build.toml"), `
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), filepath.Join(tmplDir, "build.toml"), []byte(`
 [build-root-templates.srpm]
 packages = ["bash"]
-`)
+`), fileperms.PrivateFile))
 
-	config, err := cttools.LoadConfig(filepath.Join(dir, "main.toml"))
+	config, err := cttools.LoadConfig(ctx.FS(), mainPath)
 	require.NoError(t, err)
 
 	require.Contains(t, config.MockOptionsTemplates, "rpm")
@@ -110,21 +126,25 @@ packages = ["bash"]
 }
 
 func TestLoadConfig_DeepMerge_MapsMerge(t *testing.T) {
-	dir := t.TempDir()
+	ctx := testctx.NewCtx()
 
-	writeFile(t, filepath.Join(dir, "main.toml"), `
+	require.NoError(t, fileutils.MkdirAll(ctx.FS(), testConfigDir))
+
+	mainPath := filepath.Join(testConfigDir, "main.toml")
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), mainPath, []byte(`
 include = ["extra.toml"]
 
 [distros.d1]
 description = "D1"
-`)
+`), fileperms.PrivateFile))
 
-	writeFile(t, filepath.Join(dir, "extra.toml"), `
+	extraPath := filepath.Join(testConfigDir, "extra.toml")
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), extraPath, []byte(`
 [distros.d2]
 description = "D2"
-`)
+`), fileperms.PrivateFile))
 
-	config, err := cttools.LoadConfig(filepath.Join(dir, "main.toml"))
+	config, err := cttools.LoadConfig(ctx.FS(), mainPath)
 	require.NoError(t, err)
 
 	require.Contains(t, config.Distros, "d1")
@@ -132,21 +152,25 @@ description = "D2"
 }
 
 func TestLoadConfig_DeepMerge_ArraysConcatenate(t *testing.T) {
-	dir := t.TempDir()
+	ctx := testctx.NewCtx()
 
-	writeFile(t, filepath.Join(dir, "main.toml"), `
+	require.NoError(t, fileutils.MkdirAll(ctx.FS(), testConfigDir))
+
+	mainPath := filepath.Join(testConfigDir, "main.toml")
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), mainPath, []byte(`
 include = ["extra.toml"]
 
 [[distros.d.shadow-allowlists]]
 tag-name = "tag1"
-`)
+`), fileperms.PrivateFile))
 
-	writeFile(t, filepath.Join(dir, "extra.toml"), `
+	extraPath := filepath.Join(testConfigDir, "extra.toml")
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), extraPath, []byte(`
 [[distros.d.shadow-allowlists]]
 tag-name = "tag2"
-`)
+`), fileperms.PrivateFile))
 
-	config, err := cttools.LoadConfig(filepath.Join(dir, "main.toml"))
+	config, err := cttools.LoadConfig(ctx.FS(), mainPath)
 	require.NoError(t, err)
 
 	require.Contains(t, config.Distros, "d")
@@ -158,50 +182,59 @@ tag-name = "tag2"
 }
 
 func TestLoadConfig_CircularInclude(t *testing.T) {
-	dir := t.TempDir()
+	ctx := testctx.NewCtx()
 
-	writeFile(t, filepath.Join(dir, "a.toml"), `include = ["b.toml"]`)
-	writeFile(t, filepath.Join(dir, "b.toml"), `include = ["a.toml"]`)
+	require.NoError(t, fileutils.MkdirAll(ctx.FS(), testConfigDir))
 
-	_, err := cttools.LoadConfig(filepath.Join(dir, "a.toml"))
+	aPath := filepath.Join(testConfigDir, "a.toml")
+	bPath := filepath.Join(testConfigDir, "b.toml")
+
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), aPath, []byte(`include = ["b.toml"]`), fileperms.PrivateFile))
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), bPath, []byte(`include = ["a.toml"]`), fileperms.PrivateFile))
+
+	_, err := cttools.LoadConfig(ctx.FS(), aPath)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "circular include")
 }
 
 func TestLoadConfig_MissingInclude(t *testing.T) {
-	dir := t.TempDir()
+	ctx := testctx.NewCtx()
 
-	writeFile(t, filepath.Join(dir, "main.toml"), `include = ["nonexistent.toml"]`)
+	require.NoError(t, fileutils.MkdirAll(ctx.FS(), testConfigDir))
+
+	mainPath := filepath.Join(testConfigDir, "main.toml")
+	content := []byte(`include = ["nonexistent.toml"]`)
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), mainPath, content, fileperms.PrivateFile))
 
 	// Glob returns no matches for nonexistent files, so this should succeed with empty config.
-	config, err := cttools.LoadConfig(filepath.Join(dir, "main.toml"))
+	config, err := cttools.LoadConfig(ctx.FS(), mainPath)
 	require.NoError(t, err)
 	assert.Empty(t, config.Distros)
 }
 
 func TestLoadConfig_InvalidTOML(t *testing.T) {
-	dir := t.TempDir()
+	ctx := testctx.NewCtx()
 
-	writeFile(t, filepath.Join(dir, "main.toml"), `this is not valid toml {{{`)
+	require.NoError(t, fileutils.MkdirAll(ctx.FS(), testConfigDir))
 
-	_, err := cttools.LoadConfig(filepath.Join(dir, "main.toml"))
+	mainPath := filepath.Join(testConfigDir, "main.toml")
+	content := []byte(`this is not valid toml {{{`)
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), mainPath, content, fileperms.PrivateFile))
+
+	_, err := cttools.LoadConfig(ctx.FS(), mainPath)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse TOML")
 }
 
 func TestLoadConfig_InvalidIncludeType(t *testing.T) {
-	dir := t.TempDir()
+	ctx := testctx.NewCtx()
 
-	writeFile(t, filepath.Join(dir, "main.toml"), `include = 42`)
+	require.NoError(t, fileutils.MkdirAll(ctx.FS(), testConfigDir))
 
-	_, err := cttools.LoadConfig(filepath.Join(dir, "main.toml"))
+	mainPath := filepath.Join(testConfigDir, "main.toml")
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), mainPath, []byte(`include = 42`), fileperms.PrivateFile))
+
+	_, err := cttools.LoadConfig(ctx.FS(), mainPath)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "must be an array")
-}
-
-// writeFile is a test helper that writes content to a file, creating it if needed.
-func writeFile(t *testing.T, path, content string) {
-	t.Helper()
-
-	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 }

@@ -181,9 +181,9 @@ func TestCTToolsConfigDump(t *testing.T) {
 
 	test := cmdtest.NewScenarioTest(
 		"advanced", "ct-tools", "config-dump",
-		"--config", configPath,
+		"--ct-config", configPath,
 		"--environment", "ct-test",
-		"--format", "json",
+		"-O", "json",
 	).Locally()
 
 	results, err := test.Run(t)
@@ -229,29 +229,4 @@ func TestCTToolsConfigDump(t *testing.T) {
 	name, ok := first["name"].(string)
 	require.True(t, ok)
 	assert.Contains(t, name, "td1-dev-")
-}
-
-// Tests that `azldev advanced ct-tools config-dump` outputs valid YAML.
-func TestCTToolsConfigDumpYAML(t *testing.T) {
-	t.Parallel()
-
-	if testing.Short() {
-		t.Skip("skipping long test")
-	}
-
-	configPath, err := filepath.Abs("testdata/cttools/distro.toml")
-	require.NoError(t, err)
-
-	test := cmdtest.NewScenarioTest(
-		"advanced", "ct-tools", "config-dump",
-		"--config", configPath,
-		"--environment", "ct-test",
-		"--format", "yaml",
-	).Locally()
-
-	results, err := test.Run(t)
-	require.NoError(t, err)
-	require.Zero(t, results.ExitCode, "stderr: %s", results.Stderr)
-	assert.Contains(t, results.Stdout, "testdistro")
-	assert.Contains(t, results.Stdout, "ct-test")
 }

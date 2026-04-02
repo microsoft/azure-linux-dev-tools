@@ -4,14 +4,11 @@
 package advanced
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/cttools"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 func ctToolsOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
@@ -40,8 +37,6 @@ type ConfigDumpOptions struct {
 	ConfigPath string
 	// The Control Tower environment to filter for (e.g. "ct-dev").
 	Environment string
-	// Output format: "json" or "yaml".
-	Format string
 }
 
 // Constructs a [cobra.Command] for the "ct-tools config-dump" subcommand.
@@ -56,64 +51,44 @@ top-level file, merge includes, expand all templates (koji-targets,
 build-roots, mock-options), and output the fully resolved configuration
 filtered to a specific Control Tower environment.`,
 		Example: `  # Dump config for ct-dev as JSON
-  azldev advanced ct-tools config-dump --config /path/to/azurelinux.toml --environment ct-dev
-
-  # Dump config for ct-prod as YAML
-  azldev advanced ct-tools config-dump --config /path/to/azurelinux.toml --environment ct-prod --format yaml`,
+  azldev advanced ct-tools config-dump \
+    --ct-config /path/to/azurelinux.toml \
+    --environment ct-dev -O json`,
 		RunE: azldev.RunFuncWithoutRequiredConfig(func(env *azldev.Env) (results interface{}, err error) {
-			return nil, RunConfigDump(options)
+			return RunConfigDump(env, options)
 		}),
 	}
 
-	cmd.Flags().StringVar(&options.ConfigPath, "config", "", "Path to the top-level TOML configuration file")
+	cmd.Flags().StringVar(
+		&options.ConfigPath, "ct-config", "",
+		"Path to the top-level CT distro TOML configuration file",
+	)
 
 	envHelp := "Control Tower environment name " +
 		"(e.g. ct-dev, ct-staging, ct-prod)"
 	cmd.Flags().StringVar(&options.Environment, "environment", "", envHelp)
-	cmd.Flags().StringVar(&options.Format, "format", "json", "Output format: json or yaml")
 
-	_ = cmd.MarkFlagRequired("config")
+	_ = cmd.MarkFlagRequired("ct-config")
 	_ = cmd.MarkFlagRequired("environment")
+	_ = cmd.MarkFlagFilename("ct-config", "toml")
 
 	return cmd
 }
 
-// RunConfigDump loads, resolves, filters, and outputs the distro configuration.
-func RunConfigDump(options *ConfigDumpOptions) error {
-	config, err := cttools.LoadConfig(options.ConfigPath)
+// RunConfigDump loads, resolves, filters, and returns the distro configuration.
+func RunConfigDump(env *azldev.Env, options *ConfigDumpOptions) (*cttools.DistroConfig, error) {
+	config, err := cttools.LoadConfig(env.FS(), options.ConfigPath)
 	if err != nil {
-		return fmt.Errorf("failed to load config from %#q:\n%w", options.ConfigPath, err)
+		return nil, fmt.Errorf("failed to load config from %#q:\n%w", options.ConfigPath, err)
 	}
 
 	if err := cttools.ResolveTemplates(config); err != nil {
-		return fmt.Errorf("failed to resolve templates:\n%w", err)
+		return nil, fmt.Errorf("failed to resolve templates:\n%w", err)
 	}
 
 	if err := cttools.FilterEnvironment(config, options.Environment); err != nil {
-		return fmt.Errorf("failed to filter environment:\n%w", err)
+		return nil, fmt.Errorf("failed to filter environment:\n%w", err)
 	}
 
-	var output []byte
-
-	switch options.Format {
-	case "json":
-		output, err = json.MarshalIndent(config, "", "  ")
-		if err != nil {
-			return fmt.Errorf("failed to marshal config to JSON:\n%w", err)
-		}
-	case "yaml":
-		output, err = yaml.Marshal(config)
-		if err != nil {
-			return fmt.Errorf("failed to marshal config to YAML:\n%w", err)
-		}
-	default:
-		return fmt.Errorf("unsupported output format %#q; use 'json' or 'yaml'", options.Format)
-	}
-
-	_, err = fmt.Fprintln(os.Stdout, string(output))
-	if err != nil {
-		return fmt.Errorf("failed to write output:\n%w", err)
-	}
-
-	return nil
+	return config, nil
 }

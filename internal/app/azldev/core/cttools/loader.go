@@ -5,24 +5,29 @@ package cttools
 
 import (
 	"fmt"
-	"os"
+	"log/slog"
 	"path/filepath"
 
+	"github.com/bmatcuk/doublestar/v4"
+	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/pelletier/go-toml/v2"
 )
 
 // LoadConfig loads a distro config starting from the given top-level TOML file path.
 // It recursively resolves `include` directives (relative glob paths), deep-merges
-// all included files, and returns the final merged raw map.
-func LoadConfig(topLevelPath string) (*DistroConfig, error) {
+// all included files, and returns the final merged [DistroConfig].
+func LoadConfig(fs opctx.FS, topLevelPath string) (*DistroConfig, error) {
 	absPath, err := filepath.Abs(topLevelPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve absolute path for %#q:\n%w", topLevelPath, err)
 	}
 
+	slog.Debug("Loading CT distro config", "path", absPath)
+
 	visited := make(map[string]bool)
 
-	merged, err := loadAndMerge(absPath, visited)
+	merged, err := loadAndMerge(fs, absPath, visited)
 	if err != nil {
 		return nil, err
 	}
@@ -46,14 +51,16 @@ func LoadConfig(topLevelPath string) (*DistroConfig, error) {
 
 // loadAndMerge loads a single TOML file, processes its include directives,
 // and returns the deep-merged result as a raw map.
-func loadAndMerge(absPath string, visited map[string]bool) (map[string]any, error) {
+func loadAndMerge(fs opctx.FS, absPath string, visited map[string]bool) (map[string]any, error) {
 	if visited[absPath] {
 		return nil, fmt.Errorf("circular include detected for %#q", absPath)
 	}
 
 	visited[absPath] = true
 
-	data, err := os.ReadFile(absPath)
+	slog.Debug("Loading CT config file", "path", absPath)
+
+	data, err := fileutils.ReadFile(fs, absPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read %#q:\n%w", absPath, err)
 	}
@@ -80,15 +87,19 @@ func loadAndMerge(absPath string, visited map[string]bool) (map[string]any, erro
 	for _, pattern := range includes {
 		globPath := filepath.Join(dir, pattern)
 
-		matches, err := filepath.Glob(globPath)
+		slog.Debug("Resolving CT config include", "pattern", globPath, "from", absPath)
+
+		matches, err := fileutils.Glob(fs, globPath, doublestar.WithFilesOnly())
 		if err != nil {
 			return nil, fmt.Errorf("failed to glob %#q (from include in %#q):\n%w", globPath, absPath, err)
 		}
 
 		for _, match := range matches {
-			matchAbs, err := filepath.Abs(match)
-			if err != nil {
-				return nil, fmt.Errorf("failed to resolve absolute path for %#q:\n%w", match, err)
+			// fileutils.Glob may return paths relative to the FS root.
+			// Ensure they are absolute for consistent handling.
+			matchAbs := match
+			if !filepath.IsAbs(match) {
+				matchAbs = "/" + match
 			}
 
 			// Skip self-includes (e.g., when a glob like "./*.toml" matches the current file).
@@ -96,9 +107,9 @@ func loadAndMerge(absPath string, visited map[string]bool) (map[string]any, erro
 				continue
 			}
 
-			child, err := loadAndMerge(matchAbs, visited)
+			child, err := loadAndMerge(fs, matchAbs, visited)
 			if err != nil {
-				return nil, fmt.Errorf("error loading include %#q from %#q:\n%w", match, absPath, err)
+				return nil, fmt.Errorf("error loading include %#q from %#q:\n%w", matchAbs, absPath, err)
 			}
 
 			deepMergeMaps(result, child)

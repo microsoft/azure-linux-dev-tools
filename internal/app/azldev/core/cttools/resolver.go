@@ -5,15 +5,22 @@ package cttools
 
 import (
 	"fmt"
+	"sort"
 )
 
 // ResolveTemplates resolves all koji target templates for every git-source-repo in every distro
 // version. It expands build-root references, mock-options references, and applies
 // environment-prefix / repo-prefix / parent-prefix to produce [ResolvedKojiTarget] entries.
 func ResolveTemplates(config *DistroConfig) error {
-	for distroName, distro := range config.Distros {
-		for versionName, version := range distro.Versions {
-			for repoName, repos := range version.GitSourceRepos {
+	for _, distroName := range sortedKeys(config.Distros) {
+		distro := config.Distros[distroName]
+
+		for _, versionName := range sortedKeys(distro.Versions) {
+			version := distro.Versions[versionName]
+
+			for _, repoName := range sortedKeys(version.GitSourceRepos) {
+				repos := version.GitSourceRepos[repoName]
+
 				for i := range repos {
 					repo := &repos[i]
 
@@ -69,16 +76,24 @@ func resolveRepoTargets(config *DistroConfig, version *Version, repo *GitSourceR
 
 	var resolved []ResolvedKojiTarget
 
-	for targetName, targets := range templateSet {
+	for _, targetName := range sortedKeys(templateSet) {
+		targets := templateSet[targetName]
+
 		for _, tmpl := range targets {
-			rt, err := resolveOneTarget(config, version, envPrefix, repoPrefix, parentPrefix, targetName, &tmpl)
+			resolvedTarget, err := resolveOneTarget(
+				config, version, envPrefix, repoPrefix, parentPrefix, targetName, &tmpl,
+			)
 			if err != nil {
 				return fmt.Errorf("error resolving target %#q:\n%w", targetName, err)
 			}
 
-			resolved = append(resolved, *rt)
+			resolved = append(resolved, *resolvedTarget)
 		}
 	}
+
+	sort.Slice(resolved, func(i, j int) bool {
+		return resolved[i].Name < resolved[j].Name
+	})
 
 	repo.ResolvedKojiTargets = resolved
 
@@ -184,4 +199,16 @@ func resolveDistTag(version *Version, fieldName string) (string, error) {
 	default:
 		return "", fmt.Errorf("unknown mock-dist-tag field %#q", fieldName)
 	}
+}
+
+// sortedKeys returns the keys of a string-keyed map in sorted order.
+func sortedKeys[V any](inputMap map[string]V) []string {
+	keys := make([]string, 0, len(inputMap))
+	for key := range inputMap {
+		keys = append(keys, key)
+	}
+
+	sort.Strings(keys)
+
+	return keys
 }
