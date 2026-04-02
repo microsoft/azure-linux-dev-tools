@@ -18,6 +18,7 @@ type event struct {
 	parentEventListener *appEventListener
 	name                string
 	spinner             *spinner.Spinner
+	quiet               bool
 
 	lastReportedCompletionRatio float64
 
@@ -49,6 +50,10 @@ func (e *event) End() {
 }
 
 func (e *event) SetLongRunning(longRunningText string) {
+	if e.quiet {
+		return
+	}
+
 	const percent = 100
 
 	// Start an indeterminate spinner to indicate to the user that *something* is happening.
@@ -60,6 +65,10 @@ func (e *event) SetLongRunning(longRunningText string) {
 }
 
 func (e *event) SetProgress(unitsComplete int64, totalUnits int64) {
+	if e.quiet {
+		return
+	}
+
 	// For now, only update progress visually when the completion ratio has increased by at least 1%
 	// since progress was last rendered.
 	const minRatioIncreaseForUpdate = 0.01
