@@ -27,9 +27,10 @@ func LoadConfig(fs opctx.FS, topLevelPath string) (*DistroConfig, error) {
 
 	slog.Debug("Loading CT distro config", "path", absPath)
 
-	visited := make(map[string]bool)
+	inProgress := make(map[string]bool)
+	loaded := make(map[string]bool)
 
-	merged, err := loadAndMerge(fs, absPath, visited)
+	merged, err := loadAndMerge(fs, absPath, inProgress, loaded)
 	if err != nil {
 		return nil, err
 	}
@@ -52,13 +53,26 @@ func LoadConfig(fs opctx.FS, topLevelPath string) (*DistroConfig, error) {
 }
 
 // loadAndMerge loads a single TOML file, processes its include directives,
-// and returns the deep-merged result as a raw map.
-func loadAndMerge(fs opctx.FS, absPath string, visited map[string]bool) (map[string]any, error) {
-	if visited[absPath] {
+// and returns the deep-merged result as a raw map. inProgress tracks the current
+// recursion stack to detect cycles. loaded tracks files that have already been
+// fully processed so that diamond includes (e.g. common.toml included from two
+// branches) are only merged once.
+func loadAndMerge(
+	fs opctx.FS, absPath string, inProgress map[string]bool, loaded map[string]bool,
+) (map[string]any, error) {
+	if inProgress[absPath] {
 		return nil, fmt.Errorf("circular include detected for %#q", absPath)
 	}
 
-	visited[absPath] = true
+	// Skip files already loaded from another branch to avoid duplicate merging.
+	if loaded[absPath] {
+		slog.Debug("Skipping already-loaded CT config file", "path", absPath)
+
+		return make(map[string]any), nil
+	}
+
+	inProgress[absPath] = true
+	defer delete(inProgress, absPath)
 
 	slog.Debug("Loading CT config file", "path", absPath)
 
@@ -83,7 +97,21 @@ func loadAndMerge(fs opctx.FS, absPath string, visited map[string]bool) (map[str
 	deepMergeMaps(result, raw)
 	delete(result, "include")
 
-	// Load each included file and merge into result.
+	if err := resolveIncludes(fs, absPath, includes, inProgress, loaded, result); err != nil {
+		return nil, err
+	}
+
+	loaded[absPath] = true
+
+	return result, nil
+}
+
+// resolveIncludes processes include directives for a single config file, loading
+// and deep-merging each included file's content into result.
+func resolveIncludes(
+	fs opctx.FS, absPath string, includes []string,
+	inProgress map[string]bool, loaded map[string]bool, result map[string]any,
+) error {
 	dir := filepath.Dir(absPath)
 
 	for _, pattern := range includes {
@@ -93,11 +121,11 @@ func loadAndMerge(fs opctx.FS, absPath string, visited map[string]bool) (map[str
 
 		matches, err := fileutils.Glob(fs, globPath, doublestar.WithFilesOnly())
 		if err != nil {
-			return nil, fmt.Errorf("failed to glob %#q (from include in %#q):\n%w", globPath, absPath, err)
+			return fmt.Errorf("failed to glob %#q (from include in %#q):\n%w", globPath, absPath, err)
 		}
 
 		if len(matches) == 0 && !containsGlobMeta(pattern) {
-			return nil, fmt.Errorf(
+			return fmt.Errorf(
 				"failed to find include file %#q referenced in %#q:\n%w",
 				pattern, absPath, os.ErrNotExist,
 			)
@@ -116,16 +144,16 @@ func loadAndMerge(fs opctx.FS, absPath string, visited map[string]bool) (map[str
 				continue
 			}
 
-			child, err := loadAndMerge(fs, matchAbs, visited)
+			child, err := loadAndMerge(fs, matchAbs, inProgress, loaded)
 			if err != nil {
-				return nil, fmt.Errorf("error loading include %#q from %#q:\n%w", matchAbs, absPath, err)
+				return fmt.Errorf("error loading include %#q from %#q:\n%w", matchAbs, absPath, err)
 			}
 
 			deepMergeMaps(result, child)
 		}
 	}
 
-	return result, nil
+	return nil
 }
 
 // extractIncludes reads the "include" key from a raw TOML map and returns it as a string slice.

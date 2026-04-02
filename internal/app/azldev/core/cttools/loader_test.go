@@ -198,6 +198,36 @@ func TestLoadConfig_CircularInclude(t *testing.T) {
 	assert.Contains(t, err.Error(), "circular include")
 }
 
+func TestLoadConfig_DiamondInclude(t *testing.T) {
+	// A diamond include pattern: root includes both a.toml and b.toml,
+	// and both a.toml and b.toml include common.toml. This must not be
+	// treated as a circular include.
+	ctx := testctx.NewCtx()
+
+	require.NoError(t, fileutils.MkdirAll(ctx.FS(), testConfigDir))
+
+	rootPath := filepath.Join(testConfigDir, "root.toml")
+	aPath := filepath.Join(testConfigDir, "a.toml")
+	bPath := filepath.Join(testConfigDir, "b.toml")
+	commonPath := filepath.Join(testConfigDir, "common.toml")
+
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), rootPath,
+		[]byte(`include = ["a.toml", "b.toml"]`), fileperms.PrivateFile))
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), aPath,
+		[]byte(`include = ["common.toml"]`), fileperms.PrivateFile))
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), bPath,
+		[]byte(`include = ["common.toml"]`), fileperms.PrivateFile))
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), commonPath, []byte(`
+[mock-options-templates.shared]
+options = ["shared-opt"]
+`), fileperms.PrivateFile))
+
+	config, err := cttools.LoadConfig(ctx.FS(), rootPath)
+	require.NoError(t, err)
+	require.Contains(t, config.MockOptionsTemplates, "shared")
+	assert.Equal(t, []string{"shared-opt"}, config.MockOptionsTemplates["shared"].Options)
+}
+
 func TestLoadConfig_MissingInclude(t *testing.T) {
 	ctx := testctx.NewCtx()
 
