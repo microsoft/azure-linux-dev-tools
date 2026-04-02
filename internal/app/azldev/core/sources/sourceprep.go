@@ -68,6 +68,19 @@ func WithGitRepo() PreparerOption {
 	}
 }
 
+// WithSkipLookaside returns a [PreparerOption] that skips all lookaside cache
+// downloads during source preparation. This includes both explicit source file
+// downloads ([SourceManager.FetchFiles]) and lookaside extraction during
+// component fetching ([FedoraSourceDownloader.ExtractSourcesFromRepo]).
+// Git-tracked files (spec, patches, scripts, configs) are still fetched from
+// the upstream clone. This is useful for rendering, where only the spec and
+// sidecar files are needed and downloading large source tarballs is unnecessary.
+func WithSkipLookaside() PreparerOption {
+	return func(p *sourcePreparerImpl) {
+		p.skipLookaside = true
+	}
+}
+
 // Standard implementation of the [SourcePreparer] interface.
 type sourcePreparerImpl struct {
 	sourceManager sourceproviders.SourceManager
@@ -78,6 +91,10 @@ type sourcePreparerImpl struct {
 	// withGitRepo, when true, enables dist-git creation by preserving the
 	// upstream .git directory and generating synthetic commit history.
 	withGitRepo bool
+
+	// skipLookaside, when true, skips all lookaside cache downloads during
+	// source preparation. Git-tracked files are still fetched.
+	skipLookaside bool
 }
 
 // NewPreparer creates a new [SourcePreparer] instance. All positional arguments
@@ -126,10 +143,14 @@ func (p *sourcePreparerImpl) PrepareSources(
 	ctx context.Context, component components.Component, outputDir string, applyOverlays bool,
 ) error {
 	// Use the source manager to fetch source files (archives, patches, etc.)
-	err := p.sourceManager.FetchFiles(ctx, component, outputDir)
-	if err != nil {
-		return fmt.Errorf("failed to fetch source files for component %#q:\n%w",
-			component.GetName(), err)
+	// Skip this step when skipLookaside is set — source tarballs are not needed
+	// for rendering and are the most expensive download.
+	if !p.skipLookaside {
+		err := p.sourceManager.FetchFiles(ctx, component, outputDir)
+		if err != nil {
+			return fmt.Errorf("failed to fetch source files for component %#q:\n%w",
+				component.GetName(), err)
+		}
 	}
 
 	// Preserve the upstream .git directory only when dist-git creation is
@@ -140,8 +161,12 @@ func (p *sourcePreparerImpl) PrepareSources(
 		fetchOpts = append(fetchOpts, sourceproviders.WithPreserveGitDir())
 	}
 
+	if p.skipLookaside {
+		fetchOpts = append(fetchOpts, sourceproviders.WithSkipLookaside())
+	}
+
 	// Use the source manager to fetch the component (spec file and sidecar files).
-	err = p.sourceManager.FetchComponent(ctx, component, outputDir, fetchOpts...)
+	err := p.sourceManager.FetchComponent(ctx, component, outputDir, fetchOpts...)
 	if err != nil {
 		return fmt.Errorf("failed to fetch sources for component %#q:\n%w",
 			component.GetName(), err)
