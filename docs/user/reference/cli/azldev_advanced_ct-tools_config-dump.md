@@ -19,18 +19,16 @@ azldev advanced ct-tools config-dump [flags]
 
 ```
   # Dump config for ct-dev as JSON
-  azldev advanced ct-tools config-dump --config /path/to/azurelinux.toml --environment ct-dev
-
-  # Dump config for ct-prod as YAML
-  azldev advanced ct-tools config-dump --config /path/to/azurelinux.toml --environment ct-prod --format yaml
+  azldev advanced ct-tools config-dump \
+    --ct-config /path/to/azurelinux.toml \
+    --environment ct-dev -O json
 ```
 
 ### Options
 
 ```
-      --config string        Path to the top-level TOML configuration file
+      --ct-config string     Path to the top-level CT distro TOML configuration file
       --environment string   Control Tower environment name (e.g. ct-dev, ct-staging, ct-prod)
-      --format string        Output format: json or yaml (default "json")
   -h, --help                 help for config-dump
 ```
 

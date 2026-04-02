@@ -176,7 +176,7 @@ func TestCTToolsConfigDump(t *testing.T) {
 	}
 
 	// Use the self-contained test config under scenario/testdata/cttools/.
-	configPath, err := filepath.Abs("testdata/cttools/distro.toml")
+	configPath, err := filepath.Abs("scenario/testdata/cttools/distro.toml")
 	require.NoError(t, err)
 
 	test := cmdtest.NewScenarioTest(
