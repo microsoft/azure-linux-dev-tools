@@ -6,7 +6,9 @@ package cttools
 import (
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
@@ -94,6 +96,13 @@ func loadAndMerge(fs opctx.FS, absPath string, visited map[string]bool) (map[str
 			return nil, fmt.Errorf("failed to glob %#q (from include in %#q):\n%w", globPath, absPath, err)
 		}
 
+		if len(matches) == 0 && !containsGlobMeta(pattern) {
+			return nil, fmt.Errorf(
+				"failed to find include file %#q referenced in %#q:\n%w",
+				pattern, absPath, os.ErrNotExist,
+			)
+		}
+
 		for _, match := range matches {
 			// fileutils.Glob may return paths relative to the FS root.
 			// Ensure they are absolute for consistent handling.
@@ -143,6 +152,11 @@ func extractIncludes(raw map[string]any, filePath string) ([]string, error) {
 	}
 
 	return result, nil
+}
+
+// containsGlobMeta reports whether the pattern contains glob metacharacters.
+func containsGlobMeta(pattern string) bool {
+	return strings.ContainsAny(pattern, "*?[")
 }
 
 // deepMergeMaps merges src into dst recursively. For map values, sub-maps are merged recursively.

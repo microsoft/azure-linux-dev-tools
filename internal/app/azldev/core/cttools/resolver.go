@@ -46,10 +46,7 @@ func ResolveTemplates(config *DistroConfig) error {
 func FilterEnvironment(config *DistroConfig, envName string) error {
 	env, ok := config.Environments[envName]
 	if !ok {
-		available := make([]string, 0, len(config.Environments))
-		for k := range config.Environments {
-			available = append(available, k)
-		}
+		available := sortedKeys(config.Environments)
 
 		return fmt.Errorf("environment %#q not found; available: %v", envName, available)
 	}

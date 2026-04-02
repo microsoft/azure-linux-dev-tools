@@ -4,6 +4,7 @@
 package cttools_test
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -206,7 +207,22 @@ func TestLoadConfig_MissingInclude(t *testing.T) {
 	content := []byte(`include = ["nonexistent.toml"]`)
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), mainPath, content, fileperms.PrivateFile))
 
-	// Glob returns no matches for nonexistent files, so this should succeed with empty config.
+	// Non-glob include that doesn't exist should produce an error.
+	_, err := cttools.LoadConfig(ctx.FS(), mainPath)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestLoadConfig_MissingGlobInclude(t *testing.T) {
+	ctx := testctx.NewCtx()
+
+	require.NoError(t, fileutils.MkdirAll(ctx.FS(), testConfigDir))
+
+	mainPath := filepath.Join(testConfigDir, "main.toml")
+	content := []byte(`include = ["nonexistent/*.toml"]`)
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), mainPath, content, fileperms.PrivateFile))
+
+	// Glob pattern with no matches should silently succeed.
 	config, err := cttools.LoadConfig(ctx.FS(), mainPath)
 	require.NoError(t, err)
 	assert.Empty(t, config.Distros)
