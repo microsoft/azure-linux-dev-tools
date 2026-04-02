@@ -310,16 +310,16 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 		return nil
 	}
 
-	// Adjust the Release tag before staging changes. See [tryBumpStaticRelease]
-	// for the handling of %autorelease, static integers, and non-standard values.
-	if err := p.tryBumpStaticRelease(component, sourcesDirPath, len(commits)); err != nil {
-		return fmt.Errorf("failed to apply release bump:\n%w", err)
+	// Adjust the Release tag and/or add changelog entries before staging changes.
+	// See [tryApplyReleaseAndChangelog] for the handling of %autorelease,
+	// %autochangelog, static integers, and non-standard values.
+	if err := p.tryApplyReleaseAndChangelog(component, sourcesDirPath, commits); err != nil {
+		return fmt.Errorf("failed to apply release and changelog updates:\n%w", err)
 	}
 
-	// Use os.Stat (not p.fs) because go-git always operates on the real filesystem.
 	gitDirPath := filepath.Join(sourcesDirPath, ".git")
 
-	_, statErr := os.Stat(gitDirPath)
+	_, statErr := p.fs.Stat(gitDirPath)
 
 	if statErr != nil && !os.IsNotExist(statErr) {
 		return fmt.Errorf("failed to check for .git directory at %#q:\n%w", gitDirPath, statErr)
