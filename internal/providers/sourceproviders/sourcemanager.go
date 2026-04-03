@@ -55,6 +55,11 @@ type FetchComponentOptions struct {
 	// in the fetched component sources instead of deleting it. This is required for building
 	// synthetic git history from overlay blame metadata.
 	PreserveGitDir bool
+
+	// SkipLookaside, when true, skips all lookaside cache downloads during component
+	// fetching. Git-tracked files (spec, patches, scripts) are still fetched from the
+	// upstream clone. The sources manifest file remains available for validation.
+	SkipLookaside bool
 }
 
 // FetchComponentOption is a functional option for configuring component fetch behavior.
@@ -65,6 +70,14 @@ type FetchComponentOption func(*FetchComponentOptions)
 func WithPreserveGitDir() FetchComponentOption {
 	return func(o *FetchComponentOptions) {
 		o.PreserveGitDir = true
+	}
+}
+
+// WithSkipLookaside returns a [FetchComponentOption] that skips lookaside cache
+// downloads during component fetching. Git-tracked files are still fetched.
+func WithSkipLookaside() FetchComponentOption {
+	return func(o *FetchComponentOptions) {
+		o.SkipLookaside = true
 	}
 }
 
@@ -449,9 +462,11 @@ func (m *sourceManager) FetchComponent(
 
 	sourceType := component.GetConfig().Spec.SourceType
 
+	resolved := resolveFetchComponentOptions(opts)
+
 	switch sourceType {
 	case projectconfig.SpecSourceTypeLocal, projectconfig.SpecSourceTypeUnspecified:
-		return m.fetchLocalComponent(ctx, component, destDirPath)
+		return m.fetchLocalComponent(ctx, component, destDirPath, resolved)
 
 	case projectconfig.SpecSourceTypeUpstream:
 		return m.fetchUpstreamComponent(ctx, component, destDirPath, opts...)
@@ -511,7 +526,7 @@ func (m *sourceManager) resolveUpstreamSourceIdentity(
 }
 
 func (m *sourceManager) fetchLocalComponent(
-	ctx context.Context, component components.Component, destDirPath string,
+	ctx context.Context, component components.Component, destDirPath string, opts FetchComponentOptions,
 ) error {
 	err := FetchLocalComponent(m.dryRunnable, m.eventListener, m.fs, component, destDirPath, false)
 	if err != nil {
@@ -519,11 +534,14 @@ func (m *sourceManager) fetchLocalComponent(
 			component.GetName(), err)
 	}
 
-	// Download source files from lookaside cache if available
-	err = m.downloadLookasideSources(ctx, component, destDirPath)
-	if err != nil {
-		return fmt.Errorf("failed to download lookaside sources for component %#q:\n%w",
-			component.GetName(), err)
+	// Download source files from lookaside cache if available.
+	// Skip this step when SkipLookaside is set (e.g., during rendering).
+	if !opts.SkipLookaside {
+		err = m.downloadLookasideSources(ctx, component, destDirPath)
+		if err != nil {
+			return fmt.Errorf("failed to download lookaside sources for component %#q:\n%w",
+				component.GetName(), err)
+		}
 	}
 
 	return nil
