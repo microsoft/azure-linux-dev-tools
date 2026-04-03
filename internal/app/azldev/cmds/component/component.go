@@ -29,4 +29,5 @@ components defined in the project configuration.`,
 	listOnAppInit(app, cmd)
 	prepareOnAppInit(app, cmd)
 	queryOnAppInit(app, cmd)
+	renderOnAppInit(app, cmd)
 }
