@@ -18,7 +18,7 @@ type DistroReference struct {
 	// Version of the referenced distro.
 	Version string `toml:"version,omitempty" json:"version,omitempty" jsonschema:"title=Version,description=Version of the referenced distro"`
 	// Snapshot date/time for source code if specified components will use source as it existed at this time.
-	Snapshot string `toml:"snapshot,omitempty" json:"snapshot,omitempty" jsonschema:"format=date-time,title=Snapshot,description=If specified use source code as it existed at this date/time"`
+	Snapshot string `toml:"snapshot,omitempty" json:"snapshot,omitempty" jsonschema:"format=date-time,title=Snapshot,description=If specified use source code as it existed at this date/time" fingerprint:"-"`
 }
 
 // Implements the [Stringer] interface for [DistroReference].
