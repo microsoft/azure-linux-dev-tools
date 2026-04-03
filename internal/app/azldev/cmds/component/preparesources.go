@@ -6,6 +6,7 @@ package component
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
@@ -117,10 +118,18 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 		return err
 	}
 
+	if options.SkipOverlays && options.WithGitRepo {
+		slog.Warn("--with-git has no effect when --skip-overlays is set; " +
+			"synthetic history requires overlays to be applied")
+	}
+
 	var preparerOpts []sources.PreparerOption
 	if options.WithGitRepo {
 		preparerOpts = append(preparerOpts, sources.WithGitRepo())
 	}
+
+	preparerOpts = append(preparerOpts,
+		sources.WithDefaultAuthorEmail(env.Config().Project.DefaultAuthorEmail))
 
 	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, preparerOpts...)
 	if err != nil {

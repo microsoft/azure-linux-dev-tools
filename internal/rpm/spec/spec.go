@@ -207,6 +207,11 @@ func (s *Spec) InsertLinesAt(insertedLines []string, lineNumber int) {
 	s.rawLines = slices.Insert(s.rawLines, lineNumber, insertedLines...)
 }
 
+// LineCount returns the number of raw lines in the spec.
+func (s *Spec) LineCount() int {
+	return len(s.rawLines)
+}
+
 // Context provides context information to a visitor function when visiting a spec.
 type Context struct {
 	// Target is the current visit target.

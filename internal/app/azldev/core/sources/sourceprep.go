@@ -68,6 +68,15 @@ func WithGitRepo() PreparerOption {
 	}
 }
 
+// WithDefaultAuthorEmail returns a [PreparerOption] that sets the default email
+// address used for synthetic changelog entries and commits when no author email
+// is available from git history.
+func WithDefaultAuthorEmail(email string) PreparerOption {
+	return func(p *sourcePreparerImpl) {
+		p.defaultAuthorEmail = email
+	}
+}
+
 // Standard implementation of the [SourcePreparer] interface.
 type sourcePreparerImpl struct {
 	sourceManager sourceproviders.SourceManager
@@ -78,6 +87,10 @@ type sourcePreparerImpl struct {
 	// withGitRepo, when true, enables dist-git creation by preserving the
 	// upstream .git directory and generating synthetic commit history.
 	withGitRepo bool
+
+	// defaultAuthorEmail is the email address used for synthetic changelog
+	// entries and commits when no author email is available from git history.
+	defaultAuthorEmail string
 }
 
 // NewPreparer creates a new [SourcePreparer] instance. All positional arguments
@@ -152,13 +165,13 @@ func (p *sourcePreparerImpl) PrepareSources(
 		if err != nil {
 			return err
 		}
-	}
 
-	// Record the changes as synthetic git history when dist-git creation is enabled.
-	if p.withGitRepo {
-		if err := p.trySyntheticHistory(component, outputDir); err != nil {
-			return fmt.Errorf("failed to generate synthetic history for component %#q:\n%w",
-				component.GetName(), err)
+		// Record the changes as synthetic git history when dist-git creation is enabled.
+		if p.withGitRepo {
+			if err := p.trySyntheticHistory(component, outputDir); err != nil {
+				return fmt.Errorf("failed to generate synthetic history for component %#q:\n%w",
+					component.GetName(), err)
+			}
 		}
 	}
 
@@ -298,7 +311,7 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 	config := component.GetConfig()
 
 	// Build commit metadata from Affects commits.
-	commits, err := buildSyntheticCommits(config, component.GetName())
+	commits, err := buildSyntheticCommits(config, component.GetName(), p.defaultAuthorEmail)
 	if err != nil {
 		return fmt.Errorf("failed to build synthetic commits:\n%w", err)
 	}
@@ -310,13 +323,16 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 		return nil
 	}
 
-	// Check for an existing git repository in the sources directory.
-	// Use os.Stat rather than p.fs because go-git's PlainInit/PlainOpen always
-	// operate on the real OS filesystem — the check must use the same source of
-	// truth to avoid disagreement when p.fs is an in-memory FS (e.g. unit tests).
+	// Adjust the Release tag and/or add changelog entries before staging changes.
+	// See [tryApplyReleaseAndChangelog] for the handling of %autorelease,
+	// %autochangelog, static integers, and non-standard values.
+	if err := p.tryApplyReleaseAndChangelog(component, sourcesDirPath, commits); err != nil {
+		return fmt.Errorf("failed to apply release and changelog updates:\n%w", err)
+	}
+
 	gitDirPath := filepath.Join(sourcesDirPath, ".git")
 
-	_, statErr := os.Stat(gitDirPath)
+	_, statErr := p.fs.Stat(gitDirPath)
 
 	if statErr != nil && !os.IsNotExist(statErr) {
 		return fmt.Errorf("failed to check for .git directory at %#q:\n%w", gitDirPath, statErr)

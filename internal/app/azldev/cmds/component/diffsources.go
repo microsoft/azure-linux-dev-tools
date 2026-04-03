@@ -97,7 +97,8 @@ func DiffComponentSources(env *azldev.Env, options *DiffSourcesOptions) (interfa
 		return nil, fmt.Errorf("failed to create source manager:\n%w", err)
 	}
 
-	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env)
+	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env,
+		sources.WithDefaultAuthorEmail(env.Config().Project.DefaultAuthorEmail))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create source preparer:\n%w", err)
 	}

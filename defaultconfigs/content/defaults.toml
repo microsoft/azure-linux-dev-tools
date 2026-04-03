@@ -1,2 +1,5 @@
+[project]
+default-author-email = "azurelinux@microsoft.com"
+
 [tools.imageCustomizer]
 containerTag = "mcr.microsoft.com/azurelinux/imagecustomizer:1"
