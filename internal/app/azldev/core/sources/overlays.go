@@ -438,10 +438,18 @@ func globNonSpecFiles(destFS opctx.FS, pattern string) ([]string, error) {
 		return nil, fmt.Errorf("failed to glob for files using pattern %#q:\n%w", pattern, err)
 	}
 
-	// Filter out .spec files. Paths are already in pseudo-absolute format.
+	// Filter out .spec files and .git directory contents. Paths are already in pseudo-absolute format.
+	// The .git directory is excluded because overlay glob patterns like "**/*" must not match
+	// git internal files (packfiles, objects, etc.) which are read-only and binary.
 	return lo.Filter(candidatePaths, func(path string, _ int) bool {
-		return !isSpecFile(path)
+		return !isSpecFile(path) && !isGitInternalPath(path)
 	}), nil
+}
+
+// isGitInternalPath returns true if the given path is inside a .git directory.
+// Handles both root-level (.git/HEAD) and nested (subdir/.git/objects) paths.
+func isGitInternalPath(path string) bool {
+	return strings.HasPrefix(path, ".git/") || strings.Contains(path, "/.git/")
 }
 
 // newDestFS creates a destination filesystem confined to the given root directory.
