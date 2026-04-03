@@ -244,6 +244,9 @@ func BuildComponent(
 		preparerOpts = append(preparerOpts, sources.WithGitRepo())
 	}
 
+	preparerOpts = append(preparerOpts,
+		sources.WithDefaultAuthorEmail(env.Config().Project.DefaultAuthorEmail))
+
 	sourcePreparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, preparerOpts...)
 	if err != nil {
 		return ComponentBuildResults{},

@@ -104,6 +104,10 @@ type ProjectInfo struct {
 
 	// Default-selected distro. May be overridden at runtime.
 	DefaultDistro DistroReference `toml:"default-distro,omitempty" json:"defaultDistro,omitempty" jsonschema:"title=Default Distro,description=Default selected distro reference"`
+
+	// Default email address used for synthetic changelog entries and commits
+	// when no author email is available (e.g. when no Affects commits exist).
+	DefaultAuthorEmail string `toml:"default-author-email,omitempty" json:"defaultAuthorEmail,omitempty" jsonschema:"title=Default Author Email,description=Default email for synthetic changelog entries and commits"`
 }
 
 // Mutates the project info, updating it with overrides present in other.

@@ -128,6 +128,9 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 		preparerOpts = append(preparerOpts, sources.WithGitRepo())
 	}
 
+	preparerOpts = append(preparerOpts,
+		sources.WithDefaultAuthorEmail(env.Config().Project.DefaultAuthorEmail))
+
 	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, preparerOpts...)
 	if err != nil {
 		return fmt.Errorf("failed to create source preparer:\n%w", err)

@@ -68,6 +68,15 @@ func WithGitRepo() PreparerOption {
 	}
 }
 
+// WithDefaultAuthorEmail returns a [PreparerOption] that sets the default email
+// address used for synthetic changelog entries and commits when no author email
+// is available from git history.
+func WithDefaultAuthorEmail(email string) PreparerOption {
+	return func(p *sourcePreparerImpl) {
+		p.defaultAuthorEmail = email
+	}
+}
+
 // Standard implementation of the [SourcePreparer] interface.
 type sourcePreparerImpl struct {
 	sourceManager sourceproviders.SourceManager
@@ -78,6 +87,10 @@ type sourcePreparerImpl struct {
 	// withGitRepo, when true, enables dist-git creation by preserving the
 	// upstream .git directory and generating synthetic commit history.
 	withGitRepo bool
+
+	// defaultAuthorEmail is the email address used for synthetic changelog
+	// entries and commits when no author email is available from git history.
+	defaultAuthorEmail string
 }
 
 // NewPreparer creates a new [SourcePreparer] instance. All positional arguments
@@ -298,7 +311,7 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 	config := component.GetConfig()
 
 	// Build commit metadata from Affects commits.
-	commits, err := buildSyntheticCommits(config, component.GetName())
+	commits, err := buildSyntheticCommits(config, component.GetName(), p.defaultAuthorEmail)
 	if err != nil {
 		return fmt.Errorf("failed to build synthetic commits:\n%w", err)
 	}
