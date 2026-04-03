@@ -1,0 +1,12 @@
+[[environments.'ct-test'.resources.'dev-rpms-base']]
+interface-type = "rpm-repo"
+backend = "azure-blobstore-repo"
+base-uri = ""
+container-name = "$releasever/dev/base"
+
+[[environments.'ct-test'.resources.'dev-images']]
+interface-type = "image-gallery"
+backend = "azure-compute-gallery"
+resource-name = "testGallery"
+staging-blobstore-uri = "https://test.blob.core.windows.net/"
+vm-definition-suffix = "-dev"

@@ -1,0 +1,12 @@
+[mock-options-templates.rpm]
+options = [
+    "mock.isolation=simple",
+    "mock.package_manager=dnf5",
+    "rpm.macro.vendor=Test Corp",
+]
+
+[build-root-templates.srpm]
+packages = ["bash", "rpm-build"]
+
+[build-root-templates.rpm]
+packages = ["bash", "gcc", "make"]
