@@ -150,7 +150,7 @@ func (r *Resolver) FindComponentsByNamePattern(pattern string) (components *Comp
 
 			matched, err = filepath.Match(pattern, name)
 			if err != nil {
-				return components, fmt.Errorf("failed to compare component pattern '%s':\n%w", pattern, err)
+				return components, fmt.Errorf("failed to compare component pattern %#q:\n%w", pattern, err)
 			}
 
 			if matched {
@@ -162,7 +162,7 @@ func (r *Resolver) FindComponentsByNamePattern(pattern string) (components *Comp
 		// Otherwise, look for the exact match.
 		component, ok := allComponents.TryGet(pattern)
 		if !ok {
-			return components, fmt.Errorf("component not found: %s", pattern)
+			return components, fmt.Errorf("component not found: %#q", pattern)
 		}
 
 		components.Add(component)
@@ -184,7 +184,7 @@ func (r *Resolver) GetComponentByName(name string) (component Component, err err
 	// Lookup the exact name.
 	var ok bool
 	if component, ok = allComponents.TryGet(name); !ok {
-		return component, fmt.Errorf("component not found: %s", name)
+		return component, fmt.Errorf("component not found: %#q", name)
 	}
 
 	return component, nil
@@ -199,7 +199,7 @@ func (r *Resolver) GetComponentGroupByName(componentGroupName string) (component
 
 	// Look in our loaded configuration for a group with the given name.
 	if componentGroupConfig, ok = r.env.Config().ComponentGroups[componentGroupName]; !ok {
-		err = fmt.Errorf("%w: %s", ErrComponentGroupNotFound, componentGroupName)
+		err = fmt.Errorf("%w: %#q", ErrComponentGroupNotFound, componentGroupName)
 
 		return componentGroup, err
 	}
@@ -268,7 +268,7 @@ func findComponentGroupSpecPaths(
 		// directories).
 		currentMatches, err = fileutils.Glob(env.FS(), pattern, doublestar.WithFilesOnly())
 		if err != nil {
-			return matches, fmt.Errorf("failed to expand spec pattern '%s':\n%w", pattern, err)
+			return matches, fmt.Errorf("failed to expand spec pattern %#q:\n%w", pattern, err)
 		}
 
 		for _, match := range currentMatches {
@@ -297,7 +297,7 @@ func componentGroupExcludesSpec(
 		matched, err := doublestar.PathMatch(excludePattern, specPath)
 		if err != nil {
 			return false, fmt.Errorf(
-				"failed to compare '%s' against exclude pattern '%s':\n%w", specPath, excludePattern, err)
+				"failed to compare %#q against exclude pattern %#q:\n%w", specPath, excludePattern, err)
 		}
 
 		if matched {
@@ -414,7 +414,7 @@ func (r *Resolver) getComponentFromNameAndSpecPath(name, specPath string) (compo
 	if !found {
 		// If we didn't find it *and* if we don't have a spec path, then we need to return error.
 		if specPath == "" {
-			return component, fmt.Errorf("component config not found: %s", name)
+			return component, fmt.Errorf("component config not found: %#q", name)
 		}
 
 		// Otherwise, we'll synthesize an empty component config.
