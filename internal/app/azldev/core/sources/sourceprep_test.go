@@ -15,6 +15,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/sourceproviders_test"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -101,6 +102,74 @@ func TestPrepareSources_SourceManagerError(t *testing.T) {
 	err = preparer.PrepareSources(ctx, component, testOutputDir, true /*applyOverlays?*/)
 	require.Error(t, err)
 	require.ErrorIs(t, err, expectedErr)
+}
+
+func TestPrepareSources_WithSkipLookaside_SkipsFetchFiles(t *testing.T) {
+	const (
+		testSpecName   = "test-component.spec"
+		outputSpecPath = testOutputDir + "/" + testSpecName
+	)
+
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+	sourceManager := sourceproviders_test.NewMockSourceManager(ctrl)
+	ctx := testctx.NewCtx()
+
+	component.EXPECT().GetName().AnyTimes().Return("test-component")
+	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{})
+
+	// FetchFiles must NOT be called when WithSkipLookaside is set.
+	// (No sourceManager.EXPECT().FetchFiles(...) — gomock will fail if it's called.)
+
+	// FetchComponent should still be called, with at least the SkipLookaside option.
+	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).DoAndReturn(
+		func(_ interface{}, _ interface{}, outputDir string, opts ...sourceproviders.FetchComponentOption) error {
+			// Verify SkipLookaside is actually set by applying the received options.
+			var resolved sourceproviders.FetchComponentOptions
+			for _, opt := range opts {
+				opt(&resolved)
+			}
+
+			assert.True(t, resolved.SkipLookaside, "FetchComponent should receive SkipLookaside option")
+
+			return fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte("# test spec"), fileperms.PublicFile)
+		},
+	)
+
+	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx, sources.WithSkipLookaside())
+	require.NoError(t, err)
+
+	err = preparer.PrepareSources(ctx, component, testOutputDir, true /*applyOverlays?*/)
+	require.NoError(t, err)
+}
+
+func TestPrepareSources_WithoutSkipLookaside_CallsFetchFiles(t *testing.T) {
+	const (
+		testSpecName   = "test-component.spec"
+		outputSpecPath = testOutputDir + "/" + testSpecName
+	)
+
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+	sourceManager := sourceproviders_test.NewMockSourceManager(ctrl)
+	ctx := testctx.NewCtx()
+
+	component.EXPECT().GetName().AnyTimes().Return("test-component")
+	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{})
+
+	// Without WithSkipLookaside, FetchFiles MUST be called.
+	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil)
+	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).DoAndReturn(
+		func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
+			return fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte("# test spec"), fileperms.PublicFile)
+		},
+	)
+
+	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx)
+	require.NoError(t, err)
+
+	err = preparer.PrepareSources(ctx, component, testOutputDir, true /*applyOverlays?*/)
+	require.NoError(t, err)
 }
 
 func TestPrepareSources_WritesMacrosFile(t *testing.T) {
