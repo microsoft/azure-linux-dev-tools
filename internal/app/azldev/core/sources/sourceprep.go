@@ -25,7 +25,6 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/samber/lo"
-	"go.szostok.io/version"
 )
 
 // MacrosFileExtension is the file extension used for azldev-generated macros files.
@@ -524,13 +523,11 @@ func synthesizeMacroLoadOverlays(macrosFileName string) ([]projectconfig.Compone
 // generateFileHeaderOverlay generates an overlay that prepends a header to the spec.
 // It should be applied after all other overlays, as it should be the first thing in the spec file.
 func generateFileHeaderOverlay() []projectconfig.ComponentOverlay {
-	ver := version.Get()
-
 	return []projectconfig.ComponentOverlay{
 		{
 			Type: projectconfig.ComponentOverlayPrependSpecLines,
 			Lines: []string{
-				"# This spec file has been modified by azldev to include build configuration overlays. Version: " + ver.Version,
+				"# This spec file has been modified by azldev to include build configuration overlays.",
 				"# Do not edit manually; changes may be overwritten.",
 				"",
 			},
