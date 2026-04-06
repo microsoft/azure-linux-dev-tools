@@ -9,6 +9,7 @@ import (
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/cloudinit"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
@@ -264,7 +265,7 @@ func TestWriteDataFiles(t *testing.T) {
 			ctx := testctx.NewCtx()
 			dir := "/cloud-init"
 
-			require.NoError(t, ctx.FS().MkdirAll(dir, 0o755))
+			require.NoError(t, ctx.FS().MkdirAll(dir, fileperms.PublicDir))
 
 			metaDataPath, userDataPath, err := cloudinit.WriteDataFiles(ctx, dir, testCase.hostname, testCase.config)
 

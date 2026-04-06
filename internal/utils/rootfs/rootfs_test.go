@@ -765,7 +765,7 @@ func TestRootFs_Rename(t *testing.T) {
 
 		rootDir := t.TempDir()
 
-		originalPerm := os.FileMode(0o755)
+		originalPerm := fileperms.PublicExecutable
 
 		err := os.WriteFile(filepath.Join(rootDir, "perms.txt"), []byte("content"), originalPerm)
 		require.NoError(t, err)
@@ -887,7 +887,7 @@ func TestRootFs_Chmod(t *testing.T) {
 
 		defer rfs.Close()
 
-		err = rfs.Chmod("nonexistent", 0o755)
+		err = rfs.Chmod("nonexistent", fileperms.PublicExecutable)
 		require.Error(t, err)
 	})
 }
@@ -1432,7 +1432,7 @@ func TestRootFs_MkdirAllErrorCases(t *testing.T) {
 
 		// Ensure cleanup even if test fails.
 		defer func() {
-			_ = os.Chmod(restrictedDir, 0o755)
+			_ = os.Chmod(restrictedDir, fileperms.PublicDir)
 		}()
 
 		rfs, err := rootfs.New(rootDir)
@@ -1513,7 +1513,7 @@ func TestRootFs_RemoveAllErrorCases(t *testing.T) {
 
 		// Ensure cleanup.
 		defer func() {
-			_ = os.Chmod(subdir, 0o755)
+			_ = os.Chmod(subdir, fileperms.PublicDir)
 		}()
 
 		rfs, err := rootfs.New(rootDir)
@@ -1554,7 +1554,7 @@ func TestRootFs_RemoveAllErrorCases(t *testing.T) {
 		require.NoError(t, err)
 
 		defer func() {
-			_ = os.Chmod(protectedDir, 0o755)
+			_ = os.Chmod(protectedDir, fileperms.PublicDir)
 		}()
 
 		rfs, err := rootfs.New(rootDir)
@@ -1588,7 +1588,7 @@ func TestRootFs_RenameErrorCases(t *testing.T) {
 		require.NoError(t, err)
 
 		defer func() {
-			_ = os.Chmod(protectedDir, 0o755)
+			_ = os.Chmod(protectedDir, fileperms.PublicDir)
 		}()
 
 		rfs, err := rootfs.New(rootDir)
@@ -1620,12 +1620,12 @@ func TestRootFs_ChmodErrorCases(t *testing.T) {
 		defer rfs.Close()
 
 		// Chmod on directory should work.
-		err = rfs.Chmod("testdir", 0o755)
+		err = rfs.Chmod("testdir", fileperms.PublicDir)
 		require.NoError(t, err)
 
 		info, err := os.Stat(filepath.Join(rootDir, "testdir"))
 		require.NoError(t, err)
-		assert.Equal(t, os.FileMode(0o755), info.Mode().Perm())
+		assert.Equal(t, fileperms.PublicDir, info.Mode().Perm())
 	})
 }
 

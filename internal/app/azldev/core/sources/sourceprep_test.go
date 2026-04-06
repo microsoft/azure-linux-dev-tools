@@ -15,6 +15,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/sourceproviders_test"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -60,7 +61,7 @@ func TestPrepareSources_Success(t *testing.T) {
 	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).DoAndReturn(
 		func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
 			// Create the expected spec file.
-			return fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte("# test spec"), 0o644)
+			return fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte("# test spec"), fileperms.PublicFile)
 		},
 	)
 
@@ -121,7 +122,7 @@ func TestPrepareSources_WritesMacrosFile(t *testing.T) {
 			// Create the expected spec file.
 			specPath := filepath.Join(outputDir, "my-package.spec")
 
-			return fileutils.WriteFile(ctx.FS(), specPath, []byte("# test spec"), 0o644)
+			return fileutils.WriteFile(ctx.FS(), specPath, []byte("# test spec"), fileperms.PublicFile)
 		},
 	)
 
@@ -378,7 +379,7 @@ Summary: Test component
 make test
 `
 
-			return fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte(specContent), 0o644)
+			return fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte(specContent), fileperms.PublicFile)
 		},
 	)
 
@@ -435,7 +436,7 @@ Summary: Test component
 make test
 `
 
-			return fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte(specContent), 0o644)
+			return fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte(specContent), fileperms.PublicFile)
 		},
 	)
 
@@ -473,7 +474,7 @@ func TestDiffSources_NoOverlays(t *testing.T) {
 		func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
 			specPath := filepath.Join(outputDir, "test-component.spec")
 
-			return fileutils.WriteFile(ctx.FS(), specPath, []byte("Name: test-component\nVersion: 1.0\n"), 0o644)
+			return fileutils.WriteFile(ctx.FS(), specPath, []byte("Name: test-component\nVersion: 1.0\n"), fileperms.PublicFile)
 		},
 	)
 
@@ -516,7 +517,7 @@ func TestDiffSources_WithOverlays(t *testing.T) {
 		func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
 			specPath := filepath.Join(outputDir, "test-component.spec")
 
-			return fileutils.WriteFile(ctx.FS(), specPath, []byte("Name: test-component\nVersion: 1.0\n"), 0o644)
+			return fileutils.WriteFile(ctx.FS(), specPath, []byte("Name: test-component\nVersion: 1.0\n"), fileperms.PublicFile)
 		},
 	)
 

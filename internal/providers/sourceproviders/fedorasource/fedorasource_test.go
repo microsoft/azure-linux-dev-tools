@@ -11,6 +11,7 @@ import (
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/downloader/downloader_test"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/retry"
 	"github.com/spf13/afero"
@@ -24,8 +25,8 @@ const (
 	testPackageName  = "test-package"
 	testRepoDir      = "/test/repo"
 	testEmptyRepoDir = "/test/empty-repo"
-	testFilePerms    = 0o644
-	testDirPerms     = 0o755
+	testFilePerms    = fileperms.PublicFile
+	testDirPerms     = fileperms.PublicDir
 
 	// Test source file data.
 	testSourcesContent = `SHA512 (example-1.0.tar.gz) = af5ae0eb4ad9c3f07b7d78ec9dfd03f6a00c257df6b829b21051d4ba2d106bf` +
@@ -135,7 +136,7 @@ func TestExtractSourcesFromRepoValidation(t *testing.T) {
 	})
 
 	t.Run("missing sources file", func(t *testing.T) {
-		require.NoError(t, ctx.FS().MkdirAll(testEmptyRepoDir, 0o755))
+		require.NoError(t, ctx.FS().MkdirAll(testEmptyRepoDir, fileperms.PublicDir))
 
 		// Missing sources file is valid - it means no external sources to download
 		err := extractor.ExtractSourcesFromRepo(

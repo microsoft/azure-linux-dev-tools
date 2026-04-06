@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-playground/validator/v10"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/pelletier/go-toml/v2"
 )
@@ -114,7 +115,7 @@ func (f ConfigFile) ToBytes() ([]byte, error) {
 // Serializes writes the config file to the specified path in appropriate format (TOML). If the given path already
 // exists, it will be overwritten.
 func (f ConfigFile) Serialize(fs opctx.FS, filePath string) error {
-	const defaultPerms = 0o644
+	const defaultPerms = fileperms.PublicFile
 
 	bytes, err := f.ToBytes()
 	if err != nil {

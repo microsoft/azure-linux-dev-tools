@@ -127,7 +127,7 @@ func TestInitializeProject(t *testing.T) {
 		// Create the test project path and a config file.
 		require.NoError(t, fileutils.MkdirAll(env.FS(), testProjectPath))
 		configFilePath := filepath.Join(testProjectPath, projectconfig.DefaultConfigFileName)
-		require.NoError(t, fileutils.WriteFile(env.FS(), configFilePath, []byte{}, 0o600))
+		require.NoError(t, fileutils.WriteFile(env.FS(), configFilePath, []byte{}, fileperms.PrivateFile))
 
 		// Run the code-under-test.
 		err := projectgen.InitializeProject(env.FS(), testProjectPath, &projectgen.NewProjectOptions{})

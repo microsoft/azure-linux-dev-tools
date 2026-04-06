@@ -11,6 +11,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/advanced"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -128,7 +129,7 @@ func TestBuildRPMS(t *testing.T) {
 			OutputDirPath: testOutputDirPath,
 		}
 
-		require.NoError(t, fileutils.WriteFile(testEnv.FS(), testMockConfigPath, []byte{}, 0o600))
+		require.NoError(t, fileutils.WriteFile(testEnv.FS(), testMockConfigPath, []byte{}, fileperms.PrivateFile))
 
 		// Confirm that we can "build" RPMs without an explicit mock config file, because
 		// the loaded project config provides that.

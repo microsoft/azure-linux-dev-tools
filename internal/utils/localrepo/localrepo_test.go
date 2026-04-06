@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/localrepo"
 	"github.com/spf13/afero"
@@ -50,7 +51,7 @@ func TestPublisher_EnsureRepoExists_ExistingDirectory(t *testing.T) {
 	testFS := afero.NewMemMapFs()
 	ctx := testctx.NewCtx(testctx.WithFS(testFS))
 
-	require.NoError(t, testFS.MkdirAll(testRepoPath, 0o755))
+	require.NoError(t, testFS.MkdirAll(testRepoPath, fileperms.PublicDir))
 
 	publisher, err := localrepo.NewPublisher(ctx, testRepoPath, false)
 	require.NoError(t, err)
@@ -117,7 +118,7 @@ func TestPublisher_EnsureRepoInitialized_SkipsIfRepodataExists(t *testing.T) {
 	}
 
 	// Pre-create the repo with repodata directory.
-	require.NoError(t, testFS.MkdirAll(path.Join(testRepoPath, "repodata"), 0o755))
+	require.NoError(t, testFS.MkdirAll(path.Join(testRepoPath, "repodata"), fileperms.PublicDir))
 
 	publisher, err := localrepo.NewPublisher(ctx, testRepoPath, false)
 	require.NoError(t, err)
@@ -143,17 +144,17 @@ func TestPublisher_PublishRPMs_CopiesFilesAndRunsCreaterepoC(t *testing.T) {
 		return nil
 	}
 
-	require.NoError(t, testFS.MkdirAll(testRepoPath, 0o755))
+	require.NoError(t, testFS.MkdirAll(testRepoPath, fileperms.PublicDir))
 
 	// Create source RPM files.
 	sourcePath := "/build/output"
-	require.NoError(t, testFS.MkdirAll(sourcePath, 0o755))
+	require.NoError(t, testFS.MkdirAll(sourcePath, fileperms.PublicDir))
 
 	rpm1 := path.Join(sourcePath, "package-1.0-1.x86_64.rpm")
 	rpm2 := path.Join(sourcePath, "package-devel-1.0-1.x86_64.rpm")
 
-	require.NoError(t, fileutils.WriteFile(testFS, rpm1, []byte("rpm1 content"), 0o644))
-	require.NoError(t, fileutils.WriteFile(testFS, rpm2, []byte("rpm2 content"), 0o644))
+	require.NoError(t, fileutils.WriteFile(testFS, rpm1, []byte("rpm1 content"), fileperms.PublicFile))
+	require.NoError(t, fileutils.WriteFile(testFS, rpm2, []byte("rpm2 content"), fileperms.PublicFile))
 
 	publisher, err := localrepo.NewPublisher(ctx, testRepoPath, false)
 	require.NoError(t, err)
