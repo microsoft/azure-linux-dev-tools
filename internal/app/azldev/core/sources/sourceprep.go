@@ -21,6 +21,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
+	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/dirdiff"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
@@ -176,6 +177,11 @@ func (p *sourcePreparerImpl) PrepareSources(
 		if err != nil {
 			return err
 		}
+	}
+
+	if err := p.updateSourcesFile(component, outputDir); err != nil {
+		return fmt.Errorf("failed to update 'sources' file for component %#q:\n%w",
+			component.GetName(), err)
 	}
 
 	// Record the changes as synthetic git history when dist-git creation is enabled.
@@ -419,6 +425,126 @@ func (p *sourcePreparerImpl) DiffSources(
 	}
 
 	return result, nil
+}
+
+// updateSourcesFile appends entries to the sources file for any extra source files
+// defined in the component's source-files configuration. Each source file reference
+// must have both hash and hash-type specified; missing either is a configuration error.
+// Entries already present in the sources file are skipped to avoid duplicates.
+func (p *sourcePreparerImpl) updateSourcesFile(component components.Component, outputDir string) error {
+	sourceFiles := component.GetConfig().SourceFiles
+	if len(sourceFiles) == 0 {
+		return nil
+	}
+
+	sourcesFilePath := filepath.Join(outputDir, "sources")
+
+	// Read existing sources file content, if it exists.
+	existingContent, err := p.readSourcesFileIfExists(sourcesFilePath)
+	if err != nil {
+		return err
+	}
+
+	// Parse existing entries to detect duplicates.
+	existingEntries, err := fedorasource.ParseSourcesFile(existingContent)
+	if err != nil {
+		return fmt.Errorf("failed to parse existing sources file %#q:\n%w", sourcesFilePath, err)
+	}
+
+	existingFilenames := lo.SliceToMap(existingEntries, func(entry fedorasource.SourcesFileEntry) (string, bool) {
+		return entry.Filename, true
+	})
+
+	// Collect new entries to append.
+	newEntries, err := collectNewSourceEntries(sourceFiles, existingFilenames)
+	if err != nil {
+		return err
+	}
+
+	if len(newEntries) == 0 {
+		return nil
+	}
+
+	// Ensure existing content ends with a newline before appending.
+	if existingContent != "" && !strings.HasSuffix(existingContent, "\n") {
+		existingContent += "\n"
+	}
+
+	// Append new entries.
+	newContent := existingContent + strings.Join(newEntries, "\n") + "\n"
+
+	if err := fileutils.WriteFile(
+		p.fs,
+		sourcesFilePath,
+		[]byte(newContent),
+		fileperms.PublicFile,
+	); err != nil {
+		return fmt.Errorf("failed to write sources file:\n%w", err)
+	}
+
+	slog.Info("Updated sources file with extra source file entries",
+		"count", len(newEntries),
+		"path", sourcesFilePath)
+
+	return nil
+}
+
+// readSourcesFileIfExists reads the sources file content if it exists, returning empty string if not.
+func (p *sourcePreparerImpl) readSourcesFileIfExists(sourcesFilePath string) (string, error) {
+	exists, err := fileutils.Exists(p.fs, sourcesFilePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to check if sources file %#q exists:\n%w", sourcesFilePath, err)
+	}
+
+	if !exists {
+		return "", nil
+	}
+
+	data, err := fileutils.ReadFile(p.fs, sourcesFilePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read sources file %#q:\n%w", sourcesFilePath, err)
+	}
+
+	return string(data), nil
+}
+
+// collectNewSourceEntries validates source file references and collects formatted entries
+// for files not already present in the sources file.
+func collectNewSourceEntries(
+	sourceFiles []projectconfig.SourceFileReference,
+	existingFilenames map[string]bool,
+) ([]string, error) {
+	newEntries := make([]string, 0, len(sourceFiles))
+
+	for _, ref := range sourceFiles {
+		// Both hash and hash-type are required.
+		if ref.Hash == "" || ref.HashType == "" {
+			return nil, fmt.Errorf(
+				"source file %#q is missing required hash or hash-type; "+
+					"both must be specified in the source-files configuration",
+				ref.Filename)
+		}
+
+		// Error if file already present in sources file.
+		if existingFilenames[ref.Filename] {
+			return nil, fmt.Errorf(
+				"source file %#q in 'source-files' configuration conflicts with an existing entry in the sources file; "+
+					"to overwrite the existing entry, add a component overlay to remove it first; "+
+					"if this is unintentional, use a different filename",
+				ref.Filename)
+		}
+
+		// Format: "SHA512 (filename) = hash"
+		entry := fedorasource.FormatSourcesEntry(ref.Filename, ref.HashType, ref.Hash)
+		newEntries = append(newEntries, entry)
+
+		slog.Debug("Adding source file entry to sources file",
+			"filename", ref.Filename,
+			"hashType", ref.HashType,
+			"hash", ref.Hash)
+	}
+
+	return newEntries, nil
 }
 
 // writeMacrosFile writes a macros file containing the resolved macros for a component.
