@@ -13,6 +13,7 @@ import (
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 )
 
@@ -22,7 +23,7 @@ const (
 	DefaultWorkDir               = "build/work"
 	defaultOutputDir             = "out"
 
-	defaultFilePerms = 0o644
+	defaultFilePerms = fileperms.PublicFile
 )
 
 // ErrProjectRootAlreadyExists is returned when a project root directory already exists but an attempt

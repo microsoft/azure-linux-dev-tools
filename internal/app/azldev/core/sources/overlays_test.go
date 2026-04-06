@@ -12,6 +12,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spec"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -432,18 +433,20 @@ func TestApplyNonSpecOverlay(t *testing.T) {
 
 			// Set up source directory.
 			sourceDir := "/sources"
-			require.NoError(t, testFS.MkdirAll(sourceDir, 0o755))
+			require.NoError(t, testFS.MkdirAll(sourceDir, fileperms.PublicDir))
 
 			// Create existing file if specified.
 			if testCase.existingFile != "" {
 				filePath := sourceDir + "/" + testCase.overlay.Filename
-				require.NoError(t, fileutils.WriteFile(testFS, filePath, []byte(testCase.existingFile), 0o644))
+				require.NoError(t, fileutils.WriteFile(testFS, filePath, []byte(testCase.existingFile), fileperms.PublicFile))
 			}
 
 			// Create source file for file-add overlays.
 			if testCase.existingSource != "" {
-				require.NoError(t, testFS.MkdirAll("/source", 0o755))
-				require.NoError(t, fileutils.WriteFile(testFS, testCase.overlay.Source, []byte(testCase.existingSource), 0o644))
+				require.NoError(t, testFS.MkdirAll("/source", fileperms.PublicDir))
+				require.NoError(t, fileutils.WriteFile(
+					testFS, testCase.overlay.Source, []byte(testCase.existingSource), fileperms.PublicFile,
+				))
 			}
 
 			// Apply the overlay.
@@ -473,10 +476,10 @@ func TestApplyDestructiveNonSpecOverlay(t *testing.T) {
 		ctx := testctx.NewCtx()
 		testFS := ctx.FS()
 
-		require.NoError(t, testFS.MkdirAll(testSourceDir, 0o755))
+		require.NoError(t, testFS.MkdirAll(testSourceDir, fileperms.PublicDir))
 
 		filePath := testSourceDir + "/to-delete.txt"
-		require.NoError(t, fileutils.WriteFile(testFS, filePath, []byte("content\n"), 0o644))
+		require.NoError(t, fileutils.WriteFile(testFS, filePath, []byte("content\n"), fileperms.PublicFile))
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:     projectconfig.ComponentOverlayRemoveFile,
@@ -495,7 +498,7 @@ func TestApplyDestructiveNonSpecOverlay(t *testing.T) {
 		ctx := testctx.NewCtx()
 		testFS := ctx.FS()
 
-		require.NoError(t, testFS.MkdirAll(testSourceDir, 0o755))
+		require.NoError(t, testFS.MkdirAll(testSourceDir, fileperms.PublicDir))
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:     projectconfig.ComponentOverlayRemoveFile,
@@ -510,12 +513,12 @@ func TestApplyDestructiveNonSpecOverlay(t *testing.T) {
 		ctx := testctx.NewCtx()
 		testFS := ctx.FS()
 
-		require.NoError(t, testFS.MkdirAll(testSourceDir, 0o755))
+		require.NoError(t, testFS.MkdirAll(testSourceDir, fileperms.PublicDir))
 
 		oldPath := testSourceDir + "/old-name.txt"
 		newPath := testSourceDir + "/new-name.txt"
 		fileContent := "file content\n"
-		require.NoError(t, fileutils.WriteFile(testFS, oldPath, []byte(fileContent), 0o644))
+		require.NoError(t, fileutils.WriteFile(testFS, oldPath, []byte(fileContent), fileperms.PublicFile))
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:        projectconfig.ComponentOverlayRenameFile,
@@ -541,7 +544,7 @@ func TestApplyDestructiveNonSpecOverlay(t *testing.T) {
 		ctx := testctx.NewCtx()
 		testFS := ctx.FS()
 
-		require.NoError(t, testFS.MkdirAll(testSourceDir, 0o755))
+		require.NoError(t, testFS.MkdirAll(testSourceDir, fileperms.PublicDir))
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:        projectconfig.ComponentOverlayRenameFile,
@@ -557,10 +560,10 @@ func TestApplyDestructiveNonSpecOverlay(t *testing.T) {
 		ctx := testctx.NewCtx()
 		testFS := ctx.FS()
 
-		require.NoError(t, testFS.MkdirAll(testSourceDir, 0o755))
+		require.NoError(t, testFS.MkdirAll(testSourceDir, fileperms.PublicDir))
 
 		filePath := testSourceDir + "/test.spec"
-		require.NoError(t, fileutils.WriteFile(testFS, filePath, []byte("Name: test\n"), 0o644))
+		require.NoError(t, fileutils.WriteFile(testFS, filePath, []byte("Name: test\n"), fileperms.PublicFile))
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:     projectconfig.ComponentOverlayRemoveFile,
@@ -575,10 +578,10 @@ func TestApplyDestructiveNonSpecOverlay(t *testing.T) {
 		ctx := testctx.NewCtx()
 		testFS := ctx.FS()
 
-		require.NoError(t, testFS.MkdirAll(testSourceDir, 0o755))
+		require.NoError(t, testFS.MkdirAll(testSourceDir, fileperms.PublicDir))
 
 		filePath := testSourceDir + "/test.spec"
-		require.NoError(t, fileutils.WriteFile(testFS, filePath, []byte("Name: test\n"), 0o644))
+		require.NoError(t, fileutils.WriteFile(testFS, filePath, []byte("Name: test\n"), fileperms.PublicFile))
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:        projectconfig.ComponentOverlayRenameFile,
@@ -598,12 +601,18 @@ func TestApplyNonSpecOverlayWithGlob(t *testing.T) {
 		ctx := testctx.NewCtx()
 		testFS := ctx.FS()
 
-		require.NoError(t, testFS.MkdirAll(testSourceDir, 0o755))
+		require.NoError(t, testFS.MkdirAll(testSourceDir, fileperms.PublicDir))
 
 		// Create multiple .txt files.
-		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/file1.txt", []byte("content1\n"), 0o644))
-		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/file2.txt", []byte("content2\n"), 0o644))
-		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/other.md", []byte("not matched\n"), 0o644))
+		require.NoError(t, fileutils.WriteFile(
+			testFS, testSourceDir+"/file1.txt", []byte("content1\n"), fileperms.PublicFile,
+		))
+		require.NoError(t, fileutils.WriteFile(
+			testFS, testSourceDir+"/file2.txt", []byte("content2\n"), fileperms.PublicFile,
+		))
+		require.NoError(t, fileutils.WriteFile(
+			testFS, testSourceDir+"/other.md", []byte("not matched\n"), fileperms.PublicFile,
+		))
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:     projectconfig.ComponentOverlayPrependLinesToFile,
@@ -633,11 +642,15 @@ func TestApplyNonSpecOverlayWithGlob(t *testing.T) {
 		ctx := testctx.NewCtx()
 		testFS := ctx.FS()
 
-		require.NoError(t, testFS.MkdirAll(testSourceDir+"/subdir", 0o755))
+		require.NoError(t, testFS.MkdirAll(testSourceDir+"/subdir", fileperms.PublicDir))
 
 		// Create files at different levels.
-		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/root.conf", []byte("DEBUG=false\n"), 0o644))
-		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/subdir/nested.conf", []byte("DEBUG=false\n"), 0o644))
+		require.NoError(t, fileutils.WriteFile(
+			testFS, testSourceDir+"/root.conf", []byte("DEBUG=false\n"), fileperms.PublicFile,
+		))
+		require.NoError(t, fileutils.WriteFile(
+			testFS, testSourceDir+"/subdir/nested.conf", []byte("DEBUG=false\n"), fileperms.PublicFile,
+		))
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:        projectconfig.ComponentOverlaySearchAndReplaceInFile,
@@ -663,12 +676,18 @@ func TestApplyNonSpecOverlayWithGlob(t *testing.T) {
 		ctx := testctx.NewCtx()
 		testFS := ctx.FS()
 
-		require.NoError(t, testFS.MkdirAll(testSourceDir, 0o755))
+		require.NoError(t, testFS.MkdirAll(testSourceDir, fileperms.PublicDir))
 
 		// Create backup files to remove.
-		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/file1.bak", []byte("backup1\n"), 0o644))
-		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/file2.bak", []byte("backup2\n"), 0o644))
-		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/keep.txt", []byte("keep this\n"), 0o644))
+		require.NoError(t, fileutils.WriteFile(
+			testFS, testSourceDir+"/file1.bak", []byte("backup1\n"), fileperms.PublicFile,
+		))
+		require.NoError(t, fileutils.WriteFile(
+			testFS, testSourceDir+"/file2.bak", []byte("backup2\n"), fileperms.PublicFile,
+		))
+		require.NoError(t, fileutils.WriteFile(
+			testFS, testSourceDir+"/keep.txt", []byte("keep this\n"), fileperms.PublicFile,
+		))
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:     projectconfig.ComponentOverlayRemoveFile,
@@ -697,10 +716,10 @@ func TestApplyNonSpecOverlayWithGlob(t *testing.T) {
 		ctx := testctx.NewCtx()
 		testFS := ctx.FS()
 
-		require.NoError(t, testFS.MkdirAll(testSourceDir, 0o755))
+		require.NoError(t, testFS.MkdirAll(testSourceDir, fileperms.PublicDir))
 
 		// Create a file that won't match the pattern.
-		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/file.txt", []byte("content\n"), 0o644))
+		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/file.txt", []byte("content\n"), fileperms.PublicFile))
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:     projectconfig.ComponentOverlayPrependLinesToFile,
@@ -716,11 +735,15 @@ func TestApplyNonSpecOverlayWithGlob(t *testing.T) {
 		ctx := testctx.NewCtx()
 		testFS := ctx.FS()
 
-		require.NoError(t, testFS.MkdirAll(testSourceDir, 0o755))
+		require.NoError(t, testFS.MkdirAll(testSourceDir, fileperms.PublicDir))
 
 		// Create multiple files that will match the pattern.
-		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/file1.txt", []byte("content1\n"), 0o644))
-		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/file2.txt", []byte("content2\n"), 0o644))
+		require.NoError(t, fileutils.WriteFile(
+			testFS, testSourceDir+"/file1.txt", []byte("content1\n"), fileperms.PublicFile,
+		))
+		require.NoError(t, fileutils.WriteFile(
+			testFS, testSourceDir+"/file2.txt", []byte("content2\n"), fileperms.PublicFile,
+		))
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:        projectconfig.ComponentOverlayRenameFile,
@@ -736,11 +759,15 @@ func TestApplyNonSpecOverlayWithGlob(t *testing.T) {
 		ctx := testctx.NewCtx()
 		testFS := ctx.FS()
 
-		require.NoError(t, testFS.MkdirAll(testSourceDir, 0o755))
+		require.NoError(t, testFS.MkdirAll(testSourceDir, fileperms.PublicDir))
 
 		// Create a mix of .spec and non-.spec files that match the pattern.
-		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/config.cfg", []byte("value=old\n"), 0o644))
-		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/test.spec", []byte("Name: test\n"), 0o644))
+		require.NoError(t, fileutils.WriteFile(
+			testFS, testSourceDir+"/config.cfg", []byte("value=old\n"), fileperms.PublicFile,
+		))
+		require.NoError(t, fileutils.WriteFile(
+			testFS, testSourceDir+"/test.spec", []byte("Name: test\n"), fileperms.PublicFile,
+		))
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:        projectconfig.ComponentOverlaySearchAndReplaceInFile,
@@ -767,11 +794,15 @@ func TestApplyNonSpecOverlayWithGlob(t *testing.T) {
 		ctx := testctx.NewCtx()
 		testFS := ctx.FS()
 
-		require.NoError(t, testFS.MkdirAll(testSourceDir, 0o755))
+		require.NoError(t, testFS.MkdirAll(testSourceDir, fileperms.PublicDir))
 
 		// Create only .spec files.
-		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/test.spec", []byte("Name: test\n"), 0o644))
-		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/other.spec", []byte("Name: other\n"), 0o644))
+		require.NoError(t, fileutils.WriteFile(
+			testFS, testSourceDir+"/test.spec", []byte("Name: test\n"), fileperms.PublicFile,
+		))
+		require.NoError(t, fileutils.WriteFile(
+			testFS, testSourceDir+"/other.spec", []byte("Name: other\n"), fileperms.PublicFile,
+		))
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:     projectconfig.ComponentOverlayPrependLinesToFile,
@@ -794,14 +825,16 @@ func TestApplyAddPatchOverlay(t *testing.T) {
 		ctx := testctx.NewCtx()
 		testFS := ctx.FS()
 
-		require.NoError(t, testFS.MkdirAll(testSourceDir, 0o755))
+		require.NoError(t, testFS.MkdirAll(testSourceDir, fileperms.PublicDir))
 
 		specContent := "Name: test\nVersion: 1.0\n"
-		require.NoError(t, fileutils.WriteFile(testFS, testSpecPath, []byte(specContent), 0o644))
+		require.NoError(t, fileutils.WriteFile(testFS, testSpecPath, []byte(specContent), fileperms.PublicFile))
 
 		// Create source patch file.
-		require.NoError(t, testFS.MkdirAll("/patches", 0o755))
-		require.NoError(t, fileutils.WriteFile(testFS, "/patches/fix-foo.patch", []byte("patch content\n"), 0o644))
+		require.NoError(t, testFS.MkdirAll("/patches", fileperms.PublicDir))
+		require.NoError(t, fileutils.WriteFile(
+			testFS, "/patches/fix-foo.patch", []byte("patch content\n"), fileperms.PublicFile,
+		))
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:   projectconfig.ComponentOverlayAddPatch,
@@ -822,17 +855,17 @@ func TestApplyAddPatchOverlay(t *testing.T) {
 		assert.Equal(t, "patch content\n", string(patchContent))
 	})
 
-	t.Run("adds patch with next PatchN number", func(t *testing.T) {
+	t.Run("adds patch with next PatchN number", func(t *testing.T) { //nolint:dupl
 		ctx := testctx.NewCtx()
 		testFS := ctx.FS()
 
-		require.NoError(t, testFS.MkdirAll(testSourceDir, 0o755))
+		require.NoError(t, testFS.MkdirAll(testSourceDir, fileperms.PublicDir))
 
 		specContent := "Name: test\nPatch0: existing.patch\nPatch1: other.patch\n"
-		require.NoError(t, fileutils.WriteFile(testFS, testSpecPath, []byte(specContent), 0o644))
+		require.NoError(t, fileutils.WriteFile(testFS, testSpecPath, []byte(specContent), fileperms.PublicFile))
 
-		require.NoError(t, testFS.MkdirAll("/patches", 0o755))
-		require.NoError(t, fileutils.WriteFile(testFS, "/patches/fix-bar.patch", []byte("new patch\n"), 0o644))
+		require.NoError(t, testFS.MkdirAll("/patches", fileperms.PublicDir))
+		require.NoError(t, fileutils.WriteFile(testFS, "/patches/fix-bar.patch", []byte("new patch\n"), fileperms.PublicFile))
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:   projectconfig.ComponentOverlayAddPatch,
@@ -847,17 +880,17 @@ func TestApplyAddPatchOverlay(t *testing.T) {
 		assert.Contains(t, string(updatedSpec), "Patch2: fix-bar.patch")
 	})
 
-	t.Run("adds patch with non-contiguous PatchN numbers", func(t *testing.T) {
+	t.Run("adds patch with non-contiguous PatchN numbers", func(t *testing.T) { //nolint:dupl
 		ctx := testctx.NewCtx()
 		testFS := ctx.FS()
 
-		require.NoError(t, testFS.MkdirAll(testSourceDir, 0o755))
+		require.NoError(t, testFS.MkdirAll(testSourceDir, fileperms.PublicDir))
 
 		specContent := "Name: test\nPatch0: a.patch\nPatch5: b.patch\n"
-		require.NoError(t, fileutils.WriteFile(testFS, testSpecPath, []byte(specContent), 0o644))
+		require.NoError(t, fileutils.WriteFile(testFS, testSpecPath, []byte(specContent), fileperms.PublicFile))
 
-		require.NoError(t, testFS.MkdirAll("/patches", 0o755))
-		require.NoError(t, fileutils.WriteFile(testFS, "/patches/c.patch", []byte("content\n"), 0o644))
+		require.NoError(t, testFS.MkdirAll("/patches", fileperms.PublicDir))
+		require.NoError(t, fileutils.WriteFile(testFS, "/patches/c.patch", []byte("content\n"), fileperms.PublicFile))
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:   projectconfig.ComponentOverlayAddPatch,
@@ -876,13 +909,13 @@ func TestApplyAddPatchOverlay(t *testing.T) {
 		ctx := testctx.NewCtx()
 		testFS := ctx.FS()
 
-		require.NoError(t, testFS.MkdirAll(testSourceDir, 0o755))
+		require.NoError(t, testFS.MkdirAll(testSourceDir, fileperms.PublicDir))
 
 		specContent := "Name: test\n\n%patchlist\nexisting.patch\n\n%build\nmake\n"
-		require.NoError(t, fileutils.WriteFile(testFS, testSpecPath, []byte(specContent), 0o644))
+		require.NoError(t, fileutils.WriteFile(testFS, testSpecPath, []byte(specContent), fileperms.PublicFile))
 
-		require.NoError(t, testFS.MkdirAll("/patches", 0o755))
-		require.NoError(t, fileutils.WriteFile(testFS, "/patches/new.patch", []byte("content\n"), 0o644))
+		require.NoError(t, testFS.MkdirAll("/patches", fileperms.PublicDir))
+		require.NoError(t, fileutils.WriteFile(testFS, "/patches/new.patch", []byte("content\n"), fileperms.PublicFile))
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:   projectconfig.ComponentOverlayAddPatch,
@@ -905,13 +938,15 @@ func TestApplyAddPatchOverlay(t *testing.T) {
 		ctx := testctx.NewCtx()
 		testFS := ctx.FS()
 
-		require.NoError(t, testFS.MkdirAll(testSourceDir, 0o755))
+		require.NoError(t, testFS.MkdirAll(testSourceDir, fileperms.PublicDir))
 
 		specContent := "Name: test\n"
-		require.NoError(t, fileutils.WriteFile(testFS, testSpecPath, []byte(specContent), 0o644))
+		require.NoError(t, fileutils.WriteFile(testFS, testSpecPath, []byte(specContent), fileperms.PublicFile))
 
-		require.NoError(t, testFS.MkdirAll("/patches", 0o755))
-		require.NoError(t, fileutils.WriteFile(testFS, "/patches/original-name.patch", []byte("content\n"), 0o644))
+		require.NoError(t, testFS.MkdirAll("/patches", fileperms.PublicDir))
+		require.NoError(t, fileutils.WriteFile(
+			testFS, "/patches/original-name.patch", []byte("content\n"), fileperms.PublicFile,
+		))
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:     projectconfig.ComponentOverlayAddPatch,
@@ -936,16 +971,18 @@ func TestApplyAddPatchOverlay(t *testing.T) {
 		ctx := testctx.NewCtx()
 		testFS := ctx.FS()
 
-		require.NoError(t, testFS.MkdirAll(testSourceDir, 0o755))
+		require.NoError(t, testFS.MkdirAll(testSourceDir, fileperms.PublicDir))
 
 		specContent := "Name: test\n"
-		require.NoError(t, fileutils.WriteFile(testFS, testSpecPath, []byte(specContent), 0o644))
+		require.NoError(t, fileutils.WriteFile(testFS, testSpecPath, []byte(specContent), fileperms.PublicFile))
 
 		// Pre-create the destination file.
-		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/conflict.patch", []byte("existing\n"), 0o644))
+		require.NoError(t, fileutils.WriteFile(
+			testFS, testSourceDir+"/conflict.patch", []byte("existing\n"), fileperms.PublicFile,
+		))
 
-		require.NoError(t, testFS.MkdirAll("/patches", 0o755))
-		require.NoError(t, fileutils.WriteFile(testFS, "/patches/conflict.patch", []byte("new\n"), 0o644))
+		require.NoError(t, testFS.MkdirAll("/patches", fileperms.PublicDir))
+		require.NoError(t, fileutils.WriteFile(testFS, "/patches/conflict.patch", []byte("new\n"), fileperms.PublicFile))
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:   projectconfig.ComponentOverlayAddPatch,
@@ -968,11 +1005,13 @@ func TestApplyRemovePatchOverlay(t *testing.T) {
 		ctx := testctx.NewCtx()
 		testFS := ctx.FS()
 
-		require.NoError(t, testFS.MkdirAll(testSourceDir, 0o755))
+		require.NoError(t, testFS.MkdirAll(testSourceDir, fileperms.PublicDir))
 
 		specContent := "Name: test\nPatch0: keep.patch\nPatch1: remove-me.patch\nPatch2: also-keep.patch\n"
-		require.NoError(t, fileutils.WriteFile(testFS, testSpecPath, []byte(specContent), 0o644))
-		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/remove-me.patch", []byte("patch\n"), 0o644))
+		require.NoError(t, fileutils.WriteFile(testFS, testSpecPath, []byte(specContent), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(
+			testFS, testSourceDir+"/remove-me.patch", []byte("patch\n"), fileperms.PublicFile,
+		))
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:     projectconfig.ComponentOverlayRemovePatch,
@@ -1000,11 +1039,13 @@ func TestApplyRemovePatchOverlay(t *testing.T) {
 		ctx := testctx.NewCtx()
 		testFS := ctx.FS()
 
-		require.NoError(t, testFS.MkdirAll(testSourceDir, 0o755))
+		require.NoError(t, testFS.MkdirAll(testSourceDir, fileperms.PublicDir))
 
 		specContent := "Name: test\n\n%patchlist\nkeep.patch\nremove-me.patch\n\n%build\nmake\n"
-		require.NoError(t, fileutils.WriteFile(testFS, testSpecPath, []byte(specContent), 0o644))
-		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/remove-me.patch", []byte("patch\n"), 0o644))
+		require.NoError(t, fileutils.WriteFile(testFS, testSpecPath, []byte(specContent), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(
+			testFS, testSourceDir+"/remove-me.patch", []byte("patch\n"), fileperms.PublicFile,
+		))
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:     projectconfig.ComponentOverlayRemovePatch,
@@ -1026,12 +1067,12 @@ func TestApplyRemovePatchOverlay(t *testing.T) {
 		ctx := testctx.NewCtx()
 		testFS := ctx.FS()
 
-		require.NoError(t, testFS.MkdirAll(testSourceDir, 0o755))
+		require.NoError(t, testFS.MkdirAll(testSourceDir, fileperms.PublicDir))
 
 		// A spec with both PatchN tags and a %patchlist (unusual but possible).
 		specContent := "Name: test\nPatch0: fix-a.patch\n\n%patchlist\nfix-a.patch\n\n%build\nmake\n"
-		require.NoError(t, fileutils.WriteFile(testFS, testSpecPath, []byte(specContent), 0o644))
-		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/fix-a.patch", []byte("a\n"), 0o644))
+		require.NoError(t, fileutils.WriteFile(testFS, testSpecPath, []byte(specContent), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/fix-a.patch", []byte("a\n"), fileperms.PublicFile))
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:     projectconfig.ComponentOverlayRemovePatch,
@@ -1052,10 +1093,10 @@ func TestApplyRemovePatchOverlay(t *testing.T) {
 		ctx := testctx.NewCtx()
 		testFS := ctx.FS()
 
-		require.NoError(t, testFS.MkdirAll(testSourceDir, 0o755))
+		require.NoError(t, testFS.MkdirAll(testSourceDir, fileperms.PublicDir))
 
 		specContent := "Name: test\nPatch0: keep.patch\n"
-		require.NoError(t, fileutils.WriteFile(testFS, testSpecPath, []byte(specContent), 0o644))
+		require.NoError(t, fileutils.WriteFile(testFS, testSpecPath, []byte(specContent), fileperms.PublicFile))
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:     projectconfig.ComponentOverlayRemovePatch,
@@ -1071,11 +1112,11 @@ func TestApplyRemovePatchOverlay(t *testing.T) {
 		ctx := testctx.NewCtx()
 		testFS := ctx.FS()
 
-		require.NoError(t, testFS.MkdirAll(testSourceDir, 0o755))
+		require.NoError(t, testFS.MkdirAll(testSourceDir, fileperms.PublicDir))
 
 		// Patch is declared in spec but file doesn't exist in sources.
 		specContent := "Name: test\nPatch0: ghost.patch\n"
-		require.NoError(t, fileutils.WriteFile(testFS, testSpecPath, []byte(specContent), 0o644))
+		require.NoError(t, fileutils.WriteFile(testFS, testSpecPath, []byte(specContent), fileperms.PublicFile))
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:     projectconfig.ComponentOverlayRemovePatch,
@@ -1090,13 +1131,13 @@ func TestApplyRemovePatchOverlay(t *testing.T) {
 		ctx := testctx.NewCtx()
 		testFS := ctx.FS()
 
-		require.NoError(t, testFS.MkdirAll(testSourceDir, 0o755))
+		require.NoError(t, testFS.MkdirAll(testSourceDir, fileperms.PublicDir))
 
 		specContent := "Name: test\nPatch0: CVE-001.patch\nPatch1: CVE-002.patch\nPatch2: keep.patch\n"
-		require.NoError(t, fileutils.WriteFile(testFS, testSpecPath, []byte(specContent), 0o644))
-		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/CVE-001.patch", []byte("a\n"), 0o644))
-		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/CVE-002.patch", []byte("b\n"), 0o644))
-		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/keep.patch", []byte("c\n"), 0o644))
+		require.NoError(t, fileutils.WriteFile(testFS, testSpecPath, []byte(specContent), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/CVE-001.patch", []byte("a\n"), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/CVE-002.patch", []byte("b\n"), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/keep.patch", []byte("c\n"), fileperms.PublicFile))
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:     projectconfig.ComponentOverlayRemovePatch,
@@ -1133,13 +1174,13 @@ func TestApplyRemovePatchOverlay(t *testing.T) {
 		ctx := testctx.NewCtx()
 		testFS := ctx.FS()
 
-		require.NoError(t, testFS.MkdirAll(testSourceDir, 0o755))
+		require.NoError(t, testFS.MkdirAll(testSourceDir, fileperms.PublicDir))
 
 		specContent := "Name: test\n\n%patchlist\nCVE-001.patch\nkeep.patch\nCVE-002.patch\n\n%build\nmake\n"
-		require.NoError(t, fileutils.WriteFile(testFS, testSpecPath, []byte(specContent), 0o644))
-		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/CVE-001.patch", []byte("a\n"), 0o644))
-		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/CVE-002.patch", []byte("b\n"), 0o644))
-		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/keep.patch", []byte("c\n"), 0o644))
+		require.NoError(t, fileutils.WriteFile(testFS, testSpecPath, []byte(specContent), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/CVE-001.patch", []byte("a\n"), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/CVE-002.patch", []byte("b\n"), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/keep.patch", []byte("c\n"), fileperms.PublicFile))
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:     projectconfig.ComponentOverlayRemovePatch,
@@ -1162,11 +1203,11 @@ func TestApplyRemovePatchOverlay(t *testing.T) {
 		ctx := testctx.NewCtx()
 		testFS := ctx.FS()
 
-		require.NoError(t, testFS.MkdirAll(testSourceDir, 0o755))
+		require.NoError(t, testFS.MkdirAll(testSourceDir, fileperms.PublicDir))
 
 		specContent := "Name: test\nPatch0: fix-build.patch\n"
-		require.NoError(t, fileutils.WriteFile(testFS, testSpecPath, []byte(specContent), 0o644))
-		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/fix-build.patch", []byte("a\n"), 0o644))
+		require.NoError(t, fileutils.WriteFile(testFS, testSpecPath, []byte(specContent), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(testFS, testSourceDir+"/fix-build.patch", []byte("a\n"), fileperms.PublicFile))
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:     projectconfig.ComponentOverlayRemovePatch,

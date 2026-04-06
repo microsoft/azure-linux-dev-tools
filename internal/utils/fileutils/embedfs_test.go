@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/stretchr/testify/require"
 )
@@ -158,13 +159,13 @@ func TestEmbedFSReadOnlyOperations(t *testing.T) {
 		{
 			name: "Mkdir",
 			fn: func() error {
-				return embedfs.Mkdir("newdir", 0o755)
+				return embedfs.Mkdir("newdir", fileperms.PublicDir)
 			},
 		},
 		{
 			name: "MkdirAll",
 			fn: func() error {
-				return embedfs.MkdirAll("new/nested/dir", 0o755)
+				return embedfs.MkdirAll("new/nested/dir", fileperms.PublicDir)
 			},
 		},
 		{
@@ -188,7 +189,7 @@ func TestEmbedFSReadOnlyOperations(t *testing.T) {
 		{
 			name: "Chmod",
 			fn: func() error {
-				return embedfs.Chmod("testdata/embedfs/file1.txt", 0o644)
+				return embedfs.Chmod("testdata/embedfs/file1.txt", fileperms.PublicFile)
 			},
 		},
 		{
