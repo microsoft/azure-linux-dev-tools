@@ -486,6 +486,56 @@ func TestSourceManager_ResolveSourceIdentity_UpstreamAllProvidersFail(t *testing
 	require.Contains(t, err.Error(), "failed to resolve source identity")
 }
 
+func TestSourceManager_FetchComponent_LocalComponent_WithSkipLookaside(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+	spec := specs_testutils.NewMockComponentSpec(ctrl)
+
+	const (
+		specDir  = "/specs/test-component"
+		specPath = specDir + "/test-component.spec"
+	)
+
+	componentConfig := &projectconfig.ComponentConfig{
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeLocal,
+			Path:       specPath,
+		},
+	}
+
+	component.EXPECT().GetName().AnyTimes().Return("test-component")
+	component.EXPECT().GetConfig().AnyTimes().Return(componentConfig)
+	component.EXPECT().GetSpec().AnyTimes().Return(spec)
+	spec.EXPECT().GetPath().AnyTimes().Return(specPath, nil)
+
+	// Create spec file and a lookaside sources manifest in the source directory.
+	// The sources file references a tarball that would require downloading from
+	// the lookaside cache. If downloadLookasideSources runs despite SkipLookaside,
+	// the download will fail (no real server at example.com) and the test will fail.
+	require.NoError(t, fileutils.WriteFile(env.TestFS, specPath,
+		[]byte("Name: test-component\nVersion: 1.0\n"), fileperms.PrivateFile))
+	require.NoError(t, fileutils.WriteFile(env.TestFS, specDir+"/sources",
+		[]byte("SHA512 (big-source.tar.gz) = abc123def456\n"), fileperms.PrivateFile))
+
+	sourceManager, err := sourceproviders.NewSourceManager(env.Env, testDefaultDistro())
+	require.NoError(t, err)
+
+	// With SkipLookaside, downloadLookasideSources is not called and the fetch succeeds.
+	err = sourceManager.FetchComponent(t.Context(), component, testDestDir, sourceproviders.WithSkipLookaside())
+	require.NoError(t, err)
+
+	// Spec was copied to destination (FetchLocalComponent still ran).
+	specExists, err := fileutils.Exists(env.TestFS, filepath.Join(testDestDir, "test-component.spec"))
+	require.NoError(t, err)
+	assert.True(t, specExists, "spec file should exist in destination")
+
+	// Source tarball was NOT downloaded (lookaside was skipped).
+	tarballExists, err := fileutils.Exists(env.TestFS, filepath.Join(testDestDir, "big-source.tar.gz"))
+	require.NoError(t, err)
+	assert.False(t, tarballExists, "source tarball should not be present when SkipLookaside is set")
+}
+
 func TestSourceManager_ResolveSourceIdentity_UnknownSourceType(t *testing.T) {
 	env := testutils.NewTestEnv(t)
 	ctrl := gomock.NewController(t)

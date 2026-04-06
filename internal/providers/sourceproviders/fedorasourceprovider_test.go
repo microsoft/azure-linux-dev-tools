@@ -601,6 +601,57 @@ func TestGetComponentFromGit(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to rename fetched spec file")
 	})
+
+	t.Run("skip lookaside does not call ExtractSourcesFromRepo", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		mockGitProvider := git_test.NewMockGitProvider(ctrl)
+		mockExtractor := fedorasource_test.NewMockFedoraSourceDownloader(ctrl)
+
+		provider, err := sourceproviders.NewFedoraSourcesProviderImpl(
+			env.FS(),
+			env.DryRunnable,
+			mockGitProvider,
+			mockExtractor,
+			testResolvedDistro(),
+			retry.Disabled(),
+		)
+		require.NoError(t, err)
+
+		mockComponent := components_testutils.NewMockComponent(ctrl)
+		mockComponent.EXPECT().GetName().AnyTimes().Return(testPackageName)
+		mockComponent.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
+			Name: testPackageName,
+		})
+
+		// Git clone creates spec file.
+		mockGitProvider.EXPECT().
+			Clone(gomock.Any(), repoURL, gomock.Any(), gomock.Any()).
+			DoAndReturn(func(ctx context.Context, repoURL, cloneDir string, opts ...git.GitOptions) error {
+				specPath := cloneDir + "/" + testPackageName + ".spec"
+
+				return fileutils.WriteFile(env.FS(), specPath, []byte("Name: "+testPackageName), fileperms.PublicFile)
+			})
+
+		mockGitProvider.EXPECT().
+			GetCurrentCommit(gomock.Any(), gomock.Any()).
+			Return("head123abc", nil)
+
+		mockGitProvider.EXPECT().
+			Checkout(gomock.Any(), gomock.Any(), "head123abc").
+			Return(nil)
+
+		// ExtractSourcesFromRepo must NOT be called — no EXPECT set for it.
+		// gomock will fail if it's called unexpectedly.
+
+		err = provider.GetComponent(context.Background(), mockComponent, destDir, sourceproviders.WithSkipLookaside())
+		require.NoError(t, err)
+
+		// Verify spec file was still copied to destination.
+		specPath := destDir + "/" + testPackageName + ".spec"
+		exists, checkErr := fileutils.Exists(env.FS(), specPath)
+		require.NoError(t, checkErr)
+		assert.True(t, exists, "spec file should exist in destination even with skip-lookaside")
+	})
 }
 
 // testResolvedDistroWithSnapshot returns a [sourceproviders.ResolvedDistro] with the given snapshot time.
