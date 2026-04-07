@@ -29,7 +29,7 @@ import json
 import os
 import subprocess
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 def process_component(staging_dir: str, name: str, spec_filename: str) -> dict:
@@ -100,30 +100,37 @@ def main() -> int:
         check=False,
     )
 
+    total = len(inputs)
+
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {
-            comp["name"]: pool.submit(
+            pool.submit(
                 process_component,
                 staging_dir,
                 comp["name"],
                 comp["specFilename"],
-            )
+            ): comp["name"]
             for comp in inputs
         }
 
-    # Collect results in input order.
-    results = []
-    for comp in inputs:
-        try:
-            results.append(futures[comp["name"]].result())
-        except Exception as exc:
-            results.append(
-                {
-                    "name": comp["name"],
+        # Report progress to stderr as each component completes.
+        # The Go caller parses these lines via SetRealTimeStderrListener.
+        completed_results = {}
+        for idx, future in enumerate(as_completed(futures), 1):
+            name = futures[future]
+            try:
+                completed_results[name] = future.result()
+            except Exception as exc:
+                completed_results[name] = {
+                    "name": name,
                     "specFiles": "",
                     "error": str(exc),
                 }
-            )
+
+            print(f"PROGRESS {idx}/{total} {name}", file=sys.stderr, flush=True)
+
+    # Collect results in input order (as_completed returns in completion order).
+    results = [completed_results[comp["name"]] for comp in inputs]
 
     json.dump(results, sys.stdout)
 

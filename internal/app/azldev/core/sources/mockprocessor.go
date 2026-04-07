@@ -146,7 +146,8 @@ func (p *MockProcessor) initOnce(ctx context.Context) error {
 // mount exposes the entire staging tree to the chroot.
 //
 // Components are processed in parallel inside the chroot by an embedded
-// Python script (render_process.py) which returns JSON results on stdout.
+// Python script (render_process.py) which returns JSON results on stdout
+// and per-component progress on stderr.
 func (p *MockProcessor) BatchProcess(
 	ctx context.Context, events opctx.EventListener,
 	stagingDir string, inputs []ComponentInput, fs opctx.FS,
@@ -168,11 +169,14 @@ func (p *MockProcessor) BatchProcess(
 
 	slog.Info("Batch processing components in mock chroot", "count", len(inputs))
 
-	// Write the Python script to the staging directory once (it doesn't change
-	// between chunks). The inputs.json manifest is written per-chunk below.
+	// Write the Python script and inputs manifest to the staging directory.
 	scriptPath := filepath.Join(stagingDir, "render_process.py")
 	if err := fileutils.WriteFile(fs, scriptPath, renderProcessScript, fileperms.PublicExecutable); err != nil {
 		return nil, fmt.Errorf("writing render script:\n%w", err)
+	}
+
+	if err := writeInputsManifest(fs, stagingDir, inputs); err != nil {
+		return nil, err
 	}
 
 	// Clone the runner and add a single bind mount for the staging directory.
@@ -185,108 +189,56 @@ func (p *MockProcessor) BatchProcess(
 	const chrootStagingPath = "/tmp/render"
 	runner.AddBindMount(stagingDir, chrootStagingPath)
 
-	chunkCtx := chunkContext{
-		runner:        runner,
-		fs:            fs,
-		stagingDir:    stagingDir,
-		chrootStaging: chrootStagingPath,
-		chrootScript:  filepath.Join(chrootStagingPath, "render_process.py"),
-		workers:       strconv.Itoa(max(1, runtime.NumCPU())), // 1x CPU; mock work is CPU-bound
-	}
+	chrootScript := filepath.Join(chrootStagingPath, "render_process.py")
+	workers := strconv.Itoa(max(1, runtime.NumCPU())) // 1x CPU; mock work is CPU-bound
+	args := []string{"python3", chrootScript, chrootStagingPath, workers}
 
-	// Split the batch into chunks, this allows us to display a progress bar for each chunk instead of just
-	// freezing without any progress indication for several minutes when processing a large number of components.
-	subBatches := splitBatches(inputs)
-	results := make([]ComponentMockResult, 0, len(inputs))
-
-	mockProgress := events.StartEvent("Processing specs in mock chroot", "count", len(inputs))
-
-	mockProgress.SetLongRunning("Processing specs in mock chroot")
-	defer mockProgress.End()
-
-	for batchIdx, chunk := range subBatches {
-		batchResults, err := p.processChunk(ctx, &chunkCtx, chunk)
-		if err != nil {
-			slog.Error("Failed to process batch chunk",
-				"chunk", batchIdx, "error", err)
-
-			// Mark all components in this chunk as failed, but preserve results
-			// from earlier successful chunks.
-			for _, input := range chunk {
-				results = append(results, ComponentMockResult{
-					Name:  input.Name,
-					Error: fmt.Errorf("batch chunk %d failed:\n%w", batchIdx, err),
-				})
-			}
-
-			continue
-		}
-
-		results = append(results, batchResults...)
-
-		mockProgress.SetProgress(int64(batchIdx+1), int64(len(subBatches)))
-	}
-
-	return results, nil
-}
-
-// splitBatches divides the input slice into sub-slices of at most batchSize
-// elements. This allows progress reporting between chunks rather than appearing
-// frozen during a single long mock invocation.
-func splitBatches(inputs []ComponentInput) [][]ComponentInput {
-	const batchSize = 1000
-
-	var batches [][]ComponentInput
-
-	for idx := 0; idx < len(inputs); idx += batchSize {
-		end := idx + batchSize
-		if end > len(inputs) {
-			end = len(inputs)
-		}
-
-		batches = append(batches, inputs[idx:end])
-	}
-
-	return batches
-}
-
-// chunkContext holds the mock chroot configuration shared across all chunks.
-type chunkContext struct {
-	runner        *mock.Runner
-	fs            opctx.FS
-	stagingDir    string // Host path to the staging directory.
-	chrootStaging string // Chroot path to the staging directory.
-	chrootScript  string // Chroot path to the Python script.
-	workers       string // Max parallel workers for the Python script.
-}
-
-// processChunk writes the inputs.json manifest for a chunk of components, then
-// runs the embedded Python script in the mock chroot. The script reads
-// inputs.json and returns a JSON array of per-component results on stdout.
-func (p *MockProcessor) processChunk(
-	ctx context.Context,
-	chunkCtx *chunkContext,
-	chunk []ComponentInput,
-) ([]ComponentMockResult, error) {
-	if err := writeInputsManifest(chunkCtx.fs, chunkCtx.stagingDir, chunk); err != nil {
-		return nil, err
-	}
-
-	args := []string{"python3", chunkCtx.chrootScript, chunkCtx.chrootStaging, chunkCtx.workers}
-
-	cmd, err := chunkCtx.runner.CmdInChroot(ctx, args, false)
+	cmd, err := runner.CmdInChroot(ctx, args, false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create batch command in mock:\n%w", err)
 	}
 
-	stdout, err := cmd.RunAndGetOutput(ctx)
-	if err != nil {
-		slog.Warn("Batch mock script exited with error", "error", err)
+	// Capture stdout (JSON results) and stderr (progress lines) via listeners.
+	// RunAndGetOutput cannot be used with listeners, so we use Run + listeners.
+	var stdoutLines []string
 
-		return nil, fmt.Errorf("batch mock processing failed:\n%w", err)
+	if err := cmd.SetRealTimeStdoutListener(func(_ context.Context, line string) {
+		stdoutLines = append(stdoutLines, line)
+	}); err != nil {
+		return nil, fmt.Errorf("setting stdout listener:\n%w", err)
 	}
 
-	return parseBatchJSON(stdout, chunk)
+	// Set up progress reporting from the Python script's stderr output.
+	// The script prints "PROGRESS <completed>/<total> <name>" per component.
+	mockProgress := events.StartEvent("Processing specs in mock chroot", "count", len(inputs))
+	mockProgress.SetLongRunning("Processing specs in mock chroot")
+
+	defer mockProgress.End()
+
+	total := int64(len(inputs))
+
+	if listenerErr := cmd.SetRealTimeStderrListener(func(_ context.Context, line string) {
+		// Parse "PROGRESS <i>/<total> <name>" lines.
+		if after, found := strings.CutPrefix(line, "PROGRESS "); found {
+			if slashIdx := strings.Index(after, "/"); slashIdx > 0 {
+				if completed, parseErr := strconv.ParseInt(after[:slashIdx], 10, 64); parseErr == nil {
+					mockProgress.SetProgress(completed, total)
+				}
+			}
+		}
+	}); listenerErr != nil {
+		slog.Warn("Failed to set stderr listener for progress", "error", listenerErr)
+	}
+
+	if runErr := cmd.Run(ctx); runErr != nil {
+		slog.Warn("Batch mock script exited with error", "error", runErr)
+
+		return nil, fmt.Errorf("batch mock processing failed:\n%w", runErr)
+	}
+
+	stdout := strings.Join(stdoutLines, "\n")
+
+	return parseBatchJSON(stdout, inputs)
 }
 
 // componentInputJSON is the JSON-serializable form written to inputs.json.
