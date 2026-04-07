@@ -1,0 +1,331 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+package sources
+
+import (
+	"context"
+	_ "embed"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"sync"
+
+	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
+	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/mock"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
+)
+
+//go:embed render_process.py
+var renderProcessScript []byte
+
+// MockProcessor provides a shared mock chroot for running rpmautospec and
+// spectool during component rendering. The chroot is lazily initialized on
+// first use and supports batch processing of multiple components in a single
+// mock invocation.
+type MockProcessor struct {
+	mu             sync.Mutex
+	runner         *mock.Runner
+	initialized    bool
+	initErr        error
+	ctx            opctx.Ctx
+	mockConfigPath string
+}
+
+// NewMockProcessor creates a new processor that will lazily initialize
+// a mock chroot using the given config path.
+func NewMockProcessor(ctx opctx.Ctx, mockConfigPath string) *MockProcessor {
+	return &MockProcessor{
+		ctx:            ctx,
+		mockConfigPath: mockConfigPath,
+	}
+}
+
+// ComponentInput describes a single component to process in the mock chroot.
+// Name must match the subdirectory name under the staging directory.
+type ComponentInput struct {
+	Name         string // Component name (matches subdirectory in staging dir)
+	SpecFilename string // Just the filename, e.g., "curl.spec"
+}
+
+// ComponentMockResult holds the mock processing result for one component.
+type ComponentMockResult struct {
+	Name      string   // Component name
+	SpecFiles []string // Files listed by spectool (basenames/relative paths)
+	Error     error    // Non-nil if rpmautospec or spectool failed for this component
+}
+
+// initOnce lazily initializes the mock chroot.
+func (p *MockProcessor) initOnce(ctx context.Context) error {
+	if p.initialized {
+		return p.initErr
+	}
+
+	slog.Info("Initializing mock chroot for rendering")
+
+	p.runner = mock.NewRunner(p.ctx, p.mockConfigPath)
+	p.runner.EnableNetwork()
+
+	if err := p.runner.InitRoot(ctx); err != nil {
+		p.initErr = fmt.Errorf("failed to initialize mock chroot:\n%w", err)
+		p.initialized = true
+
+		return p.initErr
+	}
+
+	// Install rpmautospec (macro expansion), rpmdevtools (spectool), and git
+	// (required for rpmautospec to read commit history).
+	// python3-click is required by rpmautospec but not declared as an RPM dependency.
+	// Ecosystem macro packages (go-srpm-macros, etc.) are already present via
+	// @buildsys-build → azurelinux-rpm-config.
+	if err := p.runner.InstallPackages(ctx, []string{"rpmautospec", "rpmdevtools", "git", "python3-click"}); err != nil {
+		p.initErr = fmt.Errorf("failed to install packages in mock chroot:\n%w", err)
+		p.initialized = true
+
+		return p.initErr
+	}
+
+	p.initialized = true
+
+	slog.Info("Mock chroot ready for rendering")
+
+	return nil
+}
+
+// BatchProcess runs rpmautospec and spectool for multiple components in a single
+// mock chroot invocation. stagingDir is the host directory containing one
+// subdirectory per component (named by ComponentInput.Name). A single bind
+// mount exposes the entire staging tree to the chroot.
+//
+// Components are processed in parallel inside the chroot by an embedded
+// Python script (render_process.py) which returns JSON results on stdout.
+func (p *MockProcessor) BatchProcess(
+	ctx context.Context, events opctx.EventListener,
+	stagingDir string, inputs []ComponentInput, fs opctx.FS,
+) ([]ComponentMockResult, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if err := p.initOnce(ctx); err != nil {
+		return nil, err
+	}
+
+	if len(inputs) == 0 {
+		return nil, nil
+	}
+
+	slog.Info("Batch processing components in mock chroot", "count", len(inputs))
+
+	// Write the Python script to the staging directory once (it doesn't change
+	// between chunks). The inputs.json manifest is written per-chunk below.
+	scriptPath := filepath.Join(stagingDir, "render_process.py")
+	if err := fileutils.WriteFile(fs, scriptPath, renderProcessScript, fileperms.PublicExecutable); err != nil {
+		return nil, fmt.Errorf("writing render script:\n%w", err)
+	}
+
+	// Clone the runner and add a single bind mount for the staging directory.
+	// WithUnprivileged drops to the mockbuild user for chroot commands,
+	// matching how mock builds run and avoiding root-owned files in the
+	// bind-mounted staging directory.
+	runner := p.runner.Clone()
+	runner.WithUnprivileged()
+
+	const chrootStagingPath = "/tmp/render"
+	runner.AddBindMount(stagingDir, chrootStagingPath)
+
+	chunkCtx := chunkContext{
+		runner:        runner,
+		fs:            fs,
+		stagingDir:    stagingDir,
+		chrootStaging: chrootStagingPath,
+		chrootScript:  filepath.Join(chrootStagingPath, "render_process.py"),
+		workers:       strconv.Itoa(max(1, runtime.NumCPU())), // 1x CPU; mock work is CPU-bound
+	}
+
+	// Split the batch into chunks, this allows us to display a progress bar for each chunk instead of just
+	// freezing without any progress indication for several minutes when processing a large number of components.
+	subBatches := splitBatches(inputs)
+	results := make([]ComponentMockResult, 0, len(inputs))
+
+	mockProgress := events.StartEvent("Processing specs in mock chroot", "count", len(inputs))
+
+	mockProgress.SetLongRunning("Processing specs in mock chroot")
+	defer mockProgress.End()
+
+	for batchIdx, chunk := range subBatches {
+		batchResults, err := p.processChunk(ctx, &chunkCtx, chunk)
+		if err != nil {
+			slog.Error("Failed to process batch chunk",
+				"chunk", batchIdx, "error", err)
+
+			// Mark all components in this chunk as failed, but preserve results
+			// from earlier successful chunks.
+			for _, input := range chunk {
+				results = append(results, ComponentMockResult{
+					Name:  input.Name,
+					Error: fmt.Errorf("batch chunk %d failed:\n%w", batchIdx, err),
+				})
+			}
+
+			continue
+		}
+
+		results = append(results, batchResults...)
+
+		mockProgress.SetProgress(int64(batchIdx+1), int64(len(subBatches)))
+	}
+
+	return results, nil
+}
+
+// splitBatches divides the input slice into sub-slices of at most batchSize
+// elements. This allows progress reporting between chunks rather than appearing
+// frozen during a single long mock invocation.
+func splitBatches(inputs []ComponentInput) [][]ComponentInput {
+	const batchSize = 1000
+
+	var batches [][]ComponentInput
+
+	for idx := 0; idx < len(inputs); idx += batchSize {
+		end := idx + batchSize
+		if end > len(inputs) {
+			end = len(inputs)
+		}
+
+		batches = append(batches, inputs[idx:end])
+	}
+
+	return batches
+}
+
+// chunkContext holds the mock chroot configuration shared across all chunks.
+type chunkContext struct {
+	runner        *mock.Runner
+	fs            opctx.FS
+	stagingDir    string // Host path to the staging directory.
+	chrootStaging string // Chroot path to the staging directory.
+	chrootScript  string // Chroot path to the Python script.
+	workers       string // Max parallel workers for the Python script.
+}
+
+// processChunk writes the inputs.json manifest for a chunk of components, then
+// runs the embedded Python script in the mock chroot. The script reads
+// inputs.json and returns a JSON array of per-component results on stdout.
+func (p *MockProcessor) processChunk(
+	ctx context.Context,
+	chunkCtx *chunkContext,
+	chunk []ComponentInput,
+) ([]ComponentMockResult, error) {
+	if err := writeInputsManifest(chunkCtx.fs, chunkCtx.stagingDir, chunk); err != nil {
+		return nil, err
+	}
+
+	args := []string{"python3", chunkCtx.chrootScript, chunkCtx.chrootStaging, chunkCtx.workers}
+
+	cmd, err := chunkCtx.runner.CmdInChroot(ctx, args, false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create batch command in mock:\n%w", err)
+	}
+
+	stdout, err := cmd.RunAndGetOutput(ctx)
+	if err != nil {
+		slog.Warn("Batch mock script exited with error", "error", err)
+
+		return nil, fmt.Errorf("batch mock processing failed:\n%w", err)
+	}
+
+	return parseBatchJSON(stdout, chunk)
+}
+
+// componentInputJSON is the JSON-serializable form written to inputs.json.
+type componentInputJSON struct {
+	Name         string `json:"name"`
+	SpecFilename string `json:"specFilename"`
+}
+
+// componentResultJSON mirrors the JSON output from render_process.py.
+type componentResultJSON struct {
+	Name      string  `json:"name"`
+	SpecFiles string  `json:"specFiles"`
+	Error     *string `json:"error"`
+}
+
+// parseBatchJSON parses the JSON array produced by render_process.py into
+// ComponentMockResult values. The spectool output (raw lines) is parsed into
+// individual filenames.
+func parseBatchJSON(stdout string, inputs []ComponentInput) ([]ComponentMockResult, error) {
+	var jsonResults []componentResultJSON
+	if err := json.Unmarshal([]byte(stdout), &jsonResults); err != nil {
+		return nil, fmt.Errorf("parsing batch results JSON:\n%w", err)
+	}
+
+	// Build a lookup map from the JSON results.
+	resultMap := make(map[string]*componentResultJSON, len(jsonResults))
+	for idx := range jsonResults {
+		resultMap[jsonResults[idx].Name] = &jsonResults[idx]
+	}
+
+	results := make([]ComponentMockResult, len(inputs))
+
+	for idx, input := range inputs {
+		results[idx].Name = input.Name
+
+		compResult, ok := resultMap[input.Name]
+		if !ok {
+			results[idx].Error = fmt.Errorf("no result returned for %#q", input.Name)
+
+			continue
+		}
+
+		if compResult.Error != nil {
+			results[idx].Error = fmt.Errorf("%s", *compResult.Error)
+
+			continue
+		}
+
+		results[idx].SpecFiles = parseSpectoolOutput(compResult.SpecFiles)
+	}
+
+	return results, nil
+}
+
+// writeInputsManifest writes the inputs.json manifest to the staging directory
+// so it can be read by the Python script inside the mock chroot.
+func writeInputsManifest(fs opctx.FS, stagingDir string, inputs []ComponentInput) error {
+	jsonInputs := make([]componentInputJSON, len(inputs))
+	for idx, input := range inputs {
+		jsonInputs[idx] = componentInputJSON(input)
+	}
+
+	data, err := json.Marshal(jsonInputs)
+	if err != nil {
+		return fmt.Errorf("marshaling inputs:\n%w", err)
+	}
+
+	inputsPath := filepath.Join(stagingDir, "inputs.json")
+	if err := fileutils.WriteFile(fs, inputsPath, data, fileperms.PublicFile); err != nil {
+		return fmt.Errorf("writing inputs manifest:\n%w", err)
+	}
+
+	return nil
+}
+
+// Destroy cleans up the mock chroot. Should be called when rendering is complete.
+// Attempts cleanup even if initialization partially failed (e.g., InitRoot succeeded
+// but InstallPackages failed), since a partially initialized chroot still needs scrubbing.
+func (p *MockProcessor) Destroy(ctx context.Context) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.runner != nil && p.initialized {
+		slog.Debug("Destroying mock chroot")
+
+		if err := p.runner.ScrubRoot(ctx); err != nil {
+			slog.Warn("Failed to clean up mock chroot", "error", err)
+		}
+	}
+}

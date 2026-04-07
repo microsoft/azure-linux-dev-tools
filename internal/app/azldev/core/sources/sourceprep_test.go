@@ -124,10 +124,15 @@ func TestPrepareSources_WithSkipLookaside_SkipsFetchFiles(t *testing.T) {
 	// FetchComponent should still be called, with at least the SkipLookaside option.
 	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).DoAndReturn(
 		func(_ interface{}, _ interface{}, outputDir string, opts ...sourceproviders.FetchComponentOption) error {
-			// At least one option (SkipLookaside) should be passed.
-			assert.NotEmpty(t, opts, "FetchComponent should receive at least one option (SkipLookaside)")
+			// Verify SkipLookaside is actually set by applying the received options.
+			var resolved sourceproviders.FetchComponentOptions
+			for _, opt := range opts {
+				opt(&resolved)
+			}
 
-			return fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte("# test spec"), 0o644)
+			assert.True(t, resolved.SkipLookaside, "FetchComponent should receive SkipLookaside option")
+
+			return fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte("# test spec"), fileperms.PublicFile)
 		},
 	)
 
@@ -156,7 +161,7 @@ func TestPrepareSources_WithoutSkipLookaside_CallsFetchFiles(t *testing.T) {
 	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil)
 	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).DoAndReturn(
 		func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
-			return fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte("# test spec"), 0o644)
+			return fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte("# test spec"), fileperms.PublicFile)
 		},
 	)
 

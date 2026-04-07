@@ -102,6 +102,9 @@ type ProjectInfo struct {
 	// Path to output directory to use for this project.
 	OutputDir string `toml:"output-dir,omitempty" json:"outputDir,omitempty" jsonschema:"title=Output Directory,description=Path to the output directory,example=out"`
 
+	// Path to the output directory for rendered specs (component render).
+	RenderedSpecsDir string `toml:"rendered-specs-dir,omitempty" json:"renderedSpecsDir,omitempty" jsonschema:"title=Rendered Specs Directory,description=Output directory for rendered specs,example=SPECS"`
+
 	// Default-selected distro. May be overridden at runtime.
 	DefaultDistro DistroReference `toml:"default-distro,omitempty" json:"defaultDistro,omitempty" jsonschema:"title=Default Distro,description=Default selected distro reference"`
 
@@ -133,6 +136,7 @@ func (p *ProjectInfo) WithAbsolutePaths(referenceDir string) *ProjectInfo {
 	result.LogDir = makeAbsolute(referenceDir, result.LogDir)
 	result.WorkDir = makeAbsolute(referenceDir, result.WorkDir)
 	result.OutputDir = makeAbsolute(referenceDir, result.OutputDir)
+	result.RenderedSpecsDir = makeAbsolute(referenceDir, result.RenderedSpecsDir)
 
 	return result
 }
