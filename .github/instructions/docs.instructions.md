@@ -1,5 +1,6 @@
 ---
 applyTo: "**/*"
+description: "Documentation requirements for user-facing features. Always check this file when working on features that the user may interact with."
 ---
 
 # Documentation Requirements
