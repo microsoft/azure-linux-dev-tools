@@ -2,4 +2,4 @@
 includes = ["distros/**/*.distro.toml"]
 
 [project]
-default-distro = { name = "azurelinux", version = "3.0" }
+default-distro = { name = "azurelinux", version = "4.0" }

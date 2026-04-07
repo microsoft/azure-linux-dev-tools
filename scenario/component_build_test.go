@@ -93,7 +93,7 @@ func TestBuildingLocalComponentFromCheckedInFiles(t *testing.T) {
 	srpm := srpms[0]
 	assert.Equal(t, "a", srpm.Name())
 	assert.Equal(t, "1.2.3", srpm.Version())
-	assert.Equal(t, "4.azl3", srpm.Release())
+	assert.Equal(t, "4.azl4", srpm.Release())
 
 	// Validate RPM metadata.
 	rpm := rpms[0]
@@ -130,9 +130,9 @@ func TestBuildingUpstreamComponent(t *testing.T) {
 	srpms := results.GetSRPMs(t)
 	require.Len(t, srpms, 1)
 
-	// Make sure we got 2 RPMs: 1 prod, 1 debuginfo.
+	// Make sure we got 3 RPMs: 1 prod, 1 debuginfo, 1 debugsource.
 	rpms := results.GetRPMs(t)
-	require.Len(t, rpms, 2)
+	require.Len(t, rpms, 3)
 
 	// Figure out our host architecture so we can validate the RPMs' architecture tags.
 	hostInfo, err := host.Info()
@@ -144,7 +144,7 @@ func TestBuildingUpstreamComponent(t *testing.T) {
 	// on them.
 	//
 
-	const releaseRegexStr = `^\d+\.azl3$`
+	const releaseRegexStr = `^\d+\.azl4$`
 
 	srpm := srpms[0]
 	assert.Equal(t, testComponentName, srpm.Name())
@@ -164,4 +164,5 @@ func TestBuildingUpstreamComponent(t *testing.T) {
 
 	require.Contains(t, rpmsByName, testComponentName)
 	require.Contains(t, rpmsByName, testComponentName+"-debuginfo")
+	require.Contains(t, rpmsByName, testComponentName+"-debugsource")
 }
