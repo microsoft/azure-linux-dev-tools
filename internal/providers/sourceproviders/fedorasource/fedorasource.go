@@ -325,11 +325,13 @@ func BuildLookasideURL(template, packageName, fileName, hashType, hash string) (
 	// allPlaceholders lists all supported lookaside URI template placeholders.
 	allPlaceholders := []string{PlaceholderPkg, PlaceholderFilename, PlaceholderHashType, PlaceholderHash}
 
-	// Check the normalized (lowercased) hashType since that is the form actually substituted.
-	for _, v := range []string{packageName, fileName, strings.ToLower(hashType), hash} {
+	// Normalize hashType to lowercase since that is the form actually substituted.
+	hashType = strings.ToLower(hashType)
+
+	for _, v := range []string{packageName, fileName, hashType, hash} {
 		for _, p := range allPlaceholders {
 			if strings.Contains(v, p) {
-				return "", fmt.Errorf("value %#q contains placeholder %s, which would cause ambiguous substitution", v, p)
+				return "", fmt.Errorf("value %#q contains placeholder %#q, which would cause ambiguous substitution", v, p)
 			}
 		}
 	}
@@ -337,7 +339,7 @@ func BuildLookasideURL(template, packageName, fileName, hashType, hash string) (
 	uri := template
 	uri = strings.ReplaceAll(uri, PlaceholderPkg, url.PathEscape(packageName))
 	uri = strings.ReplaceAll(uri, PlaceholderFilename, url.PathEscape(fileName))
-	uri = strings.ReplaceAll(uri, PlaceholderHashType, url.PathEscape(strings.ToLower(hashType)))
+	uri = strings.ReplaceAll(uri, PlaceholderHashType, url.PathEscape(hashType))
 	uri = strings.ReplaceAll(uri, PlaceholderHash, url.PathEscape(hash))
 
 	u, err := url.Parse(uri)
@@ -362,7 +364,7 @@ func BuildLookasideURL(template, packageName, fileName, hashType, hash string) (
 // resulting URL is not valid.
 func BuildDistGitURL(template, packageName string) (string, error) {
 	if strings.Contains(packageName, PlaceholderPkg) {
-		return "", fmt.Errorf("package name %#q contains placeholder %s, which would cause ambiguous substitution",
+		return "", fmt.Errorf("package name %#q contains placeholder %#q, which would cause ambiguous substitution",
 			packageName, PlaceholderPkg)
 	}
 
