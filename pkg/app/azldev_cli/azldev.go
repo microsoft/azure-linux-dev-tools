@@ -11,7 +11,6 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/component"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/config"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/docs"
-	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/downloadsources"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/image"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/pkg"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/project"
@@ -39,7 +38,6 @@ func InstantiateApp() *azldev.App {
 	component.OnAppInit(app)
 	config.OnAppInit(app)
 	docs.OnAppInit(app)
-	downloadsources.OnAppInit(app)
 	image.OnAppInit(app)
 	pkg.OnAppInit(app)
 	project.OnAppInit(app)

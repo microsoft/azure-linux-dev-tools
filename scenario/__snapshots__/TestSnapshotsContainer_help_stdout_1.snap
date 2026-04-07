@@ -10,18 +10,17 @@ Usage:
   azldev [command]
 
 Primary commands:
-  component        Manage components
-  config           Manage tool configuration
-  docs             Documentation commands
-  download-sources Download source files listed in a Fedora-format sources file
-  image            Manage Azure Linux images
-  package          Manage binary package configuration
-  project          Manage Azure Linux projects
+  component   Manage components
+  config      Manage tool configuration
+  docs        Documentation commands
+  image       Manage Azure Linux images
+  package     Manage binary package configuration
+  project     Manage Azure Linux projects
 
 Meta commands:
-  completion       Generate the autocompletion script for the specified shell
-  help             Help about any command
-  version          Print the CLI version
+  completion  Generate the autocompletion script for the specified shell
+  help        Help about any command
+  version     Print the CLI version
 
 Flags:
   -y, --accept-all                accept all prompts

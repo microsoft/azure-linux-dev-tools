@@ -38,7 +38,6 @@ lives), or use -C to point to one.
 * [azldev component](azldev_component.md)	 - Manage components
 * [azldev config](azldev_config.md)	 - Manage tool configuration
 * [azldev docs](azldev_docs.md)	 - Documentation commands
-* [azldev download-sources](azldev_download-sources.md)	 - Download source files listed in a Fedora-format sources file
 * [azldev image](azldev_image.md)	 - Manage Azure Linux images
 * [azldev package](azldev_package.md)	 - Manage binary package configuration
 * [azldev project](azldev_project.md)	 - Manage Azure Linux projects

@@ -8,12 +8,8 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
-	"strings"
 
-	"github.com/bmatcuk/doublestar/v4"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
-	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
-	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/downloader"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
@@ -21,19 +17,17 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// specFileExtension is the file extension for RPM spec files.
-const specFileExtension = ".spec"
-
 // DownloadSourcesOptions holds the options for the download-sources command.
 type DownloadSourcesOptions struct {
-	ComponentFilter components.ComponentFilter
-	Directory       string
-	OutputDir       string
+	Directory         string
+	OutputDir         string
+	LookasideBaseURIs []string
+	PackageName       string
 }
 
-// OnAppInit registers the download-sources command as a top-level command.
-func OnAppInit(app *azldev.App) {
-	app.AddTopLevelCommand(NewDownloadSourcesCmd())
+// OnAppInit registers the download-sources command as a subcommand of the given parent.
+func OnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
+	parentCmd.AddCommand(NewDownloadSourcesCmd())
 }
 
 // NewDownloadSourcesCmd creates the download-sources cobra command.
@@ -41,7 +35,7 @@ func NewDownloadSourcesCmd() *cobra.Command {
 	var options DownloadSourcesOptions
 
 	cmd := &cobra.Command{
-		Use:   "download-sources [directory]",
+		Use:   "download-sources",
 		Short: "Download source files listed in a Fedora-format sources file",
 		Long: `Download source files from a lookaside cache based on a Fedora-format
 'sources' file in the specified directory.
@@ -50,59 +44,63 @@ The command reads the 'sources' file, resolves the lookaside cache URI from
 the distro configuration, and downloads each listed file into the directory.
 Files that already exist in the directory are skipped.
 
-The package name is derived from the .spec file in the directory. If a
-component is specified, its upstream-name override and distro configuration
-are used instead. When no component is given, the project's default distro
-is used.`,
-		Example: `  # Download sources (package name derived from .spec file in directory)
-  azldev download-sources ./path/to/sources/dir
+The package name is derived from the directory name and can be overridden
+with --package-name. The directory must contain a 'sources' file.
 
-  # Download sources in the current directory
-  azldev download-sources
+This command can run without project configuration by providing
+--lookaside-uri explicitly.`,
+		Example: `  # Download sources in the current directory (package name derived from dir name)
+  azldev advanced download-sources
 
-  # Download sources for a specific component
-  azldev download-sources ./path/to/sources/dir -p curl
+  # Download sources from a specific directory
+  azldev advanced download-sources -d ./path/to/curl/
 
   # Download sources to a different output directory
-  azldev download-sources ./path/to/sources/dir -o /tmp/output`,
-		Args: cobra.MaximumNArgs(1),
-		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
-			options.Directory = "."
-			if len(args) > 0 {
-				options.Directory = args[0]
+  azldev advanced download-sources -o /tmp/output
+
+  # Download sources using explicit lookaside URIs
+  azldev advanced download-sources \\
+    --lookaside-uri https://example.com/cache1 \\
+    --lookaside-uri https://example.com/cache2
+
+  # Download sources without project configuration
+  azldev advanced download-sources \\
+    --lookaside-uri https://example.com/cache -d ./curl`,
+		RunE: azldev.RunFuncWithoutRequiredConfig(func(env *azldev.Env) (interface{}, error) {
+			if options.Directory == "" {
+				options.Directory = "."
 			}
 
 			return nil, DownloadSources(env, &options)
 		}),
-		ValidArgsFunction: func(
-			_ *cobra.Command, _ []string, _ string,
-		) ([]string, cobra.ShellCompDirective) {
-			return nil, cobra.ShellCompDirectiveFilterDirs
-		},
 	}
 
-	components.AddComponentFilterOptionsToCommand(cmd, &options.ComponentFilter)
+	cmd.Flags().StringVarP(&options.Directory, "dir", "d", "",
+		"source directory containing the 'sources' file (defaults to current directory)")
+	_ = cmd.MarkFlagDirname("dir")
 
 	cmd.Flags().StringVarP(&options.OutputDir, "output-dir", "o", "",
 		"output directory for downloaded files (defaults to source directory)")
 	_ = cmd.MarkFlagDirname("output-dir")
 
-	azldev.ExportAsMCPTool(cmd)
+	cmd.Flags().StringArrayVar(&options.LookasideBaseURIs, "lookaside-uri", nil,
+		"explicit lookaside base URI(s) to use instead of the distro configuration (can be specified multiple times)")
+
+	cmd.Flags().StringVar(&options.PackageName, "package-name", "",
+		"explicit package name to use instead of deriving from the directory name")
 
 	return cmd
 }
 
 // DownloadSources downloads source files from a lookaside cache into the specified directory.
 func DownloadSources(env *azldev.Env, options *DownloadSourcesOptions) error {
-	packageName, lookasideBaseURI, err := resolveDownloadParams(env, options)
+	packageName, lookasideBaseURIs, err := resolveDownloadParams(env, options)
 	if err != nil {
 		return err
 	}
 
-	slog.Info("Downloading sources from lookaside cache",
-		"packageName", packageName,
-		"outputDir", options.OutputDir,
-	)
+	event := env.StartEvent("Downloading sources", "packageName", packageName)
+	defer event.End()
 
 	// Build retry config from environment.
 	retryCfg := retry.DefaultConfig()
@@ -123,132 +121,119 @@ func DownloadSources(env *azldev.Env, options *DownloadSourcesOptions) error {
 		return fmt.Errorf("failed to create lookaside downloader:\n%w", err)
 	}
 
-	// Determine where to download files.
-	downloadDir := options.Directory
-	if options.OutputDir != "" {
-		downloadDir = options.OutputDir
-	}
-
-	// If downloading to a different directory, copy the sources file there.
-	if downloadDir != options.Directory {
-		srcPath := filepath.Join(options.Directory, "sources")
-		dstPath := filepath.Join(downloadDir, "sources")
-
-		if err := fileutils.MkdirAll(env.FS(), downloadDir); err != nil {
-			return fmt.Errorf("failed to create output directory %#q:\n%w", downloadDir, err)
-		}
-
-		if err := fileutils.CopyFile(env, env.FS(), srcPath, dstPath, fileutils.CopyFileOptions{}); err != nil {
-			return fmt.Errorf("failed to copy sources file to output directory:\n%w", err)
-		}
-	}
-
-	// Download all sources listed in the sources file.
-	err = lookasideDownloader.ExtractSourcesFromRepo(
-		env, downloadDir, packageName, lookasideBaseURI, nil,
-	)
+	downloadDir, err := prepareDownloadDir(env, options)
 	if err != nil {
-		return fmt.Errorf("failed to download sources:\n%w", err)
+		return err
 	}
 
-	slog.Info("Sources downloaded successfully", "outputDir", options.OutputDir)
+	// Try each lookaside base URI until one succeeds.
+	var downloadErr error
+
+	for _, uri := range lookasideBaseURIs {
+		slog.Info("Trying lookaside base URI", "uri", uri)
+
+		downloadErr = lookasideDownloader.ExtractSourcesFromRepo(
+			env, downloadDir, packageName, uri, nil,
+		)
+		if downloadErr == nil {
+			break
+		}
+
+		slog.Warn("Failed to download sources from lookaside URI",
+			"uri", uri, "error", downloadErr)
+	}
+
+	if downloadErr != nil {
+		return fmt.Errorf("failed to download sources from any lookaside URI:\n%w", downloadErr)
+	}
+
+	slog.Info("Sources downloaded successfully", "outputDir", downloadDir)
 
 	return nil
 }
 
-// resolveDownloadParams determines the package name and lookaside URI, either from
-// a specified component or by reading the .spec file in the directory.
+// prepareDownloadDir resolves the download directory, verifies the 'sources' file exists,
+// and copies it to the output directory if needed.
+func prepareDownloadDir(env *azldev.Env, options *DownloadSourcesOptions) (string, error) {
+	sourceDir, err := filepath.Abs(options.Directory)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve absolute path for source directory %#q:\n%w", options.Directory, err)
+	}
+
+	// Verify the 'sources' file exists before attempting downloads.
+	sourcesFilePath := filepath.Join(sourceDir, "sources")
+
+	sourcesExists, err := fileutils.Exists(env.FS(), sourcesFilePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to check for sources file at %#q:\n%w", sourcesFilePath, err)
+	}
+
+	if !sourcesExists {
+		return "", fmt.Errorf("no 'sources' file found in %#q", sourceDir)
+	}
+
+	downloadDir := sourceDir
+
+	if options.OutputDir != "" {
+		downloadDir, err = filepath.Abs(options.OutputDir)
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve absolute path for output directory %#q:\n%w", options.OutputDir, err)
+		}
+	}
+
+	// If downloading to a different directory, copy the 'sources' file there.
+	if downloadDir != sourceDir {
+		dstPath := filepath.Join(downloadDir, "sources")
+
+		if err := fileutils.MkdirAll(env.FS(), downloadDir); err != nil {
+			return "", fmt.Errorf("failed to create output directory %#q:\n%w", downloadDir, err)
+		}
+
+		if err := fileutils.CopyFile(env, env.FS(), sourcesFilePath, dstPath, fileutils.CopyFileOptions{}); err != nil {
+			return "", fmt.Errorf("failed to copy sources file to output directory:\n%w", err)
+		}
+	}
+
+	return downloadDir, nil
+}
+
+// resolveDownloadParams determines the package name and lookaside URIs.
 func resolveDownloadParams(
 	env *azldev.Env, options *DownloadSourcesOptions,
-) (packageName string, lookasideBaseURI string, err error) {
-	if !options.ComponentFilter.HasNoCriteria() {
-		return resolveFromComponent(env, options)
+) (packageName string, lookasideBaseURIs []string, err error) {
+	packageName, err = resolvePackageName(options)
+	if err != nil {
+		return "", nil, err
 	}
 
-	return resolveFromSpecFile(env, options.Directory)
+	if len(options.LookasideBaseURIs) > 0 {
+		return packageName, options.LookasideBaseURIs, nil
+	}
+
+	lookasideBaseURI, err := resolveLookasideURI(env)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return packageName, []string{lookasideBaseURI}, nil
 }
 
-// resolveFromComponent resolves the package name and lookaside URI from a component's config.
-func resolveFromComponent(
-	env *azldev.Env, options *DownloadSourcesOptions,
-) (packageName string, lookasideBaseURI string, err error) {
-	resolver := components.NewResolver(env)
+// resolvePackageName determines the package name from the --package-name flag or directory name.
+func resolvePackageName(options *DownloadSourcesOptions) (string, error) {
+	if options.PackageName != "" {
+		return options.PackageName, nil
+	}
 
-	comps, err := resolver.FindComponents(&options.ComponentFilter)
+	absDir, err := filepath.Abs(options.Directory)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to resolve components:\n%w", err)
+		return "", fmt.Errorf("failed to resolve absolute path for %#q:\n%w", options.Directory, err)
 	}
 
-	if comps.Len() == 0 {
-		return "", "", errors.New("no components were selected; " +
-			"please use command-line options to indicate which component to use")
-	}
+	packageName := filepath.Base(absDir)
 
-	if comps.Len() != 1 {
-		return "", "", fmt.Errorf("expected exactly one component, got %d", comps.Len())
-	}
+	slog.Debug("Derived package name from directory name", "name", packageName, "dir", options.Directory)
 
-	component := comps.Components()[0]
-
-	packageName = component.GetName()
-	if upstreamName := component.GetConfig().Spec.UpstreamName; upstreamName != "" {
-		packageName = upstreamName
-	}
-
-	distro, err := sourceproviders.ResolveDistro(env, component)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to resolve distro for component %#q:\n%w", component.GetName(), err)
-	}
-
-	lookasideBaseURI = distro.Definition.LookasideBaseURI
-	if lookasideBaseURI == "" {
-		return "", "", fmt.Errorf("no lookaside base URI configured for distro %#q", distro.Ref.Name)
-	}
-
-	return packageName, lookasideBaseURI, nil
-}
-
-// resolveFromSpecFile derives the package name from a .spec file in the directory
-// and uses the project's default distro for the lookaside URI.
-func resolveFromSpecFile(
-	env *azldev.Env, directory string,
-) (packageName string, lookasideBaseURI string, err error) {
-	dirExists, err := fileutils.DirExists(env.FS(), directory)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to check directory %#q:\n%w", directory, err)
-	}
-
-	if !dirExists {
-		return "", "", fmt.Errorf("directory %#q does not exist", directory)
-	}
-
-	specPattern := filepath.Join(directory, "*"+specFileExtension)
-
-	specFiles, err := fileutils.Glob(env.FS(), specPattern, doublestar.WithFilesOnly())
-	if err != nil {
-		return "", "", fmt.Errorf("failed to search for spec files in %#q:\n%w", directory, err)
-	}
-
-	if len(specFiles) == 0 {
-		return "", "", fmt.Errorf("no .spec file found in %#q; "+
-			"specify a component with -p to provide the package name", directory)
-	}
-
-	if len(specFiles) > 1 {
-		return "", "", fmt.Errorf("multiple .spec files found in %#q; "+
-			"specify a component with -p to select one", directory)
-	}
-
-	packageName = strings.TrimSuffix(filepath.Base(specFiles[0]), specFileExtension)
-
-	slog.Debug("Derived package name from spec filename", "name", packageName, "specFile", specFiles[0])
-
-	lookasideBaseURI, err = resolveLookasideURI(env)
-	if err != nil {
-		return "", "", err
-	}
-
-	return packageName, lookasideBaseURI, nil
+	return packageName, nil
 }
 
 // resolveLookasideURI finds the lookaside base URI by checking the default distro first,
@@ -268,7 +253,7 @@ func resolveLookasideURI(env *azldev.Env) (string, error) {
 	upstreamRef := distroVersionDef.DefaultComponentConfig.Spec.UpstreamDistro
 	if upstreamRef.Name == "" {
 		return "", errors.New("no lookaside base URI configured for the default distro, " +
-			"and no upstream distro reference found; specify a component with -p")
+			"and no upstream distro reference found; use --lookaside-uri to specify one")
 	}
 
 	upstreamDef, _, err := env.ResolveDistroRef(upstreamRef)

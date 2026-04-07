@@ -10,18 +10,17 @@ lives), or use -C to point to one.
   [1;3mazldev[0m [command]
 
 Primary commands:
-  [1;36mcomponent[0m         Manage components
-  [1;36mconfig[0m            Manage tool configuration
-  [1;36mdocs[0m              Documentation commands
-  [1;36mdownload-sources[0m  Download source files listed in a Fedora-format sources file
-  [1;36mimage[0m             Manage Azure Linux images
-  [1;36mpackage[0m           Manage binary package configuration
-  [1;36mproject[0m           Manage Azure Linux projects
+  [1;36mcomponent[0m    Manage components
+  [1;36mconfig[0m       Manage tool configuration
+  [1;36mdocs[0m         Documentation commands
+  [1;36mimage[0m        Manage Azure Linux images
+  [1;36mpackage[0m      Manage binary package configuration
+  [1;36mproject[0m      Manage Azure Linux projects
 
 Meta commands:
-  [1;36mcompletion[0m        Generate the autocompletion script for the specified shell
-  [1;36mhelp[0m              Help about any command
-  [1;36mversion[0m           Print the CLI version
+  [1;36mcompletion[0m   Generate the autocompletion script for the specified shell
+  [1;36mhelp[0m         Help about any command
+  [1;36mversion[0m      Print the CLI version
 
 [1;4;92;4mF[0m[1;4;92;4ml[0m[1;4;92;4ma[0m[1;4;92;4mg[0m[1;4;92;4ms[0m[1;4;92;4m:[0m
   [1;36m-y,[0m [1;36m--accept-all[0m                accept all prompts

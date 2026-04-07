@@ -13,6 +13,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -22,83 +23,83 @@ func TestOnAppInit(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	app := azldev.NewApp(opctx_test.NewMockFileSystemFactory(ctrl), opctx_test.NewMockOSEnvFactory(ctrl))
 
-	downloadsources.OnAppInit(app)
+	parentCmd := &cobra.Command{Use: "test-parent"}
+	downloadsources.OnAppInit(app, parentCmd)
 
-	topLevelCommandNames, err := app.CommandNames()
-	require.NoError(t, err)
-	assert.Contains(t, topLevelCommandNames, "download-sources [directory]")
+	var found bool
+
+	for _, child := range parentCmd.Commands() {
+		if child.Name() == "download-sources" {
+			found = true
+
+			break
+		}
+	}
+
+	assert.True(t, found, "download-sources should be registered as a subcommand")
 }
 
 func TestNewDownloadSourcesCmd(t *testing.T) {
 	cmd := downloadsources.NewDownloadSourcesCmd()
 	require.NotNil(t, cmd)
-	assert.Equal(t, "download-sources [directory]", cmd.Use)
+	assert.Equal(t, "download-sources", cmd.Use)
 
 	outputDirFlag := cmd.Flags().Lookup("output-dir")
 	require.NotNil(t, outputDirFlag, "--output-dir flag should be registered")
 	assert.Equal(t, "o", outputDirFlag.Shorthand)
 	assert.Empty(t, outputDirFlag.DefValue)
 
-	componentFlag := cmd.Flags().Lookup("component")
-	require.NotNil(t, componentFlag, "--component flag should be registered")
+	lookasideFlag := cmd.Flags().Lookup("lookaside-uri")
+	require.NotNil(t, lookasideFlag, "--lookaside-uri flag should be registered")
+
+	packageNameFlag := cmd.Flags().Lookup("package-name")
+	require.NotNil(t, packageNameFlag, "--package-name flag should be registered")
 }
 
-func TestResolveFromSpecFile_SingleSpec(t *testing.T) {
+func TestResolveFromDirectory_DerivesPackageName(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
 
-	// Create a directory with a spec file and sources file.
-	specDir := "/project/testpkg"
-	require.NoError(t, fileutils.MkdirAll(testEnv.TestFS, specDir))
-	require.NoError(t, fileutils.WriteFile(
-		testEnv.TestFS, specDir+"/curl.spec", []byte("Name: curl\n"), fileperms.PrivateFile))
-	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, specDir+"/sources", []byte(""), fileperms.PrivateFile))
+	// Create a directory named after the package with a sources file.
+	pkgDir := "/project/curl"
+	require.NoError(t, fileutils.MkdirAll(testEnv.TestFS, pkgDir))
+	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, pkgDir+"/sources", []byte(""), fileperms.PrivateFile))
 
 	options := &downloadsources.DownloadSourcesOptions{
-		Directory: specDir,
+		Directory: pkgDir,
 	}
 
-	// This will fail at the download step (no real HTTP), but we can verify
-	// it gets past parameter resolution by checking the error message.
+	// With a valid directory, valid distro config, and an empty sources file,
+	// the command should succeed and derive the package name from the directory.
 	err := downloadsources.DownloadSources(testEnv.Env, options)
-	// Should not fail with "no .spec file" or "no lookaside" errors.
-	// It should fail at the download stage since there are no real sources to download.
-	// The absence of a sources-related resolution error confirms resolveFromSpecFile worked.
-	if err != nil {
-		assert.NotContains(t, err.Error(), "no .spec file found")
-		assert.NotContains(t, err.Error(), "no lookaside base URI")
-	}
+	require.NoError(t, err)
 }
 
-func TestResolveFromSpecFile_NoSpec(t *testing.T) {
+func TestResolveFromDirectory_NonexistentDir(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
 
-	specDir := "/project/empty"
-	require.NoError(t, fileutils.MkdirAll(testEnv.TestFS, specDir))
-
 	options := &downloadsources.DownloadSourcesOptions{
-		Directory: specDir,
+		Directory: "/project/nonexistent",
 	}
 
 	err := downloadsources.DownloadSources(testEnv.Env, options)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no .spec file found")
+	assert.Contains(t, err.Error(), "no 'sources' file found")
 }
 
-func TestResolveFromSpecFile_MultipleSpecs(t *testing.T) {
+func TestDownloadSources_NoSourcesFile(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
 
-	specDir := "/project/multi"
-	require.NoError(t, fileutils.MkdirAll(testEnv.TestFS, specDir))
-	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, specDir+"/a.spec", []byte(""), fileperms.PrivateFile))
-	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, specDir+"/b.spec", []byte(""), fileperms.PrivateFile))
+	// Create a directory without a 'sources' file.
+	pkgDir := "/project/curl"
+	require.NoError(t, fileutils.MkdirAll(testEnv.TestFS, pkgDir))
 
 	options := &downloadsources.DownloadSourcesOptions{
-		Directory: specDir,
+		Directory: pkgDir,
 	}
 
 	err := downloadsources.DownloadSources(testEnv.Env, options)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "multiple .spec files found")
+	assert.Contains(t, err.Error(), "no 'sources' file found")
 }
 
 func TestResolveLookasideURI_FollowsUpstreamDistro(t *testing.T) {
@@ -129,17 +130,14 @@ func TestResolveLookasideURI_FollowsUpstreamDistro(t *testing.T) {
 
 	specDir := "/project/testpkg"
 	require.NoError(t, fileutils.MkdirAll(testEnv.TestFS, specDir))
-	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, specDir+"/mypkg.spec", []byte(""), fileperms.PrivateFile))
 	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, specDir+"/sources", []byte(""), fileperms.PrivateFile))
 
 	options := &downloadsources.DownloadSourcesOptions{
 		Directory: specDir,
 	}
 
+	// With the upstream distro providing the lookaside URI and an empty sources file,
+	// the command should succeed.
 	err := downloadsources.DownloadSources(testEnv.Env, options)
-	// Should not fail with lookaside resolution errors.
-	if err != nil {
-		assert.NotContains(t, err.Error(), "no lookaside base URI")
-		assert.NotContains(t, err.Error(), "no upstream distro reference found")
-	}
+	require.NoError(t, err)
 }

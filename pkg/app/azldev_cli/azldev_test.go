@@ -26,7 +26,6 @@ func TestInstantiateApp(t *testing.T) {
 				"component",
 				"config",
 				"docs",
-				"download-sources [directory]",
 				"image",
 				"package",
 				"project",
