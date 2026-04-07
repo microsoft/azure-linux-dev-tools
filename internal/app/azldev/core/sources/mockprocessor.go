@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
@@ -28,20 +29,18 @@ var renderProcessScript []byte
 // first use and supports batch processing of multiple components in a single
 // mock invocation.
 type MockProcessor struct {
-	mu             sync.Mutex
-	runner         *mock.Runner
-	initialized    bool
-	initErr        error
-	ctx            opctx.Ctx
-	mockConfigPath string
+	mu          sync.Mutex
+	runner      *mock.Runner
+	initialized bool
+	initErr     error
 }
 
 // NewMockProcessor creates a new processor that will lazily initialize
-// a mock chroot using the given config path.
+// a mock chroot using the given config path. The runner is created eagerly
+// but the chroot is only initialized on first use.
 func NewMockProcessor(ctx opctx.Ctx, mockConfigPath string) *MockProcessor {
 	return &MockProcessor{
-		ctx:            ctx,
-		mockConfigPath: mockConfigPath,
+		runner: mock.NewRunner(ctx, mockConfigPath),
 	}
 }
 
@@ -59,6 +58,52 @@ type ComponentMockResult struct {
 	Error     error    // Non-nil if rpmautospec or spectool failed for this component
 }
 
+// validateInputs validates all component inputs before batch processing.
+// Rejects empty names, path traversal, absolute paths, non-basename spec filenames,
+// and duplicate component names.
+func validateInputs(inputs []ComponentInput) error {
+	seen := make(map[string]bool, len(inputs))
+
+	for _, input := range inputs {
+		if err := validateComponentInput(input); err != nil {
+			return err
+		}
+
+		if seen[input.Name] {
+			return fmt.Errorf("duplicate component name %#q", input.Name)
+		}
+
+		seen[input.Name] = true
+	}
+
+	return nil
+}
+
+// validateComponentInput rejects component inputs that could cause path traversal
+// or other safety issues when used to construct paths inside the mock chroot.
+func validateComponentInput(input ComponentInput) error {
+	name := input.Name
+	if name == "" || name == "." ||
+		strings.Contains(name, "/") || strings.Contains(name, "\\") ||
+		strings.Contains(name, "..") || strings.ContainsRune(name, 0) ||
+		filepath.IsAbs(name) {
+		return fmt.Errorf(
+			"invalid component name %#q: must be a simple name without path separators", name)
+	}
+
+	if input.SpecFilename == "" {
+		return fmt.Errorf("empty spec filename for component %#q", name)
+	}
+
+	if input.SpecFilename != filepath.Base(input.SpecFilename) {
+		return fmt.Errorf(
+			"spec filename %#q for component %#q contains path separators; expected a basename",
+			input.SpecFilename, name)
+	}
+
+	return nil
+}
+
 // initOnce lazily initializes the mock chroot.
 func (p *MockProcessor) initOnce(ctx context.Context) error {
 	if p.initialized {
@@ -67,7 +112,6 @@ func (p *MockProcessor) initOnce(ctx context.Context) error {
 
 	slog.Info("Initializing mock chroot for rendering")
 
-	p.runner = mock.NewRunner(p.ctx, p.mockConfigPath)
 	p.runner.EnableNetwork()
 
 	if err := p.runner.InitRoot(ctx); err != nil {
@@ -116,6 +160,10 @@ func (p *MockProcessor) BatchProcess(
 
 	if len(inputs) == 0 {
 		return nil, nil
+	}
+
+	if err := validateInputs(inputs); err != nil {
+		return nil, err
 	}
 
 	slog.Info("Batch processing components in mock chroot", "count", len(inputs))

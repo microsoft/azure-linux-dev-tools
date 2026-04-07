@@ -97,3 +97,47 @@ func TestParseBatchJSON_InvalidJSON(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "parsing batch results JSON")
 }
+
+func TestValidateInputs(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		inputs  []ComponentInput
+		wantErr bool
+		errMsg  string
+	}{
+		{"valid single", []ComponentInput{{Name: "curl", SpecFilename: "curl.spec"}}, false, ""},
+		{"valid multiple", []ComponentInput{
+			{Name: "curl", SpecFilename: "curl.spec"},
+			{Name: "wget", SpecFilename: "wget.spec"},
+		}, false, ""},
+		{"empty name", []ComponentInput{{Name: "", SpecFilename: "a.spec"}}, true, "invalid component name"},
+		{"dot name", []ComponentInput{{Name: ".", SpecFilename: "a.spec"}}, true, "invalid component name"},
+		{"slash in name", []ComponentInput{{Name: "foo/bar", SpecFilename: "a.spec"}}, true, "invalid component name"},
+		{"backslash in name", []ComponentInput{{Name: "foo\\bar", SpecFilename: "a.spec"}}, true, "invalid component name"},
+		{"dotdot in name", []ComponentInput{{Name: "..", SpecFilename: "a.spec"}}, true, "invalid component name"},
+		{"absolute name", []ComponentInput{{Name: "/tmp/evil", SpecFilename: "a.spec"}}, true, "invalid component name"},
+		{"null in name", []ComponentInput{{Name: "has\x00null", SpecFilename: "a.spec"}}, true, "invalid component name"},
+		{"empty spec", []ComponentInput{{Name: "curl", SpecFilename: ""}}, true, "empty spec filename"},
+		{"spec with path", []ComponentInput{{Name: "curl", SpecFilename: "sub/curl.spec"}}, true, "contains path separators"},
+		{"duplicate names", []ComponentInput{
+			{Name: "curl", SpecFilename: "curl.spec"},
+			{Name: "curl", SpecFilename: "curl.spec"},
+		}, true, "duplicate component name"},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := validateInputs(testCase.inputs)
+			if testCase.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), testCase.errMsg)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
