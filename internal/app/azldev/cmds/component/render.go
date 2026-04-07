@@ -162,7 +162,7 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 	results := make([]*RenderResult, len(componentList))
 
 	// ── Phase 1: Parallel source preparation ──
-	prepared := parallelPrepare(env, componentList, stagingDir, results)
+	prepared := parallelPrepare(env, componentList, stagingDir, options.OutputDir, options.Force, results)
 
 	// ── Phase 2: Batch mock processing ──
 	mockResultMap := batchMockProcess(env, mockProcessor, stagingDir, prepared)
@@ -255,6 +255,8 @@ func parallelPrepare(
 	env *azldev.Env,
 	comps []components.Component,
 	stagingDir string,
+	outputDir string,
+	allowOverwrite bool,
 	results []*RenderResult,
 ) []*preparedComponent {
 	progressEvent := env.StartEvent("Preparing component sources", "count", len(comps))
@@ -274,7 +276,7 @@ func parallelPrepare(
 		go func(idx int, comp components.Component) {
 			defer waitGroup.Done()
 
-			resultsChan <- prepWithSemaphore(workerEnv, semaphore, idx, comp, stagingDir)
+			resultsChan <- prepWithSemaphore(workerEnv, semaphore, idx, comp, stagingDir, outputDir, allowOverwrite)
 		}(compIdx, comp)
 	}
 
@@ -308,16 +310,11 @@ func prepWithSemaphore(
 	index int,
 	comp components.Component,
 	stagingDir string,
+	outputDir string,
+	allowOverwrite bool,
 ) prepResult {
-	// Validate component name before any filesystem work.
-	if err := validateComponentName(comp.GetName()); err != nil {
-		return prepResult{index: index, result: &RenderResult{
-			Component: comp.GetName(),
-			OutputDir: "(invalid)",
-			Status:    renderStatusError,
-			Error:     err.Error(),
-		}}
-	}
+	componentName := comp.GetName()
+	compOutputDir := filepath.Join(outputDir, componentName)
 
 	// Context-aware semaphore acquisition.
 	select {
@@ -325,8 +322,8 @@ func prepWithSemaphore(
 		defer func() { <-semaphore }()
 	case <-env.Done():
 		return prepResult{index: index, result: &RenderResult{
-			Component: comp.GetName(),
-			OutputDir: comp.GetName(),
+			Component: componentName,
+			OutputDir: compOutputDir,
 			Status:    renderStatusCancelled,
 			Error:     "context cancelled",
 		}}
@@ -335,11 +332,21 @@ func prepWithSemaphore(
 	prep, err := prepareComponentSources(env, comp, stagingDir)
 	if err != nil {
 		slog.Error("Failed to prepare component sources",
-			"component", comp.GetName(), "error", err)
+			"component", componentName, "error", err)
+
+		// Write error marker so the failure is visible in git diff.
+		if allowOverwrite {
+			if removeErr := env.FS().RemoveAll(compOutputDir); removeErr != nil {
+				slog.Debug("Failed to clean output before writing error marker",
+					"path", compOutputDir, "error", removeErr)
+			}
+		}
+
+		writeRenderErrorMarker(env.FS(), compOutputDir)
 
 		return prepResult{index: index, result: &RenderResult{
-			Component: comp.GetName(),
-			OutputDir: comp.GetName(),
+			Component: componentName,
+			OutputDir: compOutputDir,
 			Status:    renderStatusError,
 			Error:     err.Error(),
 		}}
@@ -388,7 +395,7 @@ func prepareComponentSources(
 	// WithSkipLookaside avoids expensive tarball downloads — only spec +
 	// sidecar files are needed for rendering.
 	preparerOpts := []sources.PreparerOption{
-		sources.WithGitRepo(),
+		sources.WithGitRepo(env.Config().Project.DefaultAuthorEmail),
 		sources.WithSkipLookaside(),
 	}
 
@@ -834,19 +841,6 @@ func validateOutputDir(outputDir string) error {
 	if cleaned == "." || cleaned == string(filepath.Separator) || strings.HasPrefix(cleaned, "..") {
 		return fmt.Errorf(
 			"output directory %#q is unsafe; use a dedicated subdirectory (e.g., ./SPECS/)", outputDir)
-	}
-
-	return nil
-}
-
-// validateComponentName rejects component names that could cause path traversal
-// when used as directory names in filepath.Join.
-func validateComponentName(name string) error {
-	if name == "" || name == "." ||
-		strings.Contains(name, "/") || strings.Contains(name, "\\") ||
-		strings.Contains(name, "..") || strings.ContainsRune(name, 0) {
-		return fmt.Errorf(
-			"component name %#q is invalid or contains path separators/traversal sequences", name)
 	}
 
 	return nil

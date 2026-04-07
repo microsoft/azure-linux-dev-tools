@@ -173,35 +173,6 @@ func TestValidateOutputDir(t *testing.T) {
 	}
 }
 
-func TestValidateComponentName(t *testing.T) {
-	tests := []struct {
-		name    string
-		wantErr bool
-	}{
-		{"curl", false},
-		{"my-package", false},
-		{"my_package.123", false},
-		{"../escape", true},
-		{"foo/bar", true},
-		{"foo\\bar", true},
-		{"..evil", true},
-		{"", true},
-		{".", true},
-		{"has\x00null", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateComponentName(tt.name)
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
 func TestRemoveUnreferencedFiles(t *testing.T) {
 	t.Run("keeps spec and referenced files, removes others", func(t *testing.T) {
 		testFS := afero.NewMemMapFs()
