@@ -49,7 +49,7 @@ type ConfigFile struct {
 
 	// Definitions of package groups. Groups allow shared configuration
 	// to be applied to sets of binary packages.
-	PackageGroups map[string]PackageGroupConfig `toml:"package-groups,omitempty" jsonschema:"title=Package groups,description=Definitions of package groups for shared binary package configuration"`
+	PackageGroups map[string]PackageGroupConfig `toml:"package-groups,omitempty" validate:"dive" jsonschema:"title=Package groups,description=Definitions of package groups for shared binary package configuration"`
 
 	// Internal fields used to track the origin of the config file; `dir` is the directory
 	// that the config file's relative paths are based from.
@@ -75,13 +75,6 @@ func (f ConfigFile) Validate() error {
 		return fmt.Errorf("config file error:\n%w", err)
 	}
 
-	// Validate the project-wide default package config.
-	if f.DefaultPackageConfig != nil {
-		if err := f.DefaultPackageConfig.Validate(); err != nil {
-			return fmt.Errorf("invalid default-package-config:\n%w", err)
-		}
-	}
-
 	// Validate package group configurations.
 	for groupName, group := range f.PackageGroups {
 		if err := group.Validate(); err != nil {
@@ -102,17 +95,6 @@ func (f ConfigFile) Validate() error {
 		err := component.Build.Validate()
 		if err != nil {
 			return fmt.Errorf("invalid build config for component %#q:\n%w", componentName, err)
-		}
-
-		// Validate component-level package config (default and per-package overrides).
-		if err := component.DefaultPackageConfig.Validate(); err != nil {
-			return fmt.Errorf("invalid default-package-config for component %#q:\n%w", componentName, err)
-		}
-
-		for pkgName, pkgConfig := range component.Packages {
-			if err := pkgConfig.Validate(); err != nil {
-				return fmt.Errorf("invalid package config for %#q in component %#q:\n%w", pkgName, componentName, err)
-			}
 		}
 	}
 

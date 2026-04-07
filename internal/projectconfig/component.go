@@ -135,7 +135,7 @@ type ComponentConfig struct {
 
 	// Per-package configuration overrides, keyed by exact binary package name.
 	// Takes precedence over DefaultPackageConfig and package-group defaults.
-	Packages map[string]PackageConfig `toml:"packages,omitempty" json:"packages,omitempty" table:"-" jsonschema:"title=Package overrides,description=Per-package configuration overrides keyed by exact binary package name"`
+	Packages map[string]PackageConfig `toml:"packages,omitempty" json:"packages,omitempty" table:"-" validate:"dive" jsonschema:"title=Package overrides,description=Per-package configuration overrides keyed by exact binary package name"`
 }
 
 // Mutates the component config, updating it with overrides present in other.

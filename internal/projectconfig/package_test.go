@@ -6,6 +6,7 @@ package projectconfig_test
 import (
 	"testing"
 
+	"github.com/go-playground/validator/v10"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,7 +33,7 @@ func TestPackagePublishConfig_Validate(t *testing.T) {
 			t.Parallel()
 
 			cfg := projectconfig.PackagePublishConfig{Channel: testCase.channel}
-			assert.NoError(t, cfg.Validate())
+			assert.NoError(t, validator.New().Struct(&cfg))
 		})
 	}
 
@@ -41,12 +42,12 @@ func TestPackagePublishConfig_Validate(t *testing.T) {
 		channel     string
 		errContains string
 	}{
-		{name: "absolute path", channel: "/etc/passwd", errContains: "path separators"},
-		{name: "traversal with slash", channel: "../secret", errContains: "path separators"},
-		{name: "multi-segment path", channel: "foo/bar", errContains: "path separators"},
-		{name: "backslash separator", channel: `foo\bar`, errContains: "path separators"},
-		{name: "dot traversal", channel: "..", errContains: "not a valid path component"},
-		{name: "single dot", channel: ".", errContains: "not a valid path component"},
+		{name: "absolute path", channel: "/etc/passwd", errContains: "excludesall"},
+		{name: "traversal with slash", channel: "../secret", errContains: "excludesall"},
+		{name: "multi-segment path", channel: "foo/bar", errContains: "excludesall"},
+		{name: "backslash separator", channel: `foo\bar`, errContains: "excludesall"},
+		{name: "dot traversal", channel: "..", errContains: "'ne'"},
+		{name: "single dot", channel: ".", errContains: "'ne'"},
 	}
 
 	for _, testCase := range invalidCases {
@@ -54,7 +55,7 @@ func TestPackagePublishConfig_Validate(t *testing.T) {
 			t.Parallel()
 
 			cfg := projectconfig.PackagePublishConfig{Channel: testCase.channel}
-			err := cfg.Validate()
+			err := validator.New().Struct(&cfg)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), testCase.errContains)
 		})
@@ -67,16 +68,20 @@ func TestPackageGroupConfig_Validate_InvalidChannel(t *testing.T) {
 	t.Run("traversal channel in group default config is rejected", func(t *testing.T) {
 		t.Parallel()
 
-		group := projectconfig.PackageGroupConfig{
-			Packages: []string{"curl"},
-			DefaultPackageConfig: projectconfig.PackageConfig{
-				Publish: projectconfig.PackagePublishConfig{Channel: "../escape"},
+		file := projectconfig.ConfigFile{
+			PackageGroups: map[string]projectconfig.PackageGroupConfig{
+				"test-group": {
+					Packages: []string{"curl"},
+					DefaultPackageConfig: projectconfig.PackageConfig{
+						Publish: projectconfig.PackagePublishConfig{Channel: "../escape"},
+					},
+				},
 			},
 		}
-		err := group.Validate()
+		err := file.Validate()
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "default-package-config")
-		assert.Contains(t, err.Error(), "path separators")
+		assert.Contains(t, err.Error(), "Channel")
+		assert.Contains(t, err.Error(), "excludesall")
 	})
 }
 

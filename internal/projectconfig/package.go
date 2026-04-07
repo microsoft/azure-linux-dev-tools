@@ -6,7 +6,6 @@ package projectconfig
 import (
 	"fmt"
 	"slices"
-	"strings"
 
 	"dario.cat/mergo"
 )
@@ -18,7 +17,7 @@ type PackagePublishConfig struct {
 	// The special value "none" is a convention meaning the package should not be published;
 	// azldev records this value in build results but enforcement is left to downstream tooling.
 	// When empty, the value is inherited from the next layer in the resolution order.
-	Channel string `toml:"channel,omitempty" json:"channel,omitempty" jsonschema:"title=Channel,description=Publish channel for this package; use 'none' to signal to downstream tooling that this package should not be published"`
+	Channel string `toml:"channel,omitempty" json:"channel,omitempty" validate:"omitempty,ne=.,ne=..,excludesall=/\\" jsonschema:"title=Channel,description=Publish channel for this package; use 'none' to signal to downstream tooling that this package should not be published"`
 }
 
 // PackageConfig holds all configuration applied to a single binary package.
@@ -26,40 +25,6 @@ type PackagePublishConfig struct {
 type PackageConfig struct {
 	// Publish holds the publish settings for this package.
 	Publish PackagePublishConfig `toml:"publish,omitempty" json:"publish,omitempty" jsonschema:"title=Publish settings,description=Publishing settings for this binary package"`
-}
-
-// validateChannelName checks that a channel name is safe to use as a single filesystem
-// path component when constructing a path of the form rpmsDir/<channel>/. Empty strings
-// (indicating inheritance from a higher-priority layer) are always allowed. Names that
-// are absolute paths, path-traversal sequences, or contain path separators are rejected.
-func validateChannelName(channel string) error {
-	if channel == "" {
-		return nil
-	}
-
-	if channel == "." || channel == ".." {
-		return fmt.Errorf("channel name %#q is not a valid path component", channel)
-	}
-
-	if strings.ContainsAny(channel, "/\\") {
-		return fmt.Errorf("channel name %#q must not contain path separators or traversal sequences", channel)
-	}
-
-	return nil
-}
-
-// Validate checks that the channel name is safe to use as a filesystem path component.
-func (p *PackagePublishConfig) Validate() error {
-	return validateChannelName(p.Channel)
-}
-
-// Validate checks the publish configuration for semantic errors.
-func (p *PackageConfig) Validate() error {
-	if err := p.Publish.Validate(); err != nil {
-		return fmt.Errorf("invalid publish config:\n%w", err)
-	}
-
-	return nil
 }
 
 // MergeUpdatesFrom updates the package config with non-zero values from other.
@@ -89,8 +54,7 @@ type PackageGroupConfig struct {
 	DefaultPackageConfig PackageConfig `toml:"default-package-config,omitempty" json:"defaultPackageConfig,omitempty" jsonschema:"title=Default package config,description=Configuration inherited by all packages in this group"`
 }
 
-// Validate checks that all package names in the group are non-empty and unique within
-// the group, and that the group's default package config is valid.
+// Validate checks that all package names in the group are non-empty and unique within the group.
 func (g *PackageGroupConfig) Validate() error {
 	seen := make(map[string]struct{}, len(g.Packages))
 
@@ -104,10 +68,6 @@ func (g *PackageGroupConfig) Validate() error {
 		}
 
 		seen[pkg] = struct{}{}
-	}
-
-	if err := g.DefaultPackageConfig.Validate(); err != nil {
-		return fmt.Errorf("invalid default-package-config:\n%w", err)
 	}
 
 	return nil

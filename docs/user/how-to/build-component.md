@@ -15,7 +15,14 @@ Build a component by name:
 azldev comp build -p <component-name>
 ```
 
-Built RPMs appear in the project's output directory (configured by `output-dir` in [project config](../reference/config/project.md)).
+Built packages are placed in structured subdirectories under the project's output directory
+(configured by `output-dir` in [project config](../reference/config/project.md)):
+
+| Directory | Contents |
+|-----------|----------|
+| `out/srpms/` | Source RPMs (SRPMs) |
+| `out/rpms/` | Binary RPMs with no channel configured, or channel `none` |
+| `out/rpms/<channel>/` | Binary RPMs assigned to a named publish channel |
 
 ## Common Options
 
