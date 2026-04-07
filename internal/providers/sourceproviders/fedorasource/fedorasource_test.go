@@ -389,6 +389,15 @@ func TestBuildLookasideURL(t *testing.T) {
 			hash:          "abc123",
 			expectedError: "ambiguous substitution",
 		},
+		{
+			name:          "template without scheme is rejected",
+			template:      "example.com/$pkg/$filename/$hashtype/$hash",
+			pkg:           "my-pkg",
+			filename:      "source.tar.gz",
+			hashType:      "SHA512",
+			hash:          "abc123",
+			expectedError: "missing scheme or host",
+		},
 	}
 
 	for _, testCase := range tests {
@@ -449,6 +458,12 @@ func TestBuildDistGitURL(t *testing.T) {
 			template: "https://src.example.com/rpms/$pkg.git",
 			pkg:      "foo%zz",
 			expected: "https://src.example.com/rpms/foo%25zz.git",
+		},
+		{
+			name:          "template without scheme is rejected",
+			template:      "example.com/rpms/$pkg.git",
+			pkg:           "curl",
+			expectedError: "missing scheme or host",
 		},
 	}
 

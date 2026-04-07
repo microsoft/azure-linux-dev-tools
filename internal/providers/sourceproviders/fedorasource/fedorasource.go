@@ -340,9 +340,13 @@ func BuildLookasideURL(template, packageName, fileName, hashType, hash string) (
 	uri = strings.ReplaceAll(uri, PlaceholderHashType, url.PathEscape(strings.ToLower(hashType)))
 	uri = strings.ReplaceAll(uri, PlaceholderHash, url.PathEscape(hash))
 
-	_, err := url.Parse(uri)
+	u, err := url.Parse(uri)
 	if err != nil {
 		return "", fmt.Errorf("resulting lookaside URL is not valid:\n%w", err)
+	}
+
+	if u.Scheme == "" || u.Host == "" {
+		return "", fmt.Errorf("resulting lookaside URL %#q is missing scheme or host", uri)
 	}
 
 	return uri, nil
@@ -364,9 +368,13 @@ func BuildDistGitURL(template, packageName string) (string, error) {
 
 	uri := strings.ReplaceAll(template, PlaceholderPkg, url.PathEscape(packageName))
 
-	_, err := url.Parse(uri)
+	u, err := url.Parse(uri)
 	if err != nil {
 		return "", fmt.Errorf("resulting dist-git URL is not valid:\n%w", err)
+	}
+
+	if u.Scheme == "" || u.Host == "" {
+		return "", fmt.Errorf("resulting dist-git URL %#q is missing scheme or host", uri)
 	}
 
 	return uri, nil
