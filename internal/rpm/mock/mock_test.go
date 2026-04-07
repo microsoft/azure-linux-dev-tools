@@ -62,6 +62,7 @@ func TestRunnerDefaults(t *testing.T) {
 	assert.Empty(t, runner.BindMounts())
 	assert.False(t, runner.HasNetworkEnabled())
 	assert.False(t, runner.HasNoPreClean())
+	assert.False(t, runner.HasUnprivileged())
 	assert.Empty(t, runner.BaseDir())
 	assert.Empty(t, runner.RootDir())
 	assert.Empty(t, runner.ConfigOpts())

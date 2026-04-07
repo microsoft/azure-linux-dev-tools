@@ -3,7 +3,7 @@
 # Licensed under the MIT License.
 
 """Process RPM specs inside a mock chroot: run rpmautospec and spectool for each
-component, returning per-component results as JSON on stdout.
+component, writing per-component results to a JSON file in the staging directory.
 
 This script is embedded in the azldev Go binary and executed inside a mock chroot
 during ``azldev component render``. It avoids the need for complex inline shell
@@ -17,12 +17,14 @@ The staging directory must contain an ``inputs.json`` file listing components::
 
     [{"name": "curl", "specFilename": "curl.spec"}, ...]
 
-Output (stdout, JSON array)::
+Results are written to ``<staging_dir>/results.json``::
 
     [
       {"name": "curl", "specFiles": "Source0: curl-8.5.0.tar.xz\\nPatch0: fix.patch", "error": null},
       {"name": "broken", "specFiles": "", "error": "rpmautospec failed: ..."}
     ]
+
+Progress is reported to stderr as ``PROGRESS <completed>/<total> <name>``.
 """
 
 import json
@@ -132,7 +134,13 @@ def main() -> int:
     # Collect results in input order (as_completed returns in completion order).
     results = [completed_results[comp["name"]] for comp in inputs]
 
-    json.dump(results, sys.stdout)
+    # Write results to a file in the staging directory rather than stdout.
+    # This avoids bufio.Scanner token size limits in the Go caller, which
+    # would truncate large JSON payloads (e.g., 7k components ≈ 560KB).
+    results_path = os.path.join(staging_dir, "results.json")
+
+    with open(results_path, "w") as results_file:
+        json.dump(results, results_file)
 
     return 0
 

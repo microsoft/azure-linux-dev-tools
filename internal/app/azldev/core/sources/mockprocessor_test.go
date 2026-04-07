@@ -119,7 +119,9 @@ func TestValidateInputs(t *testing.T) {
 		{"dotdot in name", []ComponentInput{{Name: "..", SpecFilename: "a.spec"}}, true, "invalid component name"},
 		{"absolute name", []ComponentInput{{Name: "/tmp/evil", SpecFilename: "a.spec"}}, true, "invalid component name"},
 		{"null in name", []ComponentInput{{Name: "has\x00null", SpecFilename: "a.spec"}}, true, "invalid component name"},
-		{"empty spec", []ComponentInput{{Name: "curl", SpecFilename: ""}}, true, "empty spec filename"},
+		{"empty spec", []ComponentInput{{Name: "curl", SpecFilename: ""}}, true, "invalid spec filename"},
+		{"dot spec", []ComponentInput{{Name: "curl", SpecFilename: "."}}, true, "invalid spec filename"},
+		{"dotdot spec", []ComponentInput{{Name: "curl", SpecFilename: ".."}}, true, "invalid spec filename"},
 		{"spec with path", []ComponentInput{{Name: "curl", SpecFilename: "sub/curl.spec"}}, true, "contains path separators"},
 		{"duplicate names", []ComponentInput{
 			{Name: "curl", SpecFilename: "curl.spec"},

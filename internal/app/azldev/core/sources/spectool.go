@@ -42,7 +42,7 @@ func parseSpectoolOutput(stdout string) []string {
 			continue
 		}
 
-		// Each line is "SourceN: <url-or-filename>" or "PatchN: <filename>"
+		// spectool always separates tag from value with ": " (colon-space).
 		_, value, found := strings.Cut(line, ": ")
 		if !found {
 			continue

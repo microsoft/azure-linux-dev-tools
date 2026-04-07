@@ -91,8 +91,8 @@ func validateComponentInput(input ComponentInput) error {
 			"invalid component name %#q: must be a simple name without path separators", name)
 	}
 
-	if input.SpecFilename == "" {
-		return fmt.Errorf("empty spec filename for component %#q", name)
+	if input.SpecFilename == "" || input.SpecFilename == "." || input.SpecFilename == ".." {
+		return fmt.Errorf("invalid spec filename %#q for component %#q", input.SpecFilename, name)
 	}
 
 	if input.SpecFilename != filepath.Base(input.SpecFilename) {
@@ -104,7 +104,7 @@ func validateComponentInput(input ComponentInput) error {
 	return nil
 }
 
-// initOnce lazily initializes the mock chroot.
+// initOnce lazily initializes the mock chroot. Caller must hold p.mu.
 func (p *MockProcessor) initOnce(ctx context.Context) error {
 	if p.initialized {
 		return p.initErr
@@ -182,7 +182,9 @@ func (p *MockProcessor) BatchProcess(
 	// Clone the runner and add a single bind mount for the staging directory.
 	// WithUnprivileged drops to the mockbuild user for chroot commands,
 	// matching how mock builds run and avoiding root-owned files in the
-	// bind-mounted staging directory.
+	// bind-mounted staging directory. This is safe because mock defaults
+	// chrootuid to os.getuid() — the mockbuild user inside the chroot has
+	// the same UID as the host user, so bind-mounted files remain writable.
 	runner := p.runner.Clone()
 	runner.WithUnprivileged()
 
@@ -196,16 +198,6 @@ func (p *MockProcessor) BatchProcess(
 	cmd, err := runner.CmdInChroot(ctx, args, false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create batch command in mock:\n%w", err)
-	}
-
-	// Capture stdout (JSON results) and stderr (progress lines) via listeners.
-	// RunAndGetOutput cannot be used with listeners, so we use Run + listeners.
-	var stdoutLines []string
-
-	if err := cmd.SetRealTimeStdoutListener(func(_ context.Context, line string) {
-		stdoutLines = append(stdoutLines, line)
-	}); err != nil {
-		return nil, fmt.Errorf("setting stdout listener:\n%w", err)
 	}
 
 	// Set up progress reporting from the Python script's stderr output.
@@ -236,9 +228,17 @@ func (p *MockProcessor) BatchProcess(
 		return nil, fmt.Errorf("batch mock processing failed:\n%w", runErr)
 	}
 
-	stdout := strings.Join(stdoutLines, "\n")
+	// Read results from the file written by the Python script.
+	// Using a file avoids bufio.Scanner token size limits that would truncate
+	// large JSON payloads when capturing stdout (e.g., 7k components ≈ 560KB).
+	resultsPath := filepath.Join(stagingDir, "results.json")
 
-	return parseBatchJSON(stdout, inputs)
+	resultsData, readErr := fileutils.ReadFile(fs, resultsPath)
+	if readErr != nil {
+		return nil, fmt.Errorf("reading batch results from %#q:\n%w", resultsPath, readErr)
+	}
+
+	return parseBatchJSON(string(resultsData), inputs)
 }
 
 // componentInputJSON is the JSON-serializable form written to inputs.json.
@@ -315,6 +315,7 @@ func writeInputsManifest(fs opctx.FS, stagingDir string, inputs []ComponentInput
 }
 
 // Destroy cleans up the mock chroot. Should be called when rendering is complete.
+// The processor must not be reused after Destroy — create a new MockProcessor if needed.
 // Attempts cleanup even if initialization partially failed (e.g., InitRoot succeeded
 // but InstallPackages failed), since a partially initialized chroot still needs scrubbing.
 func (p *MockProcessor) Destroy(ctx context.Context) {
