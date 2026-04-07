@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -314,8 +315,12 @@ const (
 // [PlaceholderFilename], [PlaceholderHashType], and [PlaceholderHash].
 // Placeholders not present in the template are simply ignored.
 //
+// Substituted values are URL path-escaped via [url.PathEscape] so that reserved
+// characters such as /, ?, #, and % do not alter the URL structure.
+//
 // Returns an error if any of the provided values contain a placeholder string, as this
-// would cause ambiguous substitution results depending on replacement order.
+// would cause ambiguous substitution results depending on replacement order, or if the
+// resulting URL is not valid.
 func BuildLookasideURL(template, packageName, fileName, hashType, hash string) (string, error) {
 	// allPlaceholders lists all supported lookaside URI template placeholders.
 	allPlaceholders := []string{PlaceholderPkg, PlaceholderFilename, PlaceholderHashType, PlaceholderHash}
@@ -329,10 +334,39 @@ func BuildLookasideURL(template, packageName, fileName, hashType, hash string) (
 	}
 
 	uri := template
-	uri = strings.ReplaceAll(uri, PlaceholderPkg, packageName)
-	uri = strings.ReplaceAll(uri, PlaceholderFilename, fileName)
-	uri = strings.ReplaceAll(uri, PlaceholderHashType, strings.ToLower(hashType))
-	uri = strings.ReplaceAll(uri, PlaceholderHash, hash)
+	uri = strings.ReplaceAll(uri, PlaceholderPkg, url.PathEscape(packageName))
+	uri = strings.ReplaceAll(uri, PlaceholderFilename, url.PathEscape(fileName))
+	uri = strings.ReplaceAll(uri, PlaceholderHashType, url.PathEscape(strings.ToLower(hashType)))
+	uri = strings.ReplaceAll(uri, PlaceholderHash, url.PathEscape(hash))
+
+	_, err := url.Parse(uri)
+	if err != nil {
+		return "", fmt.Errorf("resulting lookaside URL is not valid:\n%w", err)
+	}
+
+	return uri, nil
+}
+
+// BuildDistGitURL constructs a dist-git repository URL by substituting the
+// [PlaceholderPkg] placeholder in the URI template with the provided package name.
+//
+// The package name is URL path-escaped via [url.PathEscape] so that reserved
+// characters such as /, ?, #, and % do not alter the URL structure.
+//
+// Returns an error if the package name contains a placeholder string, or if the
+// resulting URL is not valid.
+func BuildDistGitURL(template, packageName string) (string, error) {
+	if strings.Contains(packageName, PlaceholderPkg) {
+		return "", fmt.Errorf("package name %#q contains placeholder %s, which would cause ambiguous substitution",
+			packageName, PlaceholderPkg)
+	}
+
+	uri := strings.ReplaceAll(template, PlaceholderPkg, url.PathEscape(packageName))
+
+	_, err := url.Parse(uri)
+	if err != nil {
+		return "", fmt.Errorf("resulting dist-git URL is not valid:\n%w", err)
+	}
 
 	return uri, nil
 }

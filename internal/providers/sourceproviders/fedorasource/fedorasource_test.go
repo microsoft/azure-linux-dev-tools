@@ -326,6 +326,60 @@ func TestBuildLookasideURL(t *testing.T) {
 			hash:          "abc123",
 			expectedError: "ambiguous substitution",
 		},
+		{
+			name:     "filename with slash is path-escaped",
+			template: "https://example.com/$pkg/$filename/$hashtype/$hash",
+			pkg:      "my-pkg",
+			filename: "foo/bar",
+			hashType: "SHA512",
+			hash:     "abc123",
+			expected: "https://example.com/my-pkg/foo%2Fbar/sha512/abc123",
+		},
+		{
+			name:     "filename with question mark is path-escaped",
+			template: "https://example.com/$pkg/$filename/$hashtype/$hash",
+			pkg:      "my-pkg",
+			filename: "file?x=1",
+			hashType: "SHA512",
+			hash:     "abc123",
+			expected: "https://example.com/my-pkg/file%3Fx=1/sha512/abc123",
+		},
+		{
+			name:     "filename with hash is path-escaped",
+			template: "https://example.com/$pkg/$filename/$hashtype/$hash",
+			pkg:      "my-pkg",
+			filename: "file#frag",
+			hashType: "SHA512",
+			hash:     "abc123",
+			expected: "https://example.com/my-pkg/file%23frag/sha512/abc123",
+		},
+		{
+			name:     "filename with malformed percent is path-escaped",
+			template: "https://example.com/$pkg/$filename/$hashtype/$hash",
+			pkg:      "my-pkg",
+			filename: "file%zz",
+			hashType: "SHA512",
+			hash:     "abc123",
+			expected: "https://example.com/my-pkg/file%25zz/sha512/abc123",
+		},
+		{
+			name:     "packageName with slash is path-escaped",
+			template: "https://example.com/$pkg/$filename/$hashtype/$hash",
+			pkg:      "foo/bar",
+			filename: "source.tar.gz",
+			hashType: "SHA512",
+			hash:     "abc123",
+			expected: "https://example.com/foo%2Fbar/source.tar.gz/sha512/abc123",
+		},
+		{
+			name:     "packageName with hash is path-escaped",
+			template: "https://example.com/$pkg/$filename/$hashtype/$hash",
+			pkg:      "foo#bar",
+			filename: "source.tar.gz",
+			hashType: "SHA512",
+			hash:     "abc123",
+			expected: "https://example.com/foo%23bar/source.tar.gz/sha512/abc123",
+		},
 	}
 
 	for _, testCase := range tests {
@@ -333,6 +387,65 @@ func TestBuildLookasideURL(t *testing.T) {
 			result, err := BuildLookasideURL(
 				testCase.template, testCase.pkg, testCase.filename, testCase.hashType, testCase.hash,
 			)
+			if testCase.expectedError != "" {
+				assert.ErrorContains(t, err, testCase.expectedError)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, testCase.expected, result)
+			}
+		})
+	}
+}
+
+func TestBuildDistGitURL(t *testing.T) {
+	tests := []struct {
+		name          string
+		template      string
+		pkg           string
+		expected      string
+		expectedError string
+	}{
+		{
+			name:     "standard template",
+			template: "https://src.example.com/rpms/$pkg.git",
+			pkg:      "curl",
+			expected: "https://src.example.com/rpms/curl.git",
+		},
+		{
+			name:          "packageName containing $pkg placeholder",
+			template:      "https://src.example.com/rpms/$pkg.git",
+			pkg:           "evil-$pkg-name",
+			expectedError: "ambiguous substitution",
+		},
+		{
+			name:     "packageName with slash is path-escaped",
+			template: "https://src.example.com/rpms/$pkg.git",
+			pkg:      "foo/bar",
+			expected: "https://src.example.com/rpms/foo%2Fbar.git",
+		},
+		{
+			name:     "packageName with hash is path-escaped",
+			template: "https://src.example.com/rpms/$pkg.git",
+			pkg:      "foo#bar",
+			expected: "https://src.example.com/rpms/foo%23bar.git",
+		},
+		{
+			name:     "packageName with question mark is path-escaped",
+			template: "https://src.example.com/rpms/$pkg.git",
+			pkg:      "foo?bar",
+			expected: "https://src.example.com/rpms/foo%3Fbar.git",
+		},
+		{
+			name:     "packageName with malformed percent is path-escaped",
+			template: "https://src.example.com/rpms/$pkg.git",
+			pkg:      "foo%zz",
+			expected: "https://src.example.com/rpms/foo%25zz.git",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			result, err := BuildDistGitURL(testCase.template, testCase.pkg)
 			if testCase.expectedError != "" {
 				assert.ErrorContains(t, err, testCase.expectedError)
 			} else {
