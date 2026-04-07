@@ -155,15 +155,15 @@ func (p *MockProcessor) BatchProcess(
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if err := p.initOnce(ctx); err != nil {
-		return nil, err
-	}
-
 	if len(inputs) == 0 {
 		return nil, nil
 	}
 
 	if err := validateInputs(inputs); err != nil {
+		return nil, err
+	}
+
+	if err := p.initOnce(ctx); err != nil {
 		return nil, err
 	}
 

@@ -63,7 +63,7 @@ func parseSpectoolOutput(stdout string) []string {
 			name = cleaned
 		}
 
-		if name != "" && name != "." {
+		if name != "" && name != "." && name != "/" {
 			files = append(files, name)
 		}
 	}
