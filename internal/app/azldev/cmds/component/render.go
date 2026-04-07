@@ -172,8 +172,13 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 		options.Force)
 
 	// Clean up stale rendered directories when rendering all components.
-	// Only runs when --force is set (auto-set for configured dirs).
-	if options.ComponentFilter.IncludeAllComponents && options.Force {
+	// Requires --force (auto-set for configured dirs) to prevent accidental deletion.
+	if options.ComponentFilter.IncludeAllComponents {
+		if !options.Force {
+			return nil, errors.New(
+				"rendering all components (-a) requires --force to enable cleanup of stale output directories")
+		}
+
 		if cleanupErr := cleanupStaleRenders(env.FS(), comps, options.OutputDir); cleanupErr != nil {
 			return results, fmt.Errorf("cleaning up stale rendered output:\n%w", cleanupErr)
 		}
@@ -644,7 +649,7 @@ func copyRenderedOutput(env *azldev.Env, tempDir, baseOutputDir, componentName s
 	if exists {
 		if !allowOverwrite {
 			return fmt.Errorf(
-				"output directory %#q already exists; external output directories are not overwritten",
+				"output directory %#q already exists; use --force to overwrite",
 				componentOutputDir)
 		}
 
