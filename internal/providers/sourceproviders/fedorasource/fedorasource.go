@@ -325,7 +325,8 @@ func BuildLookasideURL(template, packageName, fileName, hashType, hash string) (
 	// allPlaceholders lists all supported lookaside URI template placeholders.
 	allPlaceholders := []string{PlaceholderPkg, PlaceholderFilename, PlaceholderHashType, PlaceholderHash}
 
-	for _, v := range []string{packageName, fileName, hashType, hash} {
+	// Check the normalized (lowercased) hashType since that is the form actually substituted.
+	for _, v := range []string{packageName, fileName, strings.ToLower(hashType), hash} {
 		for _, p := range allPlaceholders {
 			if strings.Contains(v, p) {
 				return "", fmt.Errorf("value %#q contains placeholder %s, which would cause ambiguous substitution", v, p)

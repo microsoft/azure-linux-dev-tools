@@ -380,6 +380,15 @@ func TestBuildLookasideURL(t *testing.T) {
 			hash:     "abc123",
 			expected: "https://example.com/foo%23bar/source.tar.gz/sha512/abc123",
 		},
+		{
+			name:          "hashType containing uppercase placeholder is caught after lowercasing",
+			template:      "https://example.com/$pkg/$filename/$hashtype/$hash",
+			pkg:           "my-pkg",
+			filename:      "source.tar.gz",
+			hashType:      "$PKG",
+			hash:          "abc123",
+			expectedError: "ambiguous substitution",
+		},
 	}
 
 	for _, testCase := range tests {
