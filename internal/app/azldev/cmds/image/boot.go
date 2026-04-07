@@ -423,27 +423,31 @@ func ResolveImageByName(env *azldev.Env, imageName string) (*projectconfig.Image
 		return nil, errors.New("no project configuration loaded")
 	}
 
-	if imageName == "" {
-		return nil, errors.New("image name is required")
-	}
+	var err error
 
-	imageConfig, ok := cfg.Images[imageName]
-	if !ok {
-		// List available images in the error message.
-		availableImages := lo.Keys(cfg.Images)
-		sort.Strings(availableImages)
-
-		if len(availableImages) == 0 {
-			return nil, fmt.Errorf("image %#q not found; no images defined in project configuration", imageName)
+	// If an image name was provided and exists in the configuration, then return the config.
+	if imageName != "" {
+		if imageConfig, ok := cfg.Images[imageName]; ok {
+			return &imageConfig, nil
 		}
 
-		return nil, fmt.Errorf(
-			"image %#q not found in project configuration; available images: %s",
-			imageName, strings.Join(availableImages, ", "),
-		)
+		err = fmt.Errorf("image %#q not found in project configuration", imageName)
+	} else {
+		err = errors.New("image name is required")
 	}
 
-	return &imageConfig, nil
+	// Something went wrong; list available images so we can offer options in the error message.
+	availableImages := lo.Keys(cfg.Images)
+	sort.Strings(availableImages)
+
+	if len(availableImages) == 0 {
+		return nil, fmt.Errorf("%w; no images defined in project configuration", err)
+	}
+
+	return nil, fmt.Errorf(
+		"%w; available images: %s",
+		err, strings.Join(availableImages, ", "),
+	)
 }
 
 func checkBootPrerequisites(env *azldev.Env, arch string) error {
