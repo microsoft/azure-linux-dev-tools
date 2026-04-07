@@ -11,6 +11,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx/opctx_test"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource/fedorasource_test"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/spf13/cobra"
@@ -58,18 +59,22 @@ func TestNewDownloadSourcesCmd(t *testing.T) {
 
 func TestResolveFromDirectory_DerivesPackageName(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
+	ctrl := gomock.NewController(t)
 
-	// Create a directory named after the package with a sources file.
 	pkgDir := "/project/curl"
 	require.NoError(t, fileutils.MkdirAll(testEnv.TestFS, pkgDir))
 	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, pkgDir+"/sources", []byte(""), fileperms.PrivateFile))
 
+	mockDownloader := fedorasource_test.NewMockFedoraSourceDownloader(ctrl)
+	mockDownloader.EXPECT().
+		ExtractSourcesFromRepo(gomock.Any(), pkgDir, "curl", gomock.Any(), gomock.Any()).
+		Return(nil)
+
 	options := &downloadsources.DownloadSourcesOptions{
-		Directory: pkgDir,
+		Directory:           pkgDir,
+		LookasideDownloader: mockDownloader,
 	}
 
-	// With a valid directory, valid distro config, and an empty sources file,
-	// the command should succeed and derive the package name from the directory.
 	err := downloadsources.DownloadSources(testEnv.Env, options)
 	require.NoError(t, err)
 }
@@ -104,6 +109,7 @@ func TestDownloadSources_NoSourcesFile(t *testing.T) {
 
 func TestResolveLookasideURI_FollowsUpstreamDistro(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
+	ctrl := gomock.NewController(t)
 
 	// Reconfigure: default distro has NO lookaside URI, but points to an upstream that does.
 	testEnv.Config.Distros["test-distro"] = projectconfig.DistroDefinition{
@@ -121,23 +127,29 @@ func TestResolveLookasideURI_FollowsUpstreamDistro(t *testing.T) {
 		},
 	}
 
+	expectedURI := "https://upstream.example.com/lookaside/$pkg/$filename/$hashtype/$hash/$filename"
+
 	testEnv.Config.Distros["upstream-distro"] = projectconfig.DistroDefinition{
-		LookasideBaseURI: "https://upstream.example.com/lookaside/$pkg/$filename/$hashtype/$hash/$filename",
+		LookasideBaseURI: expectedURI,
 		Versions: map[string]projectconfig.DistroVersionDefinition{
 			"42": {},
 		},
 	}
 
-	specDir := "/project/testpkg"
-	require.NoError(t, fileutils.MkdirAll(testEnv.TestFS, specDir))
-	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, specDir+"/sources", []byte(""), fileperms.PrivateFile))
+	pkgDir := "/project/testpkg"
+	require.NoError(t, fileutils.MkdirAll(testEnv.TestFS, pkgDir))
+	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, pkgDir+"/sources", []byte(""), fileperms.PrivateFile))
+
+	mockDownloader := fedorasource_test.NewMockFedoraSourceDownloader(ctrl)
+	mockDownloader.EXPECT().
+		ExtractSourcesFromRepo(gomock.Any(), pkgDir, "testpkg", expectedURI, gomock.Any()).
+		Return(nil)
 
 	options := &downloadsources.DownloadSourcesOptions{
-		Directory: specDir,
+		Directory:           pkgDir,
+		LookasideDownloader: mockDownloader,
 	}
 
-	// With the upstream distro providing the lookaside URI and an empty sources file,
-	// the command should succeed.
 	err := downloadsources.DownloadSources(testEnv.Env, options)
 	require.NoError(t, err)
 }

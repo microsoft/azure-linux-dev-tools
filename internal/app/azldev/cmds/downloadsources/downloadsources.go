@@ -19,10 +19,11 @@ import (
 
 // DownloadSourcesOptions holds the options for the download-sources command.
 type DownloadSourcesOptions struct {
-	Directory         string
-	OutputDir         string
-	LookasideBaseURIs []string
-	PackageName       string
+	Directory           string
+	OutputDir           string
+	LookasideBaseURIs   []string
+	PackageName         string
+	LookasideDownloader fedorasource.FedoraSourceDownloader
 }
 
 // OnAppInit registers the download-sources command as a subcommand of the given parent.
@@ -102,28 +103,30 @@ func DownloadSources(env *azldev.Env, options *DownloadSourcesOptions) error {
 	event := env.StartEvent("Downloading sources", "packageName", packageName)
 	defer event.End()
 
-	// Build retry config from environment.
-	retryCfg := retry.DefaultConfig()
-	if env.NetworkRetries() > 0 {
-		retryCfg.MaxAttempts = env.NetworkRetries()
+	lookasideDownloader := options.LookasideDownloader
+	if lookasideDownloader == nil {
+		lookasideDownloader, err = createLookasideDownloader(env)
+		if err != nil {
+			return err
+		}
 	}
 
-	// Create the HTTP downloader and lookaside source downloader.
-	httpDownloader, err := downloader.NewHTTPDownloader(env, env, env.FS())
-	if err != nil {
-		return fmt.Errorf("failed to create HTTP downloader:\n%w", err)
+	// Build extract options.
+	var extractOpts []fedorasource.ExtractOption
+	if options.OutputDir != "" {
+		extractOpts = append(extractOpts, fedorasource.WithOutputDir(options.OutputDir))
 	}
 
-	lookasideDownloader, err := fedorasource.NewFedoraRepoExtractorImpl(
-		env, env.FS(), httpDownloader, retryCfg,
-	)
+	// Verify the 'sources' file exists before attempting downloads.
+	sourcesPath := filepath.Join(options.Directory, "sources")
+
+	sourcesExists, err := fileutils.Exists(env.FS(), sourcesPath)
 	if err != nil {
-		return fmt.Errorf("failed to create lookaside downloader:\n%w", err)
+		return fmt.Errorf("failed to check for sources file at %#q:\n%w", sourcesPath, err)
 	}
 
-	downloadDir, err := prepareDownloadDir(env, options)
-	if err != nil {
-		return err
+	if !sourcesExists {
+		return fmt.Errorf("no 'sources' file found in %#q", options.Directory)
 	}
 
 	// Try each lookaside base URI until one succeeds.
@@ -133,7 +136,7 @@ func DownloadSources(env *azldev.Env, options *DownloadSourcesOptions) error {
 		slog.Info("Trying lookaside base URI", "uri", uri)
 
 		downloadErr = lookasideDownloader.ExtractSourcesFromRepo(
-			env, downloadDir, packageName, uri, nil,
+			env, options.Directory, packageName, uri, nil, extractOpts...,
 		)
 		if downloadErr == nil {
 			break
@@ -147,54 +150,38 @@ func DownloadSources(env *azldev.Env, options *DownloadSourcesOptions) error {
 		return fmt.Errorf("failed to download sources from any lookaside URI:\n%w", downloadErr)
 	}
 
-	slog.Info("Sources downloaded successfully", "outputDir", downloadDir)
+	outputDir := options.Directory
+	if options.OutputDir != "" {
+		outputDir = options.OutputDir
+	}
+
+	absOutputDir, _ := filepath.Abs(outputDir)
+	slog.Info("Sources downloaded successfully", "outputDir", absOutputDir)
 
 	return nil
 }
 
-// prepareDownloadDir resolves the download directory, verifies the 'sources' file exists,
-// and copies it to the output directory if needed.
-func prepareDownloadDir(env *azldev.Env, options *DownloadSourcesOptions) (string, error) {
-	sourceDir, err := filepath.Abs(options.Directory)
+// createLookasideDownloader builds the default [fedorasource.FedoraSourceDownloader]
+// from the environment's network and filesystem configuration.
+func createLookasideDownloader(env *azldev.Env) (fedorasource.FedoraSourceDownloader, error) {
+	retryCfg := retry.DefaultConfig()
+	if env.NetworkRetries() > 0 {
+		retryCfg.MaxAttempts = env.NetworkRetries()
+	}
+
+	httpDownloader, err := downloader.NewHTTPDownloader(env, env, env.FS())
 	if err != nil {
-		return "", fmt.Errorf("failed to resolve absolute path for source directory %#q:\n%w", options.Directory, err)
+		return nil, fmt.Errorf("failed to create HTTP downloader:\n%w", err)
 	}
 
-	// Verify the 'sources' file exists before attempting downloads.
-	sourcesFilePath := filepath.Join(sourceDir, "sources")
-
-	sourcesExists, err := fileutils.Exists(env.FS(), sourcesFilePath)
+	lookasideDownloader, err := fedorasource.NewFedoraRepoExtractorImpl(
+		env, env.FS(), httpDownloader, retryCfg,
+	)
 	if err != nil {
-		return "", fmt.Errorf("failed to check for sources file at %#q:\n%w", sourcesFilePath, err)
+		return nil, fmt.Errorf("failed to create lookaside downloader:\n%w", err)
 	}
 
-	if !sourcesExists {
-		return "", fmt.Errorf("no 'sources' file found in %#q", sourceDir)
-	}
-
-	downloadDir := sourceDir
-
-	if options.OutputDir != "" {
-		downloadDir, err = filepath.Abs(options.OutputDir)
-		if err != nil {
-			return "", fmt.Errorf("failed to resolve absolute path for output directory %#q:\n%w", options.OutputDir, err)
-		}
-	}
-
-	// If downloading to a different directory, copy the 'sources' file there.
-	if downloadDir != sourceDir {
-		dstPath := filepath.Join(downloadDir, "sources")
-
-		if err := fileutils.MkdirAll(env.FS(), downloadDir); err != nil {
-			return "", fmt.Errorf("failed to create output directory %#q:\n%w", downloadDir, err)
-		}
-
-		if err := fileutils.CopyFile(env, env.FS(), sourcesFilePath, dstPath, fileutils.CopyFileOptions{}); err != nil {
-			return "", fmt.Errorf("failed to copy sources file to output directory:\n%w", err)
-		}
-	}
-
-	return downloadDir, nil
+	return lookasideDownloader, nil
 }
 
 // resolveDownloadParams determines the package name and lookaside URIs.

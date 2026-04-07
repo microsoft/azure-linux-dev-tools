@@ -268,6 +268,24 @@ func TestParseSourcesFile(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, sources)
 	})
+
+	t.Run("path traversal filename is rejected", func(t *testing.T) {
+		content := "SHA512 (../../etc/passwd) = abc123\n"
+
+		_, err := parseSourcesFile(content, "pkg", "https://example.com/$hashtype/$hash/$pkg/$filename")
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unsafe filename")
+	})
+
+	t.Run("absolute path filename is rejected", func(t *testing.T) {
+		content := "SHA512 (/etc/passwd) = abc123\n"
+
+		_, err := parseSourcesFile(content, "pkg", "https://example.com/$hashtype/$hash/$pkg/$filename")
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unsafe filename")
+	})
 }
 
 func TestBuildLookasideURL(t *testing.T) {

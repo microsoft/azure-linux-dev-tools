@@ -18,6 +18,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/rpmprovider/rpmprovider_test"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
+	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/rpm_test"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
@@ -291,7 +292,7 @@ func newNoOpDownloader() *noOpDownloader {
 type noOpDownloader struct{}
 
 func (d *noOpDownloader) ExtractSourcesFromRepo(
-	_ context.Context, _, _, _ string, _ []string,
+	_ context.Context, _, _, _ string, _ []string, _ ...fedorasource.ExtractOption,
 ) error {
 	return nil
 }

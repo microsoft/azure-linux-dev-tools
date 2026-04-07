@@ -17,6 +17,7 @@ import (
 	context "context"
 	reflect "reflect"
 
+	fedorasource "github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -45,15 +46,20 @@ func (m *MockFedoraSourceDownloader) EXPECT() *MockFedoraSourceDownloaderMockRec
 }
 
 // ExtractSourcesFromRepo mocks base method.
-func (m *MockFedoraSourceDownloader) ExtractSourcesFromRepo(ctx context.Context, repoDir, packageName, lookasideBaseURI string, skipFilenames []string) error {
+func (m *MockFedoraSourceDownloader) ExtractSourcesFromRepo(ctx context.Context, repoDir, packageName, lookasideBaseURI string, skipFilenames []string, opts ...fedorasource.ExtractOption) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ExtractSourcesFromRepo", ctx, repoDir, packageName, lookasideBaseURI, skipFilenames)
+	varargs := []any{ctx, repoDir, packageName, lookasideBaseURI, skipFilenames}
+	for _, a := range opts {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "ExtractSourcesFromRepo", varargs...)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // ExtractSourcesFromRepo indicates an expected call of ExtractSourcesFromRepo.
-func (mr *MockFedoraSourceDownloaderMockRecorder) ExtractSourcesFromRepo(ctx, repoDir, packageName, lookasideBaseURI, skipFilenames any) *gomock.Call {
+func (mr *MockFedoraSourceDownloaderMockRecorder) ExtractSourcesFromRepo(ctx, repoDir, packageName, lookasideBaseURI, skipFilenames any, opts ...any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExtractSourcesFromRepo", reflect.TypeOf((*MockFedoraSourceDownloader)(nil).ExtractSourcesFromRepo), ctx, repoDir, packageName, lookasideBaseURI, skipFilenames)
+	varargs := append([]any{ctx, repoDir, packageName, lookasideBaseURI, skipFilenames}, opts...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExtractSourcesFromRepo", reflect.TypeOf((*MockFedoraSourceDownloader)(nil).ExtractSourcesFromRepo), varargs...)
 }
