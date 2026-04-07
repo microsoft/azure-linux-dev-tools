@@ -5,6 +5,7 @@ package projecttest
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -25,9 +26,13 @@ type dynamicTestProject struct {
 
 	// Maps relative file path to file contents (as bytes).
 	otherFiles map[string][]byte
+
+	// initGitRepo causes [Serialize] to initialize a git repo in the project directory
+	// and commit all files. Required for commands that use synthetic history (e.g., render).
+	initGitRepo bool
 }
 
-// NewDynamicProject dynamically constructs a new test project that can later be
+// NewDynamicTestProject dynamically constructs a new test project that can later be
 // rendered to files and used in a test.
 func NewDynamicTestProject(options ...DynamicTestProjectOption) *dynamicTestProject {
 	// Start the project off with a basic configuration and an empty set of additional files.
@@ -70,6 +75,11 @@ func (p *dynamicTestProject) Serialize(t *testing.T, projectDir string) {
 		// Write out the file.
 		require.NoError(t, os.WriteFile(destFilePath, fileContent, fileperms.PublicFile))
 	}
+
+	// Initialize a git repo if requested.
+	if p.initGitRepo {
+		initProjectGitRepo(t, projectDir)
+	}
 }
 
 // AddSpec adds (or updates) the contents of a spec file to the project.
@@ -109,4 +119,52 @@ func (p *dynamicTestProject) addSpecContents(name, specContent string) {
 func (p *dynamicTestProject) addComponent(componentConfig *projectconfig.ComponentConfig) {
 	// Deep-clone the input configuration so we don't accidentally alias any internal pointers.
 	p.configFile.Components[componentConfig.Name] = deep.MustCopy(*componentConfig)
+}
+
+// AddFile adds an arbitrary file to the project at the specified relative path.
+func AddFile(relativePath, content string) DynamicTestProjectOption {
+	return func(p *dynamicTestProject) {
+		p.otherFiles[relativePath] = []byte(content)
+	}
+}
+
+// WithRenderedSpecsDir sets the rendered-specs-dir project config field.
+func WithRenderedSpecsDir(dir string) DynamicTestProjectOption {
+	return func(p *dynamicTestProject) {
+		if p.configFile.Project == nil {
+			p.configFile.Project = &projectconfig.ProjectInfo{}
+		}
+
+		p.configFile.Project.RenderedSpecsDir = dir
+	}
+}
+
+// WithGitRepo initializes the project directory as a git repository with an initial
+// commit containing all project files. Required for commands that use synthetic history
+// (e.g., [component render]).
+func WithGitRepo() DynamicTestProjectOption {
+	return func(p *dynamicTestProject) {
+		p.initGitRepo = true
+	}
+}
+
+// initProjectGitRepo initializes a git repository in the specified directory and
+// commits all files with a default commit message.
+func initProjectGitRepo(t *testing.T, dir string) {
+	t.Helper()
+
+	cmds := [][]string{
+		{"git", "init"},
+		{"git", "config", "user.email", "test@test.com"},
+		{"git", "config", "user.name", "Test User"},
+		{"git", "add", "."},
+		{"git", "commit", "-m", "Initial commit"},
+	}
+
+	for _, args := range cmds {
+		cmd := exec.CommandContext(t.Context(), args[0], args[1:]...)
+		cmd.Dir = dir
+		output, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git command %v failed: %s", args, string(output))
+	}
 }
