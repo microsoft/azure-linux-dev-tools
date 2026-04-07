@@ -287,6 +287,7 @@ func parseSourcesFile(content string, packageName string, lookasideBaseURI strin
 // (e.g., "abc123...  file.tar.gz").
 func ParseSourcesFile(content string) ([]SourcesFileEntry, error) {
 	lines := strings.Split(content, "\n")
+
 	entries := make([]SourcesFileEntry, 0, len(lines))
 	for lineNum, line := range lines {
 		line = strings.TrimSpace(line)

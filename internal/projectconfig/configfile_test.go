@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -104,6 +105,44 @@ func TestProjectConfigFileValidation_EmptySourceFiles(t *testing.T) {
 		Components: map[string]projectconfig.ComponentConfig{
 			"test-component": {
 				SourceFiles: []projectconfig.SourceFileReference{},
+			},
+		},
+	}
+	assert.NoError(t, file.Validate())
+}
+
+func TestProjectConfigFileValidation_MD5HashTypeDisallowed(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"test-component": {
+				SourceFiles: []projectconfig.SourceFileReference{
+					{
+						Filename: "source.tar.gz",
+						HashType: fileutils.HashTypeMD5,
+						Hash:     "abc123",
+					},
+				},
+			},
+		},
+	}
+	err := file.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "MD5 hash type is not allowed")
+	assert.Contains(t, err.Error(), "source.tar.gz")
+	assert.Contains(t, err.Error(), "test-component")
+}
+
+func TestProjectConfigFileValidation_SHA256HashTypeAllowed(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"test-component": {
+				SourceFiles: []projectconfig.SourceFileReference{
+					{
+						Filename: "source.tar.gz",
+						HashType: fileutils.HashTypeSHA256,
+						Hash:     "abc123",
+					},
+				},
 			},
 		},
 	}

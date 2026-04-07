@@ -98,8 +98,7 @@ func (f ConfigFile) Validate() error {
 			return fmt.Errorf("invalid build config for component %#q:\n%w", componentName, err)
 		}
 
-		// Validate no duplicate filenames in source-files.
-		if err := validateUniqueSourceFiles(component.SourceFiles, componentName); err != nil {
+		if err := validateSourceFiles(component.SourceFiles, componentName); err != nil {
 			return err
 		}
 	}
@@ -107,8 +106,10 @@ func (f ConfigFile) Validate() error {
 	return nil
 }
 
-// validateUniqueSourceFiles checks that all 'source-files' entries have unique filenames.
-func validateUniqueSourceFiles(sourceFiles []SourceFileReference, componentName string) error {
+// validateSourceFiles checks 'source-files' configuration for a component:
+//   - All filenames must be unique.
+//   - MD5 hash type is not allowed.
+func validateSourceFiles(sourceFiles []SourceFileReference, componentName string) error {
 	seen := make(map[string]bool, len(sourceFiles))
 
 	for _, ref := range sourceFiles {
@@ -119,6 +120,12 @@ func validateUniqueSourceFiles(sourceFiles []SourceFileReference, componentName 
 		}
 
 		seen[ref.Filename] = true
+
+		if ref.HashType == fileutils.HashTypeMD5 {
+			return fmt.Errorf(
+				"MD5 hash type is not allowed. Source file %#q, component %#q; use SHA256 or SHA512 instead",
+				ref.Filename, componentName)
+		}
 	}
 
 	return nil
