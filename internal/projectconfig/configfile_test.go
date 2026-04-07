@@ -64,3 +64,48 @@ func TestProjectConfigFileValidation_InvalidBuildCheckSkip(t *testing.T) {
 	assert.Contains(t, err.Error(), "reason")
 	assert.Contains(t, err.Error(), "test-component")
 }
+
+func TestProjectConfigFileValidation_DuplicateSourceFileName(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"test-component": {
+				SourceFiles: []projectconfig.SourceFileReference{
+					{Filename: "source.tar.gz"},
+					{Filename: "another.tar.gz"},
+					{Filename: "source.tar.gz"}, // duplicate
+				},
+			},
+		},
+	}
+	err := file.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "duplicate filename")
+	assert.Contains(t, err.Error(), "source.tar.gz")
+	assert.Contains(t, err.Error(), "test-component")
+}
+
+func TestProjectConfigFileValidation_UniqueSourceFileNames(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"test-component": {
+				SourceFiles: []projectconfig.SourceFileReference{
+					{Filename: "source.tar.gz"},
+					{Filename: "another.tar.gz"},
+					{Filename: "patch.patch"},
+				},
+			},
+		},
+	}
+	assert.NoError(t, file.Validate())
+}
+
+func TestProjectConfigFileValidation_EmptySourceFiles(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"test-component": {
+				SourceFiles: []projectconfig.SourceFileReference{},
+			},
+		},
+	}
+	assert.NoError(t, file.Validate())
+}

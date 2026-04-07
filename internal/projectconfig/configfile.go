@@ -97,6 +97,28 @@ func (f ConfigFile) Validate() error {
 		if err != nil {
 			return fmt.Errorf("invalid build config for component %#q:\n%w", componentName, err)
 		}
+
+		// Validate no duplicate filenames in source-files.
+		if err := validateUniqueSourceFiles(component.SourceFiles, componentName); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateUniqueSourceFiles checks that all 'source-files' entries have unique filenames.
+func validateUniqueSourceFiles(sourceFiles []SourceFileReference, componentName string) error {
+	seen := make(map[string]bool, len(sourceFiles))
+
+	for _, ref := range sourceFiles {
+		if seen[ref.Filename] {
+			return fmt.Errorf(
+				"duplicate filename %#q in 'source-files' for component %#q; each filename must be unique",
+				ref.Filename, componentName)
+		}
+
+		seen[ref.Filename] = true
 	}
 
 	return nil
