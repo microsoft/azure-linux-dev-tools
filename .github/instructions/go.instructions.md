@@ -49,10 +49,10 @@ description: "Instructions for working on the azldev Go codebase. IMPORTANT: Alw
 
 ### External Command Execution
 
-- **NEVER** use `exec.LookPath` to check for external tools. Use `cmdFactory.CommandInSearchPath("toolname")` instead — it integrates with `testctx` for stubbing in tests.
+- **NEVER** use `exec.LookPath` to check for external tools. Use `ctx.CommandInSearchPath("toolname")` or `env.CommandInSearchPath("toolname")` instead — these delegate to the underlying command factory and integrate with `testctx` for stubbing in tests (for example via `testEnv.CmdFactory.RegisterCommandInSearchPath(...)`).
 - Use `exec.CommandContext(ctx, "toolname", args...)` with the binary name (not an absolute path) after the `CommandInSearchPath` check. PATH resolution happens at exec time.
-- Always wrap with `cmdFactory.Command(rawCmd)` and use `cmd.RunAndGetOutput(ctx)` or `cmd.Run(ctx)` for consistent event tracking and dry-run support.
-- Capture stderr separately via `rawCmd.Stderr = &stderr` (set BEFORE `cmdFactory.Command()`) for use in error messages.
+- Always wrap with `ctx.Command(rawCmd)` or `env.Command(rawCmd)` and use `cmd.RunAndGetOutput(ctx)` or `cmd.Run(ctx)` for consistent event tracking and dry-run support.
+- Capture stderr separately via `rawCmd.Stderr = &stderr` (set BEFORE `ctx.Command()` / `env.Command()`) for use in error messages.
 
 ### Return values
 
@@ -94,7 +94,7 @@ description: "Instructions for working on the azldev Go codebase. IMPORTANT: Alw
 
 ### Cmdline Returns
 
-CLI commands should return meaningful tables of results, azldev has output formatting helpers to facilitate this (e.g. reflectable.FormatValue via RunFuncWithExtraArgs etc.).
+CLI commands should return meaningful structured results. azldev has output formatting helpers to facilitate this (for example, `RunFunc*` wrappers handle formatting, so callers typically should not call `reflectable.FormatValue` directly).
 
 ## Quality Standards
 
@@ -110,5 +110,5 @@ CLI commands should return meaningful tables of results, azldev has output forma
 New component subcommands (`internal/app/azldev/cmds/component/`) require:
 - **Command wiring test** (`*_test.go`, external `package component_test`): verify `NewXxxCmd()` returns a valid command with correct `Use`, `RunE`, and expected flags/defaults.
 - **No-match test**: call `cmd.ExecuteContext(testEnv.Env)` with a nonexistent component to verify error handling.
-- **Helper unit tests** (`*_internal_test.go`, internal `package component`): test unexported helper functions (e.g., `findSpecFile`, `cleanupStaleRenders`) using `afero.NewMemMapFs`.
+- **Helper unit tests** (`*_test.go`, same-package `package component`): test unexported helper functions (e.g., `findSpecFile`, `cleanupStaleRenders`) using `afero.NewMemMapFs`; where needed, follow the existing `//nolint:testpackage` pattern used in this repo.
 - **Snapshot update**: if the command changes the schema or CLI docs, run `mage scenarioUpdate` to update snapshots.
