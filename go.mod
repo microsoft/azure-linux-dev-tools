@@ -22,8 +22,8 @@ require (
 	github.com/fatih/color v1.19.0
 	github.com/gkampitakis/go-snaps v0.5.21
 	github.com/go-git/go-billy/v5 v5.8.0
-	github.com/go-git/go-git/v5 v5.17.1
-	github.com/go-playground/validator/v10 v10.30.1
+	github.com/go-git/go-git/v5 v5.17.2
+	github.com/go-playground/validator/v10 v10.30.2
 	github.com/google/renameio v1.0.1
 	github.com/google/uuid v1.6.0
 	github.com/h2non/gock v1.2.0
@@ -33,8 +33,8 @@ require (
 	github.com/klauspost/compress v1.18.5
 	github.com/knqyf263/go-rpm-version v0.0.0-20240918084003-2afd7dc6a38f
 	github.com/lmittmann/tint v1.1.3
-	github.com/magefile/mage v1.16.1
-	github.com/mark3labs/mcp-go v0.45.0
+	github.com/magefile/mage v1.17.1
+	github.com/mark3labs/mcp-go v0.46.0
 	github.com/mattn/go-isatty v0.0.20
 	github.com/muesli/termenv v0.16.0
 	github.com/nxadm/tail v1.4.11
@@ -42,7 +42,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.3.0
 	github.com/pmezard/go-difflib v1.0.0
 	github.com/samber/lo v1.53.0
-	github.com/samber/slog-multi v1.7.1
+	github.com/samber/slog-multi v1.8.0
 	github.com/shirou/gopsutil v3.21.11+incompatible
 	github.com/spf13/afero v1.15.0
 	github.com/spf13/cobra v1.10.2
@@ -102,6 +102,7 @@ require (
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
+	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/h2non/parth v0.0.0-20190131123155-b4df798d6542 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
@@ -135,7 +136,7 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
-	github.com/samber/slog-common v0.20.0 // indirect
+	github.com/samber/slog-common v0.21.0 // indirect
 	github.com/sergi/go-diff v1.4.0 // indirect
 	github.com/shirou/gopsutil/v4 v4.26.2 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
