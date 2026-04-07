@@ -20,6 +20,8 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/retry"
 )
 
+const SourcesFileName = "sources"
+
 type FedoraSourceDownloader interface {
 	// ExtractSourcesFromRepo processes a git repository by downloading any required
 	// lookaside cache files into the repository directory. Files whose names appear
@@ -138,7 +140,7 @@ func (g *FedoraSourceDownloaderImpl) ExtractSourcesFromRepo(
 		return fmt.Errorf("repository directory does not exist at %#q, cloning failed", repoDir)
 	}
 
-	sourcesFilePath := filepath.Join(repoDir, "sources")
+	sourcesFilePath := filepath.Join(repoDir, SourcesFileName)
 
 	sourcesExists, err := fileutils.Exists(g.fileSystem, sourcesFilePath)
 	if err != nil {
@@ -259,13 +261,13 @@ func parseSourcesFile(content string, packageName string, lookasideBaseURI strin
 
 	sourceFiles := make([]sourceFileInfo, 0, len(entries))
 
-	for entryIndex, entry := range entries {
+	for _, entry := range entries {
 		sourceURI, err := BuildLookasideURL(
 			lookasideBaseURI, packageName, entry.Filename,
 			strings.ToUpper(string(entry.HashType)), entry.Hash,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("failed to build lookaside URL for file %#q at line %d:\n%w", entry.Filename, entryIndex+1, err)
+			return nil, fmt.Errorf("failed to build lookaside URL for file %#q:\n%w", entry.Filename, err)
 		}
 
 		sourceFiles = append(sourceFiles, sourceFileInfo{

@@ -177,11 +177,11 @@ func (p *sourcePreparerImpl) PrepareSources(
 		if err != nil {
 			return err
 		}
-	}
 
-	if err := p.updateSourcesFile(component, outputDir); err != nil {
-		return fmt.Errorf("failed to update 'sources' file for component %#q:\n%w",
-			component.GetName(), err)
+		if err := p.updateSourcesFile(component, outputDir); err != nil {
+			return fmt.Errorf("failed to update 'sources' file for component %#q:\n%w",
+				component.GetName(), err)
+		}
 	}
 
 	// Record the changes as synthetic git history when dist-git creation is enabled.
@@ -427,25 +427,24 @@ func (p *sourcePreparerImpl) DiffSources(
 	return result, nil
 }
 
-// updateSourcesFile appends entries to the sources file for any extra source files
-// defined in the component's source-files configuration. Each source file reference
+// updateSourcesFile appends entries to the 'sources' file for any extra source files
+// defined in the component's 'source-files' configuration. Each source file reference
 // must have both hash and hash-type specified; missing either is a configuration error.
-// Entries already present in the sources file are skipped to avoid duplicates.
+// Conflicts between existing entries in the 'sources' file and sources introduced through
+// the 'source-files' configuration are also treated as errors.
 func (p *sourcePreparerImpl) updateSourcesFile(component components.Component, outputDir string) error {
 	sourceFiles := component.GetConfig().SourceFiles
 	if len(sourceFiles) == 0 {
 		return nil
 	}
 
-	sourcesFilePath := filepath.Join(outputDir, "sources")
+	sourcesFilePath := filepath.Join(outputDir, fedorasource.SourcesFileName)
 
-	// Read existing sources file content, if it exists.
 	existingContent, err := p.readSourcesFileIfExists(sourcesFilePath)
 	if err != nil {
 		return err
 	}
 
-	// Parse existing entries to detect duplicates.
 	existingEntries, err := fedorasource.ParseSourcesFile(existingContent)
 	if err != nil {
 		return fmt.Errorf("failed to parse existing sources file %#q:\n%w", sourcesFilePath, err)
@@ -455,14 +454,9 @@ func (p *sourcePreparerImpl) updateSourcesFile(component components.Component, o
 		return entry.Filename, true
 	})
 
-	// Collect new entries to append.
-	newEntries, err := collectNewSourceEntries(sourceFiles, existingFilenames)
+	newEntries, err := buildSourceEntries(sourceFiles, existingFilenames)
 	if err != nil {
 		return err
-	}
-
-	if len(newEntries) == 0 {
-		return nil
 	}
 
 	// Ensure existing content ends with a newline before appending.
@@ -470,7 +464,6 @@ func (p *sourcePreparerImpl) updateSourcesFile(component components.Component, o
 		existingContent += "\n"
 	}
 
-	// Append new entries.
 	newContent := existingContent + strings.Join(newEntries, "\n") + "\n"
 
 	if err := fileutils.WriteFile(
@@ -508,16 +501,14 @@ func (p *sourcePreparerImpl) readSourcesFileIfExists(sourcesFilePath string) (st
 	return string(data), nil
 }
 
-// collectNewSourceEntries validates source file references and collects formatted entries
-// for files not already present in the sources file.
-func collectNewSourceEntries(
+// buildSourceEntries validates source file references and collects formatted entries.
+func buildSourceEntries(
 	sourceFiles []projectconfig.SourceFileReference,
 	existingFilenames map[string]bool,
 ) ([]string, error) {
 	newEntries := make([]string, 0, len(sourceFiles))
 
 	for _, ref := range sourceFiles {
-		// Both hash and hash-type are required.
 		if ref.Hash == "" || ref.HashType == "" {
 			return nil, fmt.Errorf(
 				"source file %#q is missing required hash or hash-type; "+
@@ -525,20 +516,18 @@ func collectNewSourceEntries(
 				ref.Filename)
 		}
 
-		// Error if file already present in sources file.
 		if existingFilenames[ref.Filename] {
 			return nil, fmt.Errorf(
-				"source file %#q in 'source-files' configuration conflicts with an existing entry in the sources file; "+
+				"source file %#q in 'source-files' configuration conflicts with an existing entry in the 'sources' file; "+
 					"to overwrite the existing entry, add a component overlay to remove it first; "+
 					"if this is unintentional, use a different filename",
 				ref.Filename)
 		}
 
-		// Format: "SHA512 (filename) = hash"
 		entry := fedorasource.FormatSourcesEntry(ref.Filename, ref.HashType, ref.Hash)
 		newEntries = append(newEntries, entry)
 
-		slog.Debug("Adding source file entry to sources file",
+		slog.Debug("New 'sources' file entry",
 			"filename", ref.Filename,
 			"hashType", ref.HashType,
 			"hash", ref.Hash)
