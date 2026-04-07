@@ -129,7 +129,7 @@ func CommitSyntheticHistory(
 // matching commit metadata sorted chronologically. If no Affects commits are found, a
 // single default overlay commit is returned instead.
 func buildSyntheticCommits(
-	config *projectconfig.ComponentConfig, componentName string,
+	config *projectconfig.ComponentConfig, componentName, defaultAuthorEmail string,
 ) ([]CommitMetadata, error) {
 	configFilePath, err := resolveConfigFilePath(config, componentName)
 	if err != nil {
@@ -155,14 +155,14 @@ func buildSyntheticCommits(
 			"creating default commit",
 			"component", componentName)
 
-		return []CommitMetadata{
-			defaultOverlayCommit(projectRepo, componentName),
-		}, nil
-	} else {
-		slog.Info("Found commits affecting component",
-			"component", componentName,
-			"commitCount", len(affectsCommits))
+		commit := defaultOverlayCommit(projectRepo, componentName, defaultAuthorEmail)
+
+		return []CommitMetadata{commit}, nil
 	}
+
+	slog.Info("Found commits affecting component",
+		"component", componentName,
+		"commitCount", len(affectsCommits))
 
 	return affectsCommits, nil
 }
@@ -170,7 +170,14 @@ func buildSyntheticCommits(
 // defaultOverlayCommit returns a single [CommitMetadata] entry that represents a generic
 // commit when no Affects commits exist in the project history. The commit hash is
 // set to the current HEAD of the project repository.
-func defaultOverlayCommit(repo *gogit.Repository, componentName string) CommitMetadata {
+func defaultOverlayCommit(repo *gogit.Repository, componentName,
+	defaultAuthorEmail string,
+) CommitMetadata {
+	if defaultAuthorEmail == "" {
+		slog.Warn("No default author email configured; synthetic commit will have an empty author email",
+			"hint", "set project.default-author-email in the project config")
+	}
+
 	var (
 		timestamp int64
 		hash      string
@@ -184,10 +191,11 @@ func defaultOverlayCommit(repo *gogit.Repository, componentName string) CommitMe
 	}
 
 	return CommitMetadata{
-		Hash:      hash,
-		Author:    "azldev",
-		Timestamp: timestamp,
-		Message:   "Latest state for " + componentName,
+		Hash:        hash,
+		Author:      "azldev",
+		AuthorEmail: defaultAuthorEmail,
+		Timestamp:   timestamp,
+		Message:     "Latest state for " + componentName,
 	}
 }
 

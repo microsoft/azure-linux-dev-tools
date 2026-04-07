@@ -125,7 +125,7 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 
 	var preparerOpts []sources.PreparerOption
 	if options.WithGitRepo {
-		preparerOpts = append(preparerOpts, sources.WithGitRepo())
+		preparerOpts = append(preparerOpts, sources.WithGitRepo(env.Config().Project.DefaultAuthorEmail))
 	}
 
 	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, preparerOpts...)

@@ -61,9 +61,13 @@ type PreparerOption func(*sourcePreparerImpl)
 // is preserved and synthetic commit history is generated on top of it. This
 // requires the project configuration to reside inside a git repository.
 // Without this option, no dist-git is created and synthetic history is skipped.
-func WithGitRepo() PreparerOption {
+//
+// The defaultAuthorEmail is used for synthetic changelog entries and commits
+// when no author email is available from git history.
+func WithGitRepo(defaultAuthorEmail string) PreparerOption {
 	return func(p *sourcePreparerImpl) {
 		p.withGitRepo = true
+		p.defaultAuthorEmail = defaultAuthorEmail
 	}
 }
 
@@ -94,6 +98,9 @@ type sourcePreparerImpl struct {
 	// skipLookaside, when true, skips all lookaside cache downloads during
 	// source preparation. Git-tracked files are still fetched.
 	skipLookaside bool
+	// defaultAuthorEmail is the email address used for synthetic changelog
+	// entries and commits when no author email is available from git history.
+	defaultAuthorEmail string
 }
 
 // NewPreparer creates a new [SourcePreparer] instance. All positional arguments
@@ -322,7 +329,7 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 	config := component.GetConfig()
 
 	// Build commit metadata from Affects commits.
-	commits, err := buildSyntheticCommits(config, component.GetName())
+	commits, err := buildSyntheticCommits(config, component.GetName(), p.defaultAuthorEmail)
 	if err != nil {
 		return fmt.Errorf("failed to build synthetic commits:\n%w", err)
 	}

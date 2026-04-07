@@ -152,8 +152,8 @@ func (p *sourcePreparerImpl) tryBumpStaticRelease(
 		// and the user did not provide an explicit overlay to set it.
 		return fmt.Errorf(
 			"component %#q has a non-standard Release tag value %#q that cannot be auto-bumped; "+
-				"add a \"spec-set-tag\" overlay for the Release tag in the component configuration",
-			component.GetName(), releaseValue)
+				"add a \"spec-set-tag\" overlay for the Release tag in the component configuration:\n%w",
+			component.GetName(), releaseValue, err)
 	}
 
 	slog.Info("Bumping static release",
