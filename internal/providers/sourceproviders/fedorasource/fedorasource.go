@@ -20,6 +20,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/retry"
 )
 
+// SourcesFileName is the name of the Fedora/RHEL 'sources' metadata file.
 const SourcesFileName = "sources"
 
 type FedoraSourceDownloader interface {

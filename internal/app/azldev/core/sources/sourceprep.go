@@ -556,6 +556,10 @@ func (p *sourcePreparerImpl) buildSourceEntries(
 	newEntries := make([]string, 0, len(sourceFiles))
 
 	for _, ref := range sourceFiles {
+		if err := fileutils.ValidateFilename(ref.Filename); err != nil {
+			return nil, fmt.Errorf("invalid filename %#q in 'source-files' configuration:\n%w", ref.Filename, err)
+		}
+
 		if existingFilenames[ref.Filename] {
 			return nil, fmt.Errorf(
 				"source file %#q in 'source-files' configuration conflicts with an existing entry in the 'sources' file; "+

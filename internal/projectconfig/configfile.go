@@ -118,6 +118,10 @@ func validateSourceFiles(sourceFiles []SourceFileReference, componentName string
 	seen := make(map[string]bool, len(sourceFiles))
 
 	for _, ref := range sourceFiles {
+		if err := fileutils.ValidateFilename(ref.Filename); err != nil {
+			return fmt.Errorf("invalid filename %#q for source file in component %#q:\n%w", ref.Filename, componentName, err)
+		}
+
 		if seen[ref.Filename] {
 			return fmt.Errorf(
 				"duplicate filename %#q in 'source-files' for component %#q; each filename must be unique",
