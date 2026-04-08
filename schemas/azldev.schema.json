@@ -275,6 +275,34 @@
         "type"
       ]
     },
+    "ComponentTemplateConfig": {
+      "properties": {
+        "description": {
+          "type": "string",
+          "title": "Description",
+          "description": "Description of this component template"
+        },
+        "default-component-config": {
+          "$ref": "#/$defs/ComponentConfig",
+          "title": "Default component configuration",
+          "description": "Default component config applied to every expanded variant before axis overrides"
+        },
+        "matrix": {
+          "items": {
+            "$ref": "#/$defs/MatrixAxis"
+          },
+          "type": "array",
+          "minItems": 1,
+          "title": "Matrix axes",
+          "description": "Ordered list of matrix axes whose cartesian product defines the expanded component variants"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "matrix"
+      ]
+    },
     "ConfigFile": {
       "properties": {
         "$schema": {
@@ -316,6 +344,14 @@
           "type": "object",
           "title": "Components",
           "description": "Definitions of components for this project"
+        },
+        "component-templates": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ComponentTemplateConfig"
+          },
+          "type": "object",
+          "title": "Component templates",
+          "description": "Definitions of component templates that expand into multiple components via matrix axes"
         },
         "images": {
           "additionalProperties": {
@@ -512,6 +548,29 @@
       },
       "additionalProperties": false,
       "type": "object"
+    },
+    "MatrixAxis": {
+      "properties": {
+        "axis": {
+          "type": "string",
+          "title": "Axis name",
+          "description": "Name of this matrix axis (e.g. kernel or toolchain)"
+        },
+        "values": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ComponentConfig"
+          },
+          "type": "object",
+          "title": "Axis values",
+          "description": "Named values for this axis; each value is a partial ComponentConfig merged into the expanded component"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "axis",
+        "values"
+      ]
     },
     "Origin": {
       "properties": {

@@ -38,6 +38,9 @@ type ConfigFile struct {
 	// Definitions of components.
 	Components map[string]ComponentConfig `toml:"components,omitempty" validate:"dive" jsonschema:"title=Components,description=Definitions of components for this project"`
 
+	// Definitions of component templates that expand into multiple components via a matrix.
+	ComponentTemplates map[string]ComponentTemplateConfig `toml:"component-templates,omitempty" validate:"dive" jsonschema:"title=Component templates,description=Definitions of component templates that expand into multiple components via matrix axes"`
+
 	// Definitions of images.
 	Images map[string]ImageConfig `toml:"images,omitempty" validate:"dive" jsonschema:"title=Images,description=Definitions of images for this project"`
 
@@ -80,6 +83,13 @@ func (f ConfigFile) Validate() error {
 	for groupName, group := range f.PackageGroups {
 		if err := group.Validate(); err != nil {
 			return fmt.Errorf("invalid package group %#q:\n%w", groupName, err)
+		}
+	}
+
+	// Validate component template configurations.
+	for templateName, tmpl := range f.ComponentTemplates {
+		if err := tmpl.Validate(); err != nil {
+			return fmt.Errorf("invalid component template %#q:\n%w", templateName, err)
 		}
 	}
 

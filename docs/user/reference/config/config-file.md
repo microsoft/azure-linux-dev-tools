@@ -13,6 +13,7 @@ All config files share the same schema — there is no distinction between a "ro
 | `distros` | map of objects | Distro definitions (build environments, upstream sources) | [Distros](distros.md) |
 | `components` | map of objects | Component (package) definitions | [Components](components.md) |
 | `component-groups` | map of objects | Named groups of components with shared defaults | [Component Groups](component-groups.md) |
+| `component-templates` | map of objects | Component templates that expand into multiple components via matrix axes | [Component Templates](component-templates.md) |
 | `images` | map of objects | Image definitions (VMs, containers) | [Images](images.md) |
 | `tools` | object | Configuration for external tools used by azldev | [Tools](tools.md) |
 
