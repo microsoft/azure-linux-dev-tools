@@ -13,11 +13,12 @@ The command reads the 'sources' file, resolves the lookaside cache URI from
 the distro configuration, and downloads each listed file into the directory.
 Files that already exist in the directory are skipped.
 
-The package name is derived from the directory name and can be overridden
-with --package-name. The directory must contain a 'sources' file.
+Either --component or --lookaside-uri must be provided:
 
-This command can run without project configuration by providing
---lookaside-uri explicitly.
+  --component (-p)    Uses the component's distro configuration to resolve
+                      the lookaside URI and package name.
+  --lookaside-uri     Provides the URI explicitly (no project config needed).
+                      Package name is derived from the directory name.
 
 ```
 azldev advanced download-sources [flags]
@@ -26,33 +27,33 @@ azldev advanced download-sources [flags]
 ### Examples
 
 ```
-  # Download sources in the current directory (package name derived from dir name)
-  azldev advanced download-sources
+  # Download sources for a component (uses component's distro config)
+  azldev advanced download-sources -p curl
 
-  # Download sources from a specific directory
-  azldev advanced download-sources -d ./path/to/curl/
+  # Download sources using explicit lookaside URI (no config needed)
+  azldev advanced download-sources \
+    --lookaside-uri 'https://example.com/$pkg/$filename/$hashtype/$hash/$filename'
 
-  # Download sources to a different output directory
-  azldev advanced download-sources -o /tmp/output
+  # Specify a different source directory
+  azldev advanced download-sources -p curl -d ./path/to/sources/
 
-  # Download sources using explicit lookaside URIs
-  azldev advanced download-sources \\
-    --lookaside-uri https://example.com/cache1 \\
-    --lookaside-uri https://example.com/cache2
+  # Download to a different output directory
+  azldev advanced download-sources -p curl -o /tmp/output
 
-  # Download sources without project configuration
-  azldev advanced download-sources \\
-    --lookaside-uri https://example.com/cache -d ./curl
+  # Try multiple lookaside URIs in order
+  azldev advanced download-sources \
+    --lookaside-uri 'https://cache1.example.com/$pkg/$filename/$hashtype/$hash/$filename' \
+    --lookaside-uri 'https://cache2.example.com/$pkg/$filename/$hashtype/$hash/$filename'
 ```
 
 ### Options
 
 ```
+  -p, --component string            component name to resolve distro and package name from
   -d, --dir string                  source directory containing the 'sources' file (defaults to current directory)
   -h, --help                        help for download-sources
-      --lookaside-uri stringArray   explicit lookaside base URI(s) to use instead of the distro configuration (can be specified multiple times)
+      --lookaside-uri stringArray   explicit lookaside base URI(s) to try in order, first success wins (can be specified multiple times)
   -o, --output-dir string           output directory for downloaded files (defaults to source directory)
-      --package-name string         explicit package name to use instead of deriving from the directory name
 ```
 
 ### Options inherited from parent commands

@@ -154,7 +154,12 @@ func (g *FedoraSourceDownloaderImpl) ExtractSourcesFromRepo(
 
 	// Apply functional options.
 	var options extractOptions
+
 	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+
 		opt(&options)
 	}
 
@@ -174,8 +179,10 @@ func (g *FedoraSourceDownloaderImpl) ExtractSourcesFromRepo(
 		return fmt.Errorf("failed to check if sources file exists at %#q:\n%w", sourcesFilePath, err)
 	}
 
-	// If the sources file does not exist, there are no external sources to download
+	// If the sources file does not exist, there are no external sources to download.
 	if !sourcesExists {
+		slog.Info("No 'sources' file found, nothing to download", "dir", repoDir)
+
 		return nil
 	}
 
@@ -198,6 +205,10 @@ func (g *FedoraSourceDownloaderImpl) ExtractSourcesFromRepo(
 	destDir := repoDir
 	if options.outputDir != "" {
 		destDir = options.outputDir
+
+		if err := fileutils.MkdirAll(g.fileSystem, destDir); err != nil {
+			return fmt.Errorf("failed to create output directory %#q:\n%w", destDir, err)
+		}
 	}
 
 	err = g.downloadAndVerifySources(ctx, sourceFiles, destDir, skipSet)
@@ -258,6 +269,10 @@ func (g *FedoraSourceDownloaderImpl) downloadAndVerifySources(
 
 			return nil
 		}); err != nil {
+			// Remove any bad file left by the final failed attempt so subsequent
+			// callers (e.g. retrying with a different URI) don't see it as valid.
+			_ = g.fileSystem.Remove(destFilePath)
+
 			return fmt.Errorf("failed to retrieve source file %#q:\n%w", sourceFile.fileName, err)
 		}
 	}

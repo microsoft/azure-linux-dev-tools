@@ -20,6 +20,10 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+const testLookasideURI = "https://example.com/lookaside/$pkg/$filename/$hashtype/$hash/$filename"
+
+const testPkgDir = "/project/curl"
+
 func TestOnAppInit(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	app := azldev.NewApp(opctx_test.NewMockFileSystemFactory(ctrl), opctx_test.NewMockOSEnvFactory(ctrl))
@@ -53,25 +57,48 @@ func TestNewDownloadSourcesCmd(t *testing.T) {
 	lookasideFlag := cmd.Flags().Lookup("lookaside-uri")
 	require.NotNil(t, lookasideFlag, "--lookaside-uri flag should be registered")
 
-	packageNameFlag := cmd.Flags().Lookup("package-name")
-	require.NotNil(t, packageNameFlag, "--package-name flag should be registered")
+	componentFlag := cmd.Flags().Lookup("component")
+	require.NotNil(t, componentFlag, "--component flag should be registered")
 }
 
-func TestResolveFromDirectory_DerivesPackageName(t *testing.T) {
+func TestDownloadSources_StandaloneMode(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
 	ctrl := gomock.NewController(t)
 
-	pkgDir := "/project/curl"
-	require.NoError(t, fileutils.MkdirAll(testEnv.TestFS, pkgDir))
-	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, pkgDir+"/sources", []byte(""), fileperms.PrivateFile))
+	require.NoError(t, fileutils.MkdirAll(testEnv.TestFS, testPkgDir))
+	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, testPkgDir+"/sources", []byte(""), fileperms.PrivateFile))
 
 	mockDownloader := fedorasource_test.NewMockFedoraSourceDownloader(ctrl)
 	mockDownloader.EXPECT().
-		ExtractSourcesFromRepo(gomock.Any(), pkgDir, "curl", gomock.Any(), gomock.Any()).
+		ExtractSourcesFromRepo(gomock.Any(), testPkgDir, "curl", testLookasideURI, gomock.Any()).
 		Return(nil)
 
 	options := &downloadsources.DownloadSourcesOptions{
-		Directory:           pkgDir,
+		Directory:           testPkgDir,
+		LookasideBaseURIs:   []string{testLookasideURI},
+		LookasideDownloader: mockDownloader,
+	}
+
+	// Package name "curl" derived from directory basename.
+	err := downloadsources.DownloadSources(testEnv.Env, options)
+	require.NoError(t, err)
+}
+
+func TestDownloadSources_StandaloneMode_NoSourcesFile(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+	ctrl := gomock.NewController(t)
+
+	require.NoError(t, fileutils.MkdirAll(testEnv.TestFS, testPkgDir))
+
+	// ExtractSourcesFromRepo returns nil when no sources file exists.
+	mockDownloader := fedorasource_test.NewMockFedoraSourceDownloader(ctrl)
+	mockDownloader.EXPECT().
+		ExtractSourcesFromRepo(gomock.Any(), testPkgDir, "curl", testLookasideURI, gomock.Any()).
+		Return(nil)
+
+	options := &downloadsources.DownloadSourcesOptions{
+		Directory:           testPkgDir,
+		LookasideBaseURIs:   []string{testLookasideURI},
 		LookasideDownloader: mockDownloader,
 	}
 
@@ -79,74 +106,34 @@ func TestResolveFromDirectory_DerivesPackageName(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestResolveFromDirectory_NonexistentDir(t *testing.T) {
-	testEnv := testutils.NewTestEnv(t)
-
-	options := &downloadsources.DownloadSourcesOptions{
-		Directory: "/project/nonexistent",
-	}
-
-	err := downloadsources.DownloadSources(testEnv.Env, options)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no 'sources' file found")
-}
-
-func TestDownloadSources_NoSourcesFile(t *testing.T) {
-	testEnv := testutils.NewTestEnv(t)
-
-	// Create a directory without a 'sources' file.
-	pkgDir := "/project/curl"
-	require.NoError(t, fileutils.MkdirAll(testEnv.TestFS, pkgDir))
-
-	options := &downloadsources.DownloadSourcesOptions{
-		Directory: pkgDir,
-	}
-
-	err := downloadsources.DownloadSources(testEnv.Env, options)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no 'sources' file found")
-}
-
-func TestResolveLookasideURI_FollowsUpstreamDistro(t *testing.T) {
+func TestDownloadSources_ComponentMode(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
 	ctrl := gomock.NewController(t)
 
-	// Reconfigure: default distro has NO lookaside URI, but points to an upstream that does.
-	testEnv.Config.Distros["test-distro"] = projectconfig.DistroDefinition{
-		Versions: map[string]projectconfig.DistroVersionDefinition{
-			"1.0": {
-				DefaultComponentConfig: projectconfig.ComponentConfig{
-					Spec: projectconfig.SpecSource{
-						UpstreamDistro: projectconfig.DistroReference{
-							Name:    "upstream-distro",
-							Version: "42",
-						},
-					},
-				},
-			},
+	// Register a component with an upstream-name that differs from the
+	// component name, verifying that the upstream name is used for $pkg.
+	testEnv.Config.Components["my-curl"] = projectconfig.ComponentConfig{
+		Name: "my-curl",
+		Spec: projectconfig.SpecSource{
+			SourceType:   projectconfig.SpecSourceTypeLocal,
+			Path:         testPkgDir + "/curl.spec",
+			UpstreamName: "curl",
 		},
 	}
 
-	expectedURI := "https://upstream.example.com/lookaside/$pkg/$filename/$hashtype/$hash/$filename"
-
-	testEnv.Config.Distros["upstream-distro"] = projectconfig.DistroDefinition{
-		LookasideBaseURI: expectedURI,
-		Versions: map[string]projectconfig.DistroVersionDefinition{
-			"42": {},
-		},
-	}
-
-	pkgDir := "/project/testpkg"
-	require.NoError(t, fileutils.MkdirAll(testEnv.TestFS, pkgDir))
-	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, pkgDir+"/sources", []byte(""), fileperms.PrivateFile))
+	// The test distro already has a LookasideBaseURI configured.
+	expectedURI := testEnv.Config.Distros["test-distro"].LookasideBaseURI
 
 	mockDownloader := fedorasource_test.NewMockFedoraSourceDownloader(ctrl)
 	mockDownloader.EXPECT().
-		ExtractSourcesFromRepo(gomock.Any(), pkgDir, "testpkg", expectedURI, gomock.Any()).
+		ExtractSourcesFromRepo(
+			gomock.Any(), testPkgDir, "curl", expectedURI, gomock.Any(),
+		).
 		Return(nil)
 
 	options := &downloadsources.DownloadSourcesOptions{
-		Directory:           pkgDir,
+		Directory:           testPkgDir,
+		ComponentName:       "my-curl",
 		LookasideDownloader: mockDownloader,
 	}
 

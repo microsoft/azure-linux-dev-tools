@@ -24,12 +24,8 @@ output but fully supported.`,
 	}
 
 	app.AddTopLevelCommand(cmd)
-	downloadSourcesOnAppInit(app, cmd)
+	downloadsources.OnAppInit(app, cmd)
 	mcpOnAppInit(app, cmd)
 	mockOnAppInit(app, cmd)
 	wgetOnAppInit(app, cmd)
-}
-
-func downloadSourcesOnAppInit(app *azldev.App, parentCmd *cobra.Command) {
-	downloadsources.OnAppInit(app, parentCmd)
 }
