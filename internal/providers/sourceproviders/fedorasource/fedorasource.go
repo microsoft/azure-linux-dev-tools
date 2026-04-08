@@ -321,6 +321,22 @@ const (
 // Returns an error if any of the provided values contain a placeholder string, as this
 // would cause ambiguous substitution results depending on replacement order, or if the
 // resulting URL is not valid.
+// validateAbsoluteURL parses uri and verifies it is an absolute URL with a
+// non-empty scheme and host. The label parameter is used in error messages to
+// identify the URL's purpose (e.g. "lookaside", "dist-git").
+func validateAbsoluteURL(uri, label string) error {
+	u, err := url.Parse(uri)
+	if err != nil {
+		return fmt.Errorf("resulting %s URL is not valid:\n%w", label, err)
+	}
+
+	if u.Scheme == "" || u.Host == "" {
+		return fmt.Errorf("resulting %s URL %#q is missing scheme or host", label, uri)
+	}
+
+	return nil
+}
+
 func BuildLookasideURL(template, packageName, fileName, hashType, hash string) (string, error) {
 	// allPlaceholders lists all supported lookaside URI template placeholders.
 	allPlaceholders := []string{PlaceholderPkg, PlaceholderFilename, PlaceholderHashType, PlaceholderHash}
@@ -342,13 +358,8 @@ func BuildLookasideURL(template, packageName, fileName, hashType, hash string) (
 	uri = strings.ReplaceAll(uri, PlaceholderHashType, url.PathEscape(hashType))
 	uri = strings.ReplaceAll(uri, PlaceholderHash, url.PathEscape(hash))
 
-	u, err := url.Parse(uri)
-	if err != nil {
-		return "", fmt.Errorf("resulting lookaside URL is not valid:\n%w", err)
-	}
-
-	if u.Scheme == "" || u.Host == "" {
-		return "", fmt.Errorf("resulting lookaside URL %#q is missing scheme or host", uri)
+	if err := validateAbsoluteURL(uri, "lookaside"); err != nil {
+		return "", err
 	}
 
 	return uri, nil
@@ -370,13 +381,8 @@ func BuildDistGitURL(template, packageName string) (string, error) {
 
 	uri := strings.ReplaceAll(template, PlaceholderPkg, url.PathEscape(packageName))
 
-	u, err := url.Parse(uri)
-	if err != nil {
-		return "", fmt.Errorf("resulting dist-git URL is not valid:\n%w", err)
-	}
-
-	if u.Scheme == "" || u.Host == "" {
-		return "", fmt.Errorf("resulting dist-git URL %#q is missing scheme or host", uri)
+	if err := validateAbsoluteURL(uri, "dist-git"); err != nil {
+		return "", err
 	}
 
 	return uri, nil
