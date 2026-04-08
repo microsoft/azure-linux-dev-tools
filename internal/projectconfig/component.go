@@ -117,6 +117,11 @@ type ComponentConfig struct {
 	// in serialized files.
 	SourceConfigFile *ConfigFile `toml:"-" json:"-" table:"-"`
 
+	// RenderedSpecDir is the output directory for this component's rendered spec files.
+	// Derived at resolve time from the project's rendered-specs-dir setting; not present
+	// in serialized files. Empty when rendered-specs-dir is not configured.
+	RenderedSpecDir string `toml:"-" json:"renderedSpecDir,omitempty" table:"Rendered Spec Dir"`
+
 	// Where to get its spec and adjacent files from.
 	Spec SpecSource `toml:"spec,omitempty" json:"spec,omitempty" jsonschema:"title=Spec,description=Identifies where to find the spec for this component"`
 
@@ -167,6 +172,7 @@ func (c *ComponentConfig) WithAbsolutePaths(referenceDir string) *ComponentConfi
 	result := &ComponentConfig{
 		Name:                 c.Name,
 		SourceConfigFile:     c.SourceConfigFile,
+		RenderedSpecDir:      c.RenderedSpecDir,
 		Spec:                 deep.MustCopy(c.Spec),
 		Build:                deep.MustCopy(c.Build),
 		SourceFiles:          deep.MustCopy(c.SourceFiles),

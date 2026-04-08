@@ -18,16 +18,6 @@ type ListComponentOptions struct {
 	ComponentFilter components.ComponentFilter
 }
 
-// ComponentListEntry wraps a [projectconfig.ComponentConfig] with additional computed fields
-// for the component list output.
-type ComponentListEntry struct {
-	projectconfig.ComponentConfig
-
-	// RenderedSpecDir is the output directory for this component's rendered spec files.
-	// Empty when rendered-specs-dir is not configured in the project.
-	RenderedSpecDir string `json:"renderedSpecDir,omitempty" table:"Rendered Spec Dir"`
-}
-
 func listOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
 	parentCmd.AddCommand(NewComponentListCommand())
 }
@@ -72,7 +62,7 @@ Component name patterns support glob syntax (*, ?, []).`,
 // Lists components in the env, in accordance with options. Returns the found components.
 func ListComponentConfigs(
 	env *azldev.Env, options *ListComponentOptions,
-) (results []ComponentListEntry, err error) {
+) (results []projectconfig.ComponentConfig, err error) {
 	var comps *components.ComponentSet
 
 	resolver := components.NewResolver(env)
@@ -82,16 +72,10 @@ func ListComponentConfigs(
 		return results, fmt.Errorf("failed to resolve components:\n%w", err)
 	}
 
-	renderedSpecsDir := env.Config().Project.RenderedSpecsDir
-
-	// Extract the component configs from the resolved components, compute the rendered spec
-	// directory for each, and return them in a slice.
-	entries := make([]ComponentListEntry, 0, comps.Len())
+	// Extract the component configs from the resolved components, and return them in a slice.
+	entries := make([]projectconfig.ComponentConfig, 0, comps.Len())
 	for _, comp := range comps.Components() {
-		entries = append(entries, ComponentListEntry{
-			ComponentConfig: *comp.GetConfig(),
-			RenderedSpecDir: components.RenderedSpecDir(renderedSpecsDir, comp.GetName()),
-		})
+		entries = append(entries, *comp.GetConfig())
 	}
 
 	return entries, nil

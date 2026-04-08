@@ -448,6 +448,10 @@ func (r *Resolver) getComponentFromNameAndSpecPath(name, specPath string) (compo
 }
 
 func (r *Resolver) createComponentFromConfig(componentConfig *projectconfig.ComponentConfig) Component {
+	componentConfig.RenderedSpecDir = RenderedSpecDir(
+		r.env.Config().Project.RenderedSpecsDir, componentConfig.Name,
+	)
+
 	return &resolvedComponent{
 		env:    r.env,
 		config: *componentConfig,
