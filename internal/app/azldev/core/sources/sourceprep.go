@@ -82,14 +82,17 @@ func WithSkipLookaside() PreparerOption {
 }
 
 // WithAllowNoHashes returns a [PreparerOption] that allows source file
-// references to omit their [projectconfig.SourceFileReference.Hash] value. When set, any source file that lacks a
-// hash will have its hash computed from the already-downloaded file in the
-// output directory. If [projectconfig.SourceFileReference.HashType] is also missing, SHA-512 is used as the
-// default. A warning is emitted for each file whose hash is auto-computed.
+// references to omit their [projectconfig.SourceFileReference.Hash] value.
+// When set, any source file that lacks a hash will have its hash computed
+// from the already-downloaded file in the output directory. If
+// [projectconfig.SourceFileReference.HashType] is also missing, SHA-512 is
+// used as the default. A warning is emitted for each file whose hash is
+// auto-computed.
 //
-// This option has no effect when combined with [WithSkipLookaside], because
-// source file downloads are skipped entirely in that mode, so the files are
-// not available on disk for hash computation. A warning is emitted in that case.
+// When combined with [WithSkipLookaside], source file downloads are skipped,
+// so files needed for hash computation are not available on disk. In that
+// case, missing hashes cannot be auto-computed and source preparation
+// returns an error.
 func WithAllowNoHashes() PreparerOption {
 	return func(p *sourcePreparerImpl) {
 		p.allowNoHashes = true
