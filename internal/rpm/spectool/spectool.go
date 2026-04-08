@@ -1,7 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-package sources
+// Package spectool provides utilities for parsing spectool output.
+package spectool
 
 import (
 	"net/url"
@@ -10,27 +11,21 @@ import (
 	"strings"
 )
 
-// isURL returns true if the value looks like a URL (has a scheme).
-func isURL(value string) bool {
-	return strings.Contains(value, "://")
-}
-
-// extractFilenameFromURL parses a URL and returns just the filename from
-// its path component, stripping query strings and fragments.
-func extractFilenameFromURL(rawURL string) string {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		// Fall back to filepath.Base if URL parsing fails.
-		return filepath.Base(rawURL)
+// filenameFromURL attempts to parse value as a URL and extract the basename.
+// Returns the filename and true if value is a URL, or ("", false) if not.
+func filenameFromURL(value string) (string, bool) {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", false
 	}
 
-	return path.Base(parsed.Path)
+	return path.Base(parsed.Path), true
 }
 
-// parseSpectoolOutput parses the raw stdout from spectool -l -a into a list of
+// ParseSpectoolOutput parses the raw stdout from spectool -l -a into a list of
 // source/patch filenames. For URL values, extracts the basename. For local paths,
 // preserves the relative directory structure.
-func parseSpectoolOutput(stdout string) []string {
+func ParseSpectoolOutput(stdout string) []string {
 	// Parse output lines like:
 	//   Source0: ftp://ftp.gnu.org/pub/gnu/sed/sed-4.9.tar.xz
 	//   Patch0: sed-b-flag.patch
@@ -51,8 +46,8 @@ func parseSpectoolOutput(stdout string) []string {
 		trimmed := strings.TrimSpace(value)
 
 		var name string
-		if isURL(trimmed) {
-			name = extractFilenameFromURL(trimmed)
+		if urlName, ok := filenameFromURL(trimmed); ok {
+			name = urlName
 		} else {
 			// Local paths: clean but preserve relative directory structure.
 			cleaned := filepath.Clean(trimmed)

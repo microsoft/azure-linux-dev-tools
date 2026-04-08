@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//nolint:testpackage // Testing unexported functions.
-package sources
+//nolint:testpackage // Testing unexported helper functions.
+package spectool
 
 import (
 	"testing"
@@ -79,43 +79,41 @@ func TestParseSpectoolOutput(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
-			result := parseSpectoolOutput(testCase.input)
+			result := ParseSpectoolOutput(testCase.input)
 			assert.Equal(t, testCase.expected, result)
 		})
 	}
 }
 
-func TestIsURL(t *testing.T) {
-	t.Parallel()
-
-	assert.True(t, isURL("https://example.com/file.tar.gz"))
-	assert.True(t, isURL("ftp://ftp.gnu.org/pub/file.tar.xz"))
-	assert.False(t, isURL("file.tar.gz"))
-	assert.False(t, isURL("patches/fix.patch"))
-}
-
-func TestExtractFilenameFromURL(t *testing.T) {
+func TestFilenameFromURL(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		url      string
-		expected string
+		name         string
+		input        string
+		expectedName string
+		expectedOK   bool
 	}{
-		{"simple", "https://example.com/file.tar.gz", "file.tar.gz"},
-		{"with query", "https://example.com/file.tar.gz?raw=true", "file.tar.gz"},
-		{"with fragment", "https://example.com/file.tar.gz#section", "file.tar.gz"},
-		{"nested path", "https://example.com/a/b/c/file.tar.gz", "file.tar.gz"},
-		{"trailing slash", "https://example.com/", "/"},
-		{"ftp", "ftp://ftp.gnu.org/pub/gnu/sed/sed-4.9.tar.xz", "sed-4.9.tar.xz"},
+		{"https URL", "https://example.com/file.tar.gz", "file.tar.gz", true},
+		{"URL with query", "https://example.com/file.tar.gz?raw=true", "file.tar.gz", true},
+		{"URL with fragment", "https://example.com/file.tar.gz#section", "file.tar.gz", true},
+		{"nested URL path", "https://example.com/a/b/c/file.tar.gz", "file.tar.gz", true},
+		{"ftp URL", "ftp://ftp.gnu.org/pub/gnu/sed/sed-4.9.tar.xz", "sed-4.9.tar.xz", true},
+		{"trailing slash", "https://example.com/", "/", true},
+		{"not a URL - plain filename", "file.tar.gz", "", false},
+		{"not a URL - relative path", "patches/fix.patch", "", false},
 	}
 
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
-			result := extractFilenameFromURL(testCase.url)
-			assert.Equal(t, testCase.expected, result)
+			name, ok := filenameFromURL(testCase.input)
+			assert.Equal(t, testCase.expectedOK, ok)
+
+			if ok {
+				assert.Equal(t, testCase.expectedName, name)
+			}
 		})
 	}
 }

@@ -17,6 +17,7 @@ import (
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/mock"
+	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spectool"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 )
@@ -79,26 +80,25 @@ func validateInputs(inputs []ComponentInput) error {
 	return nil
 }
 
+// isSimpleName returns true if s is a non-empty, single-component filename
+// without path separators, traversal sequences, or null bytes.
+func isSimpleName(s string) bool {
+	return s != "" && s != "." && s != ".." &&
+		!strings.ContainsAny(s, "/\\") &&
+		!strings.Contains(s, "..") &&
+		!strings.ContainsRune(s, 0)
+}
+
 // validateComponentInput rejects component inputs that could cause path traversal
 // or other safety issues when used to construct paths inside the mock chroot.
 func validateComponentInput(input ComponentInput) error {
-	name := input.Name
-	if name == "" || name == "." ||
-		strings.Contains(name, "/") || strings.Contains(name, "\\") ||
-		strings.Contains(name, "..") || strings.ContainsRune(name, 0) ||
-		filepath.IsAbs(name) {
+	if !isSimpleName(input.Name) {
 		return fmt.Errorf(
-			"invalid component name %#q: must be a simple name without path separators or traversal sequences", name)
+			"invalid component name %#q: must be a simple name without path separators or traversal sequences", input.Name)
 	}
 
-	if input.SpecFilename == "" || input.SpecFilename == "." || input.SpecFilename == ".." {
-		return fmt.Errorf("invalid spec filename %#q for component %#q", input.SpecFilename, name)
-	}
-
-	if input.SpecFilename != filepath.Base(input.SpecFilename) {
-		return fmt.Errorf(
-			"spec filename %#q for component %#q contains path separators; expected a basename",
-			input.SpecFilename, name)
+	if !isSimpleName(input.SpecFilename) {
+		return fmt.Errorf("invalid spec filename %#q for component %#q", input.SpecFilename, input.Name)
 	}
 
 	return nil
@@ -289,7 +289,7 @@ func parseBatchJSON(stdout string, inputs []ComponentInput) ([]ComponentMockResu
 			continue
 		}
 
-		results[idx].SpecFiles = parseSpectoolOutput(compResult.SpecFiles)
+		results[idx].SpecFiles = spectool.ParseSpectoolOutput(compResult.SpecFiles)
 	}
 
 	return results, nil
