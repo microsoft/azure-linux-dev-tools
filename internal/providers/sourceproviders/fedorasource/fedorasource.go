@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -309,30 +310,80 @@ const (
 	PlaceholderHash = "$hash"
 )
 
+// validateAbsoluteURL parses uri and verifies it is an absolute URL with a
+// non-empty scheme and host. The label parameter is used in error messages to
+// identify the URL's purpose (e.g. "lookaside", "dist-git").
+func validateAbsoluteURL(uri, label string) error {
+	u, err := url.Parse(uri)
+	if err != nil {
+		return fmt.Errorf("resulting %s URL is not valid:\n%w", label, err)
+	}
+
+	if u.Scheme == "" || u.Host == "" {
+		return fmt.Errorf("resulting %s URL %#q is missing scheme or host", label, uri)
+	}
+
+	return nil
+}
+
 // BuildLookasideURL constructs a lookaside cache URL by substituting placeholders in the
 // URI template with the provided values. Supported placeholders are [PlaceholderPkg],
 // [PlaceholderFilename], [PlaceholderHashType], and [PlaceholderHash].
 // Placeholders not present in the template are simply ignored.
 //
+// Substituted values are URL path-escaped via [url.PathEscape] so that reserved
+// characters such as /, ?, #, and % do not alter the URL structure.
+//
 // Returns an error if any of the provided values contain a placeholder string, as this
-// would cause ambiguous substitution results depending on replacement order.
+// would cause ambiguous substitution results depending on replacement order, or if the
+// resulting URL is not valid.
 func BuildLookasideURL(template, packageName, fileName, hashType, hash string) (string, error) {
 	// allPlaceholders lists all supported lookaside URI template placeholders.
 	allPlaceholders := []string{PlaceholderPkg, PlaceholderFilename, PlaceholderHashType, PlaceholderHash}
 
+	// Normalize hashType to lowercase since that is the form actually substituted.
+	hashType = strings.ToLower(hashType)
+
 	for _, v := range []string{packageName, fileName, hashType, hash} {
 		for _, p := range allPlaceholders {
 			if strings.Contains(v, p) {
-				return "", fmt.Errorf("value %#q contains placeholder %s, which would cause ambiguous substitution", v, p)
+				return "", fmt.Errorf("value %#q contains placeholder %#q, which would cause ambiguous substitution", v, p)
 			}
 		}
 	}
 
 	uri := template
-	uri = strings.ReplaceAll(uri, PlaceholderPkg, packageName)
-	uri = strings.ReplaceAll(uri, PlaceholderFilename, fileName)
-	uri = strings.ReplaceAll(uri, PlaceholderHashType, strings.ToLower(hashType))
-	uri = strings.ReplaceAll(uri, PlaceholderHash, hash)
+	uri = strings.ReplaceAll(uri, PlaceholderPkg, url.PathEscape(packageName))
+	uri = strings.ReplaceAll(uri, PlaceholderFilename, url.PathEscape(fileName))
+	uri = strings.ReplaceAll(uri, PlaceholderHashType, url.PathEscape(hashType))
+	uri = strings.ReplaceAll(uri, PlaceholderHash, url.PathEscape(hash))
+
+	if err := validateAbsoluteURL(uri, "lookaside"); err != nil {
+		return "", err
+	}
+
+	return uri, nil
+}
+
+// BuildDistGitURL constructs a dist-git repository URL by substituting the
+// [PlaceholderPkg] placeholder in the URI template with the provided package name.
+//
+// The package name is URL path-escaped via [url.PathEscape] so that reserved
+// characters such as /, ?, #, and % do not alter the URL structure.
+//
+// Returns an error if the package name contains a placeholder string, or if the
+// resulting URL is not valid.
+func BuildDistGitURL(template, packageName string) (string, error) {
+	if strings.Contains(packageName, PlaceholderPkg) {
+		return "", fmt.Errorf("package name %#q contains placeholder %#q, which would cause ambiguous substitution",
+			packageName, PlaceholderPkg)
+	}
+
+	uri := strings.ReplaceAll(template, PlaceholderPkg, url.PathEscape(packageName))
+
+	if err := validateAbsoluteURL(uri, "dist-git"); err != nil {
+		return "", err
+	}
 
 	return uri, nil
 }

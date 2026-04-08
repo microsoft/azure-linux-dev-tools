@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
@@ -106,7 +105,10 @@ func (g *FedoraSourcesProviderImpl) GetComponent(
 		return errors.New("destination path cannot be empty")
 	}
 
-	gitRepoURL := strings.ReplaceAll(g.distroGitBaseURI, "$pkg", upstreamNameToUse)
+	gitRepoURL, err := fedorasource.BuildDistGitURL(g.distroGitBaseURI, upstreamNameToUse)
+	if err != nil {
+		return fmt.Errorf("failed to build dist-git URL for %#q:\n%w", upstreamNameToUse, err)
+	}
 
 	slog.Info("Getting component from git repo",
 		"component", componentName,
@@ -259,7 +261,10 @@ func (g *FedoraSourcesProviderImpl) ResolveIdentity(
 		upstreamName = component.GetName()
 	}
 
-	gitRepoURL := strings.ReplaceAll(g.distroGitBaseURI, "$pkg", upstreamName)
+	gitRepoURL, err := fedorasource.BuildDistGitURL(g.distroGitBaseURI, upstreamName)
+	if err != nil {
+		return "", fmt.Errorf("failed to build dist-git URL for %#q:\n%w", upstreamName, err)
+	}
 
 	return g.resolveCommit(ctx, gitRepoURL, upstreamName, component.GetConfig().Spec.UpstreamCommit)
 }
