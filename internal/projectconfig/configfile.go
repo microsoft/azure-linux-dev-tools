@@ -5,6 +5,7 @@ package projectconfig
 
 import (
 	"fmt"
+	"net/url"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
@@ -123,10 +124,10 @@ func validateSourceFiles(sourceFiles []SourceFileReference, componentName string
 
 		seen[ref.Filename] = true
 
-		if ref.HashType != "" && !SupportedSourceFilesHashTypes[ref.HashType] {
+		if ref.HashType != "" && !AllowedSourceFilesHashTypes[ref.HashType] {
 			return fmt.Errorf(
 				"unsupported hash type %#q for source file %#q, component %#q; supported types are %v",
-				ref.HashType, ref.Filename, componentName, lo.Keys(SupportedSourceFilesHashTypes))
+				ref.HashType, ref.Filename, componentName, lo.Keys(AllowedSourceFilesHashTypes))
 		}
 
 		if ref.Hash != "" && ref.HashType == "" {
@@ -136,12 +137,50 @@ func validateSourceFiles(sourceFiles []SourceFileReference, componentName string
 				ref.Filename, componentName)
 		}
 
-		if ref.Origin.Type == "" {
-			return fmt.Errorf(
-				"missing 'origin' for source file %#q, component %#q; "+
-					"an origin is required for all source file entries",
-				ref.Filename, componentName)
+		if err := validateOrigin(ref.Origin, ref.Filename, componentName); err != nil {
+			return err
 		}
+	}
+
+	return nil
+}
+
+// validateOrigin checks that a source file [Origin] is present and valid for its type.
+// For [OriginTypeURI] ('download'), the [Origin.Uri] field must be a valid URI with a scheme.
+func validateOrigin(origin Origin, filename string, componentName string) error {
+	if origin.Type == "" {
+		return fmt.Errorf(
+			"missing 'origin' for source file %#q, component %#q; "+
+				"an origin is required for all source file entries",
+			filename, componentName)
+	}
+
+	switch origin.Type {
+	case OriginTypeURI:
+		if origin.Uri == "" {
+			return fmt.Errorf(
+				"missing 'uri' for source file %#q, component %#q; "+
+					"'uri' is required when 'origin' type is 'download'",
+				filename, componentName)
+		}
+
+		parsed, err := url.Parse(origin.Uri)
+		if err != nil {
+			return fmt.Errorf(
+				"invalid 'uri' for source file %#q, component %#q:\n%w",
+				filename, componentName, err)
+		}
+
+		if parsed.Scheme == "" {
+			return fmt.Errorf(
+				"invalid 'uri' for source file %#q, component %#q; "+
+					"URI %#q is missing a scheme (e.g. 'https://')",
+				filename, componentName, origin.Uri)
+		}
+	default:
+		return fmt.Errorf(
+			"unsupported 'origin' type %#q for source file %#q, component %#q",
+			origin.Type, filename, componentName)
 	}
 
 	return nil

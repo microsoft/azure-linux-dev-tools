@@ -235,3 +235,67 @@ func TestProjectConfigFileValidation_MissingHashWithOrigin(t *testing.T) {
 	}
 	assert.NoError(t, file.Validate())
 }
+
+func TestProjectConfigFileValidation_DownloadOriginMissingURI(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"test-component": {
+				SourceFiles: []projectconfig.SourceFileReference{
+					{
+						Filename: "source.tar.gz",
+						Hash:     "abc123",
+						HashType: "sha256",
+						Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeURI},
+					},
+				},
+			},
+		},
+	}
+	err := file.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing 'uri'")
+	assert.Contains(t, err.Error(), "source.tar.gz")
+	assert.Contains(t, err.Error(), "test-component")
+}
+
+func TestProjectConfigFileValidation_DownloadOriginInvalidURI(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"test-component": {
+				SourceFiles: []projectconfig.SourceFileReference{
+					{
+						Filename: "source.tar.gz",
+						Hash:     "abc123",
+						HashType: "sha256",
+						Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "not-a-uri"},
+					},
+				},
+			},
+		},
+	}
+	err := file.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid 'uri'")
+	assert.Contains(t, err.Error(), "missing a scheme")
+}
+
+func TestProjectConfigFileValidation_UnsupportedOriginType(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"test-component": {
+				SourceFiles: []projectconfig.SourceFileReference{
+					{
+						Filename: "source.tar.gz",
+						Hash:     "abc123",
+						HashType: "sha256",
+						Origin:   projectconfig.Origin{Type: "ftp"},
+					},
+				},
+			},
+		},
+	}
+	err := file.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported 'origin' type")
+	assert.Contains(t, err.Error(), "ftp")
+}
