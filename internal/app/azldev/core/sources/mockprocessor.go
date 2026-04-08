@@ -88,7 +88,7 @@ func validateComponentInput(input ComponentInput) error {
 		strings.Contains(name, "..") || strings.ContainsRune(name, 0) ||
 		filepath.IsAbs(name) {
 		return fmt.Errorf(
-			"invalid component name %#q: must be a simple name without path separators", name)
+			"invalid component name %#q: must be a simple name without path separators or traversal sequences", name)
 	}
 
 	if input.SpecFilename == "" || input.SpecFilename == "." || input.SpecFilename == ".." {
@@ -146,8 +146,8 @@ func (p *MockProcessor) initOnce(ctx context.Context) error {
 // mount exposes the entire staging tree to the chroot.
 //
 // Components are processed in parallel inside the chroot by an embedded
-// Python script (render_process.py) which returns JSON results on stdout
-// and per-component progress on stderr.
+// Python script (render_process.py) which returns a JSON file, and reports
+// per-component progress on stderr (mapped by mock to stdout).
 func (p *MockProcessor) BatchProcess(
 	ctx context.Context, events opctx.EventListener,
 	stagingDir string, inputs []ComponentInput, fs opctx.FS,
