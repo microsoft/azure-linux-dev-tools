@@ -121,6 +121,30 @@ func TestValidateFileHash(t *testing.T) {
 			expectedHash: bogusHash,
 			wantError:    true,
 		},
+		{
+			name:         "lowercase sha256 rejected",
+			hashType:     fileutils.HashType("sha256"),
+			expectedHash: expectedSHA256,
+			wantError:    true,
+		},
+		{
+			name:         "lowercase sha512 rejected",
+			hashType:     fileutils.HashType("sha512"),
+			expectedHash: expectedSHA512,
+			wantError:    true,
+		},
+		{
+			name:         "lowercase md5 rejected",
+			hashType:     fileutils.HashType("md5"),
+			expectedHash: expectedMD5,
+			wantError:    true,
+		},
+		{
+			name:         "mixed case Sha256 rejected",
+			hashType:     fileutils.HashType("Sha256"),
+			expectedHash: expectedSHA256,
+			wantError:    true,
+		},
 	}
 
 	for _, tt := range tests {
