@@ -138,7 +138,8 @@ type ComponentConfig struct {
 	Packages map[string]PackageConfig `toml:"packages,omitempty" json:"packages,omitempty" table:"-" jsonschema:"title=Package overrides,description=Per-package configuration overrides keyed by exact binary package name"`
 }
 
-// AllowedSourceFilesHashTypes defines the set of hash types that are supported for use in 'source-files' entries in component configs.
+// AllowedSourceFilesHashTypes defines the set of hash types that are supported
+// for use in [SourceFileReference] entries in component configs.
 // MD5 is excluded by design.
 //
 //nolint:gochecknoglobals // This is effectively a constant, but Go doesn't have const maps.

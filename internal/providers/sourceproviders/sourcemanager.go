@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
-	"strings"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
@@ -358,7 +357,7 @@ func (m *sourceManager) tryLookasideDownload(
 	packageName := resolvePackageName(component)
 
 	sourceURL, err := fedorasource.BuildLookasideURL(m.lookasideBaseURI, packageName, fileRef.Filename,
-		strings.ToUpper(string(fileRef.HashType)), fileRef.Hash)
+		string(fileRef.HashType), fileRef.Hash)
 	if err != nil {
 		return fmt.Errorf("failed to build lookaside URL for %#q:\n%w", fileRef.Filename, err)
 	}

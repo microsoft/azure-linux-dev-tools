@@ -485,7 +485,9 @@ func (p *sourcePreparerImpl) updateSourcesFile(component components.Component, o
 	existingFilenames := make(map[string]bool, len(existingEntries))
 	for _, entry := range existingEntries {
 		if existingFilenames[entry.Filename] {
-			return fmt.Errorf("failed to process existing 'sources' file %#q: duplicate filename %#q", sourcesFilePath, entry.Filename)
+			return fmt.Errorf(
+				"failed to process existing 'sources' file %#q: duplicate filename %#q",
+				sourcesFilePath, entry.Filename)
 		}
 
 		existingFilenames[entry.Filename] = true

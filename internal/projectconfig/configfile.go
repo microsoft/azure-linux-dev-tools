@@ -110,8 +110,10 @@ func (f ConfigFile) Validate() error {
 
 // validateSourceFiles checks 'source-files' configuration for a component:
 //   - All filenames must be unique.
-//   - Hash type must be a supported algorithm when specified.
+//   - Hash type must be a supported algorithm when specified; it is normalized to the
+//     canonical [fileutils.HashType] constant (e.g. "sha256" → "SHA256").
 //   - Hash value without a hash type is not allowed.
+//   - Origin must be present and valid for each source file.
 func validateSourceFiles(sourceFiles []SourceFileReference, componentName string) error {
 	seen := make(map[string]bool, len(sourceFiles))
 

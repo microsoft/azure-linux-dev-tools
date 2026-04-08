@@ -648,7 +648,7 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 				{
 					Filename: "extra-source.tar.gz",
 					Hash:     "abc123def456",
-					HashType: "sha512",
+					HashType: fileutils.HashTypeSHA512,
 				},
 			},
 			existingSourcesContent: "SHA512 (existing.tar.gz) = aabbccdd1122\n",
@@ -663,7 +663,7 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 				{
 					Filename: "existing.tar.gz", // Already in sources file.
 					Hash:     "11223344aabb",
-					HashType: "sha512",
+					HashType: fileutils.HashTypeSHA512,
 				},
 			},
 			existingSourcesContent: "SHA512 (existing.tar.gz) = aabbccdd1122\n",
@@ -679,7 +679,7 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 				{
 					Filename: "missing-hash.tar.gz",
 					Hash:     "", // Missing hash.
-					HashType: "sha512",
+					HashType: fileutils.HashTypeSHA512,
 				},
 			},
 			expectError:   true,
@@ -703,7 +703,7 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 				{
 					Filename: "new-source.tar.gz",
 					Hash:     "newhash123",
-					HashType: "sha256",
+					HashType: fileutils.HashTypeSHA256,
 				},
 			},
 			existingSourcesContent: "", // No existing file.
@@ -797,7 +797,7 @@ func TestPrepareSources_AllowNoHashes(t *testing.T) {
 			sourceFiles: []projectconfig.SourceFileReference{
 				{
 					Filename: "test-file.tar.gz",
-					HashType: "sha256",
+					HashType: fileutils.HashTypeSHA256,
 					Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/test-file.tar.gz"},
 				},
 			},
@@ -826,7 +826,7 @@ func TestPrepareSources_AllowNoHashes(t *testing.T) {
 			sourceFiles: []projectconfig.SourceFileReference{
 				{
 					Filename: "nonexistent.tar.gz",
-					HashType: "sha256",
+					HashType: fileutils.HashTypeSHA256,
 					Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/nonexistent.tar.gz"},
 				},
 			},
@@ -840,7 +840,7 @@ func TestPrepareSources_AllowNoHashes(t *testing.T) {
 			sourceFiles: []projectconfig.SourceFileReference{
 				{
 					Filename: "test-file.tar.gz",
-					HashType: "sha512",
+					HashType: fileutils.HashTypeSHA512,
 					Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/test-file.tar.gz"},
 				},
 			},

@@ -73,9 +73,9 @@ func TestProjectConfigFileValidation_DuplicateSourceFileName(t *testing.T) {
 		Components: map[string]projectconfig.ComponentConfig{
 			"test-component": {
 				SourceFiles: []projectconfig.SourceFileReference{
-					{Filename: "source.tar.gz", Hash: "abc", HashType: "sha256", Origin: origin},
-					{Filename: "another.tar.gz", Hash: "def", HashType: "sha256", Origin: origin},
-					{Filename: "source.tar.gz", Hash: "ghi", HashType: "sha256", Origin: origin}, // duplicate
+					{Filename: "source.tar.gz", Hash: "abc", HashType: fileutils.HashTypeSHA256, Origin: origin},
+					{Filename: "another.tar.gz", Hash: "def", HashType: fileutils.HashTypeSHA256, Origin: origin},
+					{Filename: "source.tar.gz", Hash: "ghi", HashType: fileutils.HashTypeSHA256, Origin: origin}, // duplicate
 				},
 			},
 		},
@@ -94,9 +94,9 @@ func TestProjectConfigFileValidation_UniqueSourceFileNames(t *testing.T) {
 		Components: map[string]projectconfig.ComponentConfig{
 			"test-component": {
 				SourceFiles: []projectconfig.SourceFileReference{
-					{Filename: "source.tar.gz", Hash: "abc", HashType: "sha256", Origin: origin},
-					{Filename: "another.tar.gz", Hash: "def", HashType: "sha256", Origin: origin},
-					{Filename: "patch.patch", Hash: "ghi", HashType: "sha256", Origin: origin},
+					{Filename: "source.tar.gz", Hash: "abc", HashType: fileutils.HashTypeSHA256, Origin: origin},
+					{Filename: "another.tar.gz", Hash: "def", HashType: fileutils.HashTypeSHA256, Origin: origin},
+					{Filename: "patch.patch", Hash: "ghi", HashType: fileutils.HashTypeSHA256, Origin: origin},
 				},
 			},
 		},
@@ -207,7 +207,7 @@ func TestProjectConfigFileValidation_MissingOrigin(t *testing.T) {
 					{
 						Filename: "source.tar.gz",
 						Hash:     "abc123",
-						HashType: "sha256",
+						HashType: fileutils.HashTypeSHA256,
 					},
 				},
 			},
@@ -244,7 +244,7 @@ func TestProjectConfigFileValidation_DownloadOriginMissingURI(t *testing.T) {
 					{
 						Filename: "source.tar.gz",
 						Hash:     "abc123",
-						HashType: "sha256",
+						HashType: fileutils.HashTypeSHA256,
 						Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeURI},
 					},
 				},
@@ -266,7 +266,7 @@ func TestProjectConfigFileValidation_DownloadOriginInvalidURI(t *testing.T) {
 					{
 						Filename: "source.tar.gz",
 						Hash:     "abc123",
-						HashType: "sha256",
+						HashType: fileutils.HashTypeSHA256,
 						Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "not-a-uri"},
 					},
 				},
@@ -287,7 +287,7 @@ func TestProjectConfigFileValidation_UnsupportedOriginType(t *testing.T) {
 					{
 						Filename: "source.tar.gz",
 						Hash:     "abc123",
-						HashType: "sha256",
+						HashType: fileutils.HashTypeSHA256,
 						Origin:   projectconfig.Origin{Type: "ftp"},
 					},
 				},

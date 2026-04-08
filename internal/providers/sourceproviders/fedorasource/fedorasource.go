@@ -264,7 +264,7 @@ func parseSourcesFile(content string, packageName string, lookasideBaseURI strin
 	for _, entry := range entries {
 		sourceURI, err := BuildLookasideURL(
 			lookasideBaseURI, packageName, entry.Filename,
-			strings.ToUpper(string(entry.HashType)), entry.Hash,
+			string(entry.HashType), entry.Hash,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build lookaside URL for file %#q:\n%w", entry.Filename, err)
@@ -319,12 +319,12 @@ func ReadSourcesFileEntries(content string) ([]SourcesFileEntry, error) {
 			fileName = legacyMatches[sourcesLegacyPatternFilenameIndex]
 
 			// Legacy format historically only used MD5
-			hashType = "MD5"
+			hashType = string(fileutils.HashTypeMD5)
 		}
 
 		entries = append(entries, SourcesFileEntry{
 			Filename: fileName,
-			HashType: fileutils.HashType(strings.ToLower(hashType)),
+			HashType: fileutils.HashType(hashType),
 			Hash:     hash,
 		})
 	}
@@ -335,10 +335,10 @@ func ReadSourcesFileEntries(content string) ([]SourcesFileEntry, error) {
 // FormatSourcesEntry formats a sources file entry in the modern Fedora/RHEL format.
 // Example output: "SHA512 (example-1.0.tar.gz) = a1b2c3d4e5f6..."
 //
-// The hashType is converted to uppercase in the output (e.g., "sha512" becomes "SHA512").
+// The [hashType] must be a canonical [fileutils.HashType] constant.
 // The hash value is included as-is without case normalization.
 func FormatSourcesEntry(filename string, hashType fileutils.HashType, hash string) string {
-	return fmt.Sprintf("%s (%s) = %s", strings.ToUpper(string(hashType)), filename, hash)
+	return fmt.Sprintf("%s (%s) = %s", string(hashType), filename, hash)
 }
 
 // Lookaside URI template placeholders supported by [BuildLookasideURL].
@@ -363,11 +363,12 @@ const (
 func BuildLookasideURL(template, packageName, fileName, hashType, hash string) (string, error) {
 	// allPlaceholders lists all supported lookaside URI template placeholders.
 	allPlaceholders := []string{PlaceholderPkg, PlaceholderFilename, PlaceholderHashType, PlaceholderHash}
+	hashType = strings.ToLower(hashType)
 
 	for _, v := range []string{packageName, fileName, hashType, hash} {
 		for _, p := range allPlaceholders {
 			if strings.Contains(v, p) {
-				return "", fmt.Errorf("value %#q contains placeholder %s, which would cause ambiguous substitution", v, p)
+				return "", fmt.Errorf("value %#q contains placeholder %#q, which would cause ambiguous substitution", v, p)
 			}
 		}
 	}
@@ -375,7 +376,7 @@ func BuildLookasideURL(template, packageName, fileName, hashType, hash string) (
 	uri := template
 	uri = strings.ReplaceAll(uri, PlaceholderPkg, packageName)
 	uri = strings.ReplaceAll(uri, PlaceholderFilename, fileName)
-	uri = strings.ReplaceAll(uri, PlaceholderHashType, strings.ToLower(hashType))
+	uri = strings.ReplaceAll(uri, PlaceholderHashType, hashType)
 	uri = strings.ReplaceAll(uri, PlaceholderHash, hash)
 
 	return uri, nil
