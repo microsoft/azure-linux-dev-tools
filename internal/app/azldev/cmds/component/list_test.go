@@ -4,6 +4,7 @@
 package component_test
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/component"
@@ -92,7 +93,7 @@ func TestListComponents_WithRenderedSpecsDir(t *testing.T) {
 
 	result := results[0]
 	assert.Equal(t, testComponentName, result.Name)
-	assert.Equal(t, testRenderedDir+"/"+testComponentName, result.RenderedSpecDir)
+	assert.Equal(t, filepath.Join(testRenderedDir, testComponentName), result.RenderedSpecDir)
 }
 
 func TestListComponents_MultipleWithRenderedSpecsDir(t *testing.T) {
@@ -121,6 +122,6 @@ func TestListComponents_MultipleWithRenderedSpecsDir(t *testing.T) {
 	require.Len(t, results, 2)
 
 	for _, result := range results {
-		assert.Equal(t, testRenderedDir+"/"+result.Name, result.RenderedSpecDir)
+		assert.Equal(t, filepath.Join(testRenderedDir, result.Name), result.RenderedSpecDir)
 	}
 }
