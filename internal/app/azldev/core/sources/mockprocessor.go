@@ -200,8 +200,10 @@ func (p *MockProcessor) BatchProcess(
 		return nil, fmt.Errorf("failed to create batch command in mock:\n%w", err)
 	}
 
-	// Set up progress reporting from the Python script's stderr output.
-	// The script prints "PROGRESS <completed>/<total> <name>" per component.
+	// Set up progress reporting from the Python script's output.
+	// The script prints "PROGRESS <completed>/<total> <name>" to stderr, but
+	// mock --chroot merges the inner command's stderr into stdout, so we
+	// listen on stdout.
 	mockProgress := events.StartEvent("Processing specs in mock chroot", "count", len(inputs))
 	mockProgress.SetLongRunning("Processing specs in mock chroot")
 
@@ -209,7 +211,7 @@ func (p *MockProcessor) BatchProcess(
 
 	total := int64(len(inputs))
 
-	if listenerErr := cmd.SetRealTimeStderrListener(func(_ context.Context, line string) {
+	if listenerErr := cmd.SetRealTimeStdoutListener(func(_ context.Context, line string) {
 		// Parse "PROGRESS <i>/<total> <name>" lines.
 		if after, found := strings.CutPrefix(line, "PROGRESS "); found {
 			if slashIdx := strings.Index(after, "/"); slashIdx > 0 {
@@ -219,7 +221,7 @@ func (p *MockProcessor) BatchProcess(
 			}
 		}
 	}); listenerErr != nil {
-		slog.Warn("Failed to set stderr listener for progress", "error", listenerErr)
+		slog.Warn("Failed to set stdout listener for progress", "error", listenerErr)
 	}
 
 	if runErr := cmd.Run(ctx); runErr != nil {
