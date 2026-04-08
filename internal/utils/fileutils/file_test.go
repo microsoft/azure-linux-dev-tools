@@ -92,6 +92,7 @@ func TestValidateFilename(t *testing.T) {
 		{name: "tab in name", filename: "has\ttab.tar.gz", expectedError: "must not contain whitespace"},
 		{name: "null byte in name", filename: "has\x00null.tar.gz", expectedError: "must not contain null bytes"},
 		{name: "backslash in name", filename: "foo\\bar.tar.gz", expectedError: "must not contain backslashes"},
+		{name: "non-ASCII characters", filename: "foo\x80bar.tar.gz", expectedError: "must contain only ASCII characters"},
 	}
 
 	for _, tc := range tests {

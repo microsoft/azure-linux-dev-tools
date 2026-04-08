@@ -6,12 +6,14 @@ package components
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 )
 
 // RenderedSpecDir returns the rendered spec output directory for a given component.
-// The path is computed as {renderedSpecsDir}/{componentName}.
+// Components are organized by the lowercase first letter of their name:
+// {renderedSpecsDir}/{letter}/{componentName} (e.g., "SPECS/c/curl").
 // Returns an empty string if renderedSpecsDir is not configured (empty).
 // Returns an error if componentName is unsafe (absolute, contains path separators
 // or traversal sequences).
@@ -24,5 +26,7 @@ func RenderedSpecDir(renderedSpecsDir, componentName string) (string, error) {
 		return "", nil
 	}
 
-	return filepath.Join(renderedSpecsDir, componentName), nil
+	prefix := strings.ToLower(componentName[:1])
+
+	return filepath.Join(renderedSpecsDir, prefix, componentName), nil
 }

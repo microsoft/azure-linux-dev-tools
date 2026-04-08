@@ -96,5 +96,12 @@ func ValidateFilename(filename string) error {
 		return fmt.Errorf("filename %#q must not contain backslashes", filename)
 	}
 
+	// Reject non-ASCII characters. RPM package names are ASCII-only, and
+	// non-ASCII bytes would produce garbled single-byte prefixes when used
+	// for letter-bucketed directory layouts.
+	if strings.ContainsFunc(filename, func(r rune) bool { return r > unicode.MaxASCII }) {
+		return fmt.Errorf("filename %#q must contain only ASCII characters", filename)
+	}
+
 	return nil
 }
