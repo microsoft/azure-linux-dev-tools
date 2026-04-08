@@ -599,7 +599,9 @@ func (p *sourcePreparerImpl) resolveSourceHash(
 		if hashType == "" {
 			return "", "", fmt.Errorf(
 				"source file %#q has a 'hash' value but no 'hash-type'; "+
-					"both must be specified in the 'source-files' configuration",
+					"both must be specified in the 'source-files' configuration;"+
+					"alternatively 'hash' can be omitted and 'prep-sources' run with "+
+					"'--allow-no-hashes' to compute missing hashes automatically",
 				ref.Filename)
 		}
 
