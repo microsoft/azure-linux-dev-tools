@@ -1,0 +1,28 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+package components_test
+
+import (
+	"testing"
+
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
+	"github.com/stretchr/testify/assert"
+)
+
+func TestRenderedSpecDir(t *testing.T) {
+	t.Run("ReturnsPathWhenConfigured", func(t *testing.T) {
+		result := components.RenderedSpecDir("/path/to/specs", "vim")
+		assert.Equal(t, "/path/to/specs/vim", result)
+	})
+
+	t.Run("ReturnsEmptyWhenNotConfigured", func(t *testing.T) {
+		result := components.RenderedSpecDir("", "vim")
+		assert.Empty(t, result)
+	})
+
+	t.Run("HandlesComponentNameWithDashes", func(t *testing.T) {
+		result := components.RenderedSpecDir("/rendered", "my-component")
+		assert.Equal(t, "/rendered/my-component", result)
+	})
+}

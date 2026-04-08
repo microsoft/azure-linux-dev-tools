@@ -61,4 +61,66 @@ func TestListComponents_OneComponent(t *testing.T) {
 	result := results[0]
 	assert.Equal(t, testComponentName, result.Name)
 	assert.Equal(t, testSpecPath, result.Spec.Path)
+	assert.Empty(t, result.RenderedSpecDir, "RenderedSpecDir should be empty when rendered-specs-dir is not configured")
+}
+
+func TestListComponents_WithRenderedSpecsDir(t *testing.T) {
+	const (
+		testComponentName = "vim"
+		testSpecPath      = "/path/to/spec"
+		testRenderedDir   = "/path/to/repo/specs"
+	)
+
+	testEnv := testutils.NewTestEnv(t)
+	testEnv.Config.Project.RenderedSpecsDir = testRenderedDir
+	testEnv.Config.Components[testComponentName] = projectconfig.ComponentConfig{
+		Name: testComponentName,
+		Spec: projectconfig.SpecSource{
+			Path: testSpecPath,
+		},
+	}
+
+	options := component.ListComponentOptions{
+		ComponentFilter: components.ComponentFilter{
+			ComponentNamePatterns: []string{testComponentName},
+		},
+	}
+
+	results, err := component.ListComponentConfigs(testEnv.Env, &options)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	result := results[0]
+	assert.Equal(t, testComponentName, result.Name)
+	assert.Equal(t, testRenderedDir+"/"+testComponentName, result.RenderedSpecDir)
+}
+
+func TestListComponents_MultipleWithRenderedSpecsDir(t *testing.T) {
+	const testRenderedDir = "/rendered/specs"
+
+	testEnv := testutils.NewTestEnv(t)
+	testEnv.Config.Project.RenderedSpecsDir = testRenderedDir
+
+	testEnv.Config.Components["curl"] = projectconfig.ComponentConfig{
+		Name: "curl",
+		Spec: projectconfig.SpecSource{Path: "/specs/curl.spec"},
+	}
+	testEnv.Config.Components["vim"] = projectconfig.ComponentConfig{
+		Name: "vim",
+		Spec: projectconfig.SpecSource{Path: "/specs/vim.spec"},
+	}
+
+	options := component.ListComponentOptions{
+		ComponentFilter: components.ComponentFilter{
+			IncludeAllComponents: true,
+		},
+	}
+
+	results, err := component.ListComponentConfigs(testEnv.Env, &options)
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+
+	for _, result := range results {
+		assert.Equal(t, testRenderedDir+"/"+result.Name, result.RenderedSpecDir)
+	}
 }

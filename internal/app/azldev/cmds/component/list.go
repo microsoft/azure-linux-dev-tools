@@ -9,7 +9,6 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
-	"github.com/samber/lo"
 	"github.com/spf13/cobra"
 )
 
@@ -17,6 +16,16 @@ import (
 type ListComponentOptions struct {
 	// Standard filter for selecting components.
 	ComponentFilter components.ComponentFilter
+}
+
+// ComponentListEntry wraps a [projectconfig.ComponentConfig] with additional computed fields
+// for the component list output.
+type ComponentListEntry struct {
+	projectconfig.ComponentConfig
+
+	// RenderedSpecDir is the output directory for this component's rendered spec files.
+	// Empty when rendered-specs-dir is not configured in the project.
+	RenderedSpecDir string `json:"renderedSpecDir,omitempty" table:"Rendered Spec Dir"`
 }
 
 func listOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
@@ -63,7 +72,7 @@ Component name patterns support glob syntax (*, ?, []).`,
 // Lists components in the env, in accordance with options. Returns the found components.
 func ListComponentConfigs(
 	env *azldev.Env, options *ListComponentOptions,
-) (results []projectconfig.ComponentConfig, err error) {
+) (results []ComponentListEntry, err error) {
 	var comps *components.ComponentSet
 
 	resolver := components.NewResolver(env)
@@ -73,8 +82,17 @@ func ListComponentConfigs(
 		return results, fmt.Errorf("failed to resolve components:\n%w", err)
 	}
 
-	// Extract the component configs from the resolved components, and return them in a slice.
-	return lo.Map(comps.Components(), func(component components.Component, _ int) projectconfig.ComponentConfig {
-		return *component.GetConfig()
-	}), nil
+	renderedSpecsDir := env.Config().Project.RenderedSpecsDir
+
+	// Extract the component configs from the resolved components, compute the rendered spec
+	// directory for each, and return them in a slice.
+	entries := make([]ComponentListEntry, 0, comps.Len())
+	for _, comp := range comps.Components() {
+		entries = append(entries, ComponentListEntry{
+			ComponentConfig: *comp.GetConfig(),
+			RenderedSpecDir: components.RenderedSpecDir(renderedSpecsDir, comp.GetName()),
+		})
+	}
+
+	return entries, nil
 }
