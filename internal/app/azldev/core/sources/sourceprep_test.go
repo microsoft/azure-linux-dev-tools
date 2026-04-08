@@ -14,6 +14,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
+	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/sourceproviders_test"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
@@ -725,7 +726,7 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 				func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
 					// Create existing sources file if specified.
 					if testCase.existingSourcesContent != "" {
-						err := fileutils.WriteFile(ctx.FS(), filepath.Join(outputDir, "sources"),
+						err := fileutils.WriteFile(ctx.FS(), filepath.Join(outputDir, fedorasource.SourcesFileName),
 							[]byte(testCase.existingSourcesContent), fileperms.PublicFile)
 						if err != nil {
 							return err
@@ -753,7 +754,7 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 			require.NoError(t, err)
 
 			if len(testCase.expectedSourceEntries) > 0 {
-				sourcesFilePath := filepath.Join(testOutputDir, "sources")
+				sourcesFilePath := filepath.Join(testOutputDir, fedorasource.SourcesFileName)
 				sourcesContent, err := fileutils.ReadFile(ctx.FS(), sourcesFilePath)
 				require.NoError(t, err)
 
@@ -867,7 +868,7 @@ func TestPrepareSources_AllowNoHashes(t *testing.T) {
 			sourceManager.EXPECT().FetchComponent(gomock.Any(), comp, testOutputDir, gomock.Any()).DoAndReturn(
 				func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
 					if testCase.existingSourcesContent != "" {
-						if err := fileutils.WriteFile(ctx.FS(), filepath.Join(outputDir, "sources"),
+						if err := fileutils.WriteFile(ctx.FS(), filepath.Join(outputDir, fedorasource.SourcesFileName),
 							[]byte(testCase.existingSourcesContent), fileperms.PublicFile); err != nil {
 							return err
 						}
@@ -905,7 +906,7 @@ func TestPrepareSources_AllowNoHashes(t *testing.T) {
 			require.NoError(t, err)
 
 			if len(testCase.expectedSourceEntries) > 0 {
-				sourcesFilePath := filepath.Join(testOutputDir, "sources")
+				sourcesFilePath := filepath.Join(testOutputDir, fedorasource.SourcesFileName)
 				sourcesContent, err := fileutils.ReadFile(ctx.FS(), sourcesFilePath)
 				require.NoError(t, err)
 
