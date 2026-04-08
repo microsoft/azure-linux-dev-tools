@@ -1,5 +1,6 @@
 ---
 applyTo: "**/*.go"
+description: "Instructions for working on the azldev Go codebase. IMPORTANT: Always read these instructions when reading or editing Go code in this repository."
 ---
 
 # Guidelines for Copilot
@@ -48,6 +49,14 @@ applyTo: "**/*.go"
 - Ensure code passes golangci-lint checks
 - Use `github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms` instead of re-defining file permission constants
 - Use `github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils` for file operations like `Exists`, `ReadFile`, `WriteFile`, not "github.com/spf13/afero" directly.
+  - Avoid directly using os package functions for file operations; use the fileutils package instead.
+
+### External Command Execution
+
+- **NEVER** use `exec.LookPath` to check for external tools. Use `ctx.CommandInSearchPath("toolname")` or `env.CommandInSearchPath("toolname")` instead — these delegate to the underlying command factory and integrate with `testctx` for stubbing in tests (for example via `testEnv.CmdFactory.RegisterCommandInSearchPath(...)`).
+- Use `exec.CommandContext(ctx, "toolname", args...)` with the binary name (not an absolute path) after the `CommandInSearchPath` check. PATH resolution happens at exec time.
+- Always wrap with `ctx.Command(rawCmd)` or `env.Command(rawCmd)` and use `cmd.RunAndGetOutput(ctx)` or `cmd.Run(ctx)` for consistent event tracking and dry-run support.
+- Capture stderr separately via `rawCmd.Stderr = &stderr` (set BEFORE `ctx.Command()` / `env.Command()`) for use in error messages.
 
 ### Return values
 
@@ -87,6 +96,10 @@ applyTo: "**/*.go"
     }
     ```
 
+### Cmdline Returns
+
+CLI commands should return meaningful structured results. azldev has output formatting helpers to facilitate this (for example, `RunFunc*` wrappers handle formatting, so callers typically should not call `reflectable.FormatValue` directly).
+
 ## Quality Standards
 
 - Make minimal, focused changes to achieve the required functionality
@@ -95,3 +108,11 @@ applyTo: "**/*.go"
 - Organize imports according to Go best practices
 - Linting: Prefer fixing issues over `//nolint` comments. Use targeted `//nolint:<linter>` if absolutely required
 - Testing: Table-driven tests preferred. Use `scenario/internal/cmdtest` helpers
+
+### Component Command Testing
+
+New component subcommands (`internal/app/azldev/cmds/component/`) require:
+- **Command wiring test** (`*_test.go`, external `package component_test`): verify `NewXxxCmd()` returns a valid command with correct `Use`, `RunE`, and expected flags/defaults.
+- **No-match test**: call `cmd.ExecuteContext(testEnv.Env)` with a nonexistent component to verify error handling.
+- **Helper unit tests** (`*_test.go`, same-package `package component`): test unexported helper functions (e.g., `findSpecFile`, `cleanupStaleRenders`) using `afero.NewMemMapFs`; where needed, follow the existing `//nolint:testpackage` pattern used in this repo.
+- **Snapshot update**: if the command changes the schema or CLI docs, run `mage scenarioUpdate` to update snapshots.

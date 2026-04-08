@@ -629,10 +629,23 @@
             "out"
           ]
         },
+        "rendered-specs-dir": {
+          "type": "string",
+          "title": "Rendered Specs Directory",
+          "description": "Output directory for rendered specs",
+          "examples": [
+            "SPECS"
+          ]
+        },
         "default-distro": {
           "$ref": "#/$defs/DistroReference",
           "title": "Default Distro",
           "description": "Default selected distro reference"
+        },
+        "default-author-email": {
+          "type": "string",
+          "title": "Default Author Email",
+          "description": "Default email for synthetic changelog entries and commits"
         }
       },
       "additionalProperties": false,

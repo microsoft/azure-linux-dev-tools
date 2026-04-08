@@ -12,17 +12,19 @@ The following fields are nested under the `[project]` TOML section:
 | Log directory | `log-dir` | string | No | Path to the directory where build logs are written (relative to this config file) |
 | Work directory | `work-dir` | string | No | Path to the temporary working directory for build artifacts (relative to this config file) |
 | Output directory | `output-dir` | string | No | Path to the directory where final build outputs (RPMs, SRPMs) are placed (relative to this config file) |
+| Rendered specs directory | `rendered-specs-dir` | string | No | Output directory for `component render` (relative to this config file) |
 | Default distro | `default-distro` | [DistroReference](distros.md#distro-references) | No | The default distro and version to use when building components |
 
 > **Note:** `[default-package-config]` and `[package-groups]` are **top-level** TOML sections — they are not nested under `[project]`. They are documented in the sections below.
 
 ## Directory Paths
 
-The `log-dir`, `work-dir`, and `output-dir` paths are resolved relative to the config file that defines them. These directories are created automatically by azldev as needed.
+The `log-dir`, `work-dir`, `output-dir`, and `rendered-specs-dir` paths are resolved relative to the config file that defines them. These directories are created automatically by azldev as needed.
 
 - **`log-dir`** — build logs are written here (e.g., `azldev.log`)
 - **`work-dir`** — temporary per-component working directories are created under this path during builds (e.g., source preparation, SRPM construction)
 - **`output-dir`** — final build artifacts (RPMs, SRPMs) are placed here
+- **`rendered-specs-dir`** — rendered spec and sidecar files are written here by `azldev component render`
 
 > **Note:** Do not edit files under these directories manually — they are managed by azldev and may be overwritten or cleaned at any time.
 
