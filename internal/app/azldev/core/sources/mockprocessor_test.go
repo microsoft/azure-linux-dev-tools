@@ -119,6 +119,8 @@ func TestValidateInputs(t *testing.T) {
 		{"dotdot in name", []ComponentInput{{Name: "..", SpecFilename: "a.spec"}}, true, "invalid component name"},
 		{"absolute name", []ComponentInput{{Name: "/tmp/evil", SpecFilename: "a.spec"}}, true, "invalid component name"},
 		{"null in name", []ComponentInput{{Name: "has\x00null", SpecFilename: "a.spec"}}, true, "invalid component name"},
+		{"space in name", []ComponentInput{{Name: "has space", SpecFilename: "a.spec"}}, true, "invalid component name"},
+		{"tab in name", []ComponentInput{{Name: "has\ttab", SpecFilename: "a.spec"}}, true, "invalid component name"},
 		{"empty spec", []ComponentInput{{Name: "curl", SpecFilename: ""}}, true, "invalid spec filename"},
 		{"dot spec", []ComponentInput{{Name: "curl", SpecFilename: "."}}, true, "invalid spec filename"},
 		{"dotdot spec", []ComponentInput{{Name: "curl", SpecFilename: ".."}}, true, "invalid spec filename"},

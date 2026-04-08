@@ -80,11 +80,13 @@ func validateInputs(inputs []ComponentInput) error {
 	return nil
 }
 
-// isSimpleName returns true if s is a non-empty, single-component filename
-// without path separators, traversal sequences, or null bytes.
-func isSimpleName(s string) bool {
+// IsSimpleName returns true if s is a non-empty, single-component filename
+// without path separators, traversal sequences, whitespace, or null bytes.
+// Use this to validate component names or filenames before using them in
+// filesystem paths.
+func IsSimpleName(s string) bool {
 	return s != "" && s != "." && s != ".." &&
-		!strings.ContainsAny(s, "/\\") &&
+		!strings.ContainsAny(s, "/\\ \t\n\r") &&
 		!strings.Contains(s, "..") &&
 		!strings.ContainsRune(s, 0)
 }
@@ -92,12 +94,12 @@ func isSimpleName(s string) bool {
 // validateComponentInput rejects component inputs that could cause path traversal
 // or other safety issues when used to construct paths inside the mock chroot.
 func validateComponentInput(input ComponentInput) error {
-	if !isSimpleName(input.Name) {
+	if !IsSimpleName(input.Name) {
 		return fmt.Errorf(
 			"invalid component name %#q: must be a simple name without path separators or traversal sequences", input.Name)
 	}
 
-	if !isSimpleName(input.SpecFilename) {
+	if !IsSimpleName(input.SpecFilename) {
 		return fmt.Errorf("invalid spec filename %#q for component %#q", input.SpecFilename, input.Name)
 	}
 

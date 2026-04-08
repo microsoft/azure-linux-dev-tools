@@ -126,7 +126,8 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 	// Check early to avoid wasting work on all three phases.
 	if options.ComponentFilter.IncludeAllComponents && !options.Force {
 		return nil, errors.New(
-			"rendering all components (-a) requires --force to enable cleanup of stale output directories")
+			"rendering all components (-a) requires --force to enable cleanup of stale output directories" +
+				" (auto-set when rendered-specs-dir is configured)")
 	}
 
 	resolver := components.NewResolver(env)
@@ -208,21 +209,31 @@ func sortRenderResults(results []*RenderResult) {
 	})
 }
 
-// checkRenderErrors counts error results and returns an error if FailOnError is set.
+// checkRenderErrors counts error and cancelled results and returns an error if FailOnError is set.
 func checkRenderErrors(results []*RenderResult, failOnError bool) error {
-	errCount := 0
+	var errCount, cancelledCount int
 
 	for _, result := range results {
-		if result != nil && result.Status == renderStatusError {
+		if result == nil {
+			continue
+		}
+
+		switch result.Status {
+		case renderStatusError:
 			errCount++
+		case renderStatusCancelled:
+			cancelledCount++
 		}
 	}
 
-	if errCount > 0 {
-		slog.Error("Some components failed to render", "errorCount", errCount)
+	failCount := errCount + cancelledCount
+
+	if failCount > 0 {
+		slog.Error("Some components failed to render",
+			"errorCount", errCount, "cancelledCount", cancelledCount)
 
 		if failOnError {
-			return fmt.Errorf("%d component(s) failed to render", errCount)
+			return fmt.Errorf("%d component(s) failed to render", failCount)
 		}
 	}
 
@@ -323,12 +334,7 @@ func prepWithSemaphore(
 	compOutputDir := filepath.Join(outputDir, componentName)
 
 	// Validate component name before any filesystem work to prevent path traversal.
-	// This mirrors validateComponentInput in mockprocessor.go but runs earlier
-	// (before staging dir creation and RemoveAll calls).
-	if componentName == "" || componentName == "." ||
-		strings.ContainsAny(componentName, "/\\") ||
-		strings.Contains(componentName, "..") ||
-		strings.ContainsRune(componentName, 0) {
+	if !sources.IsSimpleName(componentName) {
 		return prepResult{index: index, result: &RenderResult{
 			Component: componentName,
 			OutputDir: "(invalid)",
@@ -620,7 +626,7 @@ func finishComponentRender(
 	mockResult, hasMockResult := mockResultMap[componentName]
 	if !hasMockResult {
 		return fmt.Errorf(
-			"no mock result for %#q (batch processing may have failed)", componentName)
+			"no mock result for %#q (batch mock processing failed; see earlier errors)", componentName)
 	}
 
 	if mockResult.Error != nil {
@@ -759,7 +765,15 @@ func findSpecFile(fs opctx.FS, dir, componentName string) (string, error) {
 
 	for _, entry := range entries {
 		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".spec" {
-			return filepath.Join(dir, entry.Name()), nil
+			foundPath := filepath.Join(dir, entry.Name())
+
+			slog.Warn("Spec filename does not match component name; using fallback",
+				"component", componentName,
+				"expected", componentName+".spec",
+				"found", entry.Name(),
+			)
+
+			return foundPath, nil
 		}
 	}
 
