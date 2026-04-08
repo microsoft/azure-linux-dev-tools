@@ -116,7 +116,8 @@ def main() -> int:
         }
 
         # Report progress to stderr as each component completes.
-        # The Go caller parses these lines via SetRealTimeStderrListener.
+        # Note: mock --chroot merges the inner command's stderr into stdout,
+        # so the Go caller uses SetRealTimeStdoutListener to receive these.
         completed_results = {}
         for idx, future in enumerate(as_completed(futures), 1):
             name = futures[future]

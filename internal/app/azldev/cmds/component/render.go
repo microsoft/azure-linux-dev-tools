@@ -455,6 +455,12 @@ func prepareComponentSources(
 
 // batchMockProcess runs rpmautospec and spectool for all prepared components in
 // a single mock chroot invocation. Returns a map from component name to result.
+//
+// NOTE: All components share one mock chroot initialized from the project's
+// default distro. Phase 1 resolves distro per-component for source fetching,
+// but the mock environment (macros, rpmautospec version, etc.) is uniform.
+// This matches the current Koji build model where all components target the
+// same distro version.
 func batchMockProcess(
 	env *azldev.Env,
 	mockProcessor *sources.MockProcessor,
