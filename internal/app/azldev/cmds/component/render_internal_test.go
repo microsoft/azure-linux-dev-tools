@@ -153,6 +153,8 @@ func TestValidateOutputDir(t *testing.T) {
 	}{
 		{"SPECS", false},
 		{"rendered/output", false},
+		{"..foo", false},
+		{"./../foo/../", true},
 		{".", true},
 		{"/", true},
 		{"./", true},

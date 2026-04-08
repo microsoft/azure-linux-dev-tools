@@ -41,7 +41,7 @@ azldev component render [flags]
   -p, --component stringArray         Component name pattern
   -g, --component-group stringArray   Component group name
       --fail-on-error                 exit with error if any component fails to render (useful for CI)
-  -f, --force                         delete and recreate existing rendered component directories
+  -f, --force                         allow deletion of existing rendered output directories; required for -a and when output dirs already exist
   -h, --help                          help for render
   -o, --output-dir string             output directory for rendered specs (overrides rendered-specs-dir from config)
   -s, --spec-path stringArray         Spec path

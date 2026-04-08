@@ -879,7 +879,8 @@ func resolveAndValidateOutputDir(env *azldev.Env, options *RenderOptions) error 
 // cleanupStaleRenders to delete unrelated directories.
 func validateOutputDir(outputDir string) error {
 	cleaned := filepath.Clean(outputDir)
-	if cleaned == "." || cleaned == string(filepath.Separator) || strings.HasPrefix(cleaned, "..") {
+	if cleaned == "." || cleaned == string(filepath.Separator) ||
+		cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
 		return fmt.Errorf(
 			"output directory %#q is unsafe; use a dedicated subdirectory (e.g., ./SPECS/)", outputDir)
 	}
