@@ -1,0 +1,7 @@
+include = [
+    "versions/v1.toml",
+    "common.toml",
+]
+
+[distros.testdistro]
+description = "Test Distro"
