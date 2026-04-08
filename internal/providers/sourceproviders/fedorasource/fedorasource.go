@@ -254,7 +254,7 @@ func (g *FedoraSourceDownloaderImpl) validateDownloadedFile(
 // (e.g., "SHA512 (file.tar.gz) = abc123...") and the legacy MD5 format
 // (e.g., "abc123...  file.tar.gz").
 func parseSourcesFile(content string, packageName string, lookasideBaseURI string) ([]sourceFileInfo, error) {
-	entries, err := ParseSourcesFile(content)
+	entries, err := ReadSourcesFileEntries(content)
 	if err != nil {
 		return nil, err
 	}
@@ -281,11 +281,11 @@ func parseSourcesFile(content string, packageName string, lookasideBaseURI strin
 	return sourceFiles, nil
 }
 
-// ParseSourcesFile parses the content of a Fedora/RHEL sources file and returns
+// ReadSourcesFileEntries parses the content of a Fedora/RHEL sources file and returns
 // the list of source file entries. It supports both the modern format
 // (e.g., "SHA512 (file.tar.gz) = abc123...") and the legacy MD5 format
 // (e.g., "abc123...  file.tar.gz").
-func ParseSourcesFile(content string) ([]SourcesFileEntry, error) {
+func ReadSourcesFileEntries(content string) ([]SourcesFileEntry, error) {
 	lines := strings.Split(content, "\n")
 
 	entries := make([]SourcesFileEntry, 0, len(lines))

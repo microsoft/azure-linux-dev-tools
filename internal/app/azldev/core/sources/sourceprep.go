@@ -466,14 +466,19 @@ func (p *sourcePreparerImpl) updateSourcesFile(component components.Component, o
 		return err
 	}
 
-	existingEntries, err := fedorasource.ParseSourcesFile(existingContent)
+	existingEntries, err := fedorasource.ReadSourcesFileEntries(existingContent)
 	if err != nil {
 		return fmt.Errorf("failed to parse existing sources file %#q:\n%w", sourcesFilePath, err)
 	}
 
-	existingFilenames := lo.SliceToMap(existingEntries, func(entry fedorasource.SourcesFileEntry) (string, bool) {
-		return entry.Filename, true
-	})
+	existingFilenames := make(map[string]bool, len(existingEntries))
+	for _, entry := range existingEntries {
+		if existingFilenames[entry.Filename] {
+			return fmt.Errorf("failed to process existing 'sources' file %#q: duplicate filename %#q", sourcesFilePath, entry.Filename)
+		}
+
+		existingFilenames[entry.Filename] = true
+	}
 
 	newEntries, err := p.buildSourceEntries(sourceFiles, existingFilenames, component.GetName(), outputDir)
 	if err != nil {
@@ -538,7 +543,7 @@ func (p *sourcePreparerImpl) buildSourceEntries(
 		if existingFilenames[ref.Filename] {
 			return nil, fmt.Errorf(
 				"source file %#q in 'source-files' configuration conflicts with an existing entry in the 'sources' file; "+
-					"to overwrite the existing entry, add a component overlay to remove it first; "+
+					"to overwrite the existing entry, ensure it's removed first; "+
 					"if this is unintentional, use a different filename",
 				ref.Filename)
 		}
