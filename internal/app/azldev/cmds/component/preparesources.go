@@ -18,10 +18,11 @@ import (
 type PrepareSourcesOptions struct {
 	ComponentFilter components.ComponentFilter
 
-	OutputDir    string
-	SkipOverlays bool
-	WithGitRepo  bool
-	Force        bool
+	OutputDir     string
+	SkipOverlays  bool
+	WithGitRepo   bool
+	Force         bool
+	AllowNoHashes bool
 }
 
 func prepareOnAppInit(_ *azldev.App, sourceCmd *cobra.Command) {
@@ -69,6 +70,8 @@ Only one component may be selected at a time.`,
 	cmd.Flags().BoolVar(&options.WithGitRepo, "with-git", false,
 		"Create a dist-git repository with synthetic commit history (requires a project git repository)")
 	cmd.Flags().BoolVar(&options.Force, "force", false, "delete and recreate the output directory if it already exists")
+	cmd.Flags().BoolVar(&options.AllowNoHashes, "allow-no-hashes", false,
+		"compute missing hashes by downloading source files from their origin")
 
 	return cmd
 }
@@ -120,6 +123,10 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 	var preparerOpts []sources.PreparerOption
 	if options.WithGitRepo {
 		preparerOpts = append(preparerOpts, sources.WithGitRepo())
+	}
+
+	if options.AllowNoHashes {
+		preparerOpts = append(preparerOpts, sources.WithAllowNoHashes())
 	}
 
 	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, preparerOpts...)

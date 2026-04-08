@@ -23,6 +23,11 @@ func TestNewPrepareSourcesCmd(t *testing.T) {
 	require.NotNil(t, forceFlag, "--force flag should be registered")
 	assert.Equal(t, "false", forceFlag.DefValue)
 	assert.Contains(t, forceFlag.Usage, "delete and recreate the output directory")
+
+	allowNoHashesFlag := cmd.Flags().Lookup("allow-no-hashes")
+	require.NotNil(t, allowNoHashesFlag, "--allow-no-hashes flag should be registered")
+	assert.Equal(t, "false", allowNoHashesFlag.DefValue)
+	assert.Contains(t, allowNoHashesFlag.Usage, "compute missing hashes")
 }
 
 func TestPrepareSourcesCmd_NoMatch(t *testing.T) {

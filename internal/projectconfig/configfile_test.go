@@ -71,9 +71,9 @@ func TestProjectConfigFileValidation_DuplicateSourceFileName(t *testing.T) {
 		Components: map[string]projectconfig.ComponentConfig{
 			"test-component": {
 				SourceFiles: []projectconfig.SourceFileReference{
-					{Filename: "source.tar.gz"},
-					{Filename: "another.tar.gz"},
-					{Filename: "source.tar.gz"}, // duplicate
+					{Filename: "source.tar.gz", Hash: "abc", HashType: "sha256"},
+					{Filename: "another.tar.gz", Hash: "def", HashType: "sha256"},
+					{Filename: "source.tar.gz", Hash: "ghi", HashType: "sha256"}, // duplicate
 				},
 			},
 		},
@@ -90,9 +90,9 @@ func TestProjectConfigFileValidation_UniqueSourceFileNames(t *testing.T) {
 		Components: map[string]projectconfig.ComponentConfig{
 			"test-component": {
 				SourceFiles: []projectconfig.SourceFileReference{
-					{Filename: "source.tar.gz"},
-					{Filename: "another.tar.gz"},
-					{Filename: "patch.patch"},
+					{Filename: "source.tar.gz", Hash: "abc", HashType: "sha256"},
+					{Filename: "another.tar.gz", Hash: "def", HashType: "sha256"},
+					{Filename: "patch.patch", Hash: "ghi", HashType: "sha256"},
 				},
 			},
 		},
@@ -141,6 +141,84 @@ func TestProjectConfigFileValidation_SHA256HashTypeAllowed(t *testing.T) {
 						Filename: "source.tar.gz",
 						HashType: fileutils.HashTypeSHA256,
 						Hash:     "abc123",
+					},
+				},
+			},
+		},
+	}
+	assert.NoError(t, file.Validate())
+}
+
+func TestProjectConfigFileValidation_UnsupportedHashType(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"test-component": {
+				SourceFiles: []projectconfig.SourceFileReference{
+					{
+						Filename: "source.tar.gz",
+						HashType: "sha128",
+						Hash:     "abc123",
+					},
+				},
+			},
+		},
+	}
+	err := file.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported hash type")
+	assert.Contains(t, err.Error(), "sha128")
+	assert.Contains(t, err.Error(), "source.tar.gz")
+	assert.Contains(t, err.Error(), "test-component")
+}
+
+func TestProjectConfigFileValidation_HashWithoutHashType(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"test-component": {
+				SourceFiles: []projectconfig.SourceFileReference{
+					{
+						Filename: "source.tar.gz",
+						Hash:     "abc123",
+						Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/source.tar.gz"},
+					},
+				},
+			},
+		},
+	}
+	err := file.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "hash value specified without hash type")
+	assert.Contains(t, err.Error(), "source.tar.gz")
+	assert.Contains(t, err.Error(), "test-component")
+}
+
+func TestProjectConfigFileValidation_MissingHashWithoutOrigin(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"test-component": {
+				SourceFiles: []projectconfig.SourceFileReference{
+					{
+						Filename: "source.tar.gz",
+					},
+				},
+			},
+		},
+	}
+	err := file.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no hash and no origin")
+	assert.Contains(t, err.Error(), "source.tar.gz")
+	assert.Contains(t, err.Error(), "test-component")
+}
+
+func TestProjectConfigFileValidation_MissingHashWithOrigin(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"test-component": {
+				SourceFiles: []projectconfig.SourceFileReference{
+					{
+						Filename: "source.tar.gz",
+						Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/source.tar.gz"},
 					},
 				},
 			},

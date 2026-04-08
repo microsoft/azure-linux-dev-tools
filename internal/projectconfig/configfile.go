@@ -11,6 +11,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/pelletier/go-toml/v2"
+	"github.com/samber/lo"
 )
 
 // Default schema URI for this config file. Useful for capable editors to provide Intellisense and validation.
@@ -108,7 +109,8 @@ func (f ConfigFile) Validate() error {
 
 // validateSourceFiles checks 'source-files' configuration for a component:
 //   - All filenames must be unique.
-//   - MD5 hash type is not allowed.
+//   - Hash type must be a supported algorithm when specified.
+//   - Hash value without a hash type is not allowed.
 func validateSourceFiles(sourceFiles []SourceFileReference, componentName string) error {
 	seen := make(map[string]bool, len(sourceFiles))
 
@@ -121,9 +123,16 @@ func validateSourceFiles(sourceFiles []SourceFileReference, componentName string
 
 		seen[ref.Filename] = true
 
-		if ref.HashType == fileutils.HashTypeMD5 {
+		if ref.HashType != "" && !SupportedSourceFilesHashTypes[ref.HashType] {
 			return fmt.Errorf(
-				"MD5 hash type is not allowed. Source file %#q, component %#q; use SHA256 or SHA512 instead",
+				"unsupported hash type %#q for source file %#q, component %#q; supported types are %v",
+				ref.HashType, ref.Filename, componentName, lo.Keys(SupportedSourceFilesHashTypes))
+		}
+
+		if ref.Hash != "" && ref.HashType == "" {
+			return fmt.Errorf(
+				"hash value specified without hash type for source file %#q, component %#q; "+
+					"hash type must be set when hash is provided",
 				ref.Filename, componentName)
 		}
 	}

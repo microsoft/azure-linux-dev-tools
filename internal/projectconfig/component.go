@@ -138,6 +138,14 @@ type ComponentConfig struct {
 	Packages map[string]PackageConfig `toml:"packages,omitempty" json:"packages,omitempty" table:"-" jsonschema:"title=Package overrides,description=Per-package configuration overrides keyed by exact binary package name"`
 }
 
+// SupportedSourceFilesHashTypes defines the set of hash types that are supported for use in 'source-files' entries in component configs.
+// MD5 is explicitly disallowed.
+var SupportedSourceFilesHashTypes = map[fileutils.HashType]bool{
+	fileutils.HashTypeMD5:    false,
+	fileutils.HashTypeSHA256: true,
+	fileutils.HashTypeSHA512: true,
+}
+
 // Mutates the component config, updating it with overrides present in other.
 func (c *ComponentConfig) MergeUpdatesFrom(other *ComponentConfig) error {
 	err := mergo.Merge(c, other, mergo.WithOverride, mergo.WithAppendSlice)
