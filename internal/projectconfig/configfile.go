@@ -132,7 +132,14 @@ func validateSourceFiles(sourceFiles []SourceFileReference, componentName string
 		if ref.Hash != "" && ref.HashType == "" {
 			return fmt.Errorf(
 				"hash value specified without hash type for source file %#q, component %#q; "+
-					"hash type must be set when hash is provided",
+					"'hash-type' must be set when 'hash' is provided",
+				ref.Filename, componentName)
+		}
+
+		if ref.Origin.Type == "" {
+			return fmt.Errorf(
+				"missing 'origin' for source file %#q, component %#q; "+
+					"an origin is required for all source file entries",
 				ref.Filename, componentName)
 		}
 	}

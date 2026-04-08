@@ -677,7 +677,7 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 				},
 			},
 			expectError:   true,
-			errorContains: []string{"missing-hash.tar.gz", "missing required hash"},
+			errorContains: []string{"missing-hash.tar.gz", "missing required 'hash'"},
 		},
 		{
 			name: "error on missing hash type when hash is set",
@@ -689,7 +689,7 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 				},
 			},
 			expectError:   true,
-			errorContains: []string{"missing-hashtype.tar.gz", "has a hash value but no hash-type"},
+			errorContains: []string{"missing-hashtype.tar.gz", "has a 'hash' value but no 'hash-type'"},
 		},
 		{
 			name: "creates sources file if not exists",

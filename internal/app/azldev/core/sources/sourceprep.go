@@ -82,9 +82,9 @@ func WithSkipLookaside() PreparerOption {
 }
 
 // WithAllowNoHashes returns a [PreparerOption] that allows source file
-// references to omit their hash value. When set, any source file that lacks a
+// references to omit their [projectconfig.SourceFileReference.Hash] value. When set, any source file that lacks a
 // hash will have its hash computed from the already-downloaded file in the
-// output directory. If hash-type is also missing, SHA-512 is used as the
+// output directory. If [projectconfig.SourceFileReference.HashType] is also missing, SHA-512 is used as the
 // default. A warning is emitted for each file whose hash is auto-computed.
 //
 // This option has no effect when combined with [WithSkipLookaside], because
@@ -447,11 +447,12 @@ func (p *sourcePreparerImpl) DiffSources(
 }
 
 // updateSourcesFile appends entries to the 'sources' file for any extra source files
-// defined in the component's 'source-files' configuration. Each source file reference
-// must have both hash and hash-type specified unless allowNoHashes is set, in which case
+// defined in the component's [projectconfig.SourceFileReference] configuration. Each source file reference
+// must have both [projectconfig.SourceFileReference.Hash] and [projectconfig.SourceFileReference.HashType]
+// specified unless [sourcePreparerImpl.allowNoHashes] is set, in which case
 // missing hashes are computed from the downloaded files in outputDir.
 // Conflicts between existing entries in the 'sources' file and sources introduced through
-// the 'source-files' configuration are also treated as errors.
+// the [projectconfig.SourceFileReference] configuration are also treated as errors.
 func (p *sourcePreparerImpl) updateSourcesFile(component components.Component, outputDir string) error {
 	sourceFiles := component.GetConfig().SourceFiles
 	if len(sourceFiles) == 0 {
@@ -474,15 +475,7 @@ func (p *sourcePreparerImpl) updateSourcesFile(component components.Component, o
 		return entry.Filename, true
 	})
 
-	opts := buildSourceEntriesOptions{
-		fs:            p.fs,
-		outputDir:     outputDir,
-		componentName: component.GetName(),
-		allowNoHashes: p.allowNoHashes,
-		skipLookaside: p.skipLookaside,
-	}
-
-	newEntries, err := buildSourceEntries(sourceFiles, existingFilenames, opts)
+	newEntries, err := p.buildSourceEntries(sourceFiles, existingFilenames, component.GetName(), outputDir)
 	if err != nil {
 		return err
 	}
@@ -529,23 +522,15 @@ func (p *sourcePreparerImpl) readSourcesFileIfExists(sourcesFilePath string) (st
 	return string(data), nil
 }
 
-// buildSourceEntriesOptions contains optional parameters for [buildSourceEntries].
-type buildSourceEntriesOptions struct {
-	fs            opctx.FS
-	outputDir     string
-	componentName string
-	allowNoHashes bool
-	skipLookaside bool
-}
-
-// buildSourceEntries validates source file references and collects formatted entries.
-// When opts.allowNoHashes is true, missing hashes are computed from the downloaded files
-// in opts.outputDir. When opts.skipLookaside is also true, hash computation is skipped
+// buildSourceEntries validates [projectconfig.SourceFileReference] and collects formatted entries.
+// When [sourcePreparerImpl.allowNoHashes] is true, missing hashes are computed from the downloaded files
+// in [outputDir]. When [sourcePreparerImpl.skipLookaside] is also true, hash computation is skipped
 // because the source files were not downloaded.
-func buildSourceEntries(
+func (p *sourcePreparerImpl) buildSourceEntries(
 	sourceFiles []projectconfig.SourceFileReference,
 	existingFilenames map[string]bool,
-	opts buildSourceEntriesOptions,
+	componentName string,
+	outputDir string,
 ) ([]string, error) {
 	newEntries := make([]string, 0, len(sourceFiles))
 
@@ -558,7 +543,7 @@ func buildSourceEntries(
 				ref.Filename)
 		}
 
-		hash, hashType, err := resolveSourceHash(ref, opts)
+		hash, hashType, err := p.resolveSourceHash(ref, componentName, outputDir)
 		if err != nil {
 			return nil, err
 		}
@@ -576,11 +561,11 @@ func buildSourceEntries(
 }
 
 // resolveSourceHash returns the hash and hash type for a source file reference.
-// If the reference already has both values, they are returned as-is. When the hash
-// is missing and opts.allowNoHashes is true, the hash is computed from the downloaded
-// file on disk. Returns an error when the hash cannot be resolved.
-func resolveSourceHash(
-	ref projectconfig.SourceFileReference, opts buildSourceEntriesOptions,
+// If the reference already has both values, they are returned as-is. When [ref.Hash]
+// is missing and '--allow-no-hashes' is set, the hash is computed from the
+// downloaded file on disk. Returns an error when the hash cannot be resolved.
+func (p *sourcePreparerImpl) resolveSourceHash(
+	ref projectconfig.SourceFileReference, componentName string, outputDir string,
 ) (hash string, hashType fileutils.HashType, err error) {
 	hash = ref.Hash
 	hashType = ref.HashType
@@ -588,23 +573,23 @@ func resolveSourceHash(
 	if hash != "" {
 		if hashType == "" {
 			return "", "", fmt.Errorf(
-				"source file %#q has a hash value but no hash-type; "+
-					"both must be specified in the source-files configuration",
+				"source file %#q has a 'hash' value but no 'hash-type'; "+
+					"both must be specified in the 'source-files' configuration",
 				ref.Filename)
 		}
 
 		return hash, hashType, nil
 	}
 
-	// Hash is empty — resolve it if allowed.
-	if !opts.allowNoHashes {
+	// Hash is empty — resolve it if '--allow-no-hashes' is set.
+	if !p.allowNoHashes {
 		return "", "", fmt.Errorf(
-			"source file %#q is missing required hash; specify the hash in the "+
-				"source-files configuration or use --allow-no-hashes to compute it automatically",
+			"source file %#q is missing required 'hash'; specify the hash in the "+
+				"'source-files' configuration or use '--allow-no-hashes' to compute it automatically",
 			ref.Filename)
 	}
 
-	if opts.skipLookaside {
+	if p.skipLookaside {
 		return "", "", fmt.Errorf(
 			"source file %#q is missing its hash and source file downloads were skipped; "+
 				"hash cannot be computed without the downloaded file",
@@ -614,22 +599,22 @@ func resolveSourceHash(
 	if hashType == "" {
 		hashType = fileutils.HashTypeSHA512
 
-		slog.Warn("No hash type specified for source file; defaulting to SHA-512",
-			"component", opts.componentName,
+		slog.Warn("No 'hash-type' specified for source file; defaulting to SHA-512",
+			"component", componentName,
 			"filename", ref.Filename,
 			"hashType", hashType)
 	}
 
-	filePath := filepath.Join(opts.outputDir, ref.Filename)
+	filePath := filepath.Join(outputDir, ref.Filename)
 
-	hash, err = fileutils.ComputeFileHash(opts.fs, hashType, filePath)
+	hash, err = fileutils.ComputeFileHash(p.fs, hashType, filePath)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to compute hash for source file %#q:\n%w",
 			ref.Filename, err)
 	}
 
-	slog.Warn("Auto-computed hash for source file; consider adding the hash to the configuration",
-		"component", opts.componentName,
+	slog.Warn("Auto-computed hash for source file; consider adding 'hash' to the configuration",
+		"component", componentName,
 		"filename", ref.Filename,
 		"hashType", hashType,
 		"hash", hash)

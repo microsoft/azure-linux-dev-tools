@@ -67,13 +67,15 @@ func TestProjectConfigFileValidation_InvalidBuildCheckSkip(t *testing.T) {
 }
 
 func TestProjectConfigFileValidation_DuplicateSourceFileName(t *testing.T) {
+	origin := projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/file"}
+
 	file := projectconfig.ConfigFile{
 		Components: map[string]projectconfig.ComponentConfig{
 			"test-component": {
 				SourceFiles: []projectconfig.SourceFileReference{
-					{Filename: "source.tar.gz", Hash: "abc", HashType: "sha256"},
-					{Filename: "another.tar.gz", Hash: "def", HashType: "sha256"},
-					{Filename: "source.tar.gz", Hash: "ghi", HashType: "sha256"}, // duplicate
+					{Filename: "source.tar.gz", Hash: "abc", HashType: "sha256", Origin: origin},
+					{Filename: "another.tar.gz", Hash: "def", HashType: "sha256", Origin: origin},
+					{Filename: "source.tar.gz", Hash: "ghi", HashType: "sha256", Origin: origin}, // duplicate
 				},
 			},
 		},
@@ -86,13 +88,15 @@ func TestProjectConfigFileValidation_DuplicateSourceFileName(t *testing.T) {
 }
 
 func TestProjectConfigFileValidation_UniqueSourceFileNames(t *testing.T) {
+	origin := projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/file"}
+
 	file := projectconfig.ConfigFile{
 		Components: map[string]projectconfig.ComponentConfig{
 			"test-component": {
 				SourceFiles: []projectconfig.SourceFileReference{
-					{Filename: "source.tar.gz", Hash: "abc", HashType: "sha256"},
-					{Filename: "another.tar.gz", Hash: "def", HashType: "sha256"},
-					{Filename: "patch.patch", Hash: "ghi", HashType: "sha256"},
+					{Filename: "source.tar.gz", Hash: "abc", HashType: "sha256", Origin: origin},
+					{Filename: "another.tar.gz", Hash: "def", HashType: "sha256", Origin: origin},
+					{Filename: "patch.patch", Hash: "ghi", HashType: "sha256", Origin: origin},
 				},
 			},
 		},
@@ -120,6 +124,7 @@ func TestProjectConfigFileValidation_MD5HashTypeDisallowed(t *testing.T) {
 						Filename: "source.tar.gz",
 						HashType: fileutils.HashTypeMD5,
 						Hash:     "abc123",
+						Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/source.tar.gz"},
 					},
 				},
 			},
@@ -127,7 +132,7 @@ func TestProjectConfigFileValidation_MD5HashTypeDisallowed(t *testing.T) {
 	}
 	err := file.Validate()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "MD5 hash type is not allowed")
+	assert.Contains(t, err.Error(), "unsupported hash type")
 	assert.Contains(t, err.Error(), "source.tar.gz")
 	assert.Contains(t, err.Error(), "test-component")
 }
@@ -141,6 +146,7 @@ func TestProjectConfigFileValidation_SHA256HashTypeAllowed(t *testing.T) {
 						Filename: "source.tar.gz",
 						HashType: fileutils.HashTypeSHA256,
 						Hash:     "abc123",
+						Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/source.tar.gz"},
 					},
 				},
 			},
@@ -158,6 +164,7 @@ func TestProjectConfigFileValidation_UnsupportedHashType(t *testing.T) {
 						Filename: "source.tar.gz",
 						HashType: "sha128",
 						Hash:     "abc123",
+						Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/source.tar.gz"},
 					},
 				},
 			},
@@ -192,13 +199,15 @@ func TestProjectConfigFileValidation_HashWithoutHashType(t *testing.T) {
 	assert.Contains(t, err.Error(), "test-component")
 }
 
-func TestProjectConfigFileValidation_MissingHashWithoutOrigin(t *testing.T) {
+func TestProjectConfigFileValidation_MissingOrigin(t *testing.T) {
 	file := projectconfig.ConfigFile{
 		Components: map[string]projectconfig.ComponentConfig{
 			"test-component": {
 				SourceFiles: []projectconfig.SourceFileReference{
 					{
 						Filename: "source.tar.gz",
+						Hash:     "abc123",
+						HashType: "sha256",
 					},
 				},
 			},
@@ -206,7 +215,7 @@ func TestProjectConfigFileValidation_MissingHashWithoutOrigin(t *testing.T) {
 	}
 	err := file.Validate()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no hash and no origin")
+	assert.Contains(t, err.Error(), "missing 'origin'")
 	assert.Contains(t, err.Error(), "source.tar.gz")
 	assert.Contains(t, err.Error(), "test-component")
 }

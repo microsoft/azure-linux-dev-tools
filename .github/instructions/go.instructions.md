@@ -40,6 +40,10 @@ applyTo: "**/*.go"
   - `return fmt.Errorf("failed to open %#q:\n%w", filename, err)`
   - `return fmt.Errorf("failed to run command 'go %s':\n%w", strings.Join(args, " "), err)`
 - Comments referring to types should encapsulate the type name in square brackets. Example: `// [packagename.MyType] is a custom type`
+- Config field names and CLI flags in comments and error messages:
+  - In code comments, use square brackets for field names: `[module.StructName.FieldName]`
+  - In code comments, use single quotes for flag names: `'[--flag-name]'`
+  - In log messages and error strings, use single quotes: `'field-name'`, `'--flag-name'`
 - Use structured logging with slog
 - Ensure code passes golangci-lint checks
 - Use `github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms` instead of re-defining file permission constants
