@@ -252,7 +252,7 @@ The `[[components.<name>.source-files]]` array defines additional source files t
 |-------|----------|------|----------|-------------|
 | Filename | `filename` | string | **Yes** | Name of the file as it will appear in the sources directory |
 | Hash | `hash` | string | Conditional | Expected hash of the downloaded file for integrity verification. Required for the `prep-sources` command unless `--allow-no-hashes` is used, in which case the hash is computed automatically from the downloaded file. |
-| Hash type | `hash-type` | string | Conditional | Hash algorithm used (examples: `"sha256"`, `"sha512"`). Required when `hash` is specified. When omitted alongside `hash` for the `prep-sources` command and `--allow-no-hashes` is used, defaults to `"sha512"`. |
+| Hash type | `hash-type` | string | Conditional | Hash algorithm used (examples: `"SHA256"`, `"SHA512"`). Required when `hash` is specified. When omitted alongside `hash` for the `prep-sources` command and `--allow-no-hashes` is used, defaults to `"SHA512"`. |
 | Origin | `origin` | [Origin](#origin) | **Yes** | Where to download the file from |
 
 ### Origin

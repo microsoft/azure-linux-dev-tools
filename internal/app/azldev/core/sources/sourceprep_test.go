@@ -634,6 +634,7 @@ func TestDiffSources_FetchError(t *testing.T) {
 }
 
 func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
+	validOrigin := projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/new-source.tar.gz"}
 	tests := []struct {
 		name                   string
 		sourceFiles            []projectconfig.SourceFileReference
@@ -649,6 +650,7 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 					Filename: "extra-source.tar.gz",
 					Hash:     "abc123def456",
 					HashType: fileutils.HashTypeSHA512,
+					Origin:   validOrigin,
 				},
 			},
 			existingSourcesContent: "SHA512 (existing.tar.gz) = aabbccdd1122\n",
@@ -664,6 +666,7 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 					Filename: "existing.tar.gz", // Already in sources file.
 					Hash:     "11223344aabb",
 					HashType: fileutils.HashTypeSHA512,
+					Origin:   validOrigin,
 				},
 			},
 			existingSourcesContent: "SHA512 (existing.tar.gz) = aabbccdd1122\n",
@@ -680,6 +683,7 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 					Filename: "missing-hash.tar.gz",
 					Hash:     "", // Missing hash.
 					HashType: fileutils.HashTypeSHA512,
+					Origin:   validOrigin,
 				},
 			},
 			expectError:   true,
@@ -692,6 +696,7 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 					Filename: "missing-hashtype.tar.gz",
 					Hash:     "abc123",
 					HashType: "", // Missing hash type.
+					Origin:   validOrigin,
 				},
 			},
 			expectError:   true,
@@ -704,6 +709,7 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 					Filename: "new-source.tar.gz",
 					Hash:     "newhash123",
 					HashType: fileutils.HashTypeSHA256,
+					Origin:   validOrigin,
 				},
 			},
 			existingSourcesContent: "", // No existing file.
