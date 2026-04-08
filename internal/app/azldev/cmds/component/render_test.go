@@ -46,12 +46,13 @@ func TestRenderCmd_NoComponents(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
 
 	cmd := componentcmds.NewRenderCmd()
-	cmd.SetArgs([]string{"nonexistent-component"})
+	cmd.SetArgs([]string{"-o", "SPECS", "nonexistent-component"})
 
 	err := cmd.ExecuteContext(testEnv.Env)
 
-	// We expect an error because no components match.
+	// We expect an error because no components match (not the output-dir error).
 	require.Error(t, err)
+	assert.Contains(t, err.Error(), "component not found")
 }
 
 func TestRenderCmd_NoOutputDir(t *testing.T) {

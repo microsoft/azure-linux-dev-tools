@@ -85,7 +85,7 @@ sidecar files are included. Multiple components can be rendered at once.`,
 		"exit with error if any component fails to render (useful for CI)")
 
 	cmd.Flags().BoolVarP(&options.Force, "force", "f", false,
-		"delete and recreate existing rendered component directories")
+		"allow deletion of existing rendered output directories; required for -a and when output dirs already exist")
 
 	return cmd
 }
@@ -120,6 +120,13 @@ func concurrentRenderLimit() int {
 func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult, error) {
 	if err := resolveAndValidateOutputDir(env, options); err != nil {
 		return nil, err
+	}
+
+	// Rendering all components requires --force for stale directory cleanup.
+	// Check early to avoid wasting work on all three phases.
+	if options.ComponentFilter.IncludeAllComponents && !options.Force {
+		return nil, errors.New(
+			"rendering all components (-a) requires --force to enable cleanup of stale output directories")
 	}
 
 	resolver := components.NewResolver(env)
@@ -172,13 +179,7 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 		options.Force)
 
 	// Clean up stale rendered directories when rendering all components.
-	// Requires --force (auto-set for configured dirs) to prevent accidental deletion.
 	if options.ComponentFilter.IncludeAllComponents {
-		if !options.Force {
-			return nil, errors.New(
-				"rendering all components (-a) requires --force to enable cleanup of stale output directories")
-		}
-
 		if cleanupErr := cleanupStaleRenders(env.FS(), comps, options.OutputDir); cleanupErr != nil {
 			return results, fmt.Errorf("cleaning up stale rendered output:\n%w", cleanupErr)
 		}
@@ -320,6 +321,23 @@ func prepWithSemaphore(
 ) prepResult {
 	componentName := comp.GetName()
 	compOutputDir := filepath.Join(outputDir, componentName)
+
+	// Validate component name before any filesystem work to prevent path traversal.
+	// This mirrors validateComponentInput in mockprocessor.go but runs earlier
+	// (before staging dir creation and RemoveAll calls).
+	if componentName == "" || componentName == "." ||
+		strings.ContainsAny(componentName, "/\\") ||
+		strings.Contains(componentName, "..") ||
+		strings.ContainsRune(componentName, 0) {
+		return prepResult{index: index, result: &RenderResult{
+			Component: componentName,
+			OutputDir: "(invalid)",
+			Status:    renderStatusError,
+			Error: fmt.Sprintf(
+				"component name %#q is invalid or contains path separators/traversal sequences",
+				componentName),
+		}}
+	}
 
 	// Context-aware semaphore acquisition.
 	select {
@@ -684,7 +702,7 @@ func copyRenderedOutput(env *azldev.Env, tempDir, baseOutputDir, componentName s
 func removeUnreferencedFiles(fs opctx.FS, tempDir, specPath string, specFiles []string, componentName string) error {
 	keepSet := make(map[string]bool, len(specFiles))
 	keepSet[filepath.Base(specPath)] = true
-	keepSet["sources"] = true
+	keepSet["sources"] = true // lookaside hashes/signatures; always preserved
 
 	for _, f := range specFiles {
 		// Extract the first path component so subdirectory entries are preserved.
@@ -801,6 +819,10 @@ const renderErrorMarkerFile = "RENDER_FAILED"
 // writeRenderErrorMarker writes a static marker file to the component's output directory
 // indicating that rendering failed. The content is intentionally static (no error details)
 // so the file is deterministic across runs and safe to check in.
+//
+// This is always written on failure, even without --force. The --force flag controls
+// deletion of existing directories (RemoveAll), not creation of new files. Writing a
+// small marker into an existing directory is safe and provides visible git diff feedback.
 func writeRenderErrorMarker(fs opctx.FS, componentOutputDir string) {
 	if mkdirErr := fileutils.MkdirAll(fs, componentOutputDir); mkdirErr != nil {
 		slog.Debug("Failed to create directory for error marker", "path", componentOutputDir, "error", mkdirErr)
