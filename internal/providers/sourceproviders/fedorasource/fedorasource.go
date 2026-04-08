@@ -310,17 +310,6 @@ const (
 	PlaceholderHash = "$hash"
 )
 
-// BuildLookasideURL constructs a lookaside cache URL by substituting placeholders in the
-// URI template with the provided values. Supported placeholders are [PlaceholderPkg],
-// [PlaceholderFilename], [PlaceholderHashType], and [PlaceholderHash].
-// Placeholders not present in the template are simply ignored.
-//
-// Substituted values are URL path-escaped via [url.PathEscape] so that reserved
-// characters such as /, ?, #, and % do not alter the URL structure.
-//
-// Returns an error if any of the provided values contain a placeholder string, as this
-// would cause ambiguous substitution results depending on replacement order, or if the
-// resulting URL is not valid.
 // validateAbsoluteURL parses uri and verifies it is an absolute URL with a
 // non-empty scheme and host. The label parameter is used in error messages to
 // identify the URL's purpose (e.g. "lookaside", "dist-git").
@@ -337,6 +326,17 @@ func validateAbsoluteURL(uri, label string) error {
 	return nil
 }
 
+// BuildLookasideURL constructs a lookaside cache URL by substituting placeholders in the
+// URI template with the provided values. Supported placeholders are [PlaceholderPkg],
+// [PlaceholderFilename], [PlaceholderHashType], and [PlaceholderHash].
+// Placeholders not present in the template are simply ignored.
+//
+// Substituted values are URL path-escaped via [url.PathEscape] so that reserved
+// characters such as /, ?, #, and % do not alter the URL structure.
+//
+// Returns an error if any of the provided values contain a placeholder string, as this
+// would cause ambiguous substitution results depending on replacement order, or if the
+// resulting URL is not valid.
 func BuildLookasideURL(template, packageName, fileName, hashType, hash string) (string, error) {
 	// allPlaceholders lists all supported lookaside URI template placeholders.
 	allPlaceholders := []string{PlaceholderPkg, PlaceholderFilename, PlaceholderHashType, PlaceholderHash}
