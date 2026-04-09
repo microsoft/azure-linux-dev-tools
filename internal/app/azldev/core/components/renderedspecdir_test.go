@@ -60,10 +60,10 @@ func TestRenderedSpecDir(t *testing.T) {
 		assert.Error(t, err)
 	})
 
-	t.Run("SkipsValidationWhenNotConfigured", func(t *testing.T) {
-		// When renderedSpecsDir is empty, no validation is needed since no path is produced.
-		result, err := components.RenderedSpecDir("", "../escape")
-		require.NoError(t, err)
-		assert.Empty(t, result)
+	t.Run("ValidatesEvenWhenNotConfigured", func(t *testing.T) {
+		// Component name is validated even when renderedSpecsDir is empty,
+		// so invalid names are caught early regardless of configuration.
+		_, err := components.RenderedSpecDir("", "../escape")
+		assert.Error(t, err)
 	})
 }

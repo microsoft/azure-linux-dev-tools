@@ -16,12 +16,12 @@ import (
 // Returns an error if componentName is unsafe (absolute, contains path separators
 // or traversal sequences).
 func RenderedSpecDir(renderedSpecsDir, componentName string) (string, error) {
-	if renderedSpecsDir == "" {
-		return "", nil
-	}
-
 	if err := fileutils.ValidateFilename(componentName); err != nil {
 		return "", fmt.Errorf("invalid component name for rendered spec dir:\n%w", err)
+	}
+
+	if renderedSpecsDir == "" {
+		return "", nil
 	}
 
 	return filepath.Join(renderedSpecsDir, componentName), nil

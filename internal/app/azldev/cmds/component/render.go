@@ -251,9 +251,10 @@ func checkRenderErrors(results []*RenderResult, failOnError bool) error {
 // preparedComponent holds the intermediate state after source preparation,
 // before mock processing.
 type preparedComponent struct {
-	index        int
-	comp         components.Component
-	specFilename string // e.g., "curl.spec"
+	index         int
+	comp          components.Component
+	specFilename  string // e.g., "curl.spec"
+	compOutputDir string // validated output path computed in phase 1
 }
 
 // prepResult pairs a prepared component (on success) or a render result (on error).
@@ -383,6 +384,7 @@ func prepWithSemaphore(
 	}
 
 	prep.index = index
+	prep.compOutputDir = compOutputDir
 
 	return prepResult{index: index, prepared: prep}
 }
@@ -570,7 +572,7 @@ func finishOneComponent(
 	allowOverwrite bool,
 ) *RenderResult {
 	componentName := prep.comp.GetName()
-	compOutputDir := filepath.Join(outputDir, componentName)
+	compOutputDir := prep.compOutputDir
 
 	// Context-aware semaphore acquisition.
 	select {
