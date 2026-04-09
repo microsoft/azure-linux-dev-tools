@@ -666,7 +666,7 @@
             "SHA512"
           ],
           "title": "Hash type",
-          "description": "Hash algorithm used for the hash value (e.g."
+          "description": "Hash algorithm used for the hash value"
         },
         "origin": {
           "$ref": "#/$defs/Origin"
