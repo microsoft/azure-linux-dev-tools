@@ -5,9 +5,12 @@ package projectconfig_test
 
 import (
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -177,4 +180,33 @@ func TestMergeComponentUpdates(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "test", base.Name)
 	require.Equal(t, []string{"x", "y", "w"}, base.Build.Without)
+}
+
+func TestAllowedSourceFilesHashTypes_MatchesJSONSchemaEnum(t *testing.T) {
+	// Extract enum values from the jsonschema tag on
+	// [projectconfig.SourceFileReference.HashType].
+	field, ok := reflect.TypeOf(projectconfig.SourceFileReference{}).FieldByName("HashType")
+	require.True(t, ok, "SourceFileReference must have a 'HashType' field")
+
+	tag := field.Tag.Get("jsonschema")
+	require.NotEmpty(t, tag, "HashType field must have a 'jsonschema' tag")
+
+	// Parse "enum=X,enum=Y,..." entries from the tag.
+	var schemaEnums []string
+
+	for _, part := range strings.Split(tag, ",") {
+		if strings.HasPrefix(part, "enum=") {
+			schemaEnums = append(schemaEnums, strings.TrimPrefix(part, "enum="))
+		}
+	}
+
+	assert.Len(t, schemaEnums, len(projectconfig.AllowedSourceFilesHashTypes),
+		"number of 'enum=' entries in 'jsonschema' tag must match number of entries in 'AllowedSourceFilesHashTypes'")
+
+	// Every enum value must be present in AllowedSourceFilesHashTypes.
+	for _, enumVal := range schemaEnums {
+		hashType := fileutils.HashType(enumVal)
+		assert.True(t, projectconfig.AllowedSourceFilesHashTypes[hashType],
+			"'jsonschema' enum value %#q is not in 'AllowedSourceFilesHashTypes'", enumVal)
+	}
 }

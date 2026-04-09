@@ -660,7 +660,13 @@
           "type": "string"
         },
         "hash-type": {
-          "type": "string"
+          "type": "string",
+          "enum": [
+            "SHA256",
+            "SHA512"
+          ],
+          "title": "Hash type",
+          "description": "Hash algorithm used for the hash value (e.g."
         },
         "origin": {
           "$ref": "#/$defs/Origin"

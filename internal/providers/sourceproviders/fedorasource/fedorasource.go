@@ -20,6 +20,9 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/retry"
 )
 
+// SourcesFileName is the name of the Fedora/RHEL 'sources' metadata file.
+const SourcesFileName = "sources"
+
 type FedoraSourceDownloader interface {
 	// ExtractSourcesFromRepo processes a git repository by downloading any required
 	// lookaside cache files into the repository directory. Files whose names appear
@@ -80,6 +83,14 @@ type sourceFileInfo struct {
 	expectedHash string
 }
 
+// SourcesFileEntry represents a parsed entry from a Fedora/RHEL sources file.
+// This struct is used for both reading existing sources files and generating new entries.
+type SourcesFileEntry struct {
+	Filename string
+	HashType fileutils.HashType
+	Hash     string
+}
+
 // NewFedoraRepoExtractorImpl creates a new instance of FedoraRepoExtractorImpl
 // with the provided downloader.
 func NewFedoraRepoExtractorImpl(
@@ -130,7 +141,7 @@ func (g *FedoraSourceDownloaderImpl) ExtractSourcesFromRepo(
 		return fmt.Errorf("repository directory does not exist at %#q, cloning failed", repoDir)
 	}
 
-	sourcesFilePath := filepath.Join(repoDir, "sources")
+	sourcesFilePath := filepath.Join(repoDir, SourcesFileName)
 
 	sourcesExists, err := fileutils.Exists(g.fileSystem, sourcesFilePath)
 	if err != nil {
@@ -244,10 +255,41 @@ func (g *FedoraSourceDownloaderImpl) validateDownloadedFile(
 // (e.g., "SHA512 (file.tar.gz) = abc123...") and the legacy MD5 format
 // (e.g., "abc123...  file.tar.gz").
 func parseSourcesFile(content string, packageName string, lookasideBaseURI string) ([]sourceFileInfo, error) {
-	sourceFiles := []sourceFileInfo{}
+	entries, err := ReadSourcesFileEntries(content)
+	if err != nil {
+		return nil, err
+	}
 
-	// Parse and validate each line in the sources file
+	sourceFiles := make([]sourceFileInfo, 0, len(entries))
+
+	for _, entry := range entries {
+		sourceURI, err := BuildLookasideURL(
+			lookasideBaseURI, packageName, entry.Filename,
+			string(entry.HashType), entry.Hash,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build lookaside URL for file %#q:\n%w", entry.Filename, err)
+		}
+
+		sourceFiles = append(sourceFiles, sourceFileInfo{
+			fileName:     entry.Filename,
+			uri:          sourceURI,
+			hashType:     entry.HashType,
+			expectedHash: entry.Hash,
+		})
+	}
+
+	return sourceFiles, nil
+}
+
+// ReadSourcesFileEntries parses the content of a Fedora/RHEL sources file and returns
+// the list of source file entries. It supports both the modern format
+// (e.g., "SHA512 (file.tar.gz) = abc123...") and the legacy MD5 format
+// (e.g., "abc123...  file.tar.gz").
+func ReadSourcesFileEntries(content string) ([]SourcesFileEntry, error) {
 	lines := strings.Split(content, "\n")
+
+	entries := make([]SourcesFileEntry, 0, len(lines))
 	for lineNum, line := range lines {
 		line = strings.TrimSpace(line)
 
@@ -278,23 +320,26 @@ func parseSourcesFile(content string, packageName string, lookasideBaseURI strin
 			fileName = legacyMatches[sourcesLegacyPatternFilenameIndex]
 
 			// Legacy format historically only used MD5
-			hashType = "MD5"
+			hashType = string(fileutils.HashTypeMD5)
 		}
 
-		sourceURI, err := BuildLookasideURL(lookasideBaseURI, packageName, fileName, hashType, hash)
-		if err != nil {
-			return nil, fmt.Errorf("failed to build lookaside URL at line %d:\n%w", lineNum+1, err)
-		}
-
-		sourceFiles = append(sourceFiles, sourceFileInfo{
-			fileName:     fileName,
-			uri:          sourceURI,
-			hashType:     fileutils.HashType(hashType),
-			expectedHash: hash,
+		entries = append(entries, SourcesFileEntry{
+			Filename: fileName,
+			HashType: fileutils.HashType(hashType),
+			Hash:     hash,
 		})
 	}
 
-	return sourceFiles, nil
+	return entries, nil
+}
+
+// FormatSourcesEntry formats a sources file entry in the modern Fedora/RHEL format.
+// Example output: "SHA512 (example-1.0.tar.gz) = a1b2c3d4e5f6..."
+//
+// The [hashType] must be a canonical [fileutils.HashType] constant.
+// The hash value is included as-is without case normalization.
+func FormatSourcesEntry(filename string, hashType fileutils.HashType, hash string) string {
+	return fmt.Sprintf("%s (%s) = %s", string(hashType), filename, hash)
 }
 
 // Lookaside URI template placeholders supported by [BuildLookasideURL].
@@ -319,11 +364,12 @@ const (
 func BuildLookasideURL(template, packageName, fileName, hashType, hash string) (string, error) {
 	// allPlaceholders lists all supported lookaside URI template placeholders.
 	allPlaceholders := []string{PlaceholderPkg, PlaceholderFilename, PlaceholderHashType, PlaceholderHash}
+	hashType = strings.ToLower(hashType)
 
 	for _, v := range []string{packageName, fileName, hashType, hash} {
 		for _, p := range allPlaceholders {
 			if strings.Contains(v, p) {
-				return "", fmt.Errorf("value %#q contains placeholder %s, which would cause ambiguous substitution", v, p)
+				return "", fmt.Errorf("value %#q contains placeholder %#q, which would cause ambiguous substitution", v, p)
 			}
 		}
 	}
@@ -331,7 +377,7 @@ func BuildLookasideURL(template, packageName, fileName, hashType, hash string) (
 	uri := template
 	uri = strings.ReplaceAll(uri, PlaceholderPkg, packageName)
 	uri = strings.ReplaceAll(uri, PlaceholderFilename, fileName)
-	uri = strings.ReplaceAll(uri, PlaceholderHashType, strings.ToLower(hashType))
+	uri = strings.ReplaceAll(uri, PlaceholderHashType, hashType)
 	uri = strings.ReplaceAll(uri, PlaceholderHash, hash)
 
 	return uri, nil

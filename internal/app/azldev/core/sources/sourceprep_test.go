@@ -14,6 +14,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
+	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/sourceproviders_test"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
@@ -630,4 +631,300 @@ func TestDiffSources_FetchError(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, result)
 	require.ErrorIs(t, err, expectedErr)
+}
+
+func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
+	validOrigin := projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/new-source.tar.gz"}
+	tests := []struct {
+		name                   string
+		sourceFiles            []projectconfig.SourceFileReference
+		existingSourcesContent string
+		expectError            bool
+		errorContains          []string
+		expectedSourceEntries  []string
+	}{
+		{
+			name: "adds new entry to existing sources file",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename: "extra-source.tar.gz",
+					Hash:     "abc123def456",
+					HashType: fileutils.HashTypeSHA512,
+					Origin:   validOrigin,
+				},
+			},
+			existingSourcesContent: "SHA512 (existing.tar.gz) = aabbccdd1122\n",
+			expectedSourceEntries: []string{
+				"SHA512 (existing.tar.gz) = aabbccdd1122",
+				"SHA512 (extra-source.tar.gz) = abc123def456",
+			},
+		},
+		{
+			name: "error on duplicate filename in sources file",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename: "existing.tar.gz", // Already in sources file.
+					Hash:     "11223344aabb",
+					HashType: fileutils.HashTypeSHA512,
+					Origin:   validOrigin,
+				},
+			},
+			existingSourcesContent: "SHA512 (existing.tar.gz) = aabbccdd1122\n",
+			expectError:            true,
+			errorContains: []string{
+				"existing.tar.gz",
+				"conflicts with an existing entry",
+			},
+		},
+		{
+			name: "error on missing hash without allow-no-hashes",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename: "missing-hash.tar.gz",
+					Hash:     "", // Missing hash.
+					HashType: fileutils.HashTypeSHA512,
+					Origin:   validOrigin,
+				},
+			},
+			expectError:   true,
+			errorContains: []string{"missing-hash.tar.gz", "missing required 'hash'"},
+		},
+		{
+			name: "error on missing hash type when hash is set",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename: "missing-hashtype.tar.gz",
+					Hash:     "abc123",
+					HashType: "", // Missing hash type.
+					Origin:   validOrigin,
+				},
+			},
+			expectError:   true,
+			errorContains: []string{"missing-hashtype.tar.gz", "has a 'hash' value but no 'hash-type'"},
+		},
+		{
+			name: "creates sources file if not exists",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename: "new-source.tar.gz",
+					Hash:     "newhash123",
+					HashType: fileutils.HashTypeSHA256,
+					Origin:   validOrigin,
+				},
+			},
+			existingSourcesContent: "", // No existing file.
+			expectedSourceEntries: []string{
+				"SHA256 (new-source.tar.gz) = newhash123",
+			},
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			const outputSpecPath = testOutputDir + "/test-component.spec"
+
+			ctrl := gomock.NewController(t)
+			component := components_testutils.NewMockComponent(ctrl)
+			sourceManager := sourceproviders_test.NewMockSourceManager(ctrl)
+			ctx := testctx.NewCtx()
+
+			component.EXPECT().GetName().AnyTimes().Return("test-component")
+			component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
+				SourceFiles: testCase.sourceFiles,
+			})
+			sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil)
+			sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).DoAndReturn(
+				func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
+					// Create existing sources file if specified.
+					if testCase.existingSourcesContent != "" {
+						err := fileutils.WriteFile(ctx.FS(), filepath.Join(outputDir, fedorasource.SourcesFileName),
+							[]byte(testCase.existingSourcesContent), fileperms.PublicFile)
+						if err != nil {
+							return err
+						}
+					}
+
+					return fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte("# test spec"), fileperms.PublicFile)
+				},
+			)
+
+			preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx)
+			require.NoError(t, err)
+
+			err = preparer.PrepareSources(ctx, component, testOutputDir, true /*applyOverlays?*/)
+			if testCase.expectError {
+				require.Error(t, err)
+
+				for _, contains := range testCase.errorContains {
+					assert.Contains(t, err.Error(), contains)
+				}
+
+				return
+			}
+
+			require.NoError(t, err)
+
+			if len(testCase.expectedSourceEntries) > 0 {
+				sourcesFilePath := filepath.Join(testOutputDir, fedorasource.SourcesFileName)
+				sourcesContent, err := fileutils.ReadFile(ctx.FS(), sourcesFilePath)
+				require.NoError(t, err)
+
+				for _, expectedEntry := range testCase.expectedSourceEntries {
+					assert.Contains(t, string(sourcesContent), expectedEntry)
+				}
+			}
+		})
+	}
+}
+
+func TestPrepareSources_AllowNoHashes(t *testing.T) {
+	const (
+		testFileContent = "hello world"
+		// Pre-computed SHA-512 hash of "hello world".
+		testFileSHA512 = "309ecc489c12d6eb4cc40f50c902f2b4d0ed77ee511a7c7a9bcd3ca86d4cd86f" +
+			"989dd35bc5ff499670da34255b45b0cfd830e81f605dcf7dc5542e93ae9cd76f"
+		// Pre-computed SHA-256 hash of "hello world".
+		testFileSHA256 = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+	)
+
+	tests := []struct {
+		name                   string
+		sourceFiles            []projectconfig.SourceFileReference
+		preparerOpts           []sources.PreparerOption
+		skipLookaside          bool
+		existingSourcesContent string
+		createFile             bool
+		expectError            bool
+		errorContains          []string
+		expectedSourceEntries  []string
+	}{
+		{
+			name: "computes hash with provided hash type",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename: "test-file.tar.gz",
+					HashType: fileutils.HashTypeSHA256,
+					Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/test-file.tar.gz"},
+				},
+			},
+			preparerOpts: []sources.PreparerOption{sources.WithAllowNoHashes()},
+			createFile:   true,
+			expectedSourceEntries: []string{
+				"SHA256 (test-file.tar.gz) = " + testFileSHA256,
+			},
+		},
+		{
+			name: "defaults to sha512 when hash type also missing",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename: "test-file.tar.gz",
+					Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/test-file.tar.gz"},
+				},
+			},
+			preparerOpts: []sources.PreparerOption{sources.WithAllowNoHashes()},
+			createFile:   true,
+			expectedSourceEntries: []string{
+				"SHA512 (test-file.tar.gz) = " + testFileSHA512,
+			},
+		},
+		{
+			name: "error when file not found in output dir",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename: "nonexistent.tar.gz",
+					HashType: fileutils.HashTypeSHA256,
+					Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/nonexistent.tar.gz"},
+				},
+			},
+			preparerOpts:  []sources.PreparerOption{sources.WithAllowNoHashes()},
+			createFile:    false,
+			expectError:   true,
+			errorContains: []string{"nonexistent.tar.gz", "failed to compute hash"},
+		},
+		{
+			name: "error when allow-no-hashes with skip-lookaside",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename: "test-file.tar.gz",
+					HashType: fileutils.HashTypeSHA512,
+					Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/test-file.tar.gz"},
+				},
+			},
+			preparerOpts:  []sources.PreparerOption{sources.WithAllowNoHashes(), sources.WithSkipLookaside()},
+			skipLookaside: true,
+			createFile:    false,
+			expectError:   true,
+			errorContains: []string{"test-file.tar.gz", "downloads were skipped"},
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			const outputSpecPath = testOutputDir + "/test-component.spec"
+
+			ctrl := gomock.NewController(t)
+			comp := components_testutils.NewMockComponent(ctrl)
+			sourceManager := sourceproviders_test.NewMockSourceManager(ctrl)
+			ctx := testctx.NewCtx()
+
+			comp.EXPECT().GetName().AnyTimes().Return("test-component")
+			comp.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
+				SourceFiles: testCase.sourceFiles,
+			})
+
+			if !testCase.skipLookaside {
+				sourceManager.EXPECT().FetchFiles(gomock.Any(), comp, testOutputDir).Return(nil)
+			}
+
+			sourceManager.EXPECT().FetchComponent(gomock.Any(), comp, testOutputDir, gomock.Any()).DoAndReturn(
+				func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
+					if testCase.existingSourcesContent != "" {
+						if err := fileutils.WriteFile(ctx.FS(), filepath.Join(outputDir, fedorasource.SourcesFileName),
+							[]byte(testCase.existingSourcesContent), fileperms.PublicFile); err != nil {
+							return err
+						}
+					}
+
+					// Create the source file in output dir to simulate it being downloaded.
+					if testCase.createFile {
+						for _, sf := range testCase.sourceFiles {
+							filePath := filepath.Join(outputDir, sf.Filename)
+							if err := fileutils.WriteFile(ctx.FS(), filePath,
+								[]byte(testFileContent), fileperms.PublicFile); err != nil {
+								return err
+							}
+						}
+					}
+
+					return fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte("# test spec"), fileperms.PublicFile)
+				},
+			)
+
+			preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx, testCase.preparerOpts...)
+			require.NoError(t, err)
+
+			err = preparer.PrepareSources(ctx, comp, testOutputDir, true /*applyOverlays?*/)
+			if testCase.expectError {
+				require.Error(t, err)
+
+				for _, contains := range testCase.errorContains {
+					assert.Contains(t, err.Error(), contains)
+				}
+
+				return
+			}
+
+			require.NoError(t, err)
+
+			if len(testCase.expectedSourceEntries) > 0 {
+				sourcesFilePath := filepath.Join(testOutputDir, fedorasource.SourcesFileName)
+				sourcesContent, err := fileutils.ReadFile(ctx.FS(), sourcesFilePath)
+				require.NoError(t, err)
+
+				for _, expectedEntry := range testCase.expectedSourceEntries {
+					assert.Contains(t, string(sourcesContent), expectedEntry)
+				}
+			}
+		})
+	}
 }

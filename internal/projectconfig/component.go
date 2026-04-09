@@ -57,8 +57,8 @@ type SourceFileReference struct {
 	// Hash of the source file, expressed as a hex string.
 	Hash string `toml:"hash,omitempty" json:"hash,omitempty"`
 
-	// Type of hash used by Hash (e.g., "sha256", "sha512").
-	HashType fileutils.HashType `toml:"hash-type,omitempty" json:"hashType,omitempty"`
+	// Type of hash used by Hash (e.g., "SHA256", "SHA512").
+	HashType fileutils.HashType `toml:"hash-type,omitempty" json:"hashType,omitempty" jsonschema:"enum=SHA256,enum=SHA512,title=Hash type,description=Hash algorithm used for the hash value (e.g., SHA256, SHA512)"`
 
 	// Origin for this source file. When omitted, the file is resolved via the lookaside cache.
 	Origin Origin `toml:"origin,omitempty" json:"origin,omitempty"`
@@ -136,6 +136,16 @@ type ComponentConfig struct {
 	// Per-package configuration overrides, keyed by exact binary package name.
 	// Takes precedence over DefaultPackageConfig and package-group defaults.
 	Packages map[string]PackageConfig `toml:"packages,omitempty" json:"packages,omitempty" table:"-" jsonschema:"title=Package overrides,description=Per-package configuration overrides keyed by exact binary package name"`
+}
+
+// AllowedSourceFilesHashTypes defines the set of hash types that are supported
+// for use in [SourceFileReference] entries in component configs.
+// MD5 is excluded by design.
+//
+//nolint:gochecknoglobals // This is effectively a constant, but Go doesn't have const maps.
+var AllowedSourceFilesHashTypes = map[fileutils.HashType]bool{
+	fileutils.HashTypeSHA256: true,
+	fileutils.HashTypeSHA512: true,
 }
 
 // Mutates the component config, updating it with overrides present in other.
