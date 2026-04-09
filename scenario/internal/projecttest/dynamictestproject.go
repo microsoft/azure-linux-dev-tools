@@ -127,12 +127,13 @@ func (p *dynamicTestProject) addComponent(componentConfig *projectconfig.Compone
 // The path must be relative and must not escape the project directory.
 func AddFile(relativePath, content string) DynamicTestProjectOption {
 	cleaned := filepath.Clean(relativePath)
-	if filepath.IsAbs(cleaned) || cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
-		panic(fmt.Sprintf("AddFile: path %#q escapes the project directory", relativePath))
+	if filepath.IsAbs(cleaned) || cleaned == "." || cleaned == ".." ||
+		strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		panic(fmt.Sprintf("AddFile: path %#q is invalid or escapes the project directory", relativePath))
 	}
 
 	return func(p *dynamicTestProject) {
-		p.otherFiles[relativePath] = []byte(content)
+		p.otherFiles[cleaned] = []byte(content)
 	}
 }
 
@@ -166,7 +167,7 @@ func initProjectGitRepo(t *testing.T, dir string) {
 		{"git", "config", "user.email", "test@test.com"},
 		{"git", "config", "user.name", "Test User"},
 		{"git", "add", "."},
-		{"git", "commit", "-m", "Initial commit"},
+		{"git", "-c", "commit.gpgsign=false", "commit", "-m", "Initial commit"},
 	}
 
 	for _, args := range cmds {

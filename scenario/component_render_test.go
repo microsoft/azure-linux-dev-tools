@@ -115,6 +115,10 @@ func TestRenderWithConfiguredOutputDir(t *testing.T) {
 
 	renderedSpecPath := results.GetProjectOutputPath("SPECS", "config-test", "config-test.spec")
 	require.FileExists(t, renderedSpecPath)
+
+	content, err := os.ReadFile(renderedSpecPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "Name: config-test")
 }
 
 func TestRenderWithOverlayApplied(t *testing.T) {
