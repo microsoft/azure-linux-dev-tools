@@ -30,6 +30,7 @@ type RenderOptions struct {
 	OutputDirExplicit bool // True when --output-dir was explicitly passed on the CLI.
 	FailOnError       bool
 	Force             bool
+	CleanStale        bool
 }
 
 func renderOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
@@ -61,8 +62,11 @@ sidecar files are included. Multiple components can be rendered at once.`,
   # Render a single component
   azldev component render -p curl
 
-  # Render to a custom directory
-  azldev component render -a -o rendered/ --force`,
+  # Render to a custom directory, allowing removal of existing rendered component directories
+  azldev component render -a -o rendered/ --force
+
+  # Render all and remove stale directories
+  azldev component render -a --clean-stale`,
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
 			options.ComponentFilter.ComponentNamePatterns = append(args, options.ComponentFilter.ComponentNamePatterns...)
 			options.OutputDirExplicit = cmd.Flags().Changed("output-dir")
@@ -85,7 +89,10 @@ sidecar files are included. Multiple components can be rendered at once.`,
 		"exit with error if any component fails to render (useful for CI)")
 
 	cmd.Flags().BoolVarP(&options.Force, "force", "f", false,
-		"allow deletion of existing rendered output directories; required for -a and when output dirs already exist")
+		"allow overwriting existing rendered component directories")
+
+	cmd.Flags().BoolVar(&options.CleanStale, "clean-stale", false,
+		"remove stale rendered directories not matching any current component (only with -a)")
 
 	return cmd
 }
@@ -122,12 +129,8 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 		return nil, err
 	}
 
-	// Rendering all components requires --force for stale directory cleanup.
-	// Check early to avoid wasting work on all three phases.
-	if options.ComponentFilter.IncludeAllComponents && !options.Force {
-		return nil, errors.New(
-			"rendering all components (-a) requires --force to enable cleanup of stale output directories" +
-				" (auto-set when rendered-specs-dir is configured)")
+	if options.CleanStale && !options.ComponentFilter.IncludeAllComponents {
+		return nil, errors.New("--clean-stale requires -a (render all components)")
 	}
 
 	resolver := components.NewResolver(env)
@@ -179,8 +182,8 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 	parallelFinish(env, prepared, mockResultMap, results, stagingDir, options.OutputDir,
 		options.Force)
 
-	// Clean up stale rendered directories when rendering all components.
-	if options.ComponentFilter.IncludeAllComponents {
+	// Clean up stale rendered directories when explicitly requested.
+	if options.CleanStale && options.ComponentFilter.IncludeAllComponents {
 		if cleanupErr := cleanupStaleRenders(env.FS(), comps, options.OutputDir); cleanupErr != nil {
 			return results, fmt.Errorf("cleaning up stale rendered output:\n%w", cleanupErr)
 		}
@@ -838,9 +841,9 @@ func writeRenderErrorMarker(fs opctx.FS, componentOutputDir string) {
 }
 
 // resolveAndValidateOutputDir resolves the output directory from CLI flags and
-// project config. If the config has rendered-specs-dir, it is used as the default
-// and --force is auto-set (the configured path is trusted). If neither the config
-// nor --output-dir provides a path, an error is returned.
+// project config. If neither the config nor --output-dir provides a path, an
+// error is returned. When the output dir comes from config, --force is auto-set
+// to allow overwriting component output (the configured path is trusted).
 func resolveAndValidateOutputDir(env *azldev.Env, options *RenderOptions) error {
 	configDir := env.Config().Project.RenderedSpecsDir
 
@@ -848,7 +851,7 @@ func resolveAndValidateOutputDir(env *azldev.Env, options *RenderOptions) error 
 	case options.OutputDirExplicit:
 		// CLI flag wins — use as-is.
 	case configDir != "":
-		// Config provides the output dir; auto-trust it.
+		// Config provides the output dir; auto-trust it for overwrites.
 		options.OutputDir = configDir
 		options.Force = true
 	default:

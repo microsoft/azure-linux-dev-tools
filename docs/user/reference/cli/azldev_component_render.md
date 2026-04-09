@@ -30,18 +30,22 @@ azldev component render [flags]
   # Render a single component
   azldev component render -p curl
 
-  # Render to a custom directory
+  # Render to a custom directory, allowing removal of existing rendered component directories
   azldev component render -a -o rendered/ --force
+
+  # Render all and remove stale directories
+  azldev component render -a --clean-stale
 ```
 
 ### Options
 
 ```
   -a, --all-components                Include all components
+      --clean-stale                   remove stale rendered directories not matching any current component (only with -a)
   -p, --component stringArray         Component name pattern
   -g, --component-group stringArray   Component group name
       --fail-on-error                 exit with error if any component fails to render (useful for CI)
-  -f, --force                         allow deletion of existing rendered output directories; required for -a and when output dirs already exist
+  -f, --force                         allow overwriting existing rendered component directories
   -h, --help                          help for render
   -o, --output-dir string             output directory for rendered specs (overrides rendered-specs-dir from config)
   -s, --spec-path stringArray         Spec path

@@ -40,6 +40,10 @@ func TestNewRenderCmd_Flags(t *testing.T) {
 	forceFlag := cmd.Flags().Lookup("force")
 	require.NotNil(t, forceFlag, "force flag should be registered")
 	assert.Equal(t, "false", forceFlag.DefValue)
+
+	cleanStaleFlag := cmd.Flags().Lookup("clean-stale")
+	require.NotNil(t, cleanStaleFlag, "clean-stale flag should be registered")
+	assert.Equal(t, "false", cleanStaleFlag.DefValue)
 }
 
 func TestRenderCmd_NoComponents(t *testing.T) {
@@ -66,4 +70,17 @@ func TestRenderCmd_NoOutputDir(t *testing.T) {
 	// Without config rendered-specs-dir or -o, render should fail.
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no output directory configured")
+}
+
+func TestRenderCmd_CleanStaleRequiresAll(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	cmd := componentcmds.NewRenderCmd()
+	cmd.SetArgs([]string{"-o", "SPECS", "--clean-stale", "some-component"})
+
+	err := cmd.ExecuteContext(testEnv.Env)
+
+	// --clean-stale without -a should fail.
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--clean-stale requires -a")
 }
