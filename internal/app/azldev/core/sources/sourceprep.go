@@ -212,6 +212,9 @@ func (p *sourcePreparerImpl) PrepareSources(
 			return fmt.Errorf("failed to update 'sources' file for component %#q:\n%w",
 				component.GetName(), err)
 		}
+	} else {
+		slog.Warn("Sources prepared without applying overlays; 'sources' file will not include entries from the 'source-files' configuration",
+			"component", component.GetName())
 	}
 
 	// Record the changes as synthetic git history when dist-git creation is enabled.
@@ -514,7 +517,7 @@ func (p *sourcePreparerImpl) updateSourcesFile(component components.Component, o
 		[]byte(newContent),
 		fileperms.PublicFile,
 	); err != nil {
-		return fmt.Errorf("failed to write sources file:\n%w", err)
+		return fmt.Errorf("failed to write sources file %#q:\n%w", sourcesFilePath, err)
 	}
 
 	slog.Info("Updated sources file with extra source file entries",
