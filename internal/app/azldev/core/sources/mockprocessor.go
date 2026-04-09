@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/mock"
@@ -86,8 +87,8 @@ func validateInputs(inputs []ComponentInput) error {
 // filesystem paths.
 func IsSimpleName(s string) bool {
 	return s != "" && s != "." && s != ".." &&
-		!strings.ContainsAny(s, "/\\ \t\n\r") &&
-		!strings.Contains(s, "..") &&
+		!strings.ContainsAny(s, "/\\") &&
+		!strings.ContainsFunc(s, unicode.IsSpace) &&
 		!strings.ContainsRune(s, 0)
 }
 
