@@ -9,6 +9,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/samber/lo"
 	"github.com/spf13/cobra"
 )
 
@@ -73,10 +74,7 @@ func ListComponentConfigs(
 	}
 
 	// Extract the component configs from the resolved components, and return them in a slice.
-	entries := make([]projectconfig.ComponentConfig, 0, comps.Len())
-	for _, comp := range comps.Components() {
-		entries = append(entries, *comp.GetConfig())
-	}
-
-	return entries, nil
+	return lo.Map(comps.Components(), func(component components.Component, _ int) projectconfig.ComponentConfig {
+		return *component.GetConfig()
+	}), nil
 }
