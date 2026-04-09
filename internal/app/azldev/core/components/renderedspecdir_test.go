@@ -8,21 +8,62 @@ import (
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRenderedSpecDir(t *testing.T) {
 	t.Run("ReturnsPathWhenConfigured", func(t *testing.T) {
-		result := components.RenderedSpecDir("/path/to/specs", "vim")
+		result, err := components.RenderedSpecDir("/path/to/specs", "vim")
+		require.NoError(t, err)
 		assert.Equal(t, "/path/to/specs/vim", result)
 	})
 
 	t.Run("ReturnsEmptyWhenNotConfigured", func(t *testing.T) {
-		result := components.RenderedSpecDir("", "vim")
+		result, err := components.RenderedSpecDir("", "vim")
+		require.NoError(t, err)
 		assert.Empty(t, result)
 	})
 
 	t.Run("HandlesComponentNameWithDashes", func(t *testing.T) {
-		result := components.RenderedSpecDir("/rendered", "my-component")
+		result, err := components.RenderedSpecDir("/rendered", "my-component")
+		require.NoError(t, err)
 		assert.Equal(t, "/rendered/my-component", result)
+	})
+
+	t.Run("RejectsAbsoluteComponentName", func(t *testing.T) {
+		_, err := components.RenderedSpecDir("/rendered", "/tmp")
+		assert.Error(t, err)
+	})
+
+	t.Run("RejectsTraversalInComponentName", func(t *testing.T) {
+		_, err := components.RenderedSpecDir("/rendered", "../escape")
+		assert.Error(t, err)
+	})
+
+	t.Run("RejectsPathSeparatorInComponentName", func(t *testing.T) {
+		_, err := components.RenderedSpecDir("/rendered", "sub/dir")
+		assert.Error(t, err)
+	})
+
+	t.Run("RejectsEmptyComponentName", func(t *testing.T) {
+		_, err := components.RenderedSpecDir("/rendered", "")
+		assert.Error(t, err)
+	})
+
+	t.Run("RejectsDotComponentName", func(t *testing.T) {
+		_, err := components.RenderedSpecDir("/rendered", ".")
+		assert.Error(t, err)
+	})
+
+	t.Run("RejectsDotDotComponentName", func(t *testing.T) {
+		_, err := components.RenderedSpecDir("/rendered", "..")
+		assert.Error(t, err)
+	})
+
+	t.Run("SkipsValidationWhenNotConfigured", func(t *testing.T) {
+		// When renderedSpecsDir is empty, no validation is needed since no path is produced.
+		result, err := components.RenderedSpecDir("", "../escape")
+		require.NoError(t, err)
+		assert.Empty(t, result)
 	})
 }

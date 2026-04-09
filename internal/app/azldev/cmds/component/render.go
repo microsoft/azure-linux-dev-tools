@@ -334,17 +334,15 @@ func prepWithSemaphore(
 	allowOverwrite bool,
 ) prepResult {
 	componentName := comp.GetName()
-	compOutputDir := filepath.Join(outputDir, componentName)
 
-	// Validate component name before any filesystem work to prevent path traversal.
-	if !sources.IsSimpleName(componentName) {
+	// Validate component name and compute output directory.
+	compOutputDir, nameErr := components.RenderedSpecDir(outputDir, componentName)
+	if nameErr != nil {
 		return prepResult{index: index, result: &RenderResult{
 			Component: componentName,
 			OutputDir: "(invalid)",
 			Status:    renderStatusError,
-			Error: fmt.Sprintf(
-				"component name %#q is invalid or contains path separators/traversal sequences",
-				componentName),
+			Error:     nameErr.Error(),
 		}}
 	}
 

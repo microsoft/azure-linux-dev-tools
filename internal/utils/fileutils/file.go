@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"unicode"
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
@@ -77,6 +79,21 @@ func ValidateFilename(filename string) error {
 
 	if filepath.Base(filename) != filename {
 		return fmt.Errorf("filename %#q must be a simple filename without directory components", filename)
+	}
+
+	if strings.ContainsFunc(filename, unicode.IsSpace) {
+		return fmt.Errorf("filename %#q must not contain whitespace", filename)
+	}
+
+	if strings.ContainsRune(filename, 0) {
+		return fmt.Errorf("filename %#q must not contain null bytes", filename)
+	}
+
+	// Reject backslashes even on Linux where they are technically valid in
+	// filenames. Component names travel across platform boundaries (e.g.,
+	// mock chroots, JSON output) where backslashes act as path separators.
+	if strings.ContainsRune(filename, '\\') {
+		return fmt.Errorf("filename %#q must not contain backslashes", filename)
 	}
 
 	return nil

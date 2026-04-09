@@ -88,6 +88,10 @@ func TestValidateFilename(t *testing.T) {
 		{name: "path traversal", filename: "../escape.tar.gz", expectedError: "without directory components"},
 		{name: "directory component", filename: "subdir/file.tar.gz", expectedError: "without directory components"},
 		{name: "dot prefix traversal", filename: "./file.tar.gz", expectedError: "path traversal"},
+		{name: "whitespace in name", filename: "has space.tar.gz", expectedError: "must not contain whitespace"},
+		{name: "tab in name", filename: "has\ttab.tar.gz", expectedError: "must not contain whitespace"},
+		{name: "null byte in name", filename: "has\x00null.tar.gz", expectedError: "must not contain null bytes"},
+		{name: "backslash in name", filename: "foo\\bar.tar.gz", expectedError: "must not contain backslashes"},
 	}
 
 	for _, tc := range tests {

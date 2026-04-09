@@ -124,7 +124,12 @@ func (r *Resolver) FindAllComponents() (components *ComponentSet, err error) {
 		}
 
 		// ...and add it to the set.
-		components.Add(r.createComponentFromConfig(updatedComponentConfig))
+		comp, createErr := r.createComponentFromConfig(updatedComponentConfig)
+		if createErr != nil {
+			return components, createErr
+		}
+
+		components.Add(comp)
 	}
 
 	return components, nil
@@ -444,18 +449,24 @@ func (r *Resolver) getComponentFromNameAndSpecPath(name, specPath string) (compo
 		}
 	}
 
-	return r.createComponentFromConfig(updatedComponentConfig), nil
+	return r.createComponentFromConfig(updatedComponentConfig)
 }
 
-func (r *Resolver) createComponentFromConfig(componentConfig *projectconfig.ComponentConfig) Component {
-	componentConfig.RenderedSpecDir = RenderedSpecDir(
+func (r *Resolver) createComponentFromConfig(componentConfig *projectconfig.ComponentConfig) (Component, error) {
+	var err error
+
+	componentConfig.RenderedSpecDir, err = RenderedSpecDir(
 		r.env.Config().Project.RenderedSpecsDir, componentConfig.Name,
 	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve rendered spec dir for component %#q:\n%w",
+			componentConfig.Name, err)
+	}
 
 	return &resolvedComponent{
 		env:    r.env,
 		config: *componentConfig,
-	}
+	}, nil
 }
 
 // Given an explicit component config, apply all inherited defaults.

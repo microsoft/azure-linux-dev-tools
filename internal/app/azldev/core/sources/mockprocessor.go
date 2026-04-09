@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"unicode"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/mock"
@@ -81,27 +80,15 @@ func validateInputs(inputs []ComponentInput) error {
 	return nil
 }
 
-// IsSimpleName returns true if s is a non-empty, single-component filename
-// without path separators, traversal sequences, whitespace, or null bytes.
-// Use this to validate component names or filenames before using them in
-// filesystem paths.
-func IsSimpleName(s string) bool {
-	return s != "" && s != "." && s != ".." &&
-		!strings.ContainsAny(s, "/\\") &&
-		!strings.ContainsFunc(s, unicode.IsSpace) &&
-		!strings.ContainsRune(s, 0)
-}
-
 // validateComponentInput rejects component inputs that could cause path traversal
 // or other safety issues when used to construct paths inside the mock chroot.
 func validateComponentInput(input ComponentInput) error {
-	if !IsSimpleName(input.Name) {
-		return fmt.Errorf(
-			"invalid component name %#q: must be a simple name without path separators or traversal sequences", input.Name)
+	if err := fileutils.ValidateFilename(input.Name); err != nil {
+		return fmt.Errorf("invalid component name %#q:\n%w", input.Name, err)
 	}
 
-	if !IsSimpleName(input.SpecFilename) {
-		return fmt.Errorf("invalid spec filename %#q for component %#q", input.SpecFilename, input.Name)
+	if err := fileutils.ValidateFilename(input.SpecFilename); err != nil {
+		return fmt.Errorf("invalid spec filename %#q for component %#q:\n%w", input.SpecFilename, input.Name, err)
 	}
 
 	return nil
