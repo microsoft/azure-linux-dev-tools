@@ -58,7 +58,7 @@ type SourceFileReference struct {
 	Hash string `toml:"hash,omitempty" json:"hash,omitempty"`
 
 	// Type of hash used by Hash (e.g., "SHA256", "SHA512").
-	HashType fileutils.HashType `toml:"hash-type,omitempty" json:"hashType,omitempty" jsonschema:"enum=SHA256,enum=SHA512,title=Hash type,description=Hash algorithm used for the hash value (e.g., SHA256, SHA512)"`
+	HashType fileutils.HashType `toml:"hash-type,omitempty" json:"hashType,omitempty" jsonschema:"enum=SHA256,enum=SHA512,title=Hash type,description=Hash algorithm used for the hash value"`
 
 	// Origin for this source file. When omitted, the file is resolved via the lookaside cache.
 	Origin Origin `toml:"origin,omitempty" json:"origin,omitempty"`
