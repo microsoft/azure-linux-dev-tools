@@ -200,12 +200,13 @@ func TestAllowedSourceFilesHashTypes_MatchesJSONSchemaEnum(t *testing.T) {
 		}
 	}
 
-	assert.Equal(t, len(projectconfig.AllowedSourceFilesHashTypes), len(schemaEnums),
+	assert.Len(t, schemaEnums, len(projectconfig.AllowedSourceFilesHashTypes),
 		"number of 'enum=' entries in 'jsonschema' tag must match number of entries in 'AllowedSourceFilesHashTypes'")
 
 	// Every enum value must be present in AllowedSourceFilesHashTypes.
 	for _, enumVal := range schemaEnums {
 		hashType := fileutils.HashType(enumVal)
-		assert.True(t, projectconfig.AllowedSourceFilesHashTypes[hashType], "'jsonschema' enum value %#q is not in 'AllowedSourceFilesHashTypes'", enumVal)
+		assert.True(t, projectconfig.AllowedSourceFilesHashTypes[hashType],
+			"'jsonschema' enum value %#q is not in 'AllowedSourceFilesHashTypes'", enumVal)
 	}
 }

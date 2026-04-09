@@ -213,7 +213,8 @@ func (p *sourcePreparerImpl) PrepareSources(
 				component.GetName(), err)
 		}
 	} else {
-		slog.Warn("Sources prepared without applying overlays; 'sources' file will not include entries from the 'source-files' configuration",
+		slog.Warn("Sources prepared without applying overlays;"+
+			" 'sources' file will not include entries from the 'source-files' configuration",
 			"component", component.GetName())
 	}
 
