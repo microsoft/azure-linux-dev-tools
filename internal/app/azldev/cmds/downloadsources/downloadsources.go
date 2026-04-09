@@ -69,6 +69,9 @@ Either --component or --lookaside-uri must be provided:
   azldev advanced download-sources \
     --lookaside-uri 'https://cache1.example.com/$pkg/$filename/$hashtype/$hash/$filename' \
     --lookaside-uri 'https://cache2.example.com/$pkg/$filename/$hashtype/$hash/$filename'`,
+		Annotations: map[string]string{
+			azldev.CommandAnnotationRootOK: "true",
+		},
 		RunE: azldev.RunFuncWithoutRequiredConfig(func(env *azldev.Env) (interface{}, error) {
 			if options.Directory == "" {
 				options.Directory = "."
