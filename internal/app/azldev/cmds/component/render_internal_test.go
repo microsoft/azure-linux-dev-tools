@@ -29,15 +29,15 @@ func TestFindSpecFile(t *testing.T) {
 		assert.Equal(t, filepath.Join("/src", "curl.spec"), path)
 	})
 
-	t.Run("falls back to any .spec file", func(t *testing.T) {
+	t.Run("error when spec name does not match component name", func(t *testing.T) {
 		fs := afero.NewMemMapFs()
 
 		require.NoError(t, fileutils.MkdirAll(fs, "/src"))
 		require.NoError(t, fileutils.WriteFile(fs, "/src/renamed.spec", []byte("Name: curl"), fileperms.PublicFile))
 
-		path, err := findSpecFile(fs, "/src", "curl")
-		require.NoError(t, err)
-		assert.Equal(t, filepath.Join("/src", "renamed.spec"), path)
+		_, err := findSpecFile(fs, "/src", "curl")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
 	})
 
 	t.Run("error when no spec file exists", func(t *testing.T) {
@@ -48,7 +48,7 @@ func TestFindSpecFile(t *testing.T) {
 
 		_, err := findSpecFile(fs, "/src", "curl")
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "no spec file found")
+		assert.Contains(t, err.Error(), "not found")
 	})
 
 	t.Run("error when directory does not exist", func(t *testing.T) {

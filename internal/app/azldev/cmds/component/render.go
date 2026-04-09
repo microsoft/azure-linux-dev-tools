@@ -751,7 +751,6 @@ func removeUnreferencedFiles(fs opctx.FS, tempDir, specPath string, specFiles []
 
 // findSpecFile locates the spec file for a component in the given directory.
 func findSpecFile(fs opctx.FS, dir, componentName string) (string, error) {
-	// Try the expected name first.
 	specPath := filepath.Join(dir, componentName+".spec")
 
 	exists, err := fileutils.Exists(fs, specPath)
@@ -759,31 +758,11 @@ func findSpecFile(fs opctx.FS, dir, componentName string) (string, error) {
 		return "", fmt.Errorf("checking spec file %#q:\n%w", specPath, err)
 	}
 
-	if exists {
-		return specPath, nil
+	if !exists {
+		return "", fmt.Errorf("expected spec file %#q not found for component %#q", specPath, componentName)
 	}
 
-	// Fall back to searching for any .spec file.
-	entries, err := fileutils.ReadDir(fs, dir)
-	if err != nil {
-		return "", fmt.Errorf("reading directory %#q:\n%w", dir, err)
-	}
-
-	for _, entry := range entries {
-		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".spec" {
-			foundPath := filepath.Join(dir, entry.Name())
-
-			slog.Warn("Spec filename does not match component name; using fallback",
-				"component", componentName,
-				"expected", componentName+".spec",
-				"found", entry.Name(),
-			)
-
-			return foundPath, nil
-		}
-	}
-
-	return "", fmt.Errorf("no spec file found in %#q for component %#q", dir, componentName)
+	return specPath, nil
 }
 
 // cleanupStaleRenders removes rendered output directories for components that
