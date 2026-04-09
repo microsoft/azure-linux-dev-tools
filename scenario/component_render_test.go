@@ -446,11 +446,15 @@ func TestRenderMultipleComponentsParallel(t *testing.T) {
 	// Build a map for easier assertion.
 	resultMap := make(map[string]map[string]interface{}, len(output))
 	for _, entry := range output {
-		name, _ := entry["component"].(string)
+		name, ok := entry["component"].(string)
+		require.True(t, ok, "component field should be a string")
 		resultMap[name] = entry
 	}
 
 	// Both should succeed.
+	require.Contains(t, resultMap, "comp-alpha", "comp-alpha should be in results")
+	require.Contains(t, resultMap, "comp-beta", "comp-beta should be in results")
+
 	assert.Equal(t, "ok", resultMap["comp-alpha"]["status"],
 		"comp-alpha should render ok")
 	assert.Equal(t, "ok", resultMap["comp-beta"]["status"],
@@ -509,11 +513,15 @@ func TestRenderBrokenSpecWithGoodSpec(t *testing.T) {
 	// Build a map for easier assertion.
 	resultMap := make(map[string]map[string]interface{}, len(output))
 	for _, entry := range output {
-		name, _ := entry["component"].(string)
+		name, ok := entry["component"].(string)
+		require.True(t, ok, "component field should be a string")
 		resultMap[name] = entry
 	}
 
 	// Good spec should succeed despite the broken one in the same batch.
+	require.Contains(t, resultMap, "good-pkg", "good-pkg should be in results")
+	require.Contains(t, resultMap, "broken-pkg", "broken-pkg should be in results")
+
 	assert.Equal(t, "ok", resultMap["good-pkg"]["status"],
 		"good-pkg should render ok even when another component fails")
 

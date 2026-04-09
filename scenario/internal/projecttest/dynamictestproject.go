@@ -4,9 +4,11 @@
 package projecttest
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/brunoga/deep"
@@ -122,7 +124,13 @@ func (p *dynamicTestProject) addComponent(componentConfig *projectconfig.Compone
 }
 
 // AddFile adds an arbitrary file to the project at the specified relative path.
+// The path must be relative and must not escape the project directory.
 func AddFile(relativePath, content string) DynamicTestProjectOption {
+	cleaned := filepath.Clean(relativePath)
+	if filepath.IsAbs(cleaned) || cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		panic(fmt.Sprintf("AddFile: path %#q escapes the project directory", relativePath))
+	}
+
 	return func(p *dynamicTestProject) {
 		p.otherFiles[relativePath] = []byte(content)
 	}
