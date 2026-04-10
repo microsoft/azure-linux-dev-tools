@@ -150,3 +150,35 @@ func TestSaveContainsVersion(t *testing.T) {
 	assert.Contains(t, string(data), "version = 1")
 	assert.Contains(t, string(data), "# azldev.lock")
 }
+
+func TestRoundTripLocalComponent(t *testing.T) {
+	memFS := afero.NewMemMapFs()
+	lockPath := filepath.Join(testProjectDir, lockfile.FileName)
+
+	require.NoError(t, fileutils.MkdirAll(memFS, testProjectDir))
+
+	// Create a lock file with a local component (empty upstream commit)
+	// alongside an upstream component.
+	original := lockfile.New()
+	original.SetUpstreamCommit("curl", "aaaa")
+	original.Components["local-pkg"] = lockfile.ComponentLock{}
+
+	require.NoError(t, original.Save(memFS, lockPath))
+
+	// Load it back and verify both entries survived.
+	loaded, err := lockfile.Load(memFS, lockPath)
+	require.NoError(t, err)
+
+	// Upstream component round-trips with its commit.
+	commit, found := loaded.GetUpstreamCommit("curl")
+	assert.True(t, found)
+	assert.Equal(t, "aaaa", commit)
+
+	// Local component has an entry but no upstream commit.
+	_, hasEntry := loaded.Components["local-pkg"]
+	assert.True(t, hasEntry, "local component entry should survive round-trip")
+
+	commit, found = loaded.GetUpstreamCommit("local-pkg")
+	assert.False(t, found, "local component should not have an upstream commit")
+	assert.Empty(t, commit)
+}

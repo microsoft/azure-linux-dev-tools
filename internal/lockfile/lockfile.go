@@ -30,6 +30,8 @@ type LockFile struct {
 }
 
 // ComponentLock holds the locked state for a single component.
+// Upstream components have [ComponentLock.UpstreamCommit] set to the resolved
+// commit hash. Local components have an entry but with an empty commit field.
 type ComponentLock struct {
 	// UpstreamCommit is the resolved full commit hash from the upstream dist-git.
 	// Empty for local components.
@@ -89,13 +91,18 @@ func (lockFile *LockFile) Save(fs opctx.FS, path string) error {
 
 // SetUpstreamCommit sets the locked upstream commit for a component.
 func (lockFile *LockFile) SetUpstreamCommit(componentName, commitHash string) {
+	if lockFile.Components == nil {
+		lockFile.Components = make(map[string]ComponentLock)
+	}
+
 	entry := lockFile.Components[componentName]
 	entry.UpstreamCommit = commitHash
 	lockFile.Components[componentName] = entry
 }
 
 // GetUpstreamCommit returns the locked upstream commit for a component.
-// Returns empty string and false if the component has no lock entry.
+// Returns empty string and false if the component has no lock entry or
+// if the entry has an empty upstream commit.
 func (lockFile *LockFile) GetUpstreamCommit(componentName string) (string, bool) {
 	entry, ok := lockFile.Components[componentName]
 	if !ok || entry.UpstreamCommit == "" {
