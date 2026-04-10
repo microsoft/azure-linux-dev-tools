@@ -38,7 +38,9 @@ type ComponentOverlay struct {
 	Lines []string `toml:"lines,omitempty" json:"lines,omitempty" jsonschema:"title=Lines,description=The lines of text to use"`
 	// For overlays that require a source file as input, indicates a path to that file; relative paths are relative to
 	// the config file that defines the overlay.
-	Source string `toml:"source,omitempty" json:"source,omitempty" jsonschema:"title=Source,description=For overlays that require a source file as input, indicates a path to that file; relative paths are relative to the config file that defines the overlay"`
+	// Excluded from fingerprint because it contains an absolute path that varies by checkout
+	// location. Overlay content is hashed separately by [fingerprint.ComputeIdentity].
+	Source string `toml:"source,omitempty" json:"source,omitempty" jsonschema:"title=Source,description=For overlays that require a source file as input, indicates a path to that file; relative paths are relative to the config file that defines the overlay" fingerprint:"-"`
 }
 
 // WithAbsolutePaths returns a copy of the overlay with config-relative file paths converted to absolute

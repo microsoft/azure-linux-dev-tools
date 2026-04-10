@@ -54,12 +54,23 @@ type IdentityOptions struct {
 	// AffectsCommitCount is the number of "Affects: <component>" commits.
 	AffectsCommitCount int
 	// SourceIdentity is the opaque identity string from a [sourceproviders.SourceIdentityProvider].
+	// For upstream components this is the resolved commit hash; for local components this is a
+	// content hash of the spec directory.
+	//
+	// This is caller-provided because resolving it requires network access (upstream clone) or
+	// filesystem traversal (local content hash). [ComputeIdentity] is a pure combiner — it does
+	// not perform I/O beyond reading overlay files. Callers should resolve source identity via
+	// SourceManager.ResolveSourceIdentity before calling [ComputeIdentity].
 	SourceIdentity string
 }
 
 // ComputeIdentity computes the fingerprint for a component from its resolved config
 // and additional context. The fs parameter is used to read overlay source file
-// contents for hashing; spec content identity is provided via opts.SourceIdentity.
+// contents for hashing; spec content identity is provided via [IdentityOptions.SourceIdentity].
+//
+// This function is a deterministic combiner: given the same resolved inputs it always
+// produces the same fingerprint. It does not resolve source identity or count commits —
+// those are expected to be pre-resolved by the caller and passed via opts.
 func ComputeIdentity(
 	fs opctx.FS,
 	component projectconfig.ComponentConfig,
@@ -110,15 +121,15 @@ func ComputeIdentity(
 }
 
 // hashOverlayFiles computes SHA256 hashes for all overlay source files that reference
-// local files. Returns a map of source path to hex hash, or an empty map if no overlay
-// source files exist.
+// local files. Returns a map of overlay index (as string) to hex hash, using the
+// index rather than the file path to avoid checkout-location dependence.
 func hashOverlayFiles(
 	fs opctx.FS,
 	overlays []projectconfig.ComponentOverlay,
 ) (map[string]string, error) {
 	hashes := make(map[string]string)
 
-	for _, overlay := range overlays {
+	for idx, overlay := range overlays {
 		if overlay.Source == "" {
 			continue
 		}
@@ -128,7 +139,7 @@ func hashOverlayFiles(
 			return nil, fmt.Errorf("hashing overlay source %#q:\n%w", overlay.Source, err)
 		}
 
-		hashes[overlay.Source] = fileHash
+		hashes[strconv.Itoa(idx)] = fileHash
 	}
 
 	return hashes, nil

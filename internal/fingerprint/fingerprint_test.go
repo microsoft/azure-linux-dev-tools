@@ -419,7 +419,7 @@ func TestComputeIdentity_InputsBreakdown(t *testing.T) {
 	assert.Equal(t, 3, identity.Inputs.AffectsCommitCount)
 	assert.Equal(t, "azl", identity.Inputs.Distro)
 	assert.Equal(t, "3.0", identity.Inputs.DistroVersion)
-	assert.Contains(t, identity.Inputs.OverlayFileHashes, "/patches/fix.patch")
+	assert.Contains(t, identity.Inputs.OverlayFileHashes, "0")
 }
 
 func TestComputeIdentity_NoSpecPath(t *testing.T) {
@@ -621,4 +621,43 @@ func TestComputeIdentity_SnapshotChangeDoesNotAffectFingerprint(t *testing.T) {
 	assert.Equal(t, fp1, fp2,
 		"changing upstream distro snapshot must NOT change fingerprint "+
 			"(snapshot is excluded; resolved commit hash is what matters)")
+}
+
+func TestComputeIdentity_DifferentCheckoutPaths(t *testing.T) {
+	// Simulate the same component checked out in two different directories.
+	// After WithAbsolutePaths, Spec.Path and overlay Source paths will differ.
+	// The fingerprint must be identical — it should not depend on checkout location.
+	ctx := newTestFS(t, map[string]string{
+		"/home/user1/repo/specs/test.spec":   "Name: testpkg\nVersion: 1.0",
+		"/home/user2/repo/specs/test.spec":   "Name: testpkg\nVersion: 1.0",
+		"/home/user1/repo/patches/fix.patch": "patch content",
+		"/home/user2/repo/patches/fix.patch": "patch content",
+	})
+	distro := baseDistroRef()
+
+	comp1 := projectconfig.ComponentConfig{
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeLocal,
+			Path:       "/home/user1/repo/specs/test.spec",
+		},
+		Overlays: []projectconfig.ComponentOverlay{
+			{Type: "patch-add", Source: "/home/user1/repo/patches/fix.patch"},
+		},
+	}
+
+	comp2 := projectconfig.ComponentConfig{
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeLocal,
+			Path:       "/home/user2/repo/specs/test.spec",
+		},
+		Overlays: []projectconfig.ComponentOverlay{
+			{Type: "patch-add", Source: "/home/user2/repo/patches/fix.patch"},
+		},
+	}
+
+	fp1 := computeFingerprint(t, ctx, comp1, distro, 0)
+	fp2 := computeFingerprint(t, ctx, comp2, distro, 0)
+
+	assert.Equal(t, fp1, fp2,
+		"same component in different checkout directories must produce identical fingerprints")
 }
