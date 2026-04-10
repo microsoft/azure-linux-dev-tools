@@ -43,6 +43,8 @@ func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
 		"ComponentConfig.Name": true,
 		// ComponentConfig.SourceConfigFile — internal bookkeeping reference, not a build input.
 		"ComponentConfig.SourceConfigFile": true,
+		// ComponentConfig.RenderedSpecDir — derived output path that varies by checkout location.
+		"ComponentConfig.RenderedSpecDir": true,
 
 		// ComponentBuildConfig.Failure — CI policy (expected failure tracking), not a build input.
 		"ComponentBuildConfig.Failure": true,

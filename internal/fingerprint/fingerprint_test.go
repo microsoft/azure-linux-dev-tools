@@ -9,8 +9,8 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/fingerprint"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
-	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -21,7 +21,7 @@ func newTestFS(t *testing.T, files map[string]string) *testctx.TestCtx {
 	ctx := testctx.NewCtx()
 
 	for path, content := range files {
-		err := afero.WriteFile(ctx.FS(), path, []byte(content), 0o644)
+		err := fileutils.WriteFile(ctx.FS(), path, []byte(content), fileperms.PublicFile)
 		require.NoError(t, err)
 	}
 
@@ -201,6 +201,13 @@ func TestComputeIdentity_ExcludedFieldsDoNotChange(t *testing.T) {
 	compReason.Build.Check.SkipReason = "tests require network"
 	fpReason := computeFingerprint(t, ctx, compReason, distro, 0)
 	assert.Equal(t, fpBase, fpReason, "changing check.skip_reason must NOT change fingerprint")
+
+	// Changing RenderedSpecDir (fingerprint:"-") should NOT change fingerprint.
+	// This is a derived output path that varies by checkout location.
+	compRendered := baseComponent()
+	compRendered.RenderedSpecDir = "/some/checkout/path/SPECS/t/testpkg"
+	fpRendered := computeFingerprint(t, ctx, compRendered, distro, 0)
+	assert.Equal(t, fpBase, fpRendered, "changing RenderedSpecDir must NOT change fingerprint")
 }
 
 func TestComputeIdentity_OverlayDescriptionExcluded(t *testing.T) {
