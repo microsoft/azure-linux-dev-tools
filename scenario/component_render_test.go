@@ -63,7 +63,7 @@ func TestRenderSimpleLocalSpec(t *testing.T) {
 		"Simple spec should render without warnings when rpmautospec is installed")
 
 	// Verify rendered spec file exists with expected content.
-	renderedSpecPath := results.GetProjectOutputPath("SPECS", "test-render", "test-render.spec")
+	renderedSpecPath := results.GetProjectOutputPath("SPECS", "t", "test-render", "test-render.spec")
 	require.FileExists(t, renderedSpecPath)
 
 	content, err := os.ReadFile(renderedSpecPath)
@@ -113,7 +113,7 @@ func TestRenderWithConfiguredOutputDir(t *testing.T) {
 	assert.Equal(t, "ok", output[0]["status"],
 		"Spec should render ok with config-provided output dir")
 
-	renderedSpecPath := results.GetProjectOutputPath("SPECS", "config-test", "config-test.spec")
+	renderedSpecPath := results.GetProjectOutputPath("SPECS", "c", "config-test", "config-test.spec")
 	require.FileExists(t, renderedSpecPath)
 
 	content, err := os.ReadFile(renderedSpecPath)
@@ -161,7 +161,7 @@ func TestRenderWithOverlayApplied(t *testing.T) {
 	assert.Equal(t, "ok", output[0]["status"], "Spec should render as ok when rpmautospec is installed")
 
 	// Verify the overlay was applied — the rendered spec should contain the added tag.
-	renderedSpecPath := results.GetProjectOutputPath("SPECS", "test-overlay", "test-overlay.spec")
+	renderedSpecPath := results.GetProjectOutputPath("SPECS", "t", "test-overlay", "test-overlay.spec")
 	require.FileExists(t, renderedSpecPath)
 
 	content, err := os.ReadFile(renderedSpecPath)
@@ -218,11 +218,11 @@ func TestRenderWithPatchSidecar(t *testing.T) {
 	assert.Equal(t, "ok", output[0]["status"], "Spec should render as ok when rpmautospec is installed")
 
 	// Verify the patch file is in the rendered output.
-	patchPath := results.GetProjectOutputPath("SPECS", "test-patch", "fix-stuff.patch")
+	patchPath := results.GetProjectOutputPath("SPECS", "t", "test-patch", "fix-stuff.patch")
 	require.FileExists(t, patchPath, "Patch sidecar should be in rendered output")
 
 	// Verify the spec references the patch.
-	renderedSpecPath := results.GetProjectOutputPath("SPECS", "test-patch", "test-patch.spec")
+	renderedSpecPath := results.GetProjectOutputPath("SPECS", "t", "test-patch", "test-patch.spec")
 	content, err := os.ReadFile(renderedSpecPath)
 	require.NoError(t, err)
 
@@ -249,7 +249,7 @@ func TestRenderStaleCleanup(t *testing.T) {
 		projecttest.AddComponent(localComponentConfig("keep-me")),
 		projecttest.UseTestDefaultConfigs(),
 		projecttest.WithGitRepo(),
-		projecttest.AddFile("SPECS/stale-component/RENDER_FAILED", "Rendering failed.\n"),
+		projecttest.AddFile("SPECS/s/stale-component/RENDER_FAILED", "Rendering failed.\n"),
 	)
 
 	results := projecttest.NewProjectTest(
@@ -265,11 +265,11 @@ func TestRenderStaleCleanup(t *testing.T) {
 	assert.Equal(t, "keep-me", output[0]["component"])
 
 	// Verify the stale directory was cleaned up.
-	stalePath := results.GetProjectOutputPath("SPECS", "stale-component")
+	stalePath := results.GetProjectOutputPath("SPECS", "s", "stale-component")
 	assert.NoDirExists(t, stalePath, "Stale component directory should have been removed")
 
 	// Verify the kept component still exists.
-	keptPath := results.GetProjectOutputPath("SPECS", "keep-me")
+	keptPath := results.GetProjectOutputPath("SPECS", "k", "keep-me")
 	assert.DirExists(t, keptPath, "Rendered component directory should still exist")
 }
 
@@ -295,7 +295,7 @@ func TestRenderRefusesOverwriteWithoutForce(t *testing.T) {
 		projecttest.AddComponent(localComponentConfig("no-clobber")),
 		projecttest.UseTestDefaultConfigs(),
 		projecttest.WithGitRepo(),
-		projecttest.AddFile("SPECS/no-clobber/existing-file.txt", "do not delete me\n"),
+		projecttest.AddFile("SPECS/n/no-clobber/existing-file.txt", "do not delete me\n"),
 	)
 
 	results := projecttest.NewProjectTest(
@@ -313,7 +313,7 @@ func TestRenderRefusesOverwriteWithoutForce(t *testing.T) {
 		"Render should fail when output dir exists without --force")
 
 	// The pre-existing file should NOT have been deleted.
-	existingPath := results.GetProjectOutputPath("SPECS", "no-clobber", "existing-file.txt")
+	existingPath := results.GetProjectOutputPath("SPECS", "n", "no-clobber", "existing-file.txt")
 	require.FileExists(t, existingPath,
 		"Pre-existing file should be preserved when --force is not set")
 }
@@ -389,7 +389,7 @@ License:        MIT
 		"Spec with golang macros should render ok via mock processing")
 
 	// The spec file should exist in the output.
-	renderedSpecPath := results.GetProjectOutputPath("SPECS", "golang-example", "golang-example.spec")
+	renderedSpecPath := results.GetProjectOutputPath("SPECS", "g", "golang-example", "golang-example.spec")
 	require.FileExists(t, renderedSpecPath,
 		"Spec should be rendered via mock processing")
 
@@ -465,10 +465,10 @@ func TestRenderMultipleComponentsParallel(t *testing.T) {
 		"comp-beta should render ok")
 
 	// Verify both rendered specs exist.
-	specAlphaPath := results.GetProjectOutputPath("SPECS", "comp-alpha", "comp-alpha.spec")
+	specAlphaPath := results.GetProjectOutputPath("SPECS", "c", "comp-alpha", "comp-alpha.spec")
 	require.FileExists(t, specAlphaPath)
 
-	specBetaPath := results.GetProjectOutputPath("SPECS", "comp-beta", "comp-beta.spec")
+	specBetaPath := results.GetProjectOutputPath("SPECS", "c", "comp-beta", "comp-beta.spec")
 	require.FileExists(t, specBetaPath)
 
 	// comp-beta uses %autorelease, so rpmautospec should have processed it.
@@ -529,7 +529,7 @@ func TestRenderBrokenSpecWithGoodSpec(t *testing.T) {
 	assert.Equal(t, "ok", resultMap["good-pkg"]["status"],
 		"good-pkg should render ok even when another component fails")
 
-	goodSpecPath := results.GetProjectOutputPath("SPECS", "good-pkg", "good-pkg.spec")
+	goodSpecPath := results.GetProjectOutputPath("SPECS", "g", "good-pkg", "good-pkg.spec")
 	require.FileExists(t, goodSpecPath)
 
 	// Broken spec should produce an error status.
@@ -537,6 +537,6 @@ func TestRenderBrokenSpecWithGoodSpec(t *testing.T) {
 		"broken-pkg should report error for malformed spec")
 
 	// Error marker file should be written for the broken component.
-	markerPath := results.GetProjectOutputPath("SPECS", "broken-pkg", "RENDER_FAILED")
+	markerPath := results.GetProjectOutputPath("SPECS", "b", "broken-pkg", "RENDER_FAILED")
 	require.FileExists(t, markerPath, "RENDER_FAILED marker should exist for broken component")
 }

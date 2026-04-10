@@ -13,8 +13,8 @@ intended for check-in.
 The output directory is set via rendered-specs-dir in the project config, or
 via --output-dir on the command line. If neither is set, an error is returned.
 Within the output directory, components are organized into letter-prefixed
-subdirectories based on the first character of their name (e.g., SPECS/c/curl,
-SPECS/v/vim).
+subdirectories based on the first character of their name (e.g., specs/c/curl,
+specs/v/vim).
 
 Unlike prepare-sources, render skips downloading source tarballs from the
 lookaside cache — only spec files, patches, scripts, and other git-tracked
