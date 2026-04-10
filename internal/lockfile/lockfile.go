@@ -86,7 +86,7 @@ func (lockFile *LockFile) Save(fs opctx.FS, path string) error {
 
 	// Post-process: insert extra blank lines before each [components.<name>] header.
 	// This helps reduce git merge conflicts when parallel PRs modify adjacent entries.
-	output := addPerComponentComments(string(data))
+	output := addPerComponentPadding(string(data))
 
 	if err := fileutils.WriteFile(fs, path, []byte(output), fileperms.PublicFile); err != nil {
 		return fmt.Errorf("writing lock file %#q:\n%w", path, err)
@@ -95,13 +95,17 @@ func (lockFile *LockFile) Save(fs opctx.FS, path string) error {
 	return nil
 }
 
-// addPerComponentComments inserts extra blank lines between component entries in the marshaled TOML output. This
+// addPerComponentPadding inserts extra blank lines between component entries in the marshaled TOML output. This
 // padding prevents git merge conflicts when parallel PRs add, remove, or modify adjacent component entries — git's
 // default 3-line diff context won't overlap between padded entries.
 //
 // This is a best-effort approach, and won't prevent all conflicts (e.g. if two PRs modify the same component entry),
 // but it should help in the common case of parallel PRs modifying different components.
-func addPerComponentComments(tomlData string) string {
+// The other option would be to have each component in a separate file, but that adds complexity and overhead
+// to the loading process, and clutters the project with more files. The files cannot live in the rendered specs
+// directory since they are required to detect changes in package state and would be removed by the rendering process or
+// a manual folder removal.
+func addPerComponentPadding(tomlData string) string {
 	const prefix = "[components."
 
 	var result strings.Builder
