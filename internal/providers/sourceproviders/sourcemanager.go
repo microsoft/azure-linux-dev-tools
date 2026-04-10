@@ -45,6 +45,9 @@ type FileSourceProvider interface {
 type SourceIdentityProvider interface {
 	// ResolveIdentity returns a deterministic identity string for the component's source.
 	// Returns an error if the identity cannot be determined (e.g., network failure for upstream sources).
+	// Upstream components must return the resolved commit hash from the dist-git provider, local components
+	// must return a content hash of the spec directory (must be stable, but exact format and algorithm
+	// are up to the provider).
 	ResolveIdentity(ctx context.Context, component components.Component) (string, error)
 }
 

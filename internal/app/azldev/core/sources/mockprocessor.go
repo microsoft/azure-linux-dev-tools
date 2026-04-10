@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -140,7 +139,7 @@ func (p *MockProcessor) initOnce(ctx context.Context) error {
 // per-component progress on stderr (mapped by mock to stdout).
 func (p *MockProcessor) BatchProcess(
 	ctx context.Context, events opctx.EventListener,
-	stagingDir string, inputs []ComponentInput, fs opctx.FS,
+	stagingDir string, inputs []ComponentInput, fs opctx.FS, maxWorkers int,
 ) ([]ComponentMockResult, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -182,7 +181,7 @@ func (p *MockProcessor) BatchProcess(
 	runner.AddBindMount(stagingDir, chrootStagingPath)
 
 	chrootScript := filepath.Join(chrootStagingPath, "render_process.py")
-	workers := strconv.Itoa(max(1, runtime.NumCPU())) // 1x CPU; mock work is CPU-bound
+	workers := strconv.Itoa(max(1, maxWorkers)) // 1x CPU; mock work is CPU-bound
 	args := []string{"python3", chrootScript, chrootStagingPath, workers}
 
 	cmd, err := runner.CmdInChroot(ctx, args, false)

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/charmbracelet/gum/confirm"
@@ -276,6 +277,24 @@ func (env *Env) LogsDir() string {
 // Returns the file path to the loaded project's output directory.
 func (env *Env) OutputDir() string {
 	return env.outputDir
+}
+
+// CPUBoundConcurrency returns the recommended concurrency limit for CPU-bound tasks.
+// Returns [runtime.NumCPU], minimum 1.
+func (env *Env) CPUBoundConcurrency() int {
+	return max(1, runtime.NumCPU())
+}
+
+// IOBoundConcurrency returns the recommended concurrency limit for I/O-bound tasks
+// (network clones, file copies). Returns 2× [runtime.NumCPU], minimum 1.
+func (env *Env) IOBoundConcurrency() int {
+	return max(1, 2*runtime.NumCPU()) //nolint:mnd // 2x CPU
+}
+
+// FastConcurrency returns the recommended concurrency limit for tasks that can benefit from higher parallelism.
+// Returns 4× [runtime.NumCPU], minimum 1.
+func (env *Env) FastConcurrency() int {
+	return max(1, 4*runtime.NumCPU()) //nolint:mnd // 4x CPU
 }
 
 // Enables or disables "accept all prompts" mode.

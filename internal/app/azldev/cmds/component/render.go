@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -114,13 +113,6 @@ const (
 	renderStatusError     = "error"
 	renderStatusCancelled = "cancelled"
 )
-
-// concurrentRenderLimit returns the number of concurrent goroutines for phases 1 and 3.
-// Each goroutine involves git clone + overlay (phase 1) or file filtering + copy (phase 3),
-// so this bounds I/O parallelism. Uses 2x CPU count since these operations are I/O-bound.
-func concurrentRenderLimit() int {
-	return max(1, 2*runtime.NumCPU()) //nolint:mnd // 2x CPU empirically chosen via benchmarking
-}
 
 // RenderComponents renders the post-overlay spec and sidecar files for each
 // selected component into the output directory. Processing is done in three phases:
@@ -290,7 +282,7 @@ func parallelPrepare(
 	defer cancel()
 
 	resultsChan := make(chan prepResult, len(comps))
-	semaphore := make(chan struct{}, concurrentRenderLimit())
+	semaphore := make(chan struct{}, env.IOBoundConcurrency())
 
 	var waitGroup sync.WaitGroup
 
@@ -486,7 +478,7 @@ func batchMockProcess(
 		}
 	}
 
-	mockResults, err := mockProcessor.BatchProcess(env, env, stagingDir, inputs, env.FS())
+	mockResults, err := mockProcessor.BatchProcess(env, env, stagingDir, inputs, env.FS(), env.CPUBoundConcurrency())
 	if err != nil {
 		slog.Error("Batch mock processing failed", "error", err)
 		// Return empty map — all components will get reported as errors in phase 3.
@@ -532,7 +524,7 @@ func parallelFinish(
 	}
 
 	resultsChan := make(chan finishResult, len(prepared))
-	semaphore := make(chan struct{}, concurrentRenderLimit())
+	semaphore := make(chan struct{}, env.IOBoundConcurrency())
 
 	var waitGroup sync.WaitGroup
 
