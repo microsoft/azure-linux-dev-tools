@@ -86,11 +86,13 @@ func TestCleanupStaleRenders(t *testing.T) {
 		testFS := afero.NewMemMapFs()
 		ctrl := gomock.NewController(t)
 
-		// Create output directories for curl, wget, and stale-pkg.
+		// Create letter-prefixed output directories for curl, wget, and stale-pkg.
 		for _, name := range []string{"curl", "wget", "stale-pkg"} {
-			require.NoError(t, fileutils.MkdirAll(testFS, filepath.Join("/output", name)))
+			prefix := string(name[0])
+			dir := filepath.Join("/output", prefix, name)
+			require.NoError(t, fileutils.MkdirAll(testFS, dir))
 			require.NoError(t, fileutils.WriteFile(testFS,
-				filepath.Join("/output", name, name+".spec"),
+				filepath.Join(dir, name+".spec"),
 				[]byte("Name: "+name), fileperms.PublicFile))
 		}
 
@@ -108,13 +110,14 @@ func TestCleanupStaleRenders(t *testing.T) {
 
 		// curl and wget should still exist.
 		for _, name := range []string{"curl", "wget"} {
-			exists, existsErr := fileutils.Exists(testFS, filepath.Join("/output", name))
+			prefix := string(name[0])
+			exists, existsErr := fileutils.Exists(testFS, filepath.Join("/output", prefix, name))
 			require.NoError(t, existsErr)
 			assert.True(t, exists, "%s should still exist", name)
 		}
 
 		// stale-pkg should be removed.
-		exists, err := fileutils.Exists(testFS, "/output/stale-pkg")
+		exists, err := fileutils.Exists(testFS, "/output/s/stale-pkg")
 		require.NoError(t, err)
 		assert.False(t, exists, "stale-pkg should be removed")
 	})

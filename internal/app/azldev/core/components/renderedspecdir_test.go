@@ -12,10 +12,10 @@ import (
 )
 
 func TestRenderedSpecDir(t *testing.T) {
-	t.Run("ReturnsPathWhenConfigured", func(t *testing.T) {
+	t.Run("ReturnsLetterPrefixedPath", func(t *testing.T) {
 		result, err := components.RenderedSpecDir("/path/to/specs", "vim")
 		require.NoError(t, err)
-		assert.Equal(t, "/path/to/specs/vim", result)
+		assert.Equal(t, "/path/to/specs/v/vim", result)
 	})
 
 	t.Run("ReturnsEmptyWhenNotConfigured", func(t *testing.T) {
@@ -24,10 +24,16 @@ func TestRenderedSpecDir(t *testing.T) {
 		assert.Empty(t, result)
 	})
 
+	t.Run("LowercasesPrefixForUppercaseName", func(t *testing.T) {
+		result, err := components.RenderedSpecDir("/specs", "SymCrypt")
+		require.NoError(t, err)
+		assert.Equal(t, "/specs/s/SymCrypt", result)
+	})
+
 	t.Run("HandlesComponentNameWithDashes", func(t *testing.T) {
 		result, err := components.RenderedSpecDir("/rendered", "my-component")
 		require.NoError(t, err)
-		assert.Equal(t, "/rendered/my-component", result)
+		assert.Equal(t, "/rendered/m/my-component", result)
 	})
 
 	t.Run("RejectsAbsoluteComponentName", func(t *testing.T) {

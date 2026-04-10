@@ -24,7 +24,7 @@ The `log-dir`, `work-dir`, `output-dir`, and `rendered-specs-dir` paths are reso
 - **`log-dir`** — build logs are written here (e.g., `azldev.log`)
 - **`work-dir`** — temporary per-component working directories are created under this path during builds (e.g., source preparation, SRPM construction)
 - **`output-dir`** — final build artifacts (RPMs, SRPMs) are placed here
-- **`rendered-specs-dir`** — rendered spec and sidecar files are written here by `azldev component render`
+- **`rendered-specs-dir`** — rendered spec and sidecar files are written here by `azldev component render`. Components are organized into letter-prefixed subdirectories (e.g., `SPECS/c/curl`, `SPECS/v/vim`)
 
 > **Note:** Do not edit files under these directories manually — they are managed by azldev and may be overwritten or cleaned at any time.
 

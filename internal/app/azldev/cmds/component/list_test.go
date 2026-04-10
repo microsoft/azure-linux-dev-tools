@@ -93,7 +93,7 @@ func TestListComponents_WithRenderedSpecsDir(t *testing.T) {
 
 	result := results[0]
 	assert.Equal(t, testComponentName, result.Name)
-	assert.Equal(t, filepath.Join(testRenderedDir, testComponentName), result.RenderedSpecDir)
+	assert.Equal(t, filepath.Join(testRenderedDir, "v", testComponentName), result.RenderedSpecDir)
 }
 
 func TestListComponents_MultipleWithRenderedSpecsDir(t *testing.T) {
@@ -121,7 +121,14 @@ func TestListComponents_MultipleWithRenderedSpecsDir(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, results, 2)
 
+	expectedDirs := map[string]string{
+		"curl": filepath.Join(testRenderedDir, "c", "curl"),
+		"vim":  filepath.Join(testRenderedDir, "v", "vim"),
+	}
+
 	for _, result := range results {
-		assert.Equal(t, filepath.Join(testRenderedDir, result.Name), result.RenderedSpecDir)
+		expected, ok := expectedDirs[result.Name]
+		require.True(t, ok, "unexpected component %q in results", result.Name)
+		assert.Equal(t, expected, result.RenderedSpecDir)
 	}
 }

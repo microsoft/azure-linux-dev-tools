@@ -52,6 +52,9 @@ intended for check-in.
 
 The output directory is set via rendered-specs-dir in the project config, or
 via --output-dir on the command line. If neither is set, an error is returned.
+Within the output directory, components are organized into letter-prefixed
+subdirectories based on the first character of their name (e.g., specs/c/curl,
+specs/v/vim).
 
 Unlike prepare-sources, render skips downloading source tarballs from the
 lookaside cache — only spec files, patches, scripts, and other git-tracked
@@ -179,7 +182,7 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 	mockResultMap := batchMockProcess(env, mockProcessor, stagingDir, prepared)
 
 	// ── Phase 3: Parallel finishing ──
-	parallelFinish(env, prepared, mockResultMap, results, stagingDir, options.OutputDir,
+	parallelFinish(env, prepared, mockResultMap, results, stagingDir,
 		options.Force)
 
 	// Clean up stale rendered directories when explicitly requested.
@@ -511,7 +514,6 @@ func parallelFinish(
 	mockResultMap map[string]*sources.ComponentMockResult,
 	results []*RenderResult,
 	stagingDir string,
-	outputDir string,
 	allowOverwrite bool,
 ) {
 	if len(prepared) == 0 {
@@ -540,7 +542,7 @@ func parallelFinish(
 		go func(prep *preparedComponent) {
 			defer waitGroup.Done()
 
-			result := finishOneComponent(workerEnv, env, prep, mockResultMap, semaphore, stagingDir, outputDir, allowOverwrite)
+			result := finishOneComponent(workerEnv, env, prep, mockResultMap, semaphore, stagingDir, allowOverwrite)
 			resultsChan <- finishResult{index: prep.index, result: result}
 		}(prep)
 	}
@@ -568,7 +570,6 @@ func finishOneComponent(
 	mockResultMap map[string]*sources.ComponentMockResult,
 	semaphore chan struct{},
 	stagingDir string,
-	outputDir string,
 	allowOverwrite bool,
 ) *RenderResult {
 	componentName := prep.comp.GetName()
@@ -593,7 +594,7 @@ func finishOneComponent(
 		Status:    renderStatusOK,
 	}
 
-	err := finishComponentRender(env, prep, mockResultMap, stagingDir, outputDir, allowOverwrite)
+	err := finishComponentRender(env, prep, mockResultMap, stagingDir, allowOverwrite)
 	if err != nil {
 		slog.Error("Failed to finish rendering component",
 			"component", componentName, "error", err)
@@ -624,7 +625,6 @@ func finishComponentRender(
 	prep *preparedComponent,
 	mockResultMap map[string]*sources.ComponentMockResult,
 	stagingDir string,
-	baseOutputDir string,
 	allowOverwrite bool,
 ) error {
 	componentName := prep.comp.GetName()
@@ -658,12 +658,12 @@ func finishComponentRender(
 	}
 
 	// Copy rendered files to the component's output directory.
-	if copyErr := copyRenderedOutput(env, componentDir, baseOutputDir, componentName, allowOverwrite); copyErr != nil {
+	if copyErr := copyRenderedOutput(env, componentDir, prep.compOutputDir, allowOverwrite); copyErr != nil {
 		return copyErr
 	}
 
 	slog.Info("Rendered component", "component", componentName,
-		"output", filepath.Join(baseOutputDir, componentName))
+		"output", prep.compOutputDir)
 
 	return nil
 }
@@ -671,9 +671,7 @@ func finishComponentRender(
 // copyRenderedOutput copies the rendered files from tempDir to the component's output directory.
 // For managed output (inside project root), existing output is removed before copying.
 // For external output, existing directories cause an error.
-func copyRenderedOutput(env *azldev.Env, tempDir, baseOutputDir, componentName string, allowOverwrite bool) error {
-	componentOutputDir := filepath.Join(baseOutputDir, componentName)
-
+func copyRenderedOutput(env *azldev.Env, tempDir, componentOutputDir string, allowOverwrite bool) error {
 	exists, existsErr := fileutils.DirExists(env.FS(), componentOutputDir)
 	if existsErr != nil {
 		return fmt.Errorf("checking output directory %#q:\n%w", componentOutputDir, existsErr)
@@ -704,7 +702,7 @@ func copyRenderedOutput(env *azldev.Env, tempDir, baseOutputDir, componentName s
 	}
 
 	if copyErr := fileutils.CopyDirRecursive(env, env.FS(), tempDir, componentOutputDir, copyOptions); copyErr != nil {
-		return fmt.Errorf("copying rendered files for %#q:\n%w", componentName, copyErr)
+		return fmt.Errorf("copying rendered files to %#q:\n%w", componentOutputDir, copyErr)
 	}
 
 	return nil
@@ -770,6 +768,8 @@ func findSpecFile(fs opctx.FS, dir, componentName string) (string, error) {
 
 // cleanupStaleRenders removes rendered output directories for components that
 // no longer exist in the current configuration. Only called during full renders (-a).
+// The output directory uses letter-prefix subdirectories (e.g., SPECS/c/curl),
+// so this walks two levels: letter directories, then component directories within each.
 func cleanupStaleRenders(fs opctx.FS, currentComponents *components.ComponentSet, outputDir string) error {
 	exists, existsErr := fileutils.Exists(fs, outputDir)
 	if existsErr != nil {
@@ -780,7 +780,7 @@ func cleanupStaleRenders(fs opctx.FS, currentComponents *components.ComponentSet
 		return nil
 	}
 
-	entries, err := fileutils.ReadDir(fs, outputDir)
+	letterEntries, err := fileutils.ReadDir(fs, outputDir)
 	if err != nil {
 		return fmt.Errorf("reading output directory %#q:\n%w", outputDir, err)
 	}
@@ -791,22 +791,34 @@ func cleanupStaleRenders(fs opctx.FS, currentComponents *components.ComponentSet
 		currentNames[comp.GetName()] = true
 	}
 
-	for _, entry := range entries {
-		// Skip non-directories and known non-component files.
-		if !entry.IsDir() {
+	for _, letterEntry := range letterEntries {
+		if !letterEntry.IsDir() {
 			continue
 		}
 
-		if currentNames[entry.Name()] {
-			continue
+		letterDir := filepath.Join(outputDir, letterEntry.Name())
+
+		compEntries, readErr := fileutils.ReadDir(fs, letterDir)
+		if readErr != nil {
+			return fmt.Errorf("reading letter directory %#q:\n%w", letterDir, readErr)
 		}
 
-		stalePath := filepath.Join(outputDir, entry.Name())
+		for _, compEntry := range compEntries {
+			if !compEntry.IsDir() {
+				continue
+			}
 
-		slog.Info("Removing stale rendered output", "directory", stalePath)
+			if currentNames[compEntry.Name()] {
+				continue
+			}
 
-		if removeErr := fs.RemoveAll(stalePath); removeErr != nil {
-			return fmt.Errorf("removing stale directory %#q:\n%w", stalePath, removeErr)
+			stalePath := filepath.Join(letterDir, compEntry.Name())
+
+			slog.Info("Removing stale rendered output", "directory", stalePath)
+
+			if removeErr := fs.RemoveAll(stalePath); removeErr != nil {
+				return fmt.Errorf("removing stale directory %#q:\n%w", stalePath, removeErr)
+			}
 		}
 	}
 
