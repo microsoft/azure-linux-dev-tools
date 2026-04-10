@@ -171,7 +171,7 @@ func resolveUpstreamCommitsParallel(
 
 	var lockMutex sync.Mutex
 
-	// Each resolution involves a metadata-only git clone (I/O-bound).
+	// Each resolution involves a metadata-only git clone, in practice highly-parallelizable.
 	semaphore := make(chan struct{}, env.FastConcurrency())
 
 	for idx, comp := range comps {
