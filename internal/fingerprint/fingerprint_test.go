@@ -254,6 +254,35 @@ func TestComputeIdentity_OverlaySourceFileChange(t *testing.T) {
 	assert.NotEqual(t, fp1, fp2, "different overlay source content must produce different fingerprints")
 }
 
+func TestComputeIdentity_PatchAddRenameChangesFP(t *testing.T) {
+	// When patch-add omits 'file', the destination filename is derived from
+	// filepath.Base(Source). Renaming the source file changes the rendered
+	// spec output (PatchN: tag + copied file), so the fingerprint must change
+	// even if the file content is identical.
+	ctx := newTestFS(t, map[string]string{
+		"/specs/test.spec":        "Name: testpkg\nVersion: 1.0",
+		"/patches/fix.patch":      "identical patch content",
+		"/patches/cve-2026.patch": "identical patch content",
+	})
+	distro := baseDistroRef()
+
+	comp1 := baseComponent()
+	comp1.Overlays = []projectconfig.ComponentOverlay{
+		{Type: "patch-add", Source: "/patches/fix.patch"},
+	}
+
+	comp2 := baseComponent()
+	comp2.Overlays = []projectconfig.ComponentOverlay{
+		{Type: "patch-add", Source: "/patches/cve-2026.patch"},
+	}
+
+	fp1 := computeFingerprint(t, ctx, comp1, distro, 0)
+	fp2 := computeFingerprint(t, ctx, comp2, distro, 0)
+
+	assert.NotEqual(t, fp1, fp2,
+		"renaming overlay source file must change fingerprint (same content, different basename)")
+}
+
 func TestComputeIdentity_DistroChange(t *testing.T) {
 	ctx := newTestFS(t, map[string]string{
 		"/specs/test.spec": "Name: testpkg\nVersion: 1.0",

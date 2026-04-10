@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"path/filepath"
 	"sort"
 	"strconv"
 
@@ -121,8 +122,10 @@ func ComputeIdentity(
 }
 
 // hashOverlayFiles computes SHA256 hashes for all overlay source files that reference
-// local files. Returns a map of overlay index (as string) to hex hash, using the
-// index rather than the file path to avoid checkout-location dependence.
+// local files. Returns a map of overlay index (as string) to a combined hash that
+// captures both the file content and the source basename. The basename is included
+// because some overlay types (e.g., patch-add) derive the destination filename from
+// it when no explicit 'file' field is set.
 func hashOverlayFiles(
 	fs opctx.FS,
 	overlays []projectconfig.ComponentOverlay,
@@ -139,7 +142,10 @@ func hashOverlayFiles(
 			return nil, fmt.Errorf("hashing overlay source %#q:\n%w", overlay.Source, err)
 		}
 
-		hashes[strconv.Itoa(idx)] = fileHash
+		// Include the basename so that renaming a source file (which changes
+		// the derived patch filename in the rendered spec) changes the fingerprint.
+		baseName := filepath.Base(overlay.Source)
+		hashes[strconv.Itoa(idx)] = baseName + ":" + fileHash
 	}
 
 	return hashes, nil
@@ -175,7 +181,7 @@ func combineInputs(inputs ComponentInputs) string {
 
 // writeField writes a labeled value to the hasher for domain separation.
 func writeField(writer io.Writer, label string, value string) {
-	// Use label=value\n format. Length-prefixing the label prevents
-	// collisions between field names that are prefixes of each other.
-	fmt.Fprintf(writer, "%d:%s=%s\n", len(label), label, value)
+	// Length-prefix both label and value to prevent injection of fake field records
+	// via values containing newlines.
+	fmt.Fprintf(writer, "%d:%s=%d:%s\n", len(label), label, len(value), value)
 }
