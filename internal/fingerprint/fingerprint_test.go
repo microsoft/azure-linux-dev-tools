@@ -56,6 +56,7 @@ func computeFingerprint(
 
 	identity, err := fingerprint.ComputeIdentity(ctx.FS(), comp, distro, fingerprint.IdentityOptions{
 		AffectsCommitCount: affects,
+		SourceIdentity:     "test-source-identity",
 	})
 	require.NoError(t, err)
 
@@ -418,7 +419,9 @@ func TestComputeIdentity_SourceFileNoHash_Error(t *testing.T) {
 	}
 	distro := baseDistroRef()
 
-	_, err := fingerprint.ComputeIdentity(ctx.FS(), comp, distro, fingerprint.IdentityOptions{})
+	_, err := fingerprint.ComputeIdentity(ctx.FS(), comp, distro, fingerprint.IdentityOptions{
+		SourceIdentity: "test-source-identity",
+	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "source.tar.gz")
 	assert.Contains(t, err.Error(), "no hash")
@@ -451,7 +454,7 @@ func TestComputeIdentity_InputsBreakdown(t *testing.T) {
 	assert.Contains(t, identity.Inputs.OverlayFileHashes, "0")
 }
 
-func TestComputeIdentity_NoSpecPath(t *testing.T) {
+func TestComputeIdentity_MissingSourceIdentity_Error(t *testing.T) {
 	ctx := newTestFS(t, nil)
 
 	comp := projectconfig.ComponentConfig{
@@ -461,10 +464,9 @@ func TestComputeIdentity_NoSpecPath(t *testing.T) {
 	}
 	distro := baseDistroRef()
 
-	identity, err := fingerprint.ComputeIdentity(ctx.FS(), comp, distro, fingerprint.IdentityOptions{})
-	require.NoError(t, err)
-
-	assert.Empty(t, identity.Inputs.SourceIdentity)
+	_, err := fingerprint.ComputeIdentity(ctx.FS(), comp, distro, fingerprint.IdentityOptions{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "source identity is required")
 }
 
 func TestComputeIdentity_OverlayFunctionalFieldChange(t *testing.T) {

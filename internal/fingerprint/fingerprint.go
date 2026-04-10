@@ -39,7 +39,9 @@ type ComponentInputs struct {
 	// SourceIdentity is the opaque identity string for the component's source.
 	// For local specs this is a content hash; for upstream specs this is a commit hash.
 	SourceIdentity string `json:"sourceIdentity,omitempty"`
-	// OverlayFileHashes maps overlay source file paths to their SHA256 hashes.
+	// OverlayFileHashes maps overlay index (as string) to a combined hash of the
+	// source file's basename and content. Keyed by index rather than path to avoid
+	// checkout-location dependence.
 	OverlayFileHashes map[string]string `json:"overlayFileHashes,omitempty"`
 	// AffectsCommitCount is the number of "Affects: <component>" commits in the project repo.
 	AffectsCommitCount int `json:"affectsCommitCount"`
@@ -85,7 +87,17 @@ func ComputeIdentity(
 		DistroVersion:      distroRef.Version,
 	}
 
-	// 1. Verify all source files have a hash. Without a hash the fingerprint
+	// 1. Require source identity when the component has a spec source that
+	//    contributes content. Without it the fingerprint cannot detect spec
+	//    content changes (Spec.Path is excluded from the config hash).
+	if opts.SourceIdentity == "" && component.Spec.SourceType != "" {
+		return nil, fmt.Errorf(
+			"source identity is required for component with source type %#q; "+
+				"resolve it via SourceManager.ResolveSourceIdentity before calling ComputeIdentity",
+			component.Spec.SourceType)
+	}
+
+	// 2. Verify all source files have a hash. Without a hash the fingerprint
 	//    cannot detect content changes, so we refuse to compute one.
 	for i := range component.SourceFiles {
 		if component.SourceFiles[i].Hash == "" {
@@ -96,7 +108,7 @@ func ComputeIdentity(
 		}
 	}
 
-	// 2. Hash the resolved config struct (excluding fingerprint:"-" fields).
+	// 3. Hash the resolved config struct (excluding fingerprint:"-" fields).
 	configHash, err := hashstructure.Hash(component, hashstructure.FormatV2, &hashstructure.HashOptions{
 		TagName: hashstructureTagName,
 	})
@@ -106,7 +118,7 @@ func ComputeIdentity(
 
 	inputs.ConfigHash = configHash
 
-	// 3. Hash overlay source file contents.
+	// 4. Hash overlay source file contents.
 	overlayHashes, err := hashOverlayFiles(fs, component.Overlays)
 	if err != nil {
 		return nil, fmt.Errorf("hashing overlay files:\n%w", err)
@@ -114,7 +126,7 @@ func ComputeIdentity(
 
 	inputs.OverlayFileHashes = overlayHashes
 
-	// 4. Combine all inputs into the overall fingerprint.
+	// 5. Combine all inputs into the overall fingerprint.
 	return &ComponentIdentity{
 		Fingerprint: combineInputs(inputs),
 		Inputs:      inputs,
