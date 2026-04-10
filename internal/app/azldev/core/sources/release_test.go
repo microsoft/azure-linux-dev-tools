@@ -20,8 +20,28 @@ func TestReleaseUsesAutorelease(t *testing.T) {
 		value    string
 		expected bool
 	}{
+		// Basic forms.
 		{"%autorelease", true},
 		{"%{autorelease}", true},
+
+		// Braced form with arguments (e.g., 389-ds-base).
+		{"%{autorelease -n %{?with_asan:-e asan}}%{?dist}", true},
+		{"%{autorelease -e asan}", true},
+
+		// Conditional forms (e.g., gnutls, keylime-agent-rust).
+		{"%{?autorelease}%{!?autorelease:1%{?dist}}", true},
+		{"%{?autorelease}", true},
+
+		// Conditional forms with a fallback value are NOT autorelease — the fallback
+		// means we cannot conclusively determine that autorelease is being used.
+		{"%{!?autorelease:1%{?dist}}", false},
+		{"%{?autorelease:1%{?dist}}", false},
+
+		// False positives (e.g., python-pyodbc).
+		{"%{autorelease_suffix}", false},
+		{"%{?autorelease_extra}", false},
+
+		// Static release values.
 		{"1", false},
 		{"1%{?dist}", false},
 		{"3%{?dist}.1", false},

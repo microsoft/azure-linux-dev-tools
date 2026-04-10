@@ -17,8 +17,12 @@ import (
 )
 
 // autoreleasePattern matches the %autorelease macro invocation in a Release tag value.
-// This covers both the bare form (%autorelease) and the braced form (%{autorelease}).
-var autoreleasePattern = regexp.MustCompile(`%(\{autorelease\}|autorelease($|\s))`)
+// This covers:
+//   - bare form: %autorelease
+//   - braced form: %{autorelease}
+//   - braced form with arguments: %{autorelease -e asan}
+//   - conditional form (no fallback): %{?autorelease}
+var autoreleasePattern = regexp.MustCompile(`%(\{[?]?autorelease($|[}\s])|autorelease($|\s))`)
 
 // staticReleasePattern matches a leading integer in a static Release tag value,
 // followed by an optional suffix (e.g. "%{?dist}").
