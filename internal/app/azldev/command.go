@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 
 	"github.com/charmbracelet/x/term"
@@ -105,16 +104,15 @@ func runFuncInternal(innerFunc CmdWithExtraArgsFuncType, requireConfig bool) cob
 		}
 
 		if requireConfig && (env.Config() == nil || env.ProjectDir() == "") {
-			slog.Warn(
-				"!!! Unable to find and load valid Azure Linux project configuration.\n\n" +
-					"Please either use the -C option to specify a path to the root directory " +
+			env.AddFixSuggestion(
+				"Please either use the -C option to specify a path to the root directory " +
 					"of your Azure Linux project/repo, or else run this tool from within a directory " +
-					"tree that contains an 'azldev.toml' file at its root.\n\n" +
-					"Most commands will not function correctly without a valid configuration.\n\n" +
-					"------------------------------------------------------------------\n",
+					"tree that contains an 'azldev.toml' file at its root. " +
+					"-- Most commands will not function correctly without a valid configuration.",
 			)
 
-			return errors.New("a valid project and configuration are required to execute this command")
+			return errors.New(
+				"a valid project and configuration are required to execute this command")
 		}
 
 		results, err := innerFunc(env, args)
