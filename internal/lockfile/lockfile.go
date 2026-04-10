@@ -8,6 +8,7 @@ package lockfile
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
@@ -75,18 +76,49 @@ func Load(fs opctx.FS, path string) (*LockFile, error) {
 }
 
 // Save writes the lock file to the given path. [toml.Marshal] sorts map keys
-// alphabetically, producing deterministic output.
+// alphabetically, producing deterministic output. Additionally, we post-process the output to insert extra blank lines
+// between component entries, which helps reduce git merge conflicts when parallel PRs modify adjacent entries.
 func (lockFile *LockFile) Save(fs opctx.FS, path string) error {
 	data, err := toml.Marshal(lockFile)
 	if err != nil {
 		return fmt.Errorf("marshaling lock file:\n%w", err)
 	}
 
-	if err := fileutils.WriteFile(fs, path, data, fileperms.PublicFile); err != nil {
+	// Post-process: insert extra blank lines before each [components.<name>] header.
+	// This helps reduce git merge conflicts when parallel PRs modify adjacent entries.
+	output := addPerComponentComments(string(data))
+
+	if err := fileutils.WriteFile(fs, path, []byte(output), fileperms.PublicFile); err != nil {
 		return fmt.Errorf("writing lock file %#q:\n%w", path, err)
 	}
 
 	return nil
+}
+
+// addPerComponentComments inserts extra blank lines between component entries in the marshaled TOML output. This
+// padding prevents git merge conflicts when parallel PRs add, remove, or modify adjacent component entries — git's
+// default 3-line diff context won't overlap between padded entries.
+//
+// This is a best-effort approach, and won't prevent all conflicts (e.g. if two PRs modify the same component entry),
+// but it should help in the common case of parallel PRs modifying different components.
+func addPerComponentComments(tomlData string) string {
+	const prefix = "[components."
+
+	var result strings.Builder
+
+	result.Grow(len(tomlData))
+
+	for line := range strings.SplitSeq(tomlData, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), prefix) {
+			// Add extra blank lines before each component section header.
+			result.WriteString("\n\n")
+		}
+
+		result.WriteString(line)
+		result.WriteString("\n")
+	}
+
+	return result.String()
 }
 
 // SetUpstreamCommit sets the locked upstream commit for a component.
