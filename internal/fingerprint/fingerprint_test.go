@@ -28,12 +28,7 @@ func newTestFS(t *testing.T, files map[string]string) *testctx.TestCtx {
 	return ctx
 }
 
-func baseDistroRef() projectconfig.DistroReference {
-	return projectconfig.DistroReference{
-		Name:    "azl",
-		Version: "3.0",
-	}
-}
+const testReleaseVer = "4.0"
 
 func baseComponent() projectconfig.ComponentConfig {
 	return projectconfig.ComponentConfig{
@@ -49,12 +44,12 @@ func computeFingerprint(
 	t *testing.T,
 	ctx *testctx.TestCtx,
 	comp projectconfig.ComponentConfig,
-	distro projectconfig.DistroReference,
+	releaseVer string,
 	affects int,
 ) string {
 	t.Helper()
 
-	identity, err := fingerprint.ComputeIdentity(ctx.FS(), comp, distro, fingerprint.IdentityOptions{
+	identity, err := fingerprint.ComputeIdentity(ctx.FS(), comp, releaseVer, fingerprint.IdentityOptions{
 		AffectsCommitCount: affects,
 		SourceIdentity:     "test-source-identity",
 	})
@@ -69,10 +64,10 @@ func TestComputeIdentity_Deterministic(t *testing.T) {
 	})
 
 	comp := baseComponent()
-	distro := baseDistroRef()
+	releaseVer := testReleaseVer
 
-	fp1 := computeFingerprint(t, ctx, comp, distro, 0)
-	fp2 := computeFingerprint(t, ctx, comp, distro, 0)
+	fp1 := computeFingerprint(t, ctx, comp, releaseVer, 0)
+	fp2 := computeFingerprint(t, ctx, comp, releaseVer, 0)
 
 	assert.Equal(t, fp1, fp2, "identical inputs must produce identical fingerprints")
 	assert.Contains(t, fp1, "sha256:", "fingerprint should have sha256: prefix")
@@ -84,14 +79,14 @@ func TestComputeIdentity_SourceIdentityChange(t *testing.T) {
 	})
 
 	comp := baseComponent()
-	distro := baseDistroRef()
+	releaseVer := testReleaseVer
 
-	identity1, err := fingerprint.ComputeIdentity(ctx.FS(), comp, distro, fingerprint.IdentityOptions{
+	identity1, err := fingerprint.ComputeIdentity(ctx.FS(), comp, releaseVer, fingerprint.IdentityOptions{
 		SourceIdentity: "abc123",
 	})
 	require.NoError(t, err)
 
-	identity2, err := fingerprint.ComputeIdentity(ctx.FS(), comp, distro, fingerprint.IdentityOptions{
+	identity2, err := fingerprint.ComputeIdentity(ctx.FS(), comp, releaseVer, fingerprint.IdentityOptions{
 		SourceIdentity: "def456",
 	})
 	require.NoError(t, err)
@@ -109,10 +104,10 @@ func TestComputeIdentity_BuildWithChange(t *testing.T) {
 	comp2 := baseComponent()
 	comp2.Build.With = []string{"feature_x"}
 
-	distro := baseDistroRef()
+	releaseVer := testReleaseVer
 
-	fp1 := computeFingerprint(t, ctx, comp1, distro, 0)
-	fp2 := computeFingerprint(t, ctx, comp2, distro, 0)
+	fp1 := computeFingerprint(t, ctx, comp1, releaseVer, 0)
+	fp2 := computeFingerprint(t, ctx, comp2, releaseVer, 0)
 
 	assert.NotEqual(t, fp1, fp2, "adding build.with must change fingerprint")
 }
@@ -126,10 +121,10 @@ func TestComputeIdentity_BuildWithoutChange(t *testing.T) {
 	comp2 := baseComponent()
 	comp2.Build.Without = []string{"docs"}
 
-	distro := baseDistroRef()
+	releaseVer := testReleaseVer
 
-	fp1 := computeFingerprint(t, ctx, comp1, distro, 0)
-	fp2 := computeFingerprint(t, ctx, comp2, distro, 0)
+	fp1 := computeFingerprint(t, ctx, comp1, releaseVer, 0)
+	fp2 := computeFingerprint(t, ctx, comp2, releaseVer, 0)
 
 	assert.NotEqual(t, fp1, fp2, "adding build.without must change fingerprint")
 }
@@ -143,10 +138,10 @@ func TestComputeIdentity_BuildDefinesChange(t *testing.T) {
 	comp2 := baseComponent()
 	comp2.Build.Defines = map[string]string{"debug": "1"}
 
-	distro := baseDistroRef()
+	releaseVer := testReleaseVer
 
-	fp1 := computeFingerprint(t, ctx, comp1, distro, 0)
-	fp2 := computeFingerprint(t, ctx, comp2, distro, 0)
+	fp1 := computeFingerprint(t, ctx, comp1, releaseVer, 0)
+	fp2 := computeFingerprint(t, ctx, comp2, releaseVer, 0)
 
 	assert.NotEqual(t, fp1, fp2, "adding build.defines must change fingerprint")
 }
@@ -160,10 +155,10 @@ func TestComputeIdentity_CheckSkipChange(t *testing.T) {
 	comp2 := baseComponent()
 	comp2.Build.Check.Skip = true
 
-	distro := baseDistroRef()
+	releaseVer := testReleaseVer
 
-	fp1 := computeFingerprint(t, ctx, comp1, distro, 0)
-	fp2 := computeFingerprint(t, ctx, comp2, distro, 0)
+	fp1 := computeFingerprint(t, ctx, comp1, releaseVer, 0)
+	fp2 := computeFingerprint(t, ctx, comp2, releaseVer, 0)
 
 	assert.NotEqual(t, fp1, fp2, "changing check.skip must change fingerprint")
 }
@@ -172,42 +167,42 @@ func TestComputeIdentity_ExcludedFieldsDoNotChange(t *testing.T) {
 	ctx := newTestFS(t, map[string]string{
 		"/specs/test.spec": "Name: testpkg\nVersion: 1.0",
 	})
-	distro := baseDistroRef()
+	releaseVer := testReleaseVer
 
 	// Base component.
 	comp := baseComponent()
-	fpBase := computeFingerprint(t, ctx, comp, distro, 0)
+	fpBase := computeFingerprint(t, ctx, comp, releaseVer, 0)
 
 	// Changing Name (fingerprint:"-") should NOT change fingerprint.
 	compName := baseComponent()
 	compName.Name = "different-name"
-	fpName := computeFingerprint(t, ctx, compName, distro, 0)
+	fpName := computeFingerprint(t, ctx, compName, releaseVer, 0)
 	assert.Equal(t, fpBase, fpName, "changing Name must NOT change fingerprint")
 
 	// Changing Build.Failure.Expected (fingerprint:"-") should NOT change fingerprint.
 	compFailure := baseComponent()
 	compFailure.Build.Failure.Expected = true
 	compFailure.Build.Failure.ExpectedReason = "known issue"
-	fpFailure := computeFingerprint(t, ctx, compFailure, distro, 0)
+	fpFailure := computeFingerprint(t, ctx, compFailure, releaseVer, 0)
 	assert.Equal(t, fpBase, fpFailure, "changing failure.expected must NOT change fingerprint")
 
 	// Changing Build.Hints.Expensive (fingerprint:"-") should NOT change fingerprint.
 	compHints := baseComponent()
 	compHints.Build.Hints.Expensive = true
-	fpHints := computeFingerprint(t, ctx, compHints, distro, 0)
+	fpHints := computeFingerprint(t, ctx, compHints, releaseVer, 0)
 	assert.Equal(t, fpBase, fpHints, "changing hints.expensive must NOT change fingerprint")
 
 	// Changing Build.Check.SkipReason (fingerprint:"-") should NOT change fingerprint.
 	compReason := baseComponent()
 	compReason.Build.Check.SkipReason = "tests require network"
-	fpReason := computeFingerprint(t, ctx, compReason, distro, 0)
+	fpReason := computeFingerprint(t, ctx, compReason, releaseVer, 0)
 	assert.Equal(t, fpBase, fpReason, "changing check.skip_reason must NOT change fingerprint")
 
 	// Changing RenderedSpecDir (fingerprint:"-") should NOT change fingerprint.
 	// This is a derived output path that varies by checkout location.
 	compRendered := baseComponent()
 	compRendered.RenderedSpecDir = "/some/checkout/path/SPECS/t/testpkg"
-	fpRendered := computeFingerprint(t, ctx, compRendered, distro, 0)
+	fpRendered := computeFingerprint(t, ctx, compRendered, releaseVer, 0)
 	assert.Equal(t, fpBase, fpRendered, "changing RenderedSpecDir must NOT change fingerprint")
 }
 
@@ -215,7 +210,7 @@ func TestComputeIdentity_OverlayDescriptionExcluded(t *testing.T) {
 	ctx := newTestFS(t, map[string]string{
 		"/specs/test.spec": "Name: testpkg\nVersion: 1.0",
 	})
-	distro := baseDistroRef()
+	releaseVer := testReleaseVer
 
 	comp1 := baseComponent()
 	comp1.Overlays = []projectconfig.ComponentOverlay{
@@ -227,8 +222,8 @@ func TestComputeIdentity_OverlayDescriptionExcluded(t *testing.T) {
 		{Type: "spec-set-tag", Tag: "Release", Value: "2%{?dist}", Description: "bumped release"},
 	}
 
-	fp1 := computeFingerprint(t, ctx, comp1, distro, 0)
-	fp2 := computeFingerprint(t, ctx, comp2, distro, 0)
+	fp1 := computeFingerprint(t, ctx, comp1, releaseVer, 0)
+	fp2 := computeFingerprint(t, ctx, comp2, releaseVer, 0)
 
 	assert.Equal(t, fp1, fp2, "overlay description must NOT change fingerprint")
 }
@@ -242,15 +237,15 @@ func TestComputeIdentity_OverlaySourceFileChange(t *testing.T) {
 		"/specs/test.spec":   "Name: testpkg\nVersion: 1.0",
 		"/patches/fix.patch": "--- a/file\n+++ b/file\n@@ modified @@",
 	})
-	distro := baseDistroRef()
+	releaseVer := testReleaseVer
 
 	comp := baseComponent()
 	comp.Overlays = []projectconfig.ComponentOverlay{
 		{Type: "patch-add", Source: "/patches/fix.patch"},
 	}
 
-	fp1 := computeFingerprint(t, ctx1, comp, distro, 0)
-	fp2 := computeFingerprint(t, ctx2, comp, distro, 0)
+	fp1 := computeFingerprint(t, ctx1, comp, releaseVer, 0)
+	fp2 := computeFingerprint(t, ctx2, comp, releaseVer, 0)
 
 	assert.NotEqual(t, fp1, fp2, "different overlay source content must produce different fingerprints")
 }
@@ -265,7 +260,7 @@ func TestComputeIdentity_PatchAddRenameChangesFP(t *testing.T) {
 		"/patches/fix.patch":      "identical patch content",
 		"/patches/cve-2026.patch": "identical patch content",
 	})
-	distro := baseDistroRef()
+	releaseVer := testReleaseVer
 
 	comp1 := baseComponent()
 	comp1.Overlays = []projectconfig.ComponentOverlay{
@@ -277,8 +272,8 @@ func TestComputeIdentity_PatchAddRenameChangesFP(t *testing.T) {
 		{Type: "patch-add", Source: "/patches/cve-2026.patch"},
 	}
 
-	fp1 := computeFingerprint(t, ctx, comp1, distro, 0)
-	fp2 := computeFingerprint(t, ctx, comp2, distro, 0)
+	fp1 := computeFingerprint(t, ctx, comp1, releaseVer, 0)
+	fp2 := computeFingerprint(t, ctx, comp2, releaseVer, 0)
 
 	assert.NotEqual(t, fp1, fp2,
 		"renaming overlay source file must change fingerprint (same content, different basename)")
@@ -291,23 +286,10 @@ func TestComputeIdentity_DistroChange(t *testing.T) {
 
 	comp := baseComponent()
 
-	fp1 := computeFingerprint(t, ctx, comp, projectconfig.DistroReference{Name: "azl", Version: "3.0"}, 0)
-	fp2 := computeFingerprint(t, ctx, comp, projectconfig.DistroReference{Name: "azl", Version: "4.0"}, 0)
+	fp1 := computeFingerprint(t, ctx, comp, "3.0", 0)
+	fp2 := computeFingerprint(t, ctx, comp, "4.0", 0)
 
-	assert.NotEqual(t, fp1, fp2, "different distro version must produce different fingerprints")
-}
-
-func TestComputeIdentity_DistroNameChange(t *testing.T) {
-	ctx := newTestFS(t, map[string]string{
-		"/specs/test.spec": "Name: testpkg\nVersion: 1.0",
-	})
-
-	comp := baseComponent()
-
-	fp1 := computeFingerprint(t, ctx, comp, projectconfig.DistroReference{Name: "azl", Version: "3.0"}, 0)
-	fp2 := computeFingerprint(t, ctx, comp, projectconfig.DistroReference{Name: "fedora", Version: "3.0"}, 0)
-
-	assert.NotEqual(t, fp1, fp2, "different distro name must produce different fingerprints")
+	assert.NotEqual(t, fp1, fp2, "different release version must produce different fingerprints")
 }
 
 func TestComputeIdentity_AffectsCountChange(t *testing.T) {
@@ -316,10 +298,10 @@ func TestComputeIdentity_AffectsCountChange(t *testing.T) {
 	})
 
 	comp := baseComponent()
-	distro := baseDistroRef()
+	releaseVer := testReleaseVer
 
-	fp1 := computeFingerprint(t, ctx, comp, distro, 0)
-	fp2 := computeFingerprint(t, ctx, comp, distro, 1)
+	fp1 := computeFingerprint(t, ctx, comp, releaseVer, 0)
+	fp2 := computeFingerprint(t, ctx, comp, releaseVer, 1)
 
 	assert.NotEqual(t, fp1, fp2, "different affects commit count must produce different fingerprints")
 }
@@ -343,10 +325,10 @@ func TestComputeIdentity_UpstreamCommitChange(t *testing.T) {
 			UpstreamDistro: projectconfig.DistroReference{Name: "fedora", Version: "41"},
 		},
 	}
-	distro := baseDistroRef()
+	releaseVer := testReleaseVer
 
-	fp1 := computeFingerprint(t, ctx, comp1, distro, 0)
-	fp2 := computeFingerprint(t, ctx, comp2, distro, 0)
+	fp1 := computeFingerprint(t, ctx, comp1, releaseVer, 0)
+	fp2 := computeFingerprint(t, ctx, comp2, releaseVer, 0)
 
 	assert.NotEqual(t, fp1, fp2, "different upstream commit must produce different fingerprints")
 }
@@ -365,10 +347,10 @@ func TestComputeIdentity_SourceFilesChange(t *testing.T) {
 	comp2.SourceFiles = []projectconfig.SourceFileReference{
 		{Filename: "source.tar.gz", Hash: "bbb222", HashType: fileutils.HashTypeSHA256},
 	}
-	distro := baseDistroRef()
+	releaseVer := testReleaseVer
 
-	fp1 := computeFingerprint(t, ctx, comp1, distro, 0)
-	fp2 := computeFingerprint(t, ctx, comp2, distro, 0)
+	fp1 := computeFingerprint(t, ctx, comp1, releaseVer, 0)
+	fp2 := computeFingerprint(t, ctx, comp2, releaseVer, 0)
 
 	assert.NotEqual(t, fp1, fp2, "different source file hash must produce different fingerprints")
 }
@@ -397,10 +379,10 @@ func TestComputeIdentity_SourceFileOriginExcluded(t *testing.T) {
 			Origin:   projectconfig.Origin{Type: "download", Uri: "https://new-cdn.example.com/source.tar.gz"},
 		},
 	}
-	distro := baseDistroRef()
+	releaseVer := testReleaseVer
 
-	fp1 := computeFingerprint(t, ctx, comp1, distro, 0)
-	fp2 := computeFingerprint(t, ctx, comp2, distro, 0)
+	fp1 := computeFingerprint(t, ctx, comp1, releaseVer, 0)
+	fp2 := computeFingerprint(t, ctx, comp2, releaseVer, 0)
 
 	assert.Equal(t, fp1, fp2, "changing source file origin URL must NOT change fingerprint")
 }
@@ -417,9 +399,9 @@ func TestComputeIdentity_SourceFileNoHash_Error(t *testing.T) {
 			Origin:   projectconfig.Origin{Type: "download", Uri: "https://example.com/source.tar.gz"},
 		},
 	}
-	distro := baseDistroRef()
+	releaseVer := testReleaseVer
 
-	_, err := fingerprint.ComputeIdentity(ctx.FS(), comp, distro, fingerprint.IdentityOptions{
+	_, err := fingerprint.ComputeIdentity(ctx.FS(), comp, releaseVer, fingerprint.IdentityOptions{
 		SourceIdentity: "test-source-identity",
 	})
 	require.Error(t, err)
@@ -437,9 +419,9 @@ func TestComputeIdentity_InputsBreakdown(t *testing.T) {
 	comp.Overlays = []projectconfig.ComponentOverlay{
 		{Type: "patch-add", Source: "/patches/fix.patch"},
 	}
-	distro := baseDistroRef()
+	releaseVer := testReleaseVer
 
-	identity, err := fingerprint.ComputeIdentity(ctx.FS(), comp, distro, fingerprint.IdentityOptions{
+	identity, err := fingerprint.ComputeIdentity(ctx.FS(), comp, releaseVer, fingerprint.IdentityOptions{
 		AffectsCommitCount: 3,
 		SourceIdentity:     "test-source-identity-hash",
 	})
@@ -449,8 +431,7 @@ func TestComputeIdentity_InputsBreakdown(t *testing.T) {
 	assert.NotZero(t, identity.Inputs.ConfigHash)
 	assert.Equal(t, "test-source-identity-hash", identity.Inputs.SourceIdentity)
 	assert.Equal(t, 3, identity.Inputs.AffectsCommitCount)
-	assert.Equal(t, "azl", identity.Inputs.Distro)
-	assert.Equal(t, "3.0", identity.Inputs.DistroVersion)
+	assert.Equal(t, testReleaseVer, identity.Inputs.ReleaseVer)
 	assert.Contains(t, identity.Inputs.OverlayFileHashes, "0")
 }
 
@@ -462,9 +443,9 @@ func TestComputeIdentity_MissingSourceIdentity_Error(t *testing.T) {
 			SourceType: projectconfig.SpecSourceTypeLocal,
 		},
 	}
-	distro := baseDistroRef()
+	releaseVer := testReleaseVer
 
-	_, err := fingerprint.ComputeIdentity(ctx.FS(), comp, distro, fingerprint.IdentityOptions{})
+	_, err := fingerprint.ComputeIdentity(ctx.FS(), comp, releaseVer, fingerprint.IdentityOptions{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "source identity is required")
 }
@@ -473,7 +454,7 @@ func TestComputeIdentity_OverlayFunctionalFieldChange(t *testing.T) {
 	ctx := newTestFS(t, map[string]string{
 		"/specs/test.spec": "Name: testpkg\nVersion: 1.0",
 	})
-	distro := baseDistroRef()
+	releaseVer := testReleaseVer
 
 	comp1 := baseComponent()
 	comp1.Overlays = []projectconfig.ComponentOverlay{
@@ -485,8 +466,8 @@ func TestComputeIdentity_OverlayFunctionalFieldChange(t *testing.T) {
 		{Type: "spec-set-tag", Tag: "Release", Value: "3%{?dist}"},
 	}
 
-	fp1 := computeFingerprint(t, ctx, comp1, distro, 0)
-	fp2 := computeFingerprint(t, ctx, comp2, distro, 0)
+	fp1 := computeFingerprint(t, ctx, comp1, releaseVer, 0)
+	fp2 := computeFingerprint(t, ctx, comp2, releaseVer, 0)
 
 	assert.NotEqual(t, fp1, fp2, "changing overlay value must change fingerprint")
 }
@@ -495,7 +476,7 @@ func TestComputeIdentity_AddingOverlay(t *testing.T) {
 	ctx := newTestFS(t, map[string]string{
 		"/specs/test.spec": "Name: testpkg\nVersion: 1.0",
 	})
-	distro := baseDistroRef()
+	releaseVer := testReleaseVer
 
 	comp1 := baseComponent()
 
@@ -504,8 +485,8 @@ func TestComputeIdentity_AddingOverlay(t *testing.T) {
 		{Type: "spec-set-tag", Tag: "Release", Value: "2%{?dist}"},
 	}
 
-	fp1 := computeFingerprint(t, ctx, comp1, distro, 0)
-	fp2 := computeFingerprint(t, ctx, comp2, distro, 0)
+	fp1 := computeFingerprint(t, ctx, comp1, releaseVer, 0)
+	fp2 := computeFingerprint(t, ctx, comp2, releaseVer, 0)
 
 	assert.NotEqual(t, fp1, fp2, "adding an overlay must change fingerprint")
 }
@@ -514,14 +495,14 @@ func TestComputeIdentity_BuildUndefinesChange(t *testing.T) {
 	ctx := newTestFS(t, map[string]string{
 		"/specs/test.spec": "Name: testpkg\nVersion: 1.0",
 	})
-	distro := baseDistroRef()
+	releaseVer := testReleaseVer
 
 	comp1 := baseComponent()
 	comp2 := baseComponent()
 	comp2.Build.Undefines = []string{"_debuginfo"}
 
-	fp1 := computeFingerprint(t, ctx, comp1, distro, 0)
-	fp2 := computeFingerprint(t, ctx, comp2, distro, 0)
+	fp1 := computeFingerprint(t, ctx, comp1, releaseVer, 0)
+	fp2 := computeFingerprint(t, ctx, comp2, releaseVer, 0)
 
 	assert.NotEqual(t, fp1, fp2, "adding build.undefines must change fingerprint")
 }
@@ -543,18 +524,18 @@ func TestComputeIdentity_DistroDefaultPropagation(t *testing.T) {
 	openssl := projectconfig.ComponentConfig{
 		Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeLocal, Path: "/specs/openssl.spec"},
 	}
-	distro := baseDistroRef()
+	releaseVer := testReleaseVer
 
-	fpCurl1 := computeFingerprint(t, ctx, curl, distro, 0)
-	fpOpenssl1 := computeFingerprint(t, ctx, openssl, distro, 0)
+	fpCurl1 := computeFingerprint(t, ctx, curl, releaseVer, 0)
+	fpOpenssl1 := computeFingerprint(t, ctx, openssl, releaseVer, 0)
 
 	// Now simulate a distro default adding build.with — after config merging,
 	// both components would have this option in their resolved config.
 	curl.Build.With = []string{"distro_feature"}
 	openssl.Build.With = []string{"distro_feature"}
 
-	fpCurl2 := computeFingerprint(t, ctx, curl, distro, 0)
-	fpOpenssl2 := computeFingerprint(t, ctx, openssl, distro, 0)
+	fpCurl2 := computeFingerprint(t, ctx, curl, releaseVer, 0)
+	fpOpenssl2 := computeFingerprint(t, ctx, openssl, releaseVer, 0)
 
 	assert.NotEqual(t, fpCurl1, fpCurl2,
 		"distro default change must propagate to curl's fingerprint")
@@ -569,7 +550,7 @@ func TestComputeIdentity_GroupDefaultPropagation(t *testing.T) {
 		"/specs/c.spec": "Name: c\nVersion: 1.0",
 	})
 
-	distro := baseDistroRef()
+	releaseVer := testReleaseVer
 
 	// Three components: a and b are in a group, c is not.
 	compA := projectconfig.ComponentConfig{
@@ -582,18 +563,18 @@ func TestComputeIdentity_GroupDefaultPropagation(t *testing.T) {
 		Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeLocal, Path: "/specs/c.spec"},
 	}
 
-	fpA1 := computeFingerprint(t, ctx, compA, distro, 0)
-	fpB1 := computeFingerprint(t, ctx, compB, distro, 0)
-	fpC1 := computeFingerprint(t, ctx, compC, distro, 0)
+	fpA1 := computeFingerprint(t, ctx, compA, releaseVer, 0)
+	fpB1 := computeFingerprint(t, ctx, compB, releaseVer, 0)
+	fpC1 := computeFingerprint(t, ctx, compC, releaseVer, 0)
 
 	// Simulate a group default adding check.skip — after merging, only a and b have it.
 	compA.Build.Check.Skip = true
 	compB.Build.Check.Skip = true
 	// compC is not in the group, remains unchanged.
 
-	fpA2 := computeFingerprint(t, ctx, compA, distro, 0)
-	fpB2 := computeFingerprint(t, ctx, compB, distro, 0)
-	fpC2 := computeFingerprint(t, ctx, compC, distro, 0)
+	fpA2 := computeFingerprint(t, ctx, compA, releaseVer, 0)
+	fpB2 := computeFingerprint(t, ctx, compB, releaseVer, 0)
+	fpC2 := computeFingerprint(t, ctx, compC, releaseVer, 0)
 
 	assert.NotEqual(t, fpA1, fpA2, "group default must propagate to member A")
 	assert.NotEqual(t, fpB1, fpB2, "group default must propagate to member B")
@@ -604,11 +585,11 @@ func TestComputeIdentity_MergeUpdatesFromPropagation(t *testing.T) {
 	ctx := newTestFS(t, map[string]string{
 		"/specs/test.spec": "Name: testpkg\nVersion: 1.0",
 	})
-	distro := baseDistroRef()
+	releaseVer := testReleaseVer
 
 	// Start with a base component.
 	comp := baseComponent()
-	fpBefore := computeFingerprint(t, ctx, comp, distro, 0)
+	fpBefore := computeFingerprint(t, ctx, comp, releaseVer, 0)
 
 	// Simulate applying a distro default via MergeUpdatesFrom.
 	distroDefault := &projectconfig.ComponentConfig{
@@ -620,7 +601,7 @@ func TestComputeIdentity_MergeUpdatesFromPropagation(t *testing.T) {
 	err := comp.MergeUpdatesFrom(distroDefault)
 	require.NoError(t, err)
 
-	fpAfter := computeFingerprint(t, ctx, comp, distro, 0)
+	fpAfter := computeFingerprint(t, ctx, comp, releaseVer, 0)
 
 	assert.NotEqual(t, fpBefore, fpAfter,
 		"merged distro default must change the fingerprint")
@@ -641,13 +622,13 @@ func TestComputeIdentity_SnapshotChangeDoesNotAffectFingerprint(t *testing.T) {
 			},
 		},
 	}
-	distro := baseDistroRef()
+	releaseVer := testReleaseVer
 
-	fp1 := computeFingerprint(t, ctx, comp, distro, 0)
+	fp1 := computeFingerprint(t, ctx, comp, releaseVer, 0)
 
 	// Change only the snapshot timestamp.
 	comp.Spec.UpstreamDistro.Snapshot = "2026-06-15T00:00:00Z"
-	fp2 := computeFingerprint(t, ctx, comp, distro, 0)
+	fp2 := computeFingerprint(t, ctx, comp, releaseVer, 0)
 
 	assert.Equal(t, fp1, fp2,
 		"changing upstream distro snapshot must NOT change fingerprint "+
@@ -664,7 +645,7 @@ func TestComputeIdentity_DifferentCheckoutPaths(t *testing.T) {
 		"/home/user1/repo/patches/fix.patch": "patch content",
 		"/home/user2/repo/patches/fix.patch": "patch content",
 	})
-	distro := baseDistroRef()
+	releaseVer := testReleaseVer
 
 	comp1 := projectconfig.ComponentConfig{
 		Spec: projectconfig.SpecSource{
@@ -686,8 +667,8 @@ func TestComputeIdentity_DifferentCheckoutPaths(t *testing.T) {
 		},
 	}
 
-	fp1 := computeFingerprint(t, ctx, comp1, distro, 0)
-	fp2 := computeFingerprint(t, ctx, comp2, distro, 0)
+	fp1 := computeFingerprint(t, ctx, comp1, releaseVer, 0)
+	fp2 := computeFingerprint(t, ctx, comp2, releaseVer, 0)
 
 	assert.Equal(t, fp1, fp2,
 		"same component in different checkout directories must produce identical fingerprints")

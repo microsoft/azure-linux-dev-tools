@@ -8,13 +8,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"path/filepath"
 	"sort"
 	"strconv"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
-	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/mitchellh/hashstructure/v2"
 )
 
@@ -45,10 +43,10 @@ type ComponentInputs struct {
 	OverlayFileHashes map[string]string `json:"overlayFileHashes,omitempty"`
 	// AffectsCommitCount is the number of "Affects: <component>" commits in the project repo.
 	AffectsCommitCount int `json:"affectsCommitCount"`
-	// Distro is the effective distro name.
-	Distro string `json:"distro"`
-	// DistroVersion is the effective distro version.
-	DistroVersion string `json:"distroVersion"`
+	// ReleaseVer is the distro's formal releasever (e.g., "4.0"), which feeds into
+	// RPM macros like %{dist}. Different release versions produce different package
+	// NEVRAs even with identical specs.
+	ReleaseVer string `json:"releaseVer"`
 }
 
 // IdentityOptions holds additional inputs for computing a component's identity
@@ -77,14 +75,13 @@ type IdentityOptions struct {
 func ComputeIdentity(
 	fs opctx.FS,
 	component projectconfig.ComponentConfig,
-	distroRef projectconfig.DistroReference,
+	releaseVer string,
 	opts IdentityOptions,
 ) (*ComponentIdentity, error) {
 	inputs := ComponentInputs{
 		AffectsCommitCount: opts.AffectsCommitCount,
 		SourceIdentity:     opts.SourceIdentity,
-		Distro:             distroRef.Name,
-		DistroVersion:      distroRef.Version,
+		ReleaseVer:         releaseVer,
 	}
 
 	// 1. Require source identity when the component has a spec source that
@@ -118,10 +115,19 @@ func ComputeIdentity(
 
 	inputs.ConfigHash = configHash
 
-	// 4. Hash overlay source file contents.
-	overlayHashes, err := hashOverlayFiles(fs, component.Overlays)
-	if err != nil {
-		return nil, fmt.Errorf("hashing overlay files:\n%w", err)
+	// 4. Hash overlay source file contents. Each overlay owns its identity
+	//    computation via [projectconfig.ComponentOverlay.SourceContentIdentity].
+	overlayHashes := make(map[string]string)
+
+	for idx := range component.Overlays {
+		identity, overlayErr := component.Overlays[idx].SourceContentIdentity(fs)
+		if overlayErr != nil {
+			return nil, fmt.Errorf("hashing overlay %d source:\n%w", idx, overlayErr)
+		}
+
+		if identity != "" {
+			overlayHashes[strconv.Itoa(idx)] = identity
+		}
 	}
 
 	inputs.OverlayFileHashes = overlayHashes
@@ -133,36 +139,6 @@ func ComputeIdentity(
 	}, nil
 }
 
-// hashOverlayFiles computes SHA256 hashes for all overlay source files that reference
-// local files. Returns a map of overlay index (as string) to a combined hash that
-// captures both the file content and the source basename. The basename is included
-// because some overlay types (e.g., patch-add) derive the destination filename from
-// it when no explicit 'file' field is set.
-func hashOverlayFiles(
-	fs opctx.FS,
-	overlays []projectconfig.ComponentOverlay,
-) (map[string]string, error) {
-	hashes := make(map[string]string)
-
-	for idx, overlay := range overlays {
-		if overlay.Source == "" {
-			continue
-		}
-
-		fileHash, err := fileutils.ComputeFileHash(fs, fileutils.HashTypeSHA256, overlay.Source)
-		if err != nil {
-			return nil, fmt.Errorf("hashing overlay source %#q:\n%w", overlay.Source, err)
-		}
-
-		// Include the basename so that renaming a source file (which changes
-		// the derived patch filename in the rendered spec) changes the fingerprint.
-		baseName := filepath.Base(overlay.Source)
-		hashes[strconv.Itoa(idx)] = baseName + ":" + fileHash
-	}
-
-	return hashes, nil
-}
-
 // combineInputs deterministically combines all input hashes into a single SHA256 fingerprint.
 func combineInputs(inputs ComponentInputs) string {
 	hasher := sha256.New()
@@ -171,8 +147,7 @@ func combineInputs(inputs ComponentInputs) string {
 	writeField(hasher, "config_hash", strconv.FormatUint(inputs.ConfigHash, 10))
 	writeField(hasher, "source_identity", inputs.SourceIdentity)
 	writeField(hasher, "affects_commit_count", strconv.Itoa(inputs.AffectsCommitCount))
-	writeField(hasher, "distro", inputs.Distro)
-	writeField(hasher, "distro_version", inputs.DistroVersion)
+	writeField(hasher, "release_ver", inputs.ReleaseVer)
 
 	// Overlay file hashes in sorted key order for determinism.
 	if len(inputs.OverlayFileHashes) > 0 {
