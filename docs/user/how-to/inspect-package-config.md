@@ -90,6 +90,24 @@ azldev package list -a -q -O json
 ]
 ```
 
+To exclude the `group` field from the JSON output (for example, when consumers only
+need package name and channel), add `--omit-group`:
+
+```bash
+azldev package list -a -q -O json --omit-group
+```
+
+```json
+[
+  {
+    "packageName": "libcurl",
+    "component": "",
+    "channel": "rpm-base"
+  },
+  ...
+]
+```
+
 ## Alias
 
 `pkg` is an alias for the `package` subcommand:

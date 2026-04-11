@@ -37,6 +37,9 @@ azldev package list [package-name...] [flags]
 
   # Output as JSON for scripting
   azldev package list -a -q -O json
+
+  # Output as JSON without the group field
+  azldev package list -a -q -O json --omit-group
 ```
 
 ### Options
@@ -44,6 +47,7 @@ azldev package list [package-name...] [flags]
 ```
   -a, --all-packages          List all explicitly-configured binary packages
   -h, --help                  help for list
+      --omit-group            Omit the 'group' field from the output
   -p, --package stringArray   Package name to look up (repeatable)
 ```
 
