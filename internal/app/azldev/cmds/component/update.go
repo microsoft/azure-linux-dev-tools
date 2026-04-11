@@ -25,10 +25,11 @@ type UpdateComponentOptions struct {
 }
 
 func updateOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
-	parentCmd.AddCommand(newComponentUpdateCommand())
+	parentCmd.AddCommand(NewUpdateCmd())
 }
 
-func newComponentUpdateCommand() *cobra.Command {
+// NewUpdateCmd constructs a [cobra.Command] for the "component update" CLI subcommand.
+func NewUpdateCmd() *cobra.Command {
 	options := &UpdateComponentOptions{}
 
 	cmd := &cobra.Command{
@@ -104,7 +105,23 @@ func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]Updat
 	// Resolve upstream commits in parallel.
 	results := resolveUpstreamCommitsParallel(env, comps, lock)
 
-	// Count changes for summary log.
+	// Check results and bail on errors/cancellation before saving.
+	if err := checkUpdateResults(env, results); err != nil {
+		return results, err
+	}
+
+	// Write updated lock file only on full success.
+	if saveErr := lock.Save(env.FS(), lockPath); saveErr != nil {
+		return results, fmt.Errorf("saving lock file:\n%w", saveErr)
+	}
+
+	// Filter results for table output: only show changed components.
+	return filterChangedResults(results), nil
+}
+
+// checkUpdateResults counts results, logs a summary, and returns an error if any
+// component failed or the context was cancelled.
+func checkUpdateResults(env *azldev.Env, results []UpdateResult) error {
 	var changed, skipped int
 
 	var failedNames []string
@@ -120,41 +137,39 @@ func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]Updat
 		}
 	}
 
-	slog.Info("Update complete",
-		"total", len(results),
-		"changed", changed,
-		"skipped", skipped,
-		"errors", len(failedNames))
-
-	// Fail hard on any errors — the lock file must be complete and consistent.
-	// Don't write a partial lock file that could silently produce wrong builds.
 	if len(failedNames) > 0 {
-		return results, fmt.Errorf(
+		slog.Error("Update failed",
+			"total", len(results),
+			"errors", len(failedNames))
+
+		return fmt.Errorf(
 			"%d component(s) failed to resolve; lock file not updated:\n  %s",
 			len(failedNames), strings.Join(failedNames, "\n  "))
 	}
 
-	// Don't save if the context was cancelled (Ctrl+C).
 	if env.Context().Err() != nil {
-		return results, errors.New("update cancelled; lock file not updated")
+		return errors.New("update cancelled; lock file not updated")
 	}
 
-	// Write updated lock file only on full success.
-	if saveErr := lock.Save(env.FS(), lockPath); saveErr != nil {
-		return results, fmt.Errorf("saving lock file:\n%w", saveErr)
-	}
+	slog.Info("Update complete",
+		"total", len(results),
+		"changed", changed,
+		"skipped", skipped)
 
-	// Filter results for table output: only show changed components.
-	// JSON consumers get the full list via -O json.
+	return nil
+}
+
+// filterChangedResults returns only changed results for table display.
+func filterChangedResults(results []UpdateResult) []UpdateResult {
 	var tableResults []UpdateResult
 
 	for idx := range results {
-		if results[idx].Changed || results[idx].Skipped {
+		if results[idx].Changed {
 			tableResults = append(tableResults, results[idx])
 		}
 	}
 
-	return tableResults, nil
+	return tableResults
 }
 
 func resolveUpstreamCommitsParallel(
