@@ -10,7 +10,7 @@ type SpecSource struct {
 
 	// Path indicates the path to the spec file; only relevant for local specs.
 	// Excluded from fingerprint because it contains an absolute path that varies by checkout
-	// location. Spec content identity is captured separately via [IdentityOptions.SourceIdentity].
+	// location. Spec content identity is captured separately via [fingerprint.IdentityOptions.SourceIdentity].
 	Path string `toml:"path,omitempty" json:"path,omitempty" validate:"excluded_unless=SourceType local,required_if=SourceType local" jsonschema:"title=Path,description=Path to the spec (if available locally),example=specs/mycomponent.spec" fingerprint:"-"`
 
 	// UpstreamDistro indicates the upstream distro providing the spec; only relevant for upstream specs.
