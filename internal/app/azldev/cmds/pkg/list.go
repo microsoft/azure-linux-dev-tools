@@ -199,6 +199,7 @@ func ListPackages(env *azldev.Env, options *ListPackageOptions) ([]PackageListRe
 		})
 	}
 
+	// Sort by package name for deterministic, readable output.
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].PackageName < results[j].PackageName
 	})
