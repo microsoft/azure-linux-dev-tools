@@ -50,8 +50,8 @@ func computeFingerprint(
 	t.Helper()
 
 	identity, err := fingerprint.ComputeIdentity(ctx.FS(), comp, releaseVer, fingerprint.IdentityOptions{
-		AffectsCommitCount: affects,
-		SourceIdentity:     "test-source-identity",
+		ManualBump:     affects,
+		SourceIdentity: "test-source-identity",
 	})
 	require.NoError(t, err)
 
@@ -422,15 +422,15 @@ func TestComputeIdentity_InputsBreakdown(t *testing.T) {
 	releaseVer := testReleaseVer
 
 	identity, err := fingerprint.ComputeIdentity(ctx.FS(), comp, releaseVer, fingerprint.IdentityOptions{
-		AffectsCommitCount: 3,
-		SourceIdentity:     "test-source-identity-hash",
+		ManualBump:     3,
+		SourceIdentity: "test-source-identity-hash",
 	})
 	require.NoError(t, err)
 
 	assert.NotEmpty(t, identity.Fingerprint)
 	assert.NotZero(t, identity.Inputs.ConfigHash)
 	assert.Equal(t, "test-source-identity-hash", identity.Inputs.SourceIdentity)
-	assert.Equal(t, 3, identity.Inputs.AffectsCommitCount)
+	assert.Equal(t, 3, identity.Inputs.ManualBump)
 	assert.Equal(t, testReleaseVer, identity.Inputs.ReleaseVer)
 	assert.Contains(t, identity.Inputs.OverlayFileHashes, "0")
 }

@@ -41,8 +41,9 @@ type ComponentInputs struct {
 	// source file's basename and content. Keyed by index rather than path to avoid
 	// checkout-location dependence.
 	OverlayFileHashes map[string]string `json:"overlayFileHashes,omitempty"`
-	// AffectsCommitCount is the number of "Affects: <component>" commits in the project repo.
-	AffectsCommitCount int `json:"affectsCommitCount"`
+	// ManualBump is the manual rebuild counter from the lock file. Almost always 0;
+	// used for mass-rebuild scenarios.
+	ManualBump int `json:"manualBump"`
 	// ReleaseVer is the distro's formal releasever (e.g., "4.0"), which feeds into
 	// RPM macros like %{dist}. Different release versions produce different package
 	// NEVRAs even with identical specs.
@@ -52,8 +53,8 @@ type ComponentInputs struct {
 // IdentityOptions holds additional inputs for computing a component's identity
 // that are not part of the component config itself.
 type IdentityOptions struct {
-	// AffectsCommitCount is the number of "Affects: <component>" commits.
-	AffectsCommitCount int
+	// ManualBump is the manual rebuild counter from the component's lock file.
+	ManualBump int
 	// SourceIdentity is the opaque identity string from a [sourceproviders.SourceIdentityProvider].
 	// For upstream components this is the resolved commit hash; for local components this is a
 	// content hash of the spec directory.
@@ -79,9 +80,9 @@ func ComputeIdentity(
 	opts IdentityOptions,
 ) (*ComponentIdentity, error) {
 	inputs := ComponentInputs{
-		AffectsCommitCount: opts.AffectsCommitCount,
-		SourceIdentity:     opts.SourceIdentity,
-		ReleaseVer:         releaseVer,
+		ManualBump:     opts.ManualBump,
+		SourceIdentity: opts.SourceIdentity,
+		ReleaseVer:     releaseVer,
 	}
 
 	// 1. Require source identity when the component has a spec source that
@@ -146,7 +147,7 @@ func combineInputs(inputs ComponentInputs) string {
 	// Write each input in a fixed order with field labels for domain separation.
 	writeField(hasher, "config_hash", strconv.FormatUint(inputs.ConfigHash, 10))
 	writeField(hasher, "source_identity", inputs.SourceIdentity)
-	writeField(hasher, "affects_commit_count", strconv.Itoa(inputs.AffectsCommitCount))
+	writeField(hasher, "manual_bump", strconv.Itoa(inputs.ManualBump))
 	writeField(hasher, "release_ver", inputs.ReleaseVer)
 
 	// Overlay file hashes in sorted key order for determinism.
