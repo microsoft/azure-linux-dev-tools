@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -35,10 +34,10 @@ func NewUpdateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Resolve and lock upstream commits for components",
-		Long: `Resolve upstream commit hashes for components and write them to azldev.lock.
+		Long: `Resolve upstream commit hashes for components and write them to per-component lock files.
 
 For upstream components, this resolves the effective commit hash using the
-distro snapshot time or explicit pin, then records it in the lock file.
+distro snapshot time or explicit pin, then records it in locks/<name>.lock.
 Subsequent commands (render, build) use the locked commit for deterministic,
 reproducible results.
 
@@ -78,7 +77,7 @@ type UpdateResult struct {
 }
 
 // UpdateComponents resolves upstream commits for all selected components and
-// writes the results to azldev.lock.
+// writes the results to per-component lock files under locks/.
 func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]UpdateResult, error) {
 	resolver := components.NewResolver(env)
 
@@ -92,31 +91,46 @@ func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]Updat
 		return nil, errors.New("no components matched the filter")
 	}
 
-	// Load existing lock file or create a new one.
-	lockPath := filepath.Join(env.ProjectDir(), lockfile.FileName)
-
-	lock, loadErr := lockfile.Load(env.FS(), lockPath)
-	if loadErr != nil {
-		slog.Debug("No existing lock file, creating new one", "error", loadErr)
-
-		lock = lockfile.New()
-	}
-
 	// Resolve upstream commits in parallel.
-	results := resolveUpstreamCommitsParallel(env, comps, lock)
+	store := env.LockStore()
+	results := resolveUpstreamCommitsParallel(env, comps, store)
 
 	// Check results and bail on errors/cancellation before saving.
 	if err := checkUpdateResults(env, results); err != nil {
 		return results, err
 	}
 
-	// Write updated lock file only on full success.
-	if saveErr := lock.Save(env.FS(), lockPath); saveErr != nil {
-		return results, fmt.Errorf("saving lock file:\n%w", saveErr)
+	// Write per-component lock files only on full success.
+	if err := saveComponentLocks(store, results); err != nil {
+		return results, err
 	}
 
 	// Filter results for table output: only show changed components.
 	return filterChangedResults(results), nil
+}
+
+// saveComponentLocks writes a lock file for each changed component.
+func saveComponentLocks(store *lockfile.Store, results []UpdateResult) error {
+	for idx := range results {
+		if !results[idx].Changed || results[idx].Error != "" || results[idx].Skipped {
+			continue
+		}
+
+		lock := store.GetOrNew(results[idx].Component)
+
+		// Set import-commit on first lock creation (write-once).
+		if lock.ImportCommit == "" && results[idx].UpstreamCommit != "" {
+			lock.ImportCommit = results[idx].UpstreamCommit
+		}
+
+		lock.UpstreamCommit = results[idx].UpstreamCommit
+
+		if saveErr := store.Save(results[idx].Component, lock); saveErr != nil {
+			return fmt.Errorf("saving lock file for %#q:\n%w", results[idx].Component, saveErr)
+		}
+	}
+
+	return nil
 }
 
 // checkUpdateResults counts results, logs a summary, and returns an error if any
@@ -175,7 +189,7 @@ func filterChangedResults(results []UpdateResult) []UpdateResult {
 func resolveUpstreamCommitsParallel(
 	env *azldev.Env,
 	comps []components.Component,
-	lock *lockfile.LockFile,
+	store *lockfile.Store,
 ) []UpdateResult {
 	results := make([]UpdateResult, len(comps))
 
@@ -183,8 +197,6 @@ func resolveUpstreamCommitsParallel(
 	defer cancel()
 
 	var waitGroup sync.WaitGroup
-
-	var lockMutex sync.Mutex
 
 	// Each resolution involves a metadata-only git clone, in practice highly-parallelizable.
 	semaphore := make(chan struct{}, env.FastConcurrency())
@@ -229,17 +241,17 @@ func resolveUpstreamCommitsParallel(
 
 			results[idx].UpstreamCommit = commitHash
 
-			lockMutex.Lock()
-			defer lockMutex.Unlock()
+			// Check existing lock to determine if the commit changed.
+			existingLock, loadErr := store.Get(comp.GetName())
+			if loadErr != nil {
+				// No existing lock = new component, always changed.
+				results[idx].Changed = true
 
-			previous, hasPrevious := lock.GetUpstreamCommit(comp.GetName())
-			if hasPrevious {
-				results[idx].PreviousCommit = previous
+				return
 			}
 
-			results[idx].Changed = !hasPrevious || previous != commitHash
-
-			lock.SetUpstreamCommit(comp.GetName(), commitHash)
+			results[idx].PreviousCommit = existingLock.UpstreamCommit
+			results[idx].Changed = existingLock.UpstreamCommit != commitHash
 		}()
 	}
 

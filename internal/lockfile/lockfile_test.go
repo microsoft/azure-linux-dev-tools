@@ -5,7 +5,6 @@ package lockfile_test
 
 import (
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
@@ -16,101 +15,99 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const testProjectDir = "/project"
+const (
+	testProjectDir = "/project"
+	testCommitHash = "aaaa"
+)
 
 func TestNew(t *testing.T) {
-	lf := lockfile.New()
-	assert.Equal(t, 1, lf.Version)
-	assert.NotNil(t, lf.Components)
-	assert.Empty(t, lf.Components)
+	lock := lockfile.New()
+	assert.Equal(t, 1, lock.Version)
+	assert.Empty(t, lock.UpstreamCommit)
+	assert.Empty(t, lock.ImportCommit)
+	assert.Zero(t, lock.ManualBump)
+	assert.Empty(t, lock.InputFingerprint)
 }
 
-func TestSetAndGetUpstreamCommit(t *testing.T) {
-	lf := lockfile.New()
-
-	lf.SetUpstreamCommit("curl", "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2")
-
-	commit, ok := lf.GetUpstreamCommit("curl")
-	assert.True(t, ok)
-	assert.Equal(t, "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2", commit)
+func TestLockPath(t *testing.T) {
+	path := lockfile.LockPath("/project", "curl")
+	assert.Equal(t, filepath.Join("/project", "locks", "curl.lock"), path)
 }
 
-func TestGetUpstreamCommitMissing(t *testing.T) {
-	lf := lockfile.New()
+func TestLockPathDistantProjectDir(t *testing.T) {
+	// Simulates -C /some/distant/repo being passed to azldev.
+	distantDir := "/some/distant/repo"
 
-	commit, ok := lf.GetUpstreamCommit("nonexistent")
-	assert.False(t, ok)
-	assert.Empty(t, commit)
+	path := lockfile.LockPath(distantDir, "curl")
+	assert.Equal(t, filepath.Join(distantDir, "locks", "curl.lock"), path)
+
+	// Save and load from the distant path to verify full round-trip.
+	memFS := afero.NewMemMapFs()
+
+	lock := lockfile.New()
+	lock.UpstreamCommit = "distant-commit"
+
+	require.NoError(t, lock.Save(memFS, path))
+
+	loaded, err := lockfile.Load(memFS, path)
+	require.NoError(t, err)
+	assert.Equal(t, "distant-commit", loaded.UpstreamCommit)
+
+	// Verify the file actually ended up under the distant dir, not cwd.
+	exists, err := lockfile.Exists(memFS, filepath.Join(distantDir, "locks", "curl.lock"))
+	require.NoError(t, err)
+	assert.True(t, exists)
+
+	// And NOT under the default project dir.
+	exists, err = lockfile.Exists(memFS, filepath.Join(testProjectDir, "locks", "curl.lock"))
+	require.NoError(t, err)
+	assert.False(t, exists, "lock file should not appear under default project dir")
 }
 
 func TestSaveAndLoad(t *testing.T) {
 	memFS := afero.NewMemMapFs()
-	lockPath := filepath.Join(testProjectDir, lockfile.FileName)
+	lockPath := lockfile.LockPath(testProjectDir, "curl")
 
-	require.NoError(t, fileutils.MkdirAll(memFS, testProjectDir))
-
-	// Create and save a lock file.
 	original := lockfile.New()
-	original.SetUpstreamCommit("curl", "aaaa")
-	original.SetUpstreamCommit("bash", "bbbb")
-	original.SetUpstreamCommit("vim", "cccc")
+	original.UpstreamCommit = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+	original.ImportCommit = "0000111122223333444455556666777788889999"
+	original.ManualBump = 2
+	original.InputFingerprint = "sha256:abcdef1234567890"
 
 	require.NoError(t, original.Save(memFS, lockPath))
 
-	// Load it back.
 	loaded, err := lockfile.Load(memFS, lockPath)
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, loaded.Version)
-
-	commit, found := loaded.GetUpstreamCommit("curl")
-	assert.True(t, found)
-	assert.Equal(t, "aaaa", commit)
-
-	commit, found = loaded.GetUpstreamCommit("bash")
-	assert.True(t, found)
-	assert.Equal(t, "bbbb", commit)
-
-	commit, found = loaded.GetUpstreamCommit("vim")
-	assert.True(t, found)
-	assert.Equal(t, "cccc", commit)
+	assert.Equal(t, "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2", loaded.UpstreamCommit)
+	assert.Equal(t, "0000111122223333444455556666777788889999", loaded.ImportCommit)
+	assert.Equal(t, 2, loaded.ManualBump)
+	assert.Equal(t, "sha256:abcdef1234567890", loaded.InputFingerprint)
 }
 
-func TestSaveSortsComponents(t *testing.T) {
+func TestSaveCreatesDirectory(t *testing.T) {
 	memFS := afero.NewMemMapFs()
-	lockPath := filepath.Join(testProjectDir, lockfile.FileName)
+	lockPath := lockfile.LockPath(testProjectDir, "newpkg")
 
-	require.NoError(t, fileutils.MkdirAll(memFS, testProjectDir))
+	lock := lockfile.New()
+	lock.UpstreamCommit = testCommitHash
 
-	lockFile := lockfile.New()
-	// Insert in non-alphabetical order.
-	lockFile.SetUpstreamCommit("zlib", "zzzz")
-	lockFile.SetUpstreamCommit("curl", "aaaa")
-	lockFile.SetUpstreamCommit("bash", "bbbb")
+	require.NoError(t, lock.Save(memFS, lockPath))
 
-	require.NoError(t, lockFile.Save(memFS, lockPath))
-
-	data, err := fileutils.ReadFile(memFS, lockPath)
+	// Verify the file was created.
+	loaded, err := lockfile.Load(memFS, lockPath)
 	require.NoError(t, err)
-
-	content := string(data)
-
-	// bash should appear before curl, which should appear before zlib.
-	bashIdx := strings.Index(content, "[components.bash]")
-	curlIdx := strings.Index(content, "[components.curl]")
-	zlibIdx := strings.Index(content, "[components.zlib]")
-
-	assert.Less(t, bashIdx, curlIdx, "bash should come before curl")
-	assert.Less(t, curlIdx, zlibIdx, "curl should come before zlib")
+	assert.Equal(t, testCommitHash, loaded.UpstreamCommit)
 }
 
 func TestLoadUnsupportedVersion(t *testing.T) {
 	memFS := afero.NewMemMapFs()
-	lockPath := filepath.Join(testProjectDir, lockfile.FileName)
+	lockPath := lockfile.LockPath(testProjectDir, "bad")
 
 	content := "version = 99\n"
 
-	require.NoError(t, fileutils.MkdirAll(memFS, testProjectDir))
+	require.NoError(t, fileutils.MkdirAll(memFS, filepath.Dir(lockPath)))
 	require.NoError(t, fileutils.WriteFile(memFS, lockPath, []byte(content), fileperms.PublicFile))
 
 	_, err := lockfile.Load(memFS, lockPath)
@@ -120,15 +117,15 @@ func TestLoadUnsupportedVersion(t *testing.T) {
 func TestLoadMissingFile(t *testing.T) {
 	fs := afero.NewMemMapFs()
 
-	_, err := lockfile.Load(fs, "/nonexistent/azldev.lock")
+	_, err := lockfile.Load(fs, "/nonexistent/locks/curl.lock")
 	assert.Error(t, err)
 }
 
 func TestLoadInvalidTOML(t *testing.T) {
 	memFS := afero.NewMemMapFs()
-	lockPath := filepath.Join(testProjectDir, lockfile.FileName)
+	lockPath := lockfile.LockPath(testProjectDir, "bad")
 
-	require.NoError(t, fileutils.MkdirAll(memFS, testProjectDir))
+	require.NoError(t, fileutils.MkdirAll(memFS, filepath.Dir(lockPath)))
 	require.NoError(t, fileutils.WriteFile(memFS, lockPath, []byte("not valid toml {{{"), fileperms.PublicFile))
 
 	_, err := lockfile.Load(memFS, lockPath)
@@ -137,48 +134,152 @@ func TestLoadInvalidTOML(t *testing.T) {
 
 func TestSaveContainsVersion(t *testing.T) {
 	memFS := afero.NewMemMapFs()
-	lockPath := filepath.Join(testProjectDir, lockfile.FileName)
+	lockPath := lockfile.LockPath(testProjectDir, "test")
 
-	require.NoError(t, fileutils.MkdirAll(memFS, testProjectDir))
-
-	lockFile := lockfile.New()
-	require.NoError(t, lockFile.Save(memFS, lockPath))
+	lock := lockfile.New()
+	require.NoError(t, lock.Save(memFS, lockPath))
 
 	data, err := fileutils.ReadFile(memFS, lockPath)
 	require.NoError(t, err)
 
 	assert.Contains(t, string(data), "version = 1")
-	assert.Contains(t, string(data), "# azldev.lock")
 }
 
-func TestRoundTripLocalComponent(t *testing.T) {
+func TestLocalComponentRoundTrip(t *testing.T) {
 	memFS := afero.NewMemMapFs()
-	lockPath := filepath.Join(testProjectDir, lockfile.FileName)
+	lockPath := lockfile.LockPath(testProjectDir, "local-pkg")
 
-	require.NoError(t, fileutils.MkdirAll(memFS, testProjectDir))
-
-	// Create a lock file with a local component (empty upstream commit)
-	// alongside an upstream component.
+	// Local component: no upstream commit, no import commit.
 	original := lockfile.New()
-	original.SetUpstreamCommit("curl", "aaaa")
-	original.Components["local-pkg"] = lockfile.ComponentLock{}
+	original.InputFingerprint = "sha256:localfp"
 
 	require.NoError(t, original.Save(memFS, lockPath))
 
-	// Load it back and verify both entries survived.
 	loaded, err := lockfile.Load(memFS, lockPath)
 	require.NoError(t, err)
 
-	// Upstream component round-trips with its commit.
-	commit, found := loaded.GetUpstreamCommit("curl")
-	assert.True(t, found)
-	assert.Equal(t, "aaaa", commit)
+	assert.Empty(t, loaded.UpstreamCommit)
+	assert.Empty(t, loaded.ImportCommit)
+	assert.Equal(t, "sha256:localfp", loaded.InputFingerprint)
+}
 
-	// Local component has an entry but no upstream commit.
-	_, hasEntry := loaded.Components["local-pkg"]
-	assert.True(t, hasEntry, "local component entry should survive round-trip")
+func TestExists(t *testing.T) {
+	memFS := afero.NewMemMapFs()
+	lockPath := lockfile.LockPath(testProjectDir, "curl")
 
-	commit, found = loaded.GetUpstreamCommit("local-pkg")
-	assert.False(t, found, "local component should not have an upstream commit")
-	assert.Empty(t, commit)
+	exists, err := lockfile.Exists(memFS, lockPath)
+	require.NoError(t, err)
+	assert.False(t, exists)
+
+	lock := lockfile.New()
+	lock.UpstreamCommit = testCommitHash
+
+	require.NoError(t, lock.Save(memFS, lockPath))
+
+	exists, err = lockfile.Exists(memFS, lockPath)
+	require.NoError(t, err)
+	assert.True(t, exists)
+}
+
+func TestRemove(t *testing.T) {
+	memFS := afero.NewMemMapFs()
+	lockPath := lockfile.LockPath(testProjectDir, "curl")
+
+	lock := lockfile.New()
+	require.NoError(t, lock.Save(memFS, lockPath))
+
+	exists, err := lockfile.Exists(memFS, lockPath)
+	require.NoError(t, err)
+	assert.True(t, exists)
+
+	require.NoError(t, lockfile.Remove(memFS, lockPath))
+
+	exists, err = lockfile.Exists(memFS, lockPath)
+	require.NoError(t, err)
+	assert.False(t, exists)
+}
+
+func TestMultipleComponentsIndependentFiles(t *testing.T) {
+	memFS := afero.NewMemMapFs()
+
+	// Save three different components.
+	for _, name := range []string{"curl", "bash", "vim"} {
+		lock := lockfile.New()
+		lock.UpstreamCommit = name + "-commit"
+
+		require.NoError(t, lock.Save(memFS, lockfile.LockPath(testProjectDir, name)))
+	}
+
+	// Load each independently and verify.
+	for _, name := range []string{"curl", "bash", "vim"} {
+		loaded, err := lockfile.Load(memFS, lockfile.LockPath(testProjectDir, name))
+		require.NoError(t, err)
+		assert.Equal(t, name+"-commit", loaded.UpstreamCommit)
+	}
+}
+
+func TestImportCommitPreservedOnRewrite(t *testing.T) {
+	memFS := afero.NewMemMapFs()
+	lockPath := lockfile.LockPath(testProjectDir, "curl")
+
+	// First write: set import-commit and upstream-commit to same value (initial import).
+	original := lockfile.New()
+	original.ImportCommit = "initial-import-commit"
+	original.UpstreamCommit = "initial-import-commit"
+
+	require.NoError(t, original.Save(memFS, lockPath))
+
+	// Simulate what update does: load, update upstream-commit, preserve import-commit.
+	loaded, err := lockfile.Load(memFS, lockPath)
+	require.NoError(t, err)
+
+	// Import-commit should not be changed — it's write-once.
+	assert.Equal(t, "initial-import-commit", loaded.ImportCommit)
+
+	loaded.UpstreamCommit = "newer-upstream-commit"
+
+	require.NoError(t, loaded.Save(memFS, lockPath))
+
+	// Reload and verify import-commit survived while upstream-commit moved.
+	reloaded, err := lockfile.Load(memFS, lockPath)
+	require.NoError(t, err)
+	assert.Equal(t, "initial-import-commit", reloaded.ImportCommit, "import-commit should be preserved")
+	assert.Equal(t, "newer-upstream-commit", reloaded.UpstreamCommit, "upstream-commit should be updated")
+}
+
+func TestResolutionInputHashRoundTrip(t *testing.T) {
+	memFS := afero.NewMemMapFs()
+	lockPath := lockfile.LockPath(testProjectDir, "curl")
+
+	// v2 field: currently stubbed but should survive round-trip.
+	lock := lockfile.New()
+	lock.UpstreamCommit = testCommitHash
+	lock.ResolutionInputHash = "sha256:resolution-inputs"
+
+	require.NoError(t, lock.Save(memFS, lockPath))
+
+	loaded, err := lockfile.Load(memFS, lockPath)
+	require.NoError(t, err)
+	assert.Equal(t, "sha256:resolution-inputs", loaded.ResolutionInputHash)
+}
+
+func TestOmitEmptyFields(t *testing.T) {
+	memFS := afero.NewMemMapFs()
+	lockPath := lockfile.LockPath(testProjectDir, "local-pkg")
+
+	// Local component: only version and fingerprint set.
+	lock := lockfile.New()
+	lock.InputFingerprint = "sha256:local"
+
+	require.NoError(t, lock.Save(memFS, lockPath))
+
+	data, err := fileutils.ReadFile(memFS, lockPath)
+	require.NoError(t, err)
+
+	content := string(data)
+	assert.NotContains(t, content, "import-commit", "empty import-commit should be omitted")
+	assert.NotContains(t, content, "upstream-commit", "empty upstream-commit should be omitted")
+	assert.NotContains(t, content, "manual-bump", "zero manual-bump should be omitted")
+	assert.NotContains(t, content, "resolution-input-hash", "empty resolution-input-hash should be omitted")
+	assert.Contains(t, content, "input-fingerprint")
 }

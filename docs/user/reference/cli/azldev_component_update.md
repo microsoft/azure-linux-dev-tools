@@ -6,10 +6,10 @@ Resolve and lock upstream commits for components
 
 ### Synopsis
 
-Resolve upstream commit hashes for components and write them to azldev.lock.
+Resolve upstream commit hashes for components and write them to per-component lock files.
 
 For upstream components, this resolves the effective commit hash using the
-distro snapshot time or explicit pin, then records it in the lock file.
+distro snapshot time or explicit pin, then records it in locks/<name>.lock.
 Subsequent commands (render, build) use the locked commit for deterministic,
 reproducible results.
 
