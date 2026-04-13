@@ -108,7 +108,7 @@ func runFuncInternal(innerFunc CmdWithExtraArgsFuncType, requireConfig bool) cob
 				"Please either use the -C option to specify a path to the root directory " +
 					"of your Azure Linux project/repo, or else run this tool from within a directory " +
 					"tree that contains an 'azldev.toml' file at its root. " +
-					"-- Most commands will not function correctly without a valid configuration.",
+					"Most commands will not function correctly without a valid configuration.",
 			)
 
 			return errors.New(
