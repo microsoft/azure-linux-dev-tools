@@ -297,39 +297,41 @@ func (env *Env) AddFixSuggestion(suggestion string) {
 
 // PrintFixSuggestions prints the current fix suggestions, if any.
 func (env *Env) PrintFixSuggestions() {
-	if len(env.fixSuggestions) > 0 {
-		// Use term.GetSize to guess at the width, defaulting to 80 if it fails
-		// Subtract 15 to account for the slog head
-		const slogHeadWidth = 15
-
-		consoleWidth, _, err := term.GetSize(os.Stderr.Fd())
-		if err != nil {
-			consoleWidth = 80
-		}
-
-		consoleWidth -= slogHeadWidth
-
-		padding := "    "
-		paddingSize := len(padding)
-
-		maxMsgLength := 0
-		for _, suggestion := range env.fixSuggestions {
-			if len(suggestion) > maxMsgLength {
-				maxMsgLength = len(suggestion)
-			}
-		}
-
-		boxWidth := max(0, min(consoleWidth, paddingSize+maxMsgLength+paddingSize))
-		boxEdgeString := strings.Repeat("=", boxWidth)
-
-		slog.Warn(boxEdgeString)
-
-		for _, suggestion := range env.fixSuggestions {
-			slog.Warn(padding + suggestion)
-		}
-
-		slog.Warn(boxEdgeString)
+	if len(env.fixSuggestions) == 0 {
+		return
 	}
+
+	// Use term.GetSize to guess at the width, defaulting to 80 if it fails.
+	// Subtract 15 to account for the slog head.
+	const slogHeadWidth = 15
+
+	consoleWidth, _, err := term.GetSize(os.Stderr.Fd())
+	if err != nil {
+		consoleWidth = 80
+	}
+
+	consoleWidth -= slogHeadWidth
+
+	padding := "    "
+	paddingSize := len(padding)
+
+	maxMsgLength := 0
+	for _, suggestion := range env.fixSuggestions {
+		if len(suggestion) > maxMsgLength {
+			maxMsgLength = len(suggestion)
+		}
+	}
+
+	boxWidth := max(0, min(consoleWidth, paddingSize+maxMsgLength+paddingSize))
+	boxEdgeString := strings.Repeat("=", boxWidth)
+
+	slog.Warn(boxEdgeString)
+
+	for _, suggestion := range env.fixSuggestions {
+		slog.Warn(padding + suggestion)
+	}
+
+	slog.Warn(boxEdgeString)
 }
 
 // CPUBoundConcurrency returns the recommended concurrency limit for CPU-bound tasks.
