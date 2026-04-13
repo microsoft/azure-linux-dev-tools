@@ -319,13 +319,15 @@ func (env *Env) PrintFixSuggestions() {
 			}
 		}
 
-		boxWidth := min(consoleWidth, paddingSize+maxMsgLength+paddingSize)
+		boxWidth := max(0, min(consoleWidth, paddingSize+maxMsgLength+paddingSize))
 		boxEdgeString := strings.Repeat("=", boxWidth)
 
 		slog.Warn(boxEdgeString)
+
 		for _, suggestion := range env.fixSuggestions {
 			slog.Warn(padding + suggestion)
 		}
+
 		slog.Warn(boxEdgeString)
 	}
 }

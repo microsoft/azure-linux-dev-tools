@@ -279,7 +279,6 @@ func (a *App) Execute(args []string) int {
 	}
 
 	configLoadErr := err
-
 	if err = a.reInitLoggingWithLogFile(envOptions); err != nil {
 		slog.Error("Error initializing file logging.", "err", err)
 
@@ -644,7 +643,7 @@ func (a *App) dispatchToCommand(env *Env, args []string) int {
 	if err != nil {
 		slog.Error("Error: " + err.Error())
 
-		env.PrintFixSuggestion()
+		env.PrintFixSuggestions()
 
 		return 1
 	}
