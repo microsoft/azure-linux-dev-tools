@@ -132,3 +132,40 @@ func TestEnvWithCancel(t *testing.T) {
 	require.Error(t, child.Err())
 	assert.NoError(t, original.Err())
 }
+
+func TestFixSuggestions(t *testing.T) {
+	t.Run("no suggestions does not panic", func(t *testing.T) {
+		testEnv := testutils.NewTestEnv(t)
+		// Should not panic when no suggestions are present.
+		assert.NotPanics(t, func() {
+			testEnv.Env.PrintFixSuggestions()
+		})
+	})
+
+	t.Run("single suggestion does not panic", func(t *testing.T) {
+		testEnv := testutils.NewTestEnv(t)
+		testEnv.Env.AddFixSuggestion("run 'azldev component update -a'")
+		assert.NotPanics(t, func() {
+			testEnv.Env.PrintFixSuggestions()
+		})
+	})
+
+	t.Run("multiple suggestions does not panic", func(t *testing.T) {
+		testEnv := testutils.NewTestEnv(t)
+		testEnv.Env.AddFixSuggestion("first suggestion")
+		testEnv.Env.AddFixSuggestion("second suggestion")
+		testEnv.Env.AddFixSuggestion("third suggestion")
+		// Should not panic with multiple suggestions.
+		assert.NotPanics(t, func() {
+			testEnv.Env.PrintFixSuggestions()
+		})
+	})
+
+	t.Run("empty string suggestion does not panic", func(t *testing.T) {
+		testEnv := testutils.NewTestEnv(t)
+		testEnv.Env.AddFixSuggestion("")
+		assert.NotPanics(t, func() {
+			testEnv.Env.PrintFixSuggestions()
+		})
+	})
+}

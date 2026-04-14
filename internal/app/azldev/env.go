@@ -8,13 +8,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/gum/confirm"
+	"github.com/charmbracelet/x/term"
 	"github.com/mattn/go-isatty"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
@@ -85,6 +88,10 @@ type Env struct {
 
 	// Start time: used for consistent timestamping of artifacts.
 	constructionTime time.Time
+
+	// Fix suggestion: a list of human readable hints that will be printed after an error to help the user
+	// resolve the issue. Printed in FIFO order.
+	fixSuggestions []string
 }
 
 // Constructs a new [Env] using specified options.
@@ -136,6 +143,9 @@ func NewEnv(ctx context.Context, options EnvOptions) *Env {
 
 		// Start time.
 		constructionTime: time.Now(),
+
+		// No fix suggestions to start.
+		fixSuggestions: []string{},
 	}
 }
 
@@ -277,6 +287,51 @@ func (env *Env) LogsDir() string {
 // Returns the file path to the loaded project's output directory.
 func (env *Env) OutputDir() string {
 	return env.outputDir
+}
+
+// AddFixSuggestion records a human-readable hint that will be printed after an
+// error to help the user resolve the issue. Suggestions are printed in FIFO order.
+func (env *Env) AddFixSuggestion(suggestion string) {
+	env.fixSuggestions = append(env.fixSuggestions, suggestion)
+}
+
+// PrintFixSuggestions prints the current fix suggestions, if any.
+func (env *Env) PrintFixSuggestions() {
+	if len(env.fixSuggestions) == 0 {
+		return
+	}
+
+	// Use term.GetSize to guess at the width, defaulting to 80 if it fails.
+	// Subtract 15 to account for the slog head.
+	const slogHeadWidth = 15
+
+	consoleWidth, _, err := term.GetSize(os.Stderr.Fd())
+	if err != nil {
+		consoleWidth = 80
+	}
+
+	consoleWidth -= slogHeadWidth
+
+	padding := "    "
+	paddingSize := len(padding)
+
+	maxMsgLength := 0
+	for _, suggestion := range env.fixSuggestions {
+		if len(suggestion) > maxMsgLength {
+			maxMsgLength = len(suggestion)
+		}
+	}
+
+	boxWidth := max(0, min(consoleWidth, paddingSize+maxMsgLength+paddingSize))
+	boxEdgeString := strings.Repeat("=", boxWidth)
+
+	slog.Warn(boxEdgeString)
+
+	for _, suggestion := range env.fixSuggestions {
+		slog.Warn(padding + suggestion)
+	}
+
+	slog.Warn(boxEdgeString)
 }
 
 // CPUBoundConcurrency returns the recommended concurrency limit for CPU-bound tasks.

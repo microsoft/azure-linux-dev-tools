@@ -273,10 +273,12 @@ func (a *App) Execute(args []string) int {
 	// usage information, query the tool's version, etc. If the user attempts to run a command that
 	// requires configuration, then execution will stop just before running the command.
 	if err = a.initializeProjectConfig(envOptions, earlyTempDirPath); err != nil {
-		// Present an error, but move on.
+		// Present an error, but move on.  Store the error so we can set a fix suggestion
+		// on env once it's constructed.
 		slog.Error("Error loading configuration, execution may fail later;", "err", err)
 	}
 
+	configLoadErr := err
 	if err = a.reInitLoggingWithLogFile(envOptions); err != nil {
 		slog.Error("Error initializing file logging.", "err", err)
 
@@ -305,6 +307,12 @@ func (a *App) Execute(args []string) int {
 	env.SetVerbose(a.verbose)
 	env.SetQuiet(a.quiet)
 	env.SetColorMode(a.colorMode)
+
+	// If config loading failed, set a fix suggestion on env so it can be shown
+	// after any command error that requires config.
+	if configLoadErr != nil {
+		env.AddFixSuggestion(fmt.Sprintf("fix the configuration error: %v", configLoadErr))
+	}
 	//
 	// If we managed to find a project + configuration, then we can let anyone who was
 	// interested have an opportunity to add subcommands (or do whatever they need to
@@ -634,6 +642,8 @@ func (a *App) dispatchToCommand(env *Env, args []string) int {
 	err := a.cmd.ExecuteContext(env)
 	if err != nil {
 		slog.Error("Error: " + err.Error())
+
+		env.PrintFixSuggestions()
 
 		return 1
 	}
