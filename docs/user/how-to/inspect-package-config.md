@@ -28,14 +28,14 @@ azldev package list -a
 Example output:
 
 ```
-╭──────────────────┬────────────────┬───────────┬──────────────╮
+╭──────────────────┬────────────────┬───────────┬─────────────────╮
 │ PACKAGE          │ GROUP          │ COMPONENT │ PUBLISH CHANNEL │
-├──────────────────┼────────────────┼───────────┼──────────────┤
-│ curl-debugsource │ debug-packages │           │ rpm-debug    │
-│ libcurl          │ base-packages  │           │ rpm-base     │
-│ libcurl-devel    │ devel-packages │ curl      │ rpm-base     │
-│ wget2-wget       │                │ wget2     │ rpm-base     │
-╰──────────────────┴────────────────┴───────────┴──────────────╯
+├──────────────────┼────────────────┼───────────┼─────────────────┤
+│ curl-debugsource │ debug-packages │           │ rpm-debug       │
+│ libcurl          │ base-packages  │           │ rpm-base        │
+│ libcurl-devel    │ devel-packages │ curl      │ rpm-base        │
+│ wget2-wget       │                │ wget2     │ rpm-base        │
+╰──────────────────┴────────────────┴───────────┴─────────────────╯
 ```
 
 ### Column meanings
