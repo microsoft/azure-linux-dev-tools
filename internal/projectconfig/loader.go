@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -23,6 +24,8 @@ var (
 	ErrDuplicateComponents = errors.New("duplicate component")
 	// ErrDuplicateComponentGroups is returned when duplicate conflicting component group definitions are found.
 	ErrDuplicateComponentGroups = errors.New("duplicate component group")
+	// ErrDuplicateComponentTemplates is returned when duplicate conflicting component template definitions are found.
+	ErrDuplicateComponentTemplates = errors.New("duplicate component template")
 	// ErrDuplicateImages is returned when duplicate conflicting image definitions are found.
 	ErrDuplicateImages = errors.New("duplicate image")
 	// ErrDuplicatePackageGroups is returned when duplicate conflicting package group definitions are found.
@@ -111,6 +114,10 @@ func mergeConfigFile(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
 		return err
 	}
 
+	if err := mergeComponentTemplates(resolvedCfg, loadedCfg); err != nil {
+		return err
+	}
+
 	if err := mergeImages(resolvedCfg, loadedCfg); err != nil {
 		return err
 	}
@@ -188,6 +195,53 @@ func mergeComponents(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
 		component.SourceConfigFile = loadedCfg
 
 		resolvedCfg.Components[componentName] = *(component.WithAbsolutePaths(loadedCfg.dir))
+	}
+
+	return nil
+}
+
+// mergeComponentTemplates expands component template definitions from a loaded config file
+// and merges the resulting components into the resolved config. Duplicate template names
+// across config files are not allowed. Expanded component names must not collide with
+// existing components.
+func mergeComponentTemplates(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
+	// Sort template names for deterministic expansion order.
+	templateNames := make([]string, 0, len(loadedCfg.ComponentTemplates))
+	for name := range loadedCfg.ComponentTemplates {
+		templateNames = append(templateNames, name)
+	}
+
+	sort.Strings(templateNames)
+
+	for _, templateName := range templateNames {
+		tmpl := loadedCfg.ComponentTemplates[templateName]
+
+		// Fill out internal fields.
+		tmpl.name = templateName
+		tmpl.sourceConfigFile = loadedCfg
+
+		// Resolve paths.
+		resolvedTmpl := tmpl.WithAbsolutePaths(loadedCfg.dir)
+		resolvedTmpl.name = templateName
+		resolvedTmpl.sourceConfigFile = loadedCfg
+
+		// Expand the template into its cartesian product of components.
+		expandedComponents, err := expandComponentTemplate(templateName, &resolvedTmpl)
+		if err != nil {
+			return fmt.Errorf("failed to expand component template %#q:\n%w", templateName, err)
+		}
+
+		// Merge expanded components into the resolved config, checking for duplicates.
+		for componentName, component := range expandedComponents {
+			if _, ok := resolvedCfg.Components[componentName]; ok {
+				return fmt.Errorf(
+					"%w: component template %#q expands to %#q which already exists",
+					ErrDuplicateComponents, templateName, componentName,
+				)
+			}
+
+			resolvedCfg.Components[componentName] = component
+		}
 	}
 
 	return nil

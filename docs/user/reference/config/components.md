@@ -367,6 +367,7 @@ lines = ["cp -vf %{shimdirx64}/$(basename %{shimefix64}) %{shimefix64} ||:"]
 - [Config File Structure](config-file.md) — top-level config file layout
 - [Distros](distros.md) — distro definitions and `default-component-config` inheritance
 - [Component Groups](component-groups.md) — grouping components with shared defaults
+- [Component Templates](component-templates.md) — generating multiple component variants from a matrix
 - [Package Groups](package-groups.md) — project-level package groups and full resolution order
 - [Configuration System](../../explanation/config-system.md) — inheritance and merge behavior
 - [JSON Schema](../../../../schemas/azldev.schema.json) — machine-readable schema
