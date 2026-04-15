@@ -8,7 +8,6 @@ import (
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
-	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spec"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/stretchr/testify/assert"
@@ -95,37 +94,4 @@ func TestGetReleaseTagValue_FileNotFound(t *testing.T) {
 	ctx := testctx.NewCtx()
 	_, err := sources.GetReleaseTagValue(ctx.FS(), "/nonexistent.spec")
 	require.Error(t, err)
-}
-
-func TestHasUserReleaseOverlay(t *testing.T) {
-	for _, testCase := range []struct {
-		name     string
-		overlays []projectconfig.ComponentOverlay
-		expected bool
-	}{
-		{"no overlays", nil, false},
-		{"unrelated tag", []projectconfig.ComponentOverlay{
-			{Type: projectconfig.ComponentOverlaySetSpecTag, Tag: "Version", Value: "1.0"},
-		}, false},
-		{"unsupported overlay type", []projectconfig.ComponentOverlay{
-			{Type: projectconfig.ComponentOverlayAddSpecTag, Tag: "Release", Value: "1%{?dist}"},
-		}, false},
-		{"spec-set-tag", []projectconfig.ComponentOverlay{
-			{Type: projectconfig.ComponentOverlaySetSpecTag, Tag: "Release", Value: "1%{?dist}"},
-		}, true},
-		{"spec-update-tag", []projectconfig.ComponentOverlay{
-			{Type: projectconfig.ComponentOverlayUpdateSpecTag, Tag: "Release", Value: "2%{?dist}"},
-		}, true},
-		{"case insensitive", []projectconfig.ComponentOverlay{
-			{Type: projectconfig.ComponentOverlaySetSpecTag, Tag: "release", Value: "1%{?dist}"},
-		}, true},
-		{"mixed overlays", []projectconfig.ComponentOverlay{
-			{Type: projectconfig.ComponentOverlaySetSpecTag, Tag: "BuildRequires", Value: "gcc"},
-			{Type: projectconfig.ComponentOverlaySetSpecTag, Tag: "Release", Value: "5%{?dist}"},
-		}, true},
-	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			assert.Equal(t, testCase.expected, sources.HasUserReleaseOverlay(testCase.overlays))
-		})
-	}
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-playground/validator/v10"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/stretchr/testify/assert"
@@ -209,4 +210,26 @@ func TestAllowedSourceFilesHashTypes_MatchesJSONSchemaEnum(t *testing.T) {
 		assert.True(t, projectconfig.AllowedSourceFilesHashTypes[hashType],
 			"'jsonschema' enum value %#q is not in 'AllowedSourceFilesHashTypes'", enumVal)
 	}
+}
+
+func TestReleaseCalculationValidation(t *testing.T) {
+	validate := validator.New()
+
+	// Empty (omitted) is valid — resolved to "auto" by the component resolver.
+	require.NoError(t, validate.Struct(&projectconfig.ComponentConfig{}))
+
+	// Explicit "auto" is valid.
+	require.NoError(t, validate.Struct(&projectconfig.ComponentConfig{
+		ReleaseCalculation: projectconfig.ReleaseCalculationAuto,
+	}))
+
+	// Explicit "manual" is valid.
+	require.NoError(t, validate.Struct(&projectconfig.ComponentConfig{
+		ReleaseCalculation: projectconfig.ReleaseCalculationManual,
+	}))
+
+	// Invalid value is rejected.
+	require.Error(t, validate.Struct(&projectconfig.ComponentConfig{
+		ReleaseCalculation: "manaul",
+	}))
 }

@@ -106,6 +106,15 @@
           "title": "Spec",
           "description": "Identifies where to find the spec for this component"
         },
+        "release-calculation": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "manual"
+          ],
+          "title": "Release calculation",
+          "description": "Controls how the Release tag is managed during rendering. Empty or omitted means auto."
+        },
         "overlays": {
           "items": {
             "$ref": "#/$defs/ComponentOverlay"

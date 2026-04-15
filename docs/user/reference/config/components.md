@@ -9,6 +9,7 @@ A component definition tells azldev where to find the spec file, how to customiz
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
 | Spec source | `spec` | [SpecSource](#spec-source) | No | Where to find the spec file for this component. Inherited from distro defaults if not specified. |
+| Release calculation | `release-calculation` | string | No | Controls how the Release tag is managed during rendering. `"auto"` (default) = auto-bump; `"manual"` = skip all automatic Release manipulation |
 | Overlays | `overlays` | array of [Overlay](overlays.md) | No | Modifications to apply to the spec and/or source files |
 | Build config | `build` | [BuildConfig](#build-configuration) | No | Build-time options (macros, conditionals, check config) |
 | Source files | `source-files` | array of [SourceFileReference](#source-file-references) | No | Additional source files to download for this component |
