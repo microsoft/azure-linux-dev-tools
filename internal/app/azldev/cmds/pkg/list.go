@@ -86,7 +86,7 @@ type PackageListResult struct {
 
 	// Channel is the resolved publish channel after applying all config layers.
 	// Empty means no channel has been configured.
-	Channel string `json:"channel" table:"Channel"`
+	Channel string `json:"publishChannel" table:"Publish Channel"`
 }
 
 // buildComponentPackageIndex builds a map from binary package name to the component

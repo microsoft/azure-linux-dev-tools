@@ -52,7 +52,7 @@ type RPMResult struct {
 
 	// Channel is the resolved publish channel from project config.
 	// Empty when no channel is configured for this package.
-	Channel string `json:"channel" table:"Channel"`
+	Channel string `json:"publishChannel" table:"Publish Channel"`
 }
 
 // ComponentBuildResults summarizes the results of building a single component.
@@ -68,7 +68,7 @@ type ComponentBuildResults struct {
 
 	// RPMChannels holds the resolved publish channel for each RPM, parallel to [RPMPaths].
 	// Empty string means no channel was configured for that package.
-	RPMChannels []string `json:"rpmChannels" table:"Channels"`
+	RPMChannels []string `json:"rpmChannels" table:"Publish Channels"`
 
 	// RPMs contains enriched per-RPM information including the resolved publish channel.
 	RPMs []RPMResult `json:"rpms" table:"-"`
