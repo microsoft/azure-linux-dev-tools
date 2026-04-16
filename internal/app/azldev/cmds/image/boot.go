@@ -27,8 +27,9 @@ const (
 	tempDirPrefixBoot = "azlboot"
 
 	// Default values for VM configuration.
-	defaultSSHPort = 8888
-	defaultCPUs    = 8
+	defaultSSHPort  = 8888
+	defaultCPUs     = 8
+	defaultDiskSize = "10G"
 
 	// Default hostname for cloud-init metadata.
 	defaultHostname = "azurelinux-vm"
@@ -98,19 +99,34 @@ func QEMUDriver(format string) string {
 
 // ImageBootOptions contains options for the boot command.
 type ImageBootOptions struct {
-	Arch                    qemu.Arch
-	AuthorizedPublicKeyPath string
-	UseDiskRW               bool
-	ImageName               string
-	ImagePath               string
-	Format                  ImageFormat
-	SecureBoot              bool
+	// VM configuration (applies to all boot modes).
+	Arch       qemu.Arch
+	SecureBoot bool
+	SSHPort    uint16
+	CPUs       int
+	Memory     string
+
+	// Image source: at least one must be provided (unless '--iso' is used, in which case
+	// an empty disk is created if no image is specified).
+	ImageName string      // Positional arg: look up image in project config to find its path.
+	ImagePath string      // --image-path: explicit path to a disk image (overrides lookup).
+	Format    ImageFormat // --format: explicit format hint for image-name lookup.
+
+	// --iso: bootable ISO (e.g., livecd, installer, rescue media). Attached as a
+	// bootable CD-ROM alongside the disk. Optional; independent of cloud-init.
+	ISOPath  string
+	DiskSize string // --disk-size: size of the empty qcow2 created when '--iso' is used without a disk.
+
+	// Disk behavior.
+	UseDiskRW bool // --rwdisk: persist writes to the source disk image.
+
+	// Cloud-init configuration. If any credential is provided, a seed ISO is generated
+	// and attached. Whether the booted system consumes it depends on cloud-init being
+	// installed and enabled in the guest (same caveat applies to disk and ISO images).
 	TestUserName            string
 	TestUserPassword        string
 	TestUserPasswordFile    string
-	SSHPort                 uint16
-	CPUs                    int
-	Memory                  string
+	AuthorizedPublicKeyPath string
 }
 
 func bootOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
@@ -126,15 +142,26 @@ func NewImageBootCmd() *cobra.Command {
 		Short: "Boot an Azure Linux image in a QEMU VM",
 		Long: `Boot an Azure Linux image in a QEMU virtual machine.
 
-This command starts a QEMU VM with the specified disk image, setting up a test user
-via cloud-init for access. SSH is forwarded to the host on the specified port (default 8888).
+This command starts a QEMU VM with the specified disk image and/or bootable ISO.
+SSH is forwarded to the host on the specified port (default 8888). If cloud-init
+credentials are provided, a NoCloud seed ISO is generated and attached; the guest
+will consume it only if cloud-init is installed and enabled.
 
-The image can be specified either by name (positional argument) which will look up the
-built image in the output directory, or by explicit path using --image-path.
+Image sources (at least one is required):
+  - IMAGE_NAME (positional):  Look up a built image in the project output directory.
+  - '--image-path':           Explicit path to a disk image (may also be combined with
+                              IMAGE_NAME to override the default location).
+  - '--iso':                  Bootable ISO (livecd, installer, rescue). May be combined
+                              with a disk image, or used alone to boot an empty disk.
+
+When '--iso' is used without a disk image, an empty qcow2 disk is created (size set
+via '--disk-size') for the live/installer ISO to install onto. The VM console is
+serial-only (-nographic), so the ISO must support serial console interaction.
 
 Requirements:
   - qemu-system-x86_64/qemu-system-aarch64 (QEMU emulator)
-  - genisoimage (for creating cloud-init ISO)
+  - genisoimage (only when cloud-init credentials are provided)
+  - qemu-img (only when creating an empty disk for '--iso')
   - sudo (for running QEMU with KVM)
   - OVMF firmware (for UEFI boot)`,
 		Example: `  # Boot an image by name
@@ -144,25 +171,41 @@ Requirements:
   azldev image boot --image-path ./out/my-image.qcow2 --test-password secret
 
   # Boot with SSH on a custom port and extra memory
-  azldev image boot my-image --test-password-file ~/.azl-test-pw --ssh-port 2222 --memory 8G`,
-		Args: cobra.MaximumNArgs(1),
-		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
-			if env.WorkDir() == "" {
-				return nil, errors.New("work dir must be specified in config")
-			}
+  azldev image boot my-image --test-password-file ~/.azl-test-pw --ssh-port 2222 --memory 8G
 
-			if len(args) > 0 {
-				options.ImageName = args[0]
-			}
+  # Boot from an ISO (livecd / installer) onto a new empty 20G disk
+  azldev image boot --iso ~/Downloads/azurelinux.iso --disk-size 20G
 
-			return nil, bootImage(env, options)
-		}),
+  # Boot an existing disk image with a rescue ISO attached
+  azldev image boot --image-path ./out/my-image.qcow2 --iso ~/Downloads/rescue.iso
+
+  # Boot from a live ISO with cloud-init credentials (consumed if the live image
+  # has cloud-init installed; otherwise harmlessly ignored)
+  azldev image boot --iso ~/Downloads/livecd.iso --test-password secret`,
+		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: generateImageNameCompletions,
 	}
+
+	cmd.RunE = azldev.RunFuncWithoutRequiredConfigWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
+		if len(args) > 0 {
+			options.ImageName = args[0]
+		}
+
+		diskSizeExplicit := cmd.Flags().Lookup("disk-size").Changed
+
+		return nil, bootImage(env, options, diskSizeExplicit)
+	})
 
 	cmd.Flags().StringVarP(&options.ImagePath, "image-path", "i", "",
 		"Path to the disk image file (overrides positional image name)")
 	_ = cmd.MarkFlagFilename("image-path")
+
+	cmd.Flags().StringVar(&options.ISOPath, "iso", "",
+		"Path to an ISO file to boot from (livecd, installer, or rescue media)")
+	_ = cmd.MarkFlagFilename("iso")
+
+	cmd.Flags().StringVar(&options.DiskSize, "disk-size", defaultDiskSize,
+		"Size of the empty virtual disk created for ISO boot (e.g., 10G, 20G, 512M)")
 
 	addBootFlags(cmd, options)
 
@@ -180,7 +223,6 @@ func addBootFlags(cmd *cobra.Command, options *ImageBootOptions) {
 		"Path to file containing the password for the test account")
 	_ = cmd.MarkFlagFilename("test-password-file")
 	cmd.MarkFlagsMutuallyExclusive("test-password", "test-password-file")
-	cmd.MarkFlagsOneRequired("test-password", "test-password-file")
 
 	cmd.Flags().StringVar(&options.AuthorizedPublicKeyPath, "authorized-public-key", "",
 		"Path to public key authorized for SSH to test user account")
@@ -204,50 +246,144 @@ func addBootFlags(cmd *cobra.Command, options *ImageBootOptions) {
 			return qemu.SupportedArchitectures(), cobra.ShellCompDirectiveNoFileComp
 		})
 
+	// '--format' only affects image-name lookup; it conflicts with an explicit path.
 	cmd.MarkFlagsMutuallyExclusive("image-path", "format")
 }
 
-func bootImage(env *azldev.Env, options *ImageBootOptions) error {
-	// Resolve password from file if specified (do this before validation since
-	// file reading is not validation).
-	if options.TestUserPasswordFile != "" {
-		passwordBytes, err := fileutils.ReadFile(env.FS(), options.TestUserPasswordFile)
-		if err != nil {
-			return fmt.Errorf("failed to read password file %#q:\n%w", options.TestUserPasswordFile, err)
-		}
+func bootImage(env *azldev.Env, options *ImageBootOptions, diskSizeExplicit bool) error {
+	needEmptyDisk := options.ISOPath != "" && options.ImagePath == "" && options.ImageName == ""
 
-		options.TestUserPassword = strings.TrimSpace(string(passwordBytes))
+	if err := validateBootOptions(options, diskSizeExplicit, needEmptyDisk); err != nil {
+		return err
 	}
 
-	// Default to host architecture if not specified.
+	if err := resolveTestPassword(env, options); err != nil {
+		return err
+	}
+
+	needCloudInit := options.TestUserPassword != "" || options.AuthorizedPublicKeyPath != ""
+
+	if err := verifyISOExists(env, options.ISOPath); err != nil {
+		return err
+	}
+
 	arch := string(options.Arch)
 	if arch == "" {
 		arch = qemu.GoArchToQEMUArch(runtime.GOARCH)
 	}
 
-	// Warn about persistent disk writes.
-	if options.UseDiskRW {
-		slog.Warn("--rwdisk enabled: changes will persist to the source disk image")
-	}
+	warnRWDisk(options, needEmptyDisk)
 
-	if err := checkBootPrerequisites(env, arch); err != nil {
+	if err := checkBootPrerequisites(env, arch, needEmptyDisk, needCloudInit); err != nil {
 		return err
 	}
 
-	// Resolve image path: explicit --image-path takes precedence, otherwise resolve from image name.
-	imagePath := options.ImagePath
-	imageFormat := string(options.Format)
+	imagePath, imageFormat, err := resolveDiskSource(env, options)
+	if err != nil {
+		return err
+	}
 
-	if imagePath == "" {
-		if options.ImageName == "" {
-			return errors.New("either IMAGE_NAME argument or --image-path must be specified")
+	if env.DryRun() {
+		slog.Info("Dry-run: would boot VM",
+			slog.String("iso", options.ISOPath),
+			slog.String("disk", imagePath),
+			slog.String("disk-format", imageFormat),
+			slog.String("arch", arch),
+			slog.Bool("empty-disk", needEmptyDisk),
+			slog.Bool("cloud-init", needCloudInit),
+		)
+
+		return nil
+	}
+
+	return runQEMUBoot(env, options, arch, imagePath, imageFormat, needEmptyDisk, needCloudInit)
+}
+
+func validateBootOptions(options *ImageBootOptions, diskSizeExplicit, needEmptyDisk bool) error {
+	if options.ISOPath == "" && options.ImagePath == "" && options.ImageName == "" {
+		return errors.New("must specify at least one of: IMAGE_NAME, '--image-path', or '--iso'")
+	}
+
+	if diskSizeExplicit && !needEmptyDisk {
+		return errors.New("'--disk-size' only applies when '--iso' is used without a disk image " +
+			"(IMAGE_NAME or '--image-path')")
+	}
+
+	return nil
+}
+
+func resolveTestPassword(env *azldev.Env, options *ImageBootOptions) error {
+	if options.TestUserPasswordFile == "" {
+		return nil
+	}
+
+	passwordBytes, err := fileutils.ReadFile(env.FS(), options.TestUserPasswordFile)
+	if err != nil {
+		return fmt.Errorf("failed to read password file %#q:\n%w", options.TestUserPasswordFile, err)
+	}
+
+	options.TestUserPassword = strings.TrimSpace(string(passwordBytes))
+
+	return nil
+}
+
+func verifyISOExists(env *azldev.Env, isoPath string) error {
+	if isoPath == "" {
+		return nil
+	}
+
+	exists, err := fileutils.Exists(env.FS(), isoPath)
+	if err != nil {
+		return fmt.Errorf("failed to check ISO file %#q:\n%w", isoPath, err)
+	}
+
+	if !exists {
+		return fmt.Errorf("ISO file %#q not found", isoPath)
+	}
+
+	return nil
+}
+
+func warnRWDisk(options *ImageBootOptions, needEmptyDisk bool) {
+	if !options.UseDiskRW {
+		return
+	}
+
+	if needEmptyDisk {
+		slog.Warn("'--rwdisk' has no effect with '--iso' alone; the empty disk is ephemeral")
+	} else {
+		slog.Warn("'--rwdisk' enabled: changes will persist to the source disk image")
+	}
+}
+
+// resolveDiskSource returns the source disk image path and format (empty strings if
+// no source disk was requested — i.e., '--iso' is used alone). If IMAGE_NAME is
+// supplied, its presence in project config is validated regardless of whether
+// '--image-path' overrides the file location.
+func resolveDiskSource(env *azldev.Env, options *ImageBootOptions) (imagePath, imageFormat string, err error) {
+	if options.ImageName != "" {
+		if _, err := ResolveImageByName(env, options.ImageName); err != nil {
+			return "", "", err
+		}
+	}
+
+	switch {
+	case options.ImagePath != "":
+		imageFormat, err = InferImageFormat(options.ImagePath)
+		if err != nil {
+			return "", "", err
 		}
 
-		var err error
+		imagePath = options.ImagePath
 
-		imagePath, imageFormat, err = findBootableImageArtifact(env, options.ImageName, imageFormat)
+		slog.Info("Using disk image",
+			slog.String("path", imagePath),
+			slog.String("format", imageFormat),
+		)
+	case options.ImageName != "":
+		imagePath, imageFormat, err = findBootableImageArtifact(env, options.ImageName, string(options.Format))
 		if err != nil {
-			return err
+			return "", "", err
 		}
 
 		slog.Info("Resolved image artifact",
@@ -255,33 +391,106 @@ func bootImage(env *azldev.Env, options *ImageBootOptions) error {
 			slog.String("path", imagePath),
 			slog.String("format", imageFormat),
 		)
-	} else {
-		// Infer format from the file extension when --image-path is used.
-		var err error
+	}
 
-		imageFormat, err = InferImageFormat(imagePath)
+	return imagePath, imageFormat, nil
+}
+
+// runQEMUBoot performs the actual QEMU boot: prepares the temp dir, creates any
+// transient artifacts (empty disk, ephemeral disk copy, cloud-init seed ISO), and
+// invokes QEMU. All boot modes converge here.
+func runQEMUBoot(
+	env *azldev.Env,
+	options *ImageBootOptions,
+	arch, imagePath, imageFormat string,
+	needEmptyDisk, needCloudInit bool,
+) (err error) {
+	bootEnv, err := prepareQEMUBootEnv(env, arch, options.SecureBoot)
+	if err != nil {
+		return err
+	}
+
+	defer fileutils.RemoveAllAndUpdateErrorIfNil(env.FS(), bootEnv.tempDir, &err)
+
+	// Prepare the disk: either create an empty qcow2, or use/copy the source disk.
+	var diskPath, diskFormat string
+
+	switch {
+	case needEmptyDisk:
+		diskPath = filepath.Join(bootEnv.tempDir, "disk.qcow2")
+		diskFormat = string(ImageFormatQcow2)
+
+		slog.Info("Creating empty qcow2 disk",
+			slog.String("path", diskPath),
+			slog.String("size", options.DiskSize),
+		)
+
+		err = bootEnv.runner.CreateEmptyQcow2(env, diskPath, options.DiskSize)
+		if err != nil {
+			return fmt.Errorf("creating empty disk:\n%w", err)
+		}
+	default:
+		diskFormat = imageFormat
+
+		diskPath, err = prepareDiskForBoot(env, options, bootEnv.tempDir, imagePath, imageFormat)
 		if err != nil {
 			return err
 		}
-
-		slog.Info("Inferred image format from file extension",
-			slog.String("path", imagePath),
-			slog.String("format", imageFormat),
-		)
 	}
 
-	// Dry-run mode: log what would be executed and return early.
-	if env.DryRun() {
-		slog.Info("Dry-run: would boot image",
-			slog.String("path", imagePath),
-			slog.String("format", imageFormat),
-			slog.String("arch", arch),
-		)
+	// Build the cloud-init seed ISO if any cloud-init credentials were provided.
+	cloudInitISOPath := ""
 
-		return nil
+	if needCloudInit {
+		cloudInitISOPath = filepath.Join(bootEnv.tempDir, "cloud-init.iso")
+
+		err = buildCloudInitMetadataIso(env, options, cloudInitISOPath)
+		if err != nil {
+			return err
+		}
 	}
 
-	return bootImageUsingDiskFile(env, options, arch, imagePath, imageFormat)
+	slog.Info("Booting VM",
+		slog.String("iso", options.ISOPath),
+		slog.String("disk", diskPath),
+		slog.String("disk-format", diskFormat),
+		slog.String("arch", arch),
+	)
+
+	err = bootEnv.runner.Run(env, qemu.RunOptions{
+		Arch:             arch,
+		FirmwarePath:     bootEnv.firmwarePath,
+		NVRAMPath:        bootEnv.nvramPath,
+		DiskPath:         diskPath,
+		DiskType:         QEMUDriver(diskFormat),
+		CloudInitISOPath: cloudInitISOPath,
+		InstallISOPath:   options.ISOPath,
+		SecureBoot:       options.SecureBoot,
+		SSHPort:          int(options.SSHPort),
+		CPUs:             options.CPUs,
+		Memory:           options.Memory,
+	})
+	if err != nil {
+		return fmt.Errorf("running QEMU:\n%w", err)
+	}
+
+	return nil
+}
+
+// createBootTempDir creates a temporary directory for boot artifacts. It uses the project
+// work directory if available, otherwise falls back to the OS temp directory.
+func createBootTempDir(env *azldev.Env) (string, error) {
+	var baseDir string
+	if env.WorkDir() != "" {
+		baseDir = env.WorkDir()
+	}
+
+	tempDir, err := fileutils.MkdirTemp(env.FS(), baseDir, tempDirPrefixBoot)
+	if err != nil {
+		return "", fmt.Errorf("failed to create boot temp dir:\n%w", err)
+	}
+
+	return tempDir, nil
 }
 
 // fileExtensionsForFormat returns the file extensions to search for the given format.
@@ -450,71 +659,65 @@ func ResolveImageByName(env *azldev.Env, imageName string) (*projectconfig.Image
 	)
 }
 
-func checkBootPrerequisites(env *azldev.Env, arch string) error {
+func checkBootPrerequisites(env *azldev.Env, arch string, needQEMUImg, needGenisoimage bool) error {
 	if err := qemu.CheckPrerequisites(env, arch); err != nil {
 		return fmt.Errorf("checking QEMU prerequisites:\n%w", err)
 	}
 
-	if err := iso.CheckPrerequisites(env); err != nil {
-		return fmt.Errorf("checking genisoimage prerequisites:\n%w", err)
+	if needQEMUImg {
+		if err := qemu.CheckQEMUImgPrerequisite(env); err != nil {
+			return fmt.Errorf("checking qemu-img prerequisites:\n%w", err)
+		}
+	}
+
+	if needGenisoimage {
+		if err := iso.CheckPrerequisites(env); err != nil {
+			return fmt.Errorf("checking genisoimage prerequisites:\n%w", err)
+		}
 	}
 
 	return nil
 }
 
-func bootImageUsingDiskFile(
-	env *azldev.Env, options *ImageBootOptions, arch, imagePath, imageFormat string,
-) (err error) {
-	qemuRunner := qemu.NewRunner(env)
+// qemuBootEnv holds the common QEMU boot environment shared by all boot modes.
+type qemuBootEnv struct {
+	runner       *qemu.Runner
+	tempDir      string
+	firmwarePath string
+	nvramPath    string
+}
 
-	fwPath, nvramTemplatePath, err := qemuRunner.FindFirmware(arch, options.SecureBoot)
+// prepareQEMUBootEnv sets up the common QEMU boot environment: runner, temp dir,
+// firmware, and NVRAM. The caller must clean up tempDir (e.g., via defer).
+func prepareQEMUBootEnv(env *azldev.Env, arch string, secureBoot bool) (*qemuBootEnv, error) {
+	runner := qemu.NewRunner(env)
+
+	fwPath, nvramTemplatePath, err := runner.FindFirmware(arch, secureBoot)
 	if err != nil {
-		return fmt.Errorf("finding VM firmware:\n%w", err)
+		return nil, fmt.Errorf("finding VM firmware:\n%w", err)
 	}
 
-	tempDir, err := fileutils.MkdirTemp(env.FS(), env.WorkDir(), tempDirPrefixBoot)
+	tempDir, err := createBootTempDir(env)
 	if err != nil {
-		return fmt.Errorf("failed to create temp dir:\n%w", err)
+		return nil, fmt.Errorf("failed to create temp dir:\n%w", err)
 	}
-
-	defer fileutils.RemoveAllAndUpdateErrorIfNil(env.FS(), tempDir, &err)
 
 	nvramPath := filepath.Join(tempDir, "nvram.bin")
 
 	err = fileutils.CopyFile(env, env.FS(), nvramTemplatePath, nvramPath, fileutils.CopyFileOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to copy NVRAM template file:\n%w", err)
+		// Clean up temp dir since the caller won't have a chance to.
+		fileutils.RemoveAllAndUpdateErrorIfNil(env.FS(), tempDir, &err)
+
+		return nil, fmt.Errorf("failed to copy NVRAM template file:\n%w", err)
 	}
 
-	cloudInitMetadataIsoPath := filepath.Join(tempDir, "cloud-init.iso")
-
-	err = buildCloudInitMetadataIso(env, options, cloudInitMetadataIsoPath)
-	if err != nil {
-		return err
-	}
-
-	selectedDiskPath, err := prepareDiskForBoot(env, options, tempDir, imagePath, imageFormat)
-	if err != nil {
-		return err
-	}
-
-	err = qemuRunner.Run(env, qemu.RunOptions{
-		Arch:             arch,
-		FirmwarePath:     fwPath,
-		NVRAMPath:        nvramPath,
-		DiskPath:         selectedDiskPath,
-		DiskType:         QEMUDriver(imageFormat),
-		CloudInitISOPath: cloudInitMetadataIsoPath,
-		SecureBoot:       options.SecureBoot,
-		SSHPort:          int(options.SSHPort),
-		CPUs:             options.CPUs,
-		Memory:           options.Memory,
-	})
-	if err != nil {
-		return fmt.Errorf("running QEMU:\n%w", err)
-	}
-
-	return nil
+	return &qemuBootEnv{
+		runner:       runner,
+		tempDir:      tempDir,
+		firmwarePath: fwPath,
+		nvramPath:    nvramPath,
+	}, nil
 }
 
 // prepareDiskForBoot prepares the disk image for booting. If UseDiskRW is false,
@@ -537,7 +740,7 @@ func prepareDiskForBoot(
 }
 
 func buildCloudInitMetadataIso(env *azldev.Env, options *ImageBootOptions, outputFilePath string) (err error) {
-	tempDir, err := fileutils.MkdirTemp(env.FS(), env.WorkDir(), tempDirPrefixBoot)
+	tempDir, err := createBootTempDir(env)
 	if err != nil {
 		return fmt.Errorf("failed to create temp dir:\n%w", err)
 	}
@@ -579,14 +782,13 @@ func buildCloudInitMetadataIso(env *azldev.Env, options *ImageBootOptions, outpu
 // buildCloudInitConfig creates the cloud-init configuration for the test user.
 func buildCloudInitConfig(env *azldev.Env, options *ImageBootOptions) (*cloudinit.Config, error) {
 	testUserConfig := cloudinit.UserConfig{
-		Name:                  options.TestUserName,
-		Description:           "Test User",
-		EnableSSHPasswordAuth: lo.ToPtr(true),
-		Shell:                 "/bin/bash",
-		Sudo:                  []string{"ALL=(ALL) NOPASSWD:ALL"},
-		LockPassword:          lo.ToPtr(false),
-		PlainTextPassword:     options.TestUserPassword,
-		Groups:                []string{"sudo"},
+		Name:              options.TestUserName,
+		Description:       "Test User",
+		Shell:             "/bin/bash",
+		Sudo:              []string{"ALL=(ALL) NOPASSWD:ALL"},
+		LockPassword:      lo.ToPtr(false),
+		PlainTextPassword: options.TestUserPassword,
+		Groups:            []string{"sudo"},
 	}
 
 	if options.AuthorizedPublicKeyPath != "" {
