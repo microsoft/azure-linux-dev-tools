@@ -180,18 +180,16 @@ lives), or use -C to point to one.`,
 	return app
 }
 
-// addAdvancedCommandHint customizes the root help output to include a hint about
-// the hidden "advanced" command group.
+// addAdvancedCommandHint embeds a hint about the hidden "advanced" command group
+// into the root command's usage template so that DisableExtraNewlines handles
+// trailing whitespace consistently.
 func (a *App) addAdvancedCommandHint() {
-	defaultHelp := a.cmd.HelpFunc()
-	a.cmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
-		defaultHelp(cmd, args)
-
-		if cmd == cmd.Root() {
-			fmt.Fprintln(cmd.OutOrStdout(),
-				`Use "azldev advanced --help" for additional tools (mock, mcp, wget).`)
-		}
-	})
+	tmpl := a.cmd.UsageTemplate()
+	tmpl = strings.TrimSuffix(tmpl, "\n")
+	tmpl += `{{if not .HasParent}}
+Use "{{.CommandPath}} advanced --help" for additional tools (mock, mcp, wget).{{end}}
+`
+	a.cmd.SetUsageTemplate(tmpl)
 }
 
 // Returns the names of the app's commands. The optional provided list of ancestors
