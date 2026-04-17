@@ -18,6 +18,7 @@ func TestNewPackageListCommand(t *testing.T) {
 	require.NotNil(t, cmd)
 	assert.Equal(t, "list [package-name...]", cmd.Use)
 	assert.NotNil(t, cmd.RunE)
+	assert.NotNil(t, cmd.Flags().Lookup("omit-group"), "expected --omit-group flag to be registered")
 }
 
 func TestListPackages_NoCriteria(t *testing.T) {
@@ -212,4 +213,27 @@ func TestListPackages_DuplicatePackageAcrossComponents_ReturnsError(t *testing.T
 	assert.Contains(t, err.Error(), "component overrides in multiple components")
 	assert.Contains(t, err.Error(), "curl")
 	assert.Contains(t, err.Error(), "other")
+}
+
+func TestListPackages_OmitGroup_ClearsGroupField(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+	testEnv.Config.PackageGroups = map[string]projectconfig.PackageGroupConfig{
+		"devel-packages": {
+			Packages: []string{"curl-devel"},
+			DefaultPackageConfig: projectconfig.PackageConfig{
+				Publish: projectconfig.PackagePublishConfig{Channel: "devel"},
+			},
+		},
+	}
+
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{
+		All:       true,
+		OmitGroup: true,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, "curl-devel", results[0].PackageName)
+	assert.Empty(t, results[0].Group, "group should be empty when OmitGroup is true")
+	assert.Equal(t, "devel", results[0].Channel)
 }

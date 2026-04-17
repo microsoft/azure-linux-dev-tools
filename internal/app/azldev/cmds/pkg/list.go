@@ -21,6 +21,9 @@ type ListPackageOptions struct {
 	// PackageNames contains specific binary package names to look up.
 	// If a package is not in any explicit config it is still resolved using project defaults.
 	PackageNames []string
+
+	// OmitGroup omits the 'group' field from the output when true.
+	OmitGroup bool
 }
 
 func listOnAppInit(_ *azldev.App, parent *cobra.Command) {
@@ -56,7 +59,10 @@ Resolution order (lowest to highest priority):
   azldev package list -p curl -p wget
 
   # Output as JSON for scripting
-  azldev package list -a -q -O json`,
+  azldev package list -a -q -O json
+
+  # Output as JSON without the group field
+  azldev package list -a -q -O json --omit-group`,
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
 			options.PackageNames = append(args, options.PackageNames...)
 
@@ -66,6 +72,7 @@ Resolution order (lowest to highest priority):
 
 	cmd.Flags().BoolVarP(&options.All, "all-packages", "a", false, "List all explicitly-configured binary packages")
 	cmd.Flags().StringArrayVarP(&options.PackageNames, "package", "p", []string{}, "Package name to look up (repeatable)")
+	cmd.Flags().BoolVar(&options.OmitGroup, "omit-group", false, "Omit the 'group' field from the output")
 
 	azldev.ExportAsMCPTool(cmd)
 
@@ -78,7 +85,8 @@ type PackageListResult struct {
 	PackageName string `json:"packageName" table:"Package"`
 
 	// Group is the package-group this package belongs to, or empty if it is not in any group.
-	Group string `json:"group" table:"Group"`
+	// When [ListPackageOptions.OmitGroup] is true, this field is always empty and omitted from JSON.
+	Group string `json:"group,omitempty" table:"Group"`
 
 	// Component is the component that has an explicit per-package override for this package,
 	// or empty if the package is only configured via a group or project default.
@@ -178,9 +186,14 @@ func ListPackages(env *azldev.Env, options *ListPackageOptions) ([]PackageListRe
 			return nil, fmt.Errorf("failed to resolve config for package %#q:\n%w", pkgName, err)
 		}
 
+		group := groupOf[pkgName]
+		if options.OmitGroup {
+			group = ""
+		}
+
 		results = append(results, PackageListResult{
 			PackageName: pkgName,
-			Group:       groupOf[pkgName],
+			Group:       group,
 			Component:   compName,
 			Channel:     pkgConfig.Publish.Channel,
 		})
