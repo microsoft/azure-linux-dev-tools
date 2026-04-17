@@ -155,6 +155,7 @@ lives), or use -C to point to one.`,
 
 	app.cmd.SetHelpCommandGroupID(CommandGroupMeta)
 	app.cmd.SetCompletionCommandGroupID(CommandGroupMeta)
+	app.addAdvancedCommandHint()
 
 	// Define global flags and configuration settings.
 	app.cmd.PersistentFlags().BoolVarP(&app.verbose, "verbose", "v", false, "enable verbose output")
@@ -177,6 +178,20 @@ lives), or use -C to point to one.`,
 		false, "do not fail on unknown fields in TOML config files")
 
 	return app
+}
+
+// addAdvancedCommandHint customizes the root help output to include a hint about
+// the hidden "advanced" command group.
+func (a *App) addAdvancedCommandHint() {
+	defaultHelp := a.cmd.HelpFunc()
+	a.cmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		defaultHelp(cmd, args)
+
+		if cmd == cmd.Root() {
+			fmt.Fprintln(cmd.OutOrStdout(),
+				`Use "azldev advanced --help" for additional tools (mock, mcp, wget).`)
+		}
+	})
 }
 
 // Returns the names of the app's commands. The optional provided list of ancestors

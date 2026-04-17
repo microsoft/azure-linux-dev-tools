@@ -39,3 +39,4 @@ Meta commands:
 
 Use "[1;3mazldev[0m [command] --help" for more information about a command.
 
+Use "azldev advanced --help" for additional tools (mock, mcp, wget).
