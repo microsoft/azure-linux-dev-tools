@@ -14,7 +14,7 @@ var (
 
 // TestSuiteConfig defines a named test suite.
 type TestSuiteConfig struct {
-	// The test's name; not present in serialized TOML files (populated from the map key).
+	// The test suite's name; not present in serialized TOML files (populated from the map key).
 	Name string `toml:"-" json:"name" table:",sortkey"`
 
 	// Description of the test suite.
