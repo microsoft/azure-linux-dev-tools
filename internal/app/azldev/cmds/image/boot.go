@@ -330,6 +330,10 @@ func validateBootOptions(options *ImageBootOptions, diskSizeExplicit, needEmptyD
 			"(IMAGE_NAME or '--image-path')")
 	}
 
+	if needEmptyDisk && strings.TrimSpace(options.DiskSize) == "" {
+		return errors.New("'--disk-size' must be non-empty when '--iso' is used without a disk image")
+	}
+
 	return nil
 }
 
@@ -509,14 +513,19 @@ func runQEMUBoot(
 }
 
 // createBootTempDir creates a temporary directory for boot artifacts. It uses the project
-// work directory if available, otherwise falls back to the OS temp directory.
+// work directory if available, otherwise falls back to the OS temp directory (resolved
+// via the injected filesystem).
 func createBootTempDir(env *azldev.Env) (string, error) {
-	var baseDir string
 	if env.WorkDir() != "" {
-		baseDir = env.WorkDir()
+		tempDir, err := fileutils.MkdirTemp(env.FS(), env.WorkDir(), tempDirPrefixBoot)
+		if err != nil {
+			return "", fmt.Errorf("failed to create boot temp dir:\n%w", err)
+		}
+
+		return tempDir, nil
 	}
 
-	tempDir, err := fileutils.MkdirTemp(env.FS(), baseDir, tempDirPrefixBoot)
+	tempDir, err := fileutils.MkdirTempInTempDir(env.FS(), tempDirPrefixBoot)
 	if err != nil {
 		return "", fmt.Errorf("failed to create boot temp dir:\n%w", err)
 	}
@@ -812,12 +821,17 @@ func buildCloudInitMetadataIso(env *azldev.Env, options *ImageBootOptions, outpu
 
 // buildCloudInitConfig creates the cloud-init configuration for the test user.
 func buildCloudInitConfig(env *azldev.Env, options *ImageBootOptions) (*cloudinit.Config, error) {
+	hasPassword := options.TestUserPassword != ""
+
 	testUserConfig := cloudinit.UserConfig{
-		Name:              options.TestUserName,
-		Description:       "Test User",
-		Shell:             "/bin/bash",
-		Sudo:              []string{"ALL=(ALL) NOPASSWD:ALL"},
-		LockPassword:      lo.ToPtr(false),
+		Name:        options.TestUserName,
+		Description: "Test User",
+		Shell:       "/bin/bash",
+		Sudo:        []string{"ALL=(ALL) NOPASSWD:ALL"},
+		// Only unlock the password when one is actually provided. Otherwise the
+		// account would be unlocked with no defined password, which combined with
+		// SSH password auth could allow passwordless login.
+		LockPassword:      lo.ToPtr(!hasPassword),
 		PlainTextPassword: options.TestUserPassword,
 		Groups:            []string{"sudo"},
 	}
@@ -832,7 +846,8 @@ func buildCloudInitConfig(env *azldev.Env, options *ImageBootOptions) (*cloudini
 	}
 
 	return &cloudinit.Config{
-		EnableSSHPasswordAuth: lo.ToPtr(true),
+		// Only enable SSH password auth when a password is actually provided.
+		EnableSSHPasswordAuth: lo.ToPtr(hasPassword),
 		DisableRootUser:       lo.ToPtr(true),
 		ChangePasswords: &cloudinit.PasswordConfig{
 			Expire: lo.ToPtr(false),

@@ -273,9 +273,11 @@ func CheckPrerequisites(ctx opctx.Ctx, arch string) error {
 
 // CheckQEMUImgPrerequisite verifies that the 'qemu-img' tool is available.
 func CheckQEMUImgPrerequisite(ctx opctx.Ctx) error {
-	if !ctx.CommandInSearchPath("qemu-img") {
-		return errors.New("'qemu-img' is not installed or not found in PATH; " +
-			"it is required to create empty disk images for ISO boot")
+	if err := prereqs.RequireExecutable(ctx, "qemu-img", &prereqs.PackagePrereq{
+		AzureLinuxPackages: []string{"qemu-img"},
+		FedoraPackages:     []string{"qemu-img"},
+	}); err != nil {
+		return fmt.Errorf("'qemu-img' prerequisite check failed:\n%w", err)
 	}
 
 	return nil
