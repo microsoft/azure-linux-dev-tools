@@ -98,7 +98,8 @@ func BumpStaticRelease(releaseValue string, commitCount int) (string, error) {
 // When the Release tag uses a non-standard value (not %autorelease and not a leading
 // integer, e.g. %{pkg_release}), the component must set release-calculation to
 // "manual", and likely define an explicit overlay that sets the Release tag.
-// If release-calculation is not set, an error is returned.
+// If a non-standard Release is found and release-calculation is not "manual",
+// an error is returned.
 func (p *sourcePreparerImpl) tryBumpStaticRelease(
 	component components.Component,
 	sourcesDirPath string,
