@@ -854,7 +854,7 @@ description = "Other smoke tests"
 	}
 
 	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testFiles[0].path)
-	require.ErrorIs(t, err, ErrDuplicateTests)
+	require.ErrorIs(t, err, ErrDuplicateTestSuites)
 }
 
 func TestLoadAndResolveProjectConfig_ImageWithValidTestRef(t *testing.T) {
@@ -894,6 +894,6 @@ test-suites = [{ name = "nonexistent" }]
 
 	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
 	require.Error(t, err)
-	require.ErrorIs(t, err, ErrUndefinedTest)
+	require.ErrorIs(t, err, ErrUndefinedTestSuite)
 	assert.Contains(t, err.Error(), "nonexistent")
 }

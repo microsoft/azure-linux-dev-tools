@@ -6,10 +6,10 @@ package projectconfig
 import "errors"
 
 var (
-	// ErrDuplicateTests is returned when duplicate conflicting test definitions are found.
-	ErrDuplicateTests = errors.New("duplicate test")
-	// ErrUndefinedTest is returned when an image references a test name that is not defined.
-	ErrUndefinedTest = errors.New("undefined test reference")
+	// ErrDuplicateTestSuites is returned when duplicate conflicting test suite definitions are found.
+	ErrDuplicateTestSuites = errors.New("duplicate test suite")
+	// ErrUndefinedTestSuite is returned when an image references a test suite name that is not defined.
+	ErrUndefinedTestSuite = errors.New("undefined test suite reference")
 )
 
 // TestSuiteConfig defines a named test suite.

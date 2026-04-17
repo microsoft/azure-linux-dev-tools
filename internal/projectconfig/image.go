@@ -40,7 +40,7 @@ type ImageConfig struct {
 // single channel), images may be published to multiple channels simultaneously.
 type ImagePublishConfig struct {
 	// Channels lists the publish channels for this image.
-	Channels []string `toml:"channels,omitempty" json:"channels,omitempty" jsonschema:"title=Channels,description=List of publish channels for this image"`
+	Channels []string `toml:"channels,omitempty" json:"channels,omitempty" validate:"dive,required,ne=.,ne=..,excludesall=/\\" jsonschema:"title=Channels,description=List of publish channels for this image"`
 }
 
 // ImageCapabilities describes the features and properties of an image. Boolean fields

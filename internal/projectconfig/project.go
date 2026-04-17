@@ -106,8 +106,8 @@ func validateImageTestReferences(images map[string]ImageConfig, tests map[string
 		for _, testName := range image.TestNames() {
 			if _, ok := tests[testName]; !ok {
 				return fmt.Errorf(
-					"%w: image %#q references test %#q, which is not defined in [test-suites]",
-					ErrUndefinedTest, imageName, testName,
+					"%w: image %#q references test suite %#q, which is not defined in [test-suites]",
+					ErrUndefinedTestSuite, imageName, testName,
 				)
 			}
 		}

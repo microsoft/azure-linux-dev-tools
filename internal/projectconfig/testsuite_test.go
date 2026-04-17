@@ -106,7 +106,7 @@ func TestValidateTestSuiteReferences(t *testing.T) {
 		}
 		err := cfg.Validate()
 		require.Error(t, err)
-		require.ErrorIs(t, err, projectconfig.ErrUndefinedTest)
+		require.ErrorIs(t, err, projectconfig.ErrUndefinedTestSuite)
 		assert.Contains(t, err.Error(), "nonexistent")
 	})
 

@@ -260,7 +260,7 @@ func mergePackageGroups(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error
 func mergeTestSuites(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
 	for testName, test := range loadedCfg.TestSuites {
 		if _, ok := resolvedCfg.TestSuites[testName]; ok {
-			return fmt.Errorf("%w: %s", ErrDuplicateTests, testName)
+			return fmt.Errorf("%w: test suite %#q", ErrDuplicateTestSuites, testName)
 		}
 
 		// Fill out fields not explicitly serialized.

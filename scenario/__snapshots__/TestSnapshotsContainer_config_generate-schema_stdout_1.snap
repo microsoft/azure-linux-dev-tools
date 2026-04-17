@@ -342,6 +342,14 @@
           "type": "object",
           "title": "Package groups",
           "description": "Definitions of package groups for shared binary package configuration"
+        },
+        "test-suites": {
+          "additionalProperties": {
+            "$ref": "#/$defs/TestSuiteConfig"
+          },
+          "type": "object",
+          "title": "Test Suites",
+          "description": "Definitions of test suites for this project"
         }
       },
       "additionalProperties": false,
@@ -465,6 +473,32 @@
         "release-ver"
       ]
     },
+    "ImageCapabilities": {
+      "properties": {
+        "machine-bootable": {
+          "type": "boolean",
+          "title": "Machine bootable",
+          "description": "Whether the image can be booted on a machine (bare metal or VM)"
+        },
+        "container": {
+          "type": "boolean",
+          "title": "Container",
+          "description": "Whether the image can be run on an OCI container host"
+        },
+        "systemd": {
+          "type": "boolean",
+          "title": "Systemd",
+          "description": "Whether the image runs systemd as its init system"
+        },
+        "runtime-package-management": {
+          "type": "boolean",
+          "title": "Runtime package management",
+          "description": "Whether the image supports installing or removing packages at runtime"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "ImageConfig": {
       "properties": {
         "description": {
@@ -476,6 +510,21 @@
           "$ref": "#/$defs/ImageDefinition",
           "title": "Definition",
           "description": "Identifies where to find the definition for this image"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/ImageCapabilities",
+          "title": "Capabilities",
+          "description": "Features and properties of this image"
+        },
+        "tests": {
+          "$ref": "#/$defs/ImageTestsConfig",
+          "title": "Tests",
+          "description": "Test configuration for this image"
+        },
+        "publish": {
+          "$ref": "#/$defs/ImagePublishConfig",
+          "title": "Publish settings",
+          "description": "Publishing settings for this image"
         }
       },
       "additionalProperties": false,
@@ -508,6 +557,34 @@
           "type": "string",
           "title": "Profile",
           "description": "Optional field that specifies the profile to use when building the image"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ImagePublishConfig": {
+      "properties": {
+        "channels": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Channels",
+          "description": "List of publish channels for this image"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ImageTestsConfig": {
+      "properties": {
+        "test-suites": {
+          "items": {
+            "$ref": "#/$defs/TestSuiteRef"
+          },
+          "type": "array",
+          "title": "Test Suites",
+          "description": "List of test suite references that apply to this image"
         }
       },
       "additionalProperties": false,
@@ -727,6 +804,31 @@
       "type": "object",
       "required": [
         "type"
+      ]
+    },
+    "TestSuiteConfig": {
+      "properties": {
+        "description": {
+          "type": "string",
+          "title": "Description",
+          "description": "Description of this test suite"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "TestSuiteRef": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "Name",
+          "description": "Name of the test suite (must match a key in [test-suites])"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name"
       ]
     },
     "ToolsConfig": {
