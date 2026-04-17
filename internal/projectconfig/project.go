@@ -34,6 +34,9 @@ type ProjectConfig struct {
 	// Definitions of package groups with shared configuration.
 	PackageGroups map[string]PackageGroupConfig `toml:"package-groups,omitempty" json:"packageGroups,omitempty" jsonschema:"title=Package groups,description=Mapping of package group names to configurations for publish-time routing"`
 
+	// Definitions of test suites.
+	TestSuites map[string]TestSuiteConfig `toml:"test-suites,omitempty" json:"testSuites,omitempty" jsonschema:"title=Test Suites,description=Mapping of test suite names to configurations"`
+
 	// Root config file path; not serialized.
 	RootConfigFilePath string `toml:"-" json:"-"`
 	// Map from component names to groups they belong to; not serialized.
@@ -50,6 +53,7 @@ func NewProjectConfig() ProjectConfig {
 		Distros:           make(map[string]DistroDefinition),
 		GroupsByComponent: make(map[string][]string),
 		PackageGroups:     make(map[string]PackageGroupConfig),
+		TestSuites:        make(map[string]TestSuiteConfig),
 	}
 }
 
@@ -61,6 +65,10 @@ func (cfg *ProjectConfig) Validate() error {
 	}
 
 	if err := validatePackageGroupMembership(cfg.PackageGroups); err != nil {
+		return err
+	}
+
+	if err := validateImageTestReferences(cfg.Images, cfg.TestSuites); err != nil {
 		return err
 	}
 
@@ -84,6 +92,24 @@ func validatePackageGroupMembership(groups map[string]PackageGroupConfig) error 
 			}
 
 			seenIn[pkg] = groupName
+		}
+	}
+
+	return nil
+}
+
+// validateImageTestReferences checks that every test suite name in an image's
+// [ImageConfig.Tests.TestSuites] list corresponds to a defined entry in the top-level
+// TestSuites map.
+func validateImageTestReferences(images map[string]ImageConfig, tests map[string]TestSuiteConfig) error {
+	for imageName, image := range images {
+		for _, testName := range image.TestNames() {
+			if _, ok := tests[testName]; !ok {
+				return fmt.Errorf(
+					"%w: image %#q references test %#q, which is not defined in [test-suites]",
+					ErrUndefinedTest, imageName, testName,
+				)
+			}
 		}
 	}
 
