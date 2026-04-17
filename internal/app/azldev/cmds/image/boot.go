@@ -191,9 +191,12 @@ Requirements:
 			options.ImageName = args[0]
 		}
 
-		diskSizeExplicit := cmd.Flags().Lookup("disk-size").Changed
+		explicit := bootFlagsExplicit{
+			DiskSize: cmd.Flags().Lookup("disk-size").Changed,
+			TestUser: cmd.Flags().Lookup("test-user").Changed,
+		}
 
-		return nil, bootImage(env, options, diskSizeExplicit)
+		return nil, bootImage(env, options, explicit)
 	})
 
 	cmd.Flags().StringVarP(&options.ImagePath, "image-path", "i", "",
@@ -250,10 +253,18 @@ func addBootFlags(cmd *cobra.Command, options *ImageBootOptions) {
 	cmd.MarkFlagsMutuallyExclusive("image-path", "format")
 }
 
-func bootImage(env *azldev.Env, options *ImageBootOptions, diskSizeExplicit bool) error {
+// bootFlagsExplicit tracks which flags were explicitly set on the command line
+// (vs. left at their default). Used to distinguish "user said nothing" from
+// "user said the default".
+type bootFlagsExplicit struct {
+	DiskSize bool
+	TestUser bool
+}
+
+func bootImage(env *azldev.Env, options *ImageBootOptions, explicit bootFlagsExplicit) error {
 	needEmptyDisk := options.ISOPath != "" && options.ImagePath == "" && options.ImageName == ""
 
-	if err := validateBootOptions(options, diskSizeExplicit, needEmptyDisk); err != nil {
+	if err := validateBootOptions(options, explicit.DiskSize, needEmptyDisk); err != nil {
 		return err
 	}
 
@@ -261,7 +272,17 @@ func bootImage(env *azldev.Env, options *ImageBootOptions, diskSizeExplicit bool
 		return err
 	}
 
-	needCloudInit := options.TestUserPassword != "" || options.AuthorizedPublicKeyPath != ""
+	// Cloud-init is needed whenever the user asked for any user-provisioning behavior:
+	// credentials (password / SSH key) OR an explicit '--test-user' (which signals
+	// they want the named account created even if no auth is supplied — otherwise
+	// '--test-user' would be silently ignored).
+	needCloudInit := shouldBuildCloudInit(options, explicit.TestUser)
+
+	hasLoginCredential := options.TestUserPassword != "" || options.AuthorizedPublicKeyPath != ""
+	if !hasLoginCredential {
+		slog.Warn("No test password ('--test-password'/'--test-password-file') or SSH key " +
+			"('--authorized-public-key') supplied; you may have no way to log in to the booted OS")
+	}
 
 	if err := verifyISOExists(env, options.ISOPath); err != nil {
 		return err
@@ -310,6 +331,16 @@ func validateBootOptions(options *ImageBootOptions, diskSizeExplicit, needEmptyD
 	}
 
 	return nil
+}
+
+// shouldBuildCloudInit reports whether a cloud-init NoCloud seed ISO should be
+// generated and attached. It returns true when the user supplied any
+// user-provisioning intent: credentials (password or SSH key) OR an explicit
+// '--test-user' (otherwise '--test-user' would be silently ignored).
+func shouldBuildCloudInit(options *ImageBootOptions, testUserExplicit bool) bool {
+	return options.TestUserPassword != "" ||
+		options.AuthorizedPublicKeyPath != "" ||
+		testUserExplicit
 }
 
 func resolveTestPassword(env *azldev.Env, options *ImageBootOptions) error {
