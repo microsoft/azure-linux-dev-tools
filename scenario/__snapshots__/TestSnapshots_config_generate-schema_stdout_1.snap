@@ -106,14 +106,10 @@
           "title": "Spec",
           "description": "Identifies where to find the spec for this component"
         },
-        "release-calculation": {
-          "type": "string",
-          "enum": [
-            "auto",
-            "manual"
-          ],
-          "title": "Release calculation",
-          "description": "Controls how the Release tag is managed during rendering. Empty or omitted means auto."
+        "release": {
+          "$ref": "#/$defs/ReleaseConfig",
+          "title": "Release configuration",
+          "description": "Configuration for how the Release tag is managed during rendering."
         },
         "overlays": {
           "items": {
@@ -655,6 +651,22 @@
           "type": "string",
           "title": "Default Author Email",
           "description": "Default email for synthetic changelog entries and commits"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ReleaseConfig": {
+      "properties": {
+        "calculation": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "manual"
+          ],
+          "title": "Release calculation",
+          "description": "Controls how the Release tag is managed during rendering. Empty or omitted means auto.",
+          "default": "auto"
         }
       },
       "additionalProperties": false,

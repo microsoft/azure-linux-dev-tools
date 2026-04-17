@@ -53,7 +53,9 @@ func TestTryBumpStaticRelease_ManualSkips(t *testing.T) {
 	preparer := newTestPreparer(memFS)
 
 	comp := mockComponent(ctrl, "kernel", &projectconfig.ComponentConfig{
-		ReleaseCalculation: projectconfig.ReleaseCalculationManual,
+		Release: projectconfig.ReleaseConfig{
+			Calculation: projectconfig.ReleaseCalculationManual,
+		},
 	})
 
 	// No spec file needed — should skip before reading anything.
@@ -69,7 +71,9 @@ func TestTryBumpStaticRelease_AutoreleaseSkips(t *testing.T) {
 	writeTestSpec(t, memFS, "test-pkg", "%autorelease")
 
 	comp := mockComponent(ctrl, "test-pkg", &projectconfig.ComponentConfig{
-		ReleaseCalculation: projectconfig.ReleaseCalculationAuto,
+		Release: projectconfig.ReleaseConfig{
+			Calculation: projectconfig.ReleaseCalculationAuto,
+		},
 	})
 
 	err := preparer.tryBumpStaticRelease(comp, filepath.Join(testSourcesDir, "test-pkg"), 3)
@@ -84,7 +88,9 @@ func TestTryBumpStaticRelease_StaticBumps(t *testing.T) {
 	writeTestSpec(t, memFS, "test-pkg", "1%{?dist}")
 
 	comp := mockComponent(ctrl, "test-pkg", &projectconfig.ComponentConfig{
-		ReleaseCalculation: projectconfig.ReleaseCalculationAuto,
+		Release: projectconfig.ReleaseConfig{
+			Calculation: projectconfig.ReleaseCalculationAuto,
+		},
 	})
 
 	err := preparer.tryBumpStaticRelease(comp, filepath.Join(testSourcesDir, "test-pkg"), 3)
@@ -105,13 +111,15 @@ func TestTryBumpStaticRelease_NonStandardErrorsWithoutManual(t *testing.T) {
 	writeTestSpec(t, memFS, "kernel", "%{pkg_release}")
 
 	comp := mockComponent(ctrl, "kernel", &projectconfig.ComponentConfig{
-		ReleaseCalculation: projectconfig.ReleaseCalculationAuto,
+		Release: projectconfig.ReleaseConfig{
+			Calculation: projectconfig.ReleaseCalculationAuto,
+		},
 	})
 
 	err := preparer.tryBumpStaticRelease(comp, filepath.Join(testSourcesDir, "kernel"), 3)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot be auto-bumped")
-	assert.Contains(t, err.Error(), "release-calculation")
+	assert.Contains(t, err.Error(), "release.calculation")
 }
 
 func TestTryBumpStaticRelease_NonStandardSucceedsWithManual(t *testing.T) {
@@ -122,7 +130,9 @@ func TestTryBumpStaticRelease_NonStandardSucceedsWithManual(t *testing.T) {
 	writeTestSpec(t, memFS, "kernel", "%{pkg_release}")
 
 	comp := mockComponent(ctrl, "kernel", &projectconfig.ComponentConfig{
-		ReleaseCalculation: projectconfig.ReleaseCalculationManual,
+		Release: projectconfig.ReleaseConfig{
+			Calculation: projectconfig.ReleaseCalculationManual,
+		},
 	})
 
 	err := preparer.tryBumpStaticRelease(comp, filepath.Join(testSourcesDir, "kernel"), 3)

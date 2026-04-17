@@ -463,8 +463,8 @@ func (r *Resolver) createComponentFromConfig(componentConfig *projectconfig.Comp
 			componentConfig.Name, err)
 	}
 
-	if componentConfig.ReleaseCalculation == "" {
-		componentConfig.ReleaseCalculation = projectconfig.ReleaseCalculationAuto
+	if componentConfig.Release.Calculation == "" {
+		componentConfig.Release.Calculation = projectconfig.ReleaseCalculationAuto
 	}
 
 	return &resolvedComponent{

@@ -122,6 +122,12 @@ const (
 	ReleaseCalculationManual ReleaseCalculation = "manual"
 )
 
+// ReleaseConfig holds release-related configuration for a component.
+type ReleaseConfig struct {
+	// Calculation controls how the Release tag is managed during rendering.
+	Calculation ReleaseCalculation `toml:"calculation,omitempty" json:"calculation,omitempty" validate:"omitempty,oneof=auto manual" jsonschema:"enum=auto,enum=manual,default=auto,title=Release calculation,description=Controls how the Release tag is managed during rendering. Empty or omitted means auto."`
+}
+
 // Defines a component.
 type ComponentConfig struct {
 	// The component's name; not actually present in serialized files.
@@ -139,10 +145,8 @@ type ComponentConfig struct {
 	// Where to get its spec and adjacent files from.
 	Spec SpecSource `toml:"spec,omitempty" json:"spec,omitempty" jsonschema:"title=Spec,description=Identifies where to find the spec for this component"`
 
-	// ReleaseCalculation controls how the Release tag is managed during rendering.
-	// Defaults to auto (empty). Set to "manual" for components that manage their own
-	// release numbering (e.g. kernel).
-	ReleaseCalculation ReleaseCalculation `toml:"release-calculation,omitempty" json:"releaseCalculation,omitempty" validate:"omitempty,oneof=auto manual" jsonschema:"enum=auto,enum=manual,title=Release calculation,description=Controls how the Release tag is managed during rendering. Empty or omitted means auto."`
+	// Release configuration for this component.
+	Release ReleaseConfig `toml:"release,omitempty" json:"release,omitempty" table:"-" jsonschema:"title=Release configuration,description=Configuration for how the Release tag is managed during rendering."`
 
 	// Overlays to apply to sources after they've been acquired. May mutate the spec as well as sources.
 	Overlays []ComponentOverlay `toml:"overlays,omitempty" json:"overlays,omitempty" table:"-" jsonschema:"title=Overlays,description=Overlays to apply to this component's spec and/or sources"`
@@ -192,7 +196,7 @@ func (c *ComponentConfig) WithAbsolutePaths(referenceDir string) *ComponentConfi
 		Name:                 c.Name,
 		SourceConfigFile:     c.SourceConfigFile,
 		RenderedSpecDir:      c.RenderedSpecDir,
-		ReleaseCalculation:   c.ReleaseCalculation,
+		Release:              c.Release,
 		Spec:                 deep.MustCopy(c.Spec),
 		Build:                deep.MustCopy(c.Build),
 		SourceFiles:          deep.MustCopy(c.SourceFiles),

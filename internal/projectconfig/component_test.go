@@ -216,20 +216,20 @@ func TestReleaseCalculationValidation(t *testing.T) {
 	validate := validator.New()
 
 	// Empty (omitted) is valid — resolved to "auto" by the component resolver.
-	require.NoError(t, validate.Struct(&projectconfig.ComponentConfig{}))
+	require.NoError(t, validate.Struct(&projectconfig.ReleaseConfig{}))
 
 	// Explicit "auto" is valid.
-	require.NoError(t, validate.Struct(&projectconfig.ComponentConfig{
-		ReleaseCalculation: projectconfig.ReleaseCalculationAuto,
+	require.NoError(t, validate.Struct(&projectconfig.ReleaseConfig{
+		Calculation: projectconfig.ReleaseCalculationAuto,
 	}))
 
 	// Explicit "manual" is valid.
-	require.NoError(t, validate.Struct(&projectconfig.ComponentConfig{
-		ReleaseCalculation: projectconfig.ReleaseCalculationManual,
+	require.NoError(t, validate.Struct(&projectconfig.ReleaseConfig{
+		Calculation: projectconfig.ReleaseCalculationManual,
 	}))
 
 	// Invalid value is rejected.
-	require.Error(t, validate.Struct(&projectconfig.ComponentConfig{
-		ReleaseCalculation: "manaul",
+	require.Error(t, validate.Struct(&projectconfig.ReleaseConfig{
+		Calculation: "manaul",
 	}))
 }

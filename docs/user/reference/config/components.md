@@ -9,7 +9,7 @@ A component definition tells azldev where to find the spec file, how to customiz
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
 | Spec source | `spec` | [SpecSource](#spec-source) | No | Where to find the spec file for this component. Inherited from distro defaults if not specified. |
-| Release calculation | `release-calculation` | string | No | Controls how the Release tag is managed during rendering. `"auto"` (default) = auto-bump; `"manual"` = skip all automatic Release manipulation |
+| Release config | `release` | [ReleaseConfig](#release-configuration) | No | Controls how the Release tag is managed during rendering |
 | Overlays | `overlays` | array of [Overlay](overlays.md) | No | Modifications to apply to the spec and/or source files |
 | Build config | `build` | [BuildConfig](#build-configuration) | No | Build-time options (macros, conditionals, check config) |
 | Source files | `source-files` | array of [SourceFileReference](#source-file-references) | No | Additional source files to download for this component |
@@ -97,6 +97,21 @@ spec = { type = "local", path = "azurelinux-release.spec" }
 ```
 
 The `path` is relative to the config file that defines the component. Local spec files and any associated source files should be placed alongside the component's `.comp.toml` file.
+
+## Release Configuration
+
+The `[components.<name>.release]` section controls how azldev manages the Release tag during rendering.
+
+| Field | TOML Key | Type | Required | Description |
+|-------|----------|------|----------|-------------|
+| Calculation | `calculation` | string | No | `"auto"` (default) = auto-bump; `"manual"` = skip all automatic Release manipulation |
+
+Most components use auto mode (the default) and need no release configuration. Set `calculation = "manual"` for components that manage their own release numbering, such as kernel:
+
+```toml
+[components.kernel.release]
+calculation = "manual"
+```
 
 ## Build Configuration
 

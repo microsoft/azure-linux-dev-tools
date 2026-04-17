@@ -96,16 +96,16 @@ func BumpStaticRelease(releaseValue string, commitCount int) (string, error) {
 // already resolves the release number from git history.
 //
 // When the Release tag uses a non-standard value (not %autorelease and not a leading
-// integer, e.g. %{pkg_release}), the component must set release-calculation to
+// integer, e.g. %{pkg_release}), the component must set release.calculation to
 // "manual", and likely define an explicit overlay that sets the Release tag.
-// If a non-standard Release is found and release-calculation is not "manual",
+// If a non-standard Release is found and release.calculation is not "manual",
 // an error is returned.
 func (p *sourcePreparerImpl) tryBumpStaticRelease(
 	component components.Component,
 	sourcesDirPath string,
 	commitCount int,
 ) error {
-	if component.GetConfig().ReleaseCalculation == projectconfig.ReleaseCalculationManual {
+	if component.GetConfig().Release.Calculation == projectconfig.ReleaseCalculationManual {
 		slog.Debug("Component uses manual release calculation; skipping static release bump",
 			"component", component.GetName())
 
@@ -133,10 +133,10 @@ func (p *sourcePreparerImpl) tryBumpStaticRelease(
 	newRelease, err := BumpStaticRelease(releaseValue, commitCount)
 	if err != nil {
 		// The Release tag does not start with an integer (e.g. %{pkg_release})
-		// and the user did not set release-calculation to "manual".
+		// and the user did not set release.calculation to "manual".
 		return fmt.Errorf(
 			"component %#q has a non-standard Release tag value %#q that cannot be auto-bumped; "+
-				"set 'release-calculation = \"manual\"' in the component configuration "+
+				"set 'release.calculation = \"manual\"' in the component configuration "+
 				"and add a \"spec-set-tag\" overlay for the Release tag if needed:\n%w",
 			component.GetName(), releaseValue, err)
 	}
