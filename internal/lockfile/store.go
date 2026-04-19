@@ -4,6 +4,7 @@
 package lockfile
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
@@ -60,15 +61,27 @@ func (s *Store) Get(componentName string) (*ComponentLock, error) {
 }
 
 // GetOrNew returns the lock for a component, creating a new empty lock if
-// none exists on disk. Useful for update flows that create locks for new
-// components.
-func (s *Store) GetOrNew(componentName string) *ComponentLock {
+// the lock file does not exist on disk. Returns an error if the lock file
+// exists but cannot be loaded (e.g., corrupt TOML, unsupported version).
+func (s *Store) GetOrNew(componentName string) (*ComponentLock, error) {
 	lock, err := s.Get(componentName)
 	if err != nil {
-		lock = New()
+		// Distinguish "not found" from other errors. Only create a new lock
+		// if the file doesn't exist; corrupt/unreadable files should be
+		// surfaced as errors to avoid silently losing data.
+		exists, existsErr := s.Exists(componentName)
+		if existsErr != nil {
+			return nil, fmt.Errorf("checking lock for %#q:\n%w", componentName, existsErr)
+		}
+
+		if exists {
+			return nil, fmt.Errorf("loading existing lock for %#q:\n%w", componentName, err)
+		}
+
+		return New(), nil
 	}
 
-	return lock
+	return lock, nil
 }
 
 // Save writes the lock for a component to disk and updates the cache.

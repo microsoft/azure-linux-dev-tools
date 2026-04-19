@@ -283,3 +283,71 @@ func TestOmitEmptyFields(t *testing.T) {
 	assert.NotContains(t, content, "resolution-input-hash", "empty resolution-input-hash should be omitted")
 	assert.Contains(t, content, "input-fingerprint")
 }
+
+// Store tests
+
+func TestStoreGetOrNew_NewComponent(t *testing.T) {
+	memFS := afero.NewMemMapFs()
+	store := lockfile.NewStore(memFS, testProjectDir)
+
+	lock, err := store.GetOrNew("newpkg")
+	require.NoError(t, err)
+	assert.Equal(t, 1, lock.Version)
+	assert.Empty(t, lock.UpstreamCommit)
+}
+
+func TestStoreGetOrNew_ExistingComponent(t *testing.T) {
+	memFS := afero.NewMemMapFs()
+	store := lockfile.NewStore(memFS, testProjectDir)
+
+	// Save a lock with data.
+	original := lockfile.New()
+	original.UpstreamCommit = testCommitHash
+	original.ImportCommit = "import-hash"
+	original.ManualBump = 3
+
+	require.NoError(t, store.Save("curl", original))
+
+	// GetOrNew should return the existing lock, preserving all fields.
+	lock, err := store.GetOrNew("curl")
+	require.NoError(t, err)
+	assert.Equal(t, testCommitHash, lock.UpstreamCommit)
+	assert.Equal(t, "import-hash", lock.ImportCommit)
+	assert.Equal(t, 3, lock.ManualBump)
+}
+
+func TestStoreGetOrNew_CorruptLock_ReturnsError(t *testing.T) {
+	memFS := afero.NewMemMapFs()
+	store := lockfile.NewStore(memFS, testProjectDir)
+
+	// Write corrupt content to the lock file path.
+	lockPath := lockfile.LockPath(testProjectDir, "corrupt")
+
+	require.NoError(t, fileutils.MkdirAll(memFS, filepath.Dir(lockPath)))
+	require.NoError(t, fileutils.WriteFile(memFS, lockPath, []byte("not valid toml {{{"), fileperms.PublicFile))
+
+	// GetOrNew should error, NOT silently create a new lock.
+	_, err := store.GetOrNew("corrupt")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "loading existing lock")
+}
+
+func TestStoreGet_Caching(t *testing.T) {
+	memFS := afero.NewMemMapFs()
+	store := lockfile.NewStore(memFS, testProjectDir)
+
+	lock := lockfile.New()
+	lock.UpstreamCommit = testCommitHash
+
+	require.NoError(t, store.Save("curl", lock))
+
+	// First get loads from disk.
+	first, err := store.Get("curl")
+	require.NoError(t, err)
+	assert.Equal(t, testCommitHash, first.UpstreamCommit)
+
+	// Second get should return cached (same pointer).
+	second, err := store.Get("curl")
+	require.NoError(t, err)
+	assert.Same(t, first, second, "second Get should return cached instance")
+}

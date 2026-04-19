@@ -4,8 +4,7 @@
 // Package lockfile reads and writes per-component lock files under the locks/
 // directory. Each component gets its own <name>.lock TOML file that pins
 // resolved upstream commits and tracks component identity for deterministic
-// builds. Lock files are managed by [azldev component update] and
-// [azldev component bump].
+// builds. Lock files are managed by [azldev component update].
 package lockfile
 
 import (

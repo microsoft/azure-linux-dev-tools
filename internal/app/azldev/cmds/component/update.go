@@ -116,7 +116,10 @@ func saveComponentLocks(store *lockfile.Store, results []UpdateResult) error {
 			continue
 		}
 
-		lock := store.GetOrNew(results[idx].Component)
+		lock, lockErr := store.GetOrNew(results[idx].Component)
+		if lockErr != nil {
+			return fmt.Errorf("loading lock for %#q:\n%w", results[idx].Component, lockErr)
+		}
 
 		// Set import-commit on first lock creation (write-once).
 		if lock.ImportCommit == "" && results[idx].UpstreamCommit != "" {
@@ -242,22 +245,41 @@ func resolveUpstreamCommitsParallel(
 			results[idx].UpstreamCommit = commitHash
 
 			// Check existing lock to determine if the commit changed.
-			existingLock, loadErr := store.Get(comp.GetName())
-			if loadErr != nil {
-				// No existing lock = new component, always changed.
-				results[idx].Changed = true
-
-				return
-			}
-
-			results[idx].PreviousCommit = existingLock.UpstreamCommit
-			results[idx].Changed = existingLock.UpstreamCommit != commitHash
+			checkLockChanged(store, comp.GetName(), &results[idx])
 		}()
 	}
 
 	waitGroup.Wait()
 
 	return results
+}
+
+// checkLockChanged compares the resolved commit against the existing lock file
+// to determine if the component changed. Distinguishes "not found" (new
+// component) from real errors (corrupt lock file).
+func checkLockChanged(store *lockfile.Store, componentName string, result *UpdateResult) {
+	exists, existsErr := store.Exists(componentName)
+	if existsErr != nil {
+		result.Error = fmt.Sprintf("checking lock: %v", existsErr)
+
+		return
+	}
+
+	if !exists {
+		result.Changed = true
+
+		return
+	}
+
+	existingLock, loadErr := store.Get(componentName)
+	if loadErr != nil {
+		result.Error = fmt.Sprintf("loading lock: %v", loadErr)
+
+		return
+	}
+
+	result.PreviousCommit = existingLock.UpstreamCommit
+	result.Changed = existingLock.UpstreamCommit != result.UpstreamCommit
 }
 
 func resolveOneUpstreamCommit(
