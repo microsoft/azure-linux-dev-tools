@@ -160,12 +160,12 @@ func checkUpdateResults(env *azldev.Env, results []UpdateResult) error {
 			"errors", len(failedNames))
 
 		return fmt.Errorf(
-			"%d component(s) failed to resolve; lock file not updated:\n  %s",
+			"%d component(s) failed to resolve; lock files not updated:\n  %s",
 			len(failedNames), strings.Join(failedNames, "\n  "))
 	}
 
 	if env.Context().Err() != nil {
-		return errors.New("update cancelled; lock file not updated")
+		return errors.New("update cancelled; lock files not updated")
 	}
 
 	slog.Info("Update complete",
