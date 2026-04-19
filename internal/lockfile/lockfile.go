@@ -77,8 +77,12 @@ func New() *ComponentLock {
 
 // LockPath returns the path to a component's lock file given the project root
 // and component name.
-func LockPath(projectDir, componentName string) string {
-	return filepath.Join(projectDir, LockDir, componentName+lockFileExtension)
+func LockPath(projectDir, componentName string) (string, error) {
+	if err := fileutils.ValidateFilename(componentName); err != nil {
+		return "", fmt.Errorf("validating component name %#q for lock file path:\n%w", componentName, err)
+	}
+
+	return filepath.Join(projectDir, LockDir, componentName+lockFileExtension), nil
 }
 
 // Load reads and parses a per-component lock file from the given path.

@@ -46,7 +46,10 @@ func (s *Store) Get(componentName string) (*ComponentLock, error) {
 	s.mu.RUnlock()
 
 	// Not cached — load from disk.
-	lockPath := LockPath(s.projectDir, componentName)
+	lockPath, err := LockPath(s.projectDir, componentName)
+	if err != nil {
+		return nil, fmt.Errorf("getting lock path for component %#q:\n%w", componentName, err)
+	}
 
 	lock, err := Load(s.fs, lockPath)
 	if err != nil {
@@ -86,7 +89,10 @@ func (s *Store) GetOrNew(componentName string) (*ComponentLock, error) {
 
 // Save writes the lock for a component to disk and updates the cache.
 func (s *Store) Save(componentName string, lock *ComponentLock) error {
-	lockPath := LockPath(s.projectDir, componentName)
+	lockPath, err := LockPath(s.projectDir, componentName)
+	if err != nil {
+		return fmt.Errorf("getting lock path for component %#q:\n%w", componentName, err)
+	}
 
 	if err := lock.Save(s.fs, lockPath); err != nil {
 		return err
@@ -111,12 +117,20 @@ func (s *Store) Exists(componentName string) (bool, error) {
 
 	s.mu.RUnlock()
 
-	return Exists(s.fs, LockPath(s.projectDir, componentName))
+	lockPath, err := LockPath(s.projectDir, componentName)
+	if err != nil {
+		return false, fmt.Errorf("getting lock path for component %#q:\n%w", componentName, err)
+	}
+
+	return Exists(s.fs, lockPath)
 }
 
 // Remove deletes a component's lock file from disk and evicts it from cache.
 func (s *Store) Remove(componentName string) error {
-	lockPath := LockPath(s.projectDir, componentName)
+	lockPath, err := LockPath(s.projectDir, componentName)
+	if err != nil {
+		return fmt.Errorf("getting lock path for component %#q:\n%w", componentName, err)
+	}
 
 	if err := Remove(s.fs, lockPath); err != nil {
 		return err

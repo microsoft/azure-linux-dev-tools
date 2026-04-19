@@ -30,7 +30,8 @@ func TestNew(t *testing.T) {
 }
 
 func TestLockPath(t *testing.T) {
-	path := lockfile.LockPath("/project", "curl")
+	path, err := lockfile.LockPath("/project", "curl")
+	require.NoError(t, err)
 	assert.Equal(t, filepath.Join("/project", "locks", "curl.lock"), path)
 }
 
@@ -38,7 +39,8 @@ func TestLockPathDistantProjectDir(t *testing.T) {
 	// Simulates -C /some/distant/repo being passed to azldev.
 	distantDir := "/some/distant/repo"
 
-	path := lockfile.LockPath(distantDir, "curl")
+	path, err := lockfile.LockPath(distantDir, "curl")
+	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(distantDir, "locks", "curl.lock"), path)
 
 	// Save and load from the distant path to verify full round-trip.
@@ -64,9 +66,34 @@ func TestLockPathDistantProjectDir(t *testing.T) {
 	assert.False(t, exists, "lock file should not appear under default project dir")
 }
 
+func TestInvalidPath(t *testing.T) {
+	tests := []struct {
+		name          string
+		componentName string
+	}{
+		{name: "dot", componentName: "."},
+		{name: "dotdot", componentName: ".."},
+		{name: "empty", componentName: ""},
+		{name: "path traversal", componentName: "../escape"},
+		{name: "absolute path", componentName: "/etc/passwd"},
+		{name: "has directory", componentName: "sub/component"},
+		{name: "whitespace", componentName: "has space"},
+		{name: "backslash", componentName: "foo\\bar"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := lockfile.LockPath("/project", tc.componentName)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "validating component name")
+		})
+	}
+}
+
 func TestSaveAndLoad(t *testing.T) {
 	memFS := afero.NewMemMapFs()
-	lockPath := lockfile.LockPath(testProjectDir, "curl")
+	lockPath, err := lockfile.LockPath(testProjectDir, "curl")
+	require.NoError(t, err)
 
 	original := lockfile.New()
 	original.UpstreamCommit = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
@@ -88,7 +115,8 @@ func TestSaveAndLoad(t *testing.T) {
 
 func TestSaveCreatesDirectory(t *testing.T) {
 	memFS := afero.NewMemMapFs()
-	lockPath := lockfile.LockPath(testProjectDir, "newpkg")
+	lockPath, err := lockfile.LockPath(testProjectDir, "newpkg")
+	require.NoError(t, err)
 
 	lock := lockfile.New()
 	lock.UpstreamCommit = testCommitHash
@@ -103,14 +131,15 @@ func TestSaveCreatesDirectory(t *testing.T) {
 
 func TestLoadUnsupportedVersion(t *testing.T) {
 	memFS := afero.NewMemMapFs()
-	lockPath := lockfile.LockPath(testProjectDir, "bad")
+	lockPath, err := lockfile.LockPath(testProjectDir, "bad")
+	require.NoError(t, err)
 
 	content := "version = 99\n"
 
 	require.NoError(t, fileutils.MkdirAll(memFS, filepath.Dir(lockPath)))
 	require.NoError(t, fileutils.WriteFile(memFS, lockPath, []byte(content), fileperms.PublicFile))
 
-	_, err := lockfile.Load(memFS, lockPath)
+	_, err = lockfile.Load(memFS, lockPath)
 	assert.ErrorContains(t, err, "unsupported lock file version")
 }
 
@@ -123,18 +152,20 @@ func TestLoadMissingFile(t *testing.T) {
 
 func TestLoadInvalidTOML(t *testing.T) {
 	memFS := afero.NewMemMapFs()
-	lockPath := lockfile.LockPath(testProjectDir, "bad")
+	lockPath, err := lockfile.LockPath(testProjectDir, "bad")
+	require.NoError(t, err)
 
 	require.NoError(t, fileutils.MkdirAll(memFS, filepath.Dir(lockPath)))
 	require.NoError(t, fileutils.WriteFile(memFS, lockPath, []byte("not valid toml {{{"), fileperms.PublicFile))
 
-	_, err := lockfile.Load(memFS, lockPath)
+	_, err = lockfile.Load(memFS, lockPath)
 	assert.ErrorContains(t, err, "parsing lock file")
 }
 
 func TestSaveContainsVersion(t *testing.T) {
 	memFS := afero.NewMemMapFs()
-	lockPath := lockfile.LockPath(testProjectDir, "test")
+	lockPath, err := lockfile.LockPath(testProjectDir, "test")
+	require.NoError(t, err)
 
 	lock := lockfile.New()
 	require.NoError(t, lock.Save(memFS, lockPath))
@@ -147,7 +178,8 @@ func TestSaveContainsVersion(t *testing.T) {
 
 func TestLocalComponentRoundTrip(t *testing.T) {
 	memFS := afero.NewMemMapFs()
-	lockPath := lockfile.LockPath(testProjectDir, "local-pkg")
+	lockPath, err := lockfile.LockPath(testProjectDir, "local-pkg")
+	require.NoError(t, err)
 
 	// Local component: no upstream commit, no import commit.
 	original := lockfile.New()
@@ -165,7 +197,8 @@ func TestLocalComponentRoundTrip(t *testing.T) {
 
 func TestExists(t *testing.T) {
 	memFS := afero.NewMemMapFs()
-	lockPath := lockfile.LockPath(testProjectDir, "curl")
+	lockPath, err := lockfile.LockPath(testProjectDir, "curl")
+	require.NoError(t, err)
 
 	exists, err := lockfile.Exists(memFS, lockPath)
 	require.NoError(t, err)
@@ -183,7 +216,8 @@ func TestExists(t *testing.T) {
 
 func TestRemove(t *testing.T) {
 	memFS := afero.NewMemMapFs()
-	lockPath := lockfile.LockPath(testProjectDir, "curl")
+	lockPath, err := lockfile.LockPath(testProjectDir, "curl")
+	require.NoError(t, err)
 
 	lock := lockfile.New()
 	require.NoError(t, lock.Save(memFS, lockPath))
@@ -207,12 +241,16 @@ func TestMultipleComponentsIndependentFiles(t *testing.T) {
 		lock := lockfile.New()
 		lock.UpstreamCommit = name + "-commit"
 
-		require.NoError(t, lock.Save(memFS, lockfile.LockPath(testProjectDir, name)))
+		lockPath, err := lockfile.LockPath(testProjectDir, name)
+		require.NoError(t, err)
+		require.NoError(t, lock.Save(memFS, lockPath))
 	}
 
 	// Load each independently and verify.
 	for _, name := range []string{"curl", "bash", "vim"} {
-		loaded, err := lockfile.Load(memFS, lockfile.LockPath(testProjectDir, name))
+		lockPath, err := lockfile.LockPath(testProjectDir, name)
+		require.NoError(t, err)
+		loaded, err := lockfile.Load(memFS, lockPath)
 		require.NoError(t, err)
 		assert.Equal(t, name+"-commit", loaded.UpstreamCommit)
 	}
@@ -220,7 +258,8 @@ func TestMultipleComponentsIndependentFiles(t *testing.T) {
 
 func TestImportCommitPreservedOnRewrite(t *testing.T) {
 	memFS := afero.NewMemMapFs()
-	lockPath := lockfile.LockPath(testProjectDir, "curl")
+	lockPath, err := lockfile.LockPath(testProjectDir, "curl")
+	require.NoError(t, err)
 
 	// First write: set import-commit and upstream-commit to same value (initial import).
 	original := lockfile.New()
@@ -249,7 +288,8 @@ func TestImportCommitPreservedOnRewrite(t *testing.T) {
 
 func TestResolutionInputHashRoundTrip(t *testing.T) {
 	memFS := afero.NewMemMapFs()
-	lockPath := lockfile.LockPath(testProjectDir, "curl")
+	lockPath, err := lockfile.LockPath(testProjectDir, "curl")
+	require.NoError(t, err)
 
 	// v2 field: currently stubbed but should survive round-trip.
 	lock := lockfile.New()
@@ -265,7 +305,8 @@ func TestResolutionInputHashRoundTrip(t *testing.T) {
 
 func TestOmitEmptyFields(t *testing.T) {
 	memFS := afero.NewMemMapFs()
-	lockPath := lockfile.LockPath(testProjectDir, "local-pkg")
+	lockPath, err := lockfile.LockPath(testProjectDir, "local-pkg")
+	require.NoError(t, err)
 
 	// Local component: only version and fingerprint set.
 	lock := lockfile.New()
@@ -321,13 +362,14 @@ func TestStoreGetOrNew_CorruptLock_ReturnsError(t *testing.T) {
 	store := lockfile.NewStore(memFS, testProjectDir)
 
 	// Write corrupt content to the lock file path.
-	lockPath := lockfile.LockPath(testProjectDir, "corrupt")
+	lockPath, err := lockfile.LockPath(testProjectDir, "corrupt")
+	require.NoError(t, err)
 
 	require.NoError(t, fileutils.MkdirAll(memFS, filepath.Dir(lockPath)))
 	require.NoError(t, fileutils.WriteFile(memFS, lockPath, []byte("not valid toml {{{"), fileperms.PublicFile))
 
 	// GetOrNew should error, NOT silently create a new lock.
-	_, err := store.GetOrNew("corrupt")
+	_, err = store.GetOrNew("corrupt")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "loading existing lock")
 }
