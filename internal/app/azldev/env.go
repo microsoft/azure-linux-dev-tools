@@ -342,9 +342,21 @@ func (env *Env) PrintFixSuggestions() {
 	slog.Warn(boxEdgeString)
 }
 
-// LockStore returns the lock store for this environment. Returns nil if no
-// project directory is configured.
+// LockStore returns the full lock store (read + write) for this environment.
+// Use this only in commands that write lock files (e.g., component update).
+// Returns nil if no project directory is configured.
 func (env *Env) LockStore() *lockfile.Store {
+	return env.lockStore
+}
+
+// LockReader returns read-only access to lock files. Use this for commands
+// that consume lock state but should not modify it (e.g., render, build).
+// Returns nil if no project directory is configured.
+func (env *Env) LockReader() lockfile.LockReader {
+	if env.lockStore == nil {
+		return nil
+	}
+
 	return env.lockStore
 }
 

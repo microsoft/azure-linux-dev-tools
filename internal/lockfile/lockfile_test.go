@@ -388,8 +388,13 @@ func TestStoreGet_Caching(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, testCommitHash, first.UpstreamCommit)
 
-	// Second get should return cached (same pointer).
+	// Second get should return equal data from cache.
 	second, err := store.Get("curl")
 	require.NoError(t, err)
-	assert.Same(t, first, second, "second Get should return cached instance")
+	assert.Equal(t, first.UpstreamCommit, second.UpstreamCommit)
+
+	// Returns copies — mutating one should not affect the other.
+	first.UpstreamCommit = "mutated"
+	assert.NotEqual(t, first.UpstreamCommit, second.UpstreamCommit,
+		"Get should return copies, not shared pointers")
 }

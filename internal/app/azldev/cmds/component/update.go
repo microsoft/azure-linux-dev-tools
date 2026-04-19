@@ -93,6 +93,10 @@ func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]Updat
 
 	// Resolve upstream commits in parallel.
 	store := env.LockStore()
+	if store == nil {
+		return nil, errors.New("no project directory configured; cannot update lock files")
+	}
+
 	results := resolveUpstreamCommitsParallel(env, comps, store)
 
 	// Check results and bail on errors/cancellation before saving.
@@ -111,6 +115,8 @@ func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]Updat
 
 // saveComponentLocks writes a lock file for each changed component.
 func saveComponentLocks(store *lockfile.Store, results []UpdateResult) error {
+	saved := make([]string, 0, len(results))
+
 	for idx := range results {
 		if !results[idx].Changed || results[idx].Error != "" || results[idx].Skipped {
 			continue
@@ -121,16 +127,17 @@ func saveComponentLocks(store *lockfile.Store, results []UpdateResult) error {
 			return fmt.Errorf("loading lock for %#q:\n%w", results[idx].Component, lockErr)
 		}
 
-		// Set import-commit on first lock creation (write-once).
-		if lock.ImportCommit == "" && results[idx].UpstreamCommit != "" {
-			lock.ImportCommit = results[idx].UpstreamCommit
-		}
-
 		lock.UpstreamCommit = results[idx].UpstreamCommit
 
 		if saveErr := store.Save(results[idx].Component, lock); saveErr != nil {
+			if len(saved) > 0 {
+				slog.Info("Lock files saved before failure", "components", saved)
+			}
+
 			return fmt.Errorf("saving lock file for %#q:\n%w", results[idx].Component, saveErr)
 		}
+
+		saved = append(saved, results[idx].Component)
 	}
 
 	return nil
