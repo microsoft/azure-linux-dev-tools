@@ -10,6 +10,7 @@ import (
 
 	memfs "github.com/go-git/go-billy/v5/memfs"
 	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/storage/memory"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
@@ -110,6 +111,25 @@ func TestFindAffectsCommits_NoMatches(t *testing.T) {
 	results, err := sources.FindAffectsCommits(repo, "curl")
 	require.NoError(t, err)
 	assert.Empty(t, results)
+}
+
+func TestFindAffectsCommits_ShallowRepo(t *testing.T) {
+	repo := createInMemoryRepo(t)
+
+	addCommit(t, repo,
+		"Fix CVE-2025-1234\n\nAffects: curl",
+		"Alice", "alice@example.com",
+		time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC))
+
+	head, err := repo.Head()
+	require.NoError(t, err)
+	require.NoError(t, repo.Storer.SetShallow([]plumbing.Hash{head.Hash()}))
+
+	results, err := sources.FindAffectsCommits(repo, "curl")
+	require.Error(t, err)
+	assert.Nil(t, results)
+	assert.Contains(t, err.Error(), "shallow clone")
+	assert.Contains(t, err.Error(), "git fetch --unshallow")
 }
 
 func TestFindAffectsCommits_MultipleComponents(t *testing.T) {
