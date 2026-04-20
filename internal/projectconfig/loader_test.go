@@ -805,6 +805,22 @@ description = "Smoke tests for images"
 working-dir = "tests"
 test-paths = ["cases/test_*.py"]
 extra-args = ["--image-path", "{image-path}"]
+
+[test-suites.integration]
+type = "lisa"
+description = "LISA integration tests"
+
+[test-suites.integration.lisa]
+extra-args = ["-v", "qcow2:{image-path}"]
+
+[test-suites.integration.lisa.framework]
+git-url = "https://github.com/microsoft/lisa.git"
+ref = "abcdef0123456789abcdef0123456789abcdef01"
+
+[test-suites.integration.lisa.runbook]
+git-url = "https://github.com/microsoft/azurelinux.git"
+ref = "abcdef0123456789abcdef0123456789abcdef01"
+path = "tests/lisa/runbooks/azl-qemu.yml"
 `
 
 	configDir := filepath.Dir(testConfigPath)
@@ -815,7 +831,7 @@ extra-args = ["--image-path", "{image-path}"]
 	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
 	require.NoError(t, err)
 
-	require.Len(t, config.TestSuites, 1)
+	require.Len(t, config.TestSuites, 2)
 
 	// Check pytest test.
 	if assert.Contains(t, config.TestSuites, "smoke") {
@@ -827,6 +843,20 @@ extra-args = ["--image-path", "{image-path}"]
 		assert.Equal(t, filepath.Join(configDir, "tests"), smokeTest.Pytest.WorkingDir)
 		assert.Equal(t, []string{"cases/test_*.py"}, smokeTest.Pytest.TestPaths)
 		assert.Equal(t, []string{"--image-path", "{image-path}"}, smokeTest.Pytest.ExtraArgs)
+	}
+
+	// Check LISA test.
+	if assert.Contains(t, config.TestSuites, "integration") {
+		lisaTest := config.TestSuites["integration"]
+		assert.Equal(t, "integration", lisaTest.Name)
+		assert.Equal(t, TestTypeLisa, lisaTest.Type)
+		assert.Equal(t, "LISA integration tests", lisaTest.Description)
+		require.NotNil(t, lisaTest.Lisa)
+		assert.Equal(t, "https://github.com/microsoft/lisa.git", lisaTest.Lisa.Framework.GitURL)
+		assert.Equal(t, "abcdef0123456789abcdef0123456789abcdef01", lisaTest.Lisa.Framework.Ref)
+		assert.Equal(t, "https://github.com/microsoft/azurelinux.git", lisaTest.Lisa.Runbook.GitURL)
+		assert.Equal(t, "tests/lisa/runbooks/azl-qemu.yml", lisaTest.Lisa.Runbook.Path)
+		assert.Equal(t, []string{"-v", "qcow2:{image-path}"}, lisaTest.Lisa.ExtraArgs)
 	}
 }
 

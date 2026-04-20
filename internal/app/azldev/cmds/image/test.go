@@ -54,7 +54,7 @@ project configuration.
 
 Test suites are defined in the [test-suites] section of azldev.toml and referenced
 by images via the [images.NAME.tests] subtable. Each test suite specifies a type
-and framework-specific configuration in a matching subtable.
+(pytest or lisa) and framework-specific configuration in a matching subtable.
 
 By default, all test suites associated with the named image are run. Use
 --test-suite to select specific suites (may be repeated).
@@ -66,7 +66,10 @@ For pytest tests, azldev creates a Python virtual environment, installs
 dependencies from pyproject.toml in the working directory, and runs pytest
 with the configured test paths and extra arguments. Use {image-path} in
 extra-args to insert the image path. Glob patterns (including **) in
-test-paths are expanded automatically.`,
+test-paths are expanded automatically.
+
+For LISA tests, the test runner executes on the host and boots the image in a
+QEMU VM.`,
 		Example: `  # Run all test suites for an image (artifact auto-resolved from output dir)
   azldev image test vm-base
 
@@ -256,6 +259,9 @@ func runTestSuite(
 	switch suiteConfig.Type {
 	case projectconfig.TestTypePytest:
 		return RunPytestSuite(env, suiteConfig, imageConfig, options)
+
+	case projectconfig.TestTypeLisa:
+		return RunLisaSuite(env, suiteConfig, imageConfig, options)
 
 	default:
 		return fmt.Errorf("unsupported test type %#q for test suite %#q", suiteConfig.Type, suiteConfig.Name)
