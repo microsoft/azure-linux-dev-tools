@@ -51,17 +51,22 @@ var (
 // key may result in a redundant disk read, but the result is identical and
 // harmless.
 type Store struct {
-	fs         opctx.FS
-	projectDir string
-	cache      sync.Map // map[string]*ComponentLock
+	fs      opctx.FS
+	lockDir string
+	cache   sync.Map // map[string]*ComponentLock
 }
 
-// NewStore creates a new lock store for the given project.
-func NewStore(fs opctx.FS, projectDir string) *Store {
+// NewStore creates a new lock store that reads/writes lock files in lockDir.
+func NewStore(fs opctx.FS, lockDir string) *Store {
 	return &Store{
-		fs:         fs,
-		projectDir: projectDir,
+		fs:      fs,
+		lockDir: lockDir,
 	}
+}
+
+// lockPath returns the path for a component's lock file within this store.
+func (s *Store) lockPath(componentName string) (string, error) {
+	return LockPath(s.lockDir, componentName)
 }
 
 // Get returns the lock for a component, loading it from disk on first access.
@@ -81,7 +86,7 @@ func (s *Store) Get(componentName string) (*ComponentLock, error) {
 	}
 
 	// Not cached — load from disk.
-	lockPath, err := LockPath(s.projectDir, componentName)
+	lockPath, err := s.lockPath(componentName)
 	if err != nil {
 		return nil, fmt.Errorf("getting lock path for component %#q:\n%w", componentName, err)
 	}
@@ -126,7 +131,7 @@ func (s *Store) GetOrNew(componentName string) (*ComponentLock, error) {
 
 // Save writes the lock for a component to disk and updates the cache.
 func (s *Store) Save(componentName string, lock *ComponentLock) error {
-	lockPath, err := LockPath(s.projectDir, componentName)
+	lockPath, err := s.lockPath(componentName)
 	if err != nil {
 		return fmt.Errorf("getting lock path for component %#q:\n%w", componentName, err)
 	}
@@ -146,7 +151,7 @@ func (s *Store) Exists(componentName string) (bool, error) {
 		return true, nil
 	}
 
-	lockPath, err := LockPath(s.projectDir, componentName)
+	lockPath, err := s.lockPath(componentName)
 	if err != nil {
 		return false, fmt.Errorf("getting lock path for component %#q:\n%w", componentName, err)
 	}
@@ -156,7 +161,7 @@ func (s *Store) Exists(componentName string) (bool, error) {
 
 // Remove deletes a component's lock file from disk and evicts it from cache.
 func (s *Store) Remove(componentName string) error {
-	lockPath, err := LockPath(s.projectDir, componentName)
+	lockPath, err := s.lockPath(componentName)
 	if err != nil {
 		return fmt.Errorf("getting lock path for component %#q:\n%w", componentName, err)
 	}

@@ -153,7 +153,7 @@ func NewEnv(ctx context.Context, options EnvOptions) *Env {
 		fixSuggestions: []string{},
 
 		// Lock store: created when we have a project directory.
-		lockStore: newLockStore(options.ProjectDir, options.Interfaces.FileSystemFactory),
+		lockStore: newLockStore(options.ProjectDir, options.Config, options.Interfaces.FileSystemFactory),
 	}
 }
 
@@ -361,13 +361,25 @@ func (env *Env) LockReader() lockfile.LockReader {
 }
 
 // newLockStore creates a lock store if a project directory and filesystem are
-// available. Returns nil otherwise.
-func newLockStore(projectDir string, fsFactory opctx.FileSystemFactory) *lockfile.Store {
+// available. Uses the configured lock-dir from project config, falling back
+// to the default locks/ directory under the project root.
+func newLockStore(
+	projectDir string,
+	config *projectconfig.ProjectConfig,
+	fsFactory opctx.FileSystemFactory,
+) *lockfile.Store {
 	if projectDir == "" || fsFactory == nil {
 		return nil
 	}
 
-	return lockfile.NewStore(fsFactory.FS(), projectDir)
+	lockDir := filepath.Join(projectDir, lockfile.LockDir)
+
+	// If the project config specifies a lock directory, use it instead of the default.
+	if config != nil && config.Project.LockDir != "" {
+		lockDir = config.Project.LockDir
+	}
+
+	return lockfile.NewStore(fsFactory.FS(), lockDir)
 }
 
 // CPUBoundConcurrency returns the recommended concurrency limit for CPU-bound tasks.
