@@ -130,7 +130,13 @@ func (s *Store) GetOrNew(componentName string) (*ComponentLock, error) {
 }
 
 // Save writes the lock for a component to disk and updates the cache.
+// Caches a defensive copy so caller mutations after Save don't affect
+// cached state.
 func (s *Store) Save(componentName string, lock *ComponentLock) error {
+	if lock == nil {
+		return fmt.Errorf("cannot save nil lock for component %#q", componentName)
+	}
+
 	lockPath, err := s.lockPath(componentName)
 	if err != nil {
 		return fmt.Errorf("getting lock path for component %#q:\n%w", componentName, err)
@@ -140,7 +146,9 @@ func (s *Store) Save(componentName string, lock *ComponentLock) error {
 		return err
 	}
 
-	s.cache.Store(componentName, lock)
+	// Cache a copy so caller can't mutate cached state after Save.
+	cp := *lock
+	s.cache.Store(componentName, &cp)
 
 	return nil
 }
