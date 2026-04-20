@@ -790,6 +790,43 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "PytestConfig": {
+      "properties": {
+        "working-dir": {
+          "type": "string",
+          "title": "Working directory",
+          "description": "Directory to use as CWD when running pytest"
+        },
+        "test-paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Test paths",
+          "description": "Test file paths or directories passed to pytest. Glob patterns are expanded."
+        },
+        "extra-args": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Extra arguments",
+          "description": "Additional arguments passed to pytest. Use {image-path} as a placeholder for the image path."
+        },
+        "install": {
+          "type": "string",
+          "enum": [
+            "pyproject",
+            "requirements",
+            "none"
+          ],
+          "title": "Install mode",
+          "description": "How to install Python dependencies: pyproject (default), requirements, or none"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "ReleaseConfig": {
       "properties": {
         "calculation": {
@@ -890,10 +927,26 @@
           "type": "string",
           "title": "Description",
           "description": "Description of this test suite"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "pytest"
+          ],
+          "title": "Type",
+          "description": "Type of test framework (pytest)"
+        },
+        "pytest": {
+          "$ref": "#/$defs/PytestConfig",
+          "title": "Pytest config",
+          "description": "Pytest-specific configuration (required when type is pytest)"
         }
       },
       "additionalProperties": false,
-      "type": "object"
+      "type": "object",
+      "required": [
+        "type"
+      ]
     },
     "TestSuiteRef": {
       "properties": {

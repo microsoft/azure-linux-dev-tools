@@ -6,39 +6,55 @@ Run tests against an Azure Linux image
 
 ### Synopsis
 
-Run tests against an Azure Linux image using a supported test runner.
+Run tests against an Azure Linux image using test suites defined in the
+project configuration.
 
-Currently only the LISA test runner is supported. The image must be in qcow2,
-vhd, or vhdfixed format. If the image is in vhd/vhdfixed format it is
-automatically converted to qcow2 before running the tests.
+Test suites are defined in the [test-suites] section of azldev.toml and referenced
+by images via the [images.NAME.tests] subtable. Each test suite specifies a type
+and framework-specific configuration in a matching subtable.
 
-Requirements:
-  - lisa (Installation instructions: https://github.com/microsoft/lisa/blob/main/INSTALL.md)
-  - runbook file (YAML format defining the tests to run: https://github.com/microsoft/lisa/blob/main/docs/Runbooks.md)
-  - qemu-img (for vhd/vhdfixed to qcow2 conversion, if needed)
+By default, all test suites associated with the named image are run. Use
+--test-suite to select specific suites (may be repeated).
+
+The image artifact can be specified explicitly with --image-path, or resolved
+automatically from the image name in the output directory.
+
+For pytest tests, azldev creates a Python virtual environment, installs
+dependencies from pyproject.toml in the working directory, and runs pytest
+with the configured test paths and extra arguments. Use {image-path} in
+extra-args to insert the image path. Glob patterns (including **) in
+test-paths are expanded automatically.
 
 ```
-azldev image test [flags]
+azldev image test IMAGE_NAME [flags]
 ```
 
 ### Examples
 
 ```
-  # Run LISA tests against a qcow2 image
-  azldev image test --image-path ./out/image.qcow2 --test-runner lisa --runbook-path ./runbooks/smoke.yml
+  # Run all test suites for an image (artifact auto-resolved from output dir)
+  azldev image test vm-base
 
-  # Run LISA tests against a vhd image (auto-converted to qcow2)
-  azldev image test --image-path ./out/image.vhd --test-runner lisa --runbook-path ./runbooks/smoke.yml
+  # Run all test suites with an explicit image path
+  azldev image test vm-base --image-path ./out/images/vm-base/image.raw
+
+  # Run a specific test suite
+  azldev image test vm-base --test-suite common-vm-checks
+
+  # Run multiple specific test suites
+  azldev image test vm-base --test-suite common-vm-checks --test-suite vm-base-checks
+
+  # Generate JUnit XML output
+  azldev image test vm-base --junit-xml results.xml
 ```
 
 ### Options
 
 ```
-  -k, --admin-private-key-path string   Path to the admin SSH private key file passed to LISA
-  -h, --help                            help for test
-  -i, --image-path string               Path to the disk image file to test
-  -r, --runbook-path string             Path to the test runbook file
-      --test-runner string              Test runner to use (currently only 'lisa' is supported)
+  -h, --help                 help for test
+  -i, --image-path string    Path to the disk image file (resolved from image name if not specified)
+      --junit-xml string     Path for writing JUnit XML output
+      --test-suite strings   Name of a test suite to run (may be repeated; defaults to all suites for the image)
 ```
 
 ### Options inherited from parent commands

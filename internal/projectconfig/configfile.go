@@ -136,6 +136,15 @@ func (f ConfigFile) Validate() error {
 		}
 	}
 
+	// Validate test suite configurations.
+	for suiteName, suite := range f.TestSuites {
+		suite.Name = suiteName
+
+		if err := suite.Validate(); err != nil {
+			return fmt.Errorf("invalid test suite %#q:\n%w", suiteName, err)
+		}
+	}
+
 	return nil
 }
 

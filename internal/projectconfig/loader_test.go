@@ -798,11 +798,16 @@ rpm-channel = "devel"
 func TestLoadAndResolveProjectConfig_TestSuite(t *testing.T) {
 	const configContents = `
 [test-suites.smoke]
+type = "pytest"
 description = "Smoke tests for images"
 
-[test-suites.integration]
-description = "Integration tests"
+[test-suites.smoke.pytest]
+working-dir = "tests"
+test-paths = ["cases/test_*.py"]
+extra-args = ["--image-path", "{image-path}"]
 `
+
+	configDir := filepath.Dir(testConfigPath)
 
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
@@ -810,18 +815,18 @@ description = "Integration tests"
 	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
 	require.NoError(t, err)
 
-	require.Len(t, config.TestSuites, 2)
+	require.Len(t, config.TestSuites, 1)
 
+	// Check pytest test.
 	if assert.Contains(t, config.TestSuites, "smoke") {
 		smokeTest := config.TestSuites["smoke"]
 		assert.Equal(t, "smoke", smokeTest.Name)
+		assert.Equal(t, TestTypePytest, smokeTest.Type)
 		assert.Equal(t, "Smoke tests for images", smokeTest.Description)
-	}
-
-	if assert.Contains(t, config.TestSuites, "integration") {
-		integrationTest := config.TestSuites["integration"]
-		assert.Equal(t, "integration", integrationTest.Name)
-		assert.Equal(t, "Integration tests", integrationTest.Description)
+		require.NotNil(t, smokeTest.Pytest)
+		assert.Equal(t, filepath.Join(configDir, "tests"), smokeTest.Pytest.WorkingDir)
+		assert.Equal(t, []string{"cases/test_*.py"}, smokeTest.Pytest.TestPaths)
+		assert.Equal(t, []string{"--image-path", "{image-path}"}, smokeTest.Pytest.ExtraArgs)
 	}
 }
 
@@ -834,11 +839,17 @@ func TestLoadAndResolveProjectConfig_DuplicateTests(t *testing.T) {
 includes = ["include.toml"]
 
 [test-suites.smoke]
-description = "Smoke tests"
+type = "pytest"
+
+[test-suites.smoke.pytest]
+test-paths = ["cases/"]
 `},
 		{"/project/include.toml", `
 [test-suites.smoke]
-description = "Other smoke tests"
+type = "pytest"
+
+[test-suites.smoke.pytest]
+test-paths = ["other/"]
 `},
 	}
 
@@ -853,10 +864,42 @@ description = "Other smoke tests"
 	require.ErrorIs(t, err, ErrDuplicateTestSuites)
 }
 
+func TestLoadAndResolveProjectConfig_InvalidTestType(t *testing.T) {
+	const configContents = `
+[test-suites.bad]
+type = "unsupported"
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnknownTestType)
+}
+
+func TestLoadAndResolveProjectConfig_TestMissingRequiredField(t *testing.T) {
+	const configContents = `
+[test-suites.smoke]
+type = "pytest"
+# Missing [test-suites.smoke.pytest] subtable
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrMissingTestField)
+}
+
 func TestLoadAndResolveProjectConfig_ImageWithValidTestRef(t *testing.T) {
 	const configContents = `
 [test-suites.smoke]
-description = "Smoke tests"
+type = "pytest"
+
+[test-suites.smoke.pytest]
+test-paths = ["cases/"]
 
 [images.myimage]
 description = "Test image"
@@ -990,4 +1033,46 @@ rpm-channel = "new-channel"
 	// rpm-channel takes precedence over the deprecated field.
 	assert.Equal(t, "new-channel", config.DefaultPackageConfig.Publish.EffectiveRPMChannel(),
 		"rpm-channel should take precedence over the deprecated channel field")
+}
+
+func TestLoadAndResolveProjectConfig_TestSuiteInstallMode(t *testing.T) {
+	const configContents = `
+[test-suites.smoke]
+type = "pytest"
+
+[test-suites.smoke.pytest]
+working-dir = "tests"
+install = "requirements"
+test-paths = ["cases/"]
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.NoError(t, err)
+
+	if assert.Contains(t, config.TestSuites, "smoke") {
+		smokeTest := config.TestSuites["smoke"]
+		require.NotNil(t, smokeTest.Pytest)
+		assert.Equal(t, PytestInstallRequirements, smokeTest.Pytest.Install)
+		assert.Equal(t, PytestInstallRequirements, smokeTest.Pytest.EffectiveInstallMode())
+	}
+}
+
+func TestLoadAndResolveProjectConfig_TestSuiteInvalidInstallMode(t *testing.T) {
+	const configContents = `
+[test-suites.smoke]
+type = "pytest"
+
+[test-suites.smoke.pytest]
+install = "invalid"
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidInstallMode)
 }
