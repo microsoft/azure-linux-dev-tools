@@ -9,6 +9,7 @@ A component definition tells azldev where to find the spec file, how to customiz
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
 | Spec source | `spec` | [SpecSource](#spec-source) | No | Where to find the spec file for this component. Inherited from distro defaults if not specified. |
+| Release config | `release` | [ReleaseConfig](#release-configuration) | No | Controls how the Release tag is managed during rendering |
 | Overlays | `overlays` | array of [Overlay](overlays.md) | No | Modifications to apply to the spec and/or source files |
 | Build config | `build` | [BuildConfig](#build-configuration) | No | Build-time options (macros, conditionals, check config) |
 | Source files | `source-files` | array of [SourceFileReference](#source-file-references) | No | Additional source files to download for this component |
@@ -96,6 +97,21 @@ spec = { type = "local", path = "azurelinux-release.spec" }
 ```
 
 The `path` is relative to the config file that defines the component. Local spec files and any associated source files should be placed alongside the component's `.comp.toml` file.
+
+## Release Configuration
+
+The `[components.<name>.release]` section controls how azldev manages the Release tag during rendering.
+
+| Field | TOML Key | Type | Required | Description |
+|-------|----------|------|----------|-------------|
+| Calculation | `calculation` | string | No | `"auto"` (default) = auto-bump; `"manual"` = skip all automatic Release manipulation |
+
+Most components use auto mode (the default) and need no release configuration. Set `calculation = "manual"` for components that manage their own release numbering, such as kernel:
+
+```toml
+[components.kernel.release]
+calculation = "manual"
+```
 
 ## Build Configuration
 
@@ -251,8 +267,8 @@ The `[[components.<name>.source-files]]` array defines additional source files t
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
 | Filename | `filename` | string | **Yes** | Name of the file as it will appear in the sources directory |
-| Hash | `hash` | string | No | Expected hash of the downloaded file for integrity verification |
-| Hash type | `hash-type` | string | No | Hash algorithm used (e.g., `"SHA512"`, `"SHA256"`) |
+| Hash | `hash` | string | Conditional | Expected hash of the downloaded file for integrity verification. Required for the `prep-sources` command unless `--allow-no-hashes` is used, in which case the hash is computed automatically from the downloaded file. |
+| Hash type | `hash-type` | string | Conditional | Hash algorithm used (examples: `"SHA256"`, `"SHA512"`). Required when `hash` is specified. When omitted alongside `hash` for the `prep-sources` command and `--allow-no-hashes` is used, defaults to `"SHA512"`. |
 | Origin | `origin` | [Origin](#origin) | **Yes** | Where to download the file from |
 
 ### Origin

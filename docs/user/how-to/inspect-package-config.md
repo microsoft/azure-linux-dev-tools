@@ -28,14 +28,14 @@ azldev package list -a
 Example output:
 
 ```
-╭──────────────────┬────────────────┬───────────┬──────────────╮
-│ PACKAGE          │ GROUP          │ COMPONENT │ CHANNEL      │
-├──────────────────┼────────────────┼───────────┼──────────────┤
-│ curl-debugsource │ debug-packages │           │ rpm-debug    │
-│ libcurl          │ base-packages  │           │ rpm-base     │
-│ libcurl-devel    │ devel-packages │ curl      │ rpm-base     │
-│ wget2-wget       │                │ wget2     │ rpm-base     │
-╰──────────────────┴────────────────┴───────────┴──────────────╯
+╭──────────────────┬────────────────┬───────────┬─────────────────╮
+│ PACKAGE          │ GROUP          │ COMPONENT │ PUBLISH CHANNEL │
+├──────────────────┼────────────────┼───────────┼─────────────────┤
+│ curl-debugsource │ debug-packages │           │ rpm-debug       │
+│ libcurl          │ base-packages  │           │ rpm-base        │
+│ libcurl-devel    │ devel-packages │ curl      │ rpm-base        │
+│ wget2-wget       │                │ wget2     │ rpm-base        │
+╰──────────────────┴────────────────┴───────────┴─────────────────╯
 ```
 
 ### Column meanings
@@ -45,7 +45,7 @@ Example output:
 | **Package** | Binary package name (RPM `Name` tag) |
 | **Group** | Package-group whose `packages` list contains this package, if any |
 | **Component** | Component that has an explicit `packages.<name>` override for this package, if any |
-| **Channel** | Effective publish channel after all config layers are applied |
+| **Publish Channel** | Effective publish channel after all config layers are applied |
 
 > **Note:** A non-empty **Component** column means the component has an explicit
 > per-package entry in its `packages` map — it does **not** mean "the component
@@ -84,7 +84,7 @@ azldev package list -a -q -O json
     "packageName": "libcurl",
     "group": "base-packages",
     "component": "",
-    "channel": "rpm-base"
+    "publishChannel": "rpm-base"
   },
   ...
 ]

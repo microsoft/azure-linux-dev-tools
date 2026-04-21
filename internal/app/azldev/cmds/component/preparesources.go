@@ -6,6 +6,7 @@ package component
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
@@ -18,10 +19,11 @@ import (
 type PrepareSourcesOptions struct {
 	ComponentFilter components.ComponentFilter
 
-	OutputDir    string
-	SkipOverlays bool
-	WithGitRepo  bool
-	Force        bool
+	OutputDir     string
+	SkipOverlays  bool
+	WithGitRepo   bool
+	Force         bool
+	AllowNoHashes bool
 }
 
 func prepareOnAppInit(_ *azldev.App, sourceCmd *cobra.Command) {
@@ -69,6 +71,8 @@ Only one component may be selected at a time.`,
 	cmd.Flags().BoolVar(&options.WithGitRepo, "with-git", false,
 		"Create a dist-git repository with synthetic commit history (requires a project git repository)")
 	cmd.Flags().BoolVar(&options.Force, "force", false, "delete and recreate the output directory if it already exists")
+	cmd.Flags().BoolVar(&options.AllowNoHashes, "allow-no-hashes", false,
+		"compute missing hashes by downloading source files from their origin")
 
 	return cmd
 }
@@ -117,9 +121,18 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 		return err
 	}
 
+	if options.SkipOverlays && options.WithGitRepo {
+		slog.Warn("--with-git has no effect when --skip-overlays is set; " +
+			"synthetic history requires overlays to be applied")
+	}
+
 	var preparerOpts []sources.PreparerOption
 	if options.WithGitRepo {
-		preparerOpts = append(preparerOpts, sources.WithGitRepo())
+		preparerOpts = append(preparerOpts, sources.WithGitRepo(env.Config().Project.DefaultAuthorEmail))
+	}
+
+	if options.AllowNoHashes {
+		preparerOpts = append(preparerOpts, sources.WithAllowNoHashes())
 	}
 
 	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, preparerOpts...)

@@ -155,6 +155,7 @@ lives), or use -C to point to one.`,
 
 	app.cmd.SetHelpCommandGroupID(CommandGroupMeta)
 	app.cmd.SetCompletionCommandGroupID(CommandGroupMeta)
+	app.addAdvancedCommandHint()
 
 	// Define global flags and configuration settings.
 	app.cmd.PersistentFlags().BoolVarP(&app.verbose, "verbose", "v", false, "enable verbose output")
@@ -177,6 +178,18 @@ lives), or use -C to point to one.`,
 		false, "do not fail on unknown fields in TOML config files")
 
 	return app
+}
+
+// addAdvancedCommandHint embeds a hint about the hidden "advanced" command group
+// into the root command's usage template so that DisableExtraNewlines handles
+// trailing whitespace consistently.
+func (a *App) addAdvancedCommandHint() {
+	tmpl := a.cmd.UsageTemplate()
+	tmpl = strings.TrimSuffix(tmpl, "\n")
+	tmpl += `{{if not .HasParent}}
+Use "{{.CommandPath}} advanced --help" for additional tools (mock, mcp, wget).{{end}}
+`
+	a.cmd.SetUsageTemplate(tmpl)
 }
 
 // Returns the names of the app's commands. The optional provided list of ancestors
@@ -248,7 +261,7 @@ func (a *App) Execute(args []string) int {
 	//
 	stdioLogger := a.initStdioLogging()
 
-	if err := setEventListener(stdioLogger, envOptions); err != nil {
+	if err := setEventListener(stdioLogger, a.quiet, envOptions); err != nil {
 		slog.Error("Error setting event listener.", "err", err)
 
 		return 1
@@ -273,10 +286,12 @@ func (a *App) Execute(args []string) int {
 	// usage information, query the tool's version, etc. If the user attempts to run a command that
 	// requires configuration, then execution will stop just before running the command.
 	if err = a.initializeProjectConfig(envOptions, earlyTempDirPath); err != nil {
-		// Present an error, but move on.
+		// Present an error, but move on.  Store the error so we can set a fix suggestion
+		// on env once it's constructed.
 		slog.Error("Error loading configuration, execution may fail later;", "err", err)
 	}
 
+	configLoadErr := err
 	if err = a.reInitLoggingWithLogFile(envOptions); err != nil {
 		slog.Error("Error initializing file logging.", "err", err)
 
@@ -305,6 +320,12 @@ func (a *App) Execute(args []string) int {
 	env.SetVerbose(a.verbose)
 	env.SetQuiet(a.quiet)
 	env.SetColorMode(a.colorMode)
+
+	// If config loading failed, set a fix suggestion on env so it can be shown
+	// after any command error that requires config.
+	if configLoadErr != nil {
+		env.AddFixSuggestion(fmt.Sprintf("fix the configuration error: %v", configLoadErr))
+	}
 	//
 	// If we managed to find a project + configuration, then we can let anyone who was
 	// interested have an opportunity to add subcommands (or do whatever they need to
@@ -357,7 +378,7 @@ func (a *App) reInitLoggingWithLogFile(envOptions *EnvOptions) error {
 		return fmt.Errorf("error re-initializing file logging:\n%w", err)
 	}
 
-	err = setEventListener(logger, envOptions)
+	err = setEventListener(logger, a.quiet, envOptions)
 	if err != nil {
 		return fmt.Errorf("error re-setting event listener:\n%w", err)
 	}
@@ -421,8 +442,8 @@ func (a *App) handlePostInitCallbacks(env *Env) error {
 	return nil
 }
 
-func setEventListener(stdioLogger *slog.Logger, envOptions *EnvOptions) error {
-	eventListener, err := NewEventListener(stdioLogger)
+func setEventListener(stdioLogger *slog.Logger, quiet bool, envOptions *EnvOptions) error {
+	eventListener, err := NewEventListener(stdioLogger, quiet)
 	if err != nil {
 		return fmt.Errorf("error initializing event listener:\n%w", err)
 	}
@@ -634,6 +655,8 @@ func (a *App) dispatchToCommand(env *Env, args []string) int {
 	err := a.cmd.ExecuteContext(env)
 	if err != nil {
 		slog.Error("Error: " + err.Error())
+
+		env.PrintFixSuggestions()
 
 		return 1
 	}

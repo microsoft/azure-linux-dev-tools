@@ -21,6 +21,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
+	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/dirdiff"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
@@ -61,9 +62,13 @@ type PreparerOption func(*sourcePreparerImpl)
 // is preserved and synthetic commit history is generated on top of it. This
 // requires the project configuration to reside inside a git repository.
 // Without this option, no dist-git is created and synthetic history is skipped.
-func WithGitRepo() PreparerOption {
+//
+// The defaultAuthorEmail is used for synthetic changelog entries and commits
+// when no author email is available from git history.
+func WithGitRepo(defaultAuthorEmail string) PreparerOption {
 	return func(p *sourcePreparerImpl) {
 		p.withGitRepo = true
+		p.defaultAuthorEmail = defaultAuthorEmail
 	}
 }
 
@@ -77,6 +82,24 @@ func WithGitRepo() PreparerOption {
 func WithSkipLookaside() PreparerOption {
 	return func(p *sourcePreparerImpl) {
 		p.skipLookaside = true
+	}
+}
+
+// WithAllowNoHashes returns a [PreparerOption] that allows source file
+// references to omit their [projectconfig.SourceFileReference.Hash] value.
+// When set, any source file that lacks a hash will have its hash computed
+// from the already-downloaded file in the output directory. If
+// [projectconfig.SourceFileReference.HashType] is also missing, SHA-512 is
+// used as the default. A warning is emitted for each file whose hash is
+// auto-computed.
+//
+// When combined with [WithSkipLookaside], source file downloads are skipped,
+// so files needed for hash computation are not available on disk. In that
+// case, missing hashes cannot be auto-computed and source preparation
+// returns an error.
+func WithAllowNoHashes() PreparerOption {
+	return func(p *sourcePreparerImpl) {
+		p.allowNoHashes = true
 	}
 }
 
@@ -94,6 +117,14 @@ type sourcePreparerImpl struct {
 	// skipLookaside, when true, skips all lookaside cache downloads during
 	// source preparation. Git-tracked files are still fetched.
 	skipLookaside bool
+
+	// defaultAuthorEmail is the email address used for synthetic changelog
+	// entries and commits when no author email is available from git history.
+	defaultAuthorEmail string
+
+	// allowNoHashes, when true, allows source file references without hash
+	// values. Missing hashes are computed from the downloaded files.
+	allowNoHashes bool
 }
 
 // NewPreparer creates a new [SourcePreparer] instance. All positional arguments
@@ -176,6 +207,15 @@ func (p *sourcePreparerImpl) PrepareSources(
 		if err != nil {
 			return err
 		}
+
+		if err := p.updateSourcesFile(component, outputDir); err != nil {
+			return fmt.Errorf("failed to update 'sources' file for component %#q:\n%w",
+				component.GetName(), err)
+		}
+	} else {
+		slog.Warn("Sources prepared without applying overlays;"+
+			" 'sources' file will not include entries from the 'source-files' configuration",
+			"component", component.GetName())
 	}
 
 	// Record the changes as synthetic git history when dist-git creation is enabled.
@@ -322,7 +362,7 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 	config := component.GetConfig()
 
 	// Build commit metadata from Affects commits.
-	commits, err := buildSyntheticCommits(config, component.GetName())
+	commits, err := buildSyntheticCommits(config, component.GetName(), p.defaultAuthorEmail)
 	if err != nil {
 		return fmt.Errorf("failed to build synthetic commits:\n%w", err)
 	}
@@ -334,10 +374,13 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 		return nil
 	}
 
-	// Check for an existing git repository in the sources directory.
-	// Use os.Stat rather than p.fs because go-git's PlainInit/PlainOpen always
-	// operate on the real OS filesystem — the check must use the same source of
-	// truth to avoid disagreement when p.fs is an in-memory FS (e.g. unit tests).
+	// Adjust the Release tag before staging changes. See [tryBumpStaticRelease]
+	// for the handling of %autorelease, static integers, and non-standard values.
+	if err := p.tryBumpStaticRelease(component, sourcesDirPath, len(commits)); err != nil {
+		return fmt.Errorf("failed to apply release bump:\n%w", err)
+	}
+
+	// Use os.Stat (not p.fs) because go-git always operates on the real filesystem.
 	gitDirPath := filepath.Join(sourcesDirPath, ".git")
 
 	_, statErr := os.Stat(gitDirPath)
@@ -419,6 +462,195 @@ func (p *sourcePreparerImpl) DiffSources(
 	}
 
 	return result, nil
+}
+
+// updateSourcesFile appends entries to the 'sources' file for any extra source files
+// defined in the component's [projectconfig.SourceFileReference] configuration. Each source file reference
+// must have both [projectconfig.SourceFileReference.Hash] and [projectconfig.SourceFileReference.HashType]
+// specified unless [sourcePreparerImpl.allowNoHashes] is set, in which case
+// missing hashes are computed from the downloaded files in outputDir.
+// Conflicts between existing entries in the 'sources' file and sources introduced through
+// the [projectconfig.SourceFileReference] configuration are also treated as errors.
+func (p *sourcePreparerImpl) updateSourcesFile(component components.Component, outputDir string) error {
+	sourceFiles := component.GetConfig().SourceFiles
+	if len(sourceFiles) == 0 {
+		return nil
+	}
+
+	sourcesFilePath := filepath.Join(outputDir, fedorasource.SourcesFileName)
+
+	existingContent, err := p.readSourcesFileIfExists(sourcesFilePath)
+	if err != nil {
+		return err
+	}
+
+	existingEntries, err := fedorasource.ReadSourcesFileEntries(existingContent)
+	if err != nil {
+		return fmt.Errorf("failed to parse existing sources file %#q:\n%w", sourcesFilePath, err)
+	}
+
+	existingFilenames := make(map[string]bool, len(existingEntries))
+	for _, entry := range existingEntries {
+		if existingFilenames[entry.Filename] {
+			return fmt.Errorf(
+				"failed to process existing 'sources' file %#q: duplicate filename %#q",
+				sourcesFilePath, entry.Filename)
+		}
+
+		existingFilenames[entry.Filename] = true
+	}
+
+	newEntries, err := p.buildSourceEntries(sourceFiles, existingFilenames, component.GetName(), outputDir)
+	if err != nil {
+		return err
+	}
+
+	// Ensure existing content ends with a newline before appending.
+	if existingContent != "" && !strings.HasSuffix(existingContent, "\n") {
+		existingContent += "\n"
+	}
+
+	newContent := existingContent + strings.Join(newEntries, "\n") + "\n"
+
+	if err := fileutils.WriteFile(
+		p.fs,
+		sourcesFilePath,
+		[]byte(newContent),
+		fileperms.PublicFile,
+	); err != nil {
+		return fmt.Errorf("failed to write sources file %#q:\n%w", sourcesFilePath, err)
+	}
+
+	slog.Info("Updated sources file with extra source file entries",
+		"count", len(newEntries),
+		"path", sourcesFilePath)
+
+	return nil
+}
+
+// readSourcesFileIfExists reads the sources file content if it exists, returning empty string if not.
+func (p *sourcePreparerImpl) readSourcesFileIfExists(sourcesFilePath string) (string, error) {
+	exists, err := fileutils.Exists(p.fs, sourcesFilePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to check if sources file %#q exists:\n%w", sourcesFilePath, err)
+	}
+
+	if !exists {
+		return "", nil
+	}
+
+	data, err := fileutils.ReadFile(p.fs, sourcesFilePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read sources file %#q:\n%w", sourcesFilePath, err)
+	}
+
+	return string(data), nil
+}
+
+// buildSourceEntries validates [projectconfig.SourceFileReference] and collects formatted entries.
+// When [sourcePreparerImpl.allowNoHashes] is true, missing hashes are computed from the downloaded files
+// in [outputDir]. When [sourcePreparerImpl.skipLookaside] is also true, hash computation is skipped
+// because the source files were not downloaded.
+func (p *sourcePreparerImpl) buildSourceEntries(
+	sourceFiles []projectconfig.SourceFileReference,
+	existingFilenames map[string]bool,
+	componentName string,
+	outputDir string,
+) ([]string, error) {
+	newEntries := make([]string, 0, len(sourceFiles))
+
+	for _, ref := range sourceFiles {
+		if err := fileutils.ValidateFilename(ref.Filename); err != nil {
+			return nil, fmt.Errorf("invalid filename %#q in 'source-files' configuration:\n%w", ref.Filename, err)
+		}
+
+		if existingFilenames[ref.Filename] {
+			return nil, fmt.Errorf(
+				"source file %#q in 'source-files' configuration conflicts with an existing entry in the 'sources' file; "+
+					"to overwrite the existing entry, ensure it's removed first; "+
+					"if this is unintentional, use a different filename",
+				ref.Filename)
+		}
+
+		hash, hashType, err := p.resolveSourceHash(ref, componentName, outputDir)
+		if err != nil {
+			return nil, err
+		}
+
+		entry := fedorasource.FormatSourcesEntry(ref.Filename, hashType, hash)
+		newEntries = append(newEntries, entry)
+
+		slog.Debug("New 'sources' file entry",
+			"filename", ref.Filename,
+			"hashType", hashType,
+			"hash", hash)
+	}
+
+	return newEntries, nil
+}
+
+// resolveSourceHash returns the hash and hash type for a source file reference.
+// If the reference already has both values, they are returned as-is. When [ref.Hash]
+// is missing and '--allow-no-hashes' is set, the hash is computed from the
+// downloaded file on disk. Returns an error when the hash cannot be resolved.
+func (p *sourcePreparerImpl) resolveSourceHash(
+	ref projectconfig.SourceFileReference, componentName string, outputDir string,
+) (hash string, hashType fileutils.HashType, err error) {
+	hash = ref.Hash
+	hashType = ref.HashType
+
+	if hash != "" {
+		if hashType == "" {
+			return "", "", fmt.Errorf(
+				"source file %#q has a 'hash' value but no 'hash-type'; "+
+					"both must be specified in the 'source-files' configuration;"+
+					"alternatively 'hash' can be omitted and 'prep-sources' run with "+
+					"'--allow-no-hashes' to compute missing hashes automatically",
+				ref.Filename)
+		}
+
+		return hash, hashType, nil
+	}
+
+	// Hash is empty — resolve it if '--allow-no-hashes' is set.
+	if !p.allowNoHashes {
+		return "", "", fmt.Errorf(
+			"source file %#q is missing required 'hash'; specify the hash in the "+
+				"'source-files' configuration or use '--allow-no-hashes' to compute it automatically",
+			ref.Filename)
+	}
+
+	if p.skipLookaside {
+		return "", "", fmt.Errorf(
+			"source file %#q is missing its hash and source file downloads were skipped; "+
+				"hash cannot be computed without the downloaded file",
+			ref.Filename)
+	}
+
+	if hashType == "" {
+		hashType = fileutils.HashTypeSHA512
+
+		slog.Warn("No 'hash-type' specified for source file; defaulting to SHA-512",
+			"component", componentName,
+			"filename", ref.Filename,
+			"hashType", hashType)
+	}
+
+	filePath := filepath.Join(outputDir, ref.Filename)
+
+	hash, err = fileutils.ComputeFileHash(p.fs, hashType, filePath)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to compute hash for source file %#q:\n%w",
+			ref.Filename, err)
+	}
+
+	slog.Warn("Auto-computed hash for source file; consider adding 'hash' to the configuration",
+		"component", componentName,
+		"filename", ref.Filename,
+		"hashType", hashType,
+		"hash", hash)
+
+	return hash, hashType, nil
 }
 
 // writeMacrosFile writes a macros file containing the resolved macros for a component.

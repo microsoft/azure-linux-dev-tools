@@ -1,6 +1,6 @@
 [distros.azurelinux]
 description = "Azure Linux"
-default-version = "3.0"
+default-version = "4.0"
 
 [distros.azurelinux.versions.'3.0']
 description = "Azure Linux 3.0"

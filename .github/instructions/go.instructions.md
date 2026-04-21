@@ -1,5 +1,6 @@
 ---
 applyTo: "**/*.go"
+description: "Instructions for working on the azldev Go codebase. IMPORTANT: Always read these instructions when reading or editing Go code in this repository."
 ---
 
 # Guidelines for Copilot
@@ -40,10 +41,22 @@ applyTo: "**/*.go"
   - `return fmt.Errorf("failed to open %#q:\n%w", filename, err)`
   - `return fmt.Errorf("failed to run command 'go %s':\n%w", strings.Join(args, " "), err)`
 - Comments referring to types should encapsulate the type name in square brackets. Example: `// [packagename.MyType] is a custom type`
+- Config field names and CLI flags in comments and error messages:
+  - In code comments, use square brackets for field names: `[module.StructName.FieldName]`
+  - In code comments, use single quotes for flag names: `'--flag-name'`
+  - In log messages and error strings, use single quotes: `'field-name'`, `'--flag-name'`
 - Use structured logging with slog
 - Ensure code passes golangci-lint checks
 - Use `github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms` instead of re-defining file permission constants
 - Use `github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils` for file operations like `Exists`, `ReadFile`, `WriteFile`, not "github.com/spf13/afero" directly.
+  - Avoid directly using os package functions for file operations; use the fileutils package instead.
+
+### External Command Execution
+
+- **NEVER** use `exec.LookPath` to check for external tools. Use `ctx.CommandInSearchPath("toolname")` or `env.CommandInSearchPath("toolname")` instead — these delegate to the underlying command factory and integrate with `testctx` for stubbing in tests (for example via `testEnv.CmdFactory.RegisterCommandInSearchPath(...)`).
+- Use `exec.CommandContext(ctx, "toolname", args...)` with the binary name (not an absolute path) after the `CommandInSearchPath` check. PATH resolution happens at exec time.
+- Always wrap with `ctx.Command(rawCmd)` or `env.Command(rawCmd)` and use `cmd.RunAndGetOutput(ctx)` or `cmd.Run(ctx)` for consistent event tracking and dry-run support.
+- Capture stderr separately via `rawCmd.Stderr = &stderr` (set BEFORE `ctx.Command()` / `env.Command()`) for use in error messages.
 
 ### Return values
 
@@ -83,6 +96,22 @@ applyTo: "**/*.go"
     }
     ```
 
+## Component Fingerprinting — `fingerprint:"-"` Tags
+
+Structs in `internal/projectconfig/` are hashed by `hashstructure.Hash()` to detect component changes. Fields **included by default** (safe: false positive > false negative).
+
+When adding a new field to a fingerprinted struct, ask: **"Does changing this field change the build output?"**
+- **Yes** (build flags, spec source, defines, etc.) → do nothing, included automatically.
+- **No** (human docs, scheduling hints, CI policy, metadata, back-references) → add `fingerprint:"-"` to the struct tag and register the exclusion in `expectedExclusions` in `internal/projectconfig/fingerprint_test.go`.
+
+If a parent struct field is already excluded (e.g. `Failure ComponentBuildFailureConfig ... fingerprint:"-"`), do **not** also tag the inner struct's fields — `hashstructure` skips the entire subtree.
+
+Run `mage unit` to verify — the guard test will catch unregistered exclusions or missing tags.
+
+### Cmdline Returns
+
+CLI commands should return meaningful structured results. azldev has output formatting helpers to facilitate this (for example, `RunFunc*` wrappers handle formatting, so callers typically should not call `reflectable.FormatValue` directly).
+
 ## Quality Standards
 
 - Make minimal, focused changes to achieve the required functionality
@@ -91,3 +120,11 @@ applyTo: "**/*.go"
 - Organize imports according to Go best practices
 - Linting: Prefer fixing issues over `//nolint` comments. Use targeted `//nolint:<linter>` if absolutely required
 - Testing: Table-driven tests preferred. Use `scenario/internal/cmdtest` helpers
+
+### Component Command Testing
+
+New component subcommands (`internal/app/azldev/cmds/component/`) require:
+- **Command wiring test** (`*_test.go`, external `package component_test`): verify `NewXxxCmd()` returns a valid command with correct `Use`, `RunE`, and expected flags/defaults.
+- **No-match test**: call `cmd.ExecuteContext(testEnv.Env)` with a nonexistent component to verify error handling.
+- **Helper unit tests** (`*_test.go`, same-package `package component`): test unexported helper functions (e.g., `findSpecFile`, `cleanupStaleRenders`) using `afero.NewMemMapFs`; where needed, follow the existing `//nolint:testpackage` pattern used in this repo.
+- **Snapshot update**: if the command changes the schema or CLI docs, run `mage scenarioUpdate` to update snapshots.

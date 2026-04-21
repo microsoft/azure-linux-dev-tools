@@ -42,6 +42,7 @@ func loadAndResolveProjectConfig(
 		Distros:           make(map[string]DistroDefinition),
 		GroupsByComponent: make(map[string][]string),
 		PackageGroups:     make(map[string]PackageGroupConfig),
+		TestSuites:        make(map[string]TestSuiteConfig),
 	}
 
 	for _, configFilePath := range configFilePaths {
@@ -124,6 +125,10 @@ func mergeConfigFile(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
 	}
 
 	if err := mergePackageGroups(resolvedCfg, loadedCfg); err != nil {
+		return err
+	}
+
+	if err := mergeTestSuites(resolvedCfg, loadedCfg); err != nil {
 		return err
 	}
 
@@ -245,6 +250,24 @@ func mergePackageGroups(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error
 		}
 
 		resolvedCfg.PackageGroups[groupName] = group
+	}
+
+	return nil
+}
+
+// mergeTestSuites merges test suite definitions from a loaded config file into the
+// resolved config. Duplicate test suite names are not allowed.
+func mergeTestSuites(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
+	for testName, test := range loadedCfg.TestSuites {
+		if _, ok := resolvedCfg.TestSuites[testName]; ok {
+			return fmt.Errorf("%w: test suite %#q", ErrDuplicateTestSuites, testName)
+		}
+
+		// Fill out fields not explicitly serialized.
+		test.Name = testName
+		test.SourceConfigFile = loadedCfg
+
+		resolvedCfg.TestSuites[testName] = test
 	}
 
 	return nil

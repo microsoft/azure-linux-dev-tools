@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
@@ -21,6 +22,15 @@ type ListPackageOptions struct {
 	// PackageNames contains specific binary package names to look up.
 	// If a package is not in any explicit config it is still resolved using project defaults.
 	PackageNames []string
+
+	// SynthesizeDebugPackages, when true, augments the result list with synthetic
+	// '-debuginfo' packages (one per reported package, using a parallel publish
+	// channel derived from the original package's publish channel by appending
+	// '-debuginfo', except when the original channel is "" or "none") and synthetic
+	// '-debugsource' packages (one per component in the project configuration,
+	// using the component's resolved publish channel after applying the same
+	// debug-channel derivation logic).
+	SynthesizeDebugPackages bool
 }
 
 func listOnAppInit(_ *azldev.App, parent *cobra.Command) {
@@ -66,6 +76,8 @@ Resolution order (lowest to highest priority):
 
 	cmd.Flags().BoolVarP(&options.All, "all-packages", "a", false, "List all explicitly-configured binary packages")
 	cmd.Flags().StringArrayVarP(&options.PackageNames, "package", "p", []string{}, "Package name to look up (repeatable)")
+	cmd.Flags().BoolVar(&options.SynthesizeDebugPackages, "synthesize-debug-packages", false,
+		"Also synthesize '-debuginfo' packages (per reported package) and '-debugsource' packages (per component)")
 
 	azldev.ExportAsMCPTool(cmd)
 
@@ -86,7 +98,7 @@ type PackageListResult struct {
 
 	// Channel is the resolved publish channel after applying all config layers.
 	// Empty means no channel has been configured.
-	Channel string `json:"channel" table:"Channel"`
+	Channel string `json:"publishChannel" table:"Publish Channel"`
 }
 
 // buildComponentPackageIndex builds a map from binary package name to the component
@@ -186,10 +198,119 @@ func ListPackages(env *azldev.Env, options *ListPackageOptions) ([]PackageListRe
 		})
 	}
 
+	if options.SynthesizeDebugPackages {
+		slog.Warn("'--synthesize-debug-packages' is a transitional flag and may change or be removed " +
+			"once first-class debug-package configuration is supported.")
+
+		results, err = synthesizeDebugPackages(results, proj)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// Sort by package name for deterministic, readable output.
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].PackageName < results[j].PackageName
 	})
 
 	return results, nil
+}
+
+// synthesizeDebugPackages augments results with synthetic '-debuginfo' packages (one per
+// already-resolved package, using a parallel publish channel derived from the original
+// package's publish channel by appending '-debuginfo', except when the original channel is
+// "" or "none") and '-debugsource' packages (one per component in the project, with the
+// publish channel resolved through the normal component → project default chain).
+//
+// Note: '-debugsource' entries are emitted for every component in the project regardless of
+// which packages were requested via '-p'. Components own packages via [ComponentConfig.Packages],
+// but most listed packages come from package groups with no component association — so scoping
+// debugsource emission to the requested package set cannot be done reliably with the current
+// configuration model.
+//
+// Synthetic entries that collide with an already-present (real) package name are skipped so
+// real configuration always wins. Source packages whose names already end in '-debuginfo' or
+// '-debugsource' do not get a doubled suffix synthesized.
+func synthesizeDebugPackages(
+	results []PackageListResult, proj *projectconfig.ProjectConfig,
+) ([]PackageListResult, error) {
+	existing := make(map[string]struct{}, len(results))
+	for _, result := range results {
+		existing[result.PackageName] = struct{}{}
+	}
+
+	// One '-debuginfo' per originally-reported package, sharing its publish channel and
+	// group/component attribution.
+	debugInfoEntries := make([]PackageListResult, 0, len(results))
+
+	for _, result := range results {
+		if isDebugPackageName(result.PackageName) {
+			continue
+		}
+
+		name := result.PackageName + "-debuginfo"
+		if _, exists := existing[name]; exists {
+			continue
+		}
+
+		existing[name] = struct{}{}
+		debugInfoEntries = append(debugInfoEntries, PackageListResult{
+			PackageName: name,
+			Group:       result.Group,
+			Component:   result.Component,
+			Channel:     debugChannelName(result.Channel),
+		})
+	}
+
+	results = append(results, debugInfoEntries...)
+
+	// One '-debugsource' per component. Resolve the synthesized package using the
+	// standard package-resolution chain for '<component>-debugsource' so the entry
+	// reflects any explicit package override, package-group defaults, component
+	// settings, or project defaults instead of an implicit empty channel.
+	for compName, comp := range proj.Components {
+		if isDebugPackageName(compName) {
+			continue
+		}
+
+		name := compName + "-debugsource"
+		if _, exists := existing[name]; exists {
+			continue
+		}
+
+		existing[name] = struct{}{}
+
+		compCopy := comp
+
+		pkgConfig, err := projectconfig.ResolvePackageConfig(name, &compCopy, proj)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve config for synthesized package %#q:\n%w", name, err)
+		}
+
+		results = append(results, PackageListResult{
+			PackageName: name,
+			Component:   compName,
+			Channel:     debugChannelName(pkgConfig.Publish.Channel),
+		})
+	}
+
+	return results, nil
+}
+
+// debugChannelName returns the publish-channel name to use for a synthesized debug package.
+// Real (non-empty, non-"none") channels are suffixed with '-debuginfo' so debug artifacts are
+// published to a parallel channel; "" and 'none' are passed through unchanged because they
+// represent "default" and "do not publish" respectively.
+func debugChannelName(channel string) string {
+	if channel == "" || channel == "none" || strings.HasSuffix(channel, "-debuginfo") {
+		return channel
+	}
+
+	return channel + "-debuginfo"
+}
+
+// isDebugPackageName reports whether name already has a '-debuginfo' or '-debugsource' suffix,
+// so the caller can avoid synthesizing doubled-suffix names like 'foo-debuginfo-debuginfo'.
+func isDebugPackageName(name string) bool {
+	return strings.HasSuffix(name, "-debuginfo") || strings.HasSuffix(name, "-debugsource")
 }

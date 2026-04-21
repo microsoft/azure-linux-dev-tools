@@ -62,6 +62,7 @@ func TestRunnerDefaults(t *testing.T) {
 	assert.Empty(t, runner.BindMounts())
 	assert.False(t, runner.HasNetworkEnabled())
 	assert.False(t, runner.HasNoPreClean())
+	assert.False(t, runner.HasUnprivileged())
 	assert.Empty(t, runner.BaseDir())
 	assert.Empty(t, runner.RootDir())
 	assert.Empty(t, runner.ConfigOpts())
@@ -84,6 +85,7 @@ func TestClone(t *testing.T) {
 	runner.WithRootDir(testRootDir)
 	runner.WithNoPreClean()
 	runner.EnableNetwork()
+	runner.WithUnprivileged()
 	runner.WithConfigOpts(map[string]string{"cleanup_on_success": "True", "cleanup_on_failure": "False"})
 
 	clone := runner.Clone()
@@ -93,6 +95,7 @@ func TestClone(t *testing.T) {
 	assert.Equal(t, map[string]string{testHostPath: testGuestPath}, clone.BindMounts())
 	assert.True(t, clone.HasNetworkEnabled())
 	assert.True(t, clone.HasNoPreClean())
+	assert.True(t, clone.HasUnprivileged())
 	assert.Equal(t, testBaseDir, clone.BaseDir())
 	assert.Equal(t, testRootDir, clone.RootDir())
 	assert.Equal(t, map[string]string{"cleanup_on_success": "True", "cleanup_on_failure": "False"}, clone.ConfigOpts())
@@ -300,6 +303,20 @@ func TestCmdInChroot_ConfigOpts(t *testing.T) {
 	assert.Contains(t, cmdArgs, "--config-opts")
 	assert.Contains(t, cmdArgs, "cleanup_on_failure=False")
 	assert.Contains(t, cmdArgs, "cleanup_on_success=True")
+}
+
+func TestCmdInChroot_Unprivileged(t *testing.T) {
+	ctx := newTestCtxWithMockPrereqsPresent()
+
+	runner := mock.NewRunner(ctx, testMockConfigPath)
+	runner.WithUnprivileged()
+
+	cmd, err := runner.CmdInChroot(ctx, []string{"arg"}, false /*interactive*/)
+	require.NoError(t, err)
+	require.NotNil(t, cmd)
+
+	// Look for unpriv arg.
+	assert.Contains(t, cmd.GetArgs(), "--unpriv")
 }
 
 func TestBuildRPM_WithConfigOpts(t *testing.T) {

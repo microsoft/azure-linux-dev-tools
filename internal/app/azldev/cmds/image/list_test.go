@@ -9,6 +9,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/image"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -76,6 +77,91 @@ func TestListImages_AllImages(t *testing.T) {
 
 	assert.Equal(t, "image-b", results[1].Name)
 	assert.Equal(t, "Image B description", results[1].Description)
+}
+
+func TestListImages_WithCapabilitiesAndTests(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+	testEnv.Config.Images = map[string]projectconfig.ImageConfig{
+		"vm-base": {
+			Name:        "vm-base",
+			Description: "VM Base Image",
+			Capabilities: projectconfig.ImageCapabilities{
+				MachineBootable: lo.ToPtr(true),
+				Systemd:         lo.ToPtr(true),
+			},
+			Tests: projectconfig.ImageTestsConfig{
+				TestSuites: []projectconfig.TestSuiteRef{
+					{Name: "smoke"},
+					{Name: "integration"},
+				},
+			},
+			Publish: projectconfig.ImagePublishConfig{
+				Channels: []string{"registry-prod", "registry-staging"},
+			},
+		},
+		"container-base": {
+			Name:        "container-base",
+			Description: "Container Base Image",
+			Capabilities: projectconfig.ImageCapabilities{
+				Container: lo.ToPtr(true),
+			},
+			Tests: projectconfig.ImageTestsConfig{
+				TestSuites: []projectconfig.TestSuiteRef{
+					{Name: "smoke"},
+				},
+			},
+			Publish: projectconfig.ImagePublishConfig{
+				Channels: []string{"registry-prod"},
+			},
+		},
+		"minimal": {
+			Name:        "minimal",
+			Description: "Minimal image with no capabilities or tests",
+		},
+	}
+
+	options := &image.ListImageOptions{}
+
+	results, err := image.ListImages(testEnv.Env, options)
+	require.NoError(t, err)
+	require.Len(t, results, 3)
+
+	// Results sorted alphabetically.
+	assert.Equal(t, "container-base", results[0].Name)
+	assert.Equal(t, lo.ToPtr(true), results[0].Capabilities.Container)
+	assert.Nil(t, results[0].Capabilities.MachineBootable)
+	assert.Equal(t, "container", results[0].CapabilitiesSummary)
+	assert.Equal(t, projectconfig.ImageTestsConfig{
+		TestSuites: []projectconfig.TestSuiteRef{{Name: "smoke"}},
+	}, results[0].Tests)
+	assert.Equal(t, "smoke", results[0].TestsSummary)
+	assert.Equal(t, projectconfig.ImagePublishConfig{
+		Channels: []string{"registry-prod"},
+	}, results[0].Publish)
+	assert.Equal(t, "registry-prod", results[0].PublishSummary)
+
+	assert.Equal(t, "minimal", results[1].Name)
+	assert.Nil(t, results[1].Capabilities.MachineBootable)
+	assert.Nil(t, results[1].Capabilities.Container)
+	assert.Empty(t, results[1].CapabilitiesSummary)
+	assert.Empty(t, results[1].Tests.TestSuites)
+	assert.Empty(t, results[1].TestsSummary)
+	assert.Empty(t, results[1].Publish.Channels)
+	assert.Empty(t, results[1].PublishSummary)
+
+	assert.Equal(t, "vm-base", results[2].Name)
+	assert.Equal(t, lo.ToPtr(true), results[2].Capabilities.MachineBootable)
+	assert.Equal(t, lo.ToPtr(true), results[2].Capabilities.Systemd)
+	assert.Nil(t, results[2].Capabilities.Container)
+	assert.Equal(t, "machine-bootable, systemd", results[2].CapabilitiesSummary)
+	assert.Equal(t, projectconfig.ImageTestsConfig{
+		TestSuites: []projectconfig.TestSuiteRef{{Name: "smoke"}, {Name: "integration"}},
+	}, results[2].Tests)
+	assert.Equal(t, "smoke, integration", results[2].TestsSummary)
+	assert.Equal(t, projectconfig.ImagePublishConfig{
+		Channels: []string{"registry-prod", "registry-staging"},
+	}, results[2].Publish)
+	assert.Equal(t, "registry-prod, registry-staging", results[2].PublishSummary)
 }
 
 func TestListImages_ExactMatch(t *testing.T) {

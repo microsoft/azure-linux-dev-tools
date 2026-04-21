@@ -42,9 +42,10 @@ azldev package list [package-name...] [flags]
 ### Options
 
 ```
-  -a, --all-packages          List all explicitly-configured binary packages
-  -h, --help                  help for list
-  -p, --package stringArray   Package name to look up (repeatable)
+  -a, --all-packages                List all explicitly-configured binary packages
+  -h, --help                        help for list
+  -p, --package stringArray         Package name to look up (repeatable)
+      --synthesize-debug-packages   Also synthesize '-debuginfo' packages (per reported package) and '-debugsource' packages (per component)
 ```
 
 ### Options inherited from parent commands

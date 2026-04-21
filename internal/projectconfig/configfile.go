@@ -5,12 +5,14 @@ package projectconfig
 
 import (
 	"fmt"
+	"net/url"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/pelletier/go-toml/v2"
+	"github.com/samber/lo"
 )
 
 // Default schema URI for this config file. Useful for capable editors to provide Intellisense and validation.
@@ -50,7 +52,10 @@ type ConfigFile struct {
 
 	// Definitions of package groups. Groups allow shared configuration
 	// to be applied to sets of binary packages.
-	PackageGroups map[string]PackageGroupConfig `toml:"package-groups,omitempty" jsonschema:"title=Package groups,description=Definitions of package groups for shared binary package configuration"`
+	PackageGroups map[string]PackageGroupConfig `toml:"package-groups,omitempty" validate:"dive" jsonschema:"title=Package groups,description=Definitions of package groups for shared binary package configuration"`
+
+	// Definitions of test suites.
+	TestSuites map[string]TestSuiteConfig `toml:"test-suites,omitempty" validate:"dive" jsonschema:"title=Test Suites,description=Definitions of test suites for this project"`
 
 	// Internal fields used to track the origin of the config file; `dir` is the directory
 	// that the config file's relative paths are based from.
@@ -97,6 +102,93 @@ func (f ConfigFile) Validate() error {
 		if err != nil {
 			return fmt.Errorf("invalid build config for component %#q:\n%w", componentName, err)
 		}
+
+		if err := validateSourceFiles(component.SourceFiles, componentName); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateSourceFiles checks 'source-files' configuration for a component:
+//   - All filenames must be unique.
+//   - Hash type must be a supported algorithm when specified.
+//   - Hash value without a hash type is not allowed.
+//   - Origin must be present and valid for each source file.
+func validateSourceFiles(sourceFiles []SourceFileReference, componentName string) error {
+	seen := make(map[string]bool, len(sourceFiles))
+
+	for _, ref := range sourceFiles {
+		if err := fileutils.ValidateFilename(ref.Filename); err != nil {
+			return fmt.Errorf("invalid filename %#q for source file in component %#q:\n%w", ref.Filename, componentName, err)
+		}
+
+		if seen[ref.Filename] {
+			return fmt.Errorf(
+				"duplicate filename %#q in 'source-files' for component %#q; each filename must be unique",
+				ref.Filename, componentName)
+		}
+
+		seen[ref.Filename] = true
+
+		if ref.HashType != "" && !AllowedSourceFilesHashTypes[ref.HashType] {
+			return fmt.Errorf(
+				"unsupported hash type %#q for source file %#q, component %#q; supported types are %v",
+				ref.HashType, ref.Filename, componentName, lo.Keys(AllowedSourceFilesHashTypes))
+		}
+
+		if ref.Hash != "" && ref.HashType == "" {
+			return fmt.Errorf(
+				"hash value specified without hash type for source file %#q, component %#q; "+
+					"'hash-type' must be set when 'hash' is provided",
+				ref.Filename, componentName)
+		}
+
+		if err := validateOrigin(ref.Origin, ref.Filename, componentName); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateOrigin checks that a source file [Origin] is present and valid for its type.
+// For [OriginTypeURI] ('download'), the [Origin.Uri] field must be a valid URI with a scheme.
+func validateOrigin(origin Origin, filename string, componentName string) error {
+	if origin.Type == "" {
+		return fmt.Errorf(
+			"missing 'origin' for source file %#q, component %#q; "+
+				"an origin is required for all source file entries",
+			filename, componentName)
+	}
+
+	switch origin.Type {
+	case OriginTypeURI:
+		if origin.Uri == "" {
+			return fmt.Errorf(
+				"missing 'uri' for source file %#q, component %#q; "+
+					"'uri' is required when 'origin' type is 'download'",
+				filename, componentName)
+		}
+
+		parsed, err := url.Parse(origin.Uri)
+		if err != nil {
+			return fmt.Errorf(
+				"invalid 'uri' for source file %#q, component %#q:\n%w",
+				filename, componentName, err)
+		}
+
+		if parsed.Scheme == "" {
+			return fmt.Errorf(
+				"invalid 'uri' for source file %#q, component %#q; "+
+					"URI %#q is missing a scheme (e.g. 'https://')",
+				filename, componentName, origin.Uri)
+		}
+	default:
+		return fmt.Errorf(
+			"unsupported 'origin' type %#q for source file %#q, component %#q",
+			origin.Type, filename, componentName)
 	}
 
 	return nil

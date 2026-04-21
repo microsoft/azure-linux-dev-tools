@@ -34,6 +34,9 @@ type ProjectConfig struct {
 	// Definitions of package groups with shared configuration.
 	PackageGroups map[string]PackageGroupConfig `toml:"package-groups,omitempty" json:"packageGroups,omitempty" jsonschema:"title=Package groups,description=Mapping of package group names to configurations for publish-time routing"`
 
+	// Definitions of test suites.
+	TestSuites map[string]TestSuiteConfig `toml:"test-suites,omitempty" json:"testSuites,omitempty" jsonschema:"title=Test Suites,description=Mapping of test suite names to configurations"`
+
 	// Root config file path; not serialized.
 	RootConfigFilePath string `toml:"-" json:"-"`
 	// Map from component names to groups they belong to; not serialized.
@@ -50,6 +53,7 @@ func NewProjectConfig() ProjectConfig {
 		Distros:           make(map[string]DistroDefinition),
 		GroupsByComponent: make(map[string][]string),
 		PackageGroups:     make(map[string]PackageGroupConfig),
+		TestSuites:        make(map[string]TestSuiteConfig),
 	}
 }
 
@@ -61,6 +65,10 @@ func (cfg *ProjectConfig) Validate() error {
 	}
 
 	if err := validatePackageGroupMembership(cfg.PackageGroups); err != nil {
+		return err
+	}
+
+	if err := validateImageTestReferences(cfg.Images, cfg.TestSuites); err != nil {
 		return err
 	}
 
@@ -90,6 +98,24 @@ func validatePackageGroupMembership(groups map[string]PackageGroupConfig) error 
 	return nil
 }
 
+// validateImageTestReferences checks that every test suite name in an image's
+// [ImageConfig.Tests.TestSuites] list corresponds to a defined entry in the top-level
+// TestSuites map.
+func validateImageTestReferences(images map[string]ImageConfig, tests map[string]TestSuiteConfig) error {
+	for imageName, image := range images {
+		for _, testName := range image.TestNames() {
+			if _, ok := tests[testName]; !ok {
+				return fmt.Errorf(
+					"%w: image %#q references test suite %#q, which is not defined in [test-suites]",
+					ErrUndefinedTestSuite, imageName, testName,
+				)
+			}
+		}
+	}
+
+	return nil
+}
+
 // Basic information regarding a project.
 type ProjectInfo struct {
 	// Human-readable description of this project.
@@ -102,8 +128,18 @@ type ProjectInfo struct {
 	// Path to output directory to use for this project.
 	OutputDir string `toml:"output-dir,omitempty" json:"outputDir,omitempty" jsonschema:"title=Output Directory,description=Path to the output directory,example=out"`
 
+	// Path to the output directory for rendered specs (component render).
+	RenderedSpecsDir string `toml:"rendered-specs-dir,omitempty" json:"renderedSpecsDir,omitempty" jsonschema:"title=Rendered Specs Directory,description=Output directory for rendered specs,example=SPECS"`
+
+	// Path to the directory for per-component lock files.
+	LockDir string `toml:"lock-dir,omitempty" json:"lockDir,omitempty" jsonschema:"title=Lock Directory,description=Directory for per-component lock files,default=locks"`
+
 	// Default-selected distro. May be overridden at runtime.
 	DefaultDistro DistroReference `toml:"default-distro,omitempty" json:"defaultDistro,omitempty" jsonschema:"title=Default Distro,description=Default selected distro reference"`
+
+	// Default email address used for synthetic changelog entries and commits
+	// when no author email is available (e.g. when no Affects commits exist).
+	DefaultAuthorEmail string `toml:"default-author-email,omitempty" json:"defaultAuthorEmail,omitempty" jsonschema:"title=Default Author Email,description=Default email for synthetic changelog entries and commits"`
 }
 
 // Mutates the project info, updating it with overrides present in other.
@@ -129,6 +165,8 @@ func (p *ProjectInfo) WithAbsolutePaths(referenceDir string) *ProjectInfo {
 	result.LogDir = makeAbsolute(referenceDir, result.LogDir)
 	result.WorkDir = makeAbsolute(referenceDir, result.WorkDir)
 	result.OutputDir = makeAbsolute(referenceDir, result.OutputDir)
+	result.RenderedSpecsDir = makeAbsolute(referenceDir, result.RenderedSpecsDir)
+	result.LockDir = makeAbsolute(referenceDir, result.LockDir)
 
 	return result
 }

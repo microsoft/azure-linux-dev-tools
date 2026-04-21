@@ -207,7 +207,7 @@ func TestParseSourcesFile(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, sources, 1)
 		assert.Equal(t, "file.tar.gz", sources[0].fileName)
-		assert.Equal(t, fileutils.HashType("SHA512"), sources[0].hashType)
+		assert.Equal(t, fileutils.HashTypeSHA512, sources[0].hashType)
 		assert.Equal(t, "abc123", sources[0].expectedHash)
 		assert.Equal(t, "https://example.com/sha512/abc123/pkg/file.tar.gz", sources[0].uri)
 	})
@@ -220,7 +220,7 @@ func TestParseSourcesFile(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, sources, 1)
 		assert.Equal(t, "legacy.tar.gz", sources[0].fileName)
-		assert.Equal(t, fileutils.HashType("MD5"), sources[0].hashType)
+		assert.Equal(t, fileutils.HashTypeMD5, sources[0].hashType)
 		assert.Equal(t, "abc123def456", sources[0].expectedHash)
 	})
 
@@ -267,6 +267,24 @@ func TestParseSourcesFile(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.Empty(t, sources)
+	})
+
+	t.Run("path traversal filename is rejected", func(t *testing.T) {
+		content := "SHA512 (../../etc/passwd) = abc123\n"
+
+		_, err := parseSourcesFile(content, "pkg", "https://example.com/$hashtype/$hash/$pkg/$filename")
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unsafe filename")
+	})
+
+	t.Run("absolute path filename is rejected", func(t *testing.T) {
+		content := "SHA512 (/etc/passwd) = abc123\n"
+
+		_, err := parseSourcesFile(content, "pkg", "https://example.com/$hashtype/$hash/$pkg/$filename")
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unsafe filename")
 	})
 }
 
@@ -476,6 +494,45 @@ func TestBuildDistGitURL(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, testCase.expected, result)
 			}
+		})
+	}
+}
+
+func TestFormatSourcesEntry(t *testing.T) {
+	tests := []struct {
+		name     string
+		filename string
+		hashType fileutils.HashType
+		hash     string
+		expected string
+	}{
+		{
+			name:     "SHA512 format",
+			filename: "example-1.0.tar.gz",
+			hashType: fileutils.HashTypeSHA512,
+			hash:     "abc123def456",
+			expected: "SHA512 (example-1.0.tar.gz) = abc123def456",
+		},
+		{
+			name:     "SHA256 format",
+			filename: "patch-1.patch",
+			hashType: fileutils.HashTypeSHA256,
+			hash:     "67899aaa0f2f55e55e715cb65596449cb29bb0a76a764fe8f1e51bf4d0af648f",
+			expected: "SHA256 (patch-1.patch) = 67899aaa0f2f55e55e715cb65596449cb29bb0a76a764fe8f1e51bf4d0af648f",
+		},
+		{
+			name:     "filename with spaces",
+			filename: "my file.tar.gz",
+			hashType: fileutils.HashTypeSHA512,
+			hash:     "xyz789",
+			expected: "SHA512 (my file.tar.gz) = xyz789",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			result := FormatSourcesEntry(testCase.filename, testCase.hashType, testCase.hash)
+			assert.Equal(t, testCase.expected, result)
 		})
 	}
 }

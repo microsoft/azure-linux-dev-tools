@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
+	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/samber/lo"
 	"github.com/spf13/cobra"
 )
@@ -27,6 +28,26 @@ type ImageListResult struct {
 
 	// Description of the image.
 	Description string `json:"description"`
+
+	// Capabilities describes the features and properties of this image.
+	Capabilities projectconfig.ImageCapabilities `json:"capabilities" table:"-"`
+
+	// CapabilitiesSummary is a comma-separated summary of enabled capabilities for table
+	// display.
+	CapabilitiesSummary string `json:"-" table:"Capabilities"`
+
+	// Tests holds the test configuration for this image, matching the original config
+	// structure.
+	Tests projectconfig.ImageTestsConfig `json:"tests" table:"-"`
+
+	// TestsSummary is a comma-separated summary of test suite names for table display.
+	TestsSummary string `json:"-" table:"Tests"`
+
+	// Publish holds the publish settings for this image.
+	Publish projectconfig.ImagePublishConfig `json:"publish" table:"-"`
+
+	// PublishSummary is a comma-separated summary of publish channels for table display.
+	PublishSummary string `json:"-" table:"Publish"`
 
 	// Definition contains the image definition details (hidden from table output).
 	Definition ImageDefinitionResult `json:"definition" table:"-"`
@@ -108,9 +129,16 @@ func ListImages(env *azldev.Env, options *ListImageOptions) ([]ImageListResult, 
 		}
 
 		imageConfig := cfg.Images[name]
+
 		results = append(results, ImageListResult{
-			Name:        name,
-			Description: imageConfig.Description,
+			Name:                name,
+			Description:         imageConfig.Description,
+			Capabilities:        imageConfig.Capabilities,
+			CapabilitiesSummary: strings.Join(imageConfig.Capabilities.EnabledNames(), ", "),
+			Tests:               imageConfig.Tests,
+			TestsSummary:        strings.Join(imageConfig.TestNames(), ", "),
+			Publish:             imageConfig.Publish,
+			PublishSummary:      strings.Join(imageConfig.Publish.Channels, ", "),
 			Definition: ImageDefinitionResult{
 				Type: string(imageConfig.Definition.DefinitionType),
 				Path: imageConfig.Definition.Path,

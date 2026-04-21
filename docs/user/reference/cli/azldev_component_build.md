@@ -9,8 +9,16 @@ Build packages for components
 Build RPM packages for one or more components using mock.
 
 This command fetches upstream sources (applying any configured overlays),
-creates an SRPM, and invokes mock to produce binary RPMs. Built packages
-are placed in the project's output directory.
+creates an SRPM, and invokes mock to produce binary RPMs. Build outputs
+are placed in structured subdirectories under the project output directory:
+
+  out/srpms/           - source RPMs (SRPMs)
+  out/rpms/            - binary RPMs with no channel configured (or channel="none")
+  out/rpms/<channel>/  - binary RPMs moved to their configured publish channel subdirectory
+
+The publish channel for each package is resolved from the project's package
+configuration (package groups and per-component overrides). See 'azldev package'
+for details.
 
 Use --local-repo-with-publish to build a chain of dependent components:
 each component's RPMs are published to a local repository that subsequent

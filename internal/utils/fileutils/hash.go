@@ -24,13 +24,13 @@ type HashType string
 const (
 	// HashTypeMD5 represents the MD5 hash algorithm.
 	// Note: MD5 is cryptographically weak and should only be used for legacy compatibility.
-	HashTypeMD5 HashType = "md5"
+	HashTypeMD5 HashType = "MD5"
 
 	// HashTypeSHA256 represents the SHA-256 hash algorithm.
-	HashTypeSHA256 HashType = "sha256"
+	HashTypeSHA256 HashType = "SHA256"
 
 	// HashTypeSHA512 represents the SHA-512 hash algorithm.
-	HashTypeSHA512 HashType = "sha512"
+	HashTypeSHA512 HashType = "SHA512"
 )
 
 // Computes the hash of the file located at filePath using the specified hashType; returns the hash in hex string form.
@@ -92,15 +92,15 @@ func ValidateFileHash(
 
 // getHasher returns the appropriate hash.Hash implementation for the given algorithm name.
 func getHasher(hashType HashType) (hash.Hash, error) {
-	switch strings.ToUpper(string(hashType)) {
-	case "MD5":
+	switch hashType {
+	case HashTypeMD5:
 		//nolint:gosec // MD5 is required for legacy Fedora sources file format compatibility
 		return md5.New(), nil
-	case "SHA256":
+	case HashTypeSHA256:
 		return sha256.New(), nil
-	case "SHA512":
+	case HashTypeSHA512:
 		return sha512.New(), nil
 	default:
-		return nil, fmt.Errorf("unsupported hash algorithm: %s", hashType)
+		return nil, fmt.Errorf("unsupported hash algorithm %#q", hashType)
 	}
 }

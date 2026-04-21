@@ -65,6 +65,10 @@ type Runner struct {
 	// configOpts is an optional set of key-value pairs that will be passed through to mock as
 	// --config-opts key=value arguments, allowing callers to override mock's configuration.
 	configOpts map[string]string
+
+	// unprivileged requests that chroot commands run as the unprivileged mockbuild
+	// user instead of root. Corresponds to mock's --unpriv flag.
+	unprivileged bool
 }
 
 // BuildLogDetails encapsulates details extracted from mock build logs that may be relevant to
@@ -107,6 +111,7 @@ func (r *Runner) Clone() *Runner {
 		bindMounts:     deep.MustCopy(r.bindMounts),
 		enableNetwork:  r.enableNetwork,
 		noPreClean:     r.noPreClean,
+		unprivileged:   r.unprivileged,
 		baseDir:        r.baseDir,
 		rootDir:        r.rootDir,
 		configOpts:     deep.MustCopy(r.configOpts),
@@ -155,6 +160,21 @@ func (r *Runner) WithNoPreClean() *Runner {
 // HasNoPreClean indicates whether the [Runner] is configured to avoid pre-cleaning the root.
 func (r *Runner) HasNoPreClean() bool {
 	return r.noPreClean
+}
+
+// WithUnprivileged configures the [Runner] to drop privileges before running
+// chroot commands, using mock's --unpriv flag. Commands will run as the
+// mockbuild user instead of root.
+func (r *Runner) WithUnprivileged() *Runner {
+	r.unprivileged = true
+
+	return r
+}
+
+// HasUnprivileged indicates whether the [Runner] is configured to drop privileges
+// for chroot commands.
+func (r *Runner) HasUnprivileged() bool {
+	return r.unprivileged
 }
 
 // WithBaseDir updates the [Runner]'s configuration to set which directory mock roots are created
@@ -539,6 +559,10 @@ func (r *Runner) CmdInChroot(ctx context.Context, args []string, interactive boo
 		mockArgs = append(mockArgs, "--shell")
 	} else {
 		mockArgs = append(mockArgs, "--chroot")
+	}
+
+	if r.unprivileged {
+		mockArgs = append(mockArgs, "--unpriv")
 	}
 
 	if len(args) > 0 {

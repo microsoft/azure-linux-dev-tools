@@ -37,6 +37,64 @@ func TestNewImageBootCmd_Flags(t *testing.T) {
 	assert.NotNil(t, cmd.Flags().Lookup("cpus"))
 	assert.NotNil(t, cmd.Flags().Lookup("memory"))
 	assert.NotNil(t, cmd.Flags().Lookup("arch"))
+	assert.NotNil(t, cmd.Flags().Lookup("iso"))
+	assert.NotNil(t, cmd.Flags().Lookup("disk-size"))
+}
+
+func TestNewImageBootCmd_DiskSizeDefault(t *testing.T) {
+	cmd := image.NewImageBootCmd()
+	diskSizeFlag := cmd.Flags().Lookup("disk-size")
+	require.NotNil(t, diskSizeFlag)
+	assert.Equal(t, "10G", diskSizeFlag.DefValue)
+}
+
+func TestNewImageBootCmd_NoImageSourceErrors(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	cmd := image.NewImageBootCmd()
+	cmd.SetArgs([]string{})
+
+	err := cmd.ExecuteContext(testEnv.Env)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "IMAGE_NAME")
+	assert.Contains(t, err.Error(), "--image-path")
+	assert.Contains(t, err.Error(), "--iso")
+}
+
+func TestNewImageBootCmd_DiskSizeWithoutEmptyDiskErrors(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	cmd := image.NewImageBootCmd()
+	// '--disk-size' is only meaningful when '--iso' is used without a disk image.
+	cmd.SetArgs([]string{"--image-path", "/tmp/test.qcow2", "--iso", "/tmp/live.iso", "--disk-size", "20G"})
+
+	err := cmd.ExecuteContext(testEnv.Env)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--disk-size")
+}
+
+func TestNewImageBootCmd_CommaInImagePathErrors(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	cmd := image.NewImageBootCmd()
+	cmd.SetArgs([]string{"--image-path", "/tmp/weird,name.qcow2"})
+
+	err := cmd.ExecuteContext(testEnv.Env)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--image-path")
+	assert.Contains(t, err.Error(), ",")
+}
+
+func TestNewImageBootCmd_CommaInISOPathErrors(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	cmd := image.NewImageBootCmd()
+	cmd.SetArgs([]string{"--iso", "/tmp/weird,name.iso"})
+
+	err := cmd.ExecuteContext(testEnv.Env)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--iso")
+	assert.Contains(t, err.Error(), ",")
 }
 
 func TestImageFormat_Set_InvalidFormat(t *testing.T) {

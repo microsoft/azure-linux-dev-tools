@@ -37,15 +37,14 @@ type PasswordConfig struct {
 //
 //nolint:tagliatelle // We don't control the schema for this struct; it's an external format.
 type UserConfig struct {
-	Description           string   `yaml:"gecos,omitempty"`
-	EnableSSHPasswordAuth *bool    `yaml:"ssh_pwauth,omitempty"`
-	Groups                []string `yaml:"groups,omitempty"`
-	LockPassword          *bool    `yaml:"lock_passwd,omitempty"`
-	Name                  string   `yaml:"name,omitempty"`
-	PlainTextPassword     string   `yaml:"plain_text_passwd,omitempty"`
-	Shell                 string   `yaml:"shell,omitempty"`
-	SSHAuthorizedKeys     []string `yaml:"ssh_authorized_keys,omitempty"`
-	Sudo                  []string `yaml:"sudo,omitempty"`
+	Description       string   `yaml:"gecos,omitempty"`
+	Groups            []string `yaml:"groups,omitempty"`
+	LockPassword      *bool    `yaml:"lock_passwd,omitempty"`
+	Name              string   `yaml:"name,omitempty"`
+	PlainTextPassword string   `yaml:"plain_text_passwd,omitempty"`
+	Shell             string   `yaml:"shell,omitempty"`
+	SSHAuthorizedKeys []string `yaml:"ssh_authorized_keys,omitempty"`
+	Sudo              []string `yaml:"sudo,omitempty"`
 }
 
 // MarshalToYAML serializes the given cloud-init Config to YAML format.

@@ -33,6 +33,7 @@ azldev component prepare-sources [flags]
 
 ```
   -a, --all-components                Include all components
+      --allow-no-hashes               compute missing hashes by downloading source files from their origin
   -p, --component stringArray         Component name pattern
   -g, --component-group stringArray   Component group name
       --force                         delete and recreate the output directory if it already exists

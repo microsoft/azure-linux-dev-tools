@@ -549,6 +549,11 @@
        "description": "only enable minimal output",
        "type": "boolean"
       },
+      "synthesize-debug-packages": {
+       "default": false,
+       "description": "Also synthesize '-debuginfo' packages (per reported package) and '-debugsource' packages (per component)",
+       "type": "boolean"
+      },
       "verbose": {
        "default": false,
        "description": "enable verbose output",

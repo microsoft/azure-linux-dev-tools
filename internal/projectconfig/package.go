@@ -17,14 +17,14 @@ type PackagePublishConfig struct {
 	// The special value "none" is a convention meaning the package should not be published;
 	// azldev records this value in build results but enforcement is left to downstream tooling.
 	// When empty, the value is inherited from the next layer in the resolution order.
-	Channel string `toml:"channel,omitempty" json:"channel,omitempty" jsonschema:"title=Channel,description=Publish channel for this package; use 'none' to signal to downstream tooling that this package should not be published"`
+	Channel string `toml:"channel,omitempty" json:"channel,omitempty" validate:"omitempty,ne=.,ne=..,excludesall=/\\" jsonschema:"title=Channel,description=Publish channel for this package; use 'none' to signal to downstream tooling that this package should not be published"`
 }
 
 // PackageConfig holds all configuration applied to a single binary package.
 // Currently only publish settings are supported; additional fields may be added in the future.
 type PackageConfig struct {
 	// Publish holds the publish settings for this package.
-	Publish PackagePublishConfig `toml:"publish,omitempty" json:"publish,omitempty" jsonschema:"title=Publish settings,description=Publishing settings for this binary package"`
+	Publish PackagePublishConfig `toml:"publish,omitempty" json:"publish,omitempty" jsonschema:"title=Publish settings,description=Publishing settings for this binary package" fingerprint:"-"`
 }
 
 // MergeUpdatesFrom updates the package config with non-zero values from other.

@@ -8,14 +8,19 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/gum/confirm"
+	"github.com/charmbracelet/x/term"
 	"github.com/mattn/go-isatty"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
+	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 )
 
@@ -84,6 +89,14 @@ type Env struct {
 
 	// Start time: used for consistent timestamping of artifacts.
 	constructionTime time.Time
+
+	// Fix suggestion: a list of human readable hints that will be printed after an error to help the user
+	// resolve the issue. Printed in FIFO order.
+	fixSuggestions []string
+
+	// lockStore provides cached access to per-component lock files.
+	// Nil when no project directory is configured.
+	lockStore *lockfile.Store
 }
 
 // Constructs a new [Env] using specified options.
@@ -135,6 +148,12 @@ func NewEnv(ctx context.Context, options EnvOptions) *Env {
 
 		// Start time.
 		constructionTime: time.Now(),
+
+		// No fix suggestions to start.
+		fixSuggestions: []string{},
+
+		// Lock store: created when we have a project directory.
+		lockStore: newLockStore(options.ProjectDir, options.Config, options.Interfaces.FileSystemFactory),
 	}
 }
 
@@ -276,6 +295,109 @@ func (env *Env) LogsDir() string {
 // Returns the file path to the loaded project's output directory.
 func (env *Env) OutputDir() string {
 	return env.outputDir
+}
+
+// AddFixSuggestion records a human-readable hint that will be printed after an
+// error to help the user resolve the issue. Suggestions are printed in FIFO order.
+func (env *Env) AddFixSuggestion(suggestion string) {
+	env.fixSuggestions = append(env.fixSuggestions, suggestion)
+}
+
+// PrintFixSuggestions prints the current fix suggestions, if any.
+func (env *Env) PrintFixSuggestions() {
+	if len(env.fixSuggestions) == 0 {
+		return
+	}
+
+	// Use term.GetSize to guess at the width, defaulting to 80 if it fails.
+	// Subtract 15 to account for the slog head.
+	const slogHeadWidth = 15
+
+	consoleWidth, _, err := term.GetSize(os.Stderr.Fd())
+	if err != nil {
+		consoleWidth = 80
+	}
+
+	consoleWidth -= slogHeadWidth
+
+	padding := "    "
+	paddingSize := len(padding)
+
+	maxMsgLength := 0
+	for _, suggestion := range env.fixSuggestions {
+		if len(suggestion) > maxMsgLength {
+			maxMsgLength = len(suggestion)
+		}
+	}
+
+	boxWidth := max(0, min(consoleWidth, paddingSize+maxMsgLength+paddingSize))
+	boxEdgeString := strings.Repeat("=", boxWidth)
+
+	slog.Warn(boxEdgeString)
+
+	for _, suggestion := range env.fixSuggestions {
+		slog.Warn(padding + suggestion)
+	}
+
+	slog.Warn(boxEdgeString)
+}
+
+// LockStore returns the full lock store (read + write) for this environment.
+// Use this only in commands that write lock files (e.g., component update).
+// Returns nil if no project directory is configured.
+func (env *Env) LockStore() *lockfile.Store {
+	return env.lockStore
+}
+
+// LockReader returns read-only access to lock files. Use this for commands
+// that consume lock state but should not modify it (e.g., render, build).
+// Returns nil if no project directory is configured.
+func (env *Env) LockReader() lockfile.LockReader {
+	if env.lockStore == nil {
+		return nil
+	}
+
+	return env.lockStore
+}
+
+// newLockStore creates a lock store if a project directory and filesystem are
+// available. Uses the configured lock-dir from project config, falling back
+// to the default locks/ directory under the project root.
+func newLockStore(
+	projectDir string,
+	config *projectconfig.ProjectConfig,
+	fsFactory opctx.FileSystemFactory,
+) *lockfile.Store {
+	if projectDir == "" || fsFactory == nil {
+		return nil
+	}
+
+	lockDir := filepath.Join(projectDir, lockfile.LockDir)
+
+	// If the project config specifies a lock directory, use it instead of the default.
+	if config != nil && config.Project.LockDir != "" {
+		lockDir = config.Project.LockDir
+	}
+
+	return lockfile.NewStore(fsFactory.FS(), lockDir)
+}
+
+// CPUBoundConcurrency returns the recommended concurrency limit for CPU-bound tasks.
+// Returns [runtime.NumCPU], minimum 1.
+func (env *Env) CPUBoundConcurrency() int {
+	return max(1, runtime.NumCPU())
+}
+
+// IOBoundConcurrency returns the recommended concurrency limit for I/O-bound tasks
+// (network clones, file copies). Returns 2× [runtime.NumCPU], minimum 1.
+func (env *Env) IOBoundConcurrency() int {
+	return max(1, 2*runtime.NumCPU()) //nolint:mnd // 2x CPU
+}
+
+// FastConcurrency returns the recommended concurrency limit for tasks that can benefit from higher parallelism.
+// Returns 4× [runtime.NumCPU], minimum 1.
+func (env *Env) FastConcurrency() int {
+	return max(1, 4*runtime.NumCPU()) //nolint:mnd // 4x CPU
 }
 
 // Enables or disables "accept all prompts" mode.

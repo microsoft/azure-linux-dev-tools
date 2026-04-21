@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
-	"strings"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
@@ -46,6 +45,9 @@ type FileSourceProvider interface {
 type SourceIdentityProvider interface {
 	// ResolveIdentity returns a deterministic identity string for the component's source.
 	// Returns an error if the identity cannot be determined (e.g., network failure for upstream sources).
+	// Upstream components must return the resolved commit hash from the dist-git provider, local components
+	// must return a content hash of the spec directory (must be stable, but exact format and algorithm
+	// are up to the provider).
 	ResolveIdentity(ctx context.Context, component components.Component) (string, error)
 }
 
@@ -358,7 +360,7 @@ func (m *sourceManager) tryLookasideDownload(
 	packageName := resolvePackageName(component)
 
 	sourceURL, err := fedorasource.BuildLookasideURL(m.lookasideBaseURI, packageName, fileRef.Filename,
-		strings.ToUpper(string(fileRef.HashType)), fileRef.Hash)
+		string(fileRef.HashType), fileRef.Hash)
 	if err != nil {
 		return fmt.Errorf("failed to build lookaside URL for %#q:\n%w", fileRef.Filename, err)
 	}

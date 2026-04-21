@@ -6,10 +6,84 @@ package projectconfig_test
 import (
 	"testing"
 
+	"github.com/go-playground/validator/v10"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPackagePublishConfig_Validate(t *testing.T) {
+	t.Parallel()
+
+	validCases := []struct {
+		name    string
+		channel string
+	}{
+		{name: "empty channel is valid (means inherit)", channel: ""},
+		{name: "simple channel name", channel: "base"},
+		{name: "channel with hyphens", channel: "rpm-base"},
+		{name: "channel with underscores", channel: "rpm_base"},
+		{name: "reserved none value", channel: "none"},
+		{name: "channel starting with dot", channel: ".hidden"},
+		{name: "channel with internal dots", channel: "foo..bar"},
+	}
+
+	for _, testCase := range validCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := projectconfig.PackagePublishConfig{Channel: testCase.channel}
+			assert.NoError(t, validator.New().Struct(&cfg))
+		})
+	}
+
+	invalidCases := []struct {
+		name        string
+		channel     string
+		errContains string
+	}{
+		{name: "absolute path", channel: "/etc/passwd", errContains: "excludesall"},
+		{name: "traversal with slash", channel: "../secret", errContains: "excludesall"},
+		{name: "multi-segment path", channel: "foo/bar", errContains: "excludesall"},
+		{name: "backslash separator", channel: `foo\bar`, errContains: "excludesall"},
+		{name: "dot traversal", channel: "..", errContains: "'ne'"},
+		{name: "single dot", channel: ".", errContains: "'ne'"},
+	}
+
+	for _, testCase := range invalidCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := projectconfig.PackagePublishConfig{Channel: testCase.channel}
+			err := validator.New().Struct(&cfg)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), testCase.errContains)
+		})
+	}
+}
+
+func TestPackageGroupConfig_Validate_InvalidChannel(t *testing.T) {
+	t.Parallel()
+
+	t.Run("traversal channel in group default config is rejected", func(t *testing.T) {
+		t.Parallel()
+
+		file := projectconfig.ConfigFile{
+			PackageGroups: map[string]projectconfig.PackageGroupConfig{
+				"test-group": {
+					Packages: []string{"curl"},
+					DefaultPackageConfig: projectconfig.PackageConfig{
+						Publish: projectconfig.PackagePublishConfig{Channel: "../escape"},
+					},
+				},
+			},
+		}
+		err := file.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "Channel")
+		assert.Contains(t, err.Error(), "excludesall")
+	})
+}
 
 func TestPackageGroupConfig_Validate(t *testing.T) {
 	t.Run("empty group is valid", func(t *testing.T) {

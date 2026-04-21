@@ -49,7 +49,7 @@ type Origin struct {
 // SourceFileReference encapsulates a reference to a specific source file artifact.
 type SourceFileReference struct {
 	// Reference to the component to which the source file belongs.
-	Component ComponentReference `toml:"-" json:"-"`
+	Component ComponentReference `toml:"-" json:"-" fingerprint:"-"`
 
 	// Name of the source file; must be non-empty.
 	Filename string `toml:"filename" json:"filename"`
@@ -57,11 +57,11 @@ type SourceFileReference struct {
 	// Hash of the source file, expressed as a hex string.
 	Hash string `toml:"hash,omitempty" json:"hash,omitempty"`
 
-	// Type of hash used by Hash (e.g., "sha256", "sha512").
-	HashType fileutils.HashType `toml:"hash-type,omitempty" json:"hashType,omitempty"`
+	// Type of hash used by Hash (e.g., "SHA256", "SHA512").
+	HashType fileutils.HashType `toml:"hash-type,omitempty" json:"hashType,omitempty" jsonschema:"enum=SHA256,enum=SHA512,title=Hash type,description=Hash algorithm used for the hash value"`
 
 	// Origin for this source file. When omitted, the file is resolved via the lookaside cache.
-	Origin Origin `toml:"origin,omitempty" json:"origin,omitempty"`
+	Origin Origin `toml:"origin,omitempty" json:"origin,omitempty" fingerprint:"-"`
 }
 
 // Defines a component group. Component groups are logical groupings of components (see [ComponentConfig]).
@@ -108,17 +108,45 @@ func (g ComponentGroupConfig) WithAbsolutePaths(referenceDir string) ComponentGr
 	return result
 }
 
+// ReleaseCalculation controls how the Release tag is managed during rendering.
+type ReleaseCalculation string
+
+const (
+	// ReleaseCalculationAuto is the default. azldev auto-bumps the Release tag based on
+	// synthetic commit history. Static integer releases are incremented; %autorelease
+	// is handled by rpmautospec.
+	ReleaseCalculationAuto ReleaseCalculation = "auto"
+
+	// ReleaseCalculationManual skips all automatic Release tag manipulation. Use this for
+	// components that manage their own release numbering (e.g. kernel).
+	ReleaseCalculationManual ReleaseCalculation = "manual"
+)
+
+// ReleaseConfig holds release-related configuration for a component.
+type ReleaseConfig struct {
+	// Calculation controls how the Release tag is managed during rendering.
+	Calculation ReleaseCalculation `toml:"calculation,omitempty" json:"calculation,omitempty" validate:"omitempty,oneof=auto manual" jsonschema:"enum=auto,enum=manual,default=auto,title=Release calculation,description=Controls how the Release tag is managed during rendering. Empty or omitted means auto."`
+}
+
 // Defines a component.
 type ComponentConfig struct {
 	// The component's name; not actually present in serialized files.
-	Name string `toml:"-" json:"name" table:",sortkey"`
+	Name string `toml:"-" json:"name" table:",sortkey" fingerprint:"-"`
 
 	// Reference to the source config file that this definition came from; not present
 	// in serialized files.
-	SourceConfigFile *ConfigFile `toml:"-" json:"-" table:"-"`
+	SourceConfigFile *ConfigFile `toml:"-" json:"-" table:"-" fingerprint:"-"`
+
+	// RenderedSpecDir is the output directory for this component's rendered spec files.
+	// Derived at resolve time from the project's rendered-specs-dir setting; not present
+	// in serialized files. Empty when rendered-specs-dir is not configured.
+	RenderedSpecDir string `toml:"-" json:"renderedSpecDir,omitempty" table:"-"`
 
 	// Where to get its spec and adjacent files from.
 	Spec SpecSource `toml:"spec,omitempty" json:"spec,omitempty" jsonschema:"title=Spec,description=Identifies where to find the spec for this component"`
+
+	// Release configuration for this component.
+	Release ReleaseConfig `toml:"release,omitempty" json:"release,omitempty" table:"-" jsonschema:"title=Release configuration,description=Configuration for how the Release tag is managed during rendering."`
 
 	// Overlays to apply to sources after they've been acquired. May mutate the spec as well as sources.
 	Overlays []ComponentOverlay `toml:"overlays,omitempty" json:"overlays,omitempty" table:"-" jsonschema:"title=Overlays,description=Overlays to apply to this component's spec and/or sources"`
@@ -135,7 +163,17 @@ type ComponentConfig struct {
 
 	// Per-package configuration overrides, keyed by exact binary package name.
 	// Takes precedence over DefaultPackageConfig and package-group defaults.
-	Packages map[string]PackageConfig `toml:"packages,omitempty" json:"packages,omitempty" table:"-" jsonschema:"title=Package overrides,description=Per-package configuration overrides keyed by exact binary package name"`
+	Packages map[string]PackageConfig `toml:"packages,omitempty" json:"packages,omitempty" table:"-" validate:"dive" jsonschema:"title=Package overrides,description=Per-package configuration overrides keyed by exact binary package name"`
+}
+
+// AllowedSourceFilesHashTypes defines the set of hash types that are supported
+// for use in [SourceFileReference] entries in component configs.
+// MD5 is excluded by design.
+//
+//nolint:gochecknoglobals // This is effectively a constant, but Go doesn't have const maps.
+var AllowedSourceFilesHashTypes = map[fileutils.HashType]bool{
+	fileutils.HashTypeSHA256: true,
+	fileutils.HashTypeSHA512: true,
 }
 
 // Mutates the component config, updating it with overrides present in other.
@@ -157,6 +195,8 @@ func (c *ComponentConfig) WithAbsolutePaths(referenceDir string) *ComponentConfi
 	result := &ComponentConfig{
 		Name:                 c.Name,
 		SourceConfigFile:     c.SourceConfigFile,
+		RenderedSpecDir:      c.RenderedSpecDir,
+		Release:              c.Release,
 		Spec:                 deep.MustCopy(c.Spec),
 		Build:                deep.MustCopy(c.Build),
 		SourceFiles:          deep.MustCopy(c.SourceFiles),

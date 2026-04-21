@@ -798,3 +798,102 @@ channel = "devel"
 		}
 	}
 }
+
+func TestLoadAndResolveProjectConfig_TestSuite(t *testing.T) {
+	const configContents = `
+[test-suites.smoke]
+description = "Smoke tests for images"
+
+[test-suites.integration]
+description = "Integration tests"
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.NoError(t, err)
+
+	require.Len(t, config.TestSuites, 2)
+
+	if assert.Contains(t, config.TestSuites, "smoke") {
+		smokeTest := config.TestSuites["smoke"]
+		assert.Equal(t, "smoke", smokeTest.Name)
+		assert.Equal(t, "Smoke tests for images", smokeTest.Description)
+	}
+
+	if assert.Contains(t, config.TestSuites, "integration") {
+		integrationTest := config.TestSuites["integration"]
+		assert.Equal(t, "integration", integrationTest.Name)
+		assert.Equal(t, "Integration tests", integrationTest.Description)
+	}
+}
+
+func TestLoadAndResolveProjectConfig_DuplicateTests(t *testing.T) {
+	testFiles := []struct {
+		path     string
+		contents string
+	}{
+		{testConfigPath, `
+includes = ["include.toml"]
+
+[test-suites.smoke]
+description = "Smoke tests"
+`},
+		{"/project/include.toml", `
+[test-suites.smoke]
+description = "Other smoke tests"
+`},
+	}
+
+	ctx := testctx.NewCtx()
+
+	for _, testFile := range testFiles {
+		require.NoError(t, fileutils.MkdirAll(ctx.FS(), filepath.Dir(testFile.path)))
+		require.NoError(t, fileutils.WriteFile(ctx.FS(), testFile.path, []byte(testFile.contents), fileperms.PrivateFile))
+	}
+
+	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testFiles[0].path)
+	require.ErrorIs(t, err, ErrDuplicateTestSuites)
+}
+
+func TestLoadAndResolveProjectConfig_ImageWithValidTestRef(t *testing.T) {
+	const configContents = `
+[test-suites.smoke]
+description = "Smoke tests"
+
+[images.myimage]
+description = "Test image"
+
+[images.myimage.tests]
+test-suites = [{ name = "smoke" }]
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.NoError(t, err)
+
+	if assert.Contains(t, config.Images, "myimage") {
+		assert.Equal(t, []TestSuiteRef{{Name: "smoke"}}, config.Images["myimage"].Tests.TestSuites)
+	}
+}
+
+func TestLoadAndResolveProjectConfig_ImageWithInvalidTestRef(t *testing.T) {
+	const configContents = `
+[images.myimage]
+description = "Test image"
+
+[images.myimage.tests]
+test-suites = [{ name = "nonexistent" }]
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrUndefinedTestSuite)
+	assert.Contains(t, err.Error(), "nonexistent")
+}

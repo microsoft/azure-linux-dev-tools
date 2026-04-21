@@ -5,6 +5,7 @@ package advanced
 
 import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/downloadsources"
 	"github.com/spf13/cobra"
 )
 
@@ -23,6 +24,7 @@ output but fully supported.`,
 	}
 
 	app.AddTopLevelCommand(cmd)
+	downloadsources.OnAppInit(app, cmd)
 	mcpOnAppInit(app, cmd)
 	mockOnAppInit(app, cmd)
 	wgetOnAppInit(app, cmd)
