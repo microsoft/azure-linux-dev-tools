@@ -213,3 +213,101 @@ func TestListPackages_DuplicatePackageAcrossComponents_ReturnsError(t *testing.T
 	assert.Contains(t, err.Error(), "curl")
 	assert.Contains(t, err.Error(), "other")
 }
+
+func TestListPackages_SynthesizeDebugPackages(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+	testEnv.Config.DefaultPackageConfig = projectconfig.PackageConfig{
+		Publish: projectconfig.PackagePublishConfig{Channel: "default-channel"},
+	}
+	testEnv.Config.PackageGroups = map[string]projectconfig.PackageGroupConfig{
+		"devel-packages": {
+			Packages: []string{"curl-devel"},
+			DefaultPackageConfig: projectconfig.PackageConfig{
+				Publish: projectconfig.PackagePublishConfig{Channel: "devel"},
+			},
+		},
+	}
+	testEnv.Config.Components["curl"] = projectconfig.ComponentConfig{Name: "curl"}
+	testEnv.Config.Components["wget"] = projectconfig.ComponentConfig{
+		Name: "wget",
+		DefaultPackageConfig: projectconfig.PackageConfig{
+			Publish: projectconfig.PackagePublishConfig{Channel: "wget-default"},
+		},
+	}
+
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{
+		All:                     true,
+		SynthesizeDebugPackages: true,
+	})
+
+	require.NoError(t, err)
+
+	byName := make(map[string]pkgcmds.PackageListResult, len(results))
+	for _, result := range results {
+		byName[result.PackageName] = result
+	}
+
+	// Original package present.
+	require.Contains(t, byName, "curl-devel")
+	assert.Equal(t, "devel", byName["curl-devel"].Channel)
+
+	// '-debuginfo' synthesized for each reported package on the same channel.
+	require.Contains(t, byName, "curl-devel-debuginfo")
+	assert.Equal(t, "devel", byName["curl-devel-debuginfo"].Channel)
+	assert.Equal(t, "devel-packages", byName["curl-devel-debuginfo"].Group)
+
+	// '-debugsource' synthesized for each component with NO publish channel —
+	// downstream consumers fall back to the configured default publishing channel.
+	require.Contains(t, byName, "curl-debugsource")
+	assert.Empty(t, byName["curl-debugsource"].Channel)
+	assert.Equal(t, "curl", byName["curl-debugsource"].Component)
+	assert.Empty(t, byName["curl-debugsource"].Group)
+
+	require.Contains(t, byName, "wget-debugsource")
+	assert.Empty(t, byName["wget-debugsource"].Channel)
+	assert.Equal(t, "wget", byName["wget-debugsource"].Component)
+}
+
+func TestListPackages_SynthesizeDebugPackages_SkipsExisting(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+	testEnv.Config.PackageGroups = map[string]projectconfig.PackageGroupConfig{
+		"g": {
+			Packages: []string{"curl", "curl-debuginfo"},
+			DefaultPackageConfig: projectconfig.PackageConfig{
+				Publish: projectconfig.PackagePublishConfig{Channel: "real"},
+			},
+		},
+	}
+	testEnv.Config.Components["curl"] = projectconfig.ComponentConfig{
+		Name: "curl",
+		Packages: map[string]projectconfig.PackageConfig{
+			"curl-debugsource": {Publish: projectconfig.PackagePublishConfig{Channel: "explicit"}},
+		},
+	}
+
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{
+		All:                     true,
+		SynthesizeDebugPackages: true,
+	})
+
+	require.NoError(t, err)
+
+	// No duplicate entries — real config wins for both -debuginfo and -debugsource.
+	seen := make(map[string]int)
+	for _, result := range results {
+		seen[result.PackageName]++
+	}
+
+	assert.Equal(t, 1, seen["curl-debuginfo"])
+	assert.Equal(t, 1, seen["curl-debugsource"])
+	// The pre-existing curl-debuginfo keeps its real channel, not a synthesized override.
+	for _, result := range results {
+		if result.PackageName == "curl-debuginfo" {
+			assert.Equal(t, "real", result.Channel)
+		}
+
+		if result.PackageName == "curl-debugsource" {
+			assert.Equal(t, "explicit", result.Channel)
+		}
+	}
+}

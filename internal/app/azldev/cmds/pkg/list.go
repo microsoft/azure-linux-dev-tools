@@ -21,6 +21,13 @@ type ListPackageOptions struct {
 	// PackageNames contains specific binary package names to look up.
 	// If a package is not in any explicit config it is still resolved using project defaults.
 	PackageNames []string
+
+	// SynthesizeDebugPackages, when true, augments the result list with synthetic
+	// '-debuginfo' packages (one per reported package, sharing the original package's
+	// publish channel) and synthetic '-debugsource' packages (one per component in the
+	// project configuration, with no explicit publish channel — so they resolve to the
+	// configured default publishing channel).
+	SynthesizeDebugPackages bool
 }
 
 func listOnAppInit(_ *azldev.App, parent *cobra.Command) {
@@ -66,6 +73,8 @@ Resolution order (lowest to highest priority):
 
 	cmd.Flags().BoolVarP(&options.All, "all-packages", "a", false, "List all explicitly-configured binary packages")
 	cmd.Flags().StringArrayVarP(&options.PackageNames, "package", "p", []string{}, "Package name to look up (repeatable)")
+	cmd.Flags().BoolVar(&options.SynthesizeDebugPackages, "synthesize-debug-packages", false,
+		"Also synthesize '-debuginfo' packages (per reported package) and '-debugsource' packages (per component)")
 
 	azldev.ExportAsMCPTool(cmd)
 
@@ -186,10 +195,70 @@ func ListPackages(env *azldev.Env, options *ListPackageOptions) ([]PackageListRe
 		})
 	}
 
+	if options.SynthesizeDebugPackages {
+		results = synthesizeDebugPackages(results, proj)
+	}
+
 	// Sort by package name for deterministic, readable output.
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].PackageName < results[j].PackageName
 	})
 
 	return results, nil
+}
+
+// synthesizeDebugPackages augments results with synthetic '-debuginfo' packages (one per
+// already-resolved package, sharing the original publish channel) and '-debugsource' packages
+// (one per component, with no publish channel — so they fall back to the configured default
+// publishing channel).
+//
+// Synthetic entries that collide with an already-present (real) package name are skipped so
+// real configuration always wins.
+func synthesizeDebugPackages(
+	results []PackageListResult, proj *projectconfig.ProjectConfig,
+) []PackageListResult {
+	existing := make(map[string]struct{}, len(results))
+	for _, result := range results {
+		existing[result.PackageName] = struct{}{}
+	}
+
+	// One '-debuginfo' per originally-reported package, sharing its publish channel and
+	// group/component attribution.
+	debugInfoEntries := make([]PackageListResult, 0, len(results))
+
+	for _, result := range results {
+		name := result.PackageName + "-debuginfo"
+		if _, exists := existing[name]; exists {
+			continue
+		}
+
+		existing[name] = struct{}{}
+		debugInfoEntries = append(debugInfoEntries, PackageListResult{
+			PackageName: name,
+			Group:       result.Group,
+			Component:   result.Component,
+			Channel:     result.Channel,
+		})
+	}
+
+	results = append(results, debugInfoEntries...)
+
+	// One '-debugsource' per component. No publish info is synthesized — the channel is
+	// left blank so downstream consumers will fall back to the configured default
+	// publishing channel.
+	for compName := range proj.Components {
+		name := compName + "-debugsource"
+		if _, exists := existing[name]; exists {
+			continue
+		}
+
+		existing[name] = struct{}{}
+
+		results = append(results, PackageListResult{
+			PackageName: name,
+			Component:   compName,
+		})
+	}
+
+	return results
 }
