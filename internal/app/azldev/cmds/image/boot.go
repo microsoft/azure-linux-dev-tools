@@ -133,19 +133,15 @@ func bootOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
 	parentCmd.AddCommand(NewImageBootCmd())
 }
 
-// NewImageBootCmd constructs a [cobra.Command] for the 'image boot' command.
-func NewImageBootCmd() *cobra.Command {
-	options := &ImageBootOptions{}
-
-	cmd := &cobra.Command{
-		Use:   "boot [IMAGE_NAME]",
-		Short: "Boot an Azure Linux image in a QEMU VM",
-		Long: `Boot an Azure Linux image in a QEMU virtual machine.
+// bootCmdLongDescription is the Long help text for 'image boot'.
+const bootCmdLongDescription = `Boot an Azure Linux image in a QEMU virtual machine.
 
 This command starts a QEMU VM with the specified disk image and/or bootable ISO.
-SSH is forwarded to the host on the specified port (default 8888). If cloud-init
-credentials are provided, a NoCloud seed ISO is generated and attached; the guest
-will consume it only if cloud-init is installed and enabled.
+SSH is forwarded to the host on the specified port (default 8888). A cloud-init
+NoCloud seed ISO is generated and attached whenever the user supplies any
+user-provisioning intent — credentials ('--test-password'/'--test-password-file'
+or '--authorized-public-key') or an explicit '--test-user'. The guest will
+consume the seed only if cloud-init is installed and enabled.
 
 Image sources (at least one is required):
   - IMAGE_NAME (positional):  Look up a built image in the project output directory.
@@ -154,17 +150,21 @@ Image sources (at least one is required):
   - '--iso':                  Bootable ISO (livecd, installer, rescue). May be combined
                               with a disk image, or used alone to boot an empty disk.
 
-When '--iso' is used without a disk image, an empty qcow2 disk is created (size set
-via '--disk-size') for the live/installer ISO to install onto. The VM console is
-serial-only (-nographic), so the ISO must support serial console interaction.
+When '--iso' is used without a disk image, an ephemeral empty qcow2 disk is
+created (size set via '--disk-size') for the live/installer ISO to install onto.
+The disk lives in a temp directory and is deleted when the VM exits; it is not
+preserved between runs. The VM console is serial-only (-nographic), so the ISO
+must support serial console interaction.
 
 Requirements:
   - qemu-system-x86_64/qemu-system-aarch64 (QEMU emulator)
   - genisoimage (only when cloud-init credentials are provided)
   - qemu-img (only when creating an empty disk for '--iso')
   - sudo (for running QEMU with KVM)
-  - OVMF firmware (for UEFI boot)`,
-		Example: `  # Boot an image by name
+  - OVMF firmware (for UEFI boot)`
+
+// bootCmdExamples is the Example help text for 'image boot'.
+const bootCmdExamples = `  # Boot an image by name
   azldev image boot my-image --test-password-file ~/.azl-test-pw
 
   # Boot from an explicit image path
@@ -181,7 +181,17 @@ Requirements:
 
   # Boot from a live ISO with cloud-init credentials (consumed if the live image
   # has cloud-init installed; otherwise harmlessly ignored)
-  azldev image boot --iso ~/Downloads/livecd.iso --test-password secret`,
+  azldev image boot --iso ~/Downloads/livecd.iso --test-password secret`
+
+// NewImageBootCmd constructs a [cobra.Command] for the 'image boot' command.
+func NewImageBootCmd() *cobra.Command {
+	options := &ImageBootOptions{}
+
+	cmd := &cobra.Command{
+		Use:               "boot [IMAGE_NAME]",
+		Short:             "Boot an Azure Linux image in a QEMU VM",
+		Long:              bootCmdLongDescription,
+		Example:           bootCmdExamples,
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: generateImageNameCompletions,
 	}
@@ -332,6 +342,29 @@ func validateBootOptions(options *ImageBootOptions, diskSizeExplicit, needEmptyD
 
 	if needEmptyDisk && strings.TrimSpace(options.DiskSize) == "" {
 		return errors.New("'--disk-size' must be non-empty when '--iso' is used without a disk image")
+	}
+
+	// QEMU uses ',' as a separator in '-drive' option strings. A comma in a file path
+	// can silently corrupt the parse. Reject such paths up front with a clear error.
+	if err := rejectCommaInPath("--image-path", options.ImagePath); err != nil {
+		return err
+	}
+
+	if err := rejectCommaInPath("--iso", options.ISOPath); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// rejectCommaInPath returns an error if the given path contains a comma. QEMU's
+// '-drive' option syntax uses ',' as a key=value separator, so a comma in a file
+// path can confuse the parser. We refuse such paths rather than silently escaping.
+func rejectCommaInPath(flag, path string) error {
+	if strings.Contains(path, ",") {
+		return fmt.Errorf("path supplied via %#q contains a ',' character, which is not "+
+			"supported because QEMU '-drive' argument syntax uses ',' as a separator; "+
+			"please rename or move the file: %#q", flag, path)
 	}
 
 	return nil

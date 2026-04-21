@@ -5,12 +5,14 @@
 package qemu
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/prereqs"
@@ -288,6 +290,10 @@ func CheckQEMUImgPrerequisite(ctx opctx.Ctx) error {
 func (r *Runner) CreateEmptyQcow2(ctx context.Context, path, size string) error {
 	createCmd := exec.CommandContext(ctx, "qemu-img", "create", "-f", "qcow2", path, size)
 
+	var stderr bytes.Buffer
+
+	createCmd.Stderr = &stderr
+
 	cmd, err := r.cmdFactory.Command(createCmd)
 	if err != nil {
 		return fmt.Errorf("failed to create qemu-img command:\n%w", err)
@@ -295,6 +301,12 @@ func (r *Runner) CreateEmptyQcow2(ctx context.Context, path, size string) error 
 
 	err = cmd.Run(ctx)
 	if err != nil {
+		stderrText := strings.TrimSpace(stderr.String())
+		if stderrText != "" {
+			return fmt.Errorf("failed to create empty qcow2 disk image (qemu-img stderr: %s):\n%w",
+				stderrText, err)
+		}
+
 		return fmt.Errorf("failed to create empty qcow2 disk image:\n%w", err)
 	}
 

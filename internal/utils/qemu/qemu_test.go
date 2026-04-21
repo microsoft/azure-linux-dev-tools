@@ -727,6 +727,25 @@ func TestCreateEmptyQcow2(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to create empty qcow2 disk image")
 	})
+
+	t.Run("surfaces qemu-img stderr on failure", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := testctx.NewCtx()
+		ctx.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+			if cmd.Stderr != nil {
+				_, _ = cmd.Stderr.Write([]byte("qemu-img: unable to allocate disk\n"))
+			}
+
+			return errors.New("exit status 1")
+		}
+
+		runner := qemu.NewRunner(ctx)
+		err := runner.CreateEmptyQcow2(context.Background(), "/tmp/disk.qcow2", "10G")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "qemu-img: unable to allocate disk")
+		assert.Contains(t, err.Error(), "failed to create empty qcow2 disk image")
+	})
 }
 
 func TestCheckQEMUImgPrerequisite(t *testing.T) {

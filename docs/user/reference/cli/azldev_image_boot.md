@@ -9,9 +9,11 @@ Boot an Azure Linux image in a QEMU VM
 Boot an Azure Linux image in a QEMU virtual machine.
 
 This command starts a QEMU VM with the specified disk image and/or bootable ISO.
-SSH is forwarded to the host on the specified port (default 8888). If cloud-init
-credentials are provided, a NoCloud seed ISO is generated and attached; the guest
-will consume it only if cloud-init is installed and enabled.
+SSH is forwarded to the host on the specified port (default 8888). A cloud-init
+NoCloud seed ISO is generated and attached whenever the user supplies any
+user-provisioning intent — credentials ('--test-password'/'--test-password-file'
+or '--authorized-public-key') or an explicit '--test-user'. The guest will
+consume the seed only if cloud-init is installed and enabled.
 
 Image sources (at least one is required):
   - IMAGE_NAME (positional):  Look up a built image in the project output directory.
@@ -20,9 +22,11 @@ Image sources (at least one is required):
   - '--iso':                  Bootable ISO (livecd, installer, rescue). May be combined
                               with a disk image, or used alone to boot an empty disk.
 
-When '--iso' is used without a disk image, an empty qcow2 disk is created (size set
-via '--disk-size') for the live/installer ISO to install onto. The VM console is
-serial-only (-nographic), so the ISO must support serial console interaction.
+When '--iso' is used without a disk image, an ephemeral empty qcow2 disk is
+created (size set via '--disk-size') for the live/installer ISO to install onto.
+The disk lives in a temp directory and is deleted when the VM exits; it is not
+preserved between runs. The VM console is serial-only (-nographic), so the ISO
+must support serial console interaction.
 
 Requirements:
   - qemu-system-x86_64/qemu-system-aarch64 (QEMU emulator)

@@ -73,6 +73,30 @@ func TestNewImageBootCmd_DiskSizeWithoutEmptyDiskErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "--disk-size")
 }
 
+func TestNewImageBootCmd_CommaInImagePathErrors(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	cmd := image.NewImageBootCmd()
+	cmd.SetArgs([]string{"--image-path", "/tmp/weird,name.qcow2"})
+
+	err := cmd.ExecuteContext(testEnv.Env)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--image-path")
+	assert.Contains(t, err.Error(), ",")
+}
+
+func TestNewImageBootCmd_CommaInISOPathErrors(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	cmd := image.NewImageBootCmd()
+	cmd.SetArgs([]string{"--iso", "/tmp/weird,name.iso"})
+
+	err := cmd.ExecuteContext(testEnv.Env)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--iso")
+	assert.Contains(t, err.Error(), ",")
+}
+
 func TestImageFormat_Set_InvalidFormat(t *testing.T) {
 	var format image.ImageFormat
 
