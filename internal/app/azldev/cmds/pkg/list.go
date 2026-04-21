@@ -24,10 +24,12 @@ type ListPackageOptions struct {
 	PackageNames []string
 
 	// SynthesizeDebugPackages, when true, augments the result list with synthetic
-	// '-debuginfo' packages (one per reported package, sharing the original package's
-	// publish channel) and synthetic '-debugsource' packages (one per component in the
-	// project configuration, with no explicit publish channel — so they resolve to the
-	// configured default publishing channel).
+	// '-debuginfo' packages (one per reported package, using a parallel publish
+	// channel derived from the original package's publish channel by appending
+	// '-debuginfo', except when the original channel is "" or "none") and synthetic
+	// '-debugsource' packages (one per component in the project configuration, with
+	// no explicit publish channel — so they resolve to the configured default
+	// publishing channel).
 	SynthesizeDebugPackages bool
 }
 
@@ -295,7 +297,7 @@ func synthesizeDebugPackages(
 
 // debugChannelName returns the publish-channel name to use for a synthesized debug package.
 // Real (non-empty, non-"none") channels are suffixed with '-debuginfo' so debug artifacts are
-// published to a parallel channel; ” and 'none' are passed through unchanged because they
+// published to a parallel channel; "" and 'none' are passed through unchanged because they
 // represent "default" and "do not publish" respectively.
 func debugChannelName(channel string) string {
 	if channel == "" || channel == "none" || strings.HasSuffix(channel, "-debuginfo") {
