@@ -27,9 +27,9 @@ type ListPackageOptions struct {
 	// '-debuginfo' packages (one per reported package, using a parallel publish
 	// channel derived from the original package's publish channel by appending
 	// '-debuginfo', except when the original channel is "" or "none") and synthetic
-	// '-debugsource' packages (one per component in the project configuration, with
-	// no explicit publish channel — so they resolve to the configured default
-	// publishing channel).
+	// '-debugsource' packages (one per component in the project configuration,
+	// using the component's resolved publish channel after applying the same
+	// debug-channel derivation logic).
 	SynthesizeDebugPackages bool
 }
 
@@ -217,9 +217,10 @@ func ListPackages(env *azldev.Env, options *ListPackageOptions) ([]PackageListRe
 }
 
 // synthesizeDebugPackages augments results with synthetic '-debuginfo' packages (one per
-// already-resolved package, sharing the original publish channel) and '-debugsource' packages
-// (one per component in the project, with the publish channel resolved through the normal
-// component → project default chain).
+// already-resolved package, using a parallel publish channel derived from the original
+// package's publish channel by appending '-debuginfo', except when the original channel is
+// "" or "none") and '-debugsource' packages (one per component in the project, with the
+// publish channel resolved through the normal component → project default chain).
 //
 // Note: '-debugsource' entries are emitted for every component in the project regardless of
 // which packages were requested via '-p'. Components own packages via [ComponentConfig.Packages],
@@ -263,9 +264,10 @@ func synthesizeDebugPackages(
 
 	results = append(results, debugInfoEntries...)
 
-	// One '-debugsource' per component. Resolve through the component → project default
-	// publish-channel chain so the entry carries an honest channel value rather than an
-	// implicit "consumer applies default" empty string.
+	// One '-debugsource' per component. Resolve the synthesized package using the
+	// standard package-resolution chain for '<component>-debugsource' so the entry
+	// reflects any explicit package override, package-group defaults, component
+	// settings, or project defaults instead of an implicit empty channel.
 	for compName, comp := range proj.Components {
 		if isDebugPackageName(compName) {
 			continue
