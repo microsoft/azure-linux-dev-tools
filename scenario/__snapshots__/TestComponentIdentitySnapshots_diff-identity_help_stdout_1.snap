@@ -1,0 +1,32 @@
+Compare two component identity JSON files (produced by 'component identity -a -O json')
+and report which components have changed, been added, or been removed.
+
+CI uses the 'changed' and 'added' lists to determine the build queue.
+
+Usage:
+  azldev component diff-identity <base.json> <head.json> [flags]
+
+Examples:
+  # Compare base and head identity files
+  azldev component diff-identity base-identity.json head-identity.json
+
+  # JSON output for CI
+  azldev component diff-identity base.json head.json -O json
+
+Flags:
+  -c, --changed-only   Only show changed and added components (the build queue)
+  -h, --help           help for diff-identity
+
+Global Flags:
+  -y, --accept-all                accept all prompts
+      --color mode                output colorization mode {always, auto, never} (default auto)
+      --config-file stringArray   additional TOML config file(s) to merge (may be repeated)
+  -n, --dry-run                   dry run only (do not take action)
+      --network-retries int       maximum number of attempts for network operations (minimum 1) (default 3)
+      --no-default-config         disable default configuration
+  -O, --output-format fmt         output format {csv, json, markdown, table} (default table)
+      --permissive-config         do not fail on unknown fields in TOML config files
+  -C, --project string            path to Azure Linux project
+  -q, --quiet                     only enable minimal output
+  -v, --verbose                   enable verbose output
+
