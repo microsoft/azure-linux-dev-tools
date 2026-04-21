@@ -251,20 +251,20 @@ func TestListPackages_SynthesizeDebugPackages(t *testing.T) {
 	require.Contains(t, byName, "curl-devel")
 	assert.Equal(t, "devel", byName["curl-devel"].Channel)
 
-	// '-debuginfo' synthesized for each reported package on the same channel.
+	// '-debuginfo' synthesized for each reported package on the parallel debug channel.
 	require.Contains(t, byName, "curl-devel-debuginfo")
-	assert.Equal(t, "devel", byName["curl-devel-debuginfo"].Channel)
+	assert.Equal(t, "devel-debuginfo", byName["curl-devel-debuginfo"].Channel)
 	assert.Equal(t, "devel-packages", byName["curl-devel-debuginfo"].Group)
 
 	// '-debugsource' synthesized for each component, with its channel resolved through the
-	// component → project default chain.
+	// component → project default chain and suffixed onto the parallel debug channel.
 	require.Contains(t, byName, "curl-debugsource")
-	assert.Equal(t, "default-channel", byName["curl-debugsource"].Channel)
+	assert.Equal(t, "default-channel-debuginfo", byName["curl-debugsource"].Channel)
 	assert.Equal(t, "curl", byName["curl-debugsource"].Component)
 	assert.Empty(t, byName["curl-debugsource"].Group)
 
 	require.Contains(t, byName, "wget-debugsource")
-	assert.Equal(t, "wget-default", byName["wget-debugsource"].Channel)
+	assert.Equal(t, "wget-default-debuginfo", byName["wget-debugsource"].Channel)
 	assert.Equal(t, "wget", byName["wget-debugsource"].Component)
 }
 
@@ -347,12 +347,53 @@ func TestListPackages_SynthesizeDebugPackages_ByName(t *testing.T) {
 	require.Contains(t, byName, "curl-devel")
 	assert.Equal(t, "devel", byName["curl-devel"].Channel)
 
-	// '-debuginfo' synthesized on the same channel as the requested package.
+	// '-debuginfo' synthesized on the parallel debug channel for the requested package.
 	require.Contains(t, byName, "curl-devel-debuginfo")
-	assert.Equal(t, "devel", byName["curl-devel-debuginfo"].Channel)
+	assert.Equal(t, "devel-debuginfo", byName["curl-devel-debuginfo"].Channel)
 
 	// '-debugsource' synthesized for every component in the project, regardless of which
-	// packages were requested. Channel resolves to the project default.
+	// packages were requested. Channel resolves to the project default + '-debuginfo'.
 	require.Contains(t, byName, "curl-debugsource")
-	assert.Equal(t, "default-channel", byName["curl-debugsource"].Channel)
+	assert.Equal(t, "default-channel-debuginfo", byName["curl-debugsource"].Channel)
+}
+
+func TestListPackages_SynthesizeDebugPackages_ChannelSuffixRules(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+	testEnv.Config.PackageGroups = map[string]projectconfig.PackageGroupConfig{
+		"none-grp": {
+			Packages: []string{"pkg-none"},
+			DefaultPackageConfig: projectconfig.PackageConfig{
+				Publish: projectconfig.PackagePublishConfig{Channel: "none"},
+			},
+		},
+		"empty-grp": {
+			// No DefaultPackageConfig → resolves to "" (no channel configured).
+			Packages: []string{"pkg-empty"},
+		},
+		"already-grp": {
+			Packages: []string{"pkg-already"},
+			DefaultPackageConfig: projectconfig.PackageConfig{
+				Publish: projectconfig.PackagePublishConfig{Channel: "ms-debuginfo"},
+			},
+		},
+	}
+
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{
+		All:                     true,
+		SynthesizeDebugPackages: true,
+	})
+
+	require.NoError(t, err)
+
+	byName := make(map[string]pkgcmds.PackageListResult, len(results))
+	for _, result := range results {
+		byName[result.PackageName] = result
+	}
+
+	// "none" passes through unchanged — debug artifacts inherit the do-not-publish intent.
+	assert.Equal(t, "none", byName["pkg-none-debuginfo"].Channel)
+	// Empty passes through unchanged — downstream applies the configured default.
+	assert.Empty(t, byName["pkg-empty-debuginfo"].Channel)
+	// Already-suffixed channels are not doubled.
+	assert.Equal(t, "ms-debuginfo", byName["pkg-already-debuginfo"].Channel)
 }

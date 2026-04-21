@@ -255,7 +255,7 @@ func synthesizeDebugPackages(
 			PackageName: name,
 			Group:       result.Group,
 			Component:   result.Component,
-			Channel:     result.Channel,
+			Channel:     debugChannelName(result.Channel),
 		})
 	}
 
@@ -286,11 +286,23 @@ func synthesizeDebugPackages(
 		results = append(results, PackageListResult{
 			PackageName: name,
 			Component:   compName,
-			Channel:     pkgConfig.Publish.Channel,
+			Channel:     debugChannelName(pkgConfig.Publish.Channel),
 		})
 	}
 
 	return results, nil
+}
+
+// debugChannelName returns the publish-channel name to use for a synthesized debug package.
+// Real (non-empty, non-"none") channels are suffixed with '-debuginfo' so debug artifacts are
+// published to a parallel channel; ” and 'none' are passed through unchanged because they
+// represent "default" and "do not publish" respectively.
+func debugChannelName(channel string) string {
+	if channel == "" || channel == "none" || strings.HasSuffix(channel, "-debuginfo") {
+		return channel
+	}
+
+	return channel + "-debuginfo"
 }
 
 // isDebugPackageName reports whether name already has a '-debuginfo' or '-debugsource' suffix,
