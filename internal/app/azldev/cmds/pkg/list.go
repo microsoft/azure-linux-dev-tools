@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
@@ -196,7 +197,13 @@ func ListPackages(env *azldev.Env, options *ListPackageOptions) ([]PackageListRe
 	}
 
 	if options.SynthesizeDebugPackages {
-		results = synthesizeDebugPackages(results, proj)
+		slog.Warn("'--synthesize-debug-packages' is a transitional flag and may change or be removed " +
+			"once first-class debug-package configuration is supported.")
+
+		results, err = synthesizeDebugPackages(results, proj)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Sort by package name for deterministic, readable output.
@@ -209,14 +216,21 @@ func ListPackages(env *azldev.Env, options *ListPackageOptions) ([]PackageListRe
 
 // synthesizeDebugPackages augments results with synthetic '-debuginfo' packages (one per
 // already-resolved package, sharing the original publish channel) and '-debugsource' packages
-// (one per component, with no publish channel — so they fall back to the configured default
-// publishing channel).
+// (one per component in the project, with the publish channel resolved through the normal
+// component → project default chain).
+//
+// Note: '-debugsource' entries are emitted for every component in the project regardless of
+// which packages were requested via '-p'. Components own packages via [ComponentConfig.Packages],
+// but most listed packages come from package groups with no component association — so scoping
+// debugsource emission to the requested package set cannot be done reliably with the current
+// configuration model.
 //
 // Synthetic entries that collide with an already-present (real) package name are skipped so
-// real configuration always wins.
+// real configuration always wins. Source packages whose names already end in '-debuginfo' or
+// '-debugsource' do not get a doubled suffix synthesized.
 func synthesizeDebugPackages(
 	results []PackageListResult, proj *projectconfig.ProjectConfig,
-) []PackageListResult {
+) ([]PackageListResult, error) {
 	existing := make(map[string]struct{}, len(results))
 	for _, result := range results {
 		existing[result.PackageName] = struct{}{}
@@ -227,6 +241,10 @@ func synthesizeDebugPackages(
 	debugInfoEntries := make([]PackageListResult, 0, len(results))
 
 	for _, result := range results {
+		if isDebugPackageName(result.PackageName) {
+			continue
+		}
+
 		name := result.PackageName + "-debuginfo"
 		if _, exists := existing[name]; exists {
 			continue
@@ -243,10 +261,14 @@ func synthesizeDebugPackages(
 
 	results = append(results, debugInfoEntries...)
 
-	// One '-debugsource' per component. No publish info is synthesized — the channel is
-	// left blank so downstream consumers will fall back to the configured default
-	// publishing channel.
-	for compName := range proj.Components {
+	// One '-debugsource' per component. Resolve through the component → project default
+	// publish-channel chain so the entry carries an honest channel value rather than an
+	// implicit "consumer applies default" empty string.
+	for compName, comp := range proj.Components {
+		if isDebugPackageName(compName) {
+			continue
+		}
+
 		name := compName + "-debugsource"
 		if _, exists := existing[name]; exists {
 			continue
@@ -254,11 +276,25 @@ func synthesizeDebugPackages(
 
 		existing[name] = struct{}{}
 
+		compCopy := comp
+
+		pkgConfig, err := projectconfig.ResolvePackageConfig(name, &compCopy, proj)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve config for synthesized package %#q:\n%w", name, err)
+		}
+
 		results = append(results, PackageListResult{
 			PackageName: name,
 			Component:   compName,
+			Channel:     pkgConfig.Publish.Channel,
 		})
 	}
 
-	return results
+	return results, nil
+}
+
+// isDebugPackageName reports whether name already has a '-debuginfo' or '-debugsource' suffix,
+// so the caller can avoid synthesizing doubled-suffix names like 'foo-debuginfo-debuginfo'.
+func isDebugPackageName(name string) bool {
+	return strings.HasSuffix(name, "-debuginfo") || strings.HasSuffix(name, "-debugsource")
 }
