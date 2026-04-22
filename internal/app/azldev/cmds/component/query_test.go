@@ -80,3 +80,55 @@ func TestQueryComponents_OneComponent(t *testing.T) {
 	result := results[0]
 	assert.Equal(t, testComponentName, result.Name)
 }
+
+func TestQueryComponents_UpstreamComponent(t *testing.T) {
+	const testComponentName = "test-component"
+
+	testEnv := testutils.NewTestEnv(t)
+	testEnv.Config.Components[testComponentName] = projectconfig.ComponentConfig{
+		Name: testComponentName,
+	}
+
+	testEnv.CmdFactory.RegisterCommandInSearchPath(mock.MockBinary)
+
+	testEnv.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+		if len(cmd.Args) >= 2 && cmd.Args[0] == "git" && cmd.Args[1] == "clone" {
+			cloneDir := cmd.Args[len(cmd.Args)-1]
+			specPath := cloneDir + "/" + testComponentName + ".spec"
+
+			return fileutils.WriteFile(
+				testEnv.FS(),
+				specPath,
+				[]byte("Name: "+testComponentName+"\nVersion: 1.0.0\n"),
+				fileperms.PublicFile,
+			)
+		}
+
+		return nil
+	}
+
+	testEnv.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+		if len(cmd.Args) >= 5 &&
+			cmd.Args[0] == "git" &&
+			cmd.Args[1] == "-C" &&
+			cmd.Args[3] == "rev-parse" &&
+			cmd.Args[4] == "HEAD" {
+			return "head123abc\n", nil
+		}
+
+		return "name=test-component\nepoch=0\nversion=1.0.0\nrelease=1.azl3\n", nil
+	}
+
+	options := component.QueryComponentsOptions{
+		ComponentFilter: components.ComponentFilter{
+			ComponentNamePatterns: []string{testComponentName},
+		},
+	}
+
+	results, err := component.QueryComponents(testEnv.Env, &options)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	result := results[0]
+	assert.Equal(t, testComponentName, result.Name)
+}
