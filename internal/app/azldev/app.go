@@ -49,6 +49,7 @@ type App struct {
 	reportFormat            ReportFormat
 	disableDefaultConfig    bool
 	permissiveConfigParsing bool
+	skipLockValidation      bool
 	configFiles             []string
 	colorMode               ColorMode
 
@@ -136,6 +137,19 @@ lives), or use -C to point to one.`,
 			env.SetNetworkRetries(app.networkRetries)
 			env.SetPermissiveConfigParsing(app.permissiveConfigParsing)
 
+			// Lock validation is opt-in during rollout. Enabled by setting
+			// AZLDEV_ENABLE_LOCK_VALIDATION=1. The '--skip-lock-validation'
+			// flag overrides the env var (permanent escape hatch).
+			// Once fully rolled out, validation will be on by default and
+			// the env var will be removed.
+			//nolint:godox // TODO(lockfiles): remove env var gate once lock validation is stable.
+			// TODO(lockfiles): Remove feature flag once lock validation is fully rolled out.
+			env.SetSkipLockValidation(os.Getenv("AZLDEV_ENABLE_LOCK_VALIDATION") != "1")
+
+			if app.skipLockValidation {
+				env.SetSkipLockValidation(true)
+			}
+
 			return nil
 		},
 		// Silence errors, as we handle them ourselves; note that this will get
@@ -157,6 +171,13 @@ lives), or use -C to point to one.`,
 	app.cmd.SetCompletionCommandGroupID(CommandGroupMeta)
 	app.addAdvancedCommandHint()
 
+	app.registerGlobalFlags()
+
+	return app
+}
+
+// registerGlobalFlags defines all persistent (global) flags for the CLI.
+func (app *App) registerGlobalFlags() {
 	// Define global flags and configuration settings.
 	app.cmd.PersistentFlags().BoolVarP(&app.verbose, "verbose", "v", false, "enable verbose output")
 	app.cmd.PersistentFlags().BoolVarP(&app.quiet, "quiet", "q", false, "only enable minimal output")
@@ -176,8 +197,8 @@ lives), or use -C to point to one.`,
 		"output colorization mode {always, auto, never}")
 	app.cmd.PersistentFlags().BoolVar(&app.permissiveConfigParsing, "permissive-config",
 		false, "do not fail on unknown fields in TOML config files")
-
-	return app
+	app.cmd.PersistentFlags().BoolVar(&app.skipLockValidation, "skip-lock-validation",
+		false, "skip lock file consistency checks")
 }
 
 // addAdvancedCommandHint embeds a hint about the hidden "advanced" command group

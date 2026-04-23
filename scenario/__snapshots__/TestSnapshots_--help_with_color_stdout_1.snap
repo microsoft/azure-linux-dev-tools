@@ -34,6 +34,7 @@ Meta commands:
       [1;36m--permissive-config[0m         do not fail on unknown fields in TOML config files
   [1;36m-C,[0m [1;36m--project[0m [3;38;2;68;68;68mstring[0m            path to Azure Linux project
   [1;36m-q,[0m [1;36m--quiet[0m                     only enable minimal output
+      [1;36m--skip-lock-validation[0m      skip lock file consistency checks
   [1;36m-v,[0m [1;36m--verbose[0m                   enable verbose output
       [1;36m--version[0m                   version for azldev
 

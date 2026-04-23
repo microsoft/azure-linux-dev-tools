@@ -171,8 +171,8 @@ func ValidateUpstreamCommit(
 
 	if !exists {
 		return "", fmt.Errorf(
-			"no lock file for upstream component %#q",
-			componentName)
+			"no lock file for upstream component %#q; run 'azldev component update %s' to create one",
+			componentName, componentName)
 	}
 
 	lock, err := Load(fs, lockPath)
@@ -182,8 +182,8 @@ func ValidateUpstreamCommit(
 
 	if lock.UpstreamCommit == "" {
 		return "", fmt.Errorf(
-			"lock file for %#q has no upstream-commit",
-			componentName)
+			"lock file for %#q has no upstream-commit; run 'azldev component update %s' to populate",
+			componentName, componentName)
 	}
 
 	if configUpstreamCommit != "" && lock.UpstreamCommit != configUpstreamCommit {
@@ -195,7 +195,7 @@ func ValidateUpstreamCommit(
 	return lock.UpstreamCommit, nil
 }
 
-// ValidateConsistency checks lock files against resolved component configs.
+// validateConsistency checks lock files against resolved component configs.
 // For each upstream component, verifies a lock file exists and any explicit
 // upstream-commit pin matches. When checkOrphans is true, also detects orphan
 // lock files (components removed from config). Orphan detection should only
@@ -204,7 +204,7 @@ func ValidateUpstreamCommit(
 //
 // Returns sorted lists of components with missing/stale locks and orphan
 // component names. Returns an error if any issues are found.
-func ValidateConsistency(
+func validateConsistency(
 	fs opctx.FS,
 	lockDir string,
 	components map[string]projectconfig.ComponentConfig,
@@ -221,7 +221,7 @@ func ValidateConsistency(
 		if _, validateErr := ValidateUpstreamCommit(
 			fs, lockDir, name, comp.Spec.UpstreamCommit,
 		); validateErr != nil {
-			slog.Debug("Lock validation failed", "component", name, "error", validateErr)
+			slog.Warn("Lock validation failed", "component", name, "error", validateErr)
 
 			missingOrStale = append(missingOrStale, name)
 		}

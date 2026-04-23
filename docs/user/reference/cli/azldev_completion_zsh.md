@@ -54,6 +54,7 @@ azldev completion zsh [flags]
       --permissive-config         do not fail on unknown fields in TOML config files
   -C, --project string            path to Azure Linux project
   -q, --quiet                     only enable minimal output
+      --skip-lock-validation      skip lock file consistency checks
   -v, --verbose                   enable verbose output
 ```
 

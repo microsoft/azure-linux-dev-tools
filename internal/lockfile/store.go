@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
@@ -16,13 +15,20 @@ import (
 
 // LockReader provides read-only access to per-component lock files. Use this
 // interface for commands that consume lock state but should not modify it
-// (e.g., render, build).
+// (e.g., render, build, validation).
 type LockReader interface {
 	// Get returns the lock for a component. Returns an error if the lock file
 	// does not exist or cannot be parsed.
 	Get(componentName string) (*ComponentLock, error)
 	// Exists checks whether a lock file exists for the given component.
 	Exists(componentName string) (bool, error)
+	// ValidateConsistency checks lock files against the resolved component
+	// configs. Returns sorted lists of components with missing/stale locks
+	// and orphan component names.
+	ValidateConsistency(
+		components map[string]projectconfig.ComponentConfig,
+		checkOrphans bool,
+	) (missingOrStale, orphans []string, err error)
 }
 
 // LockWriter extends [LockReader] with write operations. Use this interface
@@ -198,7 +204,7 @@ func (s *Store) ValidateConsistency(
 	components map[string]projectconfig.ComponentConfig,
 	checkOrphans bool,
 ) (missingOrStale, orphans []string, err error) {
-	return ValidateConsistency(s.fs, s.lockDir, components, checkOrphans)
+	return validateConsistency(s.fs, s.lockDir, components, checkOrphans)
 }
 
 // FindOrphanLockFiles returns component names that have lock files but no
@@ -247,30 +253,4 @@ func (s *Store) PruneOrphans(
 	}
 
 	return pruned, nil
-}
-
-// ValidateAndSuggestFixes checks consistency and formats fix suggestions.
-// Returns an error if validation fails, with human-readable fix suggestions
-// appended via the addSuggestion callback.
-func (s *Store) ValidateAndSuggestFixes(
-	components map[string]projectconfig.ComponentConfig,
-	checkOrphans bool,
-	addSuggestion func(string),
-) error {
-	const maxIssuesForDetailedSuggestion = 10
-
-	stale, orphans, validateErr := s.ValidateConsistency(components, checkOrphans)
-	if validateErr == nil {
-		return nil
-	}
-
-	if len(orphans) > 0 || len(stale) > maxIssuesForDetailedSuggestion {
-		addSuggestion("run 'azldev component update -a' to fix all lock file issues")
-	} else if len(stale) > 0 {
-		addSuggestion(fmt.Sprintf(
-			"run 'azldev component update %s'",
-			strings.Join(stale, " ")))
-	}
-
-	return validateErr
 }

@@ -51,6 +51,9 @@ Local components are skipped — they have no upstream commit to resolve.`,
   # Update components in a group
   azldev component update -g core`,
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
+			// Skip lock validation — update is the lock file writer.
+			env.SetSkipLockValidation(true)
+
 			options.ComponentFilter.ComponentNamePatterns = append(
 				args, options.ComponentFilter.ComponentNamePatterns...,
 			)
@@ -87,11 +90,11 @@ func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]Updat
 	}
 
 	comps := resolved.Components()
-	if len(comps) == 0 {
+	if len(comps) == 0 && !options.ComponentFilter.IncludeAllComponents {
 		return nil, errors.New("no components matched the filter")
 	}
 
-	// Resolve upstream commits in parallel.
+	// Resolve upstream commits in parallel (no-op for empty list).
 	store := env.LockStore()
 	if store == nil {
 		return nil, errors.New("no project directory configured; cannot update lock files")
@@ -99,8 +102,13 @@ func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]Updat
 
 	results := resolveUpstreamCommitsParallel(env, comps, store)
 
-	// Check results and bail on errors/cancellation before saving.
-	if err := checkUpdateResults(env, results); err != nil {
+	// Don't save if the context was cancelled (Ctrl+C).
+	if env.Context().Err() != nil {
+		return results, errors.New("update cancelled; lock files not updated")
+	}
+
+	// Check results and bail on errors before saving.
+	if err := checkUpdateResults(results); err != nil {
 		return results, err
 	}
 
@@ -109,8 +117,33 @@ func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]Updat
 		return results, err
 	}
 
-	// Filter results for table output: only show changed components.
-	return filterChangedResults(results), nil
+	// Prune orphan lock files when updating all components.
+	// Use the resolved component set (not raw config) to include
+	// spec-glob-discovered components that aren't in config directly.
+	// Lock files are version controlled, so pruning is safe even if the
+	// resolved set is empty (e.g., all components removed from config).
+	if options.ComponentFilter.IncludeAllComponents {
+		if len(comps) == 0 {
+			slog.Warn("No components resolved; all existing lock files will be treated as orphans")
+		}
+
+		resolvedNames := make(map[string]projectconfig.ComponentConfig, len(comps))
+		for _, comp := range comps {
+			resolvedNames[comp.GetName()] = *comp.GetConfig()
+		}
+
+		pruned, pruneErr := store.PruneOrphans(resolvedNames)
+		if pruneErr != nil {
+			return results, fmt.Errorf("pruning orphan lock files:\n%w", pruneErr)
+		}
+
+		if pruned > 0 {
+			slog.Info("Pruned orphan lock files", "count", pruned)
+		}
+	}
+
+	// Filter results for table output: show changed and skipped components.
+	return filterDisplayResults(results), nil
 }
 
 // saveComponentLocks writes a lock file for each changed component.
@@ -144,8 +177,8 @@ func saveComponentLocks(store *lockfile.Store, results []UpdateResult) error {
 }
 
 // checkUpdateResults counts results, logs a summary, and returns an error if any
-// component failed or the context was cancelled.
-func checkUpdateResults(env *azldev.Env, results []UpdateResult) error {
+// component failed.
+func checkUpdateResults(results []UpdateResult) error {
 	var changed, skipped int
 
 	var failedNames []string
@@ -171,10 +204,6 @@ func checkUpdateResults(env *azldev.Env, results []UpdateResult) error {
 			len(failedNames), strings.Join(failedNames, "\n  "))
 	}
 
-	if env.Context().Err() != nil {
-		return errors.New("update cancelled; lock files not updated")
-	}
-
 	slog.Info("Update complete",
 		"total", len(results),
 		"changed", changed,
@@ -183,12 +212,12 @@ func checkUpdateResults(env *azldev.Env, results []UpdateResult) error {
 	return nil
 }
 
-// filterChangedResults returns only changed results for table display.
-func filterChangedResults(results []UpdateResult) []UpdateResult {
+// filterDisplayResults returns changed and skipped results for table display.
+func filterDisplayResults(results []UpdateResult) []UpdateResult {
 	var tableResults []UpdateResult
 
 	for idx := range results {
-		if results[idx].Changed {
+		if results[idx].Changed || results[idx].Skipped {
 			tableResults = append(tableResults, results[idx])
 		}
 	}
@@ -263,7 +292,7 @@ func resolveUpstreamCommitsParallel(
 
 // checkLockChanged compares the resolved commit against the existing lock file
 // to determine if the component changed. Distinguishes "not found" (new
-// component) from real errors (corrupt lock file).
+// component) from real errors (corrupt/unreadable lock file).
 func checkLockChanged(store *lockfile.Store, componentName string, result *UpdateResult) {
 	exists, existsErr := store.Exists(componentName)
 	if existsErr != nil {

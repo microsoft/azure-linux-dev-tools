@@ -458,6 +458,7 @@ func TestValidateUpstreamCommit(t *testing.T) {
 func TestValidateConsistency(t *testing.T) {
 	t.Run("all valid", func(t *testing.T) {
 		memFS := afero.NewMemMapFs()
+		store := lockfile.NewStore(memFS, testLockDir)
 
 		lock := lockfile.New()
 		lock.UpstreamCommit = testCommitHash
@@ -468,7 +469,7 @@ func TestValidateConsistency(t *testing.T) {
 			"curl": {Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeUpstream}},
 		}
 
-		stale, orphans, err := lockfile.ValidateConsistency(memFS, testLockDir, components, true)
+		stale, orphans, err := store.ValidateConsistency(components, true)
 		require.NoError(t, err)
 		assert.Empty(t, stale)
 		assert.Empty(t, orphans)
@@ -476,18 +477,20 @@ func TestValidateConsistency(t *testing.T) {
 
 	t.Run("missing lock", func(t *testing.T) {
 		memFS := afero.NewMemMapFs()
+		store := lockfile.NewStore(memFS, testLockDir)
 
 		components := map[string]projectconfig.ComponentConfig{
 			"curl": {Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeUpstream}},
 		}
 
-		stale, _, err := lockfile.ValidateConsistency(memFS, testLockDir, components, true)
+		stale, _, err := store.ValidateConsistency(components, true)
 		require.Error(t, err)
 		assert.Contains(t, stale, "curl")
 	})
 
 	t.Run("orphan lock file", func(t *testing.T) {
 		memFS := afero.NewMemMapFs()
+		store := lockfile.NewStore(memFS, testLockDir)
 
 		lock := lockfile.New()
 		lock.UpstreamCommit = testCommitHash
@@ -496,13 +499,14 @@ func TestValidateConsistency(t *testing.T) {
 
 		components := map[string]projectconfig.ComponentConfig{}
 
-		_, orphans, err := lockfile.ValidateConsistency(memFS, testLockDir, components, true)
+		_, orphans, err := store.ValidateConsistency(components, true)
 		require.Error(t, err)
 		assert.Contains(t, orphans, "removed-pkg")
 	})
 
 	t.Run("local component with lock is not orphan", func(t *testing.T) {
 		memFS := afero.NewMemMapFs()
+		store := lockfile.NewStore(memFS, testLockDir)
 
 		lock := lockfile.New()
 		lock.InputFingerprint = "sha256:local-fp"
@@ -514,19 +518,20 @@ func TestValidateConsistency(t *testing.T) {
 			"curl": {Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeLocal}},
 		}
 
-		_, orphans, err := lockfile.ValidateConsistency(memFS, testLockDir, components, true)
+		_, orphans, err := store.ValidateConsistency(components, true)
 		require.NoError(t, err)
 		assert.Empty(t, orphans)
 	})
 
 	t.Run("local components skipped", func(t *testing.T) {
 		memFS := afero.NewMemMapFs()
+		store := lockfile.NewStore(memFS, testLockDir)
 
 		components := map[string]projectconfig.ComponentConfig{
 			"local-pkg": {Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeLocal}},
 		}
 
-		stale, orphans, err := lockfile.ValidateConsistency(memFS, testLockDir, components, true)
+		stale, orphans, err := store.ValidateConsistency(components, true)
 		require.NoError(t, err)
 		assert.Empty(t, stale)
 		assert.Empty(t, orphans)
@@ -534,6 +539,7 @@ func TestValidateConsistency(t *testing.T) {
 
 	t.Run("unspecified source type validated like upstream", func(t *testing.T) {
 		memFS := afero.NewMemMapFs()
+		store := lockfile.NewStore(memFS, testLockDir)
 
 		// Component with unspecified source type (inherits upstream from defaults)
 		// but no lock file — should be flagged as missing.
@@ -541,13 +547,14 @@ func TestValidateConsistency(t *testing.T) {
 			"curl": {},
 		}
 
-		stale, _, err := lockfile.ValidateConsistency(memFS, testLockDir, components, true)
+		stale, _, err := store.ValidateConsistency(components, true)
 		require.Error(t, err)
 		assert.Contains(t, stale, "curl")
 	})
 
 	t.Run("unspecified source type with valid lock passes", func(t *testing.T) {
 		memFS := afero.NewMemMapFs()
+		store := lockfile.NewStore(memFS, testLockDir)
 
 		lock := lockfile.New()
 		lock.UpstreamCommit = testCommitHash
@@ -558,7 +565,7 @@ func TestValidateConsistency(t *testing.T) {
 			"curl": {},
 		}
 
-		stale, orphans, err := lockfile.ValidateConsistency(memFS, testLockDir, components, true)
+		stale, orphans, err := store.ValidateConsistency(components, true)
 		require.NoError(t, err)
 		assert.Empty(t, stale)
 		assert.Empty(t, orphans)
@@ -566,6 +573,7 @@ func TestValidateConsistency(t *testing.T) {
 
 	t.Run("mixed stale and orphan", func(t *testing.T) {
 		memFS := afero.NewMemMapFs()
+		store := lockfile.NewStore(memFS, testLockDir)
 
 		// Create orphan lock.
 		orphanLock := lockfile.New()
@@ -578,7 +586,7 @@ func TestValidateConsistency(t *testing.T) {
 			"missing": {Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeUpstream}},
 		}
 
-		stale, orphans, err := lockfile.ValidateConsistency(memFS, testLockDir, components, true)
+		stale, orphans, err := store.ValidateConsistency(components, true)
 		require.Error(t, err)
 		assert.Contains(t, stale, "missing")
 		assert.Contains(t, orphans, "orphan")
@@ -588,6 +596,7 @@ func TestValidateConsistency(t *testing.T) {
 func TestPruneOrphans(t *testing.T) {
 	t.Run("prunes removed components", func(t *testing.T) {
 		memFS := afero.NewMemMapFs()
+		store := lockfile.NewStore(memFS, testLockDir)
 
 		lock := lockfile.New()
 		lock.UpstreamCommit = testCommitHash
@@ -595,8 +604,6 @@ func TestPruneOrphans(t *testing.T) {
 		require.NoError(t, lock.Save(memFS, mustLockPath(t, "removed")))
 
 		components := map[string]projectconfig.ComponentConfig{}
-
-		store := lockfile.NewStore(memFS, testLockDir)
 
 		pruned, err := store.PruneOrphans(components)
 		require.NoError(t, err)
@@ -609,6 +616,7 @@ func TestPruneOrphans(t *testing.T) {
 
 	t.Run("local component lock preserved", func(t *testing.T) {
 		memFS := afero.NewMemMapFs()
+		store := lockfile.NewStore(memFS, testLockDir)
 
 		lock := lockfile.New()
 		lock.InputFingerprint = "sha256:local-fp"
@@ -620,8 +628,6 @@ func TestPruneOrphans(t *testing.T) {
 			"curl": {Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeLocal}},
 		}
 
-		store := lockfile.NewStore(memFS, testLockDir)
-
 		pruned, err := store.PruneOrphans(components)
 		require.NoError(t, err)
 		assert.Equal(t, 0, pruned, "local component locks should not be pruned")
@@ -629,6 +635,7 @@ func TestPruneOrphans(t *testing.T) {
 
 	t.Run("preserves valid locks", func(t *testing.T) {
 		memFS := afero.NewMemMapFs()
+		store := lockfile.NewStore(memFS, testLockDir)
 
 		lock := lockfile.New()
 		lock.UpstreamCommit = testCommitHash
@@ -638,8 +645,6 @@ func TestPruneOrphans(t *testing.T) {
 		components := map[string]projectconfig.ComponentConfig{
 			"curl": {Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeUpstream}},
 		}
-
-		store := lockfile.NewStore(memFS, testLockDir)
 
 		pruned, err := store.PruneOrphans(components)
 		require.NoError(t, err)
@@ -652,6 +657,7 @@ func TestPruneOrphans(t *testing.T) {
 
 	t.Run("unspecified source type is not orphan", func(t *testing.T) {
 		memFS := afero.NewMemMapFs()
+		store := lockfile.NewStore(memFS, testLockDir)
 
 		lock := lockfile.New()
 		lock.UpstreamCommit = testCommitHash
@@ -663,7 +669,7 @@ func TestPruneOrphans(t *testing.T) {
 			"curl": {},
 		}
 
-		_, orphans, err := lockfile.ValidateConsistency(memFS, testLockDir, components, true)
+		_, orphans, err := store.ValidateConsistency(components, true)
 		require.NoError(t, err)
 		assert.Empty(t, orphans)
 	})
@@ -674,6 +680,7 @@ func TestPruneOrphans(t *testing.T) {
 // components would report 199 locks as orphans and fail.
 func TestValidateConsistency_FilteredSetSkipsOrphans(t *testing.T) {
 	memFS := afero.NewMemMapFs()
+	store := lockfile.NewStore(memFS, testLockDir)
 
 	// Create locks for curl and bash.
 	for _, name := range []string{"curl", "bash"} {
@@ -688,13 +695,13 @@ func TestValidateConsistency_FilteredSetSkipsOrphans(t *testing.T) {
 		"curl": {Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeUpstream}},
 	}
 
-	stale, orphans, err := lockfile.ValidateConsistency(memFS, testLockDir, filteredComponents, false)
+	stale, orphans, err := store.ValidateConsistency(filteredComponents, false)
 	require.NoError(t, err)
 	assert.Empty(t, stale)
 	assert.Empty(t, orphans, "orphan detection should be skipped on filtered commands")
 
 	// Same call with checkOrphans=true WOULD report bash as orphan.
-	_, orphansAll, errAll := lockfile.ValidateConsistency(memFS, testLockDir, filteredComponents, true)
+	_, orphansAll, errAll := store.ValidateConsistency(filteredComponents, true)
 	require.Error(t, errAll)
 	assert.Contains(t, orphansAll, "bash")
 }
@@ -777,8 +784,8 @@ func TestStoreGet_CorruptLockReturnsError(t *testing.T) {
 	assert.Equal(t, "fixed", loaded.UpstreamCommit)
 }
 
-func TestValidateAndSuggestFixes(t *testing.T) {
-	t.Run("no issues no suggestion", func(t *testing.T) {
+func TestStoreValidateConsistency(t *testing.T) {
+	t.Run("no issues", func(t *testing.T) {
 		memFS := afero.NewMemMapFs()
 		store := lockfile.NewStore(memFS, testLockDir)
 
@@ -791,16 +798,13 @@ func TestValidateAndSuggestFixes(t *testing.T) {
 			"curl": {Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeUpstream}},
 		}
 
-		var suggestions []string
-
-		err := store.ValidateAndSuggestFixes(components, false, func(s string) {
-			suggestions = append(suggestions, s)
-		})
+		stale, orphans, err := store.ValidateConsistency(components, false)
 		require.NoError(t, err)
-		assert.Empty(t, suggestions)
+		assert.Empty(t, stale)
+		assert.Empty(t, orphans)
 	})
 
-	t.Run("few stale suggests specific update", func(t *testing.T) {
+	t.Run("stale components returned", func(t *testing.T) {
 		memFS := afero.NewMemMapFs()
 		store := lockfile.NewStore(memFS, testLockDir)
 
@@ -809,18 +813,14 @@ func TestValidateAndSuggestFixes(t *testing.T) {
 			"bash": {Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeUpstream}},
 		}
 
-		var suggestions []string
-
-		err := store.ValidateAndSuggestFixes(components, false, func(s string) {
-			suggestions = append(suggestions, s)
-		})
+		stale, _, err := store.ValidateConsistency(components, false)
 		require.Error(t, err)
-		require.Len(t, suggestions, 1)
-		assert.Contains(t, suggestions[0], "azldev component update")
-		assert.NotContains(t, suggestions[0], "-a")
+		assert.Len(t, stale, 2)
+		assert.Contains(t, stale, "curl")
+		assert.Contains(t, stale, "bash")
 	})
 
-	t.Run("orphans suggest update all", func(t *testing.T) {
+	t.Run("orphans returned with checkOrphans", func(t *testing.T) {
 		memFS := afero.NewMemMapFs()
 		store := lockfile.NewStore(memFS, testLockDir)
 
@@ -831,13 +831,8 @@ func TestValidateAndSuggestFixes(t *testing.T) {
 
 		components := map[string]projectconfig.ComponentConfig{}
 
-		var suggestions []string
-
-		err := store.ValidateAndSuggestFixes(components, true, func(s string) {
-			suggestions = append(suggestions, s)
-		})
+		_, orphans, err := store.ValidateConsistency(components, true)
 		require.Error(t, err)
-		require.Len(t, suggestions, 1)
-		assert.Contains(t, suggestions[0], "update -a")
+		assert.Contains(t, orphans, "removed")
 	})
 }

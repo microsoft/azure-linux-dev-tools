@@ -132,6 +132,11 @@ func setEnv(t *testing.T, testEnv *TestEnv, testProjectDir string) {
 	envOptions.Config = testEnv.Config
 
 	testEnv.Env = azldev.NewEnv(t.Context(), envOptions)
+
+	// Skip lock validation in test environments since they don't have lock files.
+	//nolint:godox // tracked by TODO(lockfiles) tag.
+	// TODO(lockfiles): Create lock files in test projects instead of bypassing validation.
+	testEnv.Env.SetSkipLockValidation(true)
 }
 
 // setCmdFactory sets the test version of [testctx.CmdFactory] for the test environment.

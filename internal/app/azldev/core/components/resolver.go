@@ -43,7 +43,12 @@ func (r *Resolver) FindComponents(filter *ComponentFilter) (components *Componen
 
 	// If we were asked to include all components, then it's not even worth looking at anything else.
 	if filter.IncludeAllComponents {
-		return r.FindAllComponents()
+		allComps, findErr := r.FindAllComponents()
+		if findErr != nil {
+			return allComps, findErr
+		}
+
+		return allComps, r.validateLockFiles(allComps, true)
 	}
 
 	components = NewComponentSet()
@@ -72,7 +77,7 @@ func (r *Resolver) FindComponents(filter *ComponentFilter) (components *Componen
 		}
 	}
 
-	return components, err
+	return components, r.validateLockFiles(components, false)
 }
 
 // Finds *all* components defined in the environment.
@@ -492,4 +497,47 @@ func applyInheritedDefaultsToComponent(
 	}
 
 	return &resolved, nil
+}
+
+// validateLockFiles checks lock file consistency against the resolved component
+// set. Skipped when lock validation is disabled on the environment.
+//
+// When checkOrphans is true (i.e., all components are being validated), orphan
+// lock files are also detected. On filtered commands, only missing/stale checks
+// run — orphan detection is a project-wide invariant that would misfire against
+// a subset.
+func (r *Resolver) validateLockFiles(resolved *ComponentSet, checkOrphans bool) error {
+	if r.env.SkipLockValidation() {
+		return nil
+	}
+
+	reader := r.env.LockReader()
+	if reader == nil {
+		return nil
+	}
+
+	// Build resolved config map from the component set.
+	resolvedConfigs := make(map[string]projectconfig.ComponentConfig, resolved.Len())
+	for _, comp := range resolved.Components() {
+		resolvedConfigs[comp.GetName()] = *comp.GetConfig()
+	}
+
+	stale, orphans, err := reader.ValidateConsistency(resolvedConfigs, checkOrphans)
+	if err == nil {
+		return nil
+	}
+
+	// Format fix suggestions at the call site (not in the lockfile package)
+	// so CLI-specific strings don't leak into the data layer.
+	const maxIssuesForDetailedSuggestion = 10
+
+	if len(orphans) > 0 || len(stale) > maxIssuesForDetailedSuggestion {
+		r.env.AddFixSuggestion("run 'azldev component update -a' to fix all lock file issues")
+	} else if len(stale) > 0 {
+		r.env.AddFixSuggestion(fmt.Sprintf(
+			"run 'azldev component update %s'",
+			strings.Join(stale, " ")))
+	}
+
+	return fmt.Errorf("lock file validation failed:\n%w", err)
 }

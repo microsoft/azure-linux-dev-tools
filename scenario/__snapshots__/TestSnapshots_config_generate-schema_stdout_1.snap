@@ -425,7 +425,7 @@
           "type": "string",
           "format": "date-time",
           "title": "Snapshot",
-          "description": "If specified use source code as it existed at this date/time"
+          "description": "Snapshot timestamp for source code. Set on the distro or group default-component-config only — per-component snapshots are not allowed."
         }
       },
       "additionalProperties": false,

@@ -78,6 +78,11 @@
        "description": "only enable minimal output",
        "type": "boolean"
       },
+      "skip-lock-validation": {
+       "default": false,
+       "description": "skip lock file consistency checks",
+       "type": "boolean"
+      },
       "spec-path": {
        "description": "Spec path",
        "type": "string"
@@ -166,6 +171,11 @@
        "description": "only enable minimal output",
        "type": "boolean"
       },
+      "skip-lock-validation": {
+       "default": false,
+       "description": "skip lock file consistency checks",
+       "type": "boolean"
+      },
       "spec-path": {
        "description": "Spec path",
        "type": "string"
@@ -244,6 +254,11 @@
        "description": "only enable minimal output",
        "type": "boolean"
       },
+      "skip-lock-validation": {
+       "default": false,
+       "description": "skip lock file consistency checks",
+       "type": "boolean"
+      },
       "verbose": {
        "default": false,
        "description": "enable verbose output",
@@ -312,6 +327,11 @@
       "quiet": {
        "default": false,
        "description": "only enable minimal output",
+       "type": "boolean"
+      },
+      "skip-lock-validation": {
+       "default": false,
+       "description": "skip lock file consistency checks",
        "type": "boolean"
       },
       "verbose": {
@@ -399,6 +419,11 @@
        "description": "only enable minimal output",
        "type": "boolean"
       },
+      "skip-lock-validation": {
+       "default": false,
+       "description": "skip lock file consistency checks",
+       "type": "boolean"
+      },
       "verbose": {
        "default": false,
        "description": "enable verbose output",
@@ -468,6 +493,11 @@
       "quiet": {
        "default": false,
        "description": "only enable minimal output",
+       "type": "boolean"
+      },
+      "skip-lock-validation": {
+       "default": false,
+       "description": "skip lock file consistency checks",
        "type": "boolean"
       },
       "verbose": {
@@ -547,6 +577,11 @@
       "quiet": {
        "default": false,
        "description": "only enable minimal output",
+       "type": "boolean"
+      },
+      "skip-lock-validation": {
+       "default": false,
+       "description": "skip lock file consistency checks",
        "type": "boolean"
       },
       "synthesize-debug-packages": {
