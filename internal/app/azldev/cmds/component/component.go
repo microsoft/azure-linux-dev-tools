@@ -26,6 +26,7 @@ components defined in the project configuration.`,
 	addOnAppInit(app, cmd)
 	buildOnAppInit(app, cmd)
 	diffSourcesOnAppInit(app, cmd)
+	identityOnAppInit(app, cmd)
 	listOnAppInit(app, cmd)
 	prepareOnAppInit(app, cmd)
 	queryOnAppInit(app, cmd)
