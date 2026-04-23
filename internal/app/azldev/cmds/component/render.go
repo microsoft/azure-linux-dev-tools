@@ -116,6 +116,17 @@ const (
 	renderStatusCancelled = "cancelled"
 )
 
+// caseCollisionError wraps an error produced by [checkCaseCollisions]. It signals
+// that the rendered files were successfully copied to the output directory, but
+// one or more case-insensitive filename collisions were detected. The caller should
+// mark the component as an error but must NOT delete the copied output.
+type caseCollisionError struct {
+	cause error
+}
+
+func (e *caseCollisionError) Error() string { return e.cause.Error() }
+func (e *caseCollisionError) Unwrap() error { return e.cause }
+
 // RenderComponents renders the post-overlay spec and sidecar files for each
 // selected component into the output directory. Processing is done in three phases:
 //  1. Parallel source preparation (clone, overlay, synthetic git)
@@ -596,16 +607,22 @@ func finishOneComponent(
 		result.Status = renderStatusError
 		result.Error = err.Error()
 
-		// Clean any stale good output before writing the failure marker.
-		// Only allowed for managed (project-local) output directories.
-		if allowOverwrite {
-			if removeErr := env.FS().RemoveAll(compOutputDir); removeErr != nil {
-				slog.Debug("Failed to clean output before writing error marker",
-					"path", compOutputDir, "error", removeErr)
+		// For case-collision errors the files were successfully copied to the output
+		// directory — do not delete them or write a failure marker. The collision
+		// message in the table is sufficient to prompt the user to add an overlay.
+		var collisionErr *caseCollisionError
+		if !errors.As(err, &collisionErr) {
+			// Clean any stale good output before writing the failure marker.
+			// Only allowed for managed (project-local) output directories.
+			if allowOverwrite {
+				if removeErr := env.FS().RemoveAll(compOutputDir); removeErr != nil {
+					slog.Debug("Failed to clean output before writing error marker",
+						"path", compOutputDir, "error", removeErr)
+				}
 			}
-		}
 
-		writeRenderErrorMarker(env.FS(), compOutputDir)
+			writeRenderErrorMarker(env.FS(), compOutputDir)
+		}
 	}
 
 	return result
@@ -651,10 +668,15 @@ func finishComponentRender(
 		slog.Debug("Failed to remove .git directory", "path", gitDir, "error", removeErr)
 	}
 
-	// Check for files whose names differ only by case. Such files collide on
-	// case-insensitive filesystems (e.g. Windows git clones).
-	if collisionErr := checkCaseCollisions(env.FS(), componentDir); collisionErr != nil {
-		return fmt.Errorf("case-insensitive filename collision in %#q:\n%w", componentName, collisionErr)
+	// Check for files whose names differ only by case. Such files would collide
+	// on case-insensitive filesystems (e.g. Windows git clones). We detect this
+	// before copying so the error is reported, but we still copy the files so the
+	// rendered output is as complete as possible (the tool runs on Linux where
+	// the colliding files coexist without issue).
+	collisionErr := checkCaseCollisions(env.FS(), componentDir)
+	if collisionErr != nil {
+		slog.Warn("Case-insensitive filename collision detected",
+			"component", componentName, "error", collisionErr)
 	}
 
 	// Copy rendered files to the component's output directory.
@@ -664,6 +686,12 @@ func finishComponentRender(
 
 	slog.Info("Rendered component", "component", componentName,
 		"output", prep.compOutputDir)
+
+	if collisionErr != nil {
+		return &caseCollisionError{
+			cause: fmt.Errorf("case-insensitive filename collision in %#q:\n%w", componentName, collisionErr),
+		}
+	}
 
 	return nil
 }
