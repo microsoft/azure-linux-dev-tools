@@ -233,3 +233,114 @@ func TestReleaseCalculationValidation(t *testing.T) {
 		Calculation: "manaul",
 	}))
 }
+
+func TestResolveComponentConfig(t *testing.T) {
+	distroDefaults := projectconfig.ComponentConfig{
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeUpstream,
+		},
+	}
+
+	t.Run("no groups", func(t *testing.T) {
+		comp := projectconfig.ComponentConfig{Name: "curl"}
+
+		resolved, err := projectconfig.ResolveComponentConfig(
+			comp, distroDefaults, nil, nil,
+		)
+		require.NoError(t, err)
+		assert.Equal(t, "curl", resolved.Name)
+		assert.Equal(t, projectconfig.SpecSourceTypeUpstream, resolved.Spec.SourceType)
+	})
+
+	t.Run("single group", func(t *testing.T) {
+		groups := map[string]projectconfig.ComponentGroupConfig{
+			"core": {
+				DefaultComponentConfig: projectconfig.ComponentConfig{
+					Spec: projectconfig.SpecSource{
+						UpstreamCommit: "group-commit",
+					},
+				},
+			},
+		}
+		comp := projectconfig.ComponentConfig{Name: "curl"}
+
+		resolved, err := projectconfig.ResolveComponentConfig(
+			comp, distroDefaults, groups, []string{"core"},
+		)
+		require.NoError(t, err)
+		assert.Equal(t, "group-commit", resolved.Spec.UpstreamCommit)
+		assert.Equal(t, projectconfig.SpecSourceTypeUpstream, resolved.Spec.SourceType)
+	})
+
+	t.Run("multi group sorted order", func(t *testing.T) {
+		groups := map[string]projectconfig.ComponentGroupConfig{
+			"alpha": {
+				DefaultComponentConfig: projectconfig.ComponentConfig{
+					Spec: projectconfig.SpecSource{UpstreamCommit: "alpha-commit"},
+				},
+			},
+			"beta": {
+				DefaultComponentConfig: projectconfig.ComponentConfig{
+					Spec: projectconfig.SpecSource{UpstreamCommit: "beta-commit"},
+				},
+			},
+		}
+		comp := projectconfig.ComponentConfig{Name: "curl"}
+
+		// Groups applied in sorted order: alpha then beta. beta wins.
+		resolved, err := projectconfig.ResolveComponentConfig(
+			comp, distroDefaults, groups, []string{"beta", "alpha"},
+		)
+		require.NoError(t, err)
+		assert.Equal(t, "beta-commit", resolved.Spec.UpstreamCommit)
+	})
+
+	t.Run("component overrides group", func(t *testing.T) {
+		groups := map[string]projectconfig.ComponentGroupConfig{
+			"core": {
+				DefaultComponentConfig: projectconfig.ComponentConfig{
+					Spec: projectconfig.SpecSource{UpstreamCommit: "group-commit"},
+				},
+			},
+		}
+		comp := projectconfig.ComponentConfig{
+			Name: "curl",
+			Spec: projectconfig.SpecSource{UpstreamCommit: "comp-commit"},
+		}
+
+		resolved, err := projectconfig.ResolveComponentConfig(
+			comp, distroDefaults, groups, []string{"core"},
+		)
+		require.NoError(t, err)
+		assert.Equal(t, "comp-commit", resolved.Spec.UpstreamCommit)
+	})
+
+	t.Run("missing group errors", func(t *testing.T) {
+		comp := projectconfig.ComponentConfig{Name: "curl"}
+
+		_, err := projectconfig.ResolveComponentConfig(
+			comp, distroDefaults, nil, []string{"nonexistent"},
+		)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "component group not found")
+	})
+
+	t.Run("does not mutate inputs", func(t *testing.T) {
+		groups := map[string]projectconfig.ComponentGroupConfig{
+			"core": {
+				DefaultComponentConfig: projectconfig.ComponentConfig{
+					Spec: projectconfig.SpecSource{UpstreamCommit: "group-commit"},
+				},
+			},
+		}
+		comp := projectconfig.ComponentConfig{Name: "curl"}
+		originalDefaults := distroDefaults
+
+		_, err := projectconfig.ResolveComponentConfig(
+			comp, distroDefaults, groups, []string{"core"},
+		)
+		require.NoError(t, err)
+		assert.Equal(t, originalDefaults, distroDefaults, "distro defaults should not be mutated")
+		assert.Empty(t, comp.Spec.UpstreamCommit, "component config should not be mutated")
+	})
+}

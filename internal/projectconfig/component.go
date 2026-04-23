@@ -5,6 +5,8 @@ package projectconfig
 
 import (
 	"fmt"
+	"slices"
+	"sort"
 
 	"dario.cat/mergo"
 	"github.com/brunoga/deep"
@@ -184,6 +186,42 @@ func (c *ComponentConfig) MergeUpdatesFrom(other *ComponentConfig) error {
 	}
 
 	return nil
+}
+
+// ResolveComponentConfig applies the full config inheritance chain for a single
+// component: distro defaults → group defaults (sorted) → component explicit config.
+// Returns a fully resolved copy; the inputs are not modified.
+// On error the returned config is undefined and must not be used.
+func ResolveComponentConfig(
+	comp ComponentConfig,
+	distroDefaults ComponentConfig,
+	groups map[string]ComponentGroupConfig,
+	groupMembership []string,
+) (ComponentConfig, error) {
+	merged := deep.MustCopy(distroDefaults)
+
+	// Apply group defaults in sorted order for determinism.
+	sortedGroups := slices.Clone(groupMembership)
+	sort.Strings(sortedGroups)
+
+	for _, groupName := range sortedGroups {
+		groupConfig, ok := groups[groupName]
+		if !ok {
+			return ComponentConfig{}, fmt.Errorf("component group not found: %#q", groupName)
+		}
+
+		if err := merged.MergeUpdatesFrom(&groupConfig.DefaultComponentConfig); err != nil {
+			return ComponentConfig{}, fmt.Errorf(
+				"failed to apply defaults from component group %#q:\n%w",
+				groupName, err)
+		}
+	}
+
+	if err := merged.MergeUpdatesFrom(&comp); err != nil {
+		return ComponentConfig{}, fmt.Errorf("failed to apply component config:\n%w", err)
+	}
+
+	return merged, nil
 }
 
 // Returns a copy of the component config with relative file paths converted to absolute

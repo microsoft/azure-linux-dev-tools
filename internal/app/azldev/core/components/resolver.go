@@ -9,12 +9,9 @@ import (
 	"log/slog"
 	"path"
 	"path/filepath"
-	"slices"
-	"sort"
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
-	"github.com/brunoga/deep"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
@@ -477,48 +474,22 @@ func (r *Resolver) createComponentFromConfig(componentConfig *projectconfig.Comp
 func applyInheritedDefaultsToComponent(
 	env *azldev.Env, component projectconfig.ComponentConfig,
 ) (result *projectconfig.ComponentConfig, err error) {
-	var distroVer projectconfig.DistroVersionDefinition
-
-	// Find the distro.
-	_, distroVer, err = env.Distro()
+	_, distroVer, err := env.Distro()
 	if err != nil {
-		return result, fmt.Errorf("failed to resolve current distro:\n%w", err)
+		return nil, fmt.Errorf("failed to resolve current distro:\n%w", err)
 	}
 
-	// Start by deep-cloning the distro defaults, using them as a template.
-	result = &projectconfig.ComponentConfig{}
-	*result = deep.MustCopy(distroVer.DefaultComponentConfig)
+	groupNames := env.Config().GroupsByComponent[component.Name]
 
-	// Find all component groups that this component belongs to and apply their defaults.
-	if groupNames, ok := env.Config().GroupsByComponent[component.Name]; ok {
-		// Sort the group names for deterministic layering of defaults.
-		sortedGroupNames := slices.Clone(groupNames)
-		sort.Strings(sortedGroupNames)
-
-		for _, groupName := range sortedGroupNames {
-			// Find the group.
-			groupConfig, ok := env.Config().ComponentGroups[groupName]
-			if !ok {
-				return result, fmt.Errorf("component group not found: %s", groupName)
-			}
-
-			// Apply its defaults.
-			err = result.MergeUpdatesFrom(&groupConfig.DefaultComponentConfig)
-			if err != nil {
-				return result, fmt.Errorf(
-					"failed to apply defaults from component group '%s' to config for component '%s':\n%w",
-					groupName, component.Name, err,
-				)
-			}
-		}
-	}
-
-	// Layer in the component's explicit config.
-	err = result.MergeUpdatesFrom(&component)
+	resolved, err := projectconfig.ResolveComponentConfig(
+		component,
+		distroVer.DefaultComponentConfig,
+		env.Config().ComponentGroups,
+		groupNames,
+	)
 	if err != nil {
-		return result,
-			fmt.Errorf("failed to apply distro defaults to config for component '%s':\n%w", component.Name, err)
+		return nil, fmt.Errorf("resolving config for component '%s':\n%w", component.Name, err)
 	}
 
-	return result, nil
+	return &resolved, nil
 }
