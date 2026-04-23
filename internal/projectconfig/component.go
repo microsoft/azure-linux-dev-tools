@@ -161,7 +161,7 @@ type ComponentConfig struct {
 	// RenderedSpecDir is the output directory for this component's rendered spec files.
 	// Derived at resolve time from the project's rendered-specs-dir setting; not present
 	// in serialized files. Empty when rendered-specs-dir is not configured.
-	RenderedSpecDir string `toml:"-" json:"renderedSpecDir,omitempty" table:"-"`
+	RenderedSpecDir string `toml:"-" json:"renderedSpecDir,omitempty" table:"-" fingerprint:"-"`
 
 	// Where to get its spec and adjacent files from.
 	Spec SpecSource `toml:"spec,omitempty" json:"spec,omitempty" jsonschema:"title=Spec,description=Identifies where to find the spec for this component"`

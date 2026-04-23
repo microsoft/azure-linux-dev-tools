@@ -9,7 +9,9 @@ type SpecSource struct {
 	SourceType SpecSourceType `toml:"type" json:"type,omitempty" validate:"omitempty,oneof=local upstream" jsonschema:"required,enum=local,enum=upstream,enum=,title=Source Type,description=The type of the spec source"`
 
 	// Path indicates the path to the spec file; only relevant for local specs.
-	Path string `toml:"path,omitempty" json:"path,omitempty" validate:"excluded_unless=SourceType local,required_if=SourceType local" jsonschema:"title=Path,description=Path to the spec (if available locally),example=specs/mycomponent.spec"`
+	// Excluded from fingerprint because it contains an absolute path that varies by checkout
+	// location. Spec content identity is captured separately via [fingerprint.IdentityOptions.SourceIdentity].
+	Path string `toml:"path,omitempty" json:"path,omitempty" validate:"excluded_unless=SourceType local,required_if=SourceType local" jsonschema:"title=Path,description=Path to the spec (if available locally),example=specs/mycomponent.spec" fingerprint:"-"`
 
 	// UpstreamDistro indicates the upstream distro providing the spec; only relevant for upstream specs.
 	UpstreamDistro DistroReference `toml:"upstream-distro,omitempty" json:"upstreamDistro,omitempty" jsonschema:"title=Upstream distro,description=Reference to the upstream distro providing the spec"`

@@ -45,6 +45,8 @@ func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
 		"ComponentConfig.Name": true,
 		// ComponentConfig.SourceConfigFile — internal bookkeeping reference, not a build input.
 		"ComponentConfig.SourceConfigFile": true,
+		// ComponentConfig.RenderedSpecDir — derived output path that varies by checkout location.
+		"ComponentConfig.RenderedSpecDir": true,
 
 		// ComponentBuildConfig.Failure — CI policy (expected failure tracking), not a build input.
 		"ComponentBuildConfig.Failure": true,
@@ -62,6 +64,9 @@ func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
 
 		// ComponentOverlay.Description — human-readable documentation for the overlay.
 		"ComponentOverlay.Description": true,
+		// ComponentOverlay.Source — absolute path that varies by checkout location.
+		// Overlay content is hashed separately by ComputeIdentity.
+		"ComponentOverlay.Source": true,
 
 		// SourceFileReference.Component — back-reference to parent, not a build input.
 		"SourceFileReference.Component": true,
@@ -75,6 +80,10 @@ func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
 		// The file content is already captured by Filename + Hash; changing a CDN URL should not
 		// trigger a rebuild.
 		"SourceFileReference.Origin": true,
+
+		// SpecSource.Path — absolute path that varies by checkout location.
+		// Spec content identity is captured separately via SourceIdentity.
+		"SpecSource.Path": true,
 	}
 
 	// Collect all actual exclusions found via reflection, and flag invalid tag values.
