@@ -4,10 +4,14 @@
 package lockfile
 
 import (
+	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"sync"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
+	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 )
 
 // LockReader provides read-only access to per-component lock files. Use this
@@ -181,4 +185,92 @@ func (s *Store) Remove(componentName string) error {
 	s.cache.Delete(componentName)
 
 	return nil
+}
+
+// ValidateConsistency checks lock files against the resolved component configs.
+// For each non-local component, verifies a lock file exists and any explicit
+// upstream-commit pin matches. When checkOrphans is true, also detects orphan
+// lock files (only appropriate when validating the full project).
+//
+// Returns sorted lists of components with missing/stale locks and orphan
+// component names. Returns an error if any issues are found.
+func (s *Store) ValidateConsistency(
+	components map[string]projectconfig.ComponentConfig,
+	checkOrphans bool,
+) (missingOrStale, orphans []string, err error) {
+	return ValidateConsistency(s.fs, s.lockDir, components, checkOrphans)
+}
+
+// FindOrphanLockFiles returns component names that have lock files but no
+// corresponding component in the given config map.
+func (s *Store) FindOrphanLockFiles(
+	components map[string]projectconfig.ComponentConfig,
+) ([]string, error) {
+	return FindOrphanLockFiles(s.fs, s.lockDir, components)
+}
+
+// PruneOrphans removes lock files for components that no longer exist in
+// config. Returns the number of files removed and an error if any removals
+// failed. Also evicts pruned entries from the cache.
+func (s *Store) PruneOrphans(
+	components map[string]projectconfig.ComponentConfig,
+) (int, error) {
+	orphans, findErr := s.FindOrphanLockFiles(components)
+	if findErr != nil {
+		return 0, fmt.Errorf("finding orphan lock files:\n%w", findErr)
+	}
+
+	if len(orphans) == 0 {
+		return 0, nil
+	}
+
+	var (
+		pruned int
+		errs   []error
+	)
+
+	for _, componentName := range orphans {
+		slog.Info("Removing orphan lock file", "component", componentName)
+
+		if removeErr := s.Remove(componentName); removeErr != nil {
+			errs = append(errs, fmt.Errorf("removing lock for %#q:\n%w", componentName, removeErr))
+
+			continue
+		}
+
+		pruned++
+	}
+
+	if len(errs) > 0 {
+		return pruned, fmt.Errorf("failed to remove %d orphan lock file(s):\n  %w",
+			len(errs), errors.Join(errs...))
+	}
+
+	return pruned, nil
+}
+
+// ValidateAndSuggestFixes checks consistency and formats fix suggestions.
+// Returns an error if validation fails, with human-readable fix suggestions
+// appended via the addSuggestion callback.
+func (s *Store) ValidateAndSuggestFixes(
+	components map[string]projectconfig.ComponentConfig,
+	checkOrphans bool,
+	addSuggestion func(string),
+) error {
+	const maxIssuesForDetailedSuggestion = 10
+
+	stale, orphans, validateErr := s.ValidateConsistency(components, checkOrphans)
+	if validateErr == nil {
+		return nil
+	}
+
+	if len(orphans) > 0 || len(stale) > maxIssuesForDetailedSuggestion {
+		addSuggestion("run 'azldev component update -a' to fix all lock file issues")
+	} else if len(stale) > 0 {
+		addSuggestion(fmt.Sprintf(
+			"run 'azldev component update %s'",
+			strings.Join(stale, " ")))
+	}
+
+	return validateErr
 }
