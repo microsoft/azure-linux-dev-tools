@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 )
 
@@ -649,6 +651,12 @@ func finishComponentRender(
 		slog.Debug("Failed to remove .git directory", "path", gitDir, "error", removeErr)
 	}
 
+	// Check for files whose names differ only by case. Such files collide on
+	// case-insensitive filesystems (e.g. Windows git clones).
+	if collisionErr := checkCaseCollisions(env.FS(), componentDir); collisionErr != nil {
+		return fmt.Errorf("case-insensitive filename collision in %#q:\n%w", componentName, collisionErr)
+	}
+
 	// Copy rendered files to the component's output directory.
 	if copyErr := copyRenderedOutput(env, componentDir, prep.compOutputDir, allowOverwrite); copyErr != nil {
 		return copyErr
@@ -737,6 +745,56 @@ func removeUnreferencedFiles(fs opctx.FS, tempDir, specPath string, specFiles []
 			return fmt.Errorf("failed to remove filtered entry %#q for component %#q:\n%w",
 				entry.Name(), componentName, removeErr)
 		}
+	}
+
+	return nil
+}
+
+// checkCaseCollisions walks dir recursively and returns an error if any two files
+// have names that differ only in case, which would collide on case-insensitive
+// filesystems (e.g. Windows git clones). The error message lists the colliding
+// pairs and suggests creating an overlay to rename one of them.
+func checkCaseCollisions(fs opctx.FS, dir string) error {
+	// Map lowercase relative path → first-seen relative path with original casing.
+	seen := make(map[string]string)
+
+	var collisions []string
+
+	walkErr := afero.Walk(fs, dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return fmt.Errorf("error walking %#q:\n%w", path, err)
+		}
+
+		if info.IsDir() {
+			return nil
+		}
+
+		rel, relErr := filepath.Rel(dir, path)
+		if relErr != nil {
+			return fmt.Errorf("computing relative path for %#q:\n%w", path, relErr)
+		}
+
+		lower := strings.ToLower(rel)
+		if existing, ok := seen[lower]; ok {
+			collisions = append(collisions, fmt.Sprintf("%#q collides with %#q", rel, existing))
+		} else {
+			seen[lower] = rel
+		}
+
+		return nil
+	})
+
+	if walkErr != nil {
+		return fmt.Errorf("walking directory %#q:\n%w", dir, walkErr)
+	}
+
+	if len(collisions) > 0 {
+		slices.Sort(collisions)
+
+		return fmt.Errorf(
+			"files with names that differ only in case would collide on case-insensitive filesystems (e.g. Windows git clones):\n%s\n"+
+				"to fix, create an overlay to rename one of the colliding files",
+			strings.Join(collisions, "\n"))
 	}
 
 	return nil
