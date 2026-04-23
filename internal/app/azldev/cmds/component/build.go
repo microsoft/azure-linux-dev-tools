@@ -63,6 +63,10 @@ type ComponentBuildResults struct {
 	// Absolute paths to any source RPMs built by the operation.
 	SRPMPaths []string `json:"srpmPaths" table:"SRPM Paths"`
 
+	// SRPMChannel is the resolved publish channel for the SRPM.
+	// Empty when no channel is configured.
+	SRPMChannel string `json:"srpmPublishChannel,omitempty" table:"SRPM Publish Channel"`
+
 	// Absolute paths to any RPMs built by the operation.
 	RPMPaths []string `json:"rpmPaths" table:"RPM Paths"`
 
@@ -329,6 +333,9 @@ func buildComponentUsingBuilder(
 	results.ComponentName = component.GetName()
 	results.SRPMPaths = []string{outputSourcePackagePath}
 
+	// The component is already resolved — its Publish field reflects all inherited defaults.
+	results.SRPMChannel = component.GetConfig().Publish.SRPMChannel
+
 	// Short circuit if we were asked only to build the SRPM.
 	if sourcePackageOnly {
 		return results, nil
@@ -345,38 +352,51 @@ func buildComponentUsingBuilder(
 		return results, fmt.Errorf("failed to build RPM for %#q:\n%w", component.GetName(), err)
 	}
 
-	// Enrich each RPM with its binary package name and resolved publish channel.
-	results.RPMs, err = resolveRPMResults(env.FS(), results.RPMPaths, env.Config(), component.GetConfig())
-	if err != nil {
-		return results, fmt.Errorf("failed to resolve publish channels for %#q:\n%w", component.GetName(), err)
-	}
-
-	// Move RPMs with a channel into out/rpms/<channel>/, leaving unconfigured ones in out/rpms/.
-	if err = PlaceRPMsByChannel(env, results.RPMs, rpmsDir); err != nil {
-		return results, fmt.Errorf("failed to place RPMs by channel for %#q:\n%w", component.GetName(), err)
-	}
-
-	// Sync RPMPaths to the final (possibly moved) locations.
-	results.RPMPaths = make([]string, len(results.RPMs))
-	for rpmIdx, rpm := range results.RPMs {
-		results.RPMPaths[rpmIdx] = rpm.Path
-	}
-
-	// Populate the parallel Channels slice for table display.
-	results.RPMChannels = make([]string, len(results.RPMs))
-	for rpmIdx, rpm := range results.RPMs {
-		results.RPMChannels[rpmIdx] = rpm.Channel
+	// Enrich each RPM with its binary package name and resolved publish channel,
+	// move RPMs into channel subdirectories, and populate the parallel result slices.
+	if err = resolveAndPlaceRPMs(env, component, &results, rpmsDir); err != nil {
+		return results, err
 	}
 
 	// Publish built RPMs to local repo with publish enabled.
 	if localRepoWithPublishPath != "" && len(results.RPMPaths) > 0 {
 		publishErr := publishToLocalRepo(env, results.RPMPaths, localRepoWithPublishPath)
 		if publishErr != nil {
-			return results, fmt.Errorf("failed to publish RPMs for %q:\n%w", component.GetName(), publishErr)
+			return results, fmt.Errorf("failed to publish RPMs for %#q:\n%w", component.GetName(), publishErr)
 		}
 	}
 
 	return results, nil
+}
+
+// resolveAndPlaceRPMs enriches build results with per-RPM publish channels, moves RPMs into
+// channel subdirectories, and populates the parallel RPMPaths/RPMChannels slices.
+func resolveAndPlaceRPMs(
+	env *azldev.Env, component components.Component,
+	results *ComponentBuildResults, rpmsDir string,
+) error {
+	var err error
+
+	results.RPMs, err = resolveRPMResults(env.FS(), results.RPMPaths, env.Config(), component.GetConfig())
+	if err != nil {
+		return fmt.Errorf("failed to resolve publish channels for %#q:\n%w", component.GetName(), err)
+	}
+
+	if err = PlaceRPMsByChannel(env, results.RPMs, rpmsDir); err != nil {
+		return fmt.Errorf("failed to place RPMs by channel for %#q:\n%w", component.GetName(), err)
+	}
+
+	results.RPMPaths = make([]string, len(results.RPMs))
+	for rpmIdx, rpm := range results.RPMs {
+		results.RPMPaths[rpmIdx] = rpm.Path
+	}
+
+	results.RPMChannels = make([]string, len(results.RPMs))
+	for rpmIdx, rpm := range results.RPMs {
+		results.RPMChannels[rpmIdx] = rpm.Channel
+	}
+
+	return nil
 }
 
 // PlaceRPMsByChannel moves each RPM with a configured channel from its initial location in
@@ -480,12 +500,12 @@ func resolveRPMResults(
 		}
 
 		if proj != nil {
-			pkgConfig, err := projectconfig.ResolvePackageConfig(pkgName, compConfig, proj)
+			channel, err := projectconfig.ResolvePackagePublishChannel(pkgName, compConfig, proj)
 			if err != nil {
-				return nil, fmt.Errorf("failed to resolve package config for %#q:\n%w", pkgName, err)
+				return nil, fmt.Errorf("failed to resolve publish channel for %#q:\n%w", pkgName, err)
 			}
 
-			rpmResult.Channel = pkgConfig.Publish.Channel
+			rpmResult.Channel = channel
 		}
 
 		rpmResults = append(rpmResults, rpmResult)

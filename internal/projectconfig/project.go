@@ -26,6 +26,11 @@ type ProjectConfig struct {
 	// Configuration for tools used by azldev.
 	Tools ToolsConfig `toml:"tools,omitempty" json:"tools,omitempty" jsonschema:"title=Tools configuration,description=Configuration for tools used by azldev"`
 
+	// DefaultComponentConfig is the project-wide default applied to every component before any
+	// component-group or component-level config is considered. It is the lowest-priority layer in
+	// the component publish config resolution order.
+	DefaultComponentConfig ComponentConfig `toml:"default-component-config,omitempty" json:"defaultComponentConfig,omitempty" jsonschema:"title=Default component config,description=Project-wide default applied to all components before group and component overrides"`
+
 	// DefaultPackageConfig is the project-wide default applied to every binary package before any
 	// package-group or component-level config is considered. It is the lowest-priority layer in the
 	// package config resolution order.

@@ -5,13 +5,12 @@ binary-package configuration for your project without running a build.
 
 ## Background
 
-Binary package configuration in azldev is assembled from up to four layers
+Binary package configuration in azldev is assembled from up to three layers
 (see [Package Groups](../reference/config/package-groups.md) for details):
 
 1. Project `default-package-config`
 2. Package group `default-package-config`
-3. Component `default-package-config`
-4. Component `packages.<name>` override (highest priority)
+3. Component `packages.<name>` override (highest priority)
 
 `azldev package list` resolves all of these layers and prints the effective
 configuration for each package you ask about.

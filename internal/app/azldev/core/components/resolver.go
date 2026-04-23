@@ -483,6 +483,7 @@ func applyInheritedDefaultsToComponent(
 
 	resolved, err := projectconfig.ResolveComponentConfig(
 		component,
+		env.Config().DefaultComponentConfig,
 		distroVer.DefaultComponentConfig,
 		env.Config().ComponentGroups,
 		groupNames,

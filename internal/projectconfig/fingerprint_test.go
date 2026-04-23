@@ -57,6 +57,9 @@ func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
 		// PackageConfig.Publish — post-build routing (where to publish), not a build input.
 		"PackageConfig.Publish": true,
 
+		// ComponentConfig.Publish — post-build routing (where to publish), not a build input.
+		"ComponentConfig.Publish": true,
+
 		// ComponentOverlay.Description — human-readable documentation for the overlay.
 		"ComponentOverlay.Description": true,
 

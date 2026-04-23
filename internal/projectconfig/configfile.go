@@ -46,6 +46,10 @@ type ConfigFile struct {
 	// Configuration for tools used by azldev.
 	Tools *ToolsConfig `toml:"tools,omitempty" jsonschema:"title=Tools configuration,description=Configuration for tools used by azldev"`
 
+	// DefaultComponentConfig is the project-wide default component configuration applied before any
+	// component-group or component-level config is considered.
+	DefaultComponentConfig *ComponentConfig `toml:"default-component-config,omitempty" jsonschema:"title=Default component config,description=Project-wide default applied to all components before group and component overrides"`
+
 	// DefaultPackageConfig is the project-wide default package configuration applied before any
 	// package-group or component-level config is considered.
 	DefaultPackageConfig *PackageConfig `toml:"default-package-config,omitempty" jsonschema:"title=Default package config,description=Project-wide default applied to all binary packages before group and component overrides"`

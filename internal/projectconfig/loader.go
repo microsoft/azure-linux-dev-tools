@@ -120,6 +120,10 @@ func mergeConfigFile(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
 		return err
 	}
 
+	if err := mergeDefaultComponentConfig(resolvedCfg, loadedCfg); err != nil {
+		return err
+	}
+
 	if err := mergeDefaultPackageConfig(resolvedCfg, loadedCfg); err != nil {
 		return err
 	}
@@ -235,6 +239,19 @@ func mergeDefaultPackageConfig(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile
 	if loadedCfg.DefaultPackageConfig != nil {
 		if err := resolvedCfg.DefaultPackageConfig.MergeUpdatesFrom(loadedCfg.DefaultPackageConfig); err != nil {
 			return fmt.Errorf("failed to merge project default package config:\n%w", err)
+		}
+	}
+
+	return nil
+}
+
+// mergeDefaultComponentConfig merges the project-level default component config from a loaded
+// config file into the resolved config.
+func mergeDefaultComponentConfig(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
+	if loadedCfg.DefaultComponentConfig != nil {
+		absConfig := loadedCfg.DefaultComponentConfig.WithAbsolutePaths(loadedCfg.dir)
+		if err := resolvedCfg.DefaultComponentConfig.MergeUpdatesFrom(absConfig); err != nil {
+			return fmt.Errorf("failed to merge project default component config:\n%w", err)
 		}
 	}
 

@@ -565,7 +565,7 @@ includes = ["*non-existent*.toml"]
 func TestLoadAndResolveProjectConfig_DefaultPackageConfig(t *testing.T) {
 	const configContents = `
 [default-package-config.publish]
-channel = "base"
+rpm-channel = "base"
 `
 
 	ctx := testctx.NewCtx()
@@ -574,7 +574,7 @@ channel = "base"
 	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
 	require.NoError(t, err)
 
-	assert.Equal(t, "base", config.DefaultPackageConfig.Publish.Channel)
+	assert.Equal(t, "base", config.DefaultPackageConfig.Publish.RPMChannel)
 }
 
 func TestLoadAndResolveProjectConfig_DefaultPackageConfig_MergedAcrossFiles(t *testing.T) {
@@ -587,11 +587,11 @@ func TestLoadAndResolveProjectConfig_DefaultPackageConfig_MergedAcrossFiles(t *t
 includes = ["extra.toml"]
 
 [default-package-config.publish]
-channel = "base"
+rpm-channel = "base"
 `},
 		{"/project/extra.toml", `
 [default-package-config.publish]
-channel = "stable"
+rpm-channel = "stable"
 `},
 	}
 
@@ -605,7 +605,7 @@ channel = "stable"
 	require.NoError(t, err)
 
 	// The later-loaded file wins.
-	assert.Equal(t, "stable", config.DefaultPackageConfig.Publish.Channel)
+	assert.Equal(t, "stable", config.DefaultPackageConfig.Publish.RPMChannel)
 }
 
 func TestLoadAndResolveProjectConfig_DefaultPackageConfig_MergedAcrossTopLevelFiles(t *testing.T) {
@@ -613,11 +613,11 @@ func TestLoadAndResolveProjectConfig_DefaultPackageConfig_MergedAcrossTopLevelFi
 	const (
 		configContents1 = `
 [default-package-config.publish]
-channel = "first"
+rpm-channel = "first"
 `
 		configContents2 = `
 [default-package-config.publish]
-channel = "second"
+rpm-channel = "second"
 `
 	)
 
@@ -631,7 +631,7 @@ channel = "second"
 	config, err := loadAndResolveProjectConfig(ctx.FS(), false, configPath1, configPath2)
 	require.NoError(t, err)
 
-	assert.Equal(t, "second", config.DefaultPackageConfig.Publish.Channel)
+	assert.Equal(t, "second", config.DefaultPackageConfig.Publish.RPMChannel)
 }
 
 func TestLoadAndResolveProjectConfig_PackageGroups(t *testing.T) {
@@ -641,14 +641,14 @@ description = "Development subpackages"
 packages = ["curl-devel", "wget2-devel"]
 
 [package-groups.devel-packages.default-package-config.publish]
-channel = "devel"
+rpm-channel = "devel"
 
 [package-groups.debug-packages]
 description = "Debug info packages"
 packages = ["curl-debuginfo", "curl-debugsource"]
 
 [package-groups.debug-packages.default-package-config.publish]
-channel = "none"
+rpm-channel = "none"
 `
 
 	ctx := testctx.NewCtx()
@@ -663,14 +663,14 @@ channel = "none"
 		g := config.PackageGroups["devel-packages"]
 		assert.Equal(t, "Development subpackages", g.Description)
 		assert.Equal(t, []string{"curl-devel", "wget2-devel"}, g.Packages)
-		assert.Equal(t, "devel", g.DefaultPackageConfig.Publish.Channel)
+		assert.Equal(t, "devel", g.DefaultPackageConfig.Publish.RPMChannel)
 	}
 
 	if assert.Contains(t, config.PackageGroups, "debug-packages") {
 		g := config.PackageGroups["debug-packages"]
 		assert.Equal(t, "Debug info packages", g.Description)
 		assert.Equal(t, []string{"curl-debuginfo", "curl-debugsource"}, g.Packages)
-		assert.Equal(t, "none", g.DefaultPackageConfig.Publish.Channel)
+		assert.Equal(t, "none", g.DefaultPackageConfig.Publish.RPMChannel)
 	}
 }
 
@@ -772,15 +772,12 @@ packages = ["wget2-devel", "bash-devel"]
 	assert.Contains(t, err.Error(), "may only belong to one group")
 }
 
-func TestLoadAndResolveProjectConfig_ComponentDefaultPackageConfig(t *testing.T) {
+func TestLoadAndResolveProjectConfig_ComponentPackageOverrides(t *testing.T) {
 	const configContents = `
 [components.curl]
 
-[components.curl.default-package-config.publish]
-channel = "base"
-
 [components.curl.packages.curl-devel.publish]
-channel = "devel"
+rpm-channel = "devel"
 `
 
 	ctx := testctx.NewCtx()
@@ -791,10 +788,9 @@ channel = "devel"
 
 	if assert.Contains(t, config.Components, "curl") {
 		comp := config.Components["curl"]
-		assert.Equal(t, "base", comp.DefaultPackageConfig.Publish.Channel)
 
 		if assert.Contains(t, comp.Packages, "curl-devel") {
-			assert.Equal(t, "devel", comp.Packages["curl-devel"].Publish.Channel)
+			assert.Equal(t, "devel", comp.Packages["curl-devel"].Publish.RPMChannel)
 		}
 	}
 }

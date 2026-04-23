@@ -14,10 +14,11 @@ to look up one or more specific packages by exact name — including packages
 that are not explicitly configured (they resolve using only project defaults).
 
 Resolution order (lowest to highest priority):
-  1. Project default-package-config
-  2. Package group default-package-config
-  3. Component default-package-config
-  4. Component packages.<name> override
+  1. Project default-component-config publish settings
+  2. Component-group default-component-config publish settings
+  3. Component publish settings
+  4. Package-group default-package-config
+  5. Component packages.<name> override
 
 ```
 azldev package list [package-name...] [flags]

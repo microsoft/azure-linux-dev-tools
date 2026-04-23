@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 
 	"dario.cat/mergo"
 	"github.com/brunoga/deep"
@@ -64,6 +65,24 @@ type SourceFileReference struct {
 
 	// Origin for this source file. When omitted, the file is resolved via the lookaside cache.
 	Origin Origin `toml:"origin,omitempty" json:"origin,omitempty" fingerprint:"-"`
+}
+
+// ComponentPublishConfig holds publish channel settings for a component's packages.
+// The zero value means all channels are inherited from a higher-priority config layer.
+type ComponentPublishConfig struct {
+	// RPMChannel identifies the publish channel for binary (non-debuginfo) packages
+	// produced by this component. When empty, the value is inherited from the next layer
+	// in the resolution order.
+	RPMChannel string `toml:"rpm-channel,omitempty" json:"rpmChannel,omitempty" validate:"omitempty,ne=.,ne=..,excludesall=/\\" jsonschema:"title=RPM channel,description=Publish channel for binary packages produced by this component"`
+
+	// SRPMChannel identifies the publish channel for the SRPM produced by this component.
+	// When empty, the value is inherited from the next layer in the resolution order.
+	SRPMChannel string `toml:"srpm-channel,omitempty" json:"srpmChannel,omitempty" validate:"omitempty,ne=.,ne=..,excludesall=/\\" jsonschema:"title=SRPM channel,description=Publish channel for the SRPM produced by this component"`
+
+	// DebugInfoChannel identifies the publish channel for debuginfo packages produced
+	// by this component. When empty, the value is inherited from the next layer in the
+	// resolution order.
+	DebugInfoChannel string `toml:"debuginfo-channel,omitempty" json:"debuginfoChannel,omitempty" validate:"omitempty,ne=.,ne=..,excludesall=/\\" jsonschema:"title=Debuginfo channel,description=Publish channel for debuginfo packages produced by this component"`
 }
 
 // Defines a component group. Component groups are logical groupings of components (see [ComponentConfig]).
@@ -162,13 +181,14 @@ type ComponentConfig struct {
 	// Source file references for this component.
 	SourceFiles []SourceFileReference `toml:"source-files,omitempty" json:"sourceFiles,omitempty" table:"-" jsonschema:"title=Source files,description=Source files to download for this component"`
 
-	// Default configuration applied to all binary packages produced by this component.
-	// Takes precedence over package-group defaults; overridden by explicit Packages entries.
-	DefaultPackageConfig PackageConfig `toml:"default-package-config,omitempty" json:"defaultPackageConfig,omitempty" table:"-" jsonschema:"title=Default package config,description=Default configuration applied to all binary packages produced by this component"`
-
 	// Per-package configuration overrides, keyed by exact binary package name.
-	// Takes precedence over DefaultPackageConfig and package-group defaults.
+	// Takes precedence over package-group defaults.
 	Packages map[string]PackageConfig `toml:"packages,omitempty" json:"packages,omitempty" table:"-" validate:"dive" jsonschema:"title=Package overrides,description=Per-package configuration overrides keyed by exact binary package name"`
+
+	// Publish holds the component-level publish settings. These provide default channels for
+	// all packages produced by this component. Overridden by package-group and per-package settings
+	// for binary and debuginfo channels.
+	Publish ComponentPublishConfig `toml:"publish,omitempty" json:"publish,omitempty" table:"-" jsonschema:"title=Publish settings,description=Component-level publish channel settings" fingerprint:"-"`
 }
 
 // AllowedSourceFilesHashTypes defines the set of hash types that are supported
@@ -191,17 +211,22 @@ func (c *ComponentConfig) MergeUpdatesFrom(other *ComponentConfig) error {
 	return nil
 }
 
-// ResolveComponentConfig applies the full config inheritance chain for a single
-// component: distro defaults → group defaults (sorted) → component explicit config.
+// ResolveComponentConfig applies the full config inheritance chain for a single component:
+// project-level defaults → distro defaults → group defaults (sorted) → component explicit config.
 // Returns a fully resolved copy; the inputs are not modified.
 // On error the returned config is undefined and must not be used.
 func ResolveComponentConfig(
 	comp ComponentConfig,
+	projectDefaults ComponentConfig,
 	distroDefaults ComponentConfig,
 	groups map[string]ComponentGroupConfig,
 	groupMembership []string,
 ) (ComponentConfig, error) {
-	merged := deep.MustCopy(distroDefaults)
+	merged := deep.MustCopy(projectDefaults)
+
+	if err := merged.MergeUpdatesFrom(&distroDefaults); err != nil {
+		return ComponentConfig{}, fmt.Errorf("failed to apply distro defaults:\n%w", err)
+	}
 
 	// Apply group defaults in sorted order for determinism.
 	sortedGroups := slices.Clone(groupMembership)
@@ -234,16 +259,16 @@ func (c *ComponentConfig) WithAbsolutePaths(referenceDir string) *ComponentConfi
 	// the SourceConfigFile, as we *do* want to alias that pointer, sharing it across
 	// all configs that came from that source config file.
 	result := &ComponentConfig{
-		Name:                 c.Name,
-		SourceConfigFile:     c.SourceConfigFile,
-		RenderedSpecDir:      c.RenderedSpecDir,
-		Release:              c.Release,
-		Spec:                 deep.MustCopy(c.Spec),
-		Build:                deep.MustCopy(c.Build),
-		Render:               c.Render,
-		SourceFiles:          deep.MustCopy(c.SourceFiles),
-		DefaultPackageConfig: deep.MustCopy(c.DefaultPackageConfig),
-		Packages:             deep.MustCopy(c.Packages),
+		Name:             c.Name,
+		SourceConfigFile: c.SourceConfigFile,
+		RenderedSpecDir:  c.RenderedSpecDir,
+		Release:          c.Release,
+		Spec:             deep.MustCopy(c.Spec),
+		Build:            deep.MustCopy(c.Build),
+		Render:           c.Render,
+		SourceFiles:      deep.MustCopy(c.SourceFiles),
+		Packages:         deep.MustCopy(c.Packages),
+		Publish:          deep.MustCopy(c.Publish),
 	}
 
 	// Fix up paths.
@@ -259,4 +284,84 @@ func (c *ComponentConfig) WithAbsolutePaths(referenceDir string) *ComponentConfi
 	}
 
 	return result
+}
+
+// IsDebugInfoPackage reports whether pkgName is a debuginfo or debugsource package.
+// It matches "-debuginfo" or "-debugsource" as hyphen-delimited segments so that
+// names like "kernel-debuginfo-common-x86_64" are correctly identified while
+// unrelated packages like "elfutils-debuginfod" are not.
+func IsDebugInfoPackage(pkgName string) bool {
+	return containsRPMSegment(pkgName, "-debuginfo") || containsRPMSegment(pkgName, "-debugsource")
+}
+
+// containsRPMSegment reports whether pkgName contains segment as a hyphen-delimited
+// segment — i.e. segment is followed by end-of-string or '-'. This prevents
+// "-debuginfo" from matching "-debuginfod".
+func containsRPMSegment(pkgName, segment string) bool {
+	searchStart := 0
+
+	for {
+		idx := strings.Index(pkgName[searchStart:], segment)
+		if idx < 0 {
+			return false
+		}
+
+		idx += searchStart
+		end := idx + len(segment)
+
+		if end == len(pkgName) || pkgName[end] == '-' {
+			return true
+		}
+
+		searchStart = idx + 1
+	}
+}
+
+// ResolvePackagePublishChannel returns the publish channel for a binary package produced by a
+// component. The caller must pass a resolved [ComponentConfig] (one whose Publish field already
+// reflects project-level, distro, and component-group defaults).
+//
+// Resolution order (later wins):
+//  1. The resolved component-level publish channel ([ComponentPublishConfig.RPMChannel] or
+//     [ComponentPublishConfig.DebugInfoChannel], depending on the package name).
+//  2. The matching package-group's publish channel, if the package belongs to one.
+//  3. The component's explicit per-package publish channel override, if set.
+//
+// Note: [ProjectConfig.DefaultPackageConfig] is intentionally excluded from publish channel
+// resolution here. It would override the already-resolved component channel, which would make
+// component-level publish defaults ineffective whenever a project default is set.
+func ResolvePackagePublishChannel(pkgName string, comp *ComponentConfig, proj *ProjectConfig) (string, error) {
+	isDebugInfo := IsDebugInfoPackage(pkgName)
+
+	// Start with the already-resolved component-level channel for the package type.
+	var channel string
+	if isDebugInfo {
+		channel = comp.Publish.DebugInfoChannel
+	} else {
+		channel = comp.Publish.RPMChannel
+	}
+
+	// Apply package-group override if this package belongs to one.
+	for _, group := range proj.PackageGroups {
+		if slices.Contains(group.Packages, pkgName) {
+			if isDebugInfo && group.DefaultPackageConfig.Publish.DebugInfoChannel != "" {
+				channel = group.DefaultPackageConfig.Publish.DebugInfoChannel
+			} else if !isDebugInfo && group.DefaultPackageConfig.Publish.RPMChannel != "" {
+				channel = group.DefaultPackageConfig.Publish.RPMChannel
+			}
+
+			break
+		}
+	}
+
+	// Apply the explicit per-package override (highest priority).
+	if pkgConfig, ok := comp.Packages[pkgName]; ok {
+		if isDebugInfo && pkgConfig.Publish.DebugInfoChannel != "" {
+			channel = pkgConfig.Publish.DebugInfoChannel
+		} else if !isDebugInfo && pkgConfig.Publish.RPMChannel != "" {
+			channel = pkgConfig.Publish.RPMChannel
+		}
+	}
+
+	return channel, nil
 }

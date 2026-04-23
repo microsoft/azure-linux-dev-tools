@@ -245,7 +245,7 @@ func TestResolveComponentConfig(t *testing.T) {
 		comp := projectconfig.ComponentConfig{Name: "curl"}
 
 		resolved, err := projectconfig.ResolveComponentConfig(
-			comp, distroDefaults, nil, nil,
+			comp, projectconfig.ComponentConfig{}, distroDefaults, nil, nil,
 		)
 		require.NoError(t, err)
 		assert.Equal(t, "curl", resolved.Name)
@@ -265,7 +265,7 @@ func TestResolveComponentConfig(t *testing.T) {
 		comp := projectconfig.ComponentConfig{Name: "curl"}
 
 		resolved, err := projectconfig.ResolveComponentConfig(
-			comp, distroDefaults, groups, []string{"core"},
+			comp, projectconfig.ComponentConfig{}, distroDefaults, groups, []string{"core"},
 		)
 		require.NoError(t, err)
 		assert.Equal(t, "group-commit", resolved.Spec.UpstreamCommit)
@@ -289,7 +289,7 @@ func TestResolveComponentConfig(t *testing.T) {
 
 		// Groups applied in sorted order: alpha then beta. beta wins.
 		resolved, err := projectconfig.ResolveComponentConfig(
-			comp, distroDefaults, groups, []string{"beta", "alpha"},
+			comp, projectconfig.ComponentConfig{}, distroDefaults, groups, []string{"beta", "alpha"},
 		)
 		require.NoError(t, err)
 		assert.Equal(t, "beta-commit", resolved.Spec.UpstreamCommit)
@@ -309,7 +309,7 @@ func TestResolveComponentConfig(t *testing.T) {
 		}
 
 		resolved, err := projectconfig.ResolveComponentConfig(
-			comp, distroDefaults, groups, []string{"core"},
+			comp, projectconfig.ComponentConfig{}, distroDefaults, groups, []string{"core"},
 		)
 		require.NoError(t, err)
 		assert.Equal(t, "comp-commit", resolved.Spec.UpstreamCommit)
@@ -319,7 +319,7 @@ func TestResolveComponentConfig(t *testing.T) {
 		comp := projectconfig.ComponentConfig{Name: "curl"}
 
 		_, err := projectconfig.ResolveComponentConfig(
-			comp, distroDefaults, nil, []string{"nonexistent"},
+			comp, projectconfig.ComponentConfig{}, distroDefaults, nil, []string{"nonexistent"},
 		)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "component group not found")
@@ -337,10 +337,590 @@ func TestResolveComponentConfig(t *testing.T) {
 		originalDefaults := distroDefaults
 
 		_, err := projectconfig.ResolveComponentConfig(
-			comp, distroDefaults, groups, []string{"core"},
+			comp, projectconfig.ComponentConfig{}, distroDefaults, groups, []string{"core"},
 		)
 		require.NoError(t, err)
 		assert.Equal(t, originalDefaults, distroDefaults, "distro defaults should not be mutated")
 		assert.Empty(t, comp.Spec.UpstreamCommit, "component config should not be mutated")
 	})
+}
+
+func TestComponentPublishConfig_Validate(t *testing.T) {
+	t.Parallel()
+
+	validCases := []struct {
+		name    string
+		channel string
+	}{
+		{name: "empty channel is valid (means inherit)", channel: ""},
+		{name: "simple channel name", channel: "rpms-base"},
+		{name: "channel with hyphens", channel: "rpms-sdk-srpm"},
+		{name: "channel with underscores", channel: "rpms_base"},
+		{name: "reserved none value", channel: "none"},
+	}
+
+	for _, testCase := range validCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := projectconfig.ComponentPublishConfig{
+				RPMChannel:       testCase.channel,
+				SRPMChannel:      testCase.channel,
+				DebugInfoChannel: testCase.channel,
+			}
+			assert.NoError(t, validator.New().Struct(&cfg))
+		})
+	}
+
+	invalidCases := []struct {
+		name        string
+		channel     string
+		errContains string
+	}{
+		{name: "absolute path", channel: "/etc/passwd", errContains: "excludesall"},
+		{name: "traversal with slash", channel: "../secret", errContains: "excludesall"},
+		{name: "backslash separator", channel: `foo\bar`, errContains: "excludesall"},
+		{name: "dot traversal", channel: "..", errContains: "'ne'"},
+		{name: "single dot", channel: ".", errContains: "'ne'"},
+	}
+
+	for _, testCase := range invalidCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := projectconfig.ComponentPublishConfig{RPMChannel: testCase.channel}
+			err := validator.New().Struct(&cfg)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), testCase.errContains)
+		})
+	}
+}
+
+func TestIsDebugInfoPackage(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		pkgName  string
+		expected bool
+	}{
+		{"simple debuginfo suffix", "curl-debuginfo", true},
+		{"simple debugsource suffix", "curl-debugsource", true},
+		{"debuginfo with arch suffix", "kernel-debuginfo-common-x86_64", true},
+		{"debugsource with extra segments", "glibc-debugsource-common", true},
+		{"debuginfod is not debuginfo", "elfutils-debuginfod", false},
+		{"debuginfod client is not debuginfo", "elfutils-debuginfod-client", false},
+		{"debuginfod followed by debuginfo", "foo-debuginfod-debuginfo", true},
+		{"plain binary package", "curl", false},
+		{"package ending in info", "texinfo", false},
+		{"package with debug prefix", "debug-tools", false},
+		{"empty string", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.expected, projectconfig.IsDebugInfoPackage(tt.pkgName))
+		})
+	}
+}
+
+func TestResolveComponentConfig_ProjectDefaults(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty project and component returns zero-value config", func(t *testing.T) {
+		t.Parallel()
+
+		proj := projectconfig.NewProjectConfig()
+		comp := projectconfig.ComponentConfig{Name: "curl"}
+
+		got, err := projectconfig.ResolveComponentConfig(
+			comp, proj.DefaultComponentConfig, projectconfig.ComponentConfig{},
+			proj.ComponentGroups, proj.GroupsByComponent[comp.Name],
+		)
+		require.NoError(t, err)
+		assert.Empty(t, got.Publish.RPMChannel)
+		assert.Empty(t, got.Publish.SRPMChannel)
+		assert.Empty(t, got.Publish.DebugInfoChannel)
+	})
+
+	t.Run("project default applies when no other config matches", func(t *testing.T) {
+		t.Parallel()
+
+		proj := projectconfig.NewProjectConfig()
+		proj.DefaultComponentConfig = projectconfig.ComponentConfig{
+			Publish: projectconfig.ComponentPublishConfig{
+				RPMChannel:       "rpms-sdk",
+				SRPMChannel:      "rpms-sdk-srpm",
+				DebugInfoChannel: "rpms-sdk-debuginfo",
+			},
+		}
+		comp := projectconfig.ComponentConfig{Name: "curl"}
+
+		got, err := projectconfig.ResolveComponentConfig(
+			comp, proj.DefaultComponentConfig, projectconfig.ComponentConfig{},
+			proj.ComponentGroups, proj.GroupsByComponent[comp.Name],
+		)
+		require.NoError(t, err)
+		assert.Equal(t, "rpms-sdk", got.Publish.RPMChannel)
+		assert.Equal(t, "rpms-sdk-srpm", got.Publish.SRPMChannel)
+		assert.Equal(t, "rpms-sdk-debuginfo", got.Publish.DebugInfoChannel)
+	})
+
+	t.Run("component group overrides project default", func(t *testing.T) {
+		t.Parallel()
+
+		proj := projectconfig.NewProjectConfig()
+		proj.DefaultComponentConfig = projectconfig.ComponentConfig{
+			Publish: projectconfig.ComponentPublishConfig{
+				RPMChannel:       "rpms-sdk",
+				SRPMChannel:      "rpms-sdk-srpm",
+				DebugInfoChannel: "rpms-sdk-debuginfo",
+			},
+		}
+		proj.ComponentGroups = map[string]projectconfig.ComponentGroupConfig{
+			"base-published": {
+				Components: []string{"systemd", "bash"},
+				DefaultComponentConfig: projectconfig.ComponentConfig{
+					Publish: projectconfig.ComponentPublishConfig{
+						RPMChannel:       "rpms-base",
+						SRPMChannel:      "rpms-base-srpm",
+						DebugInfoChannel: "rpms-base-debuginfo",
+					},
+				},
+			},
+		}
+		proj.GroupsByComponent = map[string][]string{
+			"systemd": {"base-published"},
+			"bash":    {"base-published"},
+		}
+
+		comp := projectconfig.ComponentConfig{Name: "systemd"}
+		got, err := projectconfig.ResolveComponentConfig(
+			comp, proj.DefaultComponentConfig, projectconfig.ComponentConfig{},
+			proj.ComponentGroups, proj.GroupsByComponent[comp.Name],
+		)
+		require.NoError(t, err)
+		assert.Equal(t, "rpms-base", got.Publish.RPMChannel)
+		assert.Equal(t, "rpms-base-srpm", got.Publish.SRPMChannel)
+		assert.Equal(t, "rpms-base-debuginfo", got.Publish.DebugInfoChannel)
+	})
+
+	t.Run("component not in group inherits project default", func(t *testing.T) {
+		t.Parallel()
+
+		proj := projectconfig.NewProjectConfig()
+		proj.DefaultComponentConfig = projectconfig.ComponentConfig{
+			Publish: projectconfig.ComponentPublishConfig{
+				RPMChannel:  "rpms-sdk",
+				SRPMChannel: "rpms-sdk-srpm",
+			},
+		}
+		proj.ComponentGroups = map[string]projectconfig.ComponentGroupConfig{
+			"base-published": {
+				Components: []string{"systemd"},
+				DefaultComponentConfig: projectconfig.ComponentConfig{
+					Publish: projectconfig.ComponentPublishConfig{
+						RPMChannel: "rpms-base",
+					},
+				},
+			},
+		}
+		proj.GroupsByComponent = map[string][]string{
+			"systemd": {"base-published"},
+		}
+
+		comp := projectconfig.ComponentConfig{Name: "curl"}
+		got, err := projectconfig.ResolveComponentConfig(
+			comp, proj.DefaultComponentConfig, projectconfig.ComponentConfig{},
+			proj.ComponentGroups, proj.GroupsByComponent[comp.Name],
+		)
+		require.NoError(t, err)
+		assert.Equal(t, "rpms-sdk", got.Publish.RPMChannel)
+		assert.Equal(t, "rpms-sdk-srpm", got.Publish.SRPMChannel)
+	})
+
+	t.Run("component own publish config overrides all defaults", func(t *testing.T) {
+		t.Parallel()
+
+		proj := projectconfig.NewProjectConfig()
+		proj.DefaultComponentConfig = projectconfig.ComponentConfig{
+			Publish: projectconfig.ComponentPublishConfig{
+				RPMChannel:       "rpms-sdk",
+				SRPMChannel:      "rpms-sdk-srpm",
+				DebugInfoChannel: "rpms-sdk-debuginfo",
+			},
+		}
+		comp := projectconfig.ComponentConfig{
+			Name: "special-comp",
+			Publish: projectconfig.ComponentPublishConfig{
+				RPMChannel: "rpms-custom",
+			},
+		}
+
+		got, err := projectconfig.ResolveComponentConfig(
+			comp, proj.DefaultComponentConfig, projectconfig.ComponentConfig{},
+			proj.ComponentGroups, proj.GroupsByComponent[comp.Name],
+		)
+		require.NoError(t, err)
+		assert.Equal(t, "rpms-custom", got.Publish.RPMChannel)
+		assert.Equal(t, "rpms-sdk-srpm", got.Publish.SRPMChannel)
+		assert.Equal(t, "rpms-sdk-debuginfo", got.Publish.DebugInfoChannel)
+	})
+
+	t.Run("partial group override preserves other fields from project default", func(t *testing.T) {
+		t.Parallel()
+
+		proj := projectconfig.NewProjectConfig()
+		proj.DefaultComponentConfig = projectconfig.ComponentConfig{
+			Publish: projectconfig.ComponentPublishConfig{
+				RPMChannel:       "rpms-sdk",
+				SRPMChannel:      "rpms-sdk-srpm",
+				DebugInfoChannel: "rpms-sdk-debuginfo",
+			},
+		}
+		proj.ComponentGroups = map[string]projectconfig.ComponentGroupConfig{
+			"base-published": {
+				Components: []string{"bash"},
+				DefaultComponentConfig: projectconfig.ComponentConfig{
+					Publish: projectconfig.ComponentPublishConfig{
+						RPMChannel: "rpms-base",
+						// SRPMChannel and DebugInfoChannel not set — should inherit.
+					},
+				},
+			},
+		}
+		proj.GroupsByComponent = map[string][]string{
+			"bash": {"base-published"},
+		}
+
+		comp := projectconfig.ComponentConfig{Name: "bash"}
+		got, err := projectconfig.ResolveComponentConfig(
+			comp, proj.DefaultComponentConfig, projectconfig.ComponentConfig{},
+			proj.ComponentGroups, proj.GroupsByComponent[comp.Name],
+		)
+		require.NoError(t, err)
+		assert.Equal(t, "rpms-base", got.Publish.RPMChannel)
+		assert.Equal(t, "rpms-sdk-srpm", got.Publish.SRPMChannel)
+		assert.Equal(t, "rpms-sdk-debuginfo", got.Publish.DebugInfoChannel)
+	})
+
+	t.Run("build config is also inherited from defaults", func(t *testing.T) {
+		t.Parallel()
+
+		proj := projectconfig.NewProjectConfig()
+		proj.DefaultComponentConfig = projectconfig.ComponentConfig{
+			Build: projectconfig.ComponentBuildConfig{
+				Without: []string{"docs"},
+			},
+		}
+
+		comp := projectconfig.ComponentConfig{Name: "curl"}
+		got, err := projectconfig.ResolveComponentConfig(
+			comp, proj.DefaultComponentConfig, projectconfig.ComponentConfig{},
+			proj.ComponentGroups, proj.GroupsByComponent[comp.Name],
+		)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"docs"}, got.Build.Without)
+	})
+}
+
+func TestResolvePackagePublishChannel(t *testing.T) {
+	t.Parallel()
+
+	t.Run("binary package gets binary channel from resolved component", func(t *testing.T) {
+		t.Parallel()
+
+		proj := projectconfig.NewProjectConfig()
+		proj.DefaultComponentConfig = projectconfig.ComponentConfig{
+			Publish: projectconfig.ComponentPublishConfig{
+				RPMChannel:       "rpms-sdk",
+				DebugInfoChannel: "rpms-sdk-debuginfo",
+			},
+		}
+
+		resolved, err := projectconfig.ResolveComponentConfig(
+			projectconfig.ComponentConfig{Name: "curl"},
+			proj.DefaultComponentConfig,
+			projectconfig.ComponentConfig{},
+			proj.ComponentGroups,
+			proj.GroupsByComponent["curl"],
+		)
+		require.NoError(t, err)
+
+		channel, err := projectconfig.ResolvePackagePublishChannel("curl", &resolved, &proj)
+		require.NoError(t, err)
+		assert.Equal(t, "rpms-sdk", channel)
+	})
+
+	t.Run("debuginfo package gets debuginfo channel from resolved component", func(t *testing.T) {
+		t.Parallel()
+
+		proj := projectconfig.NewProjectConfig()
+		proj.DefaultComponentConfig = projectconfig.ComponentConfig{
+			Publish: projectconfig.ComponentPublishConfig{
+				RPMChannel:       "rpms-sdk",
+				DebugInfoChannel: "rpms-sdk-debuginfo",
+			},
+		}
+
+		resolved, err := projectconfig.ResolveComponentConfig(
+			projectconfig.ComponentConfig{Name: "curl"},
+			proj.DefaultComponentConfig,
+			projectconfig.ComponentConfig{},
+			proj.ComponentGroups,
+			proj.GroupsByComponent["curl"],
+		)
+		require.NoError(t, err)
+
+		channel, err := projectconfig.ResolvePackagePublishChannel("curl-debuginfo", &resolved, &proj)
+		require.NoError(t, err)
+		assert.Equal(t, "rpms-sdk-debuginfo", channel)
+	})
+
+	t.Run("no config returns empty channel", func(t *testing.T) {
+		t.Parallel()
+
+		proj := projectconfig.NewProjectConfig()
+
+		resolved, err := projectconfig.ResolveComponentConfig(
+			projectconfig.ComponentConfig{Name: "curl"},
+			proj.DefaultComponentConfig,
+			projectconfig.ComponentConfig{},
+			proj.ComponentGroups,
+			proj.GroupsByComponent["curl"],
+		)
+		require.NoError(t, err)
+
+		channel, err := projectconfig.ResolvePackagePublishChannel("curl", &resolved, &proj)
+		require.NoError(t, err)
+		assert.Empty(t, channel)
+	})
+
+	t.Run("debuginfo with arch suffix uses debuginfo channel", func(t *testing.T) {
+		t.Parallel()
+
+		proj := projectconfig.NewProjectConfig()
+		proj.DefaultComponentConfig = projectconfig.ComponentConfig{
+			Publish: projectconfig.ComponentPublishConfig{
+				RPMChannel:       "rpms-base",
+				DebugInfoChannel: "rpms-base-debuginfo",
+			},
+		}
+
+		resolved, err := projectconfig.ResolveComponentConfig(
+			projectconfig.ComponentConfig{Name: "kernel"},
+			proj.DefaultComponentConfig,
+			projectconfig.ComponentConfig{},
+			proj.ComponentGroups,
+			proj.GroupsByComponent["kernel"],
+		)
+		require.NoError(t, err)
+
+		// kernel-debuginfo-common-x86_64 has "-debuginfo" as a middle segment, not a suffix.
+		channel, err := projectconfig.ResolvePackagePublishChannel(
+			"kernel-debuginfo-common-x86_64", &resolved, &proj,
+		)
+		require.NoError(t, err)
+		assert.Equal(t, "rpms-base-debuginfo", channel)
+	})
+}
+
+func TestResolvePackagePublishChannel_PackageGroupOverrides(t *testing.T) {
+	t.Parallel()
+
+	t.Run("package group overrides component binary channel", func(t *testing.T) {
+		t.Parallel()
+
+		proj := projectconfig.NewProjectConfig()
+		proj.DefaultComponentConfig = projectconfig.ComponentConfig{
+			Publish: projectconfig.ComponentPublishConfig{
+				RPMChannel:       "rpms-base",
+				SRPMChannel:      "rpms-base-srpm",
+				DebugInfoChannel: "rpms-base-debuginfo",
+			},
+		}
+		proj.ComponentGroups = map[string]projectconfig.ComponentGroupConfig{
+			"base-published": {
+				Components: []string{"cmake"},
+				DefaultComponentConfig: projectconfig.ComponentConfig{
+					Publish: projectconfig.ComponentPublishConfig{
+						RPMChannel:       "rpms-base",
+						DebugInfoChannel: "rpms-base-debuginfo",
+					},
+				},
+			},
+		}
+		proj.GroupsByComponent = map[string][]string{
+			"cmake": {"base-published"},
+		}
+		proj.PackageGroups = map[string]projectconfig.PackageGroupConfig{
+			"sdk-published": {
+				Packages: []string{"cmake-gui"},
+				DefaultPackageConfig: projectconfig.PackageConfig{
+					Publish: projectconfig.PackagePublishConfig{
+						RPMChannel:       "rpms-sdk",
+						DebugInfoChannel: "rpms-sdk-debuginfo",
+					},
+				},
+			},
+		}
+
+		resolved, err := projectconfig.ResolveComponentConfig(
+			projectconfig.ComponentConfig{Name: "cmake"},
+			proj.DefaultComponentConfig,
+			projectconfig.ComponentConfig{},
+			proj.ComponentGroups,
+			proj.GroupsByComponent["cmake"],
+		)
+		require.NoError(t, err)
+
+		// cmake-gui is in sdk-published package group — should get sdk channels.
+		channel, err := projectconfig.ResolvePackagePublishChannel("cmake-gui", &resolved, &proj)
+		require.NoError(t, err)
+		assert.Equal(t, "rpms-sdk", channel)
+
+		// cmake (not in package group) should get base channels from component group.
+		channel, err = projectconfig.ResolvePackagePublishChannel("cmake", &resolved, &proj)
+		require.NoError(t, err)
+		assert.Equal(t, "rpms-base", channel)
+	})
+
+	t.Run("package group overrides component debuginfo channel", func(t *testing.T) {
+		t.Parallel()
+
+		proj := projectconfig.NewProjectConfig()
+		proj.DefaultComponentConfig = projectconfig.ComponentConfig{
+			Publish: projectconfig.ComponentPublishConfig{
+				DebugInfoChannel: "rpms-base-debuginfo",
+			},
+		}
+		proj.PackageGroups = map[string]projectconfig.PackageGroupConfig{
+			"sdk-debug": {
+				Packages: []string{"cmake-gui-debuginfo"},
+				DefaultPackageConfig: projectconfig.PackageConfig{
+					Publish: projectconfig.PackagePublishConfig{
+						DebugInfoChannel: "rpms-sdk-debuginfo",
+					},
+				},
+			},
+		}
+
+		resolved, err := projectconfig.ResolveComponentConfig(
+			projectconfig.ComponentConfig{Name: "cmake"},
+			proj.DefaultComponentConfig,
+			projectconfig.ComponentConfig{},
+			proj.ComponentGroups,
+			proj.GroupsByComponent["cmake"],
+		)
+		require.NoError(t, err)
+
+		channel, err := projectconfig.ResolvePackagePublishChannel("cmake-gui-debuginfo", &resolved, &proj)
+		require.NoError(t, err)
+		assert.Equal(t, "rpms-sdk-debuginfo", channel)
+	})
+}
+
+func TestResolvePackagePublishChannel_FullScenario(t *testing.T) {
+	t.Parallel()
+
+	// Reproduce the user's TOML config:
+	// Project default: everything goes to SDK channels
+	// Component group "base-published": upgrades some components to base channels
+	// Package group "sdk-published": overrides specific sub-packages back to SDK
+	proj := projectconfig.NewProjectConfig()
+	proj.DefaultComponentConfig = projectconfig.ComponentConfig{
+		Publish: projectconfig.ComponentPublishConfig{
+			RPMChannel:       "rpms-sdk",
+			SRPMChannel:      "rpms-sdk-srpm",
+			DebugInfoChannel: "rpms-sdk-debuginfo",
+		},
+	}
+	proj.ComponentGroups = map[string]projectconfig.ComponentGroupConfig{
+		"base-published": {
+			Components: []string{"systemd", "bash", "cmake"},
+			DefaultComponentConfig: projectconfig.ComponentConfig{
+				Publish: projectconfig.ComponentPublishConfig{
+					RPMChannel:       "rpms-base",
+					SRPMChannel:      "rpms-base-srpm",
+					DebugInfoChannel: "rpms-base-debuginfo",
+				},
+			},
+		},
+	}
+	proj.GroupsByComponent = map[string][]string{
+		"systemd": {"base-published"},
+		"bash":    {"base-published"},
+		"cmake":   {"base-published"},
+	}
+	proj.PackageGroups = map[string]projectconfig.PackageGroupConfig{
+		"sdk-published": {
+			Packages: []string{"cmake-gui"},
+			DefaultPackageConfig: projectconfig.PackageConfig{
+				Publish: projectconfig.PackagePublishConfig{
+					RPMChannel:       "rpms-sdk",
+					DebugInfoChannel: "rpms-sdk-debuginfo",
+				},
+			},
+		},
+	}
+
+	// systemd is in base-published → SRPM channel comes from resolved Publish.
+	systemdResolved, err := projectconfig.ResolveComponentConfig(
+		projectconfig.ComponentConfig{Name: "systemd"},
+		proj.DefaultComponentConfig,
+		projectconfig.ComponentConfig{},
+		proj.ComponentGroups,
+		proj.GroupsByComponent["systemd"],
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "rpms-base-srpm", systemdResolved.Publish.SRPMChannel)
+
+	// systemd binary → rpms-base (from component group).
+	channel, err := projectconfig.ResolvePackagePublishChannel("systemd", &systemdResolved, &proj)
+	require.NoError(t, err)
+	assert.Equal(t, "rpms-base", channel)
+
+	// systemd-debuginfo → rpms-base-debuginfo (from component group).
+	channel, err = projectconfig.ResolvePackagePublishChannel("systemd-debuginfo", &systemdResolved, &proj)
+	require.NoError(t, err)
+	assert.Equal(t, "rpms-base-debuginfo", channel)
+
+	// cmake-gui (in sdk-published package group) → rpms-sdk (overrides base).
+	cmakeResolved, err := projectconfig.ResolveComponentConfig(
+		projectconfig.ComponentConfig{Name: "cmake"},
+		proj.DefaultComponentConfig,
+		projectconfig.ComponentConfig{},
+		proj.ComponentGroups,
+		proj.GroupsByComponent["cmake"],
+	)
+	require.NoError(t, err)
+
+	channel, err = projectconfig.ResolvePackagePublishChannel("cmake-gui", &cmakeResolved, &proj)
+	require.NoError(t, err)
+	assert.Equal(t, "rpms-sdk", channel)
+
+	// cmake SRPM → rpms-base-srpm (from component group).
+	assert.Equal(t, "rpms-base-srpm", cmakeResolved.Publish.SRPMChannel)
+
+	// cmake (main binary, not in package group) → rpms-base.
+	channel, err = projectconfig.ResolvePackagePublishChannel("cmake", &cmakeResolved, &proj)
+	require.NoError(t, err)
+	assert.Equal(t, "rpms-base", channel)
+
+	// A component NOT in any group (e.g., "python3") → SDK defaults.
+	pythonResolved, err := projectconfig.ResolveComponentConfig(
+		projectconfig.ComponentConfig{Name: "python3"},
+		proj.DefaultComponentConfig,
+		projectconfig.ComponentConfig{},
+		proj.ComponentGroups,
+		proj.GroupsByComponent["python3"],
+	)
+	require.NoError(t, err)
+
+	channel, err = projectconfig.ResolvePackagePublishChannel("python3", &pythonResolved, &proj)
+	require.NoError(t, err)
+	assert.Equal(t, "rpms-sdk", channel)
+
+	assert.Equal(t, "rpms-sdk-srpm", pythonResolved.Publish.SRPMChannel)
 }

@@ -52,10 +52,11 @@ to look up one or more specific packages by exact name — including packages
 that are not explicitly configured (they resolve using only project defaults).
 
 Resolution order (lowest to highest priority):
-  1. Project default-package-config
-  2. Package group default-package-config
-  3. Component default-package-config
-  4. Component packages.<name> override`,
+  1. Project default-component-config publish settings
+  2. Component-group default-component-config publish settings
+  3. Component publish settings
+  4. Package-group default-package-config
+  5. Component packages.<name> override`,
 		Example: `  # List all explicitly-configured packages
   azldev package list -a
 
@@ -174,28 +175,12 @@ func ListPackages(env *azldev.Env, options *ListPackageOptions) ([]PackageListRe
 	results := make([]PackageListResult, 0, len(toResolve))
 
 	for pkgName := range toResolve {
-		// Resolve using the component's config if one is known; otherwise use an empty config
-		// so that only the project default and group layers are applied.
-		compName := compOf[pkgName]
-		compConfig := &projectconfig.ComponentConfig{}
-
-		if compName != "" {
-			if c, ok := proj.Components[compName]; ok {
-				compConfig = &c
-			}
-		}
-
-		pkgConfig, err := projectconfig.ResolvePackageConfig(pkgName, compConfig, proj)
+		result, err := resolvePackageListResult(pkgName, compOf, groupOf, proj)
 		if err != nil {
-			return nil, fmt.Errorf("failed to resolve config for package %#q:\n%w", pkgName, err)
+			return nil, err
 		}
 
-		results = append(results, PackageListResult{
-			PackageName: pkgName,
-			Group:       groupOf[pkgName],
-			Component:   compName,
-			Channel:     pkgConfig.Publish.Channel,
-		})
+		results = append(results, result)
 	}
 
 	if options.SynthesizeDebugPackages {
@@ -214,6 +199,85 @@ func ListPackages(env *azldev.Env, options *ListPackageOptions) ([]PackageListRe
 	})
 
 	return results, nil
+}
+
+// resolvePackageListResult resolves the publish channel and component membership for a single
+// package and returns a [PackageListResult].
+func resolvePackageListResult(
+	pkgName string,
+	compOf map[string]string,
+	groupOf map[string]string,
+	proj *projectconfig.ProjectConfig,
+) (PackageListResult, error) {
+	compName := resolveComponentName(pkgName, compOf, proj)
+	compConfig := resolveComponentConfig(compName, proj)
+
+	// Apply inherited defaults (project → groups → component) so that
+	// compConfig.Publish reflects the fully-merged publish channels.
+	// No distro context is available here (pkg list operates on the raw project config),
+	// so distro defaults are omitted.
+	resolved, err := projectconfig.ResolveComponentConfig(
+		compConfig,
+		proj.DefaultComponentConfig,
+		projectconfig.ComponentConfig{}, // no distro context at this call site
+		proj.ComponentGroups,
+		proj.GroupsByComponent[compName],
+	)
+	if err != nil {
+		return PackageListResult{}, fmt.Errorf("failed to resolve defaults for component %#q:\n%w", compName, err)
+	}
+
+	channel, err := projectconfig.ResolvePackagePublishChannel(pkgName, &resolved, proj)
+	if err != nil {
+		return PackageListResult{}, fmt.Errorf("failed to resolve publish channel for package %#q:\n%w", pkgName, err)
+	}
+
+	return PackageListResult{
+		PackageName: pkgName,
+		Group:       groupOf[pkgName],
+		Component:   compName,
+		Channel:     channel,
+	}, nil
+}
+
+// resolveComponentName returns the component name for a binary package. It first
+// checks for an explicit per-package override in compOf, then falls back to
+// treating the package name itself as a component name when a matching component
+// or component-group member exists.
+func resolveComponentName(
+	pkgName string,
+	compOf map[string]string,
+	proj *projectconfig.ProjectConfig,
+) string {
+	if name := compOf[pkgName]; name != "" {
+		return name
+	}
+
+	if _, ok := proj.Components[pkgName]; ok {
+		return pkgName
+	}
+
+	if _, ok := proj.GroupsByComponent[pkgName]; ok {
+		return pkgName
+	}
+
+	return ""
+}
+
+// resolveComponentConfig returns the [projectconfig.ComponentConfig] for a named
+// component. If the component has an explicit entry in [projectconfig.ProjectConfig.Components],
+// that entry is returned; otherwise a minimal config with just the Name set is returned so that
+// [projectconfig.ResolveComponentConfig] can still look up group membership.
+func resolveComponentConfig(compName string, proj *projectconfig.ProjectConfig) projectconfig.ComponentConfig {
+	if compName == "" {
+		return projectconfig.ComponentConfig{}
+	}
+
+	if c, ok := proj.Components[compName]; ok {
+		return c
+	}
+
+	return projectconfig.ComponentConfig{Name: compName}
 }
 
 // synthesizeDebugPackages augments results with synthetic '-debuginfo' packages (one per
@@ -268,7 +332,7 @@ func synthesizeDebugPackages(
 	// standard package-resolution chain for '<component>-debugsource' so the entry
 	// reflects any explicit package override, package-group defaults, component
 	// settings, or project defaults instead of an implicit empty channel.
-	for compName, comp := range proj.Components {
+	for compName := range proj.Components {
 		if isDebugPackageName(compName) {
 			continue
 		}
@@ -280,18 +344,14 @@ func synthesizeDebugPackages(
 
 		existing[name] = struct{}{}
 
-		compCopy := comp
-
-		pkgConfig, err := projectconfig.ResolvePackageConfig(name, &compCopy, proj)
+		// compOf pins the synthesized package to its owning component; groupOf is nil
+		// because -debugsource entries are never members of a package group.
+		result, err := resolvePackageListResult(name, map[string]string{name: compName}, nil, proj)
 		if err != nil {
-			return nil, fmt.Errorf("failed to resolve config for synthesized package %#q:\n%w", name, err)
+			return nil, err
 		}
 
-		results = append(results, PackageListResult{
-			PackageName: name,
-			Component:   compName,
-			Channel:     debugChannelName(pkgConfig.Publish.Channel),
-		})
+		results = append(results, result)
 	}
 
 	return results, nil
