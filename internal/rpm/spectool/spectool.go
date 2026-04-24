@@ -14,10 +14,11 @@ import (
 // filenameFromURL attempts to parse value as a URL and extract the basename.
 // Returns the filename and true if value is a URL, or ("", false) if not.
 //
-// RPM specs use the fragment convention "#/local-name" to specify the local
-// filename for URLs whose path doesn't contain a meaningful basename (e.g.,
-// keyserver lookup URLs). When a fragment starting with "/" is present, its
-// basename is used instead of the URL path's basename.
+// RPM specs use fragment conventions like "#/local-name" and "#./local-name"
+// to specify the local filename for URLs whose path doesn't contain a
+// meaningful basename (e.g., keyserver lookup URLs). When a fragment starting
+// with "/" or "./" is present, its basename is used instead of the URL path's
+// basename.
 func filenameFromURL(value string) (string, bool) {
 	parsed, err := url.Parse(value)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
