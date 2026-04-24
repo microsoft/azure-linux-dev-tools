@@ -12,6 +12,7 @@ A component definition tells azldev where to find the spec file, how to customiz
 | Release config | `release` | [ReleaseConfig](#release-configuration) | No | Controls how the Release tag is managed during rendering |
 | Overlays | `overlays` | array of [Overlay](overlays.md) | No | Modifications to apply to the spec and/or source files |
 | Build config | `build` | [BuildConfig](#build-configuration) | No | Build-time options (macros, conditionals, check config) |
+| Render config | `render` | [RenderConfig](#render-configuration) | No | Options controlling spec rendering behavior |
 | Source files | `source-files` | array of [SourceFileReference](#source-file-references) | No | Additional source files to download for this component |
 | Default package config | `default-package-config` | [PackageConfig](package-groups.md#package-config) | No | Default configuration applied to all binary packages produced by this component; overrides project defaults and package-group defaults |
 | Package overrides | `packages` | map of string → [PackageConfig](package-groups.md#package-config) | No | Exact per-package configuration overrides; highest priority in the resolution order |
@@ -112,6 +113,27 @@ Most components use auto mode (the default) and need no release configuration. S
 [components.kernel.release]
 calculation = "manual"
 ```
+
+## Render Configuration
+
+The `[components.<name>.render]` section controls rendering behavior for a component.
+
+| Field | TOML Key | Type | Required | Description |
+|-------|----------|------|----------|-------------|
+| Skip file filter | `skip-file-filter` | boolean | No | Disable post-render file filtering (defaults to `false`) |
+
+### Skip File Filter
+
+During rendering, azldev uses `spectool` to determine which files are referenced by `Source` and `Patch` tags in the spec, then removes unreferenced files from the rendered output. Some specs use dynamic macros (e.g., `%{fontpkgname1}`) that `spectool` cannot expand, causing it to report incorrect filenames. This results in referenced files being incorrectly removed.
+
+Set `skip-file-filter = true` to preserve all files from the dist-git checkout:
+
+```toml
+[components.dejavu-fonts.render]
+skip-file-filter = true
+```
+
+> **Note:** This should only be used for specs with macros that `spectool` cannot resolve. For most components, the default filtering behavior is correct and keeps the rendered output clean.
 
 ## Build Configuration
 

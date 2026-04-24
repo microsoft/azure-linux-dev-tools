@@ -156,6 +156,9 @@ type ComponentConfig struct {
 	// Configuration for building the component.
 	Build ComponentBuildConfig `toml:"build,omitempty" json:"build,omitempty" table:"-" jsonschema:"title=Build configuration,description=Configuration for building the component"`
 
+	// Configuration for rendering the component.
+	Render ComponentRenderConfig `toml:"render,omitempty" json:"render,omitempty" table:"-" jsonschema:"title=Render configuration,description=Configuration for rendering the component"`
+
 	// Source file references for this component.
 	SourceFiles []SourceFileReference `toml:"source-files,omitempty" json:"sourceFiles,omitempty" table:"-" jsonschema:"title=Source files,description=Source files to download for this component"`
 
@@ -237,6 +240,7 @@ func (c *ComponentConfig) WithAbsolutePaths(referenceDir string) *ComponentConfi
 		Release:              c.Release,
 		Spec:                 deep.MustCopy(c.Spec),
 		Build:                deep.MustCopy(c.Build),
+		Render:               c.Render,
 		SourceFiles:          deep.MustCopy(c.SourceFiles),
 		DefaultPackageConfig: deep.MustCopy(c.DefaultPackageConfig),
 		Packages:             deep.MustCopy(c.Packages),

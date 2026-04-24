@@ -124,6 +124,11 @@
           "title": "Build configuration",
           "description": "Configuration for building the component"
         },
+        "render": {
+          "$ref": "#/$defs/ComponentRenderConfig",
+          "title": "Render configuration",
+          "description": "Configuration for rendering the component"
+        },
         "source-files": {
           "items": {
             "$ref": "#/$defs/SourceFileReference"
@@ -279,6 +284,17 @@
       "required": [
         "type"
       ]
+    },
+    "ComponentRenderConfig": {
+      "properties": {
+        "skip-file-filter": {
+          "type": "boolean",
+          "title": "Skip file filter",
+          "description": "Disable post-render file filtering for specs with unexpandable macros in Source/Patch tags"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
     },
     "ConfigFile": {
       "properties": {

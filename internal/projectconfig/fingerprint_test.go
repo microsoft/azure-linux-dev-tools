@@ -33,6 +33,7 @@ func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
 		reflect.TypeFor[projectconfig.DistroReference](),
 		reflect.TypeFor[projectconfig.SourceFileReference](),
 		reflect.TypeFor[projectconfig.ReleaseConfig](),
+		reflect.TypeFor[projectconfig.ComponentRenderConfig](),
 	}
 
 	// Maps "StructName.FieldName" for every field that should carry a
