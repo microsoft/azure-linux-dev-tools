@@ -12,6 +12,7 @@ import (
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
+	"github.com/microsoft/azure-linux-dev-tools/internal/fingerprint"
 	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
@@ -78,10 +79,15 @@ type UpdateResult struct {
 	Component      string `json:"component"                table:",sortkey"`
 	UpstreamCommit string `json:"upstreamCommit,omitempty"`
 	PreviousCommit string `json:"previousCommit,omitempty" table:"-"`
-	Changed        bool   `json:"changed"`
-	Skipped        bool   `json:"skipped,omitempty"`
-	SkipReason     string `json:"skipReason,omitempty"     table:",omitempty"`
-	Error          string `json:"error,omitempty"          table:",omitempty"`
+	// Changed is set by checkLockChanged (commit diff) or saveComponentLocks (fingerprint diff).
+	Changed    bool   `json:"changed"`
+	Skipped    bool   `json:"skipped,omitempty"`
+	SkipReason string `json:"skipReason,omitempty" table:",omitempty"`
+	Error      string `json:"error,omitempty"      table:",omitempty"`
+
+	// config is the resolved component config, used for fingerprint computation.
+	// Not serialized — only needed during the update pipeline.
+	config *projectconfig.ComponentConfig `json:"-" table:"-"`
 }
 
 // UpdateComponents resolves upstream commits for all selected components and
@@ -113,14 +119,18 @@ func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]Updat
 	}
 
 	// Check results and bail on errors before saving.
-	if err := checkUpdateResults(results); err != nil {
+	if err := checkUpdateErrors(results); err != nil {
 		return results, err
 	}
 
 	// Write per-component lock files only on full success.
-	if err := saveComponentLocks(store, results); err != nil {
+	// saveComponentLocks may flip Changed for fingerprint-only diffs.
+	if err := saveComponentLocks(env, store, results); err != nil {
 		return results, err
 	}
+
+	// Log summary after save so Changed counts include fingerprint-only diffs.
+	logUpdateSummary(results)
 
 	// Prune orphan lock files when updating all components.
 	// Use the resolved component set (not raw config) to include
@@ -151,28 +161,86 @@ func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]Updat
 	return filterDisplayResults(results), nil
 }
 
-// saveComponentLocks writes a lock file for each changed component.
-func saveComponentLocks(store *lockfile.Store, results []UpdateResult) error {
+// saveComponentLocks recomputes fingerprints and writes lock files for all
+// resolved components. A lock file is saved when either the upstream commit
+// or the input fingerprint has changed. The fingerprint is recomputed on every
+// update, so config/overlay changes are detected even when the upstream commit
+// stays the same.
+func saveComponentLocks(env *azldev.Env, store *lockfile.Store, results []UpdateResult) error {
 	saved := make([]string, 0, len(results))
 
+	// Log partially-saved components on any error so the user knows which
+	// lock files were written before the failure.
+	var retErr error
+
+	defer func() {
+		if retErr != nil && len(saved) > 0 {
+			slog.Info("Lock files saved before failure", "components", saved)
+		}
+	}()
+
 	for idx := range results {
-		if !results[idx].Changed || results[idx].Error != "" || results[idx].Skipped {
+		if results[idx].Error != "" || results[idx].Skipped {
 			continue
 		}
 
 		lock, lockErr := store.GetOrNew(results[idx].Component)
 		if lockErr != nil {
-			return fmt.Errorf("loading lock for %#q:\n%w", results[idx].Component, lockErr)
+			retErr = fmt.Errorf("loading lock for %#q:\n%w", results[idx].Component, lockErr)
+
+			return retErr
 		}
 
 		lock.UpstreamCommit = results[idx].UpstreamCommit
 
-		if saveErr := store.Save(results[idx].Component, lock); saveErr != nil {
-			if len(saved) > 0 {
-				slog.Info("Lock files saved before failure", "components", saved)
-			}
+		// Recompute fingerprint from resolved config + lock state.
+		if results[idx].config == nil {
+			retErr = fmt.Errorf("no resolved config for %#q; cannot compute fingerprint", results[idx].Component)
 
-			return fmt.Errorf("saving lock file for %#q:\n%w", results[idx].Component, saveErr)
+			return retErr
+		}
+
+		// Resolve per-component distro for ReleaseVer, matching the
+		// per-component resolution used by render/build/prepare-sources.
+		releaseVer, distroErr := resolveReleaseVer(env, results[idx].config)
+		if distroErr != nil {
+			retErr = fmt.Errorf("resolving distro for %#q:\n%w", results[idx].Component, distroErr)
+
+			return retErr
+		}
+
+		identity, fpErr := fingerprint.ComputeIdentity(
+			env.FS(),
+			*results[idx].config,
+			releaseVer,
+			fingerprint.IdentityOptions{
+				ManualBump:     lock.ManualBump,
+				SourceIdentity: lock.UpstreamCommit,
+			},
+		)
+		if fpErr != nil {
+			retErr = fmt.Errorf("computing fingerprint for %#q:\n%w", results[idx].Component, fpErr)
+
+			return retErr
+		}
+
+		// Mark as changed if fingerprint differs (catches config/overlay edits
+		// even when the upstream commit is unchanged).
+		if lock.InputFingerprint != identity.Fingerprint {
+			results[idx].Changed = true
+		}
+
+		lock.InputFingerprint = identity.Fingerprint
+
+		// Only write if something actually changed.
+		if !results[idx].Changed {
+			continue
+		}
+
+		if saveErr := store.Save(results[idx].Component, lock); saveErr != nil {
+			retErr = fmt.Errorf("saving lock file for %#q:\n%w", results[idx].Component, saveErr)
+
+			return retErr
 		}
 
 		saved = append(saved, results[idx].Component)
@@ -181,21 +249,15 @@ func saveComponentLocks(store *lockfile.Store, results []UpdateResult) error {
 	return nil
 }
 
-// checkUpdateResults counts results, logs a summary, and returns an error if any
-// component failed.
-func checkUpdateResults(results []UpdateResult) error {
-	var changed, skipped int
-
+// checkUpdateErrors returns an error if any component failed to resolve.
+// Does NOT log a summary — call [logUpdateSummary] after saves are complete
+// so that Changed counts include fingerprint-only diffs.
+func checkUpdateErrors(results []UpdateResult) error {
 	var failedNames []string
 
 	for idx := range results {
-		switch {
-		case results[idx].Error != "":
+		if results[idx].Error != "" {
 			failedNames = append(failedNames, results[idx].Component)
-		case results[idx].Skipped:
-			skipped++
-		case results[idx].Changed:
-			changed++
 		}
 	}
 
@@ -209,12 +271,27 @@ func checkUpdateResults(results []UpdateResult) error {
 			len(failedNames), strings.Join(failedNames, "\n  "))
 	}
 
+	return nil
+}
+
+// logUpdateSummary logs the final update summary. Called after saveComponentLocks
+// so that Changed counts reflect fingerprint-only diffs.
+func logUpdateSummary(results []UpdateResult) {
+	var changed, skipped int
+
+	for idx := range results {
+		switch {
+		case results[idx].Skipped:
+			skipped++
+		case results[idx].Changed:
+			changed++
+		}
+	}
+
 	slog.Info("Update complete",
 		"total", len(results),
 		"changed", changed,
 		"skipped", skipped)
-
-	return nil
 }
 
 // filterDisplayResults returns changed and skipped results for table display.
@@ -284,6 +361,7 @@ func resolveUpstreamCommitsParallel(
 			}
 
 			results[idx].UpstreamCommit = commitHash
+			results[idx].config = comp.GetConfig()
 
 			// Check existing lock to determine if the commit changed.
 			checkLockChanged(store, comp.GetName(), &results[idx])
@@ -347,4 +425,22 @@ func resolveOneUpstreamCommit(
 	slog.Info("Resolved upstream commit", "component", componentName, "commit", identity)
 
 	return identity, nil
+}
+
+// resolveReleaseVer resolves the distro release version for a component,
+// respecting per-component distro overrides. Falls back to the project's
+// default distro when the component doesn't specify one — matching the
+// resolution logic in sourceproviders.ResolveDistro.
+func resolveReleaseVer(env *azldev.Env, config *projectconfig.ComponentConfig) (string, error) {
+	ref := config.Spec.UpstreamDistro
+	if ref.Name == "" {
+		ref = env.Config().Project.DefaultDistro
+	}
+
+	_, distroVer, err := env.ResolveDistroRef(ref)
+	if err != nil {
+		return "", fmt.Errorf("resolving distro ref %#q:\n%w", ref.Name, err)
+	}
+
+	return distroVer.ReleaseVer, nil
 }
