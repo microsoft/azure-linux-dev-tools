@@ -124,6 +124,11 @@
           "title": "Build configuration",
           "description": "Configuration for building the component"
         },
+        "render": {
+          "$ref": "#/$defs/ComponentRenderConfig",
+          "title": "Render configuration",
+          "description": "Configuration for rendering the component"
+        },
         "source-files": {
           "items": {
             "$ref": "#/$defs/SourceFileReference"
@@ -296,6 +301,17 @@
           "type": "string",
           "title": "Debuginfo channel",
           "description": "Publish channel for debuginfo packages produced by this component"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ComponentRenderConfig": {
+      "properties": {
+        "skip-file-filter": {
+          "type": "boolean",
+          "title": "Skip file filter",
+          "description": "Disable post-render file filtering for specs with unexpandable macros in Source/Patch tags"
         }
       },
       "additionalProperties": false,
@@ -692,6 +708,10 @@
           "type": "string",
           "title": "Debuginfo channel",
           "description": "Publish channel for debuginfo packages; overrides the component-level debuginfo-channel; use 'none' to keep RPMs in the base directory and skip publishing"
+        },
+        "channel": {
+          "type": "string",
+          "description": "Deprecated: use 'rpm-channel' instead. Kept for backwards compatibility; falls back to this value when 'rpm-channel' is not set."
         }
       },
       "additionalProperties": false,

@@ -56,7 +56,7 @@ Individual components or [component groups](component-groups.md) can override th
 
 ## Default Package Config
 
-The `[default-package-config]` section is a **top-level** TOML section (not nested under `[project]`). It defines the lowest-priority configuration layer applied to every binary package produced by any component in the project. It is overridden by [package groups](package-groups.md), [component-level defaults](components.md#package-configuration), and explicit per-package overrides.
+The `[default-package-config]` section is a **top-level** TOML section (not nested under `[project]`). It defines the lowest-priority configuration layer applied to every binary package produced by any component in the project. It is overridden by [package groups](package-groups.md) `default-package-config` settings and explicit per-package overrides.
 
 The most common use is to set a project-wide default publish channel:
 

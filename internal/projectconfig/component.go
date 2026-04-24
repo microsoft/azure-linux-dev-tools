@@ -212,7 +212,7 @@ func (c *ComponentConfig) MergeUpdatesFrom(other *ComponentConfig) error {
 }
 
 // ResolveComponentConfig applies the full config inheritance chain for a single component:
-// project-level defaults → distro defaults → group defaults (sorted) → component explicit config.
+// distro defaults → project-level defaults → group defaults (sorted) → component explicit config.
 // Returns a fully resolved copy; the inputs are not modified.
 // On error the returned config is undefined and must not be used.
 func ResolveComponentConfig(
@@ -222,10 +222,10 @@ func ResolveComponentConfig(
 	groups map[string]ComponentGroupConfig,
 	groupMembership []string,
 ) (ComponentConfig, error) {
-	merged := deep.MustCopy(projectDefaults)
+	merged := deep.MustCopy(distroDefaults)
 
-	if err := merged.MergeUpdatesFrom(&distroDefaults); err != nil {
-		return ComponentConfig{}, fmt.Errorf("failed to apply distro defaults:\n%w", err)
+	if err := merged.MergeUpdatesFrom(&projectDefaults); err != nil {
+		return ComponentConfig{}, fmt.Errorf("failed to apply project defaults:\n%w", err)
 	}
 
 	// Apply group defaults in sorted order for determinism.
@@ -322,32 +322,37 @@ func containsRPMSegment(pkgName, segment string) bool {
 // reflects project-level, distro, and component-group defaults).
 //
 // Resolution order (later wins):
+//  0. The project-level default package config ([ProjectConfig.DefaultPackageConfig]), used
+//     only as a fallback when all higher-priority sources produce an empty channel.
 //  1. The resolved component-level publish channel ([ComponentPublishConfig.RPMChannel] or
 //     [ComponentPublishConfig.DebugInfoChannel], depending on the package name).
 //  2. The matching package-group's publish channel, if the package belongs to one.
 //  3. The component's explicit per-package publish channel override, if set.
-//
-// Note: [ProjectConfig.DefaultPackageConfig] is intentionally excluded from publish channel
-// resolution here. It would override the already-resolved component channel, which would make
-// component-level publish defaults ineffective whenever a project default is set.
 func ResolvePackagePublishChannel(pkgName string, comp *ComponentConfig, proj *ProjectConfig) (string, error) {
 	isDebugInfo := IsDebugInfoPackage(pkgName)
 
-	// Start with the already-resolved component-level channel for the package type.
-	var channel string
+	// Lowest priority: project-level default package config acts as a fallback for
+	// packages not covered by any higher-priority source. This matches the old
+	// single-field 'publish.channel' behaviour where the default applied to all packages.
+	channel := packagePublishChannel(&proj.DefaultPackageConfig.Publish, isDebugInfo)
+
+	// Component-level channel overrides the project default.
+	var compChannel string
 	if isDebugInfo {
-		channel = comp.Publish.DebugInfoChannel
+		compChannel = comp.Publish.DebugInfoChannel
 	} else {
-		channel = comp.Publish.RPMChannel
+		compChannel = comp.Publish.RPMChannel
+	}
+
+	if compChannel != "" {
+		channel = compChannel
 	}
 
 	// Apply package-group override if this package belongs to one.
 	for _, group := range proj.PackageGroups {
 		if slices.Contains(group.Packages, pkgName) {
-			if isDebugInfo && group.DefaultPackageConfig.Publish.DebugInfoChannel != "" {
-				channel = group.DefaultPackageConfig.Publish.DebugInfoChannel
-			} else if !isDebugInfo && group.DefaultPackageConfig.Publish.RPMChannel != "" {
-				channel = group.DefaultPackageConfig.Publish.RPMChannel
+			if groupChannel := packagePublishChannel(&group.DefaultPackageConfig.Publish, isDebugInfo); groupChannel != "" {
+				channel = groupChannel
 			}
 
 			break
@@ -356,12 +361,21 @@ func ResolvePackagePublishChannel(pkgName string, comp *ComponentConfig, proj *P
 
 	// Apply the explicit per-package override (highest priority).
 	if pkgConfig, ok := comp.Packages[pkgName]; ok {
-		if isDebugInfo && pkgConfig.Publish.DebugInfoChannel != "" {
-			channel = pkgConfig.Publish.DebugInfoChannel
-		} else if !isDebugInfo && pkgConfig.Publish.RPMChannel != "" {
-			channel = pkgConfig.Publish.RPMChannel
+		if pkgChannel := packagePublishChannel(&pkgConfig.Publish, isDebugInfo); pkgChannel != "" {
+			channel = pkgChannel
 		}
 	}
 
 	return channel, nil
+}
+
+// packagePublishChannel returns the rpm-channel or debuginfo-channel from publish config
+// depending on whether the package is a debuginfo package. For non-debuginfo packages,
+// it falls back to the deprecated 'channel' field for backwards compatibility.
+func packagePublishChannel(publish *PackagePublishConfig, isDebugInfo bool) string {
+	if isDebugInfo {
+		return publish.DebugInfoChannel
+	}
+
+	return publish.EffectiveRPMChannel()
 }

@@ -893,3 +893,101 @@ test-suites = [{ name = "nonexistent" }]
 	require.ErrorIs(t, err, ErrUndefinedTestSuite)
 	assert.Contains(t, err.Error(), "nonexistent")
 }
+
+// TestLoadAndResolveProjectConfig_DeprecatedChannelField_DefaultPackageConfig verifies that the
+// deprecated 'publish.channel' field is preserved as-is after loading and used as a fallback
+// by the channel resolver via [PackagePublishConfig.EffectiveRPMChannel].
+func TestLoadAndResolveProjectConfig_DeprecatedChannelField_DefaultPackageConfig(t *testing.T) {
+	const configContents = `
+[default-package-config.publish]
+channel = "rpm-base"
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), true, testConfigPath)
+	require.NoError(t, err)
+
+	// The deprecated field is preserved; no migration happens at load time.
+	assert.Empty(t, config.DefaultPackageConfig.Publish.RPMChannel)
+	assert.Equal(t, "rpm-base", config.DefaultPackageConfig.Publish.DeprecatedChannel)
+	// The resolver falls back to the deprecated field when rpm-channel is unset.
+	assert.Equal(t, "rpm-base", config.DefaultPackageConfig.Publish.EffectiveRPMChannel())
+}
+
+// TestLoadAndResolveProjectConfig_DeprecatedChannelField_PackageGroup verifies that the deprecated
+// 'publish.channel' field is preserved and used as a fallback by the channel resolver in
+// package-group default-package-config.
+func TestLoadAndResolveProjectConfig_DeprecatedChannelField_PackageGroup(t *testing.T) {
+	const configContents = `
+[package-groups.my-group]
+packages = ["curl-devel"]
+
+[package-groups.my-group.default-package-config.publish]
+channel = "rpm-sdk"
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), true, testConfigPath)
+	require.NoError(t, err)
+
+	require.Contains(t, config.PackageGroups, "my-group")
+	g := config.PackageGroups["my-group"]
+	// The deprecated field is preserved; the resolver falls back to it via EffectiveRPMChannel.
+	assert.Empty(t, g.DefaultPackageConfig.Publish.RPMChannel)
+	assert.Equal(t, "rpm-sdk", g.DefaultPackageConfig.Publish.DeprecatedChannel)
+	assert.Equal(t, "rpm-sdk", g.DefaultPackageConfig.Publish.EffectiveRPMChannel())
+}
+
+// TestLoadAndResolveProjectConfig_DeprecatedChannelField_ComponentPackage verifies that the deprecated
+// 'publish.channel' field is preserved and used as a fallback by the channel resolver in
+// per-package component overrides.
+func TestLoadAndResolveProjectConfig_DeprecatedChannelField_ComponentPackage(t *testing.T) {
+	const configContents = `
+[components.curl]
+
+[components.curl.packages.curl-devel.publish]
+channel = "devel"
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), true, testConfigPath)
+	require.NoError(t, err)
+
+	require.Contains(t, config.Components, "curl")
+	comp := config.Components["curl"]
+	require.Contains(t, comp.Packages, "curl-devel")
+	// The deprecated field is preserved; the resolver falls back to it via EffectiveRPMChannel.
+	assert.Empty(t, comp.Packages["curl-devel"].Publish.RPMChannel)
+	assert.Equal(t, "devel", comp.Packages["curl-devel"].Publish.DeprecatedChannel)
+	assert.Equal(t, "devel", comp.Packages["curl-devel"].Publish.EffectiveRPMChannel())
+}
+
+// TestLoadAndResolveProjectConfig_DeprecatedChannelField_NotOverriddenByNewField verifies that when
+// both 'publish.channel' (deprecated) and 'publish.rpm-channel' are set, rpm-channel takes precedence
+// via [PackagePublishConfig.EffectiveRPMChannel].
+func TestLoadAndResolveProjectConfig_DeprecatedChannelField_NotOverriddenByNewField(t *testing.T) {
+	const configContents = `
+[default-package-config.publish]
+channel = "old-channel"
+rpm-channel = "new-channel"
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), true, testConfigPath)
+	require.NoError(t, err)
+
+	// Both fields are preserved as loaded.
+	assert.Equal(t, "new-channel", config.DefaultPackageConfig.Publish.RPMChannel)
+	assert.Equal(t, "old-channel", config.DefaultPackageConfig.Publish.DeprecatedChannel)
+	// rpm-channel takes precedence over the deprecated field.
+	assert.Equal(t, "new-channel", config.DefaultPackageConfig.Publish.EffectiveRPMChannel(),
+		"rpm-channel should take precedence over the deprecated channel field")
+}

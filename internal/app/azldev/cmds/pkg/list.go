@@ -332,7 +332,7 @@ func synthesizeDebugPackages(
 	// standard package-resolution chain for '<component>-debugsource' so the entry
 	// reflects any explicit package override, package-group defaults, component
 	// settings, or project defaults instead of an implicit empty channel.
-	for compName := range proj.Components {
+	for compName, comp := range proj.Components {
 		if isDebugPackageName(compName) {
 			continue
 		}
@@ -344,14 +344,18 @@ func synthesizeDebugPackages(
 
 		existing[name] = struct{}{}
 
-		// compOf pins the synthesized package to its owning component; groupOf is nil
-		// because -debugsource entries are never members of a package group.
-		result, err := resolvePackageListResult(name, map[string]string{name: compName}, nil, proj)
+		compCopy := comp
+
+		pkgConfig, err := projectconfig.ResolvePackageConfig(name, &compCopy, proj)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to resolve config for synthesized package %#q:\n%w", name, err)
 		}
 
-		results = append(results, result)
+		results = append(results, PackageListResult{
+			PackageName: name,
+			Component:   compName,
+			Channel:     debugChannelName(pkgConfig.Publish.EffectiveRPMChannel()),
+		})
 	}
 
 	return results, nil

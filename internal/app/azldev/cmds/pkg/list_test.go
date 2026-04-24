@@ -166,9 +166,8 @@ func TestListPackages_ByName_NotInExplicitConfig(t *testing.T) {
 	}
 
 	// Look up a package that has no component publish config or package group.
-	// DefaultPackageConfig does NOT affect publish channel resolution (it is intentionally
-	// excluded — otherwise it would override the already-resolved component publish channel).
-	// The channel is therefore empty.
+	// DefaultPackageConfig acts as the lowest-priority fallback, so the channel resolves
+	// to the project default when no higher-priority source provides one.
 	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{PackageNames: []string{"unknown-pkg"}})
 
 	require.NoError(t, err)
@@ -176,7 +175,7 @@ func TestListPackages_ByName_NotInExplicitConfig(t *testing.T) {
 	assert.Equal(t, "unknown-pkg", results[0].PackageName)
 	assert.Empty(t, results[0].Group)
 	assert.Empty(t, results[0].Component)
-	assert.Empty(t, results[0].Channel)
+	assert.Equal(t, "default-channel", results[0].Channel)
 }
 
 func TestListPackages_ByName_MultipleNames(t *testing.T) {
@@ -219,8 +218,8 @@ func TestListPackages_DuplicatePackageAcrossComponents_ReturnsError(t *testing.T
 
 func TestListPackages_SynthesizeDebugPackages(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
-	testEnv.Config.DefaultComponentConfig = projectconfig.ComponentConfig{
-		Publish: projectconfig.ComponentPublishConfig{DebugInfoChannel: "default-channel-debuginfo"},
+	testEnv.Config.DefaultPackageConfig = projectconfig.PackageConfig{
+		Publish: projectconfig.PackagePublishConfig{RPMChannel: "default-channel"},
 	}
 	testEnv.Config.PackageGroups = map[string]projectconfig.PackageGroupConfig{
 		"devel-packages": {
@@ -316,8 +315,8 @@ func TestListPackages_SynthesizeDebugPackages_SkipsExisting(t *testing.T) {
 
 func TestListPackages_SynthesizeDebugPackages_ByName(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
-	testEnv.Config.DefaultComponentConfig = projectconfig.ComponentConfig{
-		Publish: projectconfig.ComponentPublishConfig{DebugInfoChannel: "default-channel-debuginfo"},
+	testEnv.Config.DefaultPackageConfig = projectconfig.PackageConfig{
+		Publish: projectconfig.PackagePublishConfig{RPMChannel: "default-channel"},
 	}
 	testEnv.Config.PackageGroups = map[string]projectconfig.PackageGroupConfig{
 		"devel-packages": {

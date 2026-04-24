@@ -25,6 +25,22 @@ type PackagePublishConfig struct {
 	// The reserved value `"none"` keeps RPMs in the base directory and means they
 	// should not be published.
 	DebugInfoChannel string `toml:"debuginfo-channel,omitempty" json:"debuginfoChannel,omitempty" validate:"omitempty,ne=.,ne=..,excludesall=/\\" jsonschema:"title=Debuginfo channel,description=Publish channel for debuginfo packages; overrides the component-level debuginfo-channel; use 'none' to keep RPMs in the base directory and skip publishing"`
+
+	// Deprecated: use 'rpm-channel' instead. When set, the value is used as a fallback
+	// for [PackagePublishConfig.RPMChannel] during channel resolution if 'rpm-channel' is not
+	// already set. Kept for backwards compatibility with older config files.
+	DeprecatedChannel string `toml:"channel,omitempty" json:"-" validate:"omitempty,ne=.,ne=..,excludesall=/\\" jsonschema:"deprecated=true,description=Deprecated: use 'rpm-channel' instead. Kept for backwards compatibility; falls back to this value when 'rpm-channel' is not set."`
+}
+
+// EffectiveRPMChannel returns the configured RPM channel, falling back to the deprecated
+// 'channel' field for backwards compatibility with older config files that predate
+// the 'rpm-channel' field.
+func (p PackagePublishConfig) EffectiveRPMChannel() string {
+	if p.RPMChannel != "" {
+		return p.RPMChannel
+	}
+
+	return p.DeprecatedChannel
 }
 
 // PackageConfig holds all configuration applied to a single binary package.
