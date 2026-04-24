@@ -73,6 +73,21 @@ func TestParseSpectoolOutput(t *testing.T) {
 			input:    "Source0: good.tar.gz\nPatch0: /bad/path\nPatch1: ok.patch",
 			expected: []string{"good.tar.gz", "ok.patch"},
 		},
+		{
+			name:     "URL with slash fragment extracts fragment basename",
+			input:    "Source0: https://example.com/lookup?q=abc#/local-name.asc",
+			expected: []string{"local-name.asc"},
+		},
+		{
+			name:     "URL with dot-slash fragment extracts fragment basename",
+			input:    "Source0: https://example.com/lookup?q=abc#./local-name.asc",
+			expected: []string{"local-name.asc"},
+		},
+		{
+			name:     "URL with fragment rename overrides path basename",
+			input:    "Patch0: https://example.com/pull/33.patch#/renamed.diff",
+			expected: []string{"renamed.diff"},
+		},
 	}
 
 	for _, testCase := range tests {
@@ -96,7 +111,9 @@ func TestFilenameFromURL(t *testing.T) {
 	}{
 		{"https URL", "https://example.com/file.tar.gz", "file.tar.gz", true},
 		{"URL with query", "https://example.com/file.tar.gz?raw=true", "file.tar.gz", true},
-		{"URL with fragment", "https://example.com/file.tar.gz#section", "file.tar.gz", true},
+		{"URL with non-path fragment", "https://example.com/file.tar.gz#section", "file.tar.gz", true},
+		{"RPM fragment slash", "https://example.com/lookup?q=abc#/local-name.asc", "local-name.asc", true},
+		{"RPM fragment dot-slash", "https://example.com/lookup?q=abc#./local-name.asc", "local-name.asc", true},
 		{"nested URL path", "https://example.com/a/b/c/file.tar.gz", "file.tar.gz", true},
 		{"ftp URL", "ftp://ftp.gnu.org/pub/gnu/sed/sed-4.9.tar.xz", "sed-4.9.tar.xz", true},
 		{"trailing slash", "https://example.com/", "/", true},
