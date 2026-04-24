@@ -42,7 +42,7 @@ successfully makes a replacement to at least one matching file.
 |------|-------------|-----------------|--------------------------------|
 | `file-prepend-lines` | Prepends lines to a file | `file`, `lines` | Glob pattern for files to transform |
 | `file-search-replace` | Regex-based search and replace on a file | `file`, `regex` | Glob pattern for files to transform |
-| `file-add` | Copies a new file from a source location; **fails if destination already exists** | `file`, `source` | Name of destination file |
+| `file-add` | Copies a new file from a source location; **fails if destination already exists** | `file` (required); `source` (optional, defaults to `file`) | Name of destination file |
 | `file-remove` | Removes a file | `file` | Glob pattern for files to remove |
 | `file-rename` | Renames a file within the same directory | `file`, `replacement` | Name of file to rename |
 
@@ -60,7 +60,7 @@ successfully makes a replacement to at least one matching file.
 | Replacement | `replacement` | Literal replacement text; capture group references like `$1` are **not** expanded. Omit or leave empty to delete matched text. | `spec-search-replace`, `file-search-replace`, `file-rename` |
 | Lines | `lines` | Array of text lines to insert | `spec-prepend-lines`, `spec-append-lines`, `file-prepend-lines` |
 | File | `file` | The name of the non-spec file to modify or add | `file-prepend-lines`, `file-search-replace`, `file-add`, `file-remove`, `file-rename`, `patch-add` (optional), `patch-remove` |
-| Source | `source` | Path to source file for `file-add` and `patch-add`; relative paths are relative to the config file | `file-add`, `patch-add` |
+| Source | `source` | Path to source file for `file-add` and `patch-add`; relative paths are relative to the config file. For `file-add`, defaults to the value of `file` when omitted. | `file-add` (optional), `patch-add` |
 
 > **Note:** For `file-rename`, the `replacement` field is a **filename only** (not a path). The file is renamed within its current directory.
 
@@ -198,6 +198,16 @@ The `source` path is relative to the config file that defines the overlay:
 type = "file-add"
 file = "extra-config.conf"
 source = "files/mypackage/extra-config.conf"
+description = "Add custom configuration file"
+```
+
+When the destination filename matches the source filename, `source` can be
+omitted and defaults to the value of `file`:
+
+```toml
+[[components.mypackage.overlays]]
+type = "file-add"
+file = "extra-config.conf"
 description = "Add custom configuration file"
 ```
 
