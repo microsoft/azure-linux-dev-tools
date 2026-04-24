@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 )
 
@@ -113,6 +115,17 @@ const (
 	renderStatusError     = "error"
 	renderStatusCancelled = "cancelled"
 )
+
+// caseCollisionError wraps an error produced by [checkCaseCollisions]. It signals
+// that the rendered files were successfully copied to the output directory, but
+// one or more case-insensitive filename collisions were detected. The caller should
+// mark the component as an error but must NOT delete the copied output.
+type caseCollisionError struct {
+	cause error
+}
+
+func (e *caseCollisionError) Error() string { return e.cause.Error() }
+func (e *caseCollisionError) Unwrap() error { return e.cause }
 
 // RenderComponents renders the post-overlay spec and sidecar files for each
 // selected component into the output directory. Processing is done in three phases:
@@ -594,16 +607,22 @@ func finishOneComponent(
 		result.Status = renderStatusError
 		result.Error = err.Error()
 
-		// Clean any stale good output before writing the failure marker.
-		// Only allowed for managed (project-local) output directories.
-		if allowOverwrite {
-			if removeErr := env.FS().RemoveAll(compOutputDir); removeErr != nil {
-				slog.Debug("Failed to clean output before writing error marker",
-					"path", compOutputDir, "error", removeErr)
+		// For case-collision errors the files were successfully copied to the output
+		// directory — do not delete them or write a failure marker. The collision
+		// message in the table is sufficient to prompt the user to add an overlay.
+		var collisionErr *caseCollisionError
+		if !errors.As(err, &collisionErr) {
+			// Clean any stale good output before writing the failure marker.
+			// Only allowed for managed (project-local) output directories.
+			if allowOverwrite {
+				if removeErr := env.FS().RemoveAll(compOutputDir); removeErr != nil {
+					slog.Debug("Failed to clean output before writing error marker",
+						"path", compOutputDir, "error", removeErr)
+				}
 			}
-		}
 
-		writeRenderErrorMarker(env.FS(), compOutputDir)
+			writeRenderErrorMarker(env.FS(), compOutputDir)
+		}
 	}
 
 	return result
@@ -649,6 +668,17 @@ func finishComponentRender(
 		slog.Debug("Failed to remove .git directory", "path", gitDir, "error", removeErr)
 	}
 
+	// Check for files whose names differ only by case. Such files would collide
+	// on case-insensitive filesystems (e.g. Windows git clones). We detect this
+	// before copying so the error is reported, but we still copy the files so the
+	// rendered output is as complete as possible (the tool runs on Linux where
+	// the colliding files coexist without issue).
+	collisionErr := checkCaseCollisions(env.FS(), componentDir)
+	if collisionErr != nil {
+		slog.Warn("Case-insensitive filename collision detected",
+			"component", componentName, "error", collisionErr)
+	}
+
 	// Copy rendered files to the component's output directory.
 	if copyErr := copyRenderedOutput(env, componentDir, prep.compOutputDir, allowOverwrite); copyErr != nil {
 		return copyErr
@@ -656,6 +686,12 @@ func finishComponentRender(
 
 	slog.Info("Rendered component", "component", componentName,
 		"output", prep.compOutputDir)
+
+	if collisionErr != nil {
+		return &caseCollisionError{
+			cause: fmt.Errorf("case-insensitive filename collision in %#q:\n%w", componentName, collisionErr),
+		}
+	}
 
 	return nil
 }
@@ -737,6 +773,56 @@ func removeUnreferencedFiles(fs opctx.FS, tempDir, specPath string, specFiles []
 			return fmt.Errorf("failed to remove filtered entry %#q for component %#q:\n%w",
 				entry.Name(), componentName, removeErr)
 		}
+	}
+
+	return nil
+}
+
+// checkCaseCollisions walks dir recursively and returns an error if any two files
+// have names that differ only in case, which would collide on case-insensitive
+// filesystems (e.g. Windows git clones). The error message lists the colliding
+// pairs and suggests creating an overlay to rename one of them.
+func checkCaseCollisions(fs opctx.FS, dir string) error {
+	// Map lowercase relative path → first-seen relative path with original casing.
+	seen := make(map[string]string)
+
+	var collisions []string
+
+	walkErr := afero.Walk(fs, dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return fmt.Errorf("error walking %#q:\n%w", path, err)
+		}
+
+		if info.IsDir() {
+			return nil
+		}
+
+		rel, relErr := filepath.Rel(dir, path)
+		if relErr != nil {
+			return fmt.Errorf("computing relative path for %#q:\n%w", path, relErr)
+		}
+
+		lower := strings.ToLower(rel)
+		if existing, ok := seen[lower]; ok {
+			collisions = append(collisions, fmt.Sprintf("%#q collides with %#q", rel, existing))
+		} else {
+			seen[lower] = rel
+		}
+
+		return nil
+	})
+
+	if walkErr != nil {
+		return fmt.Errorf("walking directory %#q:\n%w", dir, walkErr)
+	}
+
+	if len(collisions) > 0 {
+		slices.Sort(collisions)
+
+		return fmt.Errorf(
+			"files with names that differ only in case would collide on case-insensitive filesystems (e.g. Windows git clones):\n%s\n"+
+				"to fix, create an overlay to rename one of the colliding files",
+			strings.Join(collisions, "\n"))
 	}
 
 	return nil

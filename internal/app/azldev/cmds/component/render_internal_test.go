@@ -264,3 +264,69 @@ func TestRemoveUnreferencedFiles(t *testing.T) {
 		assert.Len(t, entries, 2, "both files should remain")
 	})
 }
+
+func TestCheckCaseCollisions(t *testing.T) {
+	t.Run("no error when all filenames are unique case-insensitively", func(t *testing.T) {
+		testFS := afero.NewMemMapFs()
+
+		require.NoError(t, fileutils.MkdirAll(testFS, "/render"))
+		require.NoError(t, fileutils.WriteFile(testFS, "/render/curl.spec", []byte("spec"), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(testFS, "/render/fix-build.patch", []byte("patch"), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(testFS, "/render/curl-8.0.tar.xz", []byte("src"), fileperms.PublicFile))
+
+		err := checkCaseCollisions(testFS, "/render")
+		require.NoError(t, err)
+	})
+
+	t.Run("error when two files differ only in case", func(t *testing.T) {
+		testFS := afero.NewMemMapFs()
+
+		require.NoError(t, fileutils.MkdirAll(testFS, "/render"))
+		require.NoError(t, fileutils.WriteFile(testFS, "/render/curl.spec", []byte("spec"), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(testFS, "/render/0001-Implement-support-for-PPC64-on-Linux.patch", []byte("patch1"), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(testFS, "/render/0001-Implement-support-for-ppc64-on-Linux.patch", []byte("patch2"), fileperms.PublicFile))
+
+		err := checkCaseCollisions(testFS, "/render")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "collides with")
+		assert.Contains(t, err.Error(), "overlay")
+	})
+
+	t.Run("error when files in subdirectory differ only in case", func(t *testing.T) {
+		testFS := afero.NewMemMapFs()
+
+		require.NoError(t, fileutils.MkdirAll(testFS, "/render/patches"))
+		require.NoError(t, fileutils.WriteFile(testFS, "/render/curl.spec", []byte("spec"), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(testFS, "/render/patches/Fix-Build.patch", []byte("patch1"), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(testFS, "/render/patches/fix-build.patch", []byte("patch2"), fileperms.PublicFile))
+
+		err := checkCaseCollisions(testFS, "/render")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "collides with")
+		assert.Contains(t, err.Error(), "overlay")
+	})
+
+	t.Run("no error for empty directory", func(t *testing.T) {
+		testFS := afero.NewMemMapFs()
+
+		require.NoError(t, fileutils.MkdirAll(testFS, "/render"))
+
+		err := checkCaseCollisions(testFS, "/render")
+		require.NoError(t, err)
+	})
+
+	t.Run("error lists all colliding pairs", func(t *testing.T) {
+		testFS := afero.NewMemMapFs()
+
+		require.NoError(t, fileutils.MkdirAll(testFS, "/render"))
+		require.NoError(t, fileutils.WriteFile(testFS, "/render/Patch-A.patch", []byte("a"), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(testFS, "/render/patch-a.patch", []byte("b"), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(testFS, "/render/Patch-B.patch", []byte("c"), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(testFS, "/render/patch-b.patch", []byte("d"), fileperms.PublicFile))
+
+		err := checkCaseCollisions(testFS, "/render")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "Patch-A.patch")
+		assert.Contains(t, err.Error(), "Patch-B.patch")
+	})
+}
