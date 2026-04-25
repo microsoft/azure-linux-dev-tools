@@ -34,6 +34,7 @@ azldev component query [flags]
   -p, --component stringArray         Component name pattern
   -g, --component-group stringArray   Component group name
   -h, --help                          help for query
+      --skip-lock-validation          skip lock file consistency checks (default true)
   -s, --spec-path stringArray         Spec path
 ```
 
@@ -50,7 +51,6 @@ azldev component query [flags]
       --permissive-config         do not fail on unknown fields in TOML config files
   -C, --project string            path to Azure Linux project
   -q, --quiet                     only enable minimal output
-      --skip-lock-validation      skip lock file consistency checks
   -v, --verbose                   enable verbose output
 ```
 

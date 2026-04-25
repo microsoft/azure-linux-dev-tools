@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -34,6 +35,15 @@ func NewResolver(env *azldev.Env) *Resolver {
 
 // Given a component filter, finds all components defined in the environment that match the filter.
 func (r *Resolver) FindComponents(filter *ComponentFilter) (components *ComponentSet, err error) {
+	// The filter's SkipLockValidation field is the primary control. When
+	// created via AddComponentFilterOptionsToCommand, its default comes from
+	// the AZLDEV_ENABLE_LOCK_VALIDATION env var. For programmatic callers
+	// (including tests), also check the env var here so the rollout gate
+	// applies uniformly.
+	//nolint:godox // tracked by TODO(lockfiles) tag.
+	// TODO(lockfiles): remove env var gate; filter.SkipLockValidation becomes sole control.
+	skipValidation := filter.SkipLockValidation || os.Getenv("AZLDEV_ENABLE_LOCK_VALIDATION") != "1"
+
 	// For usability's sake, detect if the caller/user forgot to specify *any* criteria.
 	if filter.HasNoCriteria() {
 		slog.Warn("No component selection options were given, no components will be selected.")
@@ -48,7 +58,7 @@ func (r *Resolver) FindComponents(filter *ComponentFilter) (components *Componen
 			return allComps, findErr
 		}
 
-		return allComps, r.validateLockFiles(allComps, true)
+		return allComps, r.validateLockFiles(allComps, true, skipValidation)
 	}
 
 	components = NewComponentSet()
@@ -77,7 +87,7 @@ func (r *Resolver) FindComponents(filter *ComponentFilter) (components *Componen
 		}
 	}
 
-	return components, r.validateLockFiles(components, false)
+	return components, r.validateLockFiles(components, false, skipValidation)
 }
 
 // Finds *all* components defined in the environment.
@@ -500,14 +510,15 @@ func applyInheritedDefaultsToComponent(
 }
 
 // validateLockFiles checks lock file consistency against the resolved component
-// set. Skipped when lock validation is disabled on the environment.
+// set. Skipped when skipValidation is true (set per-filter or via the global
+// '--skip-lock-validation' flag).
 //
 // When checkOrphans is true (i.e., all components are being validated), orphan
 // lock files are also detected. On filtered commands, only missing/stale checks
 // run — orphan detection is a project-wide invariant that would misfire against
 // a subset.
-func (r *Resolver) validateLockFiles(resolved *ComponentSet, checkOrphans bool) error {
-	if r.env.SkipLockValidation() {
+func (r *Resolver) validateLockFiles(resolved *ComponentSet, checkOrphans bool, skipValidation bool) error {
+	if skipValidation {
 		return nil
 	}
 

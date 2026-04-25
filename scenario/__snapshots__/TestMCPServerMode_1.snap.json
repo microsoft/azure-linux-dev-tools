@@ -79,7 +79,7 @@
        "type": "boolean"
       },
       "skip-lock-validation": {
-       "default": false,
+       "default": true,
        "description": "skip lock file consistency checks",
        "type": "boolean"
       },
@@ -172,7 +172,7 @@
        "type": "boolean"
       },
       "skip-lock-validation": {
-       "default": false,
+       "default": true,
        "description": "skip lock file consistency checks",
        "type": "boolean"
       },
@@ -254,11 +254,6 @@
        "description": "only enable minimal output",
        "type": "boolean"
       },
-      "skip-lock-validation": {
-       "default": false,
-       "description": "skip lock file consistency checks",
-       "type": "boolean"
-      },
       "verbose": {
        "default": false,
        "description": "enable verbose output",
@@ -327,11 +322,6 @@
       "quiet": {
        "default": false,
        "description": "only enable minimal output",
-       "type": "boolean"
-      },
-      "skip-lock-validation": {
-       "default": false,
-       "description": "skip lock file consistency checks",
        "type": "boolean"
       },
       "verbose": {
@@ -419,11 +409,6 @@
        "description": "only enable minimal output",
        "type": "boolean"
       },
-      "skip-lock-validation": {
-       "default": false,
-       "description": "skip lock file consistency checks",
-       "type": "boolean"
-      },
       "verbose": {
        "default": false,
        "description": "enable verbose output",
@@ -493,11 +478,6 @@
       "quiet": {
        "default": false,
        "description": "only enable minimal output",
-       "type": "boolean"
-      },
-      "skip-lock-validation": {
-       "default": false,
-       "description": "skip lock file consistency checks",
        "type": "boolean"
       },
       "verbose": {
@@ -577,11 +557,6 @@
       "quiet": {
        "default": false,
        "description": "only enable minimal output",
-       "type": "boolean"
-      },
-      "skip-lock-validation": {
-       "default": false,
-       "description": "skip lock file consistency checks",
        "type": "boolean"
       },
       "synthesize-debug-packages": {

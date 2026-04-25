@@ -94,18 +94,6 @@ type Env struct {
 	// resolve the issue. Printed in FIFO order.
 	fixSuggestions []string
 
-	// skipLockValidation disables lock file validation.
-	//
-	// During rollout, validation is off by default. Enable by setting
-	// AZLDEV_ENABLE_LOCK_VALIDATION=1. The '--skip-lock-validation' flag
-	// overrides the env var as a permanent escape hatch.
-	//
-	// Once fully rolled out, validation will be on by default, the env var
-	// will be removed, and the flag will remain as the escape hatch.
-	//nolint:godox // tracked by TODO(lockfiles) tag.
-	// TODO(lockfiles): remove env var gate, enable validation by default.
-	skipLockValidation bool
-
 	// lockStore provides cached access to per-component lock files.
 	// Nil when no project directory is configured.
 	lockStore *lockfile.Store
@@ -352,16 +340,6 @@ func (env *Env) PrintFixSuggestions() {
 	}
 
 	slog.Warn(boxEdgeString)
-}
-
-// SkipLockValidation returns whether lock file validation is disabled.
-func (env *Env) SkipLockValidation() bool {
-	return env.skipLockValidation
-}
-
-// SetSkipLockValidation enables or disables lock file validation.
-func (env *Env) SetSkipLockValidation(skip bool) {
-	env.skipLockValidation = skip
 }
 
 // LockStore returns the full lock store (read + write) for this environment.

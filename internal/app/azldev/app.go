@@ -49,7 +49,6 @@ type App struct {
 	reportFormat            ReportFormat
 	disableDefaultConfig    bool
 	permissiveConfigParsing bool
-	skipLockValidation      bool
 	configFiles             []string
 	colorMode               ColorMode
 
@@ -137,19 +136,6 @@ lives), or use -C to point to one.`,
 			env.SetNetworkRetries(app.networkRetries)
 			env.SetPermissiveConfigParsing(app.permissiveConfigParsing)
 
-			// Lock validation is opt-in during rollout. Enabled by setting
-			// AZLDEV_ENABLE_LOCK_VALIDATION=1. The '--skip-lock-validation'
-			// flag overrides the env var (permanent escape hatch).
-			// Once fully rolled out, validation will be on by default and
-			// the env var will be removed.
-			//nolint:godox // TODO(lockfiles): remove env var gate once lock validation is stable.
-			// TODO(lockfiles): Remove feature flag once lock validation is fully rolled out.
-			env.SetSkipLockValidation(os.Getenv("AZLDEV_ENABLE_LOCK_VALIDATION") != "1")
-
-			if app.skipLockValidation {
-				env.SetSkipLockValidation(true)
-			}
-
 			return nil
 		},
 		// Silence errors, as we handle them ourselves; note that this will get
@@ -197,8 +183,6 @@ func (app *App) registerGlobalFlags() {
 		"output colorization mode {always, auto, never}")
 	app.cmd.PersistentFlags().BoolVar(&app.permissiveConfigParsing, "permissive-config",
 		false, "do not fail on unknown fields in TOML config files")
-	app.cmd.PersistentFlags().BoolVar(&app.skipLockValidation, "skip-lock-validation",
-		false, "skip lock file consistency checks")
 }
 
 // addAdvancedCommandHint embeds a hint about the hidden "advanced" command group

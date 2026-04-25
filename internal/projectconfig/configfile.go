@@ -98,7 +98,7 @@ func (f ConfigFile) Validate() error {
 	// Gated behind AZLDEV_ENABLE_LOCK_VALIDATION during rollout.
 	// NOTE: Once the env var gate is removed, snapshot rejection becomes
 	// unconditional — per-component snapshots are permanently disallowed.
-	// Do NOT route this through Env.SkipLockValidation(): the snapshot check
+	// Do NOT move this into [ComponentFilter.SkipLockValidation]: the snapshot check
 	// must not be disableable post-rollout.
 	//nolint:godox // tracked by TODO(lockfiles) tag.
 	// TODO(lockfiles): remove env var gate; snapshot rejection becomes unconditional.

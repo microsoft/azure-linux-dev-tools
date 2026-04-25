@@ -41,7 +41,12 @@ distro snapshot time or explicit pin, then records it in locks/<name>.lock.
 Subsequent commands (render, build) use the locked commit for deterministic,
 reproducible results.
 
-Local components are skipped — they have no upstream commit to resolve.`,
+Local components are skipped — they have no upstream commit to resolve.
+
+When updating all components (-a), orphan lock files (locks for components
+that no longer exist in the project config) are automatically pruned.
+Orphan pruning is skipped when updating individual components to avoid
+accidentally removing lock files for components not included in the filter.`,
 		Example: `  # Update all components
   azldev component update -a
 
@@ -52,7 +57,7 @@ Local components are skipped — they have no upstream commit to resolve.`,
   azldev component update -g core`,
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
 			// Skip lock validation — update is the lock file writer.
-			env.SetSkipLockValidation(true)
+			options.ComponentFilter.SkipLockValidation = true
 
 			options.ComponentFilter.ComponentNamePatterns = append(
 				args, options.ComponentFilter.ComponentNamePatterns...,

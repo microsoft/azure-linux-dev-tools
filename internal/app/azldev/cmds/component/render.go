@@ -57,7 +57,12 @@ specs/v/vim).
 
 Unlike prepare-sources, render skips downloading source tarballs from the
 lookaside cache — only spec files, patches, scripts, and other git-tracked
-sidecar files are included. Multiple components can be rendered at once.`,
+sidecar files are included. Multiple components can be rendered at once.
+
+When rendering all components (-a), the --clean-stale flag removes rendered
+directories that no longer correspond to any current component. Stale cleanup
+is skipped when rendering individual components to avoid accidentally removing
+directories for components not included in the filter.`,
 		Example: `  # Render all components (output dir from config)
   azldev component render -a
 
