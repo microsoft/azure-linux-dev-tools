@@ -20,6 +20,10 @@ that no longer exist in the project config) are automatically pruned.
 Orphan pruning is skipped when updating individual components to avoid
 accidentally removing lock files for components not included in the filter.
 
+The --bump flag updates matching lock files to increment the manual-rebuild
+counter, triggering a new release. Useful for mass-rebuild scenarios (e.g.,
+toolchain bug, static library update). Orphan pruning is skipped under --bump.
+
 ```
 azldev component update [flags]
 ```
@@ -35,12 +39,16 @@ azldev component update [flags]
 
   # Update components in a group
   azldev component update -g core
+
+  # Bump rebuild counter for a component (triggers new release)
+  azldev component update --bump curl
 ```
 
 ### Options
 
 ```
   -a, --all-components                Include all components
+      --bump                          increment the manual-rebuild counter to trigger a new release
   -p, --component stringArray         Component name pattern
   -g, --component-group stringArray   Component group name
   -h, --help                          help for update

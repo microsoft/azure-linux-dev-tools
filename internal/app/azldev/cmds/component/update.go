@@ -22,6 +22,9 @@ import (
 // UpdateComponentOptions holds options for the component update command.
 type UpdateComponentOptions struct {
 	ComponentFilter components.ComponentFilter
+	// Bump increments the manual-rebuild counter on matched components'
+	// lock files. Used for mass-rebuild scenarios.
+	Bump bool
 }
 
 func updateOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
@@ -47,7 +50,11 @@ Local components are skipped — they have no upstream commit to resolve.
 When updating all components (-a), orphan lock files (locks for components
 that no longer exist in the project config) are automatically pruned.
 Orphan pruning is skipped when updating individual components to avoid
-accidentally removing lock files for components not included in the filter.`,
+accidentally removing lock files for components not included in the filter.
+
+The --bump flag updates matching lock files to increment the manual-rebuild
+counter, triggering a new release. Useful for mass-rebuild scenarios (e.g.,
+toolchain bug, static library update). Orphan pruning is skipped under --bump.`,
 		Example: `  # Update all components
   azldev component update -a
 
@@ -55,7 +62,10 @@ accidentally removing lock files for components not included in the filter.`,
   azldev component update -p curl
 
   # Update components in a group
-  azldev component update -g core`,
+  azldev component update -g core
+
+  # Bump rebuild counter for a component (triggers new release)
+  azldev component update --bump curl`,
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
 			// Skip lock validation — update is the lock file writer.
 			options.ComponentFilter.SkipLockValidation = true
@@ -70,6 +80,9 @@ accidentally removing lock files for components not included in the filter.`,
 	}
 
 	components.AddComponentFilterOptionsToCommand(cmd, &options.ComponentFilter)
+
+	cmd.Flags().BoolVar(&options.Bump, "bump", false,
+		"increment the manual-rebuild counter to trigger a new release")
 
 	return cmd
 }
@@ -109,6 +122,21 @@ func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]Updat
 	store := env.LockStore()
 	if store == nil {
 		return nil, errors.New("no project directory configured; cannot update lock files")
+	}
+
+	// --bump: re-fingerprint existing locks with an incremented ManualBump.
+	// Does not contact upstream. Skips orphan pruning — bump only touches
+	// existing locks and should not delete entries for components that may
+	// have been removed.
+	if options.Bump {
+		results, bumpErr := bumpComponents(env, store, comps)
+		if bumpErr != nil {
+			return results, bumpErr
+		}
+
+		logUpdateSummary(results)
+
+		return filterDisplayResults(results), nil
 	}
 
 	results := resolveUpstreamCommitsParallel(env, comps, store)
@@ -247,6 +275,97 @@ func saveComponentLocks(env *azldev.Env, store *lockfile.Store, results []Update
 	}
 
 	return nil
+}
+
+// bumpComponents re-fingerprints each matched component's lock file with an
+// incremented ManualBump counter. Does not contact upstream. Triggers a new
+// release without any other input change — used for mass-rebuild scenarios.
+func bumpComponents(
+	env *azldev.Env, store *lockfile.Store, comps []components.Component,
+) ([]UpdateResult, error) {
+	results := make([]UpdateResult, 0, len(comps))
+	saved := make([]string, 0, len(comps))
+
+	for _, comp := range comps {
+		// Check for cancellation (Ctrl+C) between components.
+		if env.Context().Err() != nil {
+			if len(saved) > 0 {
+				slog.Info("Lock files bumped before cancellation", "components", saved)
+			}
+
+			return results, fmt.Errorf("bump cancelled; %d of %d components bumped", len(saved), len(comps))
+		}
+
+		name := comp.GetName()
+
+		// Skip non-upstream components — same as the resolve path.
+		sourceType := comp.GetConfig().Spec.SourceType
+		if sourceType != projectconfig.SpecSourceTypeUpstream {
+			results = append(results, UpdateResult{
+				Component:  name,
+				Skipped:    true,
+				SkipReason: fmt.Sprintf("source type %q is not upstream", sourceType),
+			})
+
+			continue
+		}
+
+		// Require an existing lock file — bump only makes sense for
+		// components that have already been updated at least once.
+		// Use Get (not GetOrNew) so missing locks produce a clear error
+		// instead of silently creating an empty lock with no UpstreamCommit.
+		lock, lockErr := store.Get(name)
+		if lockErr != nil {
+			return results, fmt.Errorf(
+				"cannot bump %#q (run 'azldev component update -p %s' first):\n%w",
+				name, name, lockErr)
+		}
+
+		lock.ManualBump++
+
+		slog.Info("Bumping component", "component", name, "manualBump", lock.ManualBump)
+
+		// Resolve per-component distro for ReleaseVer, matching the
+		// per-component resolution used by render/build/prepare-sources.
+		releaseVer, distroErr := resolveReleaseVer(env, comp.GetConfig())
+		if distroErr != nil {
+			return results, fmt.Errorf("resolving distro for %#q:\n%w", name, distroErr)
+		}
+
+		// Recompute fingerprint with the new ManualBump.
+		identity, fpErr := fingerprint.ComputeIdentity(
+			env.FS(),
+			*comp.GetConfig(),
+			releaseVer,
+			fingerprint.IdentityOptions{
+				ManualBump:     lock.ManualBump,
+				SourceIdentity: lock.UpstreamCommit,
+			},
+		)
+		if fpErr != nil {
+			return results, fmt.Errorf("computing fingerprint for %#q:\n%w", name, fpErr)
+		}
+
+		lock.InputFingerprint = identity.Fingerprint
+
+		if saveErr := store.Save(name, lock); saveErr != nil {
+			if len(saved) > 0 {
+				slog.Info("Lock files bumped before failure", "components", saved)
+			}
+
+			return results, fmt.Errorf("saving lock for %#q:\n%w", name, saveErr)
+		}
+
+		saved = append(saved, name)
+
+		results = append(results, UpdateResult{
+			Component:      name,
+			UpstreamCommit: lock.UpstreamCommit,
+			Changed:        true,
+		})
+	}
+
+	return results, nil
 }
 
 // checkUpdateErrors returns an error if any component failed to resolve.
