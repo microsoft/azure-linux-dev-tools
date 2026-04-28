@@ -154,9 +154,11 @@ type ReleaseConfig struct {
 // (lock data). Populated by the component resolver from the lock store; nil when
 // no lock file exists for this component.
 //
-// Not serialized or fingerprinted — runtime-only. The pointer must not be
-// shared across value-copied configs; the resolver always allocates a fresh
-// struct per component.
+// Not serialized to TOML config and not fingerprinted - runtime-only. The data
+// IS included in JSON output (e.g., 'component list -O json') under "locked"
+// so users can inspect resolved lock state. The pointer must not be shared
+// across value-copied configs; the resolver always allocates a fresh struct
+// per component, and [ComponentConfig.WithAbsolutePaths] deep-copies it.
 type ComponentLockData struct {
 	// UpstreamCommit is the resolved upstream commit from the lock file.
 	UpstreamCommit string `json:"upstreamCommit,omitempty"`
@@ -183,8 +185,9 @@ type ComponentConfig struct {
 	RenderedSpecDir string `toml:"-" json:"renderedSpecDir,omitempty" table:"-" fingerprint:"-"`
 
 	// Locked holds resolved lock file state for this component. Populated by
-	// the component resolver from the lock store. Nil when no lock file exists
-	// or when lock population is skipped (e.g., during 'component update').
+	// the component resolver from the lock store. Nil when no lock file exists.
+	// During 'component update', this field may be cleared before re-resolving
+	// to prevent the source provider from short-circuiting with stale values.
 	Locked *ComponentLockData `toml:"-" json:"locked,omitempty" table:"-" fingerprint:"-"`
 
 	// Where to get its spec and adjacent files from.
@@ -238,6 +241,11 @@ func (c *ComponentConfig) MergeUpdatesFrom(other *ComponentConfig) error {
 // EffectiveUpstreamCommit returns the commit to use for upstream operations.
 // Prefers the locked commit (resolved reality) over the config pin (user intent).
 // Returns empty string when neither is set.
+//
+// TODO(lockfiles): Once lock validation is default-on, drop the Spec.UpstreamCommit
+// fallback - a missing lock will be a hard error before we reach this code.
+//
+//nolint:godox // tracked by TODO(lockfiles) tag.
 func (c *ComponentConfig) EffectiveUpstreamCommit() string {
 	if c.Locked != nil && c.Locked.UpstreamCommit != "" {
 		return c.Locked.UpstreamCommit
@@ -297,7 +305,7 @@ func (c *ComponentConfig) WithAbsolutePaths(referenceDir string) *ComponentConfi
 		Name:             c.Name,
 		SourceConfigFile: c.SourceConfigFile,
 		RenderedSpecDir:  c.RenderedSpecDir,
-		Locked:           c.Locked,
+		Locked:           deep.MustCopy(c.Locked),
 		Release:          c.Release,
 		Spec:             deep.MustCopy(c.Spec),
 		Build:            deep.MustCopy(c.Build),
