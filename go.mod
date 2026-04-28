@@ -27,16 +27,16 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/h2non/gock v1.2.0
 	github.com/invopop/jsonschema v0.13.0
-	github.com/jedib0t/go-pretty/v6 v6.7.9
+	github.com/jedib0t/go-pretty/v6 v6.7.10
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51
 	github.com/klauspost/compress v1.18.5
 	github.com/knqyf263/go-rpm-version v0.0.0-20240918084003-2afd7dc6a38f
 	github.com/lmittmann/tint v1.1.3
 	github.com/magefile/mage v1.17.1
-	github.com/mark3labs/mcp-go v0.48.0
+	github.com/mark3labs/mcp-go v0.49.0
 	github.com/mattn/go-isatty v0.0.21
 	github.com/mitchellh/hashstructure/v2 v2.0.2
-	github.com/moby/moby/api v1.54.1
+	github.com/moby/moby/api v1.54.2
 	github.com/muesli/termenv v0.16.0
 	github.com/nxadm/tail v1.4.11
 	github.com/opencontainers/selinux v1.13.1
