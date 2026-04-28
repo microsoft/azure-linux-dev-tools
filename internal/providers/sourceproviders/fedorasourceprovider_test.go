@@ -1042,3 +1042,64 @@ func TestCheckoutTargetCommit_UpstreamCommit(t *testing.T) {
 		assert.ErrorIs(t, err, checkoutError)
 	})
 }
+
+// TestGetComponent_LockedCommitTakesPriorityOverConfigPin verifies that the
+// fetch path (used by render/build) honors the same locked-beats-pin
+// precedence rule as ResolveIdentity. When both Locked.UpstreamCommit and
+// Spec.UpstreamCommit are set, Checkout must be called with the locked value.
+func TestGetComponent_LockedCommitTakesPriorityOverConfigPin(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	ctrl := gomock.NewController(t)
+	mockGitProvider := git_test.NewMockGitProvider(ctrl)
+	mockExtractor := fedorasource_test.NewMockFedoraSourceDownloader(ctrl)
+
+	const (
+		configPinCommit = "config-pin-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		lockedCommit    = "locked-commit-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	)
+
+	provider, err := sourceproviders.NewFedoraSourcesProviderImpl(
+		env.FS(),
+		env.DryRunnable,
+		mockGitProvider,
+		mockExtractor,
+		testResolvedDistro(),
+		retry.Disabled(),
+	)
+	require.NoError(t, err)
+
+	mockComponent := components_testutils.NewMockComponent(ctrl)
+	mockComponent.EXPECT().GetName().AnyTimes().Return(testPackageName)
+	mockComponent.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
+		Name: testPackageName,
+		Spec: projectconfig.SpecSource{
+			SourceType:     projectconfig.SpecSourceTypeUpstream,
+			UpstreamCommit: configPinCommit,
+		},
+		Locked: &projectconfig.ComponentLockData{
+			UpstreamCommit: lockedCommit,
+		},
+	})
+
+	mockGitProvider.EXPECT().
+		Clone(gomock.Any(), repoURL, gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _, cloneDir string, _ ...git.GitOptions) error {
+			specPath := cloneDir + "/" + testPackageName + ".spec"
+
+			return fileutils.WriteFile(env.FS(), specPath, []byte("Name: "+testPackageName), fileperms.PublicFile)
+		})
+
+	// Critical: Checkout must use the LOCKED commit, not the config pin.
+	// gomock will fail the test if Checkout is called with anything else.
+	mockGitProvider.EXPECT().
+		Checkout(gomock.Any(), gomock.Any(), lockedCommit).
+		Return(nil)
+
+	mockExtractor.EXPECT().
+		ExtractSourcesFromRepo(gomock.Any(), gomock.Any(), testPackageName, gomock.Any(), gomock.Any()).
+		Return(nil)
+
+	err = provider.GetComponent(context.Background(), mockComponent, destDir)
+	require.NoError(t, err)
+}

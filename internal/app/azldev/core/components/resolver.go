@@ -64,6 +64,8 @@ func (r *Resolver) FindComponents(filter *ComponentFilter) (components *Componen
 			return allComps, findErr
 		}
 
+		r.warnOnLockDrift(allComps)
+
 		return allComps, r.validateLockFiles(allComps, true, skipValidation)
 	}
 
@@ -92,6 +94,8 @@ func (r *Resolver) FindComponents(filter *ComponentFilter) (components *Componen
 			return components, err
 		}
 	}
+
+	r.warnOnLockDrift(components)
 
 	return components, r.validateLockFiles(components, false, skipValidation)
 }
@@ -540,21 +544,6 @@ func (r *Resolver) populateFromLock(config *projectconfig.ComponentConfig) {
 		return
 	}
 
-	// Warn when locked commit differs from explicit config pin - this is a
-	// staleness signal. Validation catches it as an error when enabled, but
-	// during the rollout transition we surface it as a warning. Suppressed
-	// for callers (e.g., 'component update') that are about to refresh the
-	// lock themselves.
-	if !r.SuppressLockWarnings &&
-		config.Spec.UpstreamCommit != "" &&
-		lock.UpstreamCommit != "" &&
-		config.Spec.UpstreamCommit != lock.UpstreamCommit {
-		slog.Warn("Lock differs from config pin - run 'component update' to refresh",
-			"component", config.Name,
-			"configPin", config.Spec.UpstreamCommit,
-			"lockedCommit", lock.UpstreamCommit)
-	}
-
 	config.Locked = &projectconfig.ComponentLockData{
 		UpstreamCommit:   lock.UpstreamCommit,
 		ImportCommit:     lock.ImportCommit,
@@ -563,6 +552,35 @@ func (r *Resolver) populateFromLock(config *projectconfig.ComponentConfig) {
 	}
 
 	slog.Debug("Populated lock data", "component", config.Name, "commit", lock.UpstreamCommit)
+}
+
+// warnOnLockDrift emits a staleness warning for each component in the resolved
+// set whose explicit config pin (Spec.UpstreamCommit) disagrees with its locked
+// commit. This runs against the filtered set so users only see warnings about
+// components they asked about, not about all components in the project.
+//
+// No-op when [Resolver.SuppressLockWarnings] is set (e.g., during component
+// update, which is about to refresh the lock).
+func (r *Resolver) warnOnLockDrift(resolved *ComponentSet) {
+	if r.SuppressLockWarnings {
+		return
+	}
+
+	for _, comp := range resolved.Components() {
+		cfg := comp.GetConfig()
+		if cfg.Locked == nil {
+			continue
+		}
+
+		if cfg.Spec.UpstreamCommit != "" &&
+			cfg.Locked.UpstreamCommit != "" &&
+			cfg.Spec.UpstreamCommit != cfg.Locked.UpstreamCommit {
+			slog.Warn("Lock differs from config pin - run 'component update' to refresh",
+				"component", cfg.Name,
+				"configPin", cfg.Spec.UpstreamCommit,
+				"lockedCommit", cfg.Locked.UpstreamCommit)
+		}
+	}
 }
 
 // Given an explicit component config, apply all inherited defaults.
