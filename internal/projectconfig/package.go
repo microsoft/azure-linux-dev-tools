@@ -11,13 +11,36 @@ import (
 )
 
 // PackagePublishConfig holds publish settings for a single binary package.
-// The zero value means the channel is inherited from a higher-priority config layer.
+// The zero value means all channels are inherited from a higher-priority config layer.
 type PackagePublishConfig struct {
-	// Channel identifies the publish channel for this package.
-	// The special value "none" is a convention meaning the package should not be published;
-	// azldev records this value in build results but enforcement is left to downstream tooling.
-	// When empty, the value is inherited from the next layer in the resolution order.
-	Channel string `toml:"channel,omitempty" json:"channel,omitempty" validate:"omitempty,ne=.,ne=..,excludesall=/\\" jsonschema:"title=Channel,description=Publish channel for this package; use 'none' to signal to downstream tooling that this package should not be published"`
+	// RPMChannel identifies the publish channel specifically for binary (non-debuginfo)
+	// packages. When set at the package level, it overrides the component-level
+	// [ComponentPublishConfig.RPMChannel]. When empty, the value is inherited. The
+	// reserved value `"none"` keeps RPMs in the base directory and means they should
+	// not be published.
+	RPMChannel string `toml:"rpm-channel,omitempty" json:"rpmChannel,omitempty" validate:"omitempty,ne=.,ne=..,excludesall=/\\" jsonschema:"title=RPM channel,description=Publish channel for binary packages; overrides the component-level rpm-channel; use 'none' to keep RPMs in the base directory and skip publishing"`
+	// DebugInfoChannel identifies the publish channel specifically for debuginfo packages.
+	// When set at the package level, it overrides the component-level
+	// [ComponentPublishConfig.DebugInfoChannel]. When empty, the value is inherited.
+	// The reserved value `"none"` keeps RPMs in the base directory and means they
+	// should not be published.
+	DebugInfoChannel string `toml:"debuginfo-channel,omitempty" json:"debuginfoChannel,omitempty" validate:"omitempty,ne=.,ne=..,excludesall=/\\" jsonschema:"title=Debuginfo channel,description=Publish channel for debuginfo packages; overrides the component-level debuginfo-channel; use 'none' to keep RPMs in the base directory and skip publishing"`
+
+	// Deprecated: use 'rpm-channel' instead. When set, the value is used as a fallback
+	// for [PackagePublishConfig.RPMChannel] during channel resolution if 'rpm-channel' is not
+	// already set. Kept for backwards compatibility with older config files.
+	DeprecatedChannel string `toml:"channel,omitempty" json:"-" validate:"omitempty,ne=.,ne=..,excludesall=/\\" jsonschema:"deprecated=true,description=Deprecated: use 'rpm-channel' instead. Kept for backwards compatibility; falls back to this value when 'rpm-channel' is not set."`
+}
+
+// EffectiveRPMChannel returns the configured RPM channel, falling back to the deprecated
+// 'channel' field for backwards compatibility with older config files that predate
+// the 'rpm-channel' field.
+func (p PackagePublishConfig) EffectiveRPMChannel() string {
+	if p.RPMChannel != "" {
+		return p.RPMChannel
+	}
+
+	return p.DeprecatedChannel
 }
 
 // PackageConfig holds all configuration applied to a single binary package.
@@ -79,8 +102,7 @@ func (g *PackageGroupConfig) Validate() error {
 // Resolution order (each layer overrides the previous — later wins):
 //  1. The project's DefaultPackageConfig (lowest priority)
 //  2. The [PackageGroupConfig] whose Packages list contains pkgName, if any
-//  3. The component's DefaultPackageConfig
-//  4. The component's explicit Packages entry for the exact package name (highest priority)
+//  3. The component's explicit Packages entry for the exact package name (highest priority)
 func ResolvePackageConfig(pkgName string, comp *ComponentConfig, proj *ProjectConfig) (PackageConfig, error) {
 	// 1. Start from the project-level default (lowest priority).
 	result := proj.DefaultPackageConfig
@@ -100,14 +122,7 @@ func ResolvePackageConfig(pkgName string, comp *ComponentConfig, proj *ProjectCo
 		}
 	}
 
-	// 3. Apply the component-level default (overrides group defaults).
-	if err := result.MergeUpdatesFrom(&comp.DefaultPackageConfig); err != nil {
-		return PackageConfig{}, fmt.Errorf(
-			"failed to apply component defaults to package %#q:\n%w", pkgName, err,
-		)
-	}
-
-	// 4. Apply the explicit per-package override (exact name, highest priority).
+	// 3. Apply the explicit per-package override (exact name, highest priority).
 	if pkgConfig, ok := comp.Packages[pkgName]; ok {
 		if err := result.MergeUpdatesFrom(&pkgConfig); err != nil {
 			return PackageConfig{}, fmt.Errorf(

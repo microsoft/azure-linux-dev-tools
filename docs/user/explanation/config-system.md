@@ -96,8 +96,9 @@ These are simple structs (not maps). Later files' non-empty fields override earl
 Component configuration supports a layered inheritance model. When azldev resolves the effective configuration for a component, it assembles it from multiple sources in this order (later layers override earlier ones):
 
 1. **Distro version defaults** — the `default-component-config` defined in the distro version (e.g., `[distros.azurelinux.versions.'4.0'.default-component-config]`)
-2. **Component group defaults** — the `default-component-config` from any component groups the component belongs to (applied in alphabetical order by group name)
-3. **Component-specific config** — the component's own explicit configuration
+2. **Project-level defaults** — the `default-component-config` defined at the project root
+3. **Component group defaults** — the `default-component-config` from any component groups the component belongs to (applied in alphabetical order by group name)
+4. **Component-specific config** — the component's own explicit configuration
 
 This inheritance is applied lazily at resolution time, not at config load time.
 

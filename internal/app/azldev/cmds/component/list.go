@@ -48,6 +48,10 @@ Component name patterns support glob syntax (*, ?, []).`,
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
 			options.ComponentFilter.ComponentNamePatterns = append(args, options.ComponentFilter.ComponentNamePatterns...)
 
+			// List is read-only — skip lock validation so users can always
+			// inspect their components even when locks are stale.
+			options.ComponentFilter.SkipLockValidation = true
+
 			return ListComponentConfigs(env, options)
 		}),
 		ValidArgsFunction: components.GenerateComponentNameCompletions,

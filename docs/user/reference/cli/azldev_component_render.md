@@ -20,6 +20,11 @@ Unlike prepare-sources, render skips downloading source tarballs from the
 lookaside cache — only spec files, patches, scripts, and other git-tracked
 sidecar files are included. Multiple components can be rendered at once.
 
+When rendering all components (-a), the --clean-stale flag removes rendered
+directories that no longer correspond to any current component. Stale cleanup
+is skipped when rendering individual components to avoid accidentally removing
+directories for components not included in the filter.
+
 ```
 azldev component render [flags]
 ```
@@ -51,6 +56,7 @@ azldev component render [flags]
   -f, --force                         allow overwriting existing rendered component directories
   -h, --help                          help for render
   -o, --output-dir string             output directory for rendered specs (overrides rendered-specs-dir from config)
+      --skip-lock-validation          skip lock file consistency checks (default true)
   -s, --spec-path stringArray         Spec path
 ```
 

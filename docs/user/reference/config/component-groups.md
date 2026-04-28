@@ -57,8 +57,9 @@ defines = { azure = "1" }
 When a component belongs to one or more groups, the effective configuration is assembled in this order (later layers override earlier ones):
 
 1. Distro version `default-component-config`
-2. Component group `default-component-config` (in alphabetical order by group name if multiple groups apply)
-3. Component's own explicit configuration
+2. Project-level `default-component-config`
+3. Component group `default-component-config` (in alphabetical order by group name if multiple groups apply)
+4. Component's own explicit configuration
 
 See [Configuration Inheritance](../../explanation/config-system.md#configuration-inheritance) for the full details.
 

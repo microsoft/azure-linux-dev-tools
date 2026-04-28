@@ -155,7 +155,15 @@ lives), or use -C to point to one.`,
 
 	app.cmd.SetHelpCommandGroupID(CommandGroupMeta)
 	app.cmd.SetCompletionCommandGroupID(CommandGroupMeta)
+	app.addAdvancedCommandHint()
 
+	app.registerGlobalFlags()
+
+	return app
+}
+
+// registerGlobalFlags defines all persistent (global) flags for the CLI.
+func (app *App) registerGlobalFlags() {
 	// Define global flags and configuration settings.
 	app.cmd.PersistentFlags().BoolVarP(&app.verbose, "verbose", "v", false, "enable verbose output")
 	app.cmd.PersistentFlags().BoolVarP(&app.quiet, "quiet", "q", false, "only enable minimal output")
@@ -175,8 +183,18 @@ lives), or use -C to point to one.`,
 		"output colorization mode {always, auto, never}")
 	app.cmd.PersistentFlags().BoolVar(&app.permissiveConfigParsing, "permissive-config",
 		false, "do not fail on unknown fields in TOML config files")
+}
 
-	return app
+// addAdvancedCommandHint embeds a hint about the hidden "advanced" command group
+// into the root command's usage template so that DisableExtraNewlines handles
+// trailing whitespace consistently.
+func (a *App) addAdvancedCommandHint() {
+	tmpl := a.cmd.UsageTemplate()
+	tmpl = strings.TrimSuffix(tmpl, "\n")
+	tmpl += `{{if not .HasParent}}
+Use "{{.CommandPath}} advanced --help" for additional tools (mock, mcp, wget).{{end}}
+`
+	a.cmd.SetUsageTemplate(tmpl)
 }
 
 // Returns the names of the app's commands. The optional provided list of ancestors
@@ -248,7 +266,7 @@ func (a *App) Execute(args []string) int {
 	//
 	stdioLogger := a.initStdioLogging()
 
-	if err := setEventListener(stdioLogger, envOptions); err != nil {
+	if err := setEventListener(stdioLogger, a.quiet, envOptions); err != nil {
 		slog.Error("Error setting event listener.", "err", err)
 
 		return 1
@@ -365,7 +383,7 @@ func (a *App) reInitLoggingWithLogFile(envOptions *EnvOptions) error {
 		return fmt.Errorf("error re-initializing file logging:\n%w", err)
 	}
 
-	err = setEventListener(logger, envOptions)
+	err = setEventListener(logger, a.quiet, envOptions)
 	if err != nil {
 		return fmt.Errorf("error re-setting event listener:\n%w", err)
 	}
@@ -429,8 +447,8 @@ func (a *App) handlePostInitCallbacks(env *Env) error {
 	return nil
 }
 
-func setEventListener(stdioLogger *slog.Logger, envOptions *EnvOptions) error {
-	eventListener, err := NewEventListener(stdioLogger)
+func setEventListener(stdioLogger *slog.Logger, quiet bool, envOptions *EnvOptions) error {
+	eventListener, err := NewEventListener(stdioLogger, quiet)
 	if err != nil {
 		return fmt.Errorf("error initializing event listener:\n%w", err)
 	}

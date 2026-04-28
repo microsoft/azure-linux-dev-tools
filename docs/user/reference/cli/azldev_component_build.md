@@ -57,6 +57,7 @@ azldev component build [flags]
       --mock-config-opt stringToString   Pass a configuration option through to mock (key=value, can be specified multiple times) (default [])
       --no-check                         Skip package %check tests
       --preserve-buildenv policy         Preserve build environment {on-failure, always, never} (default on-failure)
+      --skip-lock-validation             skip lock file consistency checks (default true)
   -s, --spec-path stringArray            Spec path
       --srpm-only                        Build SRPM (source RPM) *only*
       --with-git                         Create a dist-git repository with synthetic commit history (requires a project git repository)

@@ -8,15 +8,30 @@ Boot an Azure Linux image in a QEMU VM
 
 Boot an Azure Linux image in a QEMU virtual machine.
 
-This command starts a QEMU VM with the specified disk image, setting up a test user
-via cloud-init for access. SSH is forwarded to the host on the specified port (default 8888).
+This command starts a QEMU VM with the specified disk image and/or bootable ISO.
+SSH is forwarded to the host on the specified port (default 8888). A cloud-init
+NoCloud seed ISO is generated and attached whenever the user supplies any
+user-provisioning intent — credentials ('--test-password'/'--test-password-file'
+or '--authorized-public-key') or an explicit '--test-user'. The guest will
+consume the seed only if cloud-init is installed and enabled.
 
-The image can be specified either by name (positional argument) which will look up the
-built image in the output directory, or by explicit path using --image-path.
+Image sources (at least one is required):
+  - IMAGE_NAME (positional):  Look up a built image in the project output directory.
+  - '--image-path':           Explicit path to a disk image (may also be combined with
+                              IMAGE_NAME to override the default location).
+  - '--iso':                  Bootable ISO (livecd, installer, rescue). May be combined
+                              with a disk image, or used alone to boot an empty disk.
+
+When '--iso' is used without a disk image, an ephemeral empty qcow2 disk is
+created (size set via '--disk-size') for the live/installer ISO to install onto.
+The disk lives in a temp directory and is deleted when the VM exits; it is not
+preserved between runs. The VM console is serial-only (-nographic), so the ISO
+must support serial console interaction.
 
 Requirements:
   - qemu-system-x86_64/qemu-system-aarch64 (QEMU emulator)
-  - genisoimage (for creating cloud-init ISO)
+  - genisoimage (only when cloud-init credentials are provided)
+  - qemu-img (only when creating an empty disk for '--iso')
   - sudo (for running QEMU with KVM)
   - OVMF firmware (for UEFI boot)
 
@@ -35,6 +50,16 @@ azldev image boot [IMAGE_NAME] [flags]
 
   # Boot with SSH on a custom port and extra memory
   azldev image boot my-image --test-password-file ~/.azl-test-pw --ssh-port 2222 --memory 8G
+
+  # Boot from an ISO (livecd / installer) onto a new empty 20G disk
+  azldev image boot --iso ~/Downloads/azurelinux.iso --disk-size 20G
+
+  # Boot an existing disk image with a rescue ISO attached
+  azldev image boot --image-path ./out/my-image.qcow2 --iso ~/Downloads/rescue.iso
+
+  # Boot from a live ISO with cloud-init credentials (consumed if the live image
+  # has cloud-init installed; otherwise harmlessly ignored)
+  azldev image boot --iso ~/Downloads/livecd.iso --test-password secret
 ```
 
 ### Options
@@ -43,9 +68,11 @@ azldev image boot [IMAGE_NAME] [flags]
       --arch arch                      Target architecture (x86_64, aarch64). Defaults to host arch.
       --authorized-public-key string   Path to public key authorized for SSH to test user account
       --cpus int                       Number of CPU cores for the VM (default 8)
+      --disk-size string               Size of the empty virtual disk created for ISO boot (e.g., 10G, 20G, 512M) (default "10G")
   -f, --format format                  Image format to boot (raw, qcow2, vhdx, vhd). Auto-detected if not specified.
   -h, --help                           help for boot
   -i, --image-path string              Path to the disk image file (overrides positional image name)
+      --iso string                     Path to an ISO file to boot from (livecd, installer, or rescue media)
       --memory string                  Amount of memory for the VM (e.g., 4G, 8192M) (default "4G")
       --rwdisk                         Allow writes to persist to the disk image
       --secure-boot                    Enable secure boot for the VM

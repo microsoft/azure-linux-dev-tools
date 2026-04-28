@@ -38,4 +38,5 @@ Meta commands:
       [1;36m--version[0m                   version for azldev
 
 Use "[1;3mazldev[0m [command] --help" for more information about a command.
+Use "[1;3mazldev[0m advanced --help" for additional tools (mock, mcp, wget).
 

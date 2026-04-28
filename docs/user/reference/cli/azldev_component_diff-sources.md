@@ -22,6 +22,7 @@ azldev component diff-sources [flags]
   -g, --component-group stringArray   Component group name
   -h, --help                          help for diff-sources
       --output-file string            write the diff output to a file instead of stdout
+      --skip-lock-validation          skip lock file consistency checks (default true)
   -s, --spec-path stringArray         Spec path
 ```
 

@@ -1,149 +1,296 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-// Package lockfile reads and writes azldev.lock files, which pin resolved
-// upstream commit hashes for deterministic builds. The lock file is a TOML
-// file at the project root, managed by [azldev component update].
+// Package lockfile reads and writes per-component lock files under the locks/
+// directory. Each component gets its own <name>.lock TOML file that pins
+// resolved upstream commits and tracks component identity for deterministic
+// builds. Lock files are managed by [azldev component update].
 package lockfile
 
 import (
 	"fmt"
+	"log/slog"
+	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
+	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	toml "github.com/pelletier/go-toml/v2"
 )
 
-// FileName is the lock file name, placed at the project root.
-const FileName = "azldev.lock"
+// LockDir is the directory under the project root where per-component lock
+// files are stored.
+const LockDir = "locks"
+
+// lockFileExtension is the file extension for lock files.
+const lockFileExtension = ".lock"
 
 // currentVersion is the lock file format version.
 const currentVersion = 1
 
-// LockFile holds the parsed contents of an azldev.lock file.
-type LockFile struct {
-	// Version is the lock file format version.
-	Version int `toml:"version" comment:"azldev.lock - Managed by azldev component update. Do not edit manually."`
-	// Components maps component name → locked state.
-	Components map[string]ComponentLock `toml:"components"`
-}
-
 // ComponentLock holds the locked state for a single component.
-// Upstream components have [ComponentLock.UpstreamCommit] set to the resolved
-// commit hash. Local components have an entry but with an empty commit field.
 type ComponentLock struct {
-	// UpstreamCommit is the resolved full commit hash from the upstream dist-git.
+	// Version is the lock file format version.
+	Version int `toml:"version" comment:"Managed by azldev component update. Do not edit manually."`
+
+	// ImportCommit is the upstream commit hash at the time of initial import
+	// (fork point). Upstream changelog up to this commit is inherited verbatim.
+	// Write-once: set on first import, never changed afterwards.
+	// Empty for local components.
+	ImportCommit string `toml:"import-commit,omitempty"`
+
+	// UpstreamCommit is the current resolved upstream commit hash.
+	// Updated by 'component update' when upstream sources are re-resolved.
 	// Empty for local components.
 	UpstreamCommit string `toml:"upstream-commit,omitempty"`
+
+	// ManualBump is an extra rebuild counter for mass-rebuild scenarios.
+	// Almost always 0. Incrementing this changes the component's fingerprint,
+	// triggering a new release without any other input change.
+	ManualBump int `toml:"manual-bump,omitempty"`
+
+	// InputFingerprint is the hash of all render inputs (config, overlays,
+	// upstream-commit, manual-bump, distro release version). Recomputed on
+	// every update. Used to detect when inputs have changed.
+	InputFingerprint string `toml:"input-fingerprint,omitempty"`
+
+	// ResolutionInputHash is a hash of the config inputs that affect upstream
+	// commit resolution (snapshot timestamp, distro reference, explicit pin).
+	// Used for offline staleness detection: if the current config's resolution
+	// inputs produce a different hash than what's stored, the lock may be stale
+	// and `component update` will need to re-resolve the upstream commit via
+	// network.
+	//
+	// This enables a fast offline check without re-resolving upstream commits:
+	//   - Hash matches → resolution inputs unchanged, lock is probably fresh
+	//   - Hash differs → resolution inputs changed, run update to re-resolve
+	//
+	// Not yet populated in v1 — reserved for future use.
+	ResolutionInputHash string `toml:"resolution-input-hash,omitempty"`
 }
 
-// New creates an empty lock file with the current format version.
-func New() *LockFile {
-	return &LockFile{
-		Version:    currentVersion,
-		Components: make(map[string]ComponentLock),
+// New creates a new empty component lock with the current format version.
+func New() *ComponentLock {
+	return &ComponentLock{
+		Version: currentVersion,
 	}
 }
 
-// Load reads and parses a lock file from the given path. Returns an error if the
-// file cannot be read or parsed, or if the format version is unsupported.
-func Load(fs opctx.FS, path string) (*LockFile, error) {
+// LockPath returns the path to a component's lock file given the lock
+// directory and component name.
+func LockPath(lockDir, componentName string) (string, error) {
+	if err := fileutils.ValidateFilename(componentName); err != nil {
+		return "", fmt.Errorf("validating component name %#q for lock file path:\n%w", componentName, err)
+	}
+
+	return filepath.Join(lockDir, componentName+lockFileExtension), nil
+}
+
+// Load reads and parses a per-component lock file from the given path.
+// Returns an error if the file cannot be read or parsed, or if the format
+// version is unsupported.
+func Load(fs opctx.FS, path string) (*ComponentLock, error) {
 	data, err := fileutils.ReadFile(fs, path)
 	if err != nil {
 		return nil, fmt.Errorf("reading lock file %#q:\n%w", path, err)
 	}
 
-	var lockFile LockFile
-	if err := toml.Unmarshal(data, &lockFile); err != nil {
+	var lock ComponentLock
+	if err := toml.Unmarshal(data, &lock); err != nil {
 		return nil, fmt.Errorf("parsing lock file %#q:\n%w", path, err)
 	}
 
-	if lockFile.Version != currentVersion {
+	if lock.Version != currentVersion {
 		return nil, fmt.Errorf(
-			// Backwards compatibility is a future consideration if we need to make non-compatible changes.
-			// For now, we can just error on unsupported versions.
 			"unsupported lock file version %d in %#q (expected %d)",
-			lockFile.Version, path, currentVersion)
+			lock.Version, path, currentVersion)
 	}
 
-	if lockFile.Components == nil {
-		lockFile.Components = make(map[string]ComponentLock)
-	}
-
-	return &lockFile, nil
+	return &lock, nil
 }
 
-// Save writes the lock file to the given path. [toml.Marshal] sorts map keys
-// alphabetically, producing deterministic output. Additionally, we post-process the output to insert extra blank lines
-// between component entries, which helps reduce git merge conflicts when parallel PRs modify adjacent entries.
-func (lockFile *LockFile) Save(fs opctx.FS, path string) error {
-	data, err := toml.Marshal(lockFile)
+// Save writes the component lock file to the given path, creating parent
+// directories as needed.
+func (lock *ComponentLock) Save(fs opctx.FS, path string) error {
+	dir := filepath.Dir(path)
+	if err := fileutils.MkdirAll(fs, dir); err != nil {
+		return fmt.Errorf("creating lock directory %#q:\n%w", dir, err)
+	}
+
+	data, err := toml.Marshal(lock)
 	if err != nil {
 		return fmt.Errorf("marshaling lock file:\n%w", err)
 	}
 
-	// Post-process: insert extra blank lines before each [components.<name>] header.
-	// This helps reduce git merge conflicts when parallel PRs modify adjacent entries.
-	output := addPerComponentPadding(string(data))
-
-	if err := fileutils.WriteFile(fs, path, []byte(output), fileperms.PublicFile); err != nil {
+	if err := fileutils.WriteFile(fs, path, data, fileperms.PublicFile); err != nil {
 		return fmt.Errorf("writing lock file %#q:\n%w", path, err)
 	}
 
 	return nil
 }
 
-// addPerComponentPadding inserts extra blank lines between component entries in the marshaled TOML output. This
-// padding prevents git merge conflicts when parallel PRs add, remove, or modify adjacent component entries — git's
-// default 3-line diff context won't overlap between padded entries.
+// Exists checks whether a lock file exists at the given path.
+func Exists(fs opctx.FS, path string) (bool, error) {
+	exists, err := fileutils.Exists(fs, path)
+	if err != nil {
+		return false, fmt.Errorf("checking lock file %#q:\n%w", path, err)
+	}
+
+	return exists, nil
+}
+
+// Remove deletes a lock file at the given path.
+func Remove(fs opctx.FS, path string) error {
+	if err := fs.Remove(path); err != nil {
+		return fmt.Errorf("removing lock file %#q:\n%w", path, err)
+	}
+
+	return nil
+}
+
+// ValidateUpstreamCommit checks that a lock file is consistent with the
+// component's config. Returns the locked commit and an error if:
+//   - The lock file does not exist or cannot be loaded
+//   - The component has an explicit 'upstream-commit' in config that doesn't match
+//     the lock file (lock is stale, run 'component update')
+func ValidateUpstreamCommit(
+	fs opctx.FS, lockDir, componentName, configUpstreamCommit string,
+) (string, error) {
+	lockPath, pathErr := LockPath(lockDir, componentName)
+	if pathErr != nil {
+		return "", fmt.Errorf("getting lock path for %#q:\n%w", componentName, pathErr)
+	}
+
+	exists, err := Exists(fs, lockPath)
+	if err != nil {
+		return "", fmt.Errorf("checking lock for %#q:\n%w", componentName, err)
+	}
+
+	if !exists {
+		return "", fmt.Errorf(
+			"no lock file for upstream component %#q; run 'azldev component update %s' to create one",
+			componentName, componentName)
+	}
+
+	lock, err := Load(fs, lockPath)
+	if err != nil {
+		return "", fmt.Errorf("loading lock for %#q:\n%w", componentName, err)
+	}
+
+	if lock.UpstreamCommit == "" {
+		return "", fmt.Errorf(
+			"lock file for %#q has no upstream-commit; run 'azldev component update %s' to populate",
+			componentName, componentName)
+	}
+
+	if configUpstreamCommit != "" && lock.UpstreamCommit != configUpstreamCommit {
+		return "", fmt.Errorf(
+			"lock is stale for %#q: config pins %#q but lock has %#q",
+			componentName, configUpstreamCommit, lock.UpstreamCommit)
+	}
+
+	return lock.UpstreamCommit, nil
+}
+
+// validateConsistency checks lock files against resolved component configs.
+// For each upstream component, verifies a lock file exists and any explicit
+// upstream-commit pin matches. When checkOrphans is true, also detects orphan
+// lock files (components removed from config). Orphan detection should only
+// be used when validating the full project — on filtered commands it would
+// misfire against the subset.
 //
-// This is a best-effort approach, and won't prevent all conflicts (e.g. if two PRs modify the same component entry),
-// but it should help in the common case of parallel PRs modifying different components.
-// The other option would be to have each component in a separate file, but that adds complexity and overhead
-// to the loading process, and clutters the project with more files. The files cannot live in the rendered specs
-// directory since they are required to detect changes in package state and would be removed by the rendering process or
-// a manual folder removal.
-func addPerComponentPadding(tomlData string) string {
-	const prefix = "[components."
-
-	var result strings.Builder
-
-	result.Grow(len(tomlData))
-
-	for line := range strings.SplitSeq(tomlData, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), prefix) {
-			// Add extra blank lines before each component section header.
-			result.WriteString("\n\n")
+// Returns sorted lists of components with missing/stale locks and orphan
+// component names. Returns an error if any issues are found.
+func validateConsistency(
+	fs opctx.FS,
+	lockDir string,
+	components map[string]projectconfig.ComponentConfig,
+	checkOrphans bool,
+) (missingOrStale, orphans []string, err error) {
+	// Check each component that may need a lock file. Only skip components
+	// that are explicitly local — unspecified source type inherits upstream
+	// from distro defaults, so those need validation too.
+	for name, comp := range components {
+		if comp.Spec.SourceType == projectconfig.SpecSourceTypeLocal {
+			continue
 		}
 
-		result.WriteString(line)
-		result.WriteString("\n")
+		if _, validateErr := ValidateUpstreamCommit(
+			fs, lockDir, name, comp.Spec.UpstreamCommit,
+		); validateErr != nil {
+			slog.Warn("Lock validation failed", "component", name, "error", validateErr)
+
+			missingOrStale = append(missingOrStale, name)
+		}
 	}
 
-	return result.String()
+	if checkOrphans {
+		var orphanErr error
+
+		orphans, orphanErr = FindOrphanLockFiles(fs, lockDir, components)
+		if orphanErr != nil {
+			return missingOrStale, nil, fmt.Errorf("checking for orphan lock files:\n%w", orphanErr)
+		}
+	}
+
+	if len(missingOrStale) > 0 || len(orphans) > 0 {
+		sort.Strings(missingOrStale)
+		sort.Strings(orphans)
+
+		return missingOrStale, orphans, fmt.Errorf(
+			"lock file consistency check failed: %d missing/stale, %d orphans",
+			len(missingOrStale), len(orphans))
+	}
+
+	return nil, nil, nil
 }
 
-// SetUpstreamCommit sets the locked upstream commit for a component.
-func (lockFile *LockFile) SetUpstreamCommit(componentName, commitHash string) {
-	if lockFile.Components == nil {
-		lockFile.Components = make(map[string]ComponentLock)
+// FindOrphanLockFiles returns component names that have lock files but no
+// corresponding component in config (i.e., the component was removed).
+// Returns an error if the locks directory exists but cannot be read.
+func FindOrphanLockFiles(
+	fs opctx.FS,
+	lockDir string,
+	components map[string]projectconfig.ComponentConfig,
+) ([]string, error) {
+	entries, readErr := fileutils.ReadDir(fs, lockDir)
+	if readErr != nil {
+		// No locks directory is fine — nothing to detect.
+		exists, existsErr := fileutils.DirExists(fs, lockDir)
+		if existsErr != nil {
+			return nil, fmt.Errorf("checking locks directory %#q:\n%w", lockDir, existsErr)
+		}
+
+		if !exists {
+			return nil, nil
+		}
+
+		return nil, fmt.Errorf("reading locks directory %#q:\n%w", lockDir, readErr)
 	}
 
-	entry := lockFile.Components[componentName]
-	entry.UpstreamCommit = commitHash
-	lockFile.Components[componentName] = entry
-}
+	var orphans []string
 
-// GetUpstreamCommit returns the locked upstream commit for a component.
-// Returns empty string and false if the component has no lock entry or
-// if the entry has an empty upstream commit.
-func (lockFile *LockFile) GetUpstreamCommit(componentName string) (string, bool) {
-	entry, ok := lockFile.Components[componentName]
-	if !ok || entry.UpstreamCommit == "" {
-		return "", false
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		entryName := entry.Name()
+		if !strings.HasSuffix(entryName, lockFileExtension) || strings.HasPrefix(entryName, ".") {
+			continue
+		}
+
+		componentName := strings.TrimSuffix(entryName, lockFileExtension)
+
+		if _, exists := components[componentName]; !exists {
+			orphans = append(orphans, componentName)
+		}
 	}
 
-	return entry.UpstreamCommit, true
+	sort.Strings(orphans)
+
+	return orphans, nil
 }

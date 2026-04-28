@@ -299,3 +299,24 @@ func TestProjectConfigFileValidation_UnsupportedOriginType(t *testing.T) {
 	assert.Contains(t, err.Error(), "unsupported 'origin' type")
 	assert.Contains(t, err.Error(), "ftp")
 }
+
+func TestProjectConfigFileValidation_PerComponentSnapshotDisallowed(t *testing.T) {
+	t.Setenv("AZLDEV_ENABLE_LOCK_VALIDATION", "1")
+
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"test-component": {
+				Spec: projectconfig.SpecSource{
+					SourceType: projectconfig.SpecSourceTypeUpstream,
+					UpstreamDistro: projectconfig.DistroReference{
+						Snapshot: "2026-01-01T00:00:00Z",
+					},
+				},
+			},
+		},
+	}
+	err := file.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "snapshot")
+	assert.Contains(t, err.Error(), "test-component")
+}

@@ -43,7 +43,8 @@ The `[package-groups.<name>.default-package-config]` section defines the configu
 
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
-| Channel | `channel` | string | No | Publish channel for this package. Use `"none"` to signal to downstream tooling that this package should not be published. |
+| RPM Channel | `rpm-channel` | string | No | Publish channel for binary packages. Use `"none"` to signal to downstream tooling that this package should not be published. |
+| Debuginfo Channel | `debuginfo-channel` | string | No | Publish channel for debuginfo and debugsource packages. |
 
 ## Resolution Order
 
@@ -51,8 +52,7 @@ When determining the effective config for a binary package, azldev applies confi
 
 1. **Project `default-package-config`** — lowest priority; applies to all packages in the project
 2. **Package group** — the group (if any) whose `packages` list contains the package name
-3. **Component `default-package-config`** — applies to all packages produced by that component
-4. **Component `packages.<name>`** — highest priority; exact per-package override
+3. **Component `packages.<name>`** — highest priority; exact per-package override
 
 > **Note:** Each package name may appear in at most one group. Listing the same name in two groups produces a validation error.
 
@@ -61,14 +61,14 @@ When determining the effective config for a binary package, azldev applies confi
 ```toml
 # Set a project-wide default channel
 [default-package-config.publish]
-channel = "rpm-base"
+rpm-channel = "rpm-base"
 
 [package-groups.devel-packages]
 description = "Development subpackages"
 packages = ["libcurl-devel", "curl-static", "wget2-devel"]
 
 [package-groups.devel-packages.default-package-config.publish]
-channel = "rpm-build-only"
+rpm-channel = "rpm-build-only"
 
 [package-groups.debug-packages]
 description = "Debug info and source"
@@ -82,11 +82,11 @@ packages = [
 ]
 
 [package-groups.debug-packages.default-package-config.publish]
-channel = "rpm-debug"
+debuginfo-channel = "rpm-debug"
 ```
 
 ## Related Resources
 
 - [Project Configuration](project.md) — top-level `default-package-config` and `package-groups` fields
-- [Components](components.md) — per-component `default-package-config` and `packages` overrides
+- [Components](components.md) — per-component `packages` overrides and `publish` settings
 - [Configuration System](../../explanation/config-system.md) — inheritance and merge behavior

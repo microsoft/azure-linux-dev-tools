@@ -4,6 +4,7 @@
 package sources
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -42,6 +43,20 @@ func MessageAffectsComponent(message, componentName string) bool {
 // whose message contains an "Affects: <componentName>" trailer line. Results are sorted
 // chronologically (oldest first).
 func FindAffectsCommits(repo *gogit.Repository, componentName string) ([]CommitMetadata, error) {
+	// Synthetic history depends on a complete project commit log so Affects
+	// trailers can be discovered reliably.
+	shallowCommits, err := repo.Storer.Shallow()
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect repository history depth:\n%w", err)
+	}
+
+	if len(shallowCommits) > 0 {
+		return nil, errors.New(
+			"repository is a shallow clone; synthetic history requires a full clone. " +
+				"Run `git fetch --unshallow` or re-clone without `--depth`",
+		)
+	}
+
 	head, err := repo.Head()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get HEAD reference:\n%w", err)

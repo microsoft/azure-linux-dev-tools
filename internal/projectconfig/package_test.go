@@ -29,10 +29,17 @@ func TestPackagePublishConfig_Validate(t *testing.T) {
 	}
 
 	for _, testCase := range validCases {
-		t.Run(testCase.name, func(t *testing.T) {
+		t.Run("RPMChannel/"+testCase.name, func(t *testing.T) {
 			t.Parallel()
 
-			cfg := projectconfig.PackagePublishConfig{Channel: testCase.channel}
+			cfg := projectconfig.PackagePublishConfig{RPMChannel: testCase.channel}
+			assert.NoError(t, validator.New().Struct(&cfg))
+		})
+
+		t.Run("DebugInfoChannel/"+testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := projectconfig.PackagePublishConfig{DebugInfoChannel: testCase.channel}
 			assert.NoError(t, validator.New().Struct(&cfg))
 		})
 	}
@@ -51,10 +58,19 @@ func TestPackagePublishConfig_Validate(t *testing.T) {
 	}
 
 	for _, testCase := range invalidCases {
-		t.Run(testCase.name, func(t *testing.T) {
+		t.Run("RPMChannel/"+testCase.name, func(t *testing.T) {
 			t.Parallel()
 
-			cfg := projectconfig.PackagePublishConfig{Channel: testCase.channel}
+			cfg := projectconfig.PackagePublishConfig{RPMChannel: testCase.channel}
+			err := validator.New().Struct(&cfg)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), testCase.errContains)
+		})
+
+		t.Run("DebugInfoChannel/"+testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := projectconfig.PackagePublishConfig{DebugInfoChannel: testCase.channel}
 			err := validator.New().Struct(&cfg)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), testCase.errContains)
@@ -73,14 +89,33 @@ func TestPackageGroupConfig_Validate_InvalidChannel(t *testing.T) {
 				"test-group": {
 					Packages: []string{"curl"},
 					DefaultPackageConfig: projectconfig.PackageConfig{
-						Publish: projectconfig.PackagePublishConfig{Channel: "../escape"},
+						Publish: projectconfig.PackagePublishConfig{RPMChannel: "../escape"},
 					},
 				},
 			},
 		}
 		err := file.Validate()
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "Channel")
+		assert.Contains(t, err.Error(), "RPMChannel")
+		assert.Contains(t, err.Error(), "excludesall")
+	})
+
+	t.Run("traversal debuginfo channel in group default config is rejected", func(t *testing.T) {
+		t.Parallel()
+
+		file := projectconfig.ConfigFile{
+			PackageGroups: map[string]projectconfig.PackageGroupConfig{
+				"test-group": {
+					Packages: []string{"curl-debuginfo"},
+					DefaultPackageConfig: projectconfig.PackageConfig{
+						Publish: projectconfig.PackagePublishConfig{DebugInfoChannel: "../escape"},
+					},
+				},
+			},
+		}
+		err := file.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "DebugInfoChannel")
 		assert.Contains(t, err.Error(), "excludesall")
 	})
 }
@@ -124,30 +159,30 @@ func TestPackageConfig_MergeUpdatesFrom(t *testing.T) {
 	t.Run("non-zero other overrides zero base", func(t *testing.T) {
 		base := projectconfig.PackageConfig{}
 		other := projectconfig.PackageConfig{
-			Publish: projectconfig.PackagePublishConfig{Channel: "build"},
+			Publish: projectconfig.PackagePublishConfig{RPMChannel: "build"},
 		}
 		require.NoError(t, base.MergeUpdatesFrom(&other))
-		assert.Equal(t, "build", base.Publish.Channel)
+		assert.Equal(t, "build", base.Publish.RPMChannel)
 	})
 
 	t.Run("non-zero other overrides non-zero base", func(t *testing.T) {
 		base := projectconfig.PackageConfig{
-			Publish: projectconfig.PackagePublishConfig{Channel: "build"},
+			Publish: projectconfig.PackagePublishConfig{RPMChannel: "build"},
 		}
 		other := projectconfig.PackageConfig{
-			Publish: projectconfig.PackagePublishConfig{Channel: "base"},
+			Publish: projectconfig.PackagePublishConfig{RPMChannel: "base"},
 		}
 		require.NoError(t, base.MergeUpdatesFrom(&other))
-		assert.Equal(t, "base", base.Publish.Channel)
+		assert.Equal(t, "base", base.Publish.RPMChannel)
 	})
 
 	t.Run("zero other does not override non-zero base", func(t *testing.T) {
 		base := projectconfig.PackageConfig{
-			Publish: projectconfig.PackagePublishConfig{Channel: "build"},
+			Publish: projectconfig.PackagePublishConfig{RPMChannel: "build"},
 		}
 		other := projectconfig.PackageConfig{}
 		require.NoError(t, base.MergeUpdatesFrom(&other))
-		assert.Equal(t, "build", base.Publish.Channel)
+		assert.Equal(t, "build", base.Publish.RPMChannel)
 	})
 }
 
@@ -163,13 +198,13 @@ func TestResolvePackageConfig(t *testing.T) {
 		"debug-packages": {
 			Packages: []string{"gcc-debuginfo", "curl-debuginfo", "curl-debugsource"},
 			DefaultPackageConfig: projectconfig.PackageConfig{
-				Publish: projectconfig.PackagePublishConfig{Channel: "none"},
+				Publish: projectconfig.PackagePublishConfig{RPMChannel: "none"},
 			},
 		},
 		"build-time-deps": {
 			Packages: []string{"curl-devel", "curl-static", "gcc-devel"},
 			DefaultPackageConfig: projectconfig.PackageConfig{
-				Publish: projectconfig.PackagePublishConfig{Channel: "build"},
+				Publish: projectconfig.PackagePublishConfig{RPMChannel: "build"},
 			},
 		},
 	})
@@ -177,7 +212,6 @@ func TestResolvePackageConfig(t *testing.T) {
 	testCases := []struct {
 		name            string
 		pkgName         string
-		compDefault     projectconfig.PackageConfig
 		compPackages    map[string]projectconfig.PackageConfig
 		expectedChannel string
 	}{
@@ -197,37 +231,18 @@ func TestResolvePackageConfig(t *testing.T) {
 			expectedChannel: "none",
 		},
 		{
-			name:    "component default overrides group default",
-			pkgName: "gcc-devel",
-			compDefault: projectconfig.PackageConfig{
-				Publish: projectconfig.PackagePublishConfig{Channel: "base"},
+			name:    "exact package override takes priority over group",
+			pkgName: "curl-devel",
+			compPackages: map[string]projectconfig.PackageConfig{
+				"curl-devel": {Publish: projectconfig.PackagePublishConfig{RPMChannel: "base"}},
 			},
 			expectedChannel: "base",
 		},
 		{
-			name:    "component default applies when no group contains the package",
+			name:    "exact package override with no group match",
 			pkgName: "curl",
-			compDefault: projectconfig.PackageConfig{
-				Publish: projectconfig.PackagePublishConfig{Channel: "none"},
-			},
-			expectedChannel: "none",
-		},
-		{
-			name:    "exact package override takes priority over group and component default",
-			pkgName: "curl-devel",
-			compDefault: projectconfig.PackageConfig{
-				Publish: projectconfig.PackagePublishConfig{Channel: "none"},
-			},
 			compPackages: map[string]projectconfig.PackageConfig{
-				"curl-devel": {Publish: projectconfig.PackagePublishConfig{Channel: "base"}},
-			},
-			expectedChannel: "base",
-		},
-		{
-			name:    "exact package override takes priority over group with no component default",
-			pkgName: "curl-devel",
-			compPackages: map[string]projectconfig.PackageConfig{
-				"curl-devel": {Publish: projectconfig.PackagePublishConfig{Channel: "base"}},
+				"curl": {Publish: projectconfig.PackagePublishConfig{RPMChannel: "base"}},
 			},
 			expectedChannel: "base",
 		},
@@ -235,7 +250,7 @@ func TestResolvePackageConfig(t *testing.T) {
 			name:    "unrelated exact package entry does not affect result",
 			pkgName: "curl-devel",
 			compPackages: map[string]projectconfig.PackageConfig{
-				"curl": {Publish: projectconfig.PackagePublishConfig{Channel: "base"}},
+				"curl": {Publish: projectconfig.PackagePublishConfig{RPMChannel: "base"}},
 			},
 			expectedChannel: "build", // from group
 		},
@@ -244,14 +259,13 @@ func TestResolvePackageConfig(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			comp := &projectconfig.ComponentConfig{
-				Name:                 "test-component",
-				DefaultPackageConfig: testCase.compDefault,
-				Packages:             testCase.compPackages,
+				Name:     "test-component",
+				Packages: testCase.compPackages,
 			}
 
 			got, err := projectconfig.ResolvePackageConfig(testCase.pkgName, comp, baseProj)
 			require.NoError(t, err)
-			assert.Equal(t, testCase.expectedChannel, got.Publish.Channel)
+			assert.Equal(t, testCase.expectedChannel, got.Publish.RPMChannel)
 		})
 	}
 
@@ -260,7 +274,7 @@ func TestResolvePackageConfig(t *testing.T) {
 			"my-group": {
 				Packages: []string{"curl-devel"},
 				DefaultPackageConfig: projectconfig.PackageConfig{
-					Publish: projectconfig.PackagePublishConfig{Channel: "build"},
+					Publish: projectconfig.PackagePublishConfig{RPMChannel: "build"},
 				},
 			},
 		})
@@ -268,7 +282,7 @@ func TestResolvePackageConfig(t *testing.T) {
 		comp := &projectconfig.ComponentConfig{Name: "curl"}
 		got, err := projectconfig.ResolvePackageConfig("curl-devel", comp, proj)
 		require.NoError(t, err)
-		assert.Equal(t, "build", got.Publish.Channel)
+		assert.Equal(t, "build", got.Publish.RPMChannel)
 	})
 
 	t.Run("empty project config returns zero-value PackageConfig", func(t *testing.T) {
@@ -277,31 +291,31 @@ func TestResolvePackageConfig(t *testing.T) {
 
 		got, err := projectconfig.ResolvePackageConfig("curl", comp, &proj)
 		require.NoError(t, err)
-		assert.Empty(t, got.Publish.Channel)
+		assert.Empty(t, got.Publish.RPMChannel)
 	})
 
 	t.Run("project default applies when no other config matches", func(t *testing.T) {
 		proj := projectconfig.NewProjectConfig()
 		proj.DefaultPackageConfig = projectconfig.PackageConfig{
-			Publish: projectconfig.PackagePublishConfig{Channel: "base"},
+			Publish: projectconfig.PackagePublishConfig{RPMChannel: "base"},
 		}
 
 		comp := &projectconfig.ComponentConfig{Name: "curl"}
 		got, err := projectconfig.ResolvePackageConfig("curl", comp, &proj)
 		require.NoError(t, err)
-		assert.Equal(t, "base", got.Publish.Channel)
+		assert.Equal(t, "base", got.Publish.RPMChannel)
 	})
 
 	t.Run("package group overrides project default", func(t *testing.T) {
 		proj := projectconfig.NewProjectConfig()
 		proj.DefaultPackageConfig = projectconfig.PackageConfig{
-			Publish: projectconfig.PackagePublishConfig{Channel: "base"},
+			Publish: projectconfig.PackagePublishConfig{RPMChannel: "base"},
 		}
 		proj.PackageGroups = map[string]projectconfig.PackageGroupConfig{
 			"debug-packages": {
 				Packages: []string{"gcc-debuginfo"},
 				DefaultPackageConfig: projectconfig.PackageConfig{
-					Publish: projectconfig.PackagePublishConfig{Channel: "none"},
+					Publish: projectconfig.PackagePublishConfig{RPMChannel: "none"},
 				},
 			},
 		}
@@ -309,42 +323,24 @@ func TestResolvePackageConfig(t *testing.T) {
 		comp := &projectconfig.ComponentConfig{Name: "gcc"}
 		got, err := projectconfig.ResolvePackageConfig("gcc-debuginfo", comp, &proj)
 		require.NoError(t, err)
-		assert.Equal(t, "none", got.Publish.Channel)
-	})
-
-	t.Run("component default overrides project default", func(t *testing.T) {
-		proj := projectconfig.NewProjectConfig()
-		proj.DefaultPackageConfig = projectconfig.PackageConfig{
-			Publish: projectconfig.PackagePublishConfig{Channel: "base"},
-		}
-
-		comp := &projectconfig.ComponentConfig{
-			Name: "build-id-helper",
-			DefaultPackageConfig: projectconfig.PackageConfig{
-				Publish: projectconfig.PackagePublishConfig{Channel: "none"},
-			},
-		}
-
-		got, err := projectconfig.ResolvePackageConfig("build-id-helper-tool", comp, &proj)
-		require.NoError(t, err)
-		assert.Equal(t, "none", got.Publish.Channel)
+		assert.Equal(t, "none", got.Publish.RPMChannel)
 	})
 
 	t.Run("per-package override takes priority over project default", func(t *testing.T) {
 		proj := projectconfig.NewProjectConfig()
 		proj.DefaultPackageConfig = projectconfig.PackageConfig{
-			Publish: projectconfig.PackagePublishConfig{Channel: "base"},
+			Publish: projectconfig.PackagePublishConfig{RPMChannel: "base"},
 		}
 
 		comp := &projectconfig.ComponentConfig{
 			Name: "curl",
 			Packages: map[string]projectconfig.PackageConfig{
-				"curl-devel": {Publish: projectconfig.PackagePublishConfig{Channel: "none"}},
+				"curl-devel": {Publish: projectconfig.PackagePublishConfig{RPMChannel: "none"}},
 			},
 		}
 
 		got, err := projectconfig.ResolvePackageConfig("curl-devel", comp, &proj)
 		require.NoError(t, err)
-		assert.Equal(t, "none", got.Publish.Channel)
+		assert.Equal(t, "none", got.Publish.RPMChannel)
 	})
 }

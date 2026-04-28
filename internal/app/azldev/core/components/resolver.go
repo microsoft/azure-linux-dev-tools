@@ -7,14 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path"
 	"path/filepath"
-	"slices"
-	"sort"
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
-	"github.com/brunoga/deep"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
@@ -37,6 +35,15 @@ func NewResolver(env *azldev.Env) *Resolver {
 
 // Given a component filter, finds all components defined in the environment that match the filter.
 func (r *Resolver) FindComponents(filter *ComponentFilter) (components *ComponentSet, err error) {
+	// The filter's SkipLockValidation field is the primary control. When
+	// created via AddComponentFilterOptionsToCommand, its default comes from
+	// the AZLDEV_ENABLE_LOCK_VALIDATION env var. For programmatic callers
+	// (including tests), also check the env var here so the rollout gate
+	// applies uniformly.
+	//nolint:godox // tracked by TODO(lockfiles) tag.
+	// TODO(lockfiles): remove env var gate; filter.SkipLockValidation becomes sole control.
+	skipValidation := filter.SkipLockValidation || os.Getenv("AZLDEV_ENABLE_LOCK_VALIDATION") != "1"
+
 	// For usability's sake, detect if the caller/user forgot to specify *any* criteria.
 	if filter.HasNoCriteria() {
 		slog.Warn("No component selection options were given, no components will be selected.")
@@ -46,7 +53,12 @@ func (r *Resolver) FindComponents(filter *ComponentFilter) (components *Componen
 
 	// If we were asked to include all components, then it's not even worth looking at anything else.
 	if filter.IncludeAllComponents {
-		return r.FindAllComponents()
+		allComps, findErr := r.FindAllComponents()
+		if findErr != nil {
+			return allComps, findErr
+		}
+
+		return allComps, r.validateLockFiles(allComps, true, skipValidation)
 	}
 
 	components = NewComponentSet()
@@ -75,7 +87,7 @@ func (r *Resolver) FindComponents(filter *ComponentFilter) (components *Componen
 		}
 	}
 
-	return components, err
+	return components, r.validateLockFiles(components, false, skipValidation)
 }
 
 // Finds *all* components defined in the environment.
@@ -463,6 +475,10 @@ func (r *Resolver) createComponentFromConfig(componentConfig *projectconfig.Comp
 			componentConfig.Name, err)
 	}
 
+	if componentConfig.Release.Calculation == "" {
+		componentConfig.Release.Calculation = projectconfig.ReleaseCalculationAuto
+	}
+
 	return &resolvedComponent{
 		env:    r.env,
 		config: *componentConfig,
@@ -473,48 +489,67 @@ func (r *Resolver) createComponentFromConfig(componentConfig *projectconfig.Comp
 func applyInheritedDefaultsToComponent(
 	env *azldev.Env, component projectconfig.ComponentConfig,
 ) (result *projectconfig.ComponentConfig, err error) {
-	var distroVer projectconfig.DistroVersionDefinition
-
-	// Find the distro.
-	_, distroVer, err = env.Distro()
+	_, distroVer, err := env.Distro()
 	if err != nil {
-		return result, fmt.Errorf("failed to resolve current distro:\n%w", err)
+		return nil, fmt.Errorf("failed to resolve current distro:\n%w", err)
 	}
 
-	// Start by deep-cloning the distro defaults, using them as a template.
-	result = &projectconfig.ComponentConfig{}
-	*result = deep.MustCopy(distroVer.DefaultComponentConfig)
+	groupNames := env.Config().GroupsByComponent[component.Name]
 
-	// Find all component groups that this component belongs to and apply their defaults.
-	if groupNames, ok := env.Config().GroupsByComponent[component.Name]; ok {
-		// Sort the group names for deterministic layering of defaults.
-		sortedGroupNames := slices.Clone(groupNames)
-		sort.Strings(sortedGroupNames)
-
-		for _, groupName := range sortedGroupNames {
-			// Find the group.
-			groupConfig, ok := env.Config().ComponentGroups[groupName]
-			if !ok {
-				return result, fmt.Errorf("component group not found: %s", groupName)
-			}
-
-			// Apply its defaults.
-			err = result.MergeUpdatesFrom(&groupConfig.DefaultComponentConfig)
-			if err != nil {
-				return result, fmt.Errorf(
-					"failed to apply defaults from component group '%s' to config for component '%s':\n%w",
-					groupName, component.Name, err,
-				)
-			}
-		}
-	}
-
-	// Layer in the component's explicit config.
-	err = result.MergeUpdatesFrom(&component)
+	resolved, err := projectconfig.ResolveComponentConfig(
+		component,
+		env.Config().DefaultComponentConfig,
+		distroVer.DefaultComponentConfig,
+		env.Config().ComponentGroups,
+		groupNames,
+	)
 	if err != nil {
-		return result,
-			fmt.Errorf("failed to apply distro defaults to config for component '%s':\n%w", component.Name, err)
+		return nil, fmt.Errorf("resolving config for component '%s':\n%w", component.Name, err)
 	}
 
-	return result, nil
+	return &resolved, nil
+}
+
+// validateLockFiles checks lock file consistency against the resolved component
+// set. Skipped when skipValidation is true (set per-filter or via the global
+// '--skip-lock-validation' flag).
+//
+// When checkOrphans is true (i.e., all components are being validated), orphan
+// lock files are also detected. On filtered commands, only missing/stale checks
+// run — orphan detection is a project-wide invariant that would misfire against
+// a subset.
+func (r *Resolver) validateLockFiles(resolved *ComponentSet, checkOrphans bool, skipValidation bool) error {
+	if skipValidation {
+		return nil
+	}
+
+	reader := r.env.LockReader()
+	if reader == nil {
+		return nil
+	}
+
+	// Build resolved config map from the component set.
+	resolvedConfigs := make(map[string]projectconfig.ComponentConfig, resolved.Len())
+	for _, comp := range resolved.Components() {
+		resolvedConfigs[comp.GetName()] = *comp.GetConfig()
+	}
+
+	stale, orphans, err := reader.ValidateConsistency(resolvedConfigs, checkOrphans)
+	if err == nil {
+		return nil
+	}
+
+	// Format fix suggestions at the call site (not in the lockfile package)
+	// so CLI-specific strings don't leak into the data layer.
+	const maxIssuesForDetailedSuggestion = 10
+
+	if len(orphans) > 0 || len(stale) > maxIssuesForDetailedSuggestion {
+		r.env.AddFixSuggestion("run 'azldev component update -a' to fix all lock file issues")
+	} else if len(stale) > 0 {
+		r.env.AddFixSuggestion(fmt.Sprintf(
+			"run 'azldev component update %s'",
+			strings.Join(stale, " ")))
+	}
+
+	return fmt.Errorf("lock file validation failed:\n%w", err)
 }

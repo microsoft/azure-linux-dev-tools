@@ -264,3 +264,100 @@ func TestRemoveUnreferencedFiles(t *testing.T) {
 		assert.Len(t, entries, 2, "both files should remain")
 	})
 }
+
+func TestSkipFileFilterPreservesAllFiles(t *testing.T) {
+	// Verifies that when SkipFileFilter is true, unreferenced files are NOT removed.
+	// This mirrors the finishComponentRender logic: when the flag is set,
+	// removeUnreferencedFiles is not called, so all files survive.
+	testFS := afero.NewMemMapFs()
+
+	require.NoError(t, fileutils.MkdirAll(testFS, "/render"))
+	require.NoError(t, fileutils.WriteFile(testFS, "/render/pkg.spec", []byte("spec"), fileperms.PublicFile))
+	require.NoError(t, fileutils.WriteFile(testFS, "/render/sources", []byte("hash"), fileperms.PublicFile))
+	require.NoError(t, fileutils.WriteFile(testFS, "/render/57-pkg-fonts.xml", []byte("fontconfig"), fileperms.PublicFile))
+	require.NoError(t, fileutils.WriteFile(
+		testFS, "/render/58-pkg-lgc-fonts.xml", []byte("fontconfig"), fileperms.PublicFile))
+
+	// spectool would report unexpanded macros like "57-%{fontpkgname1}.xml"
+	// which don't match any file on disk. Without skip-file-filter, the
+	// filter would delete the real XML files.
+	specFiles := []string{"57-%{fontpkgname1}.xml", "58-%{fontpkgname4}.xml"}
+
+	// Simulate skip-file-filter=false: XML files get removed.
+	err := removeUnreferencedFiles(testFS, "/render", "/render/pkg.spec", specFiles, "pkg")
+	require.NoError(t, err)
+
+	for _, name := range []string{"57-pkg-fonts.xml", "58-pkg-lgc-fonts.xml"} {
+		exists, existsErr := fileutils.Exists(testFS, filepath.Join("/render", name))
+		require.NoError(t, existsErr)
+		assert.False(t, exists, "%s should be removed when skip-file-filter is false", name)
+	}
+
+	// Simulate skip-file-filter=true: removeUnreferencedFiles is never called,
+	// so all files are preserved. Reset the filesystem and verify.
+	testFS = afero.NewMemMapFs()
+
+	require.NoError(t, fileutils.MkdirAll(testFS, "/render"))
+	require.NoError(t, fileutils.WriteFile(testFS, "/render/pkg.spec", []byte("spec"), fileperms.PublicFile))
+	require.NoError(t, fileutils.WriteFile(testFS, "/render/sources", []byte("hash"), fileperms.PublicFile))
+	require.NoError(t, fileutils.WriteFile(testFS, "/render/57-pkg-fonts.xml", []byte("fontconfig"), fileperms.PublicFile))
+	require.NoError(t, fileutils.WriteFile(
+		testFS, "/render/58-pkg-lgc-fonts.xml", []byte("fontconfig"), fileperms.PublicFile))
+
+	// With skip-file-filter=true, removeUnreferencedFiles is NOT called.
+	// All files should remain.
+	for _, name := range []string{"pkg.spec", "sources", "57-pkg-fonts.xml", "58-pkg-lgc-fonts.xml"} {
+		exists, existsErr := fileutils.Exists(testFS, filepath.Join("/render", name))
+		require.NoError(t, existsErr)
+		assert.True(t, exists, "%s should be preserved when skip-file-filter is true", name)
+	}
+}
+
+func TestFindUnexpandedMacro(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		specFiles []string
+		want      string
+	}{
+		{
+			name:      "no macros",
+			specFiles: []string{"curl-8.0.tar.xz", "fix.patch"},
+			want:      "",
+		},
+		{
+			name:      "one unexpanded macro",
+			specFiles: []string{"curl-8.0.tar.xz", "57-%{fontpkgname1}.xml"},
+			want:      "57-%{fontpkgname1}.xml",
+		},
+		{
+			name: "returns first match",
+			specFiles: []string{
+				"good.tar.gz",
+				"57-%{fontpkgname1}.xml",
+				"58-%{fontpkgname4}.xml",
+			},
+			want: "57-%{fontpkgname1}.xml",
+		},
+		{
+			name:      "empty input",
+			specFiles: nil,
+			want:      "",
+		},
+		{
+			name:      "rust crates_source macro",
+			specFiles: []string{"%{crates_source}"},
+			want:      "%{crates_source}",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := findUnexpandedMacro(tc.specFiles)
+			assert.Equal(t, tc.want, result)
+		})
+	}
+}

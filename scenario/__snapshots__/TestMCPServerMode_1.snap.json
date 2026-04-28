@@ -78,6 +78,11 @@
        "description": "only enable minimal output",
        "type": "boolean"
       },
+      "skip-lock-validation": {
+       "default": true,
+       "description": "skip lock file consistency checks",
+       "type": "boolean"
+      },
       "spec-path": {
        "description": "Spec path",
        "type": "string"
@@ -164,6 +169,11 @@
       "quiet": {
        "default": false,
        "description": "only enable minimal output",
+       "type": "boolean"
+      },
+      "skip-lock-validation": {
+       "default": true,
+       "description": "skip lock file consistency checks",
        "type": "boolean"
       },
       "spec-path": {
@@ -547,6 +557,11 @@
       "quiet": {
        "default": false,
        "description": "only enable minimal output",
+       "type": "boolean"
+      },
+      "synthesize-debug-packages": {
+       "default": false,
+       "description": "Also synthesize '-debuginfo' packages (per reported package) and '-debugsource' packages (per component)",
        "type": "boolean"
       },
       "verbose": {

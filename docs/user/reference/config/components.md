@@ -9,10 +9,11 @@ A component definition tells azldev where to find the spec file, how to customiz
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
 | Spec source | `spec` | [SpecSource](#spec-source) | No | Where to find the spec file for this component. Inherited from distro defaults if not specified. |
+| Release config | `release` | [ReleaseConfig](#release-configuration) | No | Controls how the Release tag is managed during rendering |
 | Overlays | `overlays` | array of [Overlay](overlays.md) | No | Modifications to apply to the spec and/or source files |
 | Build config | `build` | [BuildConfig](#build-configuration) | No | Build-time options (macros, conditionals, check config) |
+| Render config | `render` | [RenderConfig](#render-configuration) | No | Options controlling spec rendering behavior |
 | Source files | `source-files` | array of [SourceFileReference](#source-file-references) | No | Additional source files to download for this component |
-| Default package config | `default-package-config` | [PackageConfig](package-groups.md#package-config) | No | Default configuration applied to all binary packages produced by this component; overrides project defaults and package-group defaults |
 | Package overrides | `packages` | map of string → [PackageConfig](package-groups.md#package-config) | No | Exact per-package configuration overrides; highest priority in the resolution order |
 
 ### Bare Components
@@ -96,6 +97,42 @@ spec = { type = "local", path = "azurelinux-release.spec" }
 ```
 
 The `path` is relative to the config file that defines the component. Local spec files and any associated source files should be placed alongside the component's `.comp.toml` file.
+
+## Release Configuration
+
+The `[components.<name>.release]` section controls how azldev manages the Release tag during rendering.
+
+| Field | TOML Key | Type | Required | Description |
+|-------|----------|------|----------|-------------|
+| Calculation | `calculation` | string | No | `"auto"` (default) = auto-bump; `"manual"` = skip all automatic Release manipulation |
+
+Most components use auto mode (the default) and need no release configuration. Set `calculation = "manual"` for components that manage their own release numbering, such as kernel:
+
+```toml
+[components.kernel.release]
+calculation = "manual"
+```
+
+## Render Configuration
+
+The `[components.<name>.render]` section controls rendering behavior for a component.
+
+| Field | TOML Key | Type | Required | Description |
+|-------|----------|------|----------|-------------|
+| Skip file filter | `skip-file-filter` | boolean | No | Disable post-render file filtering (defaults to `false`) |
+
+### Skip File Filter
+
+During rendering, azldev uses `spectool` to determine which files are referenced by `Source` and `Patch` tags in the spec, then removes unreferenced files from the rendered output. Some specs use dynamic macros (e.g., `%{fontpkgname1}`) that `spectool` cannot expand, causing it to report incorrect filenames. This results in referenced files being incorrectly removed.
+
+Set `skip-file-filter = true` to preserve all files from the dist-git checkout:
+
+```toml
+[components.dejavu-fonts.render]
+skip-file-filter = true
+```
+
+> **Note:** This should only be used for specs with macros that `spectool` cannot resolve. For most components, the default filtering behavior is correct and keeps the rendered output clean.
 
 ## Build Configuration
 
@@ -194,16 +231,7 @@ hints = { expensive = true }
 
 ## Package Configuration
 
-Components can customize the configuration for the binary packages they produce. There are two fields for this, applied at different levels of specificity.
-
-### Default Package Config
-
-The `default-package-config` field provides a component-level default that applies to **all** binary packages produced by this component. It overrides any matching [package groups](package-groups.md) but is itself overridden by the `packages` map.
-
-```toml
-[components.curl.default-package-config.publish]
-channel = "rpm-base"
-```
+Components can customize the configuration for the binary packages they produce using the `packages` map.
 
 ### Per-Package Overrides
 
@@ -212,7 +240,7 @@ The `[components.<name>.packages.<pkgname>]` map lets you override config for a 
 ```toml
 # Override just one subpackage
 [components.curl.packages.curl-devel.publish]
-channel = "rpm-devel"
+rpm-channel = "rpm-devel"
 ```
 
 ### Resolution Order
@@ -221,27 +249,40 @@ For each binary package produced by a component, the effective config is assembl
 
 1. Project `default-package-config`
 2. Package group containing this package name (if any)
-3. Component `default-package-config`
-4. Component `packages.<exact-name>` (highest priority)
+3. Component `packages.<exact-name>` (highest priority)
+
+The component's `[publish]` section provides default channels for all packages that don't have explicit overrides. See [Publish Settings](#publish-settings) for details.
 
 See [Package Groups](package-groups.md) for the full field reference and a complete example.
+
+### Publish Settings
+
+The `[components.<name>.publish]` section sets default publish channels for all packages produced by this component. These channels are inherited by every binary package unless overridden by a package-group or per-package setting.
+
+| Field | TOML Key | Type | Required | Description |
+|-------|----------|------|----------|-------------|
+| RPM Channel | `rpm-channel` | string | No | Default publish channel for binary (non-debuginfo) packages |
+| SRPM Channel | `srpm-channel` | string | No | Publish channel for the SRPM |
+| Debuginfo Channel | `debuginfo-channel` | string | No | Publish channel for debuginfo and debugsource packages |
 
 ### Example
 
 ```toml
 [components.curl]
 
-# Route all curl packages to "base" by default ...
-[components.curl.default-package-config.publish]
-channel = "rpm-base"
+# Set component-level default channels via publish
+[components.curl.publish]
+rpm-channel = "rpm-base"
+srpm-channel = "rpm-base-srpm"
+debuginfo-channel = "rpm-base-debuginfo"
 
 # ... but put curl-devel in the "devel" channel
 [components.curl.packages.libcurl-devel.publish]
-channel = "rpm-devel"
+rpm-channel = "rpm-devel"
 
 # Signal to downstream tooling that this package should not be published
 [components.curl.packages.libcurl-minimal.publish]
-channel = "none"
+rpm-channel = "none"
 ```
 
 ## Source File References

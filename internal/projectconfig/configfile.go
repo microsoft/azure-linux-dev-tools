@@ -6,6 +6,7 @@ package projectconfig
 import (
 	"fmt"
 	"net/url"
+	"os"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
@@ -46,6 +47,10 @@ type ConfigFile struct {
 	// Configuration for tools used by azldev.
 	Tools *ToolsConfig `toml:"tools,omitempty" jsonschema:"title=Tools configuration,description=Configuration for tools used by azldev"`
 
+	// DefaultComponentConfig is the project-wide default component configuration applied before any
+	// component-group or component-level config is considered.
+	DefaultComponentConfig *ComponentConfig `toml:"default-component-config,omitempty" jsonschema:"title=Default component config,description=Project-wide default applied to all components before group and component overrides"`
+
 	// DefaultPackageConfig is the project-wide default package configuration applied before any
 	// package-group or component-level config is considered.
 	DefaultPackageConfig *PackageConfig `toml:"default-package-config,omitempty" jsonschema:"title=Default package config,description=Project-wide default applied to all binary packages before group and component overrides"`
@@ -53,6 +58,9 @@ type ConfigFile struct {
 	// Definitions of package groups. Groups allow shared configuration
 	// to be applied to sets of binary packages.
 	PackageGroups map[string]PackageGroupConfig `toml:"package-groups,omitempty" validate:"dive" jsonschema:"title=Package groups,description=Definitions of package groups for shared binary package configuration"`
+
+	// Definitions of test suites.
+	TestSuites map[string]TestSuiteConfig `toml:"test-suites,omitempty" validate:"dive" jsonschema:"title=Test Suites,description=Definitions of test suites for this project"`
 
 	// Internal fields used to track the origin of the config file; `dir` is the directory
 	// that the config file's relative paths are based from.
@@ -85,6 +93,21 @@ func (f ConfigFile) Validate() error {
 		}
 	}
 
+	// Per-component snapshot timestamps are not allowed when lock validation is
+	// enabled. Components inherit the snapshot from the distro/group
+	// default-component-config or the project's default-distro. Per-component
+	// snapshots would create non-deterministic builds that the lock file cannot
+	// reliably track. Use an explicit 'upstream-commit' pin instead.
+	//
+	// Gated behind AZLDEV_ENABLE_LOCK_VALIDATION during rollout.
+	// NOTE: Once the env var gate is removed, snapshot rejection becomes
+	// unconditional — per-component snapshots are permanently disallowed.
+	// Do NOT move this into [ComponentFilter.SkipLockValidation]: the snapshot check
+	// must not be disableable post-rollout.
+	//nolint:godox // tracked by TODO(lockfiles) tag.
+	// TODO(lockfiles): remove env var gate; snapshot rejection becomes unconditional.
+	lockValidationEnabled := os.Getenv("AZLDEV_ENABLE_LOCK_VALIDATION") == "1"
+
 	// Validate overlay configurations for each component.
 	for componentName, component := range f.Components {
 		for i, overlay := range component.Overlays {
@@ -102,6 +125,30 @@ func (f ConfigFile) Validate() error {
 
 		if err := validateSourceFiles(component.SourceFiles, componentName); err != nil {
 			return err
+		}
+
+		if lockValidationEnabled && component.Spec.UpstreamDistro.Snapshot != "" {
+			return fmt.Errorf(
+				"component %#q has a per-component 'snapshot' on 'upstream-distro'; "+
+					"snapshots should be set on the distro or group default-component-config, "+
+					"or use 'upstream-commit' to pin a specific commit",
+				componentName)
+		}
+	}
+
+	// Validate test suite configurations.
+	for suiteName, suite := range f.TestSuites {
+		// Suite names are used as path components (e.g., for the per-suite venv directory),
+		// so reject anything that could escape the intended directory or otherwise be unsafe
+		// across platforms.
+		if err := fileutils.ValidateFilename(suiteName); err != nil {
+			return fmt.Errorf("invalid test suite name %#q:\n%w", suiteName, err)
+		}
+
+		suite.Name = suiteName
+
+		if err := suite.Validate(); err != nil {
+			return fmt.Errorf("invalid test suite %#q:\n%w", suiteName, err)
 		}
 	}
 

@@ -6,11 +6,13 @@ binary-package configuration for your project without running a build.
 ## Background
 
 Binary package configuration in azldev is assembled from up to four layers
-(see [Package Groups](../reference/config/package-groups.md) for details):
+(see [Package Groups](../reference/config/package-groups.md) and
+[Config System](../explanation/config-system.md) for details):
 
-1. Project `default-package-config`
-2. Package group `default-package-config`
-3. Component `default-package-config`
+1. Project `default-package-config` (lowest priority)
+2. Component `publish` channel settings (`publish.rpm-channel`, `publish.debuginfo-channel`) —
+   themselves resolved from distro defaults → project defaults → component-group defaults → component config
+3. Package group `default-package-config`
 4. Component `packages.<name>` override (highest priority)
 
 `azldev package list` resolves all of these layers and prints the effective

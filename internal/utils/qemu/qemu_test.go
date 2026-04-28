@@ -469,6 +469,44 @@ func TestRun(t *testing.T) {
 			wantErr:        true,
 			wantErrContain: "failed to run VM in QEMU",
 		},
+		{
+			name: "VM with install ISO boots ISO first",
+			options: qemu.RunOptions{
+				Arch:           qemu.ArchX86_64,
+				FirmwarePath:   "/usr/share/OVMF/OVMF_CODE.fd",
+				NVRAMPath:      "/tmp/nvram.fd",
+				DiskPath:       "/images/disk.qcow2",
+				DiskType:       "qcow2",
+				InstallISOPath: "/tmp/installer.iso",
+				SecureBoot:     false,
+				SSHPort:        2222,
+				CPUs:           2,
+				Memory:         "2G",
+			},
+			wantArgsContain: []string{
+				"qemu-system-x86_64",
+				"if=none,id=installcd,file=/tmp/installer.iso,media=cdrom,readonly=on",
+				"scsi-cd,drive=installcd,bootindex=1",
+				"scsi-hd,drive=hd,bootindex=2",
+			},
+		},
+		{
+			name: "VM without install ISO boots disk first",
+			options: qemu.RunOptions{
+				Arch:         qemu.ArchX86_64,
+				FirmwarePath: "/usr/share/OVMF/OVMF_CODE.fd",
+				NVRAMPath:    "/tmp/nvram.fd",
+				DiskPath:     "/images/disk.qcow2",
+				DiskType:     "qcow2",
+				SecureBoot:   false,
+				SSHPort:      2222,
+				CPUs:         2,
+				Memory:       "2G",
+			},
+			wantArgsContain: []string{
+				"scsi-hd,drive=hd,bootindex=1",
+			},
+		},
 	}
 
 	for _, testCase := range tests {
@@ -649,4 +687,91 @@ func argsToString(args []string) string {
 	}
 
 	return result
+}
+
+func TestCreateEmptyQcow2(t *testing.T) {
+	t.Parallel()
+
+	t.Run("invokes qemu-img with expected args", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := testctx.NewCtx()
+
+		var capturedArgs []string
+
+		ctx.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+			capturedArgs = cmd.Args
+
+			return nil
+		}
+
+		runner := qemu.NewRunner(ctx)
+		err := runner.CreateEmptyQcow2(context.Background(), "/tmp/disk.qcow2", "10G")
+		require.NoError(t, err)
+
+		require.NotEmpty(t, capturedArgs)
+		assert.Equal(t, "qemu-img", capturedArgs[0])
+		assert.Equal(t, []string{"qemu-img", "create", "-f", "qcow2", "/tmp/disk.qcow2", "10G"}, capturedArgs)
+	})
+
+	t.Run("propagates errors", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := testctx.NewCtx()
+		ctx.CmdFactory.RunHandler = func(_ *exec.Cmd) error {
+			return errors.New("disk full")
+		}
+
+		runner := qemu.NewRunner(ctx)
+		err := runner.CreateEmptyQcow2(context.Background(), "/tmp/disk.qcow2", "10G")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to create empty qcow2 disk image")
+	})
+
+	t.Run("surfaces qemu-img stderr on failure", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := testctx.NewCtx()
+		ctx.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+			if cmd.Stderr != nil {
+				_, _ = cmd.Stderr.Write([]byte("qemu-img: unable to allocate disk\n"))
+			}
+
+			return errors.New("exit status 1")
+		}
+
+		runner := qemu.NewRunner(ctx)
+		err := runner.CreateEmptyQcow2(context.Background(), "/tmp/disk.qcow2", "10G")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "qemu-img: unable to allocate disk")
+		assert.Contains(t, err.Error(), "failed to create empty qcow2 disk image")
+	})
+}
+
+func TestCheckQEMUImgPrerequisite(t *testing.T) {
+	t.Parallel()
+
+	t.Run("qemu-img available", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := testctx.NewCtx()
+		ctx.CmdFactory.RegisterCommandInSearchPath("qemu-img")
+		ctx.DryRunValue = true
+
+		err := qemu.CheckQEMUImgPrerequisite(ctx)
+		require.NoError(t, err)
+	})
+
+	t.Run("qemu-img missing", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := testctx.NewCtx()
+		ctx.DryRunValue = true
+		ctx.PromptsAllowedValue = false
+		ctx.AllPromptsAcceptedValue = false
+
+		err := qemu.CheckQEMUImgPrerequisite(ctx)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "'qemu-img' prerequisite check failed")
+	})
 }

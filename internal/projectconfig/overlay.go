@@ -10,6 +10,8 @@ import (
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/brunoga/deep"
+	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 )
 
 // ComponentOverlay represents an overlay that may be applied to a component's spec and/or its sources.
@@ -39,7 +41,47 @@ type ComponentOverlay struct {
 	// For overlays that require a source file as input, indicates a path to that file; relative paths are relative to
 	// the config file that defines the overlay. For `file-add` overlays, this defaults to the value of `file` when
 	// omitted.
-	Source string `toml:"source,omitempty" json:"source,omitempty" jsonschema:"title=Source,description=For overlays that require a source file as input, indicates a path to that file; relative paths are relative to the config file that defines the overlay. For file-add overlays, defaults to the value of file when omitted."`
+	// Excluded from fingerprint because it contains an absolute path that varies by checkout
+	// location. Overlay content is hashed separately by [fingerprint.ComputeIdentity].
+	Source string `toml:"source,omitempty" json:"source,omitempty" jsonschema:"title=Source,description=For overlays that require a source file as input, indicates a path to that file; relative paths are relative to the config file that defines the overlay. For file-add overlays, defaults to the value of file when omitted." fingerprint:"-"`
+}
+
+// EffectiveSourceName returns the checkout-independent identity of the overlay's
+// source file. When [ComponentOverlay.Filename] is set it takes precedence;
+// otherwise the basename of [ComponentOverlay.Source] is used (this matches the
+// runtime behavior in the overlay application layer, e.g., patch-add derives its
+// destination filename from the source basename).
+//
+// Returns empty string if the overlay has no source file.
+func (c *ComponentOverlay) EffectiveSourceName() string {
+	if c.Source == "" {
+		return ""
+	}
+
+	if c.Filename != "" {
+		return c.Filename
+	}
+
+	return filepath.Base(c.Source)
+}
+
+// SourceContentIdentity returns an opaque identity string for the overlay's source
+// file, combining the effective destination filename and a SHA256 content hash.
+// Returns empty string and nil error if the overlay has no source file.
+// Used by [fingerprint.ComputeIdentity] so that fingerprint logic does not need
+// overlay-specific knowledge.
+func (c *ComponentOverlay) SourceContentIdentity(fs opctx.FS) (string, error) {
+	name := c.EffectiveSourceName()
+	if name == "" {
+		return "", nil
+	}
+
+	contentHash, err := fileutils.ComputeFileHash(fs, fileutils.HashTypeSHA256, c.Source)
+	if err != nil {
+		return "", fmt.Errorf("hashing overlay source %#q:\n%w", c.Source, err)
+	}
+
+	return name + ":" + contentHash, nil
 }
 
 // WithAbsolutePaths returns a copy of the overlay with config-relative file paths converted to absolute

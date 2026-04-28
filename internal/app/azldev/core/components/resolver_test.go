@@ -36,6 +36,9 @@ func setupTestSpec(t *testing.T, testEnv *testutils.TestEnv, path string) projec
 			SourceType: projectconfig.SpecSourceTypeLocal,
 			Path:       path,
 		},
+		Release: projectconfig.ReleaseConfig{
+			Calculation: projectconfig.ReleaseCalculationAuto,
+		},
 	}
 }
 
@@ -43,7 +46,12 @@ func setupTestSpec(t *testing.T, testEnv *testutils.TestEnv, path string) projec
 func addTestComponentToConfig(t *testing.T, env *testutils.TestEnv) projectconfig.ComponentConfig {
 	t.Helper()
 
-	component := projectconfig.ComponentConfig{Name: "test-component"}
+	component := projectconfig.ComponentConfig{
+		Name: "test-component",
+		Release: projectconfig.ReleaseConfig{
+			Calculation: projectconfig.ReleaseCalculationAuto,
+		},
+	}
 
 	env.Config.Components[component.Name] = component
 
@@ -241,6 +249,9 @@ func TestFindAllComponents_MergesComponentPresentBySpecAndConfig(t *testing.T) {
 		Spec: projectconfig.SpecSource{
 			SourceType: projectconfig.SpecSourceTypeLocal,
 			Path:       testSpecPath,
+		},
+		Release: projectconfig.ReleaseConfig{
+			Calculation: projectconfig.ReleaseCalculationAuto,
 		},
 	}
 
@@ -553,6 +564,89 @@ func TestApplyInheritedDefaults_NoGroupMembership(t *testing.T) {
 
 	resolved := result.Components()[0].GetConfig()
 	assert.Contains(t, resolved.Build.With, "my-feature")
+}
+
+func TestApplyInheritedDefaults_ProjectDefault(t *testing.T) {
+	// The project-level DefaultComponentConfig should be applied as the
+	// lowest-priority layer, before distro and group defaults.
+	env := testutils.NewTestEnv(t)
+
+	// Set project-level defaults.
+	env.Config.DefaultComponentConfig = projectconfig.ComponentConfig{
+		Build: projectconfig.ComponentBuildConfig{
+			Without: []string{"docs"},
+		},
+		Publish: projectconfig.ComponentPublishConfig{
+			RPMChannel:  "rpms-sdk",
+			SRPMChannel: "rpms-sdk-srpm",
+		},
+	}
+
+	component := projectconfig.ComponentConfig{
+		Name: "my-comp",
+		Build: projectconfig.ComponentBuildConfig{
+			With: []string{"feature-x"},
+		},
+	}
+	env.Config.Components[component.Name] = component
+
+	filter := &components.ComponentFilter{IncludeAllComponents: true}
+
+	result, err := components.NewResolver(env.Env).FindComponents(filter)
+	require.NoError(t, err)
+	require.Len(t, result.Components(), 1)
+
+	resolved := result.Components()[0].GetConfig()
+
+	// Component's own With should be present.
+	assert.Contains(t, resolved.Build.With, "feature-x")
+	// Project default Without should be inherited.
+	assert.Contains(t, resolved.Build.Without, "docs")
+	// Project default publish config should be inherited.
+	assert.Equal(t, "rpms-sdk", resolved.Publish.RPMChannel)
+	assert.Equal(t, "rpms-sdk-srpm", resolved.Publish.SRPMChannel)
+}
+
+func TestApplyInheritedDefaults_ProjectDefaultOverriddenByGroup(t *testing.T) {
+	// Group defaults should override project defaults, and the component's own
+	// config should override everything.
+	env := testutils.NewTestEnv(t)
+
+	env.Config.DefaultComponentConfig = projectconfig.ComponentConfig{
+		Publish: projectconfig.ComponentPublishConfig{
+			RPMChannel:       "rpms-sdk",
+			SRPMChannel:      "rpms-sdk-srpm",
+			DebugInfoChannel: "rpms-sdk-debuginfo",
+		},
+	}
+
+	env.Config.ComponentGroups["base-group"] = projectconfig.ComponentGroupConfig{
+		Components: []string{"my-comp"},
+		DefaultComponentConfig: projectconfig.ComponentConfig{
+			Publish: projectconfig.ComponentPublishConfig{
+				RPMChannel:  "rpms-base",
+				SRPMChannel: "rpms-base-srpm",
+			},
+		},
+	}
+	env.Config.GroupsByComponent["my-comp"] = []string{"base-group"}
+
+	component := projectconfig.ComponentConfig{Name: "my-comp"}
+	env.Config.Components[component.Name] = component
+
+	filter := &components.ComponentFilter{IncludeAllComponents: true}
+
+	result, err := components.NewResolver(env.Env).FindComponents(filter)
+	require.NoError(t, err)
+	require.Len(t, result.Components(), 1)
+
+	resolved := result.Components()[0].GetConfig()
+
+	// Group overrides project default for RPM and SRPM channels.
+	assert.Equal(t, "rpms-base", resolved.Publish.RPMChannel)
+	assert.Equal(t, "rpms-base-srpm", resolved.Publish.SRPMChannel)
+	// Project default is inherited for DebugInfoChannel (not overridden by group).
+	assert.Equal(t, "rpms-sdk-debuginfo", resolved.Publish.DebugInfoChannel)
 }
 
 func TestFindAllSpecPaths_Nothing(t *testing.T) {

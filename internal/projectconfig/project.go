@@ -26,6 +26,11 @@ type ProjectConfig struct {
 	// Configuration for tools used by azldev.
 	Tools ToolsConfig `toml:"tools,omitempty" json:"tools,omitempty" jsonschema:"title=Tools configuration,description=Configuration for tools used by azldev"`
 
+	// DefaultComponentConfig is the project-wide default applied to every component before any
+	// component-group or component-level config is considered. It is the lowest-priority layer in
+	// the component publish config resolution order.
+	DefaultComponentConfig ComponentConfig `toml:"default-component-config,omitempty" json:"defaultComponentConfig,omitempty" jsonschema:"title=Default component config,description=Project-wide default applied to all components before group and component overrides"`
+
 	// DefaultPackageConfig is the project-wide default applied to every binary package before any
 	// package-group or component-level config is considered. It is the lowest-priority layer in the
 	// package config resolution order.
@@ -33,6 +38,9 @@ type ProjectConfig struct {
 
 	// Definitions of package groups with shared configuration.
 	PackageGroups map[string]PackageGroupConfig `toml:"package-groups,omitempty" json:"packageGroups,omitempty" jsonschema:"title=Package groups,description=Mapping of package group names to configurations for publish-time routing"`
+
+	// Definitions of test suites.
+	TestSuites map[string]TestSuiteConfig `toml:"test-suites,omitempty" json:"testSuites,omitempty" jsonschema:"title=Test Suites,description=Mapping of test suite names to configurations"`
 
 	// Root config file path; not serialized.
 	RootConfigFilePath string `toml:"-" json:"-"`
@@ -50,6 +58,7 @@ func NewProjectConfig() ProjectConfig {
 		Distros:           make(map[string]DistroDefinition),
 		GroupsByComponent: make(map[string][]string),
 		PackageGroups:     make(map[string]PackageGroupConfig),
+		TestSuites:        make(map[string]TestSuiteConfig),
 	}
 }
 
@@ -61,6 +70,10 @@ func (cfg *ProjectConfig) Validate() error {
 	}
 
 	if err := validatePackageGroupMembership(cfg.PackageGroups); err != nil {
+		return err
+	}
+
+	if err := validateImageTestReferences(cfg.Images, cfg.TestSuites); err != nil {
 		return err
 	}
 
@@ -90,6 +103,24 @@ func validatePackageGroupMembership(groups map[string]PackageGroupConfig) error 
 	return nil
 }
 
+// validateImageTestReferences checks that every test suite name in an image's
+// [ImageConfig.Tests.TestSuites] list corresponds to a defined entry in the top-level
+// TestSuites map.
+func validateImageTestReferences(images map[string]ImageConfig, testSuites map[string]TestSuiteConfig) error {
+	for imageName, image := range images {
+		for _, suiteName := range image.TestNames() {
+			if _, ok := testSuites[suiteName]; !ok {
+				return fmt.Errorf(
+					"%w: image %#q references test suite %#q, which is not defined in [test-suites]",
+					ErrUndefinedTestSuite, imageName, suiteName,
+				)
+			}
+		}
+	}
+
+	return nil
+}
+
 // Basic information regarding a project.
 type ProjectInfo struct {
 	// Human-readable description of this project.
@@ -104,6 +135,9 @@ type ProjectInfo struct {
 
 	// Path to the output directory for rendered specs (component render).
 	RenderedSpecsDir string `toml:"rendered-specs-dir,omitempty" json:"renderedSpecsDir,omitempty" jsonschema:"title=Rendered Specs Directory,description=Output directory for rendered specs,example=SPECS"`
+
+	// Path to the directory for per-component lock files.
+	LockDir string `toml:"lock-dir,omitempty" json:"lockDir,omitempty" jsonschema:"title=Lock Directory,description=Directory for per-component lock files,default=locks"`
 
 	// Default-selected distro. May be overridden at runtime.
 	DefaultDistro DistroReference `toml:"default-distro,omitempty" json:"defaultDistro,omitempty" jsonschema:"title=Default Distro,description=Default selected distro reference"`
@@ -137,6 +171,7 @@ func (p *ProjectInfo) WithAbsolutePaths(referenceDir string) *ProjectInfo {
 	result.WorkDir = makeAbsolute(referenceDir, result.WorkDir)
 	result.OutputDir = makeAbsolute(referenceDir, result.OutputDir)
 	result.RenderedSpecsDir = makeAbsolute(referenceDir, result.RenderedSpecsDir)
+	result.LockDir = makeAbsolute(referenceDir, result.LockDir)
 
 	return result
 }

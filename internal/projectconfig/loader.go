@@ -42,6 +42,7 @@ func loadAndResolveProjectConfig(
 		Distros:           make(map[string]DistroDefinition),
 		GroupsByComponent: make(map[string][]string),
 		PackageGroups:     make(map[string]PackageGroupConfig),
+		TestSuites:        make(map[string]TestSuiteConfig),
 	}
 
 	for _, configFilePath := range configFilePaths {
@@ -119,11 +120,19 @@ func mergeConfigFile(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
 		return err
 	}
 
+	if err := mergeDefaultComponentConfig(resolvedCfg, loadedCfg); err != nil {
+		return err
+	}
+
 	if err := mergeDefaultPackageConfig(resolvedCfg, loadedCfg); err != nil {
 		return err
 	}
 
 	if err := mergePackageGroups(resolvedCfg, loadedCfg); err != nil {
+		return err
+	}
+
+	if err := mergeTestSuites(resolvedCfg, loadedCfg); err != nil {
 		return err
 	}
 
@@ -236,6 +245,19 @@ func mergeDefaultPackageConfig(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile
 	return nil
 }
 
+// mergeDefaultComponentConfig merges the project-level default component config from a loaded
+// config file into the resolved config.
+func mergeDefaultComponentConfig(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
+	if loadedCfg.DefaultComponentConfig != nil {
+		absConfig := loadedCfg.DefaultComponentConfig.WithAbsolutePaths(loadedCfg.dir)
+		if err := resolvedCfg.DefaultComponentConfig.MergeUpdatesFrom(absConfig); err != nil {
+			return fmt.Errorf("failed to merge project default component config:\n%w", err)
+		}
+	}
+
+	return nil
+}
+
 // mergePackageGroups merges package group definitions from a loaded config file into
 // the resolved config. Duplicate package group names are not allowed.
 func mergePackageGroups(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
@@ -245,6 +267,24 @@ func mergePackageGroups(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error
 		}
 
 		resolvedCfg.PackageGroups[groupName] = group
+	}
+
+	return nil
+}
+
+// mergeTestSuites merges test suite definitions from a loaded config file into the
+// resolved config. Duplicate test suite names are not allowed.
+func mergeTestSuites(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
+	for suiteName, suite := range loadedCfg.TestSuites {
+		if _, ok := resolvedCfg.TestSuites[suiteName]; ok {
+			return fmt.Errorf("%w: test suite %#q", ErrDuplicateTestSuites, suiteName)
+		}
+
+		// Fill out fields not explicitly serialized.
+		suite.Name = suiteName
+		suite.SourceConfigFile = loadedCfg
+
+		resolvedCfg.TestSuites[suiteName] = *(suite.WithAbsolutePaths(loadedCfg.dir))
 	}
 
 	return nil

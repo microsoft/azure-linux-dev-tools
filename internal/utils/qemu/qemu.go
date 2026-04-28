@@ -5,12 +5,14 @@
 package qemu
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/prereqs"
@@ -77,16 +79,22 @@ func NewRunner(ctx opctx.Ctx) *Runner {
 
 // RunOptions contains configuration for running a QEMU VM.
 type RunOptions struct {
-	Arch             string
-	FirmwarePath     string
-	NVRAMPath        string
-	DiskPath         string
-	DiskType         string
+	Arch         string
+	FirmwarePath string
+	NVRAMPath    string
+	DiskPath     string
+	DiskType     string
+	// CloudInitISOPath is an optional cloud-init NoCloud seed ISO. When set, it is
+	// attached as a non-bootable IDE CD-ROM, independent of any install ISO.
 	CloudInitISOPath string
-	SecureBoot       bool
-	SSHPort          int
-	CPUs             int
-	Memory           string
+	// InstallISOPath is an optional ISO to boot from (e.g., a livecd or installer).
+	// When set, it is attached as a bootable SCSI CD-ROM with bootindex=1 so the VM
+	// boots from the ISO first; the disk receives bootindex=2.
+	InstallISOPath string
+	SecureBoot     bool
+	SSHPort        int
+	CPUs           int
+	Memory         string
 }
 
 // Run starts a QEMU VM with the specified options.
@@ -120,8 +128,34 @@ func (r *Runner) Run(ctx context.Context, options RunOptions) error {
 		"-drive", "if=pflash,format=raw,unit=1,file="+options.NVRAMPath,
 		"-drive", fmt.Sprintf("if=none,id=hd,file=%s,format=%s", options.DiskPath, options.DiskType),
 		"-device", "virtio-scsi-pci,id=scsi",
-		"-device", "scsi-hd,drive=hd,bootindex=1",
-		"-cdrom", options.CloudInitISOPath,
+	)
+
+	// Boot order: when an install/live ISO is attached, it boots first (bootindex=1)
+	// and the disk follows (bootindex=2). Otherwise, the disk boots first.
+	diskBootIndex := 1
+	if options.InstallISOPath != "" {
+		diskBootIndex = 2
+	}
+
+	qemuArgs = append(qemuArgs,
+		"-device", fmt.Sprintf("scsi-hd,drive=hd,bootindex=%d", diskBootIndex),
+	)
+
+	if options.InstallISOPath != "" {
+		qemuArgs = append(qemuArgs,
+			"-drive", fmt.Sprintf("if=none,id=installcd,file=%s,media=cdrom,readonly=on", options.InstallISOPath),
+			"-device", "scsi-cd,drive=installcd,bootindex=1",
+		)
+	}
+
+	// Attach the cloud-init seed ISO (if any) as a separate non-bootable IDE CD-ROM.
+	// It coexists with an install ISO on a different bus. Whether the booted system
+	// honors it is a runtime concern (cloud-init must be installed and enabled).
+	if options.CloudInitISOPath != "" {
+		qemuArgs = append(qemuArgs, "-cdrom", options.CloudInitISOPath)
+	}
+
+	qemuArgs = append(qemuArgs,
 		"-netdev", fmt.Sprintf("user,id=n1,hostfwd=tcp::%d-:22", options.SSHPort),
 		"-device", "virtio-net-pci,netdev=n1",
 		"-nographic", "-serial", "mon:stdio",
@@ -234,6 +268,46 @@ func CheckPrerequisites(ctx opctx.Ctx, arch string) error {
 
 	if err := prereqs.RequireExecutable(ctx, "sudo", nil); err != nil {
 		return fmt.Errorf("sudo prerequisite check failed:\n%w", err)
+	}
+
+	return nil
+}
+
+// CheckQEMUImgPrerequisite verifies that the 'qemu-img' tool is available.
+func CheckQEMUImgPrerequisite(ctx opctx.Ctx) error {
+	if err := prereqs.RequireExecutable(ctx, "qemu-img", &prereqs.PackagePrereq{
+		AzureLinuxPackages: []string{"qemu-img"},
+		FedoraPackages:     []string{"qemu-img"},
+	}); err != nil {
+		return fmt.Errorf("'qemu-img' prerequisite check failed:\n%w", err)
+	}
+
+	return nil
+}
+
+// CreateEmptyQcow2 creates an empty qcow2 disk image at the given path with the specified size.
+// The size should be a QEMU-compatible size string (e.g., "10G", "512M").
+func (r *Runner) CreateEmptyQcow2(ctx context.Context, path, size string) error {
+	createCmd := exec.CommandContext(ctx, "qemu-img", "create", "-f", "qcow2", path, size)
+
+	var stderr bytes.Buffer
+
+	createCmd.Stderr = &stderr
+
+	cmd, err := r.cmdFactory.Command(createCmd)
+	if err != nil {
+		return fmt.Errorf("failed to create qemu-img command:\n%w", err)
+	}
+
+	err = cmd.Run(ctx)
+	if err != nil {
+		stderrText := strings.TrimSpace(stderr.String())
+		if stderrText != "" {
+			return fmt.Errorf("failed to create empty qcow2 disk image (qemu-img stderr: %s):\n%w",
+				stderrText, err)
+		}
+
+		return fmt.Errorf("failed to create empty qcow2 disk image:\n%w", err)
 	}
 
 	return nil

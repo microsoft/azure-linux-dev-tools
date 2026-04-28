@@ -57,7 +57,12 @@ specs/v/vim).
 
 Unlike prepare-sources, render skips downloading source tarballs from the
 lookaside cache — only spec files, patches, scripts, and other git-tracked
-sidecar files are included. Multiple components can be rendered at once.`,
+sidecar files are included. Multiple components can be rendered at once.
+
+When rendering all components (-a), the --clean-stale flag removes rendered
+directories that no longer correspond to any current component. Stale cleanup
+is skipped when rendering individual components to avoid accidentally removing
+directories for components not included in the filter.`,
 		Example: `  # Render all components (output dir from config)
   azldev component render -a
 
@@ -636,7 +641,16 @@ func finishComponentRender(
 	}
 
 	// Filter files using spectool result from batch mock.
-	if filterErr := removeUnreferencedFiles(
+	// Skip filtering when:
+	// 1. The component config explicitly opts out via 'skip-file-filter'.
+	// 2. spectool output contains unexpanded RPM macros (%{...}), indicating
+	//    that the reported filenames don't match the real files on disk.
+	if prep.comp.GetConfig().Render.SkipFileFilter {
+		slog.Info("Skipping file filter ('skip-file-filter' is set)", "component", componentName)
+	} else if macro := findUnexpandedMacro(mockResult.SpecFiles); macro != "" {
+		slog.Info("Skipping file filter (spectool output contains unexpanded macros)",
+			"component", componentName, "example", macro)
+	} else if filterErr := removeUnreferencedFiles(
 		env.FS(), componentDir, specPath, mockResult.SpecFiles, componentName,
 	); filterErr != nil {
 		return fmt.Errorf("filtering unreferenced files for %#q:\n%w", componentName, filterErr)
@@ -698,6 +712,21 @@ func copyRenderedOutput(env *azldev.Env, tempDir, componentOutputDir string, all
 	}
 
 	return nil
+}
+
+// findUnexpandedMacro returns the first filename from specFiles that contains
+// an unexpanded RPM macro (i.e., a literal "%{...}" sequence), or "" if all
+// macros were resolved. When spectool cannot resolve a macro, it emits the raw
+// macro text as part of the filename (e.g., "57-%{fontpkgname1}.xml"), which
+// won't match any real file on disk.
+func findUnexpandedMacro(specFiles []string) string {
+	for _, f := range specFiles {
+		if strings.Contains(f, "%{") {
+			return f
+		}
+	}
+
+	return ""
 }
 
 // removeUnreferencedFiles removes files from the directory that aren't in the keep-list.
