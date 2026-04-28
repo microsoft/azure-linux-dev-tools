@@ -25,15 +25,15 @@ When `type = "pytest"`, a `[test-suites.<name>.pytest]` subtable must be provide
 | Working directory | `working-dir` | string | No | Directory used as pytest's CWD. Relative paths are resolved against the config file's directory. Required when `install` is `pyproject` or `requirements`. |
 | Test paths | `test-paths` | array of strings | No | Test file paths or directories passed to pytest as positional arguments. Each entry is glob-expanded (including recursive `**`) relative to `working-dir`. Patterns that match nothing are passed through unchanged so pytest reports the failure. |
 | Extra args | `extra-args` | array of strings | No | Additional arguments passed to pytest verbatim, after placeholder substitution. See [Placeholders](#placeholders). |
-| Install mode | `install` | string | No | How dependencies are installed into the venv. One of `pyproject` (default), `requirements`, or `none`. |
+| Install mode | `install` | string | No | How dependencies are installed into the venv. One of `pyproject`, `requirements`, or `none` (default). |
 
 ### Install modes
 
 | Mode | Behavior |
 |------|----------|
-| `pyproject` (default) | Installs the project at `working-dir` in editable mode (`pip install -e <working-dir>`). Errors if `pyproject.toml` is not present. |
+| `pyproject` | Installs the project at `working-dir` in editable mode (`pip install -e <working-dir>`). Errors if `pyproject.toml` is not present. |
 | `requirements` | Installs from `<working-dir>/requirements.txt`. Errors if the file is not present. |
-| `none` | Skips dependency installation entirely. Use when the venv has been pre-populated or pytest is otherwise on `PATH`. |
+| `none` (default) | Skips dependency installation entirely. Use when the venv has been pre-populated or pytest is otherwise on `PATH`. |
 
 `--junit-xml` output requested via the `azldev image test --junit-xml <path>` CLI flag is appended automatically; you do not need to add it to `extra-args`. Relative `--junit-xml` paths are resolved against the user's current working directory (not the test suite's `working-dir`).
 
@@ -76,14 +76,26 @@ test-paths = ["**/test_*.py"]
 extra-args = ["--image-name", "{image-name}"]
 ```
 
-### Suite with no dependency install
+### Suite that installs from `pyproject.toml`
+
+```toml
+[test-suites.integration-pyproject]
+type = "pytest"
+
+[test-suites.integration-pyproject.pytest]
+working-dir = "tests/integration"
+install = "pyproject"
+test-paths = ["cases/test_*.py"]
+```
+
+### Suite with no dependency install (default)
 
 ```toml
 [test-suites.preinstalled]
 type = "pytest"
 
 [test-suites.preinstalled.pytest]
-install = "none"
+# install defaults to "none" — pytest must already be available.
 test-paths = ["/opt/preinstalled-tests/test_*.py"]
 ```
 

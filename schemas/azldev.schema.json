@@ -821,7 +821,7 @@
             "none"
           ],
           "title": "Install mode",
-          "description": "How to install Python dependencies: pyproject (default), requirements, or none"
+          "description": "How to install Python dependencies: pyproject, requirements, or none (default)"
         }
       },
       "additionalProperties": false,

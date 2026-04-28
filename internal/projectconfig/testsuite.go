@@ -61,12 +61,13 @@ type PytestInstallMode string
 const (
 	// PytestInstallPyproject installs dependencies from pyproject.toml using editable mode.
 	// Returns an error if pyproject.toml is not found in the working directory.
-	// This is the default when [PytestConfig.Install] is not specified.
 	PytestInstallPyproject PytestInstallMode = "pyproject"
 	// PytestInstallRequirements installs dependencies from requirements.txt.
 	// Returns an error if requirements.txt is not found.
 	PytestInstallRequirements PytestInstallMode = "requirements"
-	// PytestInstallNone skips dependency installation entirely.
+	// PytestInstallNone skips dependency installation entirely. This is the default
+	// when [PytestConfig.Install] is not specified — pytest must already be available
+	// in the venv (e.g., pre-installed, or installed by the test author out-of-band).
 	PytestInstallNone PytestInstallMode = "none"
 )
 
@@ -86,8 +87,8 @@ type PytestConfig struct {
 	ExtraArgs []string `toml:"extra-args,omitempty" json:"extraArgs,omitempty" jsonschema:"title=Extra arguments,description=Additional arguments passed to pytest. Use {image-path} as a placeholder for the image path."`
 
 	// Install specifies how Python dependencies are installed into the venv before running
-	// pytest. Defaults to "pyproject" when not specified.
-	Install PytestInstallMode `toml:"install,omitempty" json:"install,omitempty" jsonschema:"enum=pyproject,enum=requirements,enum=none,title=Install mode,description=How to install Python dependencies: pyproject (default)\\, requirements\\, or none"`
+	// pytest. Defaults to "none" (no install) when not specified.
+	Install PytestInstallMode `toml:"install,omitempty" json:"install,omitempty" jsonschema:"enum=pyproject,enum=requirements,enum=none,title=Install mode,description=How to install Python dependencies: pyproject\\, requirements\\, or none (default)"`
 }
 
 // Validate checks that the test suite config has valid type-specific required fields and that
@@ -128,14 +129,13 @@ func (p *PytestConfig) Validate() error {
 			"%w: %#q; allowed values: %#q, %#q, %#q (or omit for default %#q)",
 			ErrInvalidInstallMode, p.Install,
 			PytestInstallPyproject, PytestInstallRequirements, PytestInstallNone,
-			PytestInstallPyproject,
+			PytestInstallNone,
 		)
 	}
 
-	// Whenever the effective install mode requires a working directory, 'working-dir'
-	// must be specified. Checking the *effective* mode (rather than only the explicitly
-	// set value) ensures the default mode (pyproject) is also covered, so a config that
-	// would inevitably fail at runtime is rejected early with a clear message.
+	// When the effective install mode requires a working directory, 'working-dir'
+	// must be specified. The default mode is 'none' (no install) and so requires
+	// nothing; only an explicitly-set install mode that performs work needs the dir.
 	if p.EffectiveInstallMode() != PytestInstallNone && p.WorkingDir == "" {
 		return fmt.Errorf(
 			"%w: 'working-dir' is required when install mode is %#q",
@@ -146,11 +146,11 @@ func (p *PytestConfig) Validate() error {
 	return nil
 }
 
-// EffectiveInstallMode returns the install mode, defaulting to [PytestInstallPyproject] when
+// EffectiveInstallMode returns the install mode, defaulting to [PytestInstallNone] when
 // the field is not set.
 func (p *PytestConfig) EffectiveInstallMode() PytestInstallMode {
 	if p.Install == "" {
-		return PytestInstallPyproject
+		return PytestInstallNone
 	}
 
 	return p.Install

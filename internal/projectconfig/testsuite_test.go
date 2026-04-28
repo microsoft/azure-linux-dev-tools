@@ -158,8 +158,8 @@ func TestTestSuiteConfig_Validate(t *testing.T) {
 		assert.NoError(t, testConfig.Validate())
 	})
 
-	t.Run("default install without working-dir is rejected", func(t *testing.T) {
-		// Default mode is 'pyproject', which requires a working directory.
+	t.Run("default install without working-dir is valid", func(t *testing.T) {
+		// Default mode is 'none' (no install) and so doesn't require working-dir.
 		testConfig := projectconfig.TestSuiteConfig{
 			Name:   "smoke",
 			Type:   projectconfig.TestTypePytest,
@@ -167,10 +167,7 @@ func TestTestSuiteConfig_Validate(t *testing.T) {
 				// Both Install and WorkingDir omitted.
 			},
 		}
-		err := testConfig.Validate()
-		require.Error(t, err)
-		require.ErrorIs(t, err, projectconfig.ErrMissingTestField)
-		assert.Contains(t, err.Error(), "working-dir")
+		assert.NoError(t, testConfig.Validate())
 	})
 
 	t.Run("pytest missing subtable", func(t *testing.T) {
@@ -207,14 +204,14 @@ func TestTestSuiteConfig_Validate(t *testing.T) {
 }
 
 func TestPytestConfig_EffectiveInstallMode(t *testing.T) {
-	t.Run("default is pyproject", func(t *testing.T) {
+	t.Run("default is none", func(t *testing.T) {
 		cfg := &projectconfig.PytestConfig{}
-		assert.Equal(t, projectconfig.PytestInstallPyproject, cfg.EffectiveInstallMode())
+		assert.Equal(t, projectconfig.PytestInstallNone, cfg.EffectiveInstallMode())
 	})
 
 	t.Run("explicit mode is preserved", func(t *testing.T) {
-		cfg := &projectconfig.PytestConfig{Install: projectconfig.PytestInstallNone}
-		assert.Equal(t, projectconfig.PytestInstallNone, cfg.EffectiveInstallMode())
+		cfg := &projectconfig.PytestConfig{Install: projectconfig.PytestInstallPyproject, WorkingDir: "tests"}
+		assert.Equal(t, projectconfig.PytestInstallPyproject, cfg.EffectiveInstallMode())
 	})
 
 	t.Run("requirements mode", func(t *testing.T) {
