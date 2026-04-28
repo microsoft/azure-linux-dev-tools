@@ -275,16 +275,16 @@ func mergePackageGroups(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error
 // mergeTestSuites merges test suite definitions from a loaded config file into the
 // resolved config. Duplicate test suite names are not allowed.
 func mergeTestSuites(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
-	for testName, test := range loadedCfg.TestSuites {
-		if _, ok := resolvedCfg.TestSuites[testName]; ok {
-			return fmt.Errorf("%w: test suite %#q", ErrDuplicateTestSuites, testName)
+	for suiteName, suite := range loadedCfg.TestSuites {
+		if _, ok := resolvedCfg.TestSuites[suiteName]; ok {
+			return fmt.Errorf("%w: test suite %#q", ErrDuplicateTestSuites, suiteName)
 		}
 
 		// Fill out fields not explicitly serialized.
-		test.Name = testName
-		test.SourceConfigFile = loadedCfg
+		suite.Name = suiteName
+		suite.SourceConfigFile = loadedCfg
 
-		resolvedCfg.TestSuites[testName] = test
+		resolvedCfg.TestSuites[suiteName] = *(suite.WithAbsolutePaths(loadedCfg.dir))
 	}
 
 	return nil

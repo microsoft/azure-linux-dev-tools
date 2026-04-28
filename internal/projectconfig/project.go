@@ -106,13 +106,13 @@ func validatePackageGroupMembership(groups map[string]PackageGroupConfig) error 
 // validateImageTestReferences checks that every test suite name in an image's
 // [ImageConfig.Tests.TestSuites] list corresponds to a defined entry in the top-level
 // TestSuites map.
-func validateImageTestReferences(images map[string]ImageConfig, tests map[string]TestSuiteConfig) error {
+func validateImageTestReferences(images map[string]ImageConfig, testSuites map[string]TestSuiteConfig) error {
 	for imageName, image := range images {
-		for _, testName := range image.TestNames() {
-			if _, ok := tests[testName]; !ok {
+		for _, suiteName := range image.TestNames() {
+			if _, ok := testSuites[suiteName]; !ok {
 				return fmt.Errorf(
 					"%w: image %#q references test suite %#q, which is not defined in [test-suites]",
-					ErrUndefinedTestSuite, imageName, testName,
+					ErrUndefinedTestSuite, imageName, suiteName,
 				)
 			}
 		}

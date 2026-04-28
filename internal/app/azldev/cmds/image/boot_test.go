@@ -206,13 +206,22 @@ func TestResolveImageWithAvailableList_Found(t *testing.T) {
 	assert.Equal(t, "My test image", cfg.Description)
 }
 
-func TestSupportedImageFormats(t *testing.T) {
-	formats := image.SupportedImageFormats()
+func TestBootableImageFormats(t *testing.T) {
+	formats := image.BootableImageFormats()
 	require.NotEmpty(t, formats)
 	assert.Contains(t, formats, "raw")
 	assert.Contains(t, formats, "qcow2")
 	assert.Contains(t, formats, "vhdx")
 	assert.Contains(t, formats, "vhd")
+	assert.NotContains(t, formats, "oci", "OCI is not a bootable format")
+}
+
+func TestAllImageFormats(t *testing.T) {
+	formats := image.AllImageFormats()
+	require.NotEmpty(t, formats)
+	assert.Contains(t, formats, "raw")
+	assert.Contains(t, formats, "qcow2")
+	assert.Contains(t, formats, "oci")
 }
 
 func TestInferImageFormat(t *testing.T) {
@@ -226,6 +235,9 @@ func TestInferImageFormat(t *testing.T) {
 		{name: "vhd", path: "/path/to/image.vhd", expected: "vhd"},
 		{name: "vhdfixed", path: "/path/to/image.vhdfixed", expected: "vhd"},
 		{name: "vhdx", path: "/path/to/image.vhdx", expected: "vhdx"},
+		{name: "oci.tar.xz", path: "/path/to/image.oci.tar.xz", expected: "oci"},
+		{name: "oci.tar.gz", path: "/path/to/image.oci.tar.gz", expected: "oci"},
+		{name: "oci.tar", path: "/path/to/image.oci.tar", expected: "oci"},
 	}
 
 	for _, test := range tests {
