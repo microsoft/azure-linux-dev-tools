@@ -169,6 +169,7 @@ func constructProjectConfig(testMockConfigPath string) *projectconfig.ProjectCon
 	distro.Versions["1.0"] = projectconfig.DistroVersionDefinition{
 		MockConfigPath: testMockConfigPath,
 		DistGitBranch:  "main",
+		ReleaseVer:     "3.0",
 	}
 
 	config.Distros["test-distro"] = distro
