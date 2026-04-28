@@ -233,7 +233,8 @@ func resolveConfigFilePath(config *projectconfig.ComponentConfig, componentName 
 // walking up the directory tree.
 func openProjectRepo(configFilePath string) (*gogit.Repository, error) {
 	repo, err := gogit.PlainOpenWithOptions(filepath.Dir(configFilePath), &gogit.PlainOpenOptions{
-		DetectDotGit: true,
+		DetectDotGit:          true,
+		EnableDotGitCommonDir: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to find project repository for config file %#q:\n%w",
