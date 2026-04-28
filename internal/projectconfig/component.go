@@ -149,6 +149,25 @@ type ReleaseConfig struct {
 	Calculation ReleaseCalculation `toml:"calculation,omitempty" json:"calculation,omitempty" validate:"omitempty,oneof=auto manual" jsonschema:"enum=auto,enum=manual,default=auto,title=Release calculation,description=Controls how the Release tag is managed during rendering. Empty or omitted means auto."`
 }
 
+// ComponentLockData holds resolved lock file state attached to a component at
+// resolve time. This separates user intent (config fields) from resolved reality
+// (lock data). Populated by the component resolver from the lock store; nil when
+// no lock file exists for this component.
+//
+// Not serialized or fingerprinted — runtime-only. The pointer must not be
+// shared across value-copied configs; the resolver always allocates a fresh
+// struct per component.
+type ComponentLockData struct {
+	// UpstreamCommit is the resolved upstream commit from the lock file.
+	UpstreamCommit string `json:"upstreamCommit,omitempty"`
+	// ImportCommit is the upstream commit at fork time (write-once).
+	ImportCommit string `json:"importCommit,omitempty"`
+	// ManualBump is the extra rebuild counter.
+	ManualBump int `json:"manualBump,omitempty"`
+	// InputFingerprint is the stored fingerprint from the last update.
+	InputFingerprint string `json:"inputFingerprint,omitempty"`
+}
+
 // Defines a component.
 type ComponentConfig struct {
 	// The component's name; not actually present in serialized files.
@@ -162,6 +181,11 @@ type ComponentConfig struct {
 	// Derived at resolve time from the project's rendered-specs-dir setting; not present
 	// in serialized files. Empty when rendered-specs-dir is not configured.
 	RenderedSpecDir string `toml:"-" json:"renderedSpecDir,omitempty" table:"-" fingerprint:"-"`
+
+	// Locked holds resolved lock file state for this component. Populated by
+	// the component resolver from the lock store. Nil when no lock file exists
+	// or when lock population is skipped (e.g., during 'component update').
+	Locked *ComponentLockData `toml:"-" json:"locked,omitempty" table:"-" fingerprint:"-"`
 
 	// Where to get its spec and adjacent files from.
 	Spec SpecSource `toml:"spec,omitempty" json:"spec,omitempty" jsonschema:"title=Spec,description=Identifies where to find the spec for this component"`
@@ -209,6 +233,17 @@ func (c *ComponentConfig) MergeUpdatesFrom(other *ComponentConfig) error {
 	}
 
 	return nil
+}
+
+// EffectiveUpstreamCommit returns the commit to use for upstream operations.
+// Prefers the locked commit (resolved reality) over the config pin (user intent).
+// Returns empty string when neither is set.
+func (c *ComponentConfig) EffectiveUpstreamCommit() string {
+	if c.Locked != nil && c.Locked.UpstreamCommit != "" {
+		return c.Locked.UpstreamCommit
+	}
+
+	return c.Spec.UpstreamCommit
 }
 
 // ResolveComponentConfig applies the full config inheritance chain for a single component:
@@ -262,6 +297,7 @@ func (c *ComponentConfig) WithAbsolutePaths(referenceDir string) *ComponentConfi
 		Name:             c.Name,
 		SourceConfigFile: c.SourceConfigFile,
 		RenderedSpecDir:  c.RenderedSpecDir,
+		Locked:           c.Locked,
 		Release:          c.Release,
 		Spec:             deep.MustCopy(c.Spec),
 		Build:            deep.MustCopy(c.Build),

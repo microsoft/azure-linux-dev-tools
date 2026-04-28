@@ -13,6 +13,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
+	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
@@ -185,4 +186,13 @@ func (e *TestEnv) FS() opctx.FS {
 // FS implements the [opctx.OSEnvFactory] interface.
 func (e *TestEnv) OSEnv() opctx.OSEnv {
 	return e.TestOSEnv
+}
+
+// WriteLock creates a lock file on the test filesystem for the given component.
+// Uses the same lock directory layout as the production [lockfile.Store].
+func (e *TestEnv) WriteLock(t *testing.T, name string, lock *lockfile.ComponentLock) {
+	t.Helper()
+
+	store := lockfile.NewStore(e.TestFS, "/project/"+lockfile.LockDir)
+	require.NoError(t, store.Save(name, lock))
 }

@@ -278,3 +278,52 @@ func mustGetFingerprint(t *testing.T, store *lockfile.Store, name string) string
 
 	return lock.InputFingerprint
 }
+
+// TestUpdateComponents_AdvancesStaleLock is a regression test for the case
+// where a pre-existing lock at commit A and an upstream that has moved to
+// commit B must result in B being written (not A echoed back). Without
+// clearing populated lock data before re-resolution, the source provider's
+// locked-commit short-circuit in ResolveIdentity would return A and the
+// lock would never advance.
+func TestUpdateComponents_AdvancesStaleLock(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	const initialCommit = "initial-aaa111"
+
+	const advancedCommit = "advanced-bbb222"
+
+	// Pre-populate a lock at initialCommit (simulates a previous update run).
+	require.NoError(t, fileutils.MkdirAll(env.TestFS, testLockDir))
+
+	preExistingLock := lockfile.New()
+	preExistingLock.UpstreamCommit = initialCommit
+
+	store := lockfile.NewStore(env.TestFS, testLockDir)
+	require.NoError(t, store.Save("curl", preExistingLock))
+
+	addUpstreamComponent(env, "curl")
+
+	// Mock git now resolves to a NEW commit — upstream moved.
+	setupMockGit(env, advancedCommit)
+
+	results, err := componentcmds.UpdateComponents(env.Env, &componentcmds.UpdateComponentOptions{
+		ComponentFilter: components.ComponentFilter{IncludeAllComponents: true},
+	})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	assert.Equal(t, advancedCommit, results[0].UpstreamCommit,
+		"update must re-resolve and return the advanced commit, not echo the locked one")
+	assert.True(t, results[0].Changed, "lock advanced from initial to advanced commit")
+	assert.Equal(t, initialCommit, results[0].PreviousCommit,
+		"PreviousCommit should track what was in the lock before update")
+
+	// Verify the lock on disk was actually updated. Use a fresh store to
+	// bypass the cache held by the pre-population store.
+	freshStore := lockfile.NewStore(env.TestFS, testLockDir)
+
+	updatedLock, loadErr := freshStore.Get("curl")
+	require.NoError(t, loadErr)
+	assert.Equal(t, advancedCommit, updatedLock.UpstreamCommit,
+		"lock file on disk must contain the new commit")
+}

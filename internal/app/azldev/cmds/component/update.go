@@ -94,6 +94,9 @@ type UpdateResult struct {
 // writes the results to per-component lock files under locks/.
 func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]UpdateResult, error) {
 	resolver := components.NewResolver(env)
+	// Suppress staleness warnings — we're about to refresh the locks ourselves,
+	// so warning the user to "run component update" would be self-referential noise.
+	resolver.SuppressLockWarnings = true
 
 	resolved, err := resolver.FindComponents(&options.ComponentFilter)
 	if err != nil {
@@ -349,6 +352,12 @@ func resolveUpstreamCommitsParallel(
 
 				return
 			}
+
+			// Drop populated lock data so the source provider re-resolves
+			// from upstream (snapshot/HEAD or pinned commit) instead of
+			// short-circuiting with the existing locked commit. We're
+			// about to overwrite the lock anyway.
+			comp.GetConfig().Locked = nil
 
 			commitHash, resolveErr := resolveOneUpstreamCommit(workerEnv, comp)
 			if resolveErr != nil {

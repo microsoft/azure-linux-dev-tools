@@ -10,6 +10,7 @@ import (
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
+	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
@@ -672,4 +673,224 @@ func TestFindAllSpecPaths_MultipleSpecs(t *testing.T) {
 	specPaths, err := components.FindAllSpecPaths(env.Env)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"/specs/a/test-a.spec", "/specs/b/test-b.spec"}, specPaths)
+}
+
+// When a lock file exists for a component, the resolver should attach all of
+// its data (commit, import-commit, manual-bump, fingerprint) to the resolved
+// component via the Locked field — without touching the original Spec config.
+// This is how downstream commands (render, build) get the locked commit.
+func TestFindComponents_PopulatesLockedData(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	// Add an upstream component with no explicit pin.
+	env.Config.Components["curl"] = projectconfig.ComponentConfig{
+		Name: "curl",
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeUpstream,
+		},
+	}
+
+	// Create a lock file with upstream commit.
+	lock := lockfile.New()
+	lock.UpstreamCommit = "locked-commit-abc123"
+	lock.ImportCommit = "import-commit-def456"
+	lock.ManualBump = 2
+	lock.InputFingerprint = "sha256:test-fingerprint"
+
+	env.WriteLock(t, "curl", lock)
+
+	filter := &components.ComponentFilter{IncludeAllComponents: true}
+
+	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
+	require.NoError(t, err)
+
+	comp, ok := resolved.TryGet("curl")
+	require.True(t, ok)
+
+	// Locked field should be populated from the lock file.
+	require.NotNil(t, comp.GetConfig().Locked, "Locked should be populated when lock file exists")
+	assert.Equal(t, "locked-commit-abc123", comp.GetConfig().Locked.UpstreamCommit)
+	assert.Equal(t, "import-commit-def456", comp.GetConfig().Locked.ImportCommit)
+	assert.Equal(t, 2, comp.GetConfig().Locked.ManualBump)
+	assert.Equal(t, "sha256:test-fingerprint", comp.GetConfig().Locked.InputFingerprint)
+
+	// Original config field should NOT be modified.
+	assert.Empty(t, comp.GetConfig().Spec.UpstreamCommit,
+		"Spec.UpstreamCommit should remain empty — lock data goes into Locked, not Spec")
+}
+
+// When no lock file exists (e.g., new component that hasn't been updated yet),
+// the Locked field should be nil. Downstream commands will fall back to the old
+// resolution path (snapshot/HEAD) until the user runs 'component update'.
+//
+// TODO(lockfiles): Once lock validation is default-on, a missing lock for an
+// upstream component should be an error, not a silent nil. Update this test to
+// expect FindComponents to return an error, and remove the fallback path.
+//
+//nolint:godox // tracked by TODO(lockfiles) tag.
+func TestFindComponents_LockedNilWhenNoLockFile(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	// Add component with no lock file.
+	env.Config.Components["bash"] = projectconfig.ComponentConfig{
+		Name: "bash",
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeUpstream,
+		},
+	}
+
+	filter := &components.ComponentFilter{IncludeAllComponents: true}
+
+	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
+	require.NoError(t, err)
+
+	comp, ok := resolved.TryGet("bash")
+	require.True(t, ok)
+
+	assert.Nil(t, comp.GetConfig().Locked, "Locked should be nil when no lock file exists")
+}
+
+// When a user explicitly pins a commit in their component config (intent),
+// that pin must survive lock population unchanged. The lock's commit goes
+// into Locked.UpstreamCommit separately. This separation is what allows
+// validation to detect "config says X but lock says Y" staleness.
+func TestFindComponents_ExplicitPinPreserved(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	// Component with explicit upstream-commit pin in config.
+	env.Config.Components["curl"] = projectconfig.ComponentConfig{
+		Name: "curl",
+		Spec: projectconfig.SpecSource{
+			SourceType:     projectconfig.SpecSourceTypeUpstream,
+			UpstreamCommit: "config-pinned-commit",
+		},
+	}
+
+	// Lock file has a different commit.
+	lock := lockfile.New()
+	lock.UpstreamCommit = "locked-commit-different"
+
+	env.WriteLock(t, "curl", lock)
+
+	filter := &components.ComponentFilter{IncludeAllComponents: true}
+
+	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
+	require.NoError(t, err)
+
+	comp, ok := resolved.TryGet("curl")
+	require.True(t, ok)
+
+	// Explicit pin must be preserved in Spec.
+	assert.Equal(t, "config-pinned-commit", comp.GetConfig().Spec.UpstreamCommit,
+		"explicit config pin must not be overwritten by lock data")
+
+	// Locked should still be populated with the correct data from the lock file.
+	require.NotNil(t, comp.GetConfig().Locked)
+	assert.Equal(t, "locked-commit-different", comp.GetConfig().Locked.UpstreamCommit)
+}
+
+// Local components (specs on disk, no upstream) don't have lock files.
+// The resolver should leave Locked as nil — no error, no special handling.
+func TestFindComponents_LocalComponentNoLockPopulation(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	specPath := "/specs/local-pkg/local-pkg.spec"
+	require.NoError(t, fileutils.WriteFile(env.TestFS, specPath, []byte("Name: local-pkg\n"), fileperms.PrivateFile))
+
+	env.Config.Components["local-pkg"] = projectconfig.ComponentConfig{
+		Name: "local-pkg",
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeLocal,
+			Path:       specPath,
+		},
+	}
+
+	// No lock file for local component — this is normal.
+	filter := &components.ComponentFilter{IncludeAllComponents: true}
+
+	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
+	require.NoError(t, err)
+
+	comp, ok := resolved.TryGet("local-pkg")
+	require.True(t, ok)
+
+	assert.Nil(t, comp.GetConfig().Locked, "local components should not have lock data")
+}
+
+// A corrupt or unparseable lock file should not silently fall back to
+// unlocked live resolution. populateFromLock should leave Locked nil and
+// log a warning (no error returned, since validation is gated separately).
+func TestFindComponents_CorruptLockSurfaces(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	env.Config.Components["curl"] = projectconfig.ComponentConfig{
+		Name: "curl",
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeUpstream,
+		},
+	}
+
+	// Write garbage to the lock file path so Load() returns a parse error.
+	lockPath := "/project/locks/curl.lock"
+	require.NoError(t, fileutils.WriteFile(env.TestFS, lockPath,
+		[]byte("this is not valid TOML \x00\x01\x02"), fileperms.PrivateFile))
+
+	filter := &components.ComponentFilter{IncludeAllComponents: true}
+
+	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
+	require.NoError(t, err, "corrupt lock should warn, not fail (validation is separate)")
+
+	comp, ok := resolved.TryGet("curl")
+	require.True(t, ok)
+
+	assert.Nil(t, comp.GetConfig().Locked,
+		"corrupt lock must NOT silently populate — leaves Locked nil and warns")
+}
+
+// When the explicit config pin and the locked commit differ, the lock wins
+// and a staleness warning fires (during normal resolution). The warning is
+// suppressed when SuppressLockWarnings is set (e.g., during component update).
+func TestFindComponents_PinDiffersFromLock(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	env.Config.Components["curl"] = projectconfig.ComponentConfig{
+		Name: "curl",
+		Spec: projectconfig.SpecSource{
+			SourceType:     projectconfig.SpecSourceTypeUpstream,
+			UpstreamCommit: "config-pin-aaa",
+		},
+	}
+
+	lock := lockfile.New()
+	lock.UpstreamCommit = "lock-commit-bbb"
+
+	env.WriteLock(t, "curl", lock)
+
+	filter := &components.ComponentFilter{IncludeAllComponents: true}
+
+	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
+	require.NoError(t, err)
+
+	comp, found := resolved.TryGet("curl")
+	require.True(t, found)
+
+	// Lock value populated; user intent preserved on Spec.
+	require.NotNil(t, comp.GetConfig().Locked)
+	assert.Equal(t, "lock-commit-bbb", comp.GetConfig().Locked.UpstreamCommit,
+		"lock value populated despite differing config pin")
+	assert.Equal(t, "config-pin-aaa", comp.GetConfig().Spec.UpstreamCommit,
+		"user intent preserved on Spec.UpstreamCommit")
+
+	// Re-resolve with SuppressLockWarnings — should still populate, just no warning.
+	suppressed := components.NewResolver(env.Env)
+	suppressed.SuppressLockWarnings = true
+
+	resolved2, err := suppressed.FindComponents(filter)
+	require.NoError(t, err)
+
+	comp2, found := resolved2.TryGet("curl")
+	require.True(t, found)
+	require.NotNil(t, comp2.GetConfig().Locked)
+	assert.Equal(t, "lock-commit-bbb", comp2.GetConfig().Locked.UpstreamCommit,
+		"suppression doesn't change the populated data, only the warning emission")
 }
