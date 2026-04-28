@@ -358,6 +358,20 @@ func initSourcesRepo(sourcesDirPath string) (*gogit.Repository, error) {
 	return repo, nil
 }
 
+// openOrInitSourcesRepo opens an existing git repository at sourcesDirPath,
+// or initializes a new one if no .git directory exists.
+func openOrInitSourcesRepo(sourcesDirPath, componentName string) (*gogit.Repository, error) {
+	repo, err := gogit.PlainOpen(sourcesDirPath)
+	if err == nil {
+		return repo, nil
+	}
+
+	slog.Info("No .git directory in sources; initializing repository",
+		"component", componentName)
+
+	return initSourcesRepo(sourcesDirPath)
+}
+
 // trySyntheticHistory attempts to create synthetic git commits on top of the
 // component's sources directory. Synthetic commits are derived from lock file
 // fingerprint changes in the project repository and interleaved into the
@@ -388,32 +402,18 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 		return nil
 	}
 
-	// Adjust the Release tag before staging changes. See [tryBumpStaticRelease]
-	// for the handling of %autorelease, static integers, and non-standard values.
-	if err := p.tryBumpStaticRelease(component, sourcesDirPath, len(changes)); err != nil {
+	// Open or initialize the dist-git repository once. It is used both for
+	// version-aware release bump computation and for recording synthetic history.
+	sourcesRepo, err := openOrInitSourcesRepo(sourcesDirPath, componentName)
+	if err != nil {
+		return err
+	}
+
+	// Adjust the Release tag before staging changes. The version-aware bump
+	// count is computed inside [tryBumpStaticRelease], only after confirming
+	// the spec uses a static release (not %autorelease or manual).
+	if err := p.tryBumpStaticRelease(component, sourcesDirPath, sourcesRepo, changes); err != nil {
 		return fmt.Errorf("failed to apply release bump:\n%w", err)
-	}
-
-	gitDirPath := filepath.Join(sourcesDirPath, ".git")
-
-	gitDirExists, err := fileutils.Exists(p.fs, gitDirPath)
-	if err != nil {
-		return fmt.Errorf("failed to check for .git directory at %#q:\n%w", gitDirPath, err)
-	}
-
-	if !gitDirExists {
-		slog.Info("No .git directory in sources; initializing repository",
-			"component", componentName)
-
-		if _, err := initSourcesRepo(sourcesDirPath); err != nil {
-			return fmt.Errorf("failed to initialize sources repository:\n%w", err)
-		}
-	}
-
-	// Open the git repository where synthetic commits will be recorded.
-	sourcesRepo, err := gogit.PlainOpen(sourcesDirPath)
-	if err != nil {
-		return fmt.Errorf("failed to open sources repository at %#q:\n%w", sourcesDirPath, err)
 	}
 
 	// Strip bogus submodule entries from the index before staging. Some upstream

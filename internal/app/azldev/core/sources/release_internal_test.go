@@ -59,7 +59,7 @@ func TestTryBumpStaticRelease_ManualSkips(t *testing.T) {
 	})
 
 	// No spec file needed — should skip before reading anything.
-	err := preparer.tryBumpStaticRelease(comp, testSourcesDir, 3)
+	err := preparer.tryBumpStaticRelease(comp, testSourcesDir, nil, nil)
 	require.NoError(t, err)
 }
 
@@ -76,7 +76,7 @@ func TestTryBumpStaticRelease_AutoreleaseSkips(t *testing.T) {
 		},
 	})
 
-	err := preparer.tryBumpStaticRelease(comp, filepath.Join(testSourcesDir, "test-pkg"), 3)
+	err := preparer.tryBumpStaticRelease(comp, filepath.Join(testSourcesDir, "test-pkg"), nil, nil)
 	require.NoError(t, err)
 }
 
@@ -93,14 +93,16 @@ func TestTryBumpStaticRelease_StaticBumps(t *testing.T) {
 		},
 	})
 
-	err := preparer.tryBumpStaticRelease(comp, filepath.Join(testSourcesDir, "test-pkg"), 3)
+	// Pass nil repo so CountCommitsSinceVersionChange falls back to len(changes).
+	changes := make([]FingerprintChange, 5)
+	err := preparer.tryBumpStaticRelease(comp, filepath.Join(testSourcesDir, "test-pkg"), nil, changes)
 	require.NoError(t, err)
 
 	// Verify the spec was updated.
 	specPath := filepath.Join(testSourcesDir, "test-pkg", "test-pkg.spec")
 	content, err := fileutils.ReadFile(memFS, specPath)
 	require.NoError(t, err)
-	assert.Contains(t, string(content), "Release: 4%{?dist}")
+	assert.Contains(t, string(content), "Release: 6%{?dist}")
 }
 
 func TestTryBumpStaticRelease_NonStandardErrorsWithoutManual(t *testing.T) {
@@ -116,7 +118,7 @@ func TestTryBumpStaticRelease_NonStandardErrorsWithoutManual(t *testing.T) {
 		},
 	})
 
-	err := preparer.tryBumpStaticRelease(comp, filepath.Join(testSourcesDir, "kernel"), 3)
+	err := preparer.tryBumpStaticRelease(comp, filepath.Join(testSourcesDir, "kernel"), nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot be auto-bumped")
 	assert.Contains(t, err.Error(), "release.calculation")
@@ -135,6 +137,6 @@ func TestTryBumpStaticRelease_NonStandardSucceedsWithManual(t *testing.T) {
 		},
 	})
 
-	err := preparer.tryBumpStaticRelease(comp, filepath.Join(testSourcesDir, "kernel"), 3)
+	err := preparer.tryBumpStaticRelease(comp, filepath.Join(testSourcesDir, "kernel"), nil, nil)
 	require.NoError(t, err)
 }

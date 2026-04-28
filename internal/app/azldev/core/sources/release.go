@@ -5,16 +5,25 @@ package sources
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spec"
 )
+
+// commitResolver abstracts the ability to look up a commit by hash.
+// This is satisfied by [*gogit.Repository] and can be replaced in tests.
+type commitResolver interface {
+	CommitObject(hash plumbing.Hash) (*object.Commit, error)
+}
 
 // autoreleasePattern matches the %autorelease macro invocation in a Release tag value.
 // This covers:
@@ -72,6 +81,132 @@ func ReleaseUsesAutorelease(releaseValue string) bool {
 	return autoreleasePattern.MatchString(releaseValue)
 }
 
+// GetVersionTagFromReader reads the Version tag value from a spec parsed from an [io.Reader].
+// Returns the raw value string (e.g. "1.0.0" or "%{base_version}").
+// Returns [spec.ErrNoSuchTag] if no Version tag is found.
+func GetVersionTagFromReader(reader io.Reader) (string, error) {
+	openedSpec, err := spec.OpenSpec(reader)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse spec:\n%w", err)
+	}
+
+	var versionValue string
+
+	err = openedSpec.VisitTagsPackage("", func(tagLine *spec.TagLine, _ *spec.Context) error {
+		if strings.EqualFold(tagLine.Tag, "Version") {
+			versionValue = tagLine.Value
+		}
+
+		return nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to visit tags:\n%w", err)
+	}
+
+	if versionValue == "" {
+		return "", fmt.Errorf("version tag not found:\n%w", spec.ErrNoSuchTag)
+	}
+
+	return versionValue, nil
+}
+
+// getVersionAtUpstreamCommit reads the Version tag from a component's spec file
+// at a specific upstream commit in the dist-git repository. The spec file is
+// located by name (e.g. "package.spec") within the commit's tree.
+func getVersionAtUpstreamCommit(
+	resolver commitResolver,
+	commitHash string,
+	specFileName string,
+) (string, error) {
+	commitObj, err := resolver.CommitObject(plumbing.NewHash(commitHash))
+	if err != nil {
+		return "", fmt.Errorf("failed to get commit %#q:\n%w", commitHash, err)
+	}
+
+	tree, err := commitObj.Tree()
+	if err != nil {
+		return "", fmt.Errorf("failed to get tree for commit %#q:\n%w", commitHash, err)
+	}
+
+	file, err := tree.File(specFileName)
+	if err != nil {
+		return "", fmt.Errorf("spec file %#q not found at commit %#q:\n%w", specFileName, commitHash, err)
+	}
+
+	reader, err := file.Reader()
+	if err != nil {
+		return "", fmt.Errorf("failed to read spec file %#q at commit %#q:\n%w", specFileName, commitHash, err)
+	}
+	defer reader.Close()
+
+	return GetVersionTagFromReader(reader)
+}
+
+// CountCommitsSinceVersionChange determines how many synthetic commits should
+// contribute to the static Release bump. It walks the [FingerprintChange] list
+// (chronological, oldest first), reads the Version tag from the dist-git spec
+// at each unique [FingerprintChange.UpstreamCommit], and finds the point where
+// the Version last changed. Only synthetic commits after that point contribute
+// to the count.
+// When the Version tag cannot be read at a historical commit (e.g. the spec was
+// renamed), the function falls back to len(changes).
+func CountCommitsSinceVersionChange(
+	resolver commitResolver,
+	specFileName string,
+	changes []FingerprintChange,
+) int {
+	if len(changes) == 0 {
+		return 0
+	}
+
+	if resolver == nil {
+		return len(changes)
+	}
+
+	// Walk changes newest-to-oldest, resolving the Version tag at each unique
+	// upstream commit. Stop as soon as a version change is detected.
+	versionCache := make(map[string]string)
+	count := 0
+
+	latestVersion := ""
+
+	for idx := len(changes) - 1; idx >= 0; idx-- {
+		hash := changes[idx].UpstreamCommit
+
+		version, ok := versionCache[hash]
+		if !ok {
+			var err error
+
+			version, err = getVersionAtUpstreamCommit(resolver, hash, specFileName)
+			if err != nil {
+				slog.Warn("Failed to read Version tag at upstream commit; falling back to total commit count",
+					"commit", hash, "error", err)
+
+				return len(changes)
+			}
+
+			versionCache[hash] = version
+		}
+
+		if latestVersion == "" {
+			latestVersion = version
+		}
+
+		if version != latestVersion {
+			break
+		}
+
+		count++
+	}
+
+	slog.Info("Computed version-aware release bump count",
+		"latestVersion", latestVersion,
+		"totalChanges", len(changes),
+		"sinceVersionChange", count)
+
+	return count
+}
+
 // BumpStaticRelease increments the leading integer in a static Release tag value
 // by the given commit count.
 func BumpStaticRelease(releaseValue string, commitCount int) (string, error) {
@@ -92,10 +227,8 @@ func BumpStaticRelease(releaseValue string, commitCount int) (string, error) {
 }
 
 // tryBumpStaticRelease checks whether the component's spec uses %autorelease.
-// If not, it bumps the static Release tag by commitCount and applies the change
-// as an overlay to the spec file in-place. This ensures that components with static
-// release numbers get deterministic version bumps matching the number of synthetic
-// commits applied from the project repository.
+// If not, it computes a version-aware bump count via [CountCommitsSinceVersionChange]
+// and applies the change as an overlay to the spec file in-place.
 //
 // When the component's release calculation is "manual", this function is a no-op.
 //
@@ -110,7 +243,8 @@ func BumpStaticRelease(releaseValue string, commitCount int) (string, error) {
 func (p *sourcePreparerImpl) tryBumpStaticRelease(
 	component components.Component,
 	sourcesDirPath string,
-	commitCount int,
+	repo commitResolver,
+	changes []FingerprintChange,
 ) error {
 	if component.GetConfig().Release.Calculation == projectconfig.ReleaseCalculationManual {
 		slog.Debug("Component uses manual release calculation; skipping static release bump",
@@ -136,6 +270,12 @@ func (p *sourcePreparerImpl) tryBumpStaticRelease(
 
 		return nil
 	}
+
+	// Only compute the version-aware commit count after confirming the spec
+	// uses a static release, to avoid unnecessary git tree traversals for
+	// components that use %autorelease or manual mode.
+	specFileName := component.GetName() + ".spec"
+	commitCount := CountCommitsSinceVersionChange(repo, specFileName, changes)
 
 	newRelease, err := BumpStaticRelease(releaseValue, commitCount)
 	if err != nil {
