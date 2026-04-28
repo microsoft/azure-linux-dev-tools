@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -139,6 +140,18 @@ func runImageTest(env *azldev.Env, options *ImageTestOptions) error {
 	}
 
 	options.ImagePath = imagePath
+
+	// Absolutize JUnitXMLPath against the user's CWD so pytest writes to the location the
+	// user expected — pytest itself resolves relative paths against its own working
+	// directory (the test suite's working-dir), which is rarely what the user intended.
+	if options.JUnitXMLPath != "" && !filepath.IsAbs(options.JUnitXMLPath) {
+		absJUnitPath, err := filepath.Abs(options.JUnitXMLPath)
+		if err != nil {
+			return fmt.Errorf("failed to resolve --junit-xml path %#q:\n%w", options.JUnitXMLPath, err)
+		}
+
+		options.JUnitXMLPath = absJUnitPath
+	}
 
 	// Determine which test suites to run.
 	suiteNames := resolveTestSuiteNames(imageConfig, options.TestSuites)

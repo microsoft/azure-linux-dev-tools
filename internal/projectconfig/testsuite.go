@@ -60,7 +60,7 @@ type PytestInstallMode string
 
 const (
 	// PytestInstallPyproject installs dependencies from pyproject.toml using editable mode.
-	// If pyproject.toml is not found, a warning is logged and installation is skipped.
+	// Returns an error if pyproject.toml is not found in the working directory.
 	// This is the default when [PytestConfig.Install] is not specified.
 	PytestInstallPyproject PytestInstallMode = "pyproject"
 	// PytestInstallRequirements installs dependencies from requirements.txt.
@@ -93,6 +93,11 @@ type PytestConfig struct {
 // Validate checks that the test suite config has valid type-specific required fields and that
 // only the matching subtable is present.
 func (t *TestSuiteConfig) Validate() error {
+	if t.Type == "" {
+		return fmt.Errorf("%w: test suite %#q is missing required field 'type'",
+			ErrMissingTestField, t.Name)
+	}
+
 	switch t.Type {
 	case TestTypePytest:
 		if t.Pytest == nil {

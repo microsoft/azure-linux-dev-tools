@@ -138,6 +138,13 @@ func (f ConfigFile) Validate() error {
 
 	// Validate test suite configurations.
 	for suiteName, suite := range f.TestSuites {
+		// Suite names are used as path components (e.g., for the per-suite venv directory),
+		// so reject anything that could escape the intended directory or otherwise be unsafe
+		// across platforms.
+		if err := fileutils.ValidateFilename(suiteName); err != nil {
+			return fmt.Errorf("invalid test suite name %#q:\n%w", suiteName, err)
+		}
+
 		suite.Name = suiteName
 
 		if err := suite.Validate(); err != nil {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
+	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/prereqs"
@@ -73,7 +74,7 @@ func RunPytestSuite(
 	}
 
 	// Build the pytest command: expand test paths, substitute placeholders in extra args.
-	pytestArgs := BuildNativePytestArgs(pytestConfig, imageConfig, options)
+	pytestArgs := BuildNativePytestArgs(env.FS(), pytestConfig, imageConfig, options)
 
 	slog.Info("Running pytest", slog.Any("args", pytestArgs))
 
@@ -186,7 +187,9 @@ func installPytestDependencies(
 }
 
 // installFromPyproject installs dependencies from pyproject.toml using editable mode.
-// If pyproject.toml is not found, a warning is logged and installation is skipped.
+// Returns an error if pyproject.toml is not found — pytest itself is expected to be
+// declared as a dependency there, so a missing file would just produce an opaque pytest
+// failure later. Users that don't want this behavior can set 'install = "none"' explicitly.
 func installFromPyproject(env *azldev.Env, venvPython string, workingDir string) error {
 	pyprojectPath := filepath.Join(workingDir, "pyproject.toml")
 
@@ -196,11 +199,11 @@ func installFromPyproject(env *azldev.Env, venvPython string, workingDir string)
 	}
 
 	if !pyprojectExists {
-		slog.Warn("No pyproject.toml found; skipping dependency installation",
-			slog.String("working-dir", workingDir),
+		return fmt.Errorf(
+			"pyproject.toml not found at %#q (required by install mode %#q; "+
+				"set 'install = \"none\"' to skip dependency installation)",
+			pyprojectPath, projectconfig.PytestInstallPyproject,
 		)
-
-		return nil
 	}
 
 	slog.Info("Installing dependencies from pyproject.toml",
@@ -265,10 +268,12 @@ func installFromRequirements(env *azldev.Env, venvPython string, workingDir stri
 }
 
 // BuildNativePytestArgs constructs the full pytest argument list from the config.
-// Test paths are glob-expanded relative to the working directory. Extra args are passed
+// Test paths are glob-expanded relative to the working directory using fs (so the
+// expansion participates in the project's filesystem abstraction). Extra args are passed
 // verbatim after placeholder substitution. The --junit-xml flag is appended automatically
 // when requested via CLI.
 func BuildNativePytestArgs(
+	fs opctx.FS,
 	pytestConfig *projectconfig.PytestConfig,
 	imageConfig *projectconfig.ImageConfig,
 	options *ImageTestOptions,
@@ -289,7 +294,7 @@ func BuildNativePytestArgs(
 
 	// Expand test paths (glob patterns resolved relative to working dir).
 	for _, testPath := range pytestConfig.TestPaths {
-		args = append(args, expandGlob(testPath, pytestConfig.WorkingDir)...)
+		args = append(args, expandGlob(fs, testPath, pytestConfig.WorkingDir)...)
 	}
 
 	// Substitute placeholders in extra args (never glob-expanded).
@@ -297,7 +302,9 @@ func BuildNativePytestArgs(
 		args = append(args, replacer.Replace(arg))
 	}
 
-	// Append --junit-xml when requested via CLI.
+	// Append --junit-xml when requested via CLI. The path is expected to have already been
+	// absolutized by the caller so pytest writes to the user-intended location regardless
+	// of its working directory.
 	if options.JUnitXMLPath != "" {
 		args = append(args, "--junit-xml", options.JUnitXMLPath)
 	}
@@ -305,10 +312,11 @@ func BuildNativePytestArgs(
 	return args
 }
 
-// expandGlob expands a glob pattern relative to workingDir using doublestar, which supports
-// recursive ** patterns. If the pattern matches no files, the original pattern is returned
-// unchanged (letting pytest report the error).
-func expandGlob(pattern string, workingDir string) []string {
+// expandGlob expands a glob pattern relative to workingDir using [fileutils.Glob], which
+// supports recursive ** patterns and operates through the project's filesystem abstraction.
+// If the pattern matches no files, the original pattern is returned unchanged (letting
+// pytest report the error).
+func expandGlob(fs opctx.FS, pattern string, workingDir string) []string {
 	absPattern := pattern
 	if workingDir != "" && !filepath.IsAbs(pattern) {
 		absPattern = filepath.Join(workingDir, pattern)
@@ -316,9 +324,8 @@ func expandGlob(pattern string, workingDir string) []string {
 
 	// Use WithFilesOnly so directory entries are excluded from glob results — pytest handles
 	// directory args directly (without globs). Use WithFailOnIOErrors to surface real I/O
-	// problems instead of silently returning empty. Follow symlinks (the default) since test
-	// trees may use them.
-	matches, err := doublestar.FilepathGlob(absPattern,
+	// problems instead of silently returning empty.
+	matches, err := fileutils.Glob(fs, absPattern,
 		doublestar.WithFilesOnly(),
 		doublestar.WithFailOnIOErrors(),
 	)

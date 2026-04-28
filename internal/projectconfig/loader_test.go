@@ -893,6 +893,41 @@ type = "pytest"
 	assert.ErrorIs(t, err, ErrMissingTestField)
 }
 
+func TestLoadAndResolveProjectConfig_TestSuiteMissingType(t *testing.T) {
+	const configContents = `
+[test-suites.smoke]
+# 'type' intentionally omitted.
+description = "no type set"
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrMissingTestField)
+	assert.Contains(t, err.Error(), "type")
+}
+
+func TestLoadAndResolveProjectConfig_TestSuiteInvalidName(t *testing.T) {
+	// Names containing path separators or traversal segments must be rejected at
+	// config load time since they are used as path components (e.g., venv directories).
+	const configContents = `
+[test-suites."../escape"]
+type = "pytest"
+
+[test-suites."../escape".pytest]
+working-dir = "tests"
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid test suite name")
+}
+
 func TestLoadAndResolveProjectConfig_ImageWithValidTestRef(t *testing.T) {
 	const configContents = `
 [test-suites.smoke]

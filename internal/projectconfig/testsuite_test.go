@@ -189,6 +189,17 @@ func TestTestSuiteConfig_Validate(t *testing.T) {
 		require.Error(t, err)
 		assert.ErrorIs(t, err, projectconfig.ErrUnknownTestType)
 	})
+
+	t.Run("missing type returns missing-field error", func(t *testing.T) {
+		testConfig := projectconfig.TestSuiteConfig{
+			Name: "smoke",
+			// Type intentionally omitted.
+		}
+		err := testConfig.Validate()
+		require.Error(t, err)
+		require.ErrorIs(t, err, projectconfig.ErrMissingTestField)
+		assert.Contains(t, err.Error(), "type")
+	})
 }
 
 func TestPytestConfig_EffectiveInstallMode(t *testing.T) {
