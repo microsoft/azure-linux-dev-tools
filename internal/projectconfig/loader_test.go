@@ -842,6 +842,7 @@ includes = ["include.toml"]
 type = "pytest"
 
 [test-suites.smoke.pytest]
+working-dir = "tests"
 test-paths = ["cases/"]
 `},
 		{"/project/include.toml", `
@@ -849,6 +850,7 @@ test-paths = ["cases/"]
 type = "pytest"
 
 [test-suites.smoke.pytest]
+working-dir = "tests"
 test-paths = ["other/"]
 `},
 	}
@@ -934,6 +936,7 @@ func TestLoadAndResolveProjectConfig_ImageWithValidTestRef(t *testing.T) {
 type = "pytest"
 
 [test-suites.smoke.pytest]
+working-dir = "tests"
 test-paths = ["cases/"]
 
 [images.myimage]

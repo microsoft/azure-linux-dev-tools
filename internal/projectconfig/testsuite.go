@@ -132,12 +132,14 @@ func (p *PytestConfig) Validate() error {
 		)
 	}
 
-	// When 'install' is explicitly set to a mode that requires a working directory,
-	// 'working-dir' must also be specified.
-	if p.Install != "" && p.Install != PytestInstallNone && p.WorkingDir == "" {
+	// Whenever the effective install mode requires a working directory, 'working-dir'
+	// must be specified. Checking the *effective* mode (rather than only the explicitly
+	// set value) ensures the default mode (pyproject) is also covered, so a config that
+	// would inevitably fail at runtime is rejected early with a clear message.
+	if p.EffectiveInstallMode() != PytestInstallNone && p.WorkingDir == "" {
 		return fmt.Errorf(
-			"%w: 'working-dir' is required when 'install' is %#q",
-			ErrMissingTestField, p.Install,
+			"%w: 'working-dir' is required when install mode is %#q",
+			ErrMissingTestField, p.EffectiveInstallMode(),
 		)
 	}
 
@@ -187,8 +189,8 @@ func (t *TestSuiteConfig) WithAbsolutePaths(referenceDir string) *TestSuiteConfi
 	if t.Pytest != nil {
 		result.Pytest = &PytestConfig{
 			WorkingDir: makeAbsolute(referenceDir, t.Pytest.WorkingDir),
-			TestPaths:  t.Pytest.TestPaths,
-			ExtraArgs:  t.Pytest.ExtraArgs,
+			TestPaths:  append([]string(nil), t.Pytest.TestPaths...),
+			ExtraArgs:  append([]string(nil), t.Pytest.ExtraArgs...),
 			Install:    t.Pytest.Install,
 		}
 	}

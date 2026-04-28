@@ -109,7 +109,18 @@ func RunPytestSuite(
 func ensurePytestVenv(
 	env *azldev.Env, testName string, pytestConfig *projectconfig.PytestConfig,
 ) (string, error) {
-	venvDir := filepath.Join(env.WorkDir(), venvDirName, testName)
+	workDir := env.WorkDir()
+	if workDir == "" {
+		// Without a configured work directory we'd otherwise create a relative
+		// 'pytest-venv/...' tree under the user's CWD, which is surprising and can
+		// pollute repos. Fail fast instead.
+		return "", fmt.Errorf(
+			"cannot create pytest venv for test suite %#q: project work directory is not configured",
+			testName,
+		)
+	}
+
+	venvDir := filepath.Join(workDir, venvDirName, testName)
 
 	venvPython := filepath.Join(venvDir, "bin", pythonProgram)
 
@@ -155,7 +166,8 @@ func createPythonVenv(env *azldev.Env, venvDir string) error {
 }
 
 // installPytestDependencies installs Python dependencies into the venv according to the
-// configured [projectconfig.PytestInstallMode].
+// configured [projectconfig.PytestInstallMode]. Config validation guarantees that
+// 'working-dir' is set whenever the effective mode requires it.
 func installPytestDependencies(
 	env *azldev.Env, venvPython string, pytestConfig *projectconfig.PytestConfig,
 ) error {
@@ -168,9 +180,11 @@ func installPytestDependencies(
 	}
 
 	if pytestConfig.WorkingDir == "" {
-		slog.Debug("No working directory configured; skipping dependency installation")
-
-		return nil
+		// Should be unreachable: PytestConfig.Validate rejects this combination.
+		return fmt.Errorf(
+			"pytest dependency installation requires 'working-dir' when install mode is %#q",
+			mode,
+		)
 	}
 
 	switch mode {

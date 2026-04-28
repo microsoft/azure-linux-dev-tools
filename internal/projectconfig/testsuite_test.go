@@ -158,15 +158,19 @@ func TestTestSuiteConfig_Validate(t *testing.T) {
 		assert.NoError(t, testConfig.Validate())
 	})
 
-	t.Run("default install without working-dir is valid", func(t *testing.T) {
+	t.Run("default install without working-dir is rejected", func(t *testing.T) {
+		// Default mode is 'pyproject', which requires a working directory.
 		testConfig := projectconfig.TestSuiteConfig{
 			Name:   "smoke",
 			Type:   projectconfig.TestTypePytest,
 			Pytest: &projectconfig.PytestConfig{
-				// Both Install and WorkingDir omitted — default auto-detect.
+				// Both Install and WorkingDir omitted.
 			},
 		}
-		assert.NoError(t, testConfig.Validate())
+		err := testConfig.Validate()
+		require.Error(t, err)
+		require.ErrorIs(t, err, projectconfig.ErrMissingTestField)
+		assert.Contains(t, err.Error(), "working-dir")
 	})
 
 	t.Run("pytest missing subtable", func(t *testing.T) {

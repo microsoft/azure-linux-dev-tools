@@ -455,6 +455,15 @@ func resolveDiskSource(env *azldev.Env, options *ImageBootOptions) (imagePath, i
 			return "", "", err
 		}
 
+		// InferImageFormat recognizes all known image formats (including non-bootable
+		// ones like OCI tarballs); reject formats that QEMU can't boot here.
+		if !lo.Contains(BootableImageFormats(), imageFormat) {
+			return "", "", fmt.Errorf(
+				"image format %#q (inferred from %#q) is not bootable; supported bootable formats: %v",
+				imageFormat, options.ImagePath, BootableImageFormats(),
+			)
+		}
+
 		imagePath = options.ImagePath
 
 		slog.Info("Using disk image",
@@ -635,7 +644,10 @@ func findImageArtifact(
 
 			matches, globErr := fileutils.Glob(env.FS(), pattern)
 			if globErr != nil {
-				continue
+				return "", "", fmt.Errorf(
+					"failed to search for image artifacts matching %#q:\n%w",
+					pattern, globErr,
+				)
 			}
 
 			if len(matches) > 0 {
