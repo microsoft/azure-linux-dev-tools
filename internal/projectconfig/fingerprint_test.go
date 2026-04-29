@@ -47,6 +47,9 @@ func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
 		"ComponentConfig.SourceConfigFile": true,
 		// ComponentConfig.RenderedSpecDir — derived output path that varies by checkout location.
 		"ComponentConfig.RenderedSpecDir": true,
+		// ComponentConfig.Locked — runtime lock state populated by resolver, not a build input.
+		// Lock data is an output of the update command, not a config-level input.
+		"ComponentConfig.Locked": true,
 
 		// ComponentBuildConfig.Failure — CI policy (expected failure tracking), not a build input.
 		"ComponentBuildConfig.Failure": true,

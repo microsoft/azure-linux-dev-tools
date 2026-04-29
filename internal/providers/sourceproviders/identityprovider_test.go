@@ -296,3 +296,112 @@ func (d *noOpDownloader) ExtractSourcesFromRepo(
 ) error {
 	return nil
 }
+
+// --- Lock data integration tests ---
+
+// TestFedoraProvider_ResolveIdentity_UsesLockedCommit verifies that ResolveIdentity
+// returns the locked commit immediately without cloning when Locked data is present.
+func TestFedoraProvider_ResolveIdentity_UsesLockedCommit(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockGitProvider := git_test.NewMockGitProvider(ctrl)
+
+	provider, err := sourceproviders.NewFedoraSourcesProviderImpl(
+		afero.NewMemMapFs(),
+		newNoOpDryRunnable(),
+		mockGitProvider,
+		newNoOpDownloader(),
+		testResolvedDistro(),
+		retry.Disabled(),
+	)
+	require.NoError(t, err)
+
+	lockedCommit := "locked-abc123"
+
+	comp := newMockCompWithConfig(ctrl, testPackageName, &projectconfig.ComponentConfig{
+		Name: testPackageName,
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeUpstream,
+		},
+		Locked: &projectconfig.ComponentLockData{
+			UpstreamCommit: lockedCommit,
+		},
+	})
+
+	// No git expectations — locked commit should be returned without any clone.
+	identity, resolveErr := provider.ResolveIdentity(t.Context(), comp)
+	require.NoError(t, resolveErr)
+	assert.Equal(t, lockedCommit, identity, "should return locked commit without cloning")
+}
+
+// TestFedoraProvider_ResolveIdentity_FallsBackWithoutLock verifies that when no
+// Locked data is present, ResolveIdentity falls back to the old resolution path.
+func TestFedoraProvider_ResolveIdentity_FallsBackWithoutLock(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockGitProvider := git_test.NewMockGitProvider(ctrl)
+
+	provider, err := sourceproviders.NewFedoraSourcesProviderImpl(
+		afero.NewMemMapFs(),
+		newNoOpDryRunnable(),
+		mockGitProvider,
+		newNoOpDownloader(),
+		testResolvedDistro(),
+		retry.Disabled(),
+	)
+	require.NoError(t, err)
+
+	headCommit := "head-fallback-commit"
+
+	comp := newMockCompWithConfig(ctrl, testPackageName, &projectconfig.ComponentConfig{
+		Name: testPackageName,
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeUpstream,
+			// No UpstreamCommit pin, no Locked data → falls back to clone + HEAD.
+		},
+	})
+
+	// Expect clone + GetCurrentCommit (fallback path).
+	mockGitProvider.EXPECT().
+		Clone(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil)
+	mockGitProvider.EXPECT().
+		GetCurrentCommit(gomock.Any(), gomock.Any()).
+		Return(headCommit, nil)
+
+	identity, resolveErr := provider.ResolveIdentity(t.Context(), comp)
+	require.NoError(t, resolveErr)
+	assert.Equal(t, headCommit, identity, "should fall back to HEAD when no lock data")
+}
+
+// TestFedoraProvider_ResolveIdentity_LockedTakesPriorityOverConfigPin verifies
+// that Locked.UpstreamCommit is used even when Spec.UpstreamCommit is also set.
+func TestFedoraProvider_ResolveIdentity_LockedTakesPriorityOverConfigPin(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockGitProvider := git_test.NewMockGitProvider(ctrl)
+
+	provider, err := sourceproviders.NewFedoraSourcesProviderImpl(
+		afero.NewMemMapFs(),
+		newNoOpDryRunnable(),
+		mockGitProvider,
+		newNoOpDownloader(),
+		testResolvedDistro(),
+		retry.Disabled(),
+	)
+	require.NoError(t, err)
+
+	comp := newMockCompWithConfig(ctrl, testPackageName, &projectconfig.ComponentConfig{
+		Name: testPackageName,
+		Spec: projectconfig.SpecSource{
+			SourceType:     projectconfig.SpecSourceTypeUpstream,
+			UpstreamCommit: "config-pinned-commit",
+		},
+		Locked: &projectconfig.ComponentLockData{
+			UpstreamCommit: "locked-commit-wins",
+		},
+	})
+
+	// No git expectations — locked commit returned directly.
+	identity, resolveErr := provider.ResolveIdentity(t.Context(), comp)
+	require.NoError(t, resolveErr)
+	assert.Equal(t, "locked-commit-wins", identity,
+		"locked commit should take priority over config pin for identity resolution")
+}

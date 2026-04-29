@@ -110,11 +110,14 @@ func (g *FedoraSourcesProviderImpl) GetComponent(
 		return fmt.Errorf("failed to build dist-git URL for %#q:\n%w", upstreamNameToUse, err)
 	}
 
+	// Get the calculated effective commit.
+	effectiveCommit := component.GetConfig().EffectiveUpstreamCommit()
+
 	slog.Info("Getting component from git repo",
 		"component", componentName,
 		"upstreamComponent", upstreamNameToUse,
 		"branch", g.distroGitBranch,
-		"upstreamCommit", component.GetConfig().Spec.UpstreamCommit,
+		"upstreamCommit", effectiveCommit,
 		"snapshot", g.snapshotTime)
 
 	// Clone to a temp directory first, then copy files to destination.
@@ -147,7 +150,7 @@ func (g *FedoraSourcesProviderImpl) GetComponent(
 	}
 
 	// Process the cloned repo: checkout target commit, extract sources, copy to destination.
-	return g.processClonedRepo(ctx, component.GetConfig().Spec.UpstreamCommit,
+	return g.processClonedRepo(ctx, effectiveCommit,
 		tempDir, upstreamNameToUse, componentName, destDirPath, skipFileNames, resolved)
 }
 
@@ -246,14 +249,22 @@ func (g *FedoraSourcesProviderImpl) checkoutTargetCommit(
 }
 
 // ResolveIdentity implements [SourceIdentityProvider] by resolving the upstream
-// commit hash for the component. All resolution priority logic is in
-// [resolveEffectiveCommitHash], called via [resolveCommit].
+// commit hash for the component. Prefers the locked commit when available;
+// falls back to live resolution (clone + snapshot/HEAD) when no lock exists.
 func (g *FedoraSourcesProviderImpl) ResolveIdentity(
 	ctx context.Context,
 	component components.Component,
 ) (string, error) {
 	if component.GetName() == "" {
 		return "", errors.New("component name cannot be empty")
+	}
+
+	// Use locked commit if available — no clone needed.
+	//nolint:godox // tracked by TODO(lockfiles) tag.
+	// TODO(lockfiles): Once lock validation is default-on, a missing lock is an
+	// error caught before we get here. Remove the fallback to resolveCommit.
+	if locked := component.GetConfig().Locked; locked != nil && locked.UpstreamCommit != "" {
+		return locked.UpstreamCommit, nil
 	}
 
 	upstreamName := component.GetConfig().Spec.UpstreamName

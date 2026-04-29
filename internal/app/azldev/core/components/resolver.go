@@ -24,6 +24,12 @@ var ErrComponentGroupNotFound = errors.New("component group not found")
 // Resolver is a utility for resolving components in an environment.
 type Resolver struct {
 	env *azldev.Env
+	// SuppressLockWarnings disables advisory warnings emitted during lock
+	// population (e.g., staleness warning when config pin differs from locked
+	// commit). Set this for commands that are about to refresh the lock
+	// themselves (e.g., 'component update') to avoid noise telling the user
+	// to do what they're already doing.
+	SuppressLockWarnings bool
 }
 
 // NewResolver constructs a new [Resolver] for the given environment.
@@ -58,6 +64,8 @@ func (r *Resolver) FindComponents(filter *ComponentFilter) (components *Componen
 			return allComps, findErr
 		}
 
+		r.warnOnLockDrift(allComps)
+
 		return allComps, r.validateLockFiles(allComps, true, skipValidation)
 	}
 
@@ -86,6 +94,8 @@ func (r *Resolver) FindComponents(filter *ComponentFilter) (components *Componen
 			return components, err
 		}
 	}
+
+	r.warnOnLockDrift(components)
 
 	return components, r.validateLockFiles(components, false, skipValidation)
 }
@@ -479,10 +489,98 @@ func (r *Resolver) createComponentFromConfig(componentConfig *projectconfig.Comp
 		componentConfig.Release.Calculation = projectconfig.ReleaseCalculationAuto
 	}
 
+	// Populate locked state onto the component config. This makes lock data
+	// available to all downstream consumers (render, build, prepare-sources,
+	// diff-sources) without each needing lock-file awareness.
+	r.populateFromLock(componentConfig)
+
 	return &resolvedComponent{
 		env:    r.env,
 		config: *componentConfig,
 	}, nil
+}
+
+// populateFromLock reads lock file data and attaches it to the component config
+// as [projectconfig.ComponentLockData]. This centralizes lock-file consumption so
+// all downstream commands (render, build, prepare-sources, diff-sources) get
+// locked state automatically via config.Locked.
+//
+// IMPORTANT: This must NEVER overwrite user-specified config values. Lock data
+// goes into the separate Locked field, preserving the manifest/lock boundary:
+// Spec.UpstreamCommit = user intent, Locked.UpstreamCommit = resolved reality.
+func (r *Resolver) populateFromLock(config *projectconfig.ComponentConfig) {
+	// Lock state is only meaningful for upstream components. Local and
+	// unspecified-source components do not have upstream commits to track,
+	// and any orphaned same-name lock file should not leak into their config.
+	if config.Spec.SourceType != projectconfig.SpecSourceTypeUpstream {
+		return
+	}
+
+	reader := r.env.LockReader()
+	if reader == nil {
+		return
+	}
+
+	// Distinguish "not found" from real errors. A missing lock is normal
+	// (new component, or lock validation disabled); a corrupt/unreadable
+	// lock should be surfaced so it doesn't silently fall back to live
+	// upstream resolution.
+	exists, existsErr := reader.Exists(config.Name)
+	if existsErr != nil {
+		slog.Warn("Cannot check lock file", "component", config.Name, "error", existsErr)
+
+		return
+	}
+
+	if !exists {
+		return
+	}
+
+	lock, err := reader.Get(config.Name)
+	if err != nil {
+		slog.Warn("Lock file exists but is unreadable (corrupt or unsupported version)",
+			"component", config.Name, "error", err)
+
+		return
+	}
+
+	config.Locked = &projectconfig.ComponentLockData{
+		UpstreamCommit:   lock.UpstreamCommit,
+		ImportCommit:     lock.ImportCommit,
+		ManualBump:       lock.ManualBump,
+		InputFingerprint: lock.InputFingerprint,
+	}
+
+	slog.Debug("Populated lock data", "component", config.Name, "commit", lock.UpstreamCommit)
+}
+
+// warnOnLockDrift emits a staleness warning for each component in the resolved
+// set whose explicit config pin (Spec.UpstreamCommit) disagrees with its locked
+// commit. This runs against the filtered set so users only see warnings about
+// components they asked about, not about all components in the project.
+//
+// No-op when [Resolver.SuppressLockWarnings] is set (e.g., during component
+// update, which is about to refresh the lock).
+func (r *Resolver) warnOnLockDrift(resolved *ComponentSet) {
+	if r.SuppressLockWarnings {
+		return
+	}
+
+	for _, comp := range resolved.Components() {
+		cfg := comp.GetConfig()
+		if cfg.Locked == nil {
+			continue
+		}
+
+		if cfg.Spec.UpstreamCommit != "" &&
+			cfg.Locked.UpstreamCommit != "" &&
+			cfg.Spec.UpstreamCommit != cfg.Locked.UpstreamCommit {
+			slog.Warn("Lock differs from config pin - run 'component update' to refresh",
+				"component", cfg.Name,
+				"configPin", cfg.Spec.UpstreamCommit,
+				"lockedCommit", cfg.Locked.UpstreamCommit)
+		}
+	}
 }
 
 // Given an explicit component config, apply all inherited defaults.
