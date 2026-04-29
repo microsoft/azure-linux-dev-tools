@@ -3,7 +3,7 @@ description = 'simple'
 log-dir = '/workdir/build/logs'
 work-dir = '/workdir/build/work'
 output-dir = '/workdir/out'
-rendered-specs-dir = '/workdir/SPECS'
+rendered-specs-dir = '/workdir/specs'
 lock-dir = '/workdir/locks'
 
 [component-groups]
