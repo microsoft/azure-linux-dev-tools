@@ -17,7 +17,7 @@ description: "Instructions for working on the azldev Go codebase. IMPORTANT: Alw
 
 ## Coding Standards
 
-- **CRITICAL**: Unit tests must NOT write to real filesystem or spawn external processes. Use `internal/global/testctx` or `afero.NewMemMapFs` directly for in-memory filesystem
+- **CRITICAL**: Unit tests must NOT write to real filesystem or spawn external processes. See `.github/instructions/testing.instructions.md` for test conventions, mock patterns, and test environment setup.
 - Follow common coding principles like:
   - DRY - Don't Repeat Yourself
   - KISS - Keep It Simple, Stupid
@@ -119,12 +119,4 @@ CLI commands should return meaningful structured results. azldev has output form
 - Ensure backward compatibility unless explicitly instructed otherwise
 - Organize imports according to Go best practices
 - Linting: Prefer fixing issues over `//nolint` comments. Use targeted `//nolint:<linter>` if absolutely required
-- Testing: Table-driven tests preferred. Use `scenario/internal/cmdtest` helpers
-
-### Component Command Testing
-
-New component subcommands (`internal/app/azldev/cmds/component/`) require:
-- **Command wiring test** (`*_test.go`, external `package component_test`): verify `NewXxxCmd()` returns a valid command with correct `Use`, `RunE`, and expected flags/defaults.
-- **No-match test**: call `cmd.ExecuteContext(testEnv.Env)` with a nonexistent component to verify error handling.
-- **Helper unit tests** (`*_test.go`, same-package `package component`): test unexported helper functions (e.g., `findSpecFile`, `cleanupStaleRenders`) using `afero.NewMemMapFs`; where needed, follow the existing `//nolint:testpackage` pattern used in this repo.
-- **Snapshot update**: if the command changes the schema or CLI docs, run `mage scenarioUpdate` to update snapshots.
+- Testing: See `.github/instructions/testing.instructions.md` for conventions

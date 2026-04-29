@@ -6,15 +6,21 @@ package component
 import (
 	"testing"
 
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components/components_testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 // testLockDir is the lock directory used by TestEnv's project layout.
-const testLockDir = "/project/locks"
+const (
+	testLockDir    = "/project/locks"
+	testCommitHash = "abc123"
+)
 
 // newTestStore creates a lockfile.Store backed by the TestEnv's in-memory filesystem.
 func newTestStore(t *testing.T, env *testutils.TestEnv) *lockfile.Store {
@@ -64,14 +70,14 @@ func TestSaveComponentLocks_ComputesFingerprint(t *testing.T) {
 	store := newTestStore(t, env)
 
 	results := []UpdateResult{
-		makeResult("curl", "abc123", baseConfig("curl")),
+		makeResult("curl", testCommitHash, baseConfig("curl")),
 	}
 
 	err := saveComponentLocks(env.Env, store, results)
 	require.NoError(t, err)
 
 	lock := readLock(t, store, "curl")
-	assert.Equal(t, "abc123", lock.UpstreamCommit)
+	assert.Equal(t, testCommitHash, lock.UpstreamCommit)
 	assert.NotEmpty(t, lock.InputFingerprint, "fingerprint should be computed and stored")
 	assert.Contains(t, lock.InputFingerprint, "sha256:", "fingerprint should have sha256 prefix")
 }
@@ -82,7 +88,7 @@ func TestSaveComponentLocks_DetectsFingerprintChange(t *testing.T) {
 
 	// First save — establishes baseline fingerprint.
 	config1 := baseConfig("curl")
-	results1 := []UpdateResult{makeResult("curl", "abc123", config1)}
+	results1 := []UpdateResult{makeResult("curl", testCommitHash, config1)}
 
 	require.NoError(t, saveComponentLocks(env.Env, store, results1))
 
@@ -96,7 +102,7 @@ func TestSaveComponentLocks_DetectsFingerprintChange(t *testing.T) {
 	results2 := []UpdateResult{
 		{
 			Component:      "curl",
-			UpstreamCommit: "abc123",
+			UpstreamCommit: testCommitHash,
 			Changed:        false, // commit didn't change
 			config:         config2,
 		},
@@ -116,7 +122,7 @@ func TestSaveComponentLocks_SkipsUnchanged(t *testing.T) {
 	config := baseConfig("curl")
 
 	// First save.
-	results1 := []UpdateResult{makeResult("curl", "abc123", config)}
+	results1 := []UpdateResult{makeResult("curl", testCommitHash, config)}
 	require.NoError(t, saveComponentLocks(env.Env, store, results1))
 
 	fp1 := readLock(t, store, "curl").InputFingerprint
@@ -125,7 +131,7 @@ func TestSaveComponentLocks_SkipsUnchanged(t *testing.T) {
 	results2 := []UpdateResult{
 		{
 			Component:      "curl",
-			UpstreamCommit: "abc123",
+			UpstreamCommit: testCommitHash,
 			Changed:        false,
 			config:         config,
 		},
@@ -201,7 +207,7 @@ func TestSaveComponentLocks_ManualBumpAffectsFingerprint(t *testing.T) {
 	config := baseConfig("curl")
 
 	// Save with ManualBump = 0.
-	results1 := []UpdateResult{makeResult("curl", "abc123", config)}
+	results1 := []UpdateResult{makeResult("curl", testCommitHash, config)}
 	require.NoError(t, saveComponentLocks(env.Env, store, results1))
 
 	fp1 := readLock(t, store, "curl").InputFingerprint
@@ -216,7 +222,7 @@ func TestSaveComponentLocks_ManualBumpAffectsFingerprint(t *testing.T) {
 
 	// Re-run save with same commit and config.
 	results2 := []UpdateResult{
-		{Component: "curl", UpstreamCommit: "abc123", Changed: false, config: config},
+		{Component: "curl", UpstreamCommit: testCommitHash, Changed: false, config: config},
 	}
 
 	require.NoError(t, saveComponentLocks(env.Env, store, results2))
@@ -224,4 +230,133 @@ func TestSaveComponentLocks_ManualBumpAffectsFingerprint(t *testing.T) {
 	fp2 := readLock(t, store, "curl").InputFingerprint
 	assert.NotEqual(t, fp1, fp2, "ManualBump change should produce different fingerprint")
 	assert.True(t, results2[0].Changed, "should be marked changed due to fingerprint diff")
+}
+
+// bumpComponents increments ManualBump and recomputes the fingerprint.
+// Verify it changes the lock and produces a different fingerprint.
+func TestBumpComponents_IncrementsManualBump(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	store := newTestStore(t, env)
+
+	// Pre-populate a lock with ManualBump = 0.
+	lock := lockfile.New()
+	lock.UpstreamCommit = testCommitHash
+
+	require.NoError(t, store.Save("curl", lock))
+
+	config := baseConfig("curl")
+	comp := newMockComp(t, "curl", config)
+
+	results, err := bumpComponents(env.Env, store, []components.Component{comp}, &UpdateComponentOptions{})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.True(t, results[0].Changed)
+
+	bumped := readLock(t, store, "curl")
+	assert.Equal(t, 1, bumped.ManualBump)
+	assert.NotEmpty(t, bumped.InputFingerprint)
+}
+
+// Bumping twice should increment to 2 and produce a different fingerprint each time.
+func TestBumpComponents_SequentialBumps(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	store := newTestStore(t, env)
+
+	lock := lockfile.New()
+	lock.UpstreamCommit = testCommitHash
+
+	require.NoError(t, store.Save("curl", lock))
+
+	config := baseConfig("curl")
+	comp := newMockComp(t, "curl", config)
+	comps := []components.Component{comp}
+
+	// First bump.
+	_, err := bumpComponents(env.Env, store, comps, &UpdateComponentOptions{})
+	require.NoError(t, err)
+
+	fp1 := readLock(t, store, "curl").InputFingerprint
+
+	// Second bump.
+	_, err = bumpComponents(env.Env, store, comps, &UpdateComponentOptions{})
+	require.NoError(t, err)
+
+	lock2 := readLock(t, store, "curl")
+	assert.Equal(t, 2, lock2.ManualBump)
+	assert.NotEqual(t, fp1, lock2.InputFingerprint, "second bump should produce different fingerprint")
+}
+
+// Bumping a local component should skip it, not error.
+func TestBumpComponents_SkipsLocalComponent(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	store := newTestStore(t, env)
+
+	localConfig := &projectconfig.ComponentConfig{
+		Name: "local-pkg",
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeLocal,
+		},
+	}
+	comp := newMockComp(t, "local-pkg", localConfig)
+
+	results, err := bumpComponents(env.Env, store, []components.Component{comp}, &UpdateComponentOptions{})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.True(t, results[0].Skipped)
+	assert.Contains(t, results[0].SkipReason, "not upstream")
+}
+
+// Bumping a component with no lock file should fail with a clear message.
+func TestBumpComponents_ErrorOnNoLockFile(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	store := newTestStore(t, env)
+
+	config := baseConfig("curl")
+	comp := newMockComp(t, "curl", config)
+
+	_, err := bumpComponents(env.Env, store, []components.Component{comp}, &UpdateComponentOptions{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot bump")
+}
+
+// Bumping mixed components: upstream with lock succeeds, local skipped.
+func TestBumpComponents_MixedComponents(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	store := newTestStore(t, env)
+
+	// Create lock for upstream component.
+	lock := lockfile.New()
+	lock.UpstreamCommit = testCommitHash
+
+	require.NoError(t, store.Save("curl", lock))
+
+	upstreamComp := newMockComp(t, "curl", baseConfig("curl"))
+	localComp := newMockComp(t, "local-pkg", &projectconfig.ComponentConfig{
+		Name: "local-pkg",
+		Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeLocal},
+	})
+
+	comps := []components.Component{localComp, upstreamComp}
+	results, err := bumpComponents(env.Env, store, comps, &UpdateComponentOptions{})
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+
+	// Local should be skipped.
+	assert.True(t, results[0].Skipped)
+
+	// Upstream should be bumped.
+	assert.True(t, results[1].Changed)
+	assert.Equal(t, 1, readLock(t, store, "curl").ManualBump)
+}
+
+// newMockComp creates a MockComponent with the given name and config using gomock.
+func newMockComp(t *testing.T, name string, config *projectconfig.ComponentConfig) components.Component {
+	t.Helper()
+
+	ctrl := gomock.NewController(t)
+	comp := components_testutils.NewMockComponent(ctrl)
+	comp.EXPECT().GetName().AnyTimes().Return(name)
+	comp.EXPECT().GetConfig().AnyTimes().Return(config)
+
+	return comp
 }
