@@ -23,6 +23,7 @@ These overlays modify `.spec` files using the structured spec parser, allowing p
 | `spec-append-lines` | Appends lines to the end of a section; **fails if section doesn't exist** | `lines` |
 | `spec-search-replace` | Regex-based search and replace on spec content | `regex` |
 | `spec-remove-section` | Removes an entire section from the spec; **fails if section doesn't exist** | `section` |
+| `spec-remove-subpackage` | Removes every section associated with a sub-package (e.g. its `%package`, `%description`, `%files`, `%post`, `%postun`, ...); **fails if no such sections exist** | `package` |
 | `patch-add` | Adds a patch file and registers it in the spec (PatchN tag or %patchlist) | `source` |
 | `patch-remove` | Removes patch files and their spec references matching a glob pattern | `file` |
 
@@ -55,7 +56,7 @@ successfully makes a replacement to at least one matching file.
 | Tag | `tag` | The spec tag name (e.g., `BuildRequires`, `Requires`, `Version`) | `spec-add-tag`, `spec-insert-tag`, `spec-set-tag`, `spec-update-tag`, `spec-remove-tag` |
 | Value | `value` | The tag value to set, or value to match for removal | `spec-add-tag`, `spec-insert-tag`, `spec-set-tag`, `spec-update-tag`, `spec-remove-tag` (optional for matching) |
 | Section | `section` | The spec section to target (e.g., `%build`, `%install`, `%files`, `%description`) | `spec-prepend-lines`, `spec-append-lines`, `spec-search-replace` (optional), `spec-remove-section` |
-| Package | `package` | The sub-package name for multi-package specs; omit to target the main package | All spec overlays (optional) |
+| Package | `package` | The sub-package name for multi-package specs; omit to target the main package | All spec overlays (optional, except `spec-remove-subpackage` which **requires** it) |
 | Regex | `regex` | Regular expression pattern to match | `spec-search-replace`, `file-search-replace` |
 | Replacement | `replacement` | Literal replacement text; capture group references like `$1` are **not** expanded. Omit or leave empty to delete matched text. | `spec-search-replace`, `file-search-replace`, `file-rename` |
 | Lines | `lines` | Array of text lines to insert | `spec-prepend-lines`, `spec-append-lines`, `file-prepend-lines` |
@@ -295,6 +296,47 @@ section = "%files"
 package = "devel"
 description = "Remove devel sub-package files section"
 ```
+
+### Removing an Entire Sub-package
+
+The `spec-remove-subpackage` overlay removes **every** section associated with a given
+sub-package — its `%package` preamble as well as any per-section directives that target
+it (e.g. `%description`, `%files`, `%post`, `%postun`, `%pre`, `%trigger*`, etc.).
+Only the `package` field is needed; you do **not** need to enumerate each section.
+
+This is the preferred way to drop an unwanted sub-package: it avoids having to author
+multiple `spec-remove-section` overlays (and remember to keep them in sync if upstream
+later adds new sub-package scriptlets).
+
+```toml
+[[components.mypackage.overlays]]
+type = "spec-remove-subpackage"
+package = "devel"
+description = "Drop the devel sub-package; not shipped in Azure Linux"
+```
+
+The overlay fails if the spec contains no sections matching the indicated sub-package.
+Specifying a `section` field on this overlay is rejected at config-load time, since
+the overlay always removes every section associated with the sub-package.
+
+> **Note:** `spec-remove-subpackage` only edits the spec. If other parts of the project
+> reference the removed sub-package (for example, dependency lists in other components),
+> those references must be cleaned up separately.
+
+> **Note:** RPM permits two forms for declaring sub-package sections — a suffix form
+> (e.g. `%package devel`, which declares a sub-package named `<base>-devel`) and an
+> absolute form (e.g. `%package -n my-other-pkg`). The `package` value here must match
+> whichever form the spec uses on the section headers: `package = "devel"` matches
+> sections written as `%files devel`, while `package = "my-other-pkg"` matches sections
+> written as `%files -n my-other-pkg`. Specs that mix both forms for the same sub-package
+> (uncommon but legal) require a separate overlay per form.
+
+> **Limitation:** Like `spec-remove-section`, this overlay operates on whole-section line
+> ranges and does **not** understand `%if`/`%endif` conditionals. If a sub-package is wrapped
+> in a conditional block (e.g. `%if 0%{?with_devel} … %endif`), the `%endif` will typically
+> be consumed as part of the trailing sub-package section while the `%if` remains, producing
+> an invalid spec. For specs that conditionalize sub-packages, use a `spec-search-replace`
+> overlay (or remove the conditional first via additional overlays) instead.
 
 ## Validation
 

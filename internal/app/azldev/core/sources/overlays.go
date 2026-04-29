@@ -167,6 +167,11 @@ func ApplySpecOverlay(overlay projectconfig.ComponentOverlay, openedSpec *spec.S
 		if err != nil {
 			return fmt.Errorf("failed to remove section from spec:\n%w", err)
 		}
+	case projectconfig.ComponentOverlayRemoveSubpackage:
+		err := openedSpec.RemoveSubpackage(overlay.PackageName)
+		if err != nil {
+			return fmt.Errorf("failed to remove sub-package from spec:\n%w", err)
+		}
 	case projectconfig.ComponentOverlayAddPatch:
 		destFilename := overlay.Filename
 		if destFilename == "" {
