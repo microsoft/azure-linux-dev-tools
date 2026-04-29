@@ -19,6 +19,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
+	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource"
@@ -64,12 +65,16 @@ type PreparerOption func(*sourcePreparerImpl)
 // Without this option, no dist-git is created and synthetic history is skipped.
 //
 // The cmdFactory is used to shell out to git for fingerprint change detection.
+// The lockDir is the lock file directory relative to the project repository
+// root (e.g. "locks").
 func WithGitRepo(
 	cmdFactory opctx.CmdFactory,
+	lockDir string,
 ) PreparerOption {
 	return func(p *sourcePreparerImpl) {
 		p.withGitRepo = true
 		p.cmdFactory = cmdFactory
+		p.lockDir = lockDir
 	}
 }
 
@@ -122,6 +127,11 @@ type sourcePreparerImpl struct {
 	// cmdFactory is used to shell out to git for fingerprint change detection
 	// in the project repository. Set via [WithGitRepo].
 	cmdFactory opctx.CmdFactory
+
+	// lockDir is the lock file directory relative to the project repository
+	// root. Used to locate lock files for fingerprint change detection in
+	// synthetic history generation. Set via [WithGitRepo].
+	lockDir string
 
 	// allowNoHashes, when true, allows source file references without hash
 	// values. Missing hashes are computed from the downloaded files.
@@ -319,7 +329,7 @@ func (p *sourcePreparerImpl) collectOverlays(
 
 // initSourcesRepo initializes a new git repository in sourcesDirPath, stages all files,
 // and creates an initial commit. This is used for components that don't have an upstream
-// dist-git so that Affects commits can still be layered on top.
+// dist-git so that synthetic commits can still be layered on top.
 func initSourcesRepo(sourcesDirPath string) (*gogit.Repository, error) {
 	slog.Info("Initializing git repository for sources", "path", sourcesDirPath)
 
@@ -365,9 +375,9 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 	config := component.GetConfig()
 	componentName := component.GetName()
 
-	lockRelPath, err := LockFilePath(componentName)
+	lockRelPath, err := lockfile.LockPath(p.lockDir, componentName)
 	if err != nil {
-		return err
+		return fmt.Errorf("resolving lock file path for %#q:\n%w", componentName, err)
 	}
 
 	// Build commit metadata from lock file fingerprint changes.

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -18,10 +19,9 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/plumbing/storer"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
+	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
-	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/git"
-	toml "github.com/pelletier/go-toml/v2"
 )
 
 // CommitMetadata holds full metadata for a commit in the project repository.
@@ -51,30 +51,6 @@ type interleavedEntry struct {
 	syntheticChange *FingerprintChange
 }
 
-// LockFilePath returns the relative path to a component's lock file within the
-// project repository. The path follows the same letter-prefix convention used by
-// [components.RenderedSpecDir]: specs/<letter>/<name>/<name>.lock.
-// Returns an error if componentName is unsafe (absolute, contains path separators
-// or traversal sequences).
-func LockFilePath(componentName string) (string, error) {
-	if err := fileutils.ValidateFilename(componentName); err != nil {
-		return "", fmt.Errorf("invalid component name for lock file path:\n%w", err)
-	}
-
-	prefix := strings.ToLower(componentName[:1])
-
-	return filepath.Join("specs", prefix, componentName, componentName+".lock"), nil
-}
-
-// lockFileFields holds the subset of lock file fields needed for fingerprint
-// change detection. This avoids importing the full [lockfile.ComponentLock]
-// struct and decouples the synthetic history logic from lock file versioning.
-type lockFileFields struct {
-	ImportCommit     string `toml:"import-commit"`
-	UpstreamCommit   string `toml:"upstream-commit"`
-	InputFingerprint string `toml:"input-fingerprint"`
-}
-
 // FindFingerprintChanges walks the git log of the project repository for commits
 // that changed the given lock file and returns metadata for each commit where the
 // 'input-fingerprint' field changed. Results are sorted chronologically (oldest
@@ -82,6 +58,7 @@ type lockFileFields struct {
 func FindFingerprintChanges(
 	ctx context.Context,
 	cmdFactory opctx.CmdFactory,
+	projectRepo *gogit.Repository,
 	projectRepoDir string,
 	lockFileRelPath string,
 ) ([]FingerprintChange, error) {
@@ -95,24 +72,21 @@ func FindFingerprintChanges(
 		return nil, nil
 	}
 
-	// Pair each commit's metadata with its lock file fields.
+	// Pair each commit's metadata with its lock file contents.
 	type entry struct {
-		fields lockFileFields
-		meta   CommitMetadata
+		lock lockfile.ComponentLock
+		meta CommitMetadata
 	}
 
 	var entries []entry //nolint:prealloc // size not known ahead of time.
 
 	for _, meta := range metas {
-		fields, err := gitShowLockFile(ctx, cmdFactory, projectRepoDir, meta.Hash, lockFileRelPath)
+		lock, err := showLockFileAtCommit(projectRepo, meta.Hash, lockFileRelPath)
 		if err != nil {
-			slog.Warn("Failed to read lock file at commit; skipping",
-				"commit", meta.Hash, "error", err)
-
-			continue
+			return nil, fmt.Errorf("failed to read lock file at commit %#q:\n%w", meta.Hash, err)
 		}
 
-		entries = append(entries, entry{fields: fields, meta: meta})
+		entries = append(entries, entry{lock: lock, meta: meta})
 	}
 
 	if len(entries) == 0 {
@@ -128,14 +102,14 @@ func FindFingerprintChanges(
 	prevFingerprint := ""
 
 	for _, change := range entries {
-		if change.fields.InputFingerprint != prevFingerprint {
+		if change.lock.InputFingerprint != prevFingerprint {
 			changes = append(changes, FingerprintChange{
 				CommitMetadata: change.meta,
-				UpstreamCommit: change.fields.UpstreamCommit,
+				UpstreamCommit: change.lock.UpstreamCommit,
 			})
 		}
 
-		prevFingerprint = change.fields.InputFingerprint
+		prevFingerprint = change.lock.InputFingerprint
 	}
 
 	return changes, nil
@@ -215,8 +189,10 @@ func stageAndCaptureOverlayTree(repo *gogit.Repository) (plumbing.Hash, error) {
 // buildInterleavedSequence produces the full commit sequence for the rebuilt
 // history. Upstream commits appear in chronological order; synthetic commits
 // that reference an older upstream are inserted directly after it. Synthetic
-// commits referencing the latest upstream are appended at the end. Orphaned
-// commits whose upstream is not found in the dist-git history are dropped.
+// commits referencing the latest upstream are appended at the end.
+// Changes with no upstream commit (local components) are always placed on top.
+// Orphaned commits whose non-empty upstream is not found in the dist-git
+// history are dropped with a warning.
 func buildInterleavedSequence(
 	upstreamCommits []*object.Commit,
 	changes []FingerprintChange,
@@ -225,11 +201,16 @@ func buildInterleavedSequence(
 
 	var interleaved, top []FingerprintChange
 
-	for i := range changes {
-		if changes[i].UpstreamCommit == latestUpstream {
-			top = append(top, changes[i])
-		} else {
-			interleaved = append(interleaved, changes[i])
+	for idx := range changes {
+		switch changes[idx].UpstreamCommit {
+		case "":
+			// Local component changes have no upstream commit reference.
+			// Always place them on top of the history.
+			top = append(top, changes[idx])
+		case latestUpstream:
+			top = append(top, changes[idx])
+		default:
+			interleaved = append(interleaved, changes[idx])
 		}
 	}
 
@@ -258,8 +239,8 @@ func buildInterleavedSequence(
 		}
 	}
 
-	// Orphaned changes whose upstream-commit wasn't found are dropped —
-	// they reference an upstream commit outside the known dist-git history.
+	// Remaining interleaved changes reference upstream commits not found in
+	// the dist-git history — drop them with a warning. Will be useful for when we switch branches.
 	for hash, orphaned := range interleavedByUpstream {
 		slog.Warn("Upstream commit referenced by fingerprint change not found in dist-git history; "+
 			"dropping",
@@ -483,31 +464,61 @@ func buildSyntheticCommits(
 
 	configFilePath := config.SourceConfigFile.SourcePath()
 
-	projectRepoDir, err := git.RunInDir(ctx, cmdFactory, filepath.Dir(configFilePath), "rev-parse", "--show-toplevel")
+	// Open the project repository by walking up from the config file directory.
+	projectRepo, err := gogit.PlainOpenWithOptions(
+		filepath.Dir(configFilePath),
+		&gogit.PlainOpenOptions{DetectDotGit: true},
+	)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to find project repository for config file %#q:\n%w",
 			configFilePath, err)
 	}
 
 	// Read the current lock file at HEAD to get the import-commit boundary.
-	headHash, err := gitHeadHash(ctx, cmdFactory, projectRepoDir)
+	head, err := projectRepo.Head()
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to get HEAD hash:\n%w", err)
+		return nil, "", fmt.Errorf("failed to get HEAD:\n%w", err)
 	}
 
-	// If no lock file exists, the component has no overlays — the dist-git
-	// is just the upstream as-is, so no synthetic commits are needed.
-	headFields, lockFileErr := gitShowLockFile(ctx, cmdFactory, projectRepoDir, headHash, lockFileRelPath)
+	// Read the lock file at HEAD. Distinguish "path does not exist in the
+	// commit tree" (file-not-found) from real failures such as TOML parse
+	// errors or unexpected git object errors — only the former is tolerated.
+	headLock, lockFileErr := showLockFileAtCommit(projectRepo, head.Hash().String(), lockFileRelPath)
 	if lockFileErr != nil {
+		// Real errors (parse failures, git object errors, etc.) are always fatal.
+		if !errors.Is(lockFileErr, object.ErrFileNotFound) {
+			return nil, "", fmt.Errorf("failed to read lock file %#q at HEAD:\n%w",
+				lockFileRelPath, lockFileErr)
+		}
+
+		// File genuinely missing — the component has no overlays, so the
+		// dist-git is just the upstream as-is and no synthetic commits
+		// are needed.
+		//nolint:godox // tracked by TODO(lockfiles) tag.
+		// TODO(lockfiles): remove env var gate and make this a hard error unconditionally.
+		if os.Getenv("AZLDEV_ENABLE_LOCK_VALIDATION") == "1" {
+			return nil, "", fmt.Errorf("lock file %#q not found at HEAD:\n%w",
+				lockFileRelPath, lockFileErr)
+		}
+
 		slog.Debug("No lock file found at HEAD; skipping synthetic history",
 			"lockFile", lockFileRelPath, "error", lockFileErr)
 
 		return nil, "", nil
 	}
 
-	importCommit = headFields.ImportCommit
+	importCommit = headLock.ImportCommit
 
-	fpChanges, err := FindFingerprintChanges(ctx, cmdFactory, projectRepoDir, lockFileRelPath)
+	// Resolve the worktree root for git CLI operations that still need a
+	// directory path (gitLogFileMetadata uses git log with path filtering).
+	worktree, err := projectRepo.Worktree()
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get project worktree:\n%w", err)
+	}
+
+	projectRepoDir := worktree.Filesystem.Root()
+
+	fpChanges, err := FindFingerprintChanges(ctx, cmdFactory, projectRepo, projectRepoDir, lockFileRelPath)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to find fingerprint changes for lock file %#q:\n%w",
 			lockFileRelPath, err)
@@ -590,8 +601,10 @@ func collectUpstreamCommits(
 	}
 
 	if importCommit != "" && !foundImport {
-		slog.Warn("Import-commit not found in dist-git history; using all collected commits",
-			"importCommit", importCommit)
+		return nil, fmt.Errorf(
+			"import-commit %#q not found in dist-git history; "+
+				"the repository may be a shallow clone or the commit may have been rebased away",
+			importCommit)
 	}
 
 	// Walk was newest-first; reverse to chronological.
@@ -608,13 +621,13 @@ func unixToTime(unix int64) time.Time {
 // --- git CLI helpers ---
 
 // gitLogFileMetadata returns commit metadata (newest-first) for all commits
-// that touched the given file path in the repository at repoDir. Each commit's
-// metadata is separated by a NUL byte in the git log output.
+// that touched the given file path in the repository at repoDir. Fields within
+// each record are separated by NUL (\x00); records are separated by SOH (\x01).
 func gitLogFileMetadata(
 	ctx context.Context, cmdFactory opctx.CmdFactory, repoDir, filePath string,
 ) ([]CommitMetadata, error) {
 	output, err := git.RunInDir(ctx, cmdFactory, repoDir,
-		"log", "--format=%H%n%an%n%ae%n%at%n%s%x00", "--", filePath)
+		"log", "--format=%H%x00%an%x00%ae%x00%at%x00%s%x01", "--", filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list commits for %#q:\n%w", filePath, err)
 	}
@@ -623,7 +636,7 @@ func gitLogFileMetadata(
 		return nil, nil
 	}
 
-	blocks := strings.Split(output, "\x00")
+	blocks := strings.Split(output, "\x01")
 
 	var metas []CommitMetadata //nolint:prealloc // trailing empty block after split.
 
@@ -644,63 +657,70 @@ func gitLogFileMetadata(
 	return metas, nil
 }
 
-// gitShowLockFile reads the lock file content at a specific commit and parses
-// the 'upstream-commit' and 'input-fingerprint' TOML fields.
-func gitShowLockFile(
-	ctx context.Context, cmdFactory opctx.CmdFactory,
-	repoDir, commitHash, lockFileRelPath string,
-) (lockFileFields, error) {
-	ref := commitHash + ":" + lockFileRelPath
+// showLockFileAtCommit reads the lock file content at a specific commit hash
+// using go-git and parses it into a [lockfile.ComponentLock].
+func showLockFileAtCommit(
+	repo *gogit.Repository,
+	commitHash, lockFileRelPath string,
+) (lockfile.ComponentLock, error) {
+	hash := plumbing.NewHash(commitHash)
 
-	output, err := git.RunInDir(ctx, cmdFactory, repoDir, "show", ref)
+	commitObj, err := repo.CommitObject(hash)
 	if err != nil {
-		return lockFileFields{}, fmt.Errorf("failed to read lock file at %#q:\n%w", ref, err)
+		return lockfile.ComponentLock{}, fmt.Errorf("failed to resolve commit %#q:\n%w", commitHash, err)
 	}
 
-	var fields lockFileFields
-	if err := toml.Unmarshal([]byte(output), &fields); err != nil {
-		return lockFileFields{}, fmt.Errorf("failed to parse lock file at %#q:\n%w", ref, err)
+	tree, err := commitObj.Tree()
+	if err != nil {
+		return lockfile.ComponentLock{}, fmt.Errorf("failed to get tree for commit %#q:\n%w", commitHash, err)
 	}
 
-	return fields, nil
+	file, err := tree.File(lockFileRelPath)
+	if err != nil {
+		return lockfile.ComponentLock{}, fmt.Errorf("failed to read %#q at commit %#q:\n%w",
+			lockFileRelPath, commitHash, err)
+	}
+
+	content, err := file.Contents()
+	if err != nil {
+		return lockfile.ComponentLock{}, fmt.Errorf("failed to read contents of %#q at commit %#q:\n%w",
+			lockFileRelPath, commitHash, err)
+	}
+
+	lock, err := lockfile.Parse([]byte(content))
+	if err != nil {
+		return lockfile.ComponentLock{}, fmt.Errorf("failed to parse lock file %#q at commit %#q:\n%w",
+			lockFileRelPath, commitHash, err)
+	}
+
+	return *lock, nil
 }
 
-// commitMetadataFieldCount is the number of fields expected in the output of
-// 'git log -1 --format=%H%n%an%n%ae%n%at%n%s'.
+// commitMetadataFieldCount is the number of NUL-separated fields expected in
+// a single commit record produced by 'git log --format=%H%x00%an%x00%ae%x00%at%x00%s'.
 const commitMetadataFieldCount = 5
 
-// ParseCommitMetadata parses the output of 'git log -1 --format=%H%n%an%n%ae%n%at%n%s'.
+// ParseCommitMetadata parses a single NUL-delimited commit record produced by
+// 'git log --format=%H%x00%an%x00%ae%x00%at%x00%s'.
 func ParseCommitMetadata(output string) (CommitMetadata, error) {
-	lines := strings.SplitN(strings.TrimSpace(output), "\n", commitMetadataFieldCount)
+	fields := strings.SplitN(output, "\x00", commitMetadataFieldCount)
 
-	if len(lines) < commitMetadataFieldCount {
+	if len(fields) < commitMetadataFieldCount {
 		return CommitMetadata{}, fmt.Errorf(
-			"unexpected git log output (expected %d lines, got %d):\n%v",
-			commitMetadataFieldCount, len(lines), output)
+			"unexpected git log output (expected %d fields, got %d):\n%v",
+			commitMetadataFieldCount, len(fields), output)
 	}
 
 	var timestamp int64
-	if _, err := fmt.Sscanf(lines[3], "%d", &timestamp); err != nil {
-		return CommitMetadata{}, fmt.Errorf("failed to parse timestamp %#q:\n%w", lines[3], err)
+	if _, err := fmt.Sscanf(fields[3], "%d", &timestamp); err != nil {
+		return CommitMetadata{}, fmt.Errorf("failed to parse timestamp %#q:\n%w", fields[3], err)
 	}
 
 	return CommitMetadata{
-		Hash:        lines[0],
-		Author:      lines[1],
-		AuthorEmail: lines[2],
+		Hash:        fields[0],
+		Author:      fields[1],
+		AuthorEmail: fields[2],
 		Timestamp:   timestamp,
-		Message:     lines[4],
+		Message:     fields[4],
 	}, nil
-}
-
-// gitHeadHash returns the HEAD commit hash of the repository at repoDir.
-func gitHeadHash(
-	ctx context.Context, cmdFactory opctx.CmdFactory, repoDir string,
-) (string, error) {
-	hash, err := git.RunInDir(ctx, cmdFactory, repoDir, "rev-parse", "HEAD")
-	if err != nil {
-		return "", fmt.Errorf("failed to resolve HEAD in %#q:\n%w", repoDir, err)
-	}
-
-	return hash, nil
 }

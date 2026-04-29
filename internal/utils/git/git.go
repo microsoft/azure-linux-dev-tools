@@ -245,7 +245,8 @@ func RunInDir(
 
 	output, err := cmd.RunAndGetOutput(ctx)
 	if err != nil {
-		return "", fmt.Errorf("git %s failed:\n%v\n%w", args, stderr.String(), err)
+		return "", fmt.Errorf("failed to run command 'git %s':\n%s\n%w",
+			strings.Join(fullArgs, " "), stderr.String(), err)
 	}
 
 	return strings.TrimSpace(output), nil

@@ -45,12 +45,12 @@ func computeFingerprint(
 	ctx *testctx.TestCtx,
 	comp projectconfig.ComponentConfig,
 	releaseVer string,
-	affects int,
+	manualBump int,
 ) string {
 	t.Helper()
 
 	identity, err := fingerprint.ComputeIdentity(ctx.FS(), comp, releaseVer, fingerprint.IdentityOptions{
-		ManualBump:     affects,
+		ManualBump:     manualBump,
 		SourceIdentity: "test-source-identity",
 	})
 	require.NoError(t, err)
@@ -292,7 +292,7 @@ func TestComputeIdentity_DistroChange(t *testing.T) {
 	assert.NotEqual(t, fp1, fp2, "different release version must produce different fingerprints")
 }
 
-func TestComputeIdentity_AffectsCountChange(t *testing.T) {
+func TestComputeIdentity_ManualBumpChange(t *testing.T) {
 	ctx := newTestFS(t, map[string]string{
 		"/specs/test.spec": "Name: testpkg\nVersion: 1.0",
 	})
@@ -303,7 +303,7 @@ func TestComputeIdentity_AffectsCountChange(t *testing.T) {
 	fp1 := computeFingerprint(t, ctx, comp, releaseVer, 0)
 	fp2 := computeFingerprint(t, ctx, comp, releaseVer, 1)
 
-	assert.NotEqual(t, fp1, fp2, "different affects commit count must produce different fingerprints")
+	assert.NotEqual(t, fp1, fp2, "different manual bump count must produce different fingerprints")
 }
 
 func TestComputeIdentity_UpstreamCommitChange(t *testing.T) {

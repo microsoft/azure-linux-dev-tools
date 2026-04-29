@@ -4,7 +4,10 @@
 package component
 
 import (
+	"path/filepath"
+
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
+	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
 	"github.com/spf13/cobra"
 )
 
@@ -31,4 +34,17 @@ components defined in the project configuration.`,
 	queryOnAppInit(app, cmd)
 	renderOnAppInit(app, cmd)
 	updateOnAppInit(app, cmd)
+}
+
+// relativeLockDir returns the lock file directory relative to the project
+// repository root. Uses the configured 'lock-dir' from the project config
+// if set, falling back to the default [lockfile.LockDir].
+func relativeLockDir(env *azldev.Env) string {
+	if cfg := env.Config(); cfg != nil && cfg.Project.LockDir != "" {
+		if rel, err := filepath.Rel(env.ProjectDir(), cfg.Project.LockDir); err == nil {
+			return rel
+		}
+	}
+
+	return lockfile.LockDir
 }

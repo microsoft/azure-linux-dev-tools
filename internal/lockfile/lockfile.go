@@ -98,15 +98,27 @@ func Load(fs opctx.FS, path string) (*ComponentLock, error) {
 		return nil, fmt.Errorf("reading lock file %#q:\n%w", path, err)
 	}
 
+	lock, err := Parse(data)
+	if err != nil {
+		return nil, fmt.Errorf("loading lock file %#q:\n%w", path, err)
+	}
+
+	return lock, nil
+}
+
+// Parse unmarshals a [ComponentLock] from raw TOML bytes and validates the
+// format version. Use this when the lock file content has already been read
+// (e.g. from git show); use [Load] to read from the filesystem.
+func Parse(data []byte) (*ComponentLock, error) {
 	var lock ComponentLock
 	if err := toml.Unmarshal(data, &lock); err != nil {
-		return nil, fmt.Errorf("parsing lock file %#q:\n%w", path, err)
+		return nil, fmt.Errorf("parsing lock file:\n%w", err)
 	}
 
 	if lock.Version != currentVersion {
 		return nil, fmt.Errorf(
-			"unsupported lock file version %d in %#q (expected %d)",
-			lock.Version, path, currentVersion)
+			"unsupported lock file version %d (expected %d)",
+			lock.Version, currentVersion)
 	}
 
 	return &lock, nil
