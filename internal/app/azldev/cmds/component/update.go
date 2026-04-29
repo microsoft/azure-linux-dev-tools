@@ -129,7 +129,7 @@ func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]Updat
 	// existing locks and should not delete entries for components that may
 	// have been removed.
 	if options.Bump {
-		results, bumpErr := bumpComponents(env, store, comps)
+		results, bumpErr := bumpComponents(env, store, comps, options)
 		if bumpErr != nil {
 			return results, bumpErr
 		}
@@ -281,7 +281,7 @@ func saveComponentLocks(env *azldev.Env, store *lockfile.Store, results []Update
 // incremented ManualBump counter. Does not contact upstream. Triggers a new
 // release without any other input change — used for mass-rebuild scenarios.
 func bumpComponents(
-	env *azldev.Env, store *lockfile.Store, comps []components.Component,
+	env *azldev.Env, store *lockfile.Store, comps []components.Component, options *UpdateComponentOptions,
 ) ([]UpdateResult, error) {
 	results := make([]UpdateResult, 0, len(comps))
 	saved := make([]string, 0, len(comps))
@@ -316,9 +316,13 @@ func bumpComponents(
 		// instead of silently creating an empty lock with no UpstreamCommit.
 		lock, lockErr := store.Get(name)
 		if lockErr != nil {
-			return results, fmt.Errorf(
-				"cannot bump %#q (run 'azldev component update -p %s' first):\n%w",
-				name, name, lockErr)
+			if options.ComponentFilter.IncludeAllComponents {
+				env.AddFixSuggestion("run 'azldev component update -a' first to populate lock files")
+			} else {
+				env.AddFixSuggestion(fmt.Sprintf("run 'azldev component update -p %s' first", name))
+			}
+
+			return results, fmt.Errorf("cannot bump %#q:\n%w", name, lockErr)
 		}
 
 		lock.ManualBump++

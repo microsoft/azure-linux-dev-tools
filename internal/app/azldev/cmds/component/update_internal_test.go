@@ -247,7 +247,7 @@ func TestBumpComponents_IncrementsManualBump(t *testing.T) {
 	config := baseConfig("curl")
 	comp := newMockComp(t, "curl", config)
 
-	results, err := bumpComponents(env.Env, store, []components.Component{comp})
+	results, err := bumpComponents(env.Env, store, []components.Component{comp}, &UpdateComponentOptions{})
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.True(t, results[0].Changed)
@@ -272,13 +272,13 @@ func TestBumpComponents_SequentialBumps(t *testing.T) {
 	comps := []components.Component{comp}
 
 	// First bump.
-	_, err := bumpComponents(env.Env, store, comps)
+	_, err := bumpComponents(env.Env, store, comps, &UpdateComponentOptions{})
 	require.NoError(t, err)
 
 	fp1 := readLock(t, store, "curl").InputFingerprint
 
 	// Second bump.
-	_, err = bumpComponents(env.Env, store, comps)
+	_, err = bumpComponents(env.Env, store, comps, &UpdateComponentOptions{})
 	require.NoError(t, err)
 
 	lock2 := readLock(t, store, "curl")
@@ -299,7 +299,7 @@ func TestBumpComponents_SkipsLocalComponent(t *testing.T) {
 	}
 	comp := newMockComp(t, "local-pkg", localConfig)
 
-	results, err := bumpComponents(env.Env, store, []components.Component{comp})
+	results, err := bumpComponents(env.Env, store, []components.Component{comp}, &UpdateComponentOptions{})
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.True(t, results[0].Skipped)
@@ -314,10 +314,9 @@ func TestBumpComponents_ErrorOnNoLockFile(t *testing.T) {
 	config := baseConfig("curl")
 	comp := newMockComp(t, "curl", config)
 
-	_, err := bumpComponents(env.Env, store, []components.Component{comp})
+	_, err := bumpComponents(env.Env, store, []components.Component{comp}, &UpdateComponentOptions{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot bump")
-	assert.Contains(t, err.Error(), "component update")
 }
 
 // Bumping mixed components: upstream with lock succeeds, local skipped.
@@ -337,7 +336,7 @@ func TestBumpComponents_MixedComponents(t *testing.T) {
 		Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeLocal},
 	})
 
-	results, err := bumpComponents(env.Env, store, []components.Component{localComp, upstreamComp})
+	results, err := bumpComponents(env.Env, store, []components.Component{localComp, upstreamComp}, &UpdateComponentOptions{})
 	require.NoError(t, err)
 	require.Len(t, results, 2)
 
