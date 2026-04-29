@@ -333,7 +333,7 @@ func bumpComponents(
 		}
 
 		// Determine source identity for fingerprint recomputation.
-		srcIdentity, identityErr := bumpSourceIdentity(env, comp, lock)
+		srcIdentity, identityErr := resolveLockedSourceIdentity(env, comp, lock)
 		if identityErr != nil {
 			return results, identityErr
 		}
@@ -374,14 +374,11 @@ func bumpComponents(
 	return results, nil
 }
 
-// checkUpdateErrors returns an error if any component failed to resolve.
-// Does NOT log a summary — call [logUpdateSummary] after saves are complete
-// so that Changed counts include fingerprint-only diffs.
-// bumpSourceIdentity returns the source identity to use when recomputing a
-// bumped component's fingerprint. For upstream components, this is the locked
-// commit (bump doesn't change it). For local components, it re-hashes the
-// spec directory.
-func bumpSourceIdentity(
+// resolveLockedSourceIdentity returns the source identity to use when
+// recomputing a component's fingerprint during bump. For upstream components,
+// this is the locked commit (bump doesn't change it). For local components,
+// it re-hashes the spec directory.
+func resolveLockedSourceIdentity(
 	env *azldev.Env, comp components.Component, lock *lockfile.ComponentLock,
 ) (string, error) {
 	if lock.UpstreamCommit != "" {
@@ -408,6 +405,9 @@ func bumpSourceIdentity(
 	return identity, nil
 }
 
+// checkUpdateErrors returns an error if any component failed to resolve.
+// Does NOT log a summary — call [logUpdateSummary] after saves are complete
+// so that Changed counts include fingerprint-only diffs.
 func checkUpdateErrors(results []UpdateResult) error {
 	var failedNames []string
 
