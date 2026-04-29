@@ -2,18 +2,17 @@
 
 ## azldev component update
 
-Resolve and lock upstream commits for components
+Resolve and lock source identities for components
 
 ### Synopsis
 
-Resolve upstream commit hashes for components and write them to per-component lock files.
+Resolve source identities for components and write them to per-component lock files.
 
 For upstream components, this resolves the effective commit hash using the
 distro snapshot time or explicit pin, then records it in locks/<name>.lock.
-Subsequent commands (render, build) use the locked commit for deterministic,
+For local components, this computes a content hash of the spec directory.
+Subsequent commands (render, build) use the locked state for deterministic,
 reproducible results.
-
-Local components are skipped — they have no upstream commit to resolve.
 
 When updating all components (-a), orphan lock files (locks for components
 that no longer exist in the project config) are automatically pruned.

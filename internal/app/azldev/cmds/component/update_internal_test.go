@@ -11,6 +11,8 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -38,12 +40,13 @@ func makeResult(name, commit string, config *projectconfig.ComponentConfig) Upda
 		UpstreamCommit: commit,
 		Changed:        true,
 		config:         config,
+		sourceIdentity: commit,
 	}
 }
 
 // readLock loads a lock file from the store and returns it. Fails the test on error.
 //
-//nolint:unparam // Helper is generic; tests happen to use "curl" consistently.
+
 func readLock(t *testing.T, store *lockfile.Store, name string) *lockfile.ComponentLock {
 	t.Helper()
 
@@ -105,6 +108,7 @@ func TestSaveComponentLocks_DetectsFingerprintChange(t *testing.T) {
 			UpstreamCommit: testCommitHash,
 			Changed:        false, // commit didn't change
 			config:         config2,
+			sourceIdentity: testCommitHash,
 		},
 	}
 
@@ -134,6 +138,7 @@ func TestSaveComponentLocks_SkipsUnchanged(t *testing.T) {
 			UpstreamCommit: testCommitHash,
 			Changed:        false,
 			config:         config,
+			sourceIdentity: testCommitHash,
 		},
 	}
 
@@ -222,7 +227,7 @@ func TestSaveComponentLocks_ManualBumpAffectsFingerprint(t *testing.T) {
 
 	// Re-run save with same commit and config.
 	results2 := []UpdateResult{
-		{Component: "curl", UpstreamCommit: testCommitHash, Changed: false, config: config},
+		{Component: "curl", UpstreamCommit: testCommitHash, Changed: false, config: config, sourceIdentity: testCommitHash},
 	}
 
 	require.NoError(t, saveComponentLocks(env.Env, store, results2))
@@ -286,8 +291,8 @@ func TestBumpComponents_SequentialBumps(t *testing.T) {
 	assert.NotEqual(t, fp1, lock2.InputFingerprint, "second bump should produce different fingerprint")
 }
 
-// Bumping a local component should skip it, not error.
-func TestBumpComponents_SkipsLocalComponent(t *testing.T) {
+// Bumping a local component with no lock file should error (same as upstream).
+func TestBumpComponents_ErrorOnLocalNoLock(t *testing.T) {
 	env := testutils.NewTestEnv(t)
 	store := newTestStore(t, env)
 
@@ -295,6 +300,34 @@ func TestBumpComponents_SkipsLocalComponent(t *testing.T) {
 		Name: "local-pkg",
 		Spec: projectconfig.SpecSource{
 			SourceType: projectconfig.SpecSourceTypeLocal,
+			Path:       "/specs/local-pkg/local-pkg.spec",
+		},
+	}
+	comp := newMockComp(t, "local-pkg", localConfig)
+
+	_, err := bumpComponents(env.Env, store, []components.Component{comp}, &UpdateComponentOptions{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot bump")
+}
+
+// Bumping a local component with an existing lock should succeed.
+func TestBumpComponents_BumpsLocalWithLock(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	store := newTestStore(t, env)
+
+	specPath := "/specs/local-pkg/local-pkg.spec"
+	require.NoError(t, fileutils.WriteFile(env.TestFS, specPath, []byte("Name: local-pkg\n"), fileperms.PrivateFile))
+
+	lock := lockfile.New()
+	lock.InputFingerprint = "sha256:old-fingerprint"
+
+	require.NoError(t, store.Save("local-pkg", lock))
+
+	localConfig := &projectconfig.ComponentConfig{
+		Name: "local-pkg",
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeLocal,
+			Path:       specPath,
 		},
 	}
 	comp := newMockComp(t, "local-pkg", localConfig)
@@ -302,8 +335,12 @@ func TestBumpComponents_SkipsLocalComponent(t *testing.T) {
 	results, err := bumpComponents(env.Env, store, []components.Component{comp}, &UpdateComponentOptions{})
 	require.NoError(t, err)
 	require.Len(t, results, 1)
-	assert.True(t, results[0].Skipped)
-	assert.Contains(t, results[0].SkipReason, "not upstream")
+	assert.True(t, results[0].Changed)
+
+	bumpedLock := readLock(t, store, "local-pkg")
+	assert.Equal(t, 1, bumpedLock.ManualBump)
+	assert.NotEqual(t, "sha256:old-fingerprint", bumpedLock.InputFingerprint,
+		"fingerprint must change after bump")
 }
 
 // Bumping a component with no lock file should fail with a clear message.
@@ -319,21 +356,33 @@ func TestBumpComponents_ErrorOnNoLockFile(t *testing.T) {
 	assert.Contains(t, err.Error(), "cannot bump")
 }
 
-// Bumping mixed components: upstream with lock succeeds, local skipped.
+// Bumping mixed components: upstream and local with locks both succeed.
 func TestBumpComponents_MixedComponents(t *testing.T) {
 	env := testutils.NewTestEnv(t)
 	store := newTestStore(t, env)
 
 	// Create lock for upstream component.
-	lock := lockfile.New()
-	lock.UpstreamCommit = testCommitHash
+	upstreamLock := lockfile.New()
+	upstreamLock.UpstreamCommit = testCommitHash
 
-	require.NoError(t, store.Save("curl", lock))
+	require.NoError(t, store.Save("curl", upstreamLock))
+
+	// Create lock and spec for local component.
+	specPath := "/specs/local-pkg/local-pkg.spec"
+	require.NoError(t, fileutils.WriteFile(env.TestFS, specPath, []byte("Name: local-pkg\n"), fileperms.PrivateFile))
+
+	localLock := lockfile.New()
+	localLock.InputFingerprint = "sha256:local-fp"
+
+	require.NoError(t, store.Save("local-pkg", localLock))
 
 	upstreamComp := newMockComp(t, "curl", baseConfig("curl"))
 	localComp := newMockComp(t, "local-pkg", &projectconfig.ComponentConfig{
 		Name: "local-pkg",
-		Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeLocal},
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeLocal,
+			Path:       specPath,
+		},
 	})
 
 	comps := []components.Component{localComp, upstreamComp}
@@ -341,11 +390,11 @@ func TestBumpComponents_MixedComponents(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, results, 2)
 
-	// Local should be skipped.
-	assert.True(t, results[0].Skipped)
-
-	// Upstream should be bumped.
+	// Both should be bumped.
+	assert.True(t, results[0].Changed)
 	assert.True(t, results[1].Changed)
+
+	assert.Equal(t, 1, readLock(t, store, "local-pkg").ManualBump)
 	assert.Equal(t, 1, readLock(t, store, "curl").ManualBump)
 }
 

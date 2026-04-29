@@ -120,3 +120,18 @@ CLI commands should return meaningful structured results. azldev has output form
 - Organize imports according to Go best practices
 - Linting: Prefer fixing issues over `//nolint` comments. Use targeted `//nolint:<linter>` if absolutely required
 - Testing: See `.github/instructions/testing.instructions.md` for conventions
+
+## Distro Resolution
+
+Components can override the project-default distro via `Spec.UpstreamDistro`. There are three ways to get distro information, each for a different purpose:
+
+| Need | Call | Returns |
+|------|------|---------|
+| Project-default distro (release ver, mock config) | `env.Distro()` | `(DistroDefinition, DistroVersionDefinition, error)` |
+| Per-component distro (for source providers) | `sourceproviders.ResolveDistro(env, comp)` | `ResolvedDistro` (includes ref, definition, version) |
+| Per-component release version only (for fingerprints) | Read `distroVer.ReleaseVer` from the resolved distro | `string` |
+
+**When to use which:**
+- **`env.Distro()`** — safe when all components share the same distro (e.g., iterating over results in `saveComponentLocks`). Breaks if components override the distro.
+- **`sourceproviders.ResolveDistro(env, comp)`** — use when you need the full distro context for a specific component (snapshot time, dist-git branch, lookaside URI). This is what `resolveOneSourceIdentity` uses to create the source manager.
+- **Per-component release version** — when computing fingerprints per-component, resolve the distro per-component to get the correct `ReleaseVer`. Using the project-default release version is wrong when component-level distro overrides exist.

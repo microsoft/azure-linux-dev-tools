@@ -789,9 +789,8 @@ func TestFindComponents_ExplicitPinPreserved(t *testing.T) {
 	assert.Equal(t, "locked-commit-different", comp.GetConfig().Locked.UpstreamCommit)
 }
 
-// Local components (specs on disk, no upstream) don't have lock files.
-// The resolver should leave Locked as nil — no error, no special handling.
-func TestFindComponents_LocalComponentNoLockPopulation(t *testing.T) {
+// When no lock file exists for a local component, Locked stays nil.
+func TestFindComponents_LocalComponentNoLockFile(t *testing.T) {
 	env := testutils.NewTestEnv(t)
 
 	specPath := "/specs/local-pkg/local-pkg.spec"
@@ -805,7 +804,6 @@ func TestFindComponents_LocalComponentNoLockPopulation(t *testing.T) {
 		},
 	}
 
-	// No lock file for local component — this is normal.
 	filter := &components.ComponentFilter{IncludeAllComponents: true}
 
 	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
@@ -814,7 +812,44 @@ func TestFindComponents_LocalComponentNoLockPopulation(t *testing.T) {
 	comp, ok := resolved.TryGet("local-pkg")
 	require.True(t, ok)
 
-	assert.Nil(t, comp.GetConfig().Locked, "local components should not have lock data")
+	assert.Nil(t, comp.GetConfig().Locked, "no lock file → Locked must be nil")
+}
+
+// When a lock file exists for a local component (written by a prior 'update'),
+// the resolver should populate Locked with the stored data.
+func TestFindComponents_LocalComponentWithLockFile(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	specPath := "/specs/local-pkg/local-pkg.spec"
+	require.NoError(t, fileutils.WriteFile(env.TestFS, specPath, []byte("Name: local-pkg\n"), fileperms.PrivateFile))
+
+	env.Config.Components["local-pkg"] = projectconfig.ComponentConfig{
+		Name: "local-pkg",
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeLocal,
+			Path:       specPath,
+		},
+	}
+
+	// Write a lock file for the local component.
+	lock := lockfile.New()
+	lock.InputFingerprint = "sha256:test-local-fingerprint"
+	lock.ManualBump = 1
+
+	env.WriteLock(t, "local-pkg", lock)
+
+	filter := &components.ComponentFilter{IncludeAllComponents: true}
+
+	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
+	require.NoError(t, err)
+
+	comp, ok := resolved.TryGet("local-pkg")
+	require.True(t, ok)
+
+	require.NotNil(t, comp.GetConfig().Locked, "lock file exists → Locked must be populated")
+	assert.Equal(t, "sha256:test-local-fingerprint", comp.GetConfig().Locked.InputFingerprint)
+	assert.Equal(t, 1, comp.GetConfig().Locked.ManualBump)
+	assert.Empty(t, comp.GetConfig().Locked.UpstreamCommit, "local components have no upstream commit")
 }
 
 // A corrupt or unparseable lock file should not silently fall back to

@@ -505,17 +505,14 @@ func (r *Resolver) createComponentFromConfig(componentConfig *projectconfig.Comp
 // all downstream commands (render, build, prepare-sources, diff-sources) get
 // locked state automatically via config.Locked.
 //
+// Works for both upstream and local components. For local components, the lock
+// file will have empty UpstreamCommit/ImportCommit fields but a populated
+// InputFingerprint.
+//
 // IMPORTANT: This must NEVER overwrite user-specified config values. Lock data
 // goes into the separate Locked field, preserving the manifest/lock boundary:
 // Spec.UpstreamCommit = user intent, Locked.UpstreamCommit = resolved reality.
 func (r *Resolver) populateFromLock(config *projectconfig.ComponentConfig) {
-	// Lock state is only meaningful for upstream components. Local and
-	// unspecified-source components do not have upstream commits to track,
-	// and any orphaned same-name lock file should not leak into their config.
-	if config.Spec.SourceType != projectconfig.SpecSourceTypeUpstream {
-		return
-	}
-
 	reader := r.env.LockReader()
 	if reader == nil {
 		return
