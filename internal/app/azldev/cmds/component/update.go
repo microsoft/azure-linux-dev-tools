@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -229,6 +230,13 @@ func saveComponentLocks(env *azldev.Env, store *lockfile.Store, results []Update
 
 		lock.UpstreamCommit = results[idx].UpstreamCommit
 
+		// Clear upstream-only fields for local components so a source-type
+		// transition (upstream → local) doesn't leave stale data in the lock.
+		if results[idx].config != nil &&
+			results[idx].config.Spec.SourceType != projectconfig.SpecSourceTypeUpstream {
+			lock.ImportCommit = ""
+		}
+
 		// Recompute fingerprint from resolved config + lock state.
 		if results[idx].config == nil {
 			retErr = fmt.Errorf("no resolved config for %#q; cannot compute fingerprint", results[idx].Component)
@@ -377,32 +385,40 @@ func bumpComponents(
 // resolveLockedSourceIdentity returns the source identity to use when
 // recomputing a component's fingerprint during bump. For upstream components,
 // this is the locked commit (bump doesn't change it). For local components,
-// it re-hashes the spec directory.
+// it re-hashes the spec directory. Does not perform network I/O.
 func resolveLockedSourceIdentity(
 	env *azldev.Env, comp components.Component, lock *lockfile.ComponentLock,
 ) (string, error) {
-	if lock.UpstreamCommit != "" {
-		return lock.UpstreamCommit, nil
-	}
-
 	name := comp.GetName()
+	sourceType := comp.GetConfig().Spec.SourceType
 
-	distro, err := sourceproviders.ResolveDistro(env, comp)
-	if err != nil {
-		return "", fmt.Errorf("resolving distro for %#q:\n%w", name, err)
+	switch sourceType {
+	case projectconfig.SpecSourceTypeUpstream:
+		if lock.UpstreamCommit == "" {
+			return "", fmt.Errorf(
+				"lock file for upstream component %#q has no upstream-commit; "+
+					"run 'azldev component update -p %s' to populate it before bumping",
+				name, name)
+		}
+
+		return lock.UpstreamCommit, nil
+
+	case projectconfig.SpecSourceTypeLocal, projectconfig.SpecSourceTypeUnspecified:
+		specPath := comp.GetConfig().Spec.Path
+		if specPath == "" {
+			return "", fmt.Errorf("component %#q has no spec path configured", name)
+		}
+
+		identity, err := sourceproviders.ResolveLocalSourceIdentity(env.FS(), filepath.Dir(specPath))
+		if err != nil {
+			return "", fmt.Errorf("resolving local source identity for %#q:\n%w", name, err)
+		}
+
+		return identity, nil
+
+	default:
+		return "", fmt.Errorf("unsupported source type %#q for component %#q", sourceType, name)
 	}
-
-	sourceManager, err := sourceproviders.NewSourceManager(env, distro)
-	if err != nil {
-		return "", fmt.Errorf("creating source manager for %#q:\n%w", name, err)
-	}
-
-	identity, err := sourceManager.ResolveSourceIdentity(env.Context(), comp)
-	if err != nil {
-		return "", fmt.Errorf("resolving source identity for %#q:\n%w", name, err)
-	}
-
-	return identity, nil
 }
 
 // checkUpdateErrors returns an error if any component failed to resolve.
@@ -533,11 +549,13 @@ func resolveSourceIdentitiesParallel(
 	return results
 }
 
-// checkLockChanged compares the resolved state against the existing lock file
-// to determine if the component changed. For upstream components, compares the
-// upstream commit hash. For local components (empty UpstreamCommit), marks as
-// changed unconditionally — the fingerprint comparison in saveComponentLocks
-// will determine the actual Changed status.
+// checkLockChanged compares the resolved upstream commit against the existing
+// lock file to determine if the component changed. For new components (no lock
+// file), marks as Changed unconditionally. For existing locks, compares
+// UpstreamCommit values — for local components both sides are empty, so
+// Changed stays false. The fingerprint comparison in [saveComponentLocks] is
+// the definitive source of truth and will flip Changed to true when content
+// actually changed.
 func checkLockChanged(store *lockfile.Store, componentName string, result *UpdateResult) {
 	exists, existsErr := store.Exists(componentName)
 	if existsErr != nil {
