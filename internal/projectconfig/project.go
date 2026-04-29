@@ -121,6 +121,16 @@ func validateImageTestReferences(images map[string]ImageConfig, testSuites map[s
 	return nil
 }
 
+// Default project-relative paths used when the corresponding [ProjectInfo]
+// field is unset. Applied by [ProjectInfo.ApplyProjectDefaults].
+const (
+	DefaultLogDir           = "build/logs"
+	DefaultWorkDir          = "build/work"
+	DefaultOutputDir        = "out"
+	DefaultLockDir          = "locks"
+	DefaultRenderedSpecsDir = "specs"
+)
+
 // Basic information regarding a project.
 type ProjectInfo struct {
 	// Human-readable description of this project.
@@ -174,4 +184,25 @@ func (p *ProjectInfo) WithAbsolutePaths(referenceDir string) *ProjectInfo {
 	result.LockDir = makeAbsolute(referenceDir, result.LockDir)
 
 	return result
+}
+
+// ApplyProjectDefaults fills in any unset path fields with their project-relative
+// defaults. Should be called once after all config files have been merged, so that
+// user-provided values always win over defaults.
+//
+// To add a new path default:
+//  1. Define a `Default<Field>` constant above
+//  2. Add a line below
+func (p *ProjectInfo) ApplyProjectDefaults(projectDir string) {
+	setIfEmpty(&p.LogDir, projectDir, DefaultLogDir)
+	setIfEmpty(&p.WorkDir, projectDir, DefaultWorkDir)
+	setIfEmpty(&p.OutputDir, projectDir, DefaultOutputDir)
+	setIfEmpty(&p.LockDir, projectDir, DefaultLockDir)
+	setIfEmpty(&p.RenderedSpecsDir, projectDir, DefaultRenderedSpecsDir)
+}
+
+func setIfEmpty(field *string, projectDir, relPath string) {
+	if *field == "" {
+		*field = makeAbsolute(projectDir, relPath)
+	}
 }

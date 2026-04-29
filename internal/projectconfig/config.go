@@ -68,5 +68,8 @@ func LoadProjectConfig(
 	// Fill in the root config file path in the config object; it won't be serialized.
 	config.RootConfigFilePath = projectFilePath
 
+	// Apply project-relative defaults for any unset path fields.
+	config.Project.ApplyProjectDefaults(projectDir)
+
 	return projectDir, config, nil
 }

@@ -158,6 +158,7 @@ func constructProjectConfig(testMockConfigPath string) *projectconfig.ProjectCon
 	config.Project.WorkDir = "/work"
 	config.Project.LogDir = "/logs"
 	config.Project.OutputDir = "/output"
+	config.Project.LockDir = "/project/locks"
 	config.Project.DefaultDistro.Name = "test-distro"
 	config.Project.DefaultDistro.Version = "1.0"
 
@@ -193,6 +194,6 @@ func (e *TestEnv) OSEnv() opctx.OSEnv {
 func (e *TestEnv) WriteLock(t *testing.T, name string, lock *lockfile.ComponentLock) {
 	t.Helper()
 
-	store := lockfile.NewStore(e.TestFS, "/project/"+lockfile.LockDir)
+	store := lockfile.NewStore(e.TestFS, "/project/"+projectconfig.DefaultLockDir)
 	require.NoError(t, store.Save(name, lock))
 }

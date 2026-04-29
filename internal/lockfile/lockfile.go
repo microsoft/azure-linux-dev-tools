@@ -21,10 +21,6 @@ import (
 	toml "github.com/pelletier/go-toml/v2"
 )
 
-// LockDir is the directory under the project root where per-component lock
-// files are stored.
-const LockDir = "locks"
-
 // lockFileExtension is the file extension for lock files.
 const lockFileExtension = ".lock"
 

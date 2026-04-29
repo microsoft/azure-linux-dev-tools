@@ -42,9 +42,11 @@ func requireProjectHasValidDefaultConfig(t *testing.T, ctx opctx.Ctx, projectPat
 	assert.NotNil(t, config)
 
 	// Check for some basic properties; we expect them to be filled out and not left empty.
-	assert.NotNil(t, config.Project.LogDir)
-	assert.NotNil(t, config.Project.WorkDir)
-	assert.NotNil(t, config.Project.OutputDir)
+	assert.NotEmpty(t, config.Project.LogDir)
+	assert.NotEmpty(t, config.Project.WorkDir)
+	assert.NotEmpty(t, config.Project.OutputDir)
+	assert.NotEmpty(t, config.Project.LockDir)
+	assert.NotEmpty(t, config.Project.RenderedSpecsDir)
 }
 
 func TestFindProjectRootAndConfigFile(t *testing.T) {
