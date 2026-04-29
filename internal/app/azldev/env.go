@@ -360,15 +360,15 @@ func (env *Env) LockReader() lockfile.LockReader {
 	return env.lockStore
 }
 
-// newLockStore creates a lock store if a project directory and filesystem are
-// available. Uses the configured lock-dir from project config, falling back
-// to the default locks/ directory under the project root.
+// newLockStore creates a lock store from the project config's lock-dir.
+// Returns nil when the project directory, filesystem, or config is unavailable,
+// or when the config's lock-dir is empty.
 func newLockStore(
 	projectDir string,
 	config *projectconfig.ProjectConfig,
 	fsFactory opctx.FileSystemFactory,
 ) *lockfile.Store {
-	if projectDir == "" || fsFactory == nil || config == nil {
+	if projectDir == "" || fsFactory == nil || config == nil || config.Project.LockDir == "" {
 		return nil
 	}
 
