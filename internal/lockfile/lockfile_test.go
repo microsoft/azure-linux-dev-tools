@@ -18,7 +18,7 @@ import (
 
 const (
 	testProjectDir = "/project"
-	testLockDir    = testProjectDir + "/" + lockfile.LockDir
+	testLockDir    = testProjectDir + "/" + projectconfig.DefaultLockDir
 	testCommitHash = "aaaa"
 )
 

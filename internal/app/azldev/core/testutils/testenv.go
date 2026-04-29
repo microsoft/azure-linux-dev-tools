@@ -158,6 +158,7 @@ func constructProjectConfig(testMockConfigPath string) *projectconfig.ProjectCon
 	config.Project.WorkDir = "/work"
 	config.Project.LogDir = "/logs"
 	config.Project.OutputDir = "/output"
+	config.Project.LockDir = "/project/locks"
 	config.Project.DefaultDistro.Name = "test-distro"
 	config.Project.DefaultDistro.Version = "1.0"
 

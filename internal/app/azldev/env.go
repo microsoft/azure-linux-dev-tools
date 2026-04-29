@@ -368,18 +368,11 @@ func newLockStore(
 	config *projectconfig.ProjectConfig,
 	fsFactory opctx.FileSystemFactory,
 ) *lockfile.Store {
-	if projectDir == "" || fsFactory == nil {
+	if projectDir == "" || fsFactory == nil || config == nil {
 		return nil
 	}
 
-	lockDir := filepath.Join(projectDir, lockfile.LockDir)
-
-	// If the project config specifies a lock directory, use it instead of the default.
-	if config != nil && config.Project.LockDir != "" {
-		lockDir = config.Project.LockDir
-	}
-
-	return lockfile.NewStore(fsFactory.FS(), lockDir)
+	return lockfile.NewStore(fsFactory.FS(), config.Project.LockDir)
 }
 
 // CPUBoundConcurrency returns the recommended concurrency limit for CPU-bound tasks.

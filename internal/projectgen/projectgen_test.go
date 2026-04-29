@@ -45,6 +45,8 @@ func requireProjectHasValidDefaultConfig(t *testing.T, ctx opctx.Ctx, projectPat
 	assert.NotNil(t, config.Project.LogDir)
 	assert.NotNil(t, config.Project.WorkDir)
 	assert.NotNil(t, config.Project.OutputDir)
+	assert.NotNil(t, config.Project.LockDir)
+	assert.NotNil(t, config.Project.RenderedSpecsDir)
 }
 
 func TestFindProjectRootAndConfigFile(t *testing.T) {
