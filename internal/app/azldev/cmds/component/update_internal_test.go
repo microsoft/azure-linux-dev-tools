@@ -336,7 +336,8 @@ func TestBumpComponents_MixedComponents(t *testing.T) {
 		Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeLocal},
 	})
 
-	results, err := bumpComponents(env.Env, store, []components.Component{localComp, upstreamComp}, &UpdateComponentOptions{})
+	comps := []components.Component{localComp, upstreamComp}
+	results, err := bumpComponents(env.Env, store, comps, &UpdateComponentOptions{})
 	require.NoError(t, err)
 	require.Len(t, results, 2)
 
