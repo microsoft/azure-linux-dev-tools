@@ -194,6 +194,6 @@ func (e *TestEnv) OSEnv() opctx.OSEnv {
 func (e *TestEnv) WriteLock(t *testing.T, name string, lock *lockfile.ComponentLock) {
 	t.Helper()
 
-	store := lockfile.NewStore(e.TestFS, "/project/"+lockfile.LockDir)
+	store := lockfile.NewStore(e.TestFS, "/project/"+projectconfig.DefaultLockDir)
 	require.NoError(t, store.Save(name, lock))
 }
