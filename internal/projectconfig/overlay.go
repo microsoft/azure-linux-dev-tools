@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/brunoga/deep"
@@ -17,7 +18,7 @@ import (
 // ComponentOverlay represents an overlay that may be applied to a component's spec and/or its sources.
 type ComponentOverlay struct {
 	// The type of overlay to apply.
-	Type ComponentOverlayType `toml:"type" json:"type" validate:"required" jsonschema:"enum=spec-add-tag,enum=spec-insert-tag,enum=spec-set-tag,enum=spec-update-tag,enum=spec-remove-tag,enum=spec-prepend-lines,enum=spec-append-lines,enum=spec-search-replace,enum=spec-remove-section,enum=patch-add,enum=patch-remove,enum=file-prepend-lines,enum=file-search-replace,enum=file-add,enum=file-remove,enum=file-rename,title=Overlay type,description=The type of overlay to apply"`
+	Type ComponentOverlayType `toml:"type" json:"type" validate:"required" jsonschema:"enum=spec-add-tag,enum=spec-insert-tag,enum=spec-set-tag,enum=spec-update-tag,enum=spec-remove-tag,enum=spec-set-macros,enum=spec-prepend-lines,enum=spec-append-lines,enum=spec-search-replace,enum=spec-remove-section,enum=patch-add,enum=patch-remove,enum=file-prepend-lines,enum=file-search-replace,enum=file-add,enum=file-remove,enum=file-rename,title=Overlay type,description=The type of overlay to apply"`
 	// Human readable description of overlay; primarily present to document the need for the change.
 	Description string `toml:"description,omitempty" json:"description,omitempty" jsonschema:"title=Description,description=Human readable description of overlay" fingerprint:"-"`
 
@@ -38,6 +39,11 @@ type ComponentOverlay struct {
 	Replacement string `toml:"replacement,omitempty" json:"replacement,omitempty" jsonschema:"title=Replacement text,description=The replacement text to use in the spec"`
 	// For overlays that reference lines of text, the lines of text to use.
 	Lines []string `toml:"lines,omitempty" json:"lines,omitempty" jsonschema:"title=Lines,description=The lines of text to use"`
+	// For overlays that set one or more spec macros (spec-set-macros). Keys are
+	// macro names; values describe how each macro should be set. Object form
+	// (no scalar shorthand) keeps room for future per-entry flags without
+	// breaking existing configs.
+	Macros map[string]MacroSetSpec `toml:"macros,omitempty" json:"macros,omitempty" jsonschema:"title=Macros,description=Map of macro names to settings; used by spec-set-macros"`
 	// For overlays that require a source file as input, indicates a path to that file; relative paths are relative to
 	// the config file that defines the overlay.
 	// Excluded from fingerprint because it contains an absolute path that varies by checkout
@@ -110,6 +116,7 @@ func (c *ComponentOverlay) ModifiesSpec() bool {
 		c.Type == ComponentOverlaySetSpecTag ||
 		c.Type == ComponentOverlayUpdateSpecTag ||
 		c.Type == ComponentOverlayRemoveSpecTag ||
+		c.Type == ComponentOverlaySetSpecMacros ||
 		c.Type == ComponentOverlayPrependSpecLines ||
 		c.Type == ComponentOverlayAppendSpecLines ||
 		c.Type == ComponentOverlaySearchAndReplaceInSpec ||
@@ -134,6 +141,27 @@ func (c *ComponentOverlay) ModifiesNonSpecFiles() bool {
 // ComponentOverlayType is the type of a component overlay.
 type ComponentOverlayType string
 
+// MacroKindGlobal forces a macro to be expressed as `%global` when set on a
+// [MacroSetSpec.Kind] field.
+const MacroKindGlobal = "global"
+
+// MacroKindDefine forces a macro to be expressed as `%define` when set on a
+// [MacroSetSpec.Kind] field.
+const MacroKindDefine = "define"
+
+// MacroSetSpec describes how to set a single spec macro for the
+// `spec-set-macros` overlay. Object form is mandatory (no scalar shorthand)
+// so additional fields can be added without breaking existing configs.
+type MacroSetSpec struct {
+	// Value is the new value to assign to the macro. Required, non-empty,
+	// no newlines.
+	Value string `toml:"value" json:"value" validate:"required" jsonschema:"title=Value,description=The new value to assign to the macro"`
+
+	// Kind optionally forces the macro to be expressed as `%global` or
+	// `%define`. If empty, the existing form in the spec is preserved.
+	Kind string `toml:"kind,omitempty" json:"kind,omitempty" jsonschema:"enum=global,enum=define,title=Kind,description=Force '%global' or '%define' form (defaults to whichever is already in the spec)"`
+}
+
 const (
 	// ComponentOverlayAddSpecTag is an overlay that adds a tag to the spec; fails if the tag already exists.
 	ComponentOverlayAddSpecTag ComponentOverlayType = "spec-add-tag"
@@ -148,6 +176,12 @@ const (
 	ComponentOverlayUpdateSpecTag ComponentOverlayType = "spec-update-tag"
 	// ComponentOverlayRemoveSpecTag is an overlay that removes a tag from the spec; fails if the tag doesn't exist.
 	ComponentOverlayRemoveSpecTag ComponentOverlayType = "spec-remove-tag"
+	// ComponentOverlaySetSpecMacros is an overlay that sets the value of one or more
+	// `%global` / `%define` macros in the spec. Auto-detects which form (global vs
+	// define) is currently used in the spec for each macro; an explicit `kind` may
+	// be provided to force a specific form. Fails if a target macro is not present
+	// in the spec.
+	ComponentOverlaySetSpecMacros ComponentOverlayType = "spec-set-macros"
 	// ComponentOverlayPrependSpecLines is an overlay that prepends lines to a section in a spec; fails if the section
 	// doesn't exist.
 	ComponentOverlayPrependSpecLines ComponentOverlayType = "spec-prepend-lines"
@@ -236,6 +270,20 @@ func (c *ComponentOverlay) Validate() error {
 		if c.Tag == "" {
 			return missingField("tag")
 		}
+	case ComponentOverlaySetSpecMacros:
+		if len(c.Macros) == 0 {
+			return missingField("macros")
+		}
+
+		for name, macroSpec := range c.Macros {
+			if err := validateMacroName(name, c.Type, desc); err != nil {
+				return err
+			}
+
+			if err := validateMacroSetSpec(name, macroSpec, c.Type, desc); err != nil {
+				return err
+			}
+		}
 	case ComponentOverlayPrependSpecLines, ComponentOverlayAppendSpecLines:
 		if len(c.Lines) == 0 {
 			return missingField("lines")
@@ -323,6 +371,65 @@ func validateRegex(pattern, overlayDesc string) error {
 	_, err := regexp.Compile(pattern)
 	if err != nil {
 		return fmt.Errorf("invalid regex %#q in overlay %q:\n%w", pattern, overlayDesc, err)
+	}
+
+	return nil
+}
+
+// validateMacroName ensures the provided macro name is well-formed for the
+// spec-set-macros overlay. Macro names must be non-empty, must not contain
+// whitespace or `%`, and must not be function-like (parentheses).
+func validateMacroName(name string, overlayType ComponentOverlayType, overlayDesc string) error {
+	if name == "" {
+		return fmt.Errorf("overlay type %#q has empty macro name: %s", overlayType, overlayDesc)
+	}
+
+	if strings.ContainsAny(name, " \t\r\n") {
+		return fmt.Errorf(
+			"overlay type %#q has invalid macro name %#q (must not contain whitespace): %s",
+			overlayType, name, overlayDesc,
+		)
+	}
+
+	if strings.ContainsAny(name, "%()") {
+		return fmt.Errorf(
+			"overlay type %#q has invalid macro name %#q (must not contain '%%' or parentheses; "+
+				"function-like macros are not supported): %s",
+			overlayType, name, overlayDesc,
+		)
+	}
+
+	return nil
+}
+
+// validateMacroSetSpec checks per-entry constraints for a spec-set-macros entry.
+func validateMacroSetSpec(
+	name string, macroSpec MacroSetSpec,
+	overlayType ComponentOverlayType, overlayDesc string,
+) error {
+	if macroSpec.Value == "" {
+		return fmt.Errorf(
+			"overlay type %#q requires %#q for macro %#q: %s",
+			overlayType, "value", name, overlayDesc,
+		)
+	}
+
+	if strings.ContainsAny(macroSpec.Value, "\r\n") {
+		return fmt.Errorf(
+			"overlay type %#q value for macro %#q must not contain newlines "+
+				"(multi-line macro values are not supported): %s",
+			overlayType, name, overlayDesc,
+		)
+	}
+
+	switch macroSpec.Kind {
+	case "", MacroKindGlobal, MacroKindDefine:
+		// OK.
+	default:
+		return fmt.Errorf(
+			"overlay type %#q has invalid %#q value %#q for macro %#q (expected %#q or %#q): %s",
+			overlayType, "kind", macroSpec.Kind, name, MacroKindGlobal, MacroKindDefine, overlayDesc,
+		)
 	}
 
 	return nil

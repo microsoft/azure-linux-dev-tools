@@ -19,6 +19,7 @@ These overlays modify `.spec` files using the structured spec parser, allowing p
 | `spec-set-tag` | Sets a tag value; replaces if exists, adds if not | `tag`, `value` |
 | `spec-update-tag` | Updates an existing tag; **fails if the tag doesn't exist** | `tag`, `value` |
 | `spec-remove-tag` | Removes a tag from the spec; **fails if the tag doesn't exist** | `tag` |
+| `spec-set-macros` | Sets the value of one or more `%global` / `%define` macros; auto-detects which directive form is in the spec, or use `kind` to force one. **Fails if a target macro is not present.** | `macros` |
 | `spec-prepend-lines` | Prepends lines to the start of a section; **fails if section doesn't exist** | `lines` |
 | `spec-append-lines` | Appends lines to the end of a section; **fails if section doesn't exist** | `lines` |
 | `spec-search-replace` | Regex-based search and replace on spec content | `regex` |
@@ -59,6 +60,7 @@ successfully makes a replacement to at least one matching file.
 | Regex | `regex` | Regular expression pattern to match | `spec-search-replace`, `file-search-replace` |
 | Replacement | `replacement` | Literal replacement text; capture group references like `$1` are **not** expanded. Omit or leave empty to delete matched text. | `spec-search-replace`, `file-search-replace`, `file-rename` |
 | Lines | `lines` | Array of text lines to insert | `spec-prepend-lines`, `spec-append-lines`, `file-prepend-lines` |
+| Macros | `macros` | Map of macro name to settings (`{value = "...", kind = "global" \| "define"}`); `kind` is optional and forces the directive form | `spec-set-macros` |
 | File | `file` | The name of the non-spec file to modify or add | `file-prepend-lines`, `file-search-replace`, `file-add`, `file-remove`, `file-rename`, `patch-add` (optional), `patch-remove` |
 | Source | `source` | Path to source file for `file-add` and `patch-add`; relative paths are relative to the config file | `file-add`, `patch-add` |
 
@@ -148,6 +150,27 @@ section = "%build"
 regex = "--enable-deprecated-feature\\s*"
 replacement = ""
 ```
+
+### Setting Spec Macros
+
+Use `spec-set-macros` to declaratively change the value of one or more `%global` / `%define` macros. The directive form (`%global` vs `%define`) is auto-detected from the existing spec, so you don't need to know which one upstream uses. The overlay **fails** if any named macro is not present in the spec — this catches typos and upstream removals.
+
+```toml
+[[components.gcc.overlays]]
+description = "Disable language frontends not supported on AZL toolchain"
+type = "spec-set-macros"
+macros = { build_ada = { value = "0" }, build_objc = { value = "0" }, build_go = { value = "0" } }
+```
+
+To force a specific directive form, use `kind`:
+
+```toml
+[[components.mypackage.overlays]]
+type = "spec-set-macros"
+macros = { with_doc = { value = "1", kind = "global" } }
+```
+
+> **Note:** Macro names must be plain identifiers (no whitespace, `%`, or parentheses). Function-like macros (`%define name() ...`) are not supported. Multi-line macro definitions (using `\` line continuation) are also not supported.
 
 ### Targeting a Sub-Package
 

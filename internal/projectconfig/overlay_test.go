@@ -385,6 +385,114 @@ func TestComponentOverlay_Validate(t *testing.T) {
 			errorExpected: true,
 			errorContains: "section",
 		},
+		// spec-set-macros tests
+		{
+			name: "spec-set-macros valid single",
+			overlay: projectconfig.ComponentOverlay{
+				Type: projectconfig.ComponentOverlaySetSpecMacros,
+				Macros: map[string]projectconfig.MacroSetSpec{
+					"build_ada": {Value: "0"},
+				},
+			},
+			errorExpected: false,
+		},
+		{
+			name: "spec-set-macros valid multiple",
+			overlay: projectconfig.ComponentOverlay{
+				Type: projectconfig.ComponentOverlaySetSpecMacros,
+				Macros: map[string]projectconfig.MacroSetSpec{
+					"build_ada": {Value: "0"},
+					"build_go":  {Value: "0", Kind: projectconfig.MacroKindGlobal},
+					"with_doc":  {Value: "1", Kind: projectconfig.MacroKindDefine},
+				},
+			},
+			errorExpected: false,
+		},
+		{
+			name: "spec-set-macros missing macros",
+			overlay: projectconfig.ComponentOverlay{
+				Type: projectconfig.ComponentOverlaySetSpecMacros,
+			},
+			errorExpected: true,
+			errorContains: "macros",
+		},
+		{
+			name: "spec-set-macros empty value",
+			overlay: projectconfig.ComponentOverlay{
+				Type: projectconfig.ComponentOverlaySetSpecMacros,
+				Macros: map[string]projectconfig.MacroSetSpec{
+					"build_ada": {Value: ""},
+				},
+			},
+			errorExpected: true,
+			errorContains: "value",
+		},
+		{
+			name: "spec-set-macros multi-line value",
+			overlay: projectconfig.ComponentOverlay{
+				Type: projectconfig.ComponentOverlaySetSpecMacros,
+				Macros: map[string]projectconfig.MacroSetSpec{
+					"build_ada": {Value: "line1\nline2"},
+				},
+			},
+			errorExpected: true,
+			errorContains: "newline",
+		},
+		{
+			name: "spec-set-macros invalid kind",
+			overlay: projectconfig.ComponentOverlay{
+				Type: projectconfig.ComponentOverlaySetSpecMacros,
+				Macros: map[string]projectconfig.MacroSetSpec{
+					"build_ada": {Value: "0", Kind: "bogus"},
+				},
+			},
+			errorExpected: true,
+			errorContains: "kind",
+		},
+		{
+			name: "spec-set-macros empty macro name",
+			overlay: projectconfig.ComponentOverlay{
+				Type: projectconfig.ComponentOverlaySetSpecMacros,
+				Macros: map[string]projectconfig.MacroSetSpec{
+					"": {Value: "0"},
+				},
+			},
+			errorExpected: true,
+			errorContains: "empty macro name",
+		},
+		{
+			name: "spec-set-macros macro name with whitespace",
+			overlay: projectconfig.ComponentOverlay{
+				Type: projectconfig.ComponentOverlaySetSpecMacros,
+				Macros: map[string]projectconfig.MacroSetSpec{
+					"build ada": {Value: "0"},
+				},
+			},
+			errorExpected: true,
+			errorContains: "whitespace",
+		},
+		{
+			name: "spec-set-macros function-like macro name rejected",
+			overlay: projectconfig.ComponentOverlay{
+				Type: projectconfig.ComponentOverlaySetSpecMacros,
+				Macros: map[string]projectconfig.MacroSetSpec{
+					"build_ada()": {Value: "0"},
+				},
+			},
+			errorExpected: true,
+			errorContains: "parentheses",
+		},
+		{
+			name: "spec-set-macros macro name with percent",
+			overlay: projectconfig.ComponentOverlay{
+				Type: projectconfig.ComponentOverlaySetSpecMacros,
+				Macros: map[string]projectconfig.MacroSetSpec{
+					"%build_ada": {Value: "0"},
+				},
+			},
+			errorExpected: true,
+			errorContains: "%",
+		},
 	}
 
 	for _, testCase := range testCases {
@@ -413,6 +521,7 @@ func TestComponentOverlay_ModifiesSpec(t *testing.T) {
 		projectconfig.ComponentOverlaySetSpecTag,
 		projectconfig.ComponentOverlayUpdateSpecTag,
 		projectconfig.ComponentOverlayRemoveSpecTag,
+		projectconfig.ComponentOverlaySetSpecMacros,
 		projectconfig.ComponentOverlayPrependSpecLines,
 		projectconfig.ComponentOverlayAppendSpecLines,
 		projectconfig.ComponentOverlaySearchAndReplaceInSpec,
