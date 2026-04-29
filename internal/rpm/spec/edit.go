@@ -24,6 +24,15 @@ var ErrSectionNotFound = errors.New("section not found")
 // ErrPatternNotFound is returned when a search pattern does not match any content in the spec.
 var ErrPatternNotFound = errors.New("pattern not found")
 
+// ErrNoSuchMacro is returned when a requested `%global` / `%define` macro does
+// not exist in the spec.
+var ErrNoSuchMacro = errors.New("no such macro")
+
+// ErrUnsupportedMacroDefinition is returned when a macro is found in the spec
+// in a form the editor cannot safely rewrite (e.g., a multi-line definition
+// using `\` continuation).
+var ErrUnsupportedMacroDefinition = errors.New("unsupported macro definition")
+
 // SetTag sets the value of the given tag in the spec, under the specified package. It first
 // attempts to update the first instance of the tag found in the spec; if no such tag exists,
 // a new tag is added under the given package.
@@ -514,6 +523,99 @@ func (s *Spec) SearchAndReplace(sectionName, packageName, regex, replacement str
 	}
 
 	return err
+}
+
+// SetMacro updates every existing `%global NAME ...` or `%define NAME ...`
+// definition of the named macro to use the supplied value. If kind is empty,
+// each occurrence retains its existing directive (`%global` or `%define`); if
+// kind is "global" or "define", every occurrence is rewritten to that form.
+// Any other value of kind returns an error rather than silently emitting an
+// invalid directive.
+//
+// Indentation of the original line is preserved. Inter-token whitespace is
+// normalized to single spaces. Returns ErrNoSuchMacro wrapped in an
+// informative error if the macro is not found, or
+// ErrUnsupportedMacroDefinition if a matched line uses `\` line continuation.
+func (s *Spec) SetMacro(name, value, kind string) error {
+	slog.Debug("Setting spec macro", "name", name, "value", value, "kind", kind)
+
+	switch kind {
+	case "", "global", "define":
+		// OK.
+	default:
+		return fmt.Errorf(
+			"invalid kind %#q for macro %#q (expected %#q, %#q, or empty)",
+			kind, name, "global", "define",
+		)
+	}
+
+	// Build a regex that matches a `%global` / `%define` line for the named
+	// macro. Use `(\s|$)` rather than `\b` so we don't match function-like
+	// macros (`%define name() ...`) or accidentally match a longer name with a
+	// shared prefix.
+	pattern, err := regexp.Compile(
+		`^(\s*)%(global|define)\s+` + regexp.QuoteMeta(name) + `(\s.*|)$`,
+	)
+	if err != nil {
+		return fmt.Errorf("compiling macro-match regex for %#q:\n%w", name, err)
+	}
+
+	var matches int
+
+	visitErr := s.Visit(func(ctx *Context) error {
+		if ctx.Target.TargetType != SectionLineTarget {
+			return nil
+		}
+
+		line := ctx.Target.Line.Text
+
+		groups := pattern.FindStringSubmatch(line)
+		if groups == nil {
+			return nil
+		}
+
+		// Refuse to rewrite a line that ends with a `\` continuation; the
+		// definition spans multiple physical lines and a single-line
+		// replacement would orphan the continuation body.
+		if endsWithLineContinuation(line) {
+			return fmt.Errorf(
+				"macro %#q has a multi-line definition (line ends with %#q); "+
+					"this operation cannot safely rewrite it:\n%w",
+				name, `\`, ErrUnsupportedMacroDefinition,
+			)
+		}
+
+		indent := groups[1]
+		existingDirective := groups[2]
+
+		directive := existingDirective
+		if kind != "" {
+			directive = kind
+		}
+
+		ctx.ReplaceLine(fmt.Sprintf("%s%%%s %s %s", indent, directive, name, value))
+
+		matches++
+
+		return nil
+	})
+	if visitErr != nil {
+		return visitErr
+	}
+
+	if matches == 0 {
+		return fmt.Errorf("macro %#q not found in spec:\n%w", name, ErrNoSuchMacro)
+	}
+
+	return nil
+}
+
+// endsWithLineContinuation returns true if a single physical spec line ends
+// with a `\` continuation (ignoring trailing whitespace).
+func endsWithLineContinuation(line string) bool {
+	trimmed := strings.TrimRight(line, " \t\r\n")
+
+	return strings.HasSuffix(trimmed, `\`)
 }
 
 // AddChangelogEntry adds a changelog entry to the spec's changelog section. An error is returned if

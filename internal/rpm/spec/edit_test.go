@@ -873,6 +873,221 @@ func TestSearchAndReplace(t *testing.T) {
 	})
 }
 
+func TestSetMacro(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		macroName      string
+		value          string
+		kind           string
+		expectError    bool
+		errorIs        error
+		expectedOutput string
+	}{
+		{
+			name: "flip global to 0",
+			input: `Name: test
+%global build_ada 1
+`,
+			macroName: "build_ada",
+			value:     "0",
+			expectedOutput: `Name: test
+%global build_ada 0
+`,
+		},
+		{
+			name: "flip define preserving form",
+			input: `Name: test
+%define build_ada 1
+`,
+			macroName: "build_ada",
+			value:     "0",
+			expectedOutput: `Name: test
+%define build_ada 0
+`,
+		},
+		{
+			name: "kind override define->global",
+			input: `Name: test
+%define build_ada 1
+`,
+			macroName: "build_ada",
+			value:     "0",
+			kind:      "global",
+			expectedOutput: `Name: test
+%global build_ada 0
+`,
+		},
+		{
+			name: "kind override global->define",
+			input: `Name: test
+%global build_ada 1
+`,
+			macroName: "build_ada",
+			value:     "0",
+			kind:      "define",
+			expectedOutput: `Name: test
+%define build_ada 0
+`,
+		},
+		{
+			name: "preserve indentation",
+			input: `Name: test
+%if 1
+    %global build_ada 1
+%endif
+`,
+			macroName: "build_ada",
+			value:     "0",
+			expectedOutput: `Name: test
+%if 1
+    %global build_ada 0
+%endif
+`,
+		},
+		{
+			name: "tolerate excess whitespace",
+			input: `Name: test
+%global   build_ada    1
+`,
+			macroName: "build_ada",
+			value:     "0",
+			// Re-emitted with single-space normalization.
+			expectedOutput: `Name: test
+%global build_ada 0
+`,
+		},
+		{
+			name: "value with spaces",
+			input: `Name: test
+%global tarfile_release 1.2.3
+`,
+			macroName: "tarfile_release",
+			value:     `"1.2.3-rc1"`,
+			expectedOutput: `Name: test
+%global tarfile_release "1.2.3-rc1"
+`,
+		},
+		{
+			name: "multiple occurrences updated",
+			input: `Name: test
+%global build_ada 1
+%define build_ada 1
+`,
+			macroName: "build_ada",
+			value:     "0",
+			// First retains %global, second retains %define.
+			expectedOutput: `Name: test
+%global build_ada 0
+%define build_ada 0
+`,
+		},
+		{
+			name: "multiple occurrences with kind override",
+			input: `Name: test
+%global build_ada 1
+%define build_ada 1
+`,
+			macroName: "build_ada",
+			value:     "0",
+			kind:      "global",
+			expectedOutput: `Name: test
+%global build_ada 0
+%global build_ada 0
+`,
+		},
+		{
+			name: "macro not present errors",
+			input: `Name: test
+%global other 1
+`,
+			macroName:   "build_ada",
+			value:       "0",
+			expectError: true,
+			errorIs:     spec.ErrNoSuchMacro,
+		},
+		{
+			name: "function-like macro is not matched",
+			input: `Name: test
+%define build_ada() echo ada
+`,
+			macroName:   "build_ada",
+			value:       "0",
+			expectError: true,
+			errorIs:     spec.ErrNoSuchMacro,
+		},
+		{
+			name: "shared-prefix macro is not matched",
+			input: `Name: test
+%global build_adapter 1
+`,
+			macroName:   "build_ada",
+			value:       "0",
+			expectError: true,
+			errorIs:     spec.ErrNoSuchMacro,
+		},
+		{
+			name: "multi-line definition rejected",
+			input: `Name: test
+%global big_macro foo \
+    bar
+`,
+			macroName:   "big_macro",
+			value:       "qux",
+			expectError: true,
+			errorIs:     spec.ErrUnsupportedMacroDefinition,
+		},
+		{
+			name: "definition with no value gets one",
+			// `%global name` (no value) — pattern's optional value group
+			// allows this; we should still rewrite to `%global name <value>`.
+			input: `Name: test
+%global build_ada
+`,
+			macroName: "build_ada",
+			value:     "0",
+			expectedOutput: `Name: test
+%global build_ada 0
+`,
+		},
+		{
+			name: "invalid kind rejected",
+			input: `Name: test
+%global build_ada 1
+`,
+			macroName:   "build_ada",
+			value:       "0",
+			kind:        "bogus",
+			expectError: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			specFile, err := spec.OpenSpec(strings.NewReader(test.input))
+			require.NoError(t, err)
+
+			err = specFile.SetMacro(test.macroName, test.value, test.kind)
+
+			if test.expectError {
+				require.Error(t, err)
+
+				if test.errorIs != nil {
+					require.ErrorIs(t, err, test.errorIs)
+				}
+
+				return
+			}
+
+			require.NoError(t, err)
+
+			actual := new(bytes.Buffer)
+			require.NoError(t, specFile.Serialize(actual))
+			assert.Equal(t, test.expectedOutput, actual.String())
+		})
+	}
+}
+
 func TestAddChangelogEntry(t *testing.T) {
 	const (
 		testUser    = "Test User"

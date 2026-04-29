@@ -210,6 +210,7 @@
             "spec-set-tag",
             "spec-update-tag",
             "spec-remove-tag",
+            "spec-set-macros",
             "spec-prepend-lines",
             "spec-append-lines",
             "spec-search-replace",
@@ -272,6 +273,14 @@
           "type": "array",
           "title": "Lines",
           "description": "The lines of text to use"
+        },
+        "macros": {
+          "additionalProperties": {
+            "$ref": "#/$defs/MacroSetSpec"
+          },
+          "type": "object",
+          "title": "Macros",
+          "description": "Map of macro names to settings; used by spec-set-macros"
         },
         "source": {
           "type": "string",
@@ -636,6 +645,29 @@
       },
       "additionalProperties": false,
       "type": "object"
+    },
+    "MacroSetSpec": {
+      "properties": {
+        "value": {
+          "type": "string",
+          "title": "Value",
+          "description": "The new value to assign to the macro"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "global",
+            "define"
+          ],
+          "title": "Kind",
+          "description": "Force '%global' or '%define' form (defaults to whichever is already in the spec)"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "value"
+      ]
     },
     "Origin": {
       "properties": {

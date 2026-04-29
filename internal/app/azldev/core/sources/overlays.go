@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -116,7 +117,7 @@ func ApplySpecOverlayToFileInPlace(fs opctx.FS, overlay projectconfig.ComponentO
 // ApplySpecOverlay applies a spec-based overlay to an opened spec. An error is returned if a non-spec
 // overlay is provided.
 //
-//nolint:cyclop,funlen // This function's complexity is inflated by the big switch over overlay types.
+//nolint:cyclop,funlen,gocognit // This function's complexity is inherent to the big switch over overlay types.
 func ApplySpecOverlay(overlay projectconfig.ComponentOverlay, openedSpec *spec.Spec) error {
 	//nolint:exhaustive // We intentionally ignore non-spec overlay types.
 	switch overlay.Type {
@@ -144,6 +145,22 @@ func ApplySpecOverlay(overlay projectconfig.ComponentOverlay, openedSpec *spec.S
 		err := openedSpec.RemoveTag(overlay.PackageName, overlay.Tag, overlay.Value)
 		if err != nil {
 			return fmt.Errorf("failed to remove tag %#q from spec:\n%w", overlay.Tag, err)
+		}
+	case projectconfig.ComponentOverlaySetSpecMacros:
+		// Apply macros in stable (alphabetical) order so the resulting spec
+		// rendering is deterministic regardless of map iteration order.
+		names := make([]string, 0, len(overlay.Macros))
+		for name := range overlay.Macros {
+			names = append(names, name)
+		}
+
+		sort.Strings(names)
+
+		for _, name := range names {
+			macroSpec := overlay.Macros[name]
+			if err := openedSpec.SetMacro(name, macroSpec.Value, macroSpec.Kind); err != nil {
+				return fmt.Errorf("failed to set macro %#q in spec:\n%w", name, err)
+			}
 		}
 	case projectconfig.ComponentOverlayPrependSpecLines:
 		err := openedSpec.PrependLinesToSection(overlay.SectionName, overlay.PackageName, overlay.Lines)

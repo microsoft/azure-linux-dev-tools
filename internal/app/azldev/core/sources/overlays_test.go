@@ -1287,3 +1287,103 @@ make
 		assert.Contains(t, err.Error(), "not found")
 	})
 }
+
+func TestApplySpecOverlay_SetMacros(t *testing.T) {
+	t.Run("sets a single macro", func(t *testing.T) {
+		specContent := `Name: test
+%global build_ada 1
+`
+		overlay := projectconfig.ComponentOverlay{
+			Type: projectconfig.ComponentOverlaySetSpecMacros,
+			Macros: map[string]projectconfig.MacroSetSpec{
+				"build_ada": {Value: "0"},
+			},
+		}
+
+		result, err := applyOverlayToSpecContents(t, overlay, specContent)
+		require.NoError(t, err)
+		assert.Equal(t, `Name: test
+%global build_ada 0
+`, result)
+	})
+
+	t.Run("sets multiple macros at once", func(t *testing.T) {
+		specContent := `Name: gcc
+%global build_ada 1
+%global build_objc 1
+%global build_go 1
+`
+		overlay := projectconfig.ComponentOverlay{
+			Type: projectconfig.ComponentOverlaySetSpecMacros,
+			Macros: map[string]projectconfig.MacroSetSpec{
+				"build_ada":  {Value: "0"},
+				"build_objc": {Value: "0"},
+				"build_go":   {Value: "0"},
+			},
+		}
+
+		result, err := applyOverlayToSpecContents(t, overlay, specContent)
+		require.NoError(t, err)
+		assert.Equal(t, `Name: gcc
+%global build_ada 0
+%global build_objc 0
+%global build_go 0
+`, result)
+	})
+
+	t.Run("kind override rewrites directive", func(t *testing.T) {
+		specContent := `Name: test
+%define with_doc 0
+`
+		overlay := projectconfig.ComponentOverlay{
+			Type: projectconfig.ComponentOverlaySetSpecMacros,
+			Macros: map[string]projectconfig.MacroSetSpec{
+				"with_doc": {Value: "1", Kind: projectconfig.MacroKindGlobal},
+			},
+		}
+
+		result, err := applyOverlayToSpecContents(t, overlay, specContent)
+		require.NoError(t, err)
+		assert.Equal(t, `Name: test
+%global with_doc 1
+`, result)
+	})
+
+	t.Run("fails when macro is missing", func(t *testing.T) {
+		specContent := `Name: test
+%global other 1
+`
+		overlay := projectconfig.ComponentOverlay{
+			Type: projectconfig.ComponentOverlaySetSpecMacros,
+			Macros: map[string]projectconfig.MacroSetSpec{
+				"build_ada": {Value: "0"},
+			},
+		}
+
+		_, err := applyOverlayToSpecContents(t, overlay, specContent)
+		require.Error(t, err)
+		require.ErrorIs(t, err, spec.ErrNoSuchMacro)
+		assert.Contains(t, err.Error(), "build_ada")
+	})
+
+	t.Run("missing-macro stops at first error in deterministic order", func(t *testing.T) {
+		// Macros are applied in alphabetical order. Even though `build_objc`
+		// is present, the missing `build_ada` is processed first and triggers
+		// the failure.
+		specContent := `Name: test
+%global build_objc 1
+`
+		overlay := projectconfig.ComponentOverlay{
+			Type: projectconfig.ComponentOverlaySetSpecMacros,
+			Macros: map[string]projectconfig.MacroSetSpec{
+				"build_ada":  {Value: "0"},
+				"build_objc": {Value: "0"},
+			},
+		}
+
+		_, err := applyOverlayToSpecContents(t, overlay, specContent)
+		require.Error(t, err)
+		require.ErrorIs(t, err, spec.ErrNoSuchMacro)
+		assert.Contains(t, err.Error(), "build_ada")
+	})
+}
