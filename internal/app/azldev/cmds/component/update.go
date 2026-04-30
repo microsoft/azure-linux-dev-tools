@@ -237,6 +237,13 @@ func saveComponentLocks(env *azldev.Env, store *lockfile.Store, results []Update
 			lock.ImportCommit = ""
 		}
 
+		// Seed import-commit on first update so the synthetic history walk
+		// has a bounded starting point instead of walking the entire repo.
+		if lock.ImportCommit == "" && results[idx].config != nil &&
+			results[idx].config.Spec.SourceType == projectconfig.SpecSourceTypeUpstream {
+			lock.ImportCommit = results[idx].UpstreamCommit
+		}
+
 		// Recompute fingerprint from resolved config + lock state.
 		if results[idx].config == nil {
 			retErr = fmt.Errorf("no resolved config for %#q; cannot compute fingerprint", results[idx].Component)

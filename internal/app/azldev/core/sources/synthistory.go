@@ -709,7 +709,7 @@ func gitLogFileMetadata(
 	var metas []CommitMetadata //nolint:prealloc // trailing empty block after split.
 
 	for _, block := range blocks {
-		block = strings.TrimRight(block, "\r\n")
+		block = strings.Trim(block, "\r\n")
 		if block == "" {
 			continue
 		}
