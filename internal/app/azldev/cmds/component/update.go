@@ -221,76 +221,89 @@ func saveComponentLocks(env *azldev.Env, store *lockfile.Store, results []Update
 			continue
 		}
 
-		lock, lockErr := store.GetOrNew(results[idx].Component)
-		if lockErr != nil {
-			retErr = fmt.Errorf("loading lock for %#q:\n%w", results[idx].Component, lockErr)
+		written, err := updateComponentLock(env, store, &results[idx])
+		if err != nil {
+			retErr = err
 
 			return retErr
 		}
 
-		lock.UpstreamCommit = results[idx].UpstreamCommit
-
-		// Clear upstream-only fields for local components so a source-type
-		// transition (upstream → local) doesn't leave stale data in the lock.
-		if results[idx].config != nil &&
-			results[idx].config.Spec.SourceType != projectconfig.SpecSourceTypeUpstream {
-			lock.ImportCommit = ""
+		if written {
+			saved = append(saved, results[idx].Component)
 		}
-
-		// Recompute fingerprint from resolved config + lock state.
-		if results[idx].config == nil {
-			retErr = fmt.Errorf("no resolved config for %#q; cannot compute fingerprint", results[idx].Component)
-
-			return retErr
-		}
-
-		// Resolve per-component distro for ReleaseVer, matching the
-		// per-component resolution used by render/build/prepare-sources.
-		releaseVer, distroErr := resolveReleaseVer(env, results[idx].config)
-		if distroErr != nil {
-			retErr = fmt.Errorf("resolving distro for %#q:\n%w", results[idx].Component, distroErr)
-
-			return retErr
-		}
-
-		identity, fpErr := fingerprint.ComputeIdentity(
-			env.FS(),
-			*results[idx].config,
-			releaseVer,
-			fingerprint.IdentityOptions{
-				ManualBump:     lock.ManualBump,
-				SourceIdentity: results[idx].sourceIdentity,
-			},
-		)
-		if fpErr != nil {
-			retErr = fmt.Errorf("computing fingerprint for %#q:\n%w", results[idx].Component, fpErr)
-
-			return retErr
-		}
-
-		// Mark as changed if fingerprint differs (catches config/overlay edits
-		// even when the upstream commit is unchanged).
-		if lock.InputFingerprint != identity.Fingerprint {
-			results[idx].Changed = true
-		}
-
-		lock.InputFingerprint = identity.Fingerprint
-
-		// Only write if something actually changed.
-		if !results[idx].Changed {
-			continue
-		}
-
-		if saveErr := store.Save(results[idx].Component, lock); saveErr != nil {
-			retErr = fmt.Errorf("saving lock file for %#q:\n%w", results[idx].Component, saveErr)
-
-			return retErr
-		}
-
-		saved = append(saved, results[idx].Component)
 	}
 
 	return nil
+}
+
+// updateComponentLock recomputes the fingerprint for a single component and
+// writes its lock file if anything changed. Returns true when the lock file
+// was written.
+func updateComponentLock(env *azldev.Env, store *lockfile.Store, result *UpdateResult) (bool, error) {
+	lock, lockErr := store.GetOrNew(result.Component)
+	if lockErr != nil {
+		return false, fmt.Errorf("loading lock for %#q:\n%w", result.Component, lockErr)
+	}
+
+	lock.UpstreamCommit = result.UpstreamCommit
+
+	// Clear upstream-only fields for local components so a source-type
+	// transition (upstream → local) doesn't leave stale data in the lock.
+	if result.config != nil &&
+		result.config.Spec.SourceType != projectconfig.SpecSourceTypeUpstream {
+		lock.ImportCommit = ""
+	}
+
+	// Seed import-commit on first update so the synthetic history walk
+	// has a bounded starting point instead of walking the entire repo.
+	if lock.ImportCommit == "" && result.config != nil &&
+		result.config.Spec.SourceType == projectconfig.SpecSourceTypeUpstream {
+		lock.ImportCommit = result.UpstreamCommit
+	}
+
+	// Recompute fingerprint from resolved config + lock state.
+	if result.config == nil {
+		return false, fmt.Errorf("no resolved config for %#q; cannot compute fingerprint", result.Component)
+	}
+
+	// Resolve per-component distro for ReleaseVer, matching the
+	// per-component resolution used by render/build/prepare-sources.
+	releaseVer, distroErr := resolveReleaseVer(env, result.config)
+	if distroErr != nil {
+		return false, fmt.Errorf("resolving distro for %#q:\n%w", result.Component, distroErr)
+	}
+
+	identity, fpErr := fingerprint.ComputeIdentity(
+		env.FS(),
+		*result.config,
+		releaseVer,
+		fingerprint.IdentityOptions{
+			ManualBump:     lock.ManualBump,
+			SourceIdentity: result.sourceIdentity,
+		},
+	)
+	if fpErr != nil {
+		return false, fmt.Errorf("computing fingerprint for %#q:\n%w", result.Component, fpErr)
+	}
+
+	// Mark as changed if fingerprint differs (catches config/overlay edits
+	// even when the upstream commit is unchanged).
+	if lock.InputFingerprint != identity.Fingerprint {
+		result.Changed = true
+	}
+
+	lock.InputFingerprint = identity.Fingerprint
+
+	// Only write if something actually changed.
+	if !result.Changed {
+		return false, nil
+	}
+
+	if saveErr := store.Save(result.Component, lock); saveErr != nil {
+		return false, fmt.Errorf("saving lock file for %#q:\n%w", result.Component, saveErr)
+	}
+
+	return true, nil
 }
 
 // bumpComponents re-fingerprints each matched component's lock file with an
