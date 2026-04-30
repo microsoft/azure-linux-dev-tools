@@ -22,6 +22,8 @@ type LockReader interface {
 	Get(componentName string) (*ComponentLock, error)
 	// Exists checks whether a lock file exists for the given component.
 	Exists(componentName string) (bool, error)
+	// LockDir returns the absolute path to the lock file directory.
+	LockDir() string
 	// ValidateConsistency checks lock files against the resolved component
 	// configs. Returns sorted lists of components with missing/stale locks
 	// and orphan component names.
@@ -72,6 +74,11 @@ func NewStore(fs opctx.FS, lockDir string) *Store {
 		fs:      fs,
 		lockDir: lockDir,
 	}
+}
+
+// LockDir returns the absolute path to the lock file directory.
+func (s *Store) LockDir() string {
+	return s.lockDir
 }
 
 // lockPath returns the path for a component's lock file within this store.
