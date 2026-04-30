@@ -88,8 +88,10 @@ func addToolForCmd(env *azldev.Env, srv *server.MCPServer, leaf *cobra.Command) 
 			continue
 		}
 
-		// Assume a flag with no default value is required.
-		if flag.DefValue == "" {
+		// Mirror cobra's required-flag annotation (set by cmd.MarkFlagRequired) into the MCP
+		// tool schema. Flags without this annotation are exposed as optional, even if their
+		// default is the type's zero value.
+		if _, required := flag.Annotations[cobra.BashCompOneRequiredFlag]; required {
 			propOptions = append(propOptions, mcp.Required())
 		}
 
