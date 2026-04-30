@@ -12,6 +12,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/format/index"
 	"github.com/go-git/go-git/v5/storage/memory"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
@@ -50,7 +51,7 @@ func TestRemoveSubmoduleEntries_StripsGitlinks(t *testing.T) {
 
 	// Create the empty directory that the bogus submodule leaves behind.
 	submoduleDir := filepath.Join(repoDir, "tests/at")
-	require.NoError(t, memFS.MkdirAll(submoduleDir, 0o755))
+	require.NoError(t, memFS.MkdirAll(submoduleDir, fileperms.PublicDir))
 
 	// Verify the directory exists before calling removeSubmoduleEntries.
 	dirExists, err := fileutils.Exists(memFS, submoduleDir)
@@ -150,8 +151,8 @@ func TestRemoveSubmoduleEntries_PreservesNormalEntriesWithMixedModes(t *testing.
 	require.NoError(t, storer.SetIndex(idx))
 
 	// Create empty dirs for both submodules.
-	require.NoError(t, memFS.MkdirAll(filepath.Join(repoDir, "tests/submod1"), 0o755))
-	require.NoError(t, memFS.MkdirAll(filepath.Join(repoDir, "tests/submod2"), 0o755))
+	require.NoError(t, memFS.MkdirAll(filepath.Join(repoDir, "tests/submod1"), fileperms.PublicDir))
+	require.NoError(t, memFS.MkdirAll(filepath.Join(repoDir, "tests/submod2"), fileperms.PublicDir))
 
 	err = removeSubmoduleEntries(memFS, repo, repoDir)
 	require.NoError(t, err)

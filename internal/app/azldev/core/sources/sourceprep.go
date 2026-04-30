@@ -446,7 +446,7 @@ func removeSubmoduleEntries(fs opctx.FS, repo *gogit.Repository, repoDir string)
 
 	for _, entry := range idx.Entries {
 		if entry.Mode == filemode.Submodule {
-			slog.Debug("Removing bogus submodule entry from index",
+			slog.Info("Removing bogus submodule entry from index",
 				"path", entry.Name)
 
 			// Remove the directory left by the uninitialized submodule.
