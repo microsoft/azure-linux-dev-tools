@@ -366,6 +366,10 @@ func openOrInitSourcesRepo(sourcesDirPath, componentName string) (*gogit.Reposit
 		return repo, nil
 	}
 
+	if !errors.Is(err, gogit.ErrRepositoryNotExists) {
+		return nil, fmt.Errorf("failed to open git repository at %#q:\n%w", sourcesDirPath, err)
+	}
+
 	slog.Info("No .git directory in sources; initializing repository",
 		"component", componentName)
 

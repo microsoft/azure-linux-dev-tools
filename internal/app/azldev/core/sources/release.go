@@ -199,7 +199,7 @@ func CountCommitsSinceVersionChange(
 		count++
 	}
 
-	slog.Info("Computed version-aware release bump count",
+	slog.Debug("Computed version-aware release bump count",
 		"latestVersion", latestVersion,
 		"totalChanges", len(changes),
 		"sinceVersionChange", count)
