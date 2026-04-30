@@ -470,7 +470,7 @@ func TestRun(t *testing.T) {
 			wantErrContain: "failed to run VM in QEMU",
 		},
 		{
-			name: "VM with install ISO boots ISO first",
+			name: "VM with install ISO gives disk priority and ISO as fallback",
 			options: qemu.RunOptions{
 				Arch:           qemu.ArchX86_64,
 				FirmwarePath:   "/usr/share/OVMF/OVMF_CODE.fd",
@@ -486,8 +486,8 @@ func TestRun(t *testing.T) {
 			wantArgsContain: []string{
 				"qemu-system-x86_64",
 				"if=none,id=installcd,file=/tmp/installer.iso,media=cdrom,readonly=on",
-				"scsi-cd,drive=installcd,bootindex=1",
-				"scsi-hd,drive=hd,bootindex=2",
+				"scsi-cd,drive=installcd,bootindex=2",
+				"scsi-hd,drive=hd,bootindex=1",
 			},
 		},
 		{

@@ -88,8 +88,8 @@ type RunOptions struct {
 	// attached as a non-bootable IDE CD-ROM, independent of any install ISO.
 	CloudInitISOPath string
 	// InstallISOPath is an optional ISO to boot from (e.g., a livecd or installer).
-	// When set, it is attached as a bootable SCSI CD-ROM with bootindex=1 so the VM
-	// boots from the ISO first; the disk receives bootindex=2.
+	// When set, it is attached as a SCSI CD-ROM with bootindex=2 (fallback). The disk
+	// keeps bootindex=1 so that after installation the system boots from disk.
 	InstallISOPath string
 	SecureBoot     bool
 	SSHPort        int
@@ -130,21 +130,21 @@ func (r *Runner) Run(ctx context.Context, options RunOptions) error {
 		"-device", "virtio-scsi-pci,id=scsi",
 	)
 
-	// Boot order: when an install/live ISO is attached, it boots first (bootindex=1)
-	// and the disk follows (bootindex=2). Otherwise, the disk boots first.
-	diskBootIndex := 1
-	if options.InstallISOPath != "" {
-		diskBootIndex = 2
-	}
-
+	// Boot order: the disk always gets bootindex=1 (highest priority). When an
+	// install/live ISO is attached it receives bootindex=2 (fallback). This works
+	// correctly with UEFI/OVMF:
+	//   - First boot (empty disk): firmware tries disk, finds no EFI bootloader,
+	//     falls through to the CD-ROM and the installer runs.
+	//   - After installation + reboot: firmware tries disk, finds the bootloader
+	//     written by the installer, and boots from disk — skipping the ISO.
 	qemuArgs = append(qemuArgs,
-		"-device", fmt.Sprintf("scsi-hd,drive=hd,bootindex=%d", diskBootIndex),
+		"-device", "scsi-hd,drive=hd,bootindex=1",
 	)
 
 	if options.InstallISOPath != "" {
 		qemuArgs = append(qemuArgs,
 			"-drive", fmt.Sprintf("if=none,id=installcd,file=%s,media=cdrom,readonly=on", options.InstallISOPath),
-			"-device", "scsi-cd,drive=installcd,bootindex=1",
+			"-device", "scsi-cd,drive=installcd,bootindex=2",
 		)
 	}
 
