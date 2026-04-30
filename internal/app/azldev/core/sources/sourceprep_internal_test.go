@@ -24,13 +24,10 @@ func TestRemoveSubmoduleEntries_StripsGitlinks(t *testing.T) {
 	memFS := afero.NewMemMapFs()
 	storer := memory.NewStorage()
 
-	// Initialize a repo with in-memory storage and a real working tree path.
+	// Initialize a repo with in-memory storage only; this test exercises the
+	// index/storer and uses memFS separately for directory cleanup assertions.
 	repo, err := gogit.Init(storer, nil)
 	require.NoError(t, err)
-
-	// Create an initial commit so HEAD exists.
-	_, err = repo.CommitObject(plumbing.ZeroHash)
-	require.Error(t, err) // expected — no commits yet
 
 	// Manually build an index with a normal file entry and a submodule entry.
 	idx := &index.Index{
@@ -145,7 +142,7 @@ func TestRemoveSubmoduleEntries_PreservesNormalEntriesWithMixedModes(t *testing.
 			{
 				Name: "tests/submod2",
 				Mode: filemode.Submodule,
-				Hash: plumbing.NewHash("dddddddddddddddddddddddddddddddddddddd"),
+				Hash: plumbing.NewHash("dddddddddddddddddddddddddddddddddddddddd"),
 			},
 		},
 	}
