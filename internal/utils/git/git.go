@@ -11,12 +11,18 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 )
+
+// ErrFileNotFound is returned by [ShowFileAtCommit] when the requested path
+// does not exist in the given commit. This covers both missing files and
+// missing parent directories.
+var ErrFileNotFound = errors.New("path not found in commit")
 
 type GitProvider interface {
 	// Clone clones a git repository to the specified destination
@@ -250,4 +256,53 @@ func RunInDir(
 	}
 
 	return strings.TrimSpace(output), nil
+}
+
+// ShowFileAtCommit returns the contents of a file at a specific git revision.
+// Uses 'git show revision:relPath' via the CLI, which is more efficient than
+// go-git for large repositories (avoids loading the full tree into memory).
+//
+// The revision parameter accepts any valid git revision: a commit hash, "HEAD",
+// a branch name, a tag, "HEAD~3", etc.
+//
+// The relPath must reference a blob (file); passing a tree (directory) path
+// will return the tree listing as text, which is unlikely to be useful.
+//
+// Returns [ErrFileNotFound] (wrapped) when the path does not exist in the
+// revision — callers can check with [errors.Is].
+func ShowFileAtCommit(
+	ctx context.Context,
+	cmdFactory opctx.CmdFactory,
+	repoDir string,
+	revision string,
+	relPath string,
+) (string, error) {
+	var stderr bytes.Buffer
+
+	objectRef := revision + ":" + relPath
+	rawCmd := exec.CommandContext(ctx, "git", "-C", repoDir, "show", objectRef)
+	rawCmd.Stderr = &stderr
+
+	// Since we need to parse raw git output, ensure the output is in a consistent
+	// locale (C) so that error messages are predictable regardless of the developer's
+	// environment.
+	rawCmd.Env = append(os.Environ(), "LC_ALL=C")
+
+	cmd, err := cmdFactory.Command(rawCmd)
+	if err != nil {
+		return "", fmt.Errorf("failed to create git command:\n%w", err)
+	}
+
+	output, err := cmd.RunAndGetOutput(ctx)
+	if err != nil {
+		stderrStr := stderr.String()
+		if strings.Contains(stderrStr, "does not exist in") ||
+			strings.Contains(stderrStr, "exists on disk, but not in") {
+			return "", fmt.Errorf("file %#q at revision %#q:\n%w", relPath, revision, ErrFileNotFound)
+		}
+
+		return "", fmt.Errorf("failed to run 'git show %s':\n%s\n%w", objectRef, stderrStr, err)
+	}
+
+	return output, nil
 }
