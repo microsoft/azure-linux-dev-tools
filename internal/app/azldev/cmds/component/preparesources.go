@@ -128,7 +128,7 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 
 	var preparerOpts []sources.PreparerOption
 	if options.WithGitRepo {
-		preparerOpts = append(preparerOpts, sources.WithGitRepo(env, relativeLockDir(env)))
+		preparerOpts = append(preparerOpts, sources.WithGitRepo(env, env.LockReader()))
 	}
 
 	if options.AllowNoHashes {

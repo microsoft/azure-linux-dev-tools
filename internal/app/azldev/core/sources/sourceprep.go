@@ -65,16 +65,15 @@ type PreparerOption func(*sourcePreparerImpl)
 // Without this option, no dist-git is created and synthetic history is skipped.
 //
 // The cmdFactory is used to shell out to git for fingerprint change detection.
-// The lockDir is the lock file directory relative to the project repository
-// root (e.g. "locks").
+// The lockReader provides access to per-component lock files and their directory.
 func WithGitRepo(
 	cmdFactory opctx.CmdFactory,
-	lockDir string,
+	lockReader lockfile.LockReader,
 ) PreparerOption {
 	return func(p *sourcePreparerImpl) {
 		p.withGitRepo = true
 		p.cmdFactory = cmdFactory
-		p.lockDir = lockDir
+		p.lockReader = lockReader
 	}
 }
 
@@ -128,10 +127,9 @@ type sourcePreparerImpl struct {
 	// in the project repository. Set via [WithGitRepo].
 	cmdFactory opctx.CmdFactory
 
-	// lockDir is the lock file directory relative to the project repository
-	// root. Used to locate lock files for fingerprint change detection in
-	// synthetic history generation. Set via [WithGitRepo].
-	lockDir string
+	// lockReader provides access to per-component lock files and their
+	// directory path. Set via [WithGitRepo].
+	lockReader lockfile.LockReader
 
 	// allowNoHashes, when true, allows source file references without hash
 	// values. Missing hashes are computed from the downloaded files.
@@ -375,14 +373,9 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 	config := component.GetConfig()
 	componentName := component.GetName()
 
-	lockRelPath, err := lockfile.LockPath(p.lockDir, componentName)
-	if err != nil {
-		return fmt.Errorf("resolving lock file path for %#q:\n%w", componentName, err)
-	}
-
 	// Build commit metadata from lock file fingerprint changes.
 	changes, importCommit, err := buildSyntheticCommits(
-		ctx, p.cmdFactory, config, lockRelPath,
+		ctx, p.cmdFactory, config, componentName, p.lockReader.LockDir(),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to build synthetic commits:\n%w", err)

@@ -130,7 +130,7 @@ func CommitInterleavedHistory(
 ) error {
 	// No changes means no synthetic commits to create, so skip the whole process.
 	if len(changes) == 0 {
-		return errors.New("no fingerprint changes to commit")
+		return nil
 	}
 
 	// The latest fingerprint change's UpstreamCommit is the commit we're
@@ -449,74 +449,49 @@ func updateHead(repo *gogit.Repository, commitHash plumbing.Hash) error {
 // Returns an error if the lock file exists but has no fingerprint changes.
 // The second return value is the import-commit hash from the lock file, used
 // to scope the upstream commit walk in [CommitInterleavedHistory].
+//
+// The lockDir is the absolute path to the lock file directory. It is converted
+// to a repo-relative path internally once the git repository root is known.
 func buildSyntheticCommits(
 	ctx context.Context,
 	cmdFactory opctx.CmdFactory,
 	config *projectconfig.ComponentConfig,
-	lockFileRelPath string,
+	componentName string,
+	lockDir string,
 ) (changes []FingerprintChange, importCommit string, err error) {
-	if config.SourceConfigFile == nil || config.SourceConfigFile.SourcePath() == "" {
-		slog.Debug("Cannot resolve config file for synthetic commits; skipping",
-			"lockFile", lockFileRelPath)
+	projectRepo, projectRepoDir, err := openProjectRepo(config, componentName)
+	if err != nil {
+		return nil, "", err
+	}
 
+	if projectRepo == nil {
 		return nil, "", nil
 	}
 
-	configFilePath := config.SourceConfigFile.SourcePath()
-
-	// Open the project repository by walking up from the config file directory.
-	projectRepo, err := gogit.PlainOpenWithOptions(
-		filepath.Dir(configFilePath),
-		&gogit.PlainOpenOptions{DetectDotGit: true},
-	)
+	// Compute the lock file path relative to the git repository root.
+	lockFileAbsPath, err := lockfile.LockPath(lockDir, componentName)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to find project repository for config file %#q:\n%w",
-			configFilePath, err)
+		return nil, "", fmt.Errorf("resolving lock file path for %#q:\n%w", componentName, err)
 	}
 
-	// Read the current lock file at HEAD to get the import-commit boundary.
-	head, err := projectRepo.Head()
+	lockFileRelPath, err := filepath.Rel(projectRepoDir, lockFileAbsPath)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to get HEAD:\n%w", err)
+		return nil, "", fmt.Errorf("failed to compute repo-relative lock path for %#q:\n%w",
+			lockFileAbsPath, err)
 	}
 
-	// Read the lock file at HEAD. Distinguish "path does not exist in the
-	// commit tree" (file-not-found) from real failures such as TOML parse
-	// errors or unexpected git object errors — only the former is tolerated.
-	headLock, lockFileErr := showLockFileAtCommit(projectRepo, head.Hash().String(), lockFileRelPath)
-	if lockFileErr != nil {
-		// Real errors (parse failures, git object errors, etc.) are always fatal.
-		if !errors.Is(lockFileErr, object.ErrFileNotFound) {
-			return nil, "", fmt.Errorf("failed to read lock file %#q at HEAD:\n%w",
-				lockFileRelPath, lockFileErr)
-		}
+	// Read the lock file at HEAD. If the file is missing (not yet committed),
+	// synthetic history is skipped.
+	headLock, err := readLockFileAtHEAD(projectRepo, lockFileRelPath)
+	if err != nil {
+		return nil, "", err
+	}
 
-		// File genuinely missing — the component has no overlays, so the
-		// dist-git is just the upstream as-is and no synthetic commits
-		// are needed.
-		//nolint:godox // tracked by TODO(lockfiles) tag.
-		// TODO(lockfiles): remove env var gate and make this a hard error unconditionally.
-		if os.Getenv("AZLDEV_ENABLE_LOCK_VALIDATION") == "1" {
-			return nil, "", fmt.Errorf("lock file %#q not found at HEAD:\n%w",
-				lockFileRelPath, lockFileErr)
-		}
-
-		slog.Debug("No lock file found at HEAD; skipping synthetic history",
-			"lockFile", lockFileRelPath, "error", lockFileErr)
-
+	if headLock == nil {
 		return nil, "", nil
 	}
 
 	importCommit = headLock.ImportCommit
-
-	// Resolve the worktree root for git CLI operations that still need a
-	// directory path (gitLogFileMetadata uses git log with path filtering).
-	worktree, err := projectRepo.Worktree()
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to get project worktree:\n%w", err)
-	}
-
-	projectRepoDir := worktree.Filesystem.Root()
 
 	fpChanges, err := FindFingerprintChanges(ctx, cmdFactory, projectRepo, projectRepoDir, lockFileRelPath)
 	if err != nil {
@@ -525,10 +500,19 @@ func buildSyntheticCommits(
 	}
 
 	if len(fpChanges) == 0 {
-		return nil, "", fmt.Errorf(
-			"lock file %#q exists but has no fingerprint changes; "+
-				"this indicates a corrupt or empty lock file history",
-			lockFileRelPath)
+		// In a shallow clone the commit that added the lock file may have
+		// been pruned, so check explicitly.
+		shallowCommits, _ := projectRepo.Storer.Shallow()
+		if len(shallowCommits) > 0 {
+			return nil, "", fmt.Errorf(
+				"lock file %#q has no git history; a full clone is required",
+				lockFileRelPath)
+		}
+
+		slog.Warn("Lock file has no fingerprint changes; skipping synthetic history",
+			"lockFile", lockFileRelPath)
+
+		return nil, "", nil
 	}
 
 	slog.Info("Found fingerprint changes",
@@ -536,6 +520,83 @@ func buildSyntheticCommits(
 		"changeCount", len(fpChanges))
 
 	return fpChanges, importCommit, nil
+}
+
+// openProjectRepo opens the git repository that contains the component's
+// config file and returns both the [gogit.Repository] and the worktree root
+// directory. Returns (nil, "", nil) when the config file path cannot be
+// resolved, indicating that synthetic commits should be skipped.
+func openProjectRepo(
+	config *projectconfig.ComponentConfig,
+	componentName string,
+) (*gogit.Repository, string, error) {
+	if config.SourceConfigFile == nil || config.SourceConfigFile.SourcePath() == "" {
+		slog.Debug("Cannot resolve config file for synthetic commits; skipping",
+			"component", componentName)
+
+		return nil, "", nil
+	}
+
+	configFilePath := config.SourceConfigFile.SourcePath()
+
+	repo, err := gogit.PlainOpenWithOptions(
+		filepath.Dir(configFilePath),
+		&gogit.PlainOpenOptions{DetectDotGit: true},
+	)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to find project repository for config file %#q:\n%w",
+			configFilePath, err)
+	}
+
+	worktree, err := repo.Worktree()
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get project worktree:\n%w", err)
+	}
+
+	return repo, worktree.Filesystem.Root(), nil
+}
+
+// readLockFileAtHEAD reads the lock file at the repository's HEAD commit.
+// Returns nil (without error) when the lock file or its parent directory does
+// not exist in the commit tree — this is the normal case for components that
+// have never had overlays. Returns a non-nil error for real failures (TOML
+// parse errors, unexpected git object errors, etc.).
+func readLockFileAtHEAD(
+	repo *gogit.Repository,
+	lockFileRelPath string,
+) (*lockfile.ComponentLock, error) {
+	head, err := repo.Head()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get HEAD:\n%w", err)
+	}
+
+	headLock, lockFileErr := showLockFileAtCommit(repo, head.Hash().String(), lockFileRelPath)
+	if lockFileErr == nil {
+		return &headLock, nil
+	}
+
+	// Tolerate both file-not-found and directory-not-found — the latter
+	// occurs when the locks directory has never been created in the repo.
+	if !errors.Is(lockFileErr, object.ErrFileNotFound) &&
+		!errors.Is(lockFileErr, object.ErrDirectoryNotFound) {
+		return nil, fmt.Errorf("failed to read lock file %#q at HEAD:\n%w",
+			lockFileRelPath, lockFileErr)
+	}
+
+	// File genuinely missing — the component has no overlays, so the
+	// dist-git is just the upstream as-is and no synthetic commits
+	// are needed.
+	//nolint:godox // tracked by TODO(lockfiles) tag.
+	// TODO(lockfiles): remove env var gate and make this a hard error unconditionally.
+	if os.Getenv("AZLDEV_ENABLE_LOCK_VALIDATION") == "1" {
+		return nil, fmt.Errorf("lock file %#q not found at HEAD:\n%w",
+			lockFileRelPath, lockFileErr)
+	}
+
+	slog.Debug("No lock file found at HEAD; skipping synthetic history",
+		"lockFile", lockFileRelPath, "error", lockFileErr)
+
+	return nil, nil //nolint:nilnil // nil,nil signals "not found, skip" to caller.
 }
 
 // collectUpstreamCommits returns commits in the repository in chronological
@@ -623,6 +684,13 @@ func unixToTime(unix int64) time.Time {
 // gitLogFileMetadata returns commit metadata (newest-first) for all commits
 // that touched the given file path in the repository at repoDir. Fields within
 // each record are separated by NUL (\x00); records are separated by SOH (\x01).
+//
+// This shells out to 'git log' rather than using go-git's [gogit.LogOptions]
+// PathFilter because go-git's path filtering walks the entire commit graph
+// in-process, diffing trees at every commit. For large repositories with
+// thousands of commits this is prohibitively slow. The git CLI delegates the
+// work to native C code with bitmap indices and pack-file optimizations,
+// making it orders of magnitude faster for path-scoped log queries.
 func gitLogFileMetadata(
 	ctx context.Context, cmdFactory opctx.CmdFactory, repoDir, filePath string,
 ) ([]CommitMetadata, error) {
@@ -641,7 +709,7 @@ func gitLogFileMetadata(
 	var metas []CommitMetadata //nolint:prealloc // trailing empty block after split.
 
 	for _, block := range blocks {
-		block = strings.TrimSpace(block)
+		block = strings.TrimRight(block, "\r\n")
 		if block == "" {
 			continue
 		}
