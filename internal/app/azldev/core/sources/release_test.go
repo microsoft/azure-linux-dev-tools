@@ -65,6 +65,12 @@ func TestBumpStaticRelease(t *testing.T) {
 		{"single commit", "1%{?dist}", 1, "2%{?dist}", false},
 		{"no leading int", "%{?dist}", 1, "", true},
 		{"empty string", "", 1, "", true},
+
+		// Dotted decimal releases are rejected (build counter is not the leading integer).
+		{"dotted with beta suffix", "1.39.b1%{?dist}", 3, "", true},
+		{"dotted simple", "1.2%{?dist}", 2, "", true},
+		{"dotted no suffix", "1.10", 5, "", true},
+		{"dotted zero prefix", "0.1", 1, "", true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			result, err := sources.BumpStaticRelease(testCase.value, testCase.commits)

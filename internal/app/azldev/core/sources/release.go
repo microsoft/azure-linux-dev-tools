@@ -25,8 +25,10 @@ import (
 var autoreleasePattern = regexp.MustCompile(`%(\{[?]?autorelease($|[}\s])|autorelease($|\s))`)
 
 // staticReleasePattern matches a leading integer in a static Release tag value,
-// followed by an optional suffix (e.g. "%{?dist}").
-var staticReleasePattern = regexp.MustCompile(`^(\d+)(.*)$`)
+// followed by an optional non-dotted-digit suffix (e.g. "%{?dist}").
+// Release values with dotted numeric prefixes (e.g. "1.39.b1%{?dist}") are
+// rejected because the leading integer is not the build counter in those cases.
+var staticReleasePattern = regexp.MustCompile(`^(\d+)([^.].*|)$`)
 
 // GetReleaseTagValue reads the Release tag value from the spec file at specPath.
 // It returns the raw value string as written in the spec (e.g. "1%{?dist}" or "%autorelease").
