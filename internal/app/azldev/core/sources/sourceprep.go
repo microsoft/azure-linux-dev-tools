@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -16,6 +15,7 @@ import (
 	"unicode"
 
 	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
@@ -396,13 +396,12 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 
 	gitDirPath := filepath.Join(sourcesDirPath, ".git")
 
-	_, statErr := os.Stat(gitDirPath)
-
-	if statErr != nil && !os.IsNotExist(statErr) {
-		return fmt.Errorf("failed to check for .git directory at %#q:\n%w", gitDirPath, statErr)
+	gitDirExists, err := fileutils.Exists(p.fs, gitDirPath)
+	if err != nil {
+		return fmt.Errorf("failed to check for .git directory at %#q:\n%w", gitDirPath, err)
 	}
 
-	if os.IsNotExist(statErr) {
+	if !gitDirExists {
 		slog.Info("No .git directory in sources; initializing repository",
 			"component", componentName)
 
@@ -417,9 +416,64 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 		return fmt.Errorf("failed to open sources repository at %#q:\n%w", sourcesDirPath, err)
 	}
 
+	// Strip bogus submodule entries from the index before staging. Some upstream
+	// repos have gitlink entries without .gitmodules that break go-git's staging.
+	if err := removeSubmoduleEntries(p.fs, sourcesRepo, sourcesDirPath); err != nil {
+		return fmt.Errorf("failed to remove submodule entries:\n%w", err)
+	}
+
 	if err := CommitInterleavedHistory(sourcesRepo, changes, importCommit); err != nil {
 		return fmt.Errorf("failed to commit synthetic history:\n%w", err)
 	}
+
+	return nil
+}
+
+// removeSubmoduleEntries strips gitlink (mode 160000) entries from the repository
+// index and removes the corresponding empty directories from disk. Some upstream
+// dist-git repositories (e.g., Fedora's "at" package) contain bogus submodule
+// references — gitlink entries without a .gitmodules file — that leave empty
+// directories after cloning. go-git's [gogit.Worktree.AddWithOptions] fails when
+// it encounters these because it tries to read the directory path as a file.
+func removeSubmoduleEntries(fs opctx.FS, repo *gogit.Repository, repoDir string) error {
+	idx, err := repo.Storer.Index()
+	if err != nil {
+		return fmt.Errorf("failed to read git index:\n%w", err)
+	}
+
+	originalLen := len(idx.Entries)
+	kept := 0
+
+	for _, entry := range idx.Entries {
+		if entry.Mode == filemode.Submodule {
+			slog.Info("Removing bogus submodule entry from index",
+				"path", entry.Name)
+
+			// Remove the directory left by the uninitialized submodule.
+			if removeErr := fs.RemoveAll(filepath.Join(repoDir, entry.Name)); removeErr != nil {
+				slog.Warn("Failed to remove submodule directory",
+					"path", entry.Name, "error", removeErr)
+			}
+
+			continue
+		}
+
+		idx.Entries[kept] = entry
+		kept++
+	}
+
+	if kept == originalLen {
+		return nil
+	}
+
+	idx.Entries = idx.Entries[:kept]
+
+	if err := repo.Storer.SetIndex(idx); err != nil {
+		return fmt.Errorf("failed to update git index:\n%w", err)
+	}
+
+	slog.Info("Removed submodule entries from git index",
+		"count", originalLen-kept)
 
 	return nil
 }
