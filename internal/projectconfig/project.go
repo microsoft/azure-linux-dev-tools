@@ -23,6 +23,9 @@ type ProjectConfig struct {
 	Images map[string]ImageConfig `toml:"images,omitempty" json:"images,omitempty" jsonschema:"title=Images,description=Mapping of image names to configurations"`
 	// Definitions of distros.
 	Distros map[string]DistroDefinition `toml:"distros,omitempty" json:"distros,omitempty" jsonschema:"title=Distros,description=Mapping of distro names to their definitions"`
+	// Reusable resource definitions (e.g., RPM repositories) referenced from
+	// elsewhere in the configuration.
+	Resources ResourcesConfig `toml:"resources,omitempty" json:"resources,omitempty" jsonschema:"title=Resources,description=Reusable named resource definitions"`
 	// Configuration for tools used by azldev.
 	Tools ToolsConfig `toml:"tools,omitempty" json:"tools,omitempty" jsonschema:"title=Tools configuration,description=Configuration for tools used by azldev"`
 
@@ -56,6 +59,7 @@ func NewProjectConfig() ProjectConfig {
 		Components:        make(map[string]ComponentConfig),
 		Images:            make(map[string]ImageConfig),
 		Distros:           make(map[string]DistroDefinition),
+		Resources:         ResourcesConfig{RpmRepos: make(map[string]RpmRepoResource)},
 		GroupsByComponent: make(map[string][]string),
 		PackageGroups:     make(map[string]PackageGroupConfig),
 		TestSuites:        make(map[string]TestSuiteConfig),
@@ -75,6 +79,72 @@ func (cfg *ProjectConfig) Validate() error {
 
 	if err := validateImageTestReferences(cfg.Images, cfg.TestSuites); err != nil {
 		return err
+	}
+
+	if err := validateRpmRepos(cfg.Resources.RpmRepos); err != nil {
+		return err
+	}
+
+	if err := validateDistroVersionInputs(cfg.Distros, cfg.Resources.RpmRepos); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateRpmRepos checks each RPM repo definition for structural validity.
+func validateRpmRepos(repos map[string]RpmRepoResource) error {
+	for name, repo := range repos {
+		if err := validateRpmRepo(name, &repo); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateDistroVersionInputs verifies that every repo name referenced from a distro
+// version's [DistroVersionDefinition.Inputs] resolves to an entry under
+// [ResourcesConfig.RpmRepos]. Failing fast at load time produces a clear error rather
+// than a confusing failure deep inside a build.
+//
+// It also rejects repos referenced by `inputs.rpm-build` whose `gpg-key` is a local
+// filesystem path: mock evaluates the URI *inside* the chroot, where the host path is
+// not visible. (Image builds are unaffected because kiwi runs on the host.)
+func validateDistroVersionInputs(
+	distros map[string]DistroDefinition, repos map[string]RpmRepoResource,
+) error {
+	for distroName, distro := range distros {
+		for versionName, version := range distro.Versions {
+			for _, name := range version.Inputs.RpmBuild {
+				repo, ok := repos[name]
+				if !ok {
+					return fmt.Errorf(
+						"distro %q version %q inputs.rpm-build references undefined rpm-repo %q",
+						distroName, versionName, name,
+					)
+				}
+
+				if repo.IsLocalGPGKey() {
+					return fmt.Errorf(
+						"distro %q version %q inputs.rpm-build references rpm-repo %q which has a local "+
+							"`gpg-key` (%q). Local keys are not yet supported for mock builds (mock would "+
+							"evaluate the path inside the chroot). Use an http(s) URI, or only reference this "+
+							"repo from inputs.image-build.",
+						distroName, versionName, name, repo.GPGKey,
+					)
+				}
+			}
+
+			for _, name := range version.Inputs.ImageBuild {
+				if _, ok := repos[name]; !ok {
+					return fmt.Errorf(
+						"distro %q version %q inputs.image-build references undefined rpm-repo %q",
+						distroName, versionName, name,
+					)
+				}
+			}
+		}
 	}
 
 	return nil

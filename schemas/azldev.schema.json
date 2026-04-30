@@ -344,6 +344,11 @@
           "title": "Distros",
           "description": "Definitions of distros to build for or consume from"
         },
+        "resources": {
+          "$ref": "#/$defs/ResourcesConfig",
+          "title": "Resources",
+          "description": "Reusable named resource definitions"
+        },
         "component-groups": {
           "additionalProperties": {
             "$ref": "#/$defs/ComponentGroupConfig"
@@ -513,6 +518,11 @@
           "type": "string",
           "title": "Mock config file",
           "description": "Path to the aarch64 mock config file for this version"
+        },
+        "inputs": {
+          "$ref": "#/$defs/DistroVersionInputs",
+          "title": "Inputs",
+          "description": "Per-use-case input repositories"
         }
       },
       "additionalProperties": false,
@@ -520,6 +530,28 @@
       "required": [
         "release-ver"
       ]
+    },
+    "DistroVersionInputs": {
+      "properties": {
+        "rpm-build": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "RPM-build inputs",
+          "description": "Repos made available to mock when building RPMs"
+        },
+        "image-build": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Image-build inputs",
+          "description": "Repos made available to kiwi when building images"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
     },
     "ImageCapabilities": {
       "properties": {
@@ -839,6 +871,77 @@
           "title": "Release calculation",
           "description": "Controls how the Release tag is managed during rendering. Empty or omitted means auto.",
           "default": "auto"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ResourcesConfig": {
+      "properties": {
+        "rpm-repos": {
+          "additionalProperties": {
+            "$ref": "#/$defs/RpmRepoResource"
+          },
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            "description": "Repo name; projected verbatim into dnf section headers and kiwi --add-repo arguments."
+          },
+          "type": "object",
+          "title": "RPM repositories",
+          "description": "Reusable named RPM repository definitions"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "RpmRepoResource": {
+      "properties": {
+        "description": {
+          "type": "string",
+          "title": "Description",
+          "description": "Human-readable description (diagnostic only)"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "rpm-md"
+          ],
+          "title": "Type",
+          "description": "Repository access protocol; defaults to rpm-md"
+        },
+        "base-uri": {
+          "type": "string",
+          "pattern": "^https?://[^\\s]+$",
+          "format": "uri",
+          "title": "Base URI",
+          "description": "Repository base URI (dnf baseurl). Mutually exclusive with metalink. Must be an http(s) URL."
+        },
+        "metalink": {
+          "type": "string",
+          "pattern": "^https?://[^\\s]+$",
+          "format": "uri",
+          "title": "Metalink",
+          "description": "Repository metalink URL. Mutually exclusive with base-uri. Must be an http(s) URL."
+        },
+        "disable-gpg-check": {
+          "type": "boolean",
+          "title": "Disable GPG check",
+          "description": "Opt out of GPG signature verification for this repo (zero value = checking enabled)"
+        },
+        "gpg-key": {
+          "type": "string",
+          "pattern": "^\\S+$",
+          "title": "GPG key",
+          "description": "Path or URI to the GPG key file. Bare paths are resolved relative to the defining TOML file. Accepted URI schemes: http"
+        },
+        "arches": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Arches",
+          "description": "Restrict to specific target architectures; empty = all"
         }
       },
       "additionalProperties": false,

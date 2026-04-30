@@ -136,6 +136,28 @@ func mergeConfigFile(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
 		return err
 	}
 
+	if err := mergeResources(resolvedCfg, loadedCfg); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// mergeResources merges the [ResourcesConfig] from a loaded config file into the resolved
+// config. Map-keyed entries (e.g., rpm-repos by name) are overlaid: a duplicate name in
+// a later-loaded file replaces the earlier definition (matching the policy applied to
+// other top-level resource collections).
+func mergeResources(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
+	if loadedCfg.Resources == nil {
+		return nil
+	}
+
+	resolved := loadedCfg.Resources.WithAbsolutePaths(loadedCfg.dir)
+
+	if err := resolvedCfg.Resources.MergeUpdatesFrom(resolved); err != nil {
+		return fmt.Errorf("failed to merge resources from %#q:\n%w", loadedCfg.SourcePath(), err)
+	}
+
 	return nil
 }
 

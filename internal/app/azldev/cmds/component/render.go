@@ -15,6 +15,7 @@ import (
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/mockconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
@@ -1007,7 +1008,14 @@ func createMockProcessor(env *azldev.Env) *sources.MockProcessor {
 		return nil
 	}
 
-	slog.Info("Mock processor available", "mockConfig", distroVerDef.MockConfigPath)
+	preparedConfigPath, err := mockconfig.PrepareForRPMBuild(env)
+	if err != nil {
+		slog.Warn("Mock processor unavailable; failed to prepare mock config", "error", err)
 
-	return sources.NewMockProcessor(env, distroVerDef.MockConfigPath)
+		return nil
+	}
+
+	slog.Info("Mock processor available", "mockConfig", preparedConfigPath)
+
+	return sources.NewMockProcessor(env, preparedConfigPath)
 }
