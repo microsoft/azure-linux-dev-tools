@@ -24,9 +24,12 @@ import (
 //   - conditional form (no fallback): %{?autorelease}
 var autoreleasePattern = regexp.MustCompile(`%(\{[?]?autorelease($|[}\s])|autorelease($|\s))`)
 
-// staticReleasePattern matches a leading integer in a static Release tag value,
-// followed by an optional suffix (e.g. "%{?dist}").
-var staticReleasePattern = regexp.MustCompile(`^(\d+)(.*)$`)
+// staticReleasePattern matches only the two Release tag forms we can safely
+// auto-bump: a bare integer (e.g. "1") or an integer followed by the
+// conditional dist macro (e.g. "5%{?dist}"). Any other suffix — dotted
+// segments, unknown macros, etc. — is rejected so the component must use
+// 'release.calculation = "manual"'.
+var staticReleasePattern = regexp.MustCompile(`^(\d+)(%\{\?dist\})?$`)
 
 // GetReleaseTagValue reads the Release tag value from the spec file at specPath.
 // It returns the raw value string as written in the spec (e.g. "1%{?dist}" or "%autorelease").

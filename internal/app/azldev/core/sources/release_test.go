@@ -59,12 +59,30 @@ func TestBumpStaticRelease(t *testing.T) {
 		expected    string
 		wantErr     bool
 	}{
+		// Accepted forms: bare integer or integer + %{?dist}.
 		{"simple integer", "1", 3, "4", false},
 		{"with dist tag", "1%{?dist}", 2, "3%{?dist}", false},
 		{"larger base", "10%{?dist}", 5, "15%{?dist}", false},
 		{"single commit", "1%{?dist}", 1, "2%{?dist}", false},
+
+		// Rejected: no leading integer.
 		{"no leading int", "%{?dist}", 1, "", true},
 		{"empty string", "", 1, "", true},
+
+		// Rejected: unknown macros in suffix.
+		{"other macros", "17%{someothermacro}%{?dist}", 3, "", true},
+		{"non-conditional dist", "1%{dist}", 1, "", true},
+		{"macro before dist", "0%{rc_subver}%{?dist}", 1, "", true},
+
+		// Rejected: dotted decimal releases.
+		{"dotted with beta suffix", "1.39.b1%{?dist}", 3, "", true},
+		{"dotted simple", "1.2%{?dist}", 2, "", true},
+		{"dotted no suffix", "1.10", 5, "", true},
+		{"dotted zero prefix", "0.1", 1, "", true},
+
+		// Rejected: trailing dot.
+		{"trailing dot before dist", "1.%{?dist}", 1, "", true},
+		{"trailing dot no suffix", "1.", 1, "", true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			result, err := sources.BumpStaticRelease(testCase.value, testCase.commits)
