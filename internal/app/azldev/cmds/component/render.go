@@ -159,7 +159,11 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 	// named by component name, enabling a single bind mount for the batch
 	// mock invocation. Use the project work dir instead of /tmp to avoid
 	// filling up tmpfs on large renders.
-	stagingDir, err := fileutils.MkdirTemp(env.FS(), env.Config().Project.WorkDir, "azldev-render-staging-")
+	if err := env.FS().MkdirAll(env.WorkDir(), fileperms.PublicDir); err != nil {
+		return nil, fmt.Errorf("creating work directory:\n%w", err)
+	}
+
+	stagingDir, err := fileutils.MkdirTemp(env.FS(), env.WorkDir(), "azldev-render-staging-")
 	if err != nil {
 		return nil, fmt.Errorf("creating staging directory:\n%w", err)
 	}
