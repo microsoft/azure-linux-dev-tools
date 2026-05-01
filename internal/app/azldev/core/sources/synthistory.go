@@ -80,7 +80,7 @@ func FindFingerprintChanges(
 	var entries []entry //nolint:prealloc // size not known ahead of time.
 
 	for _, meta := range metas {
-		lock, err := showLockFileAtCommit(projectRepo, meta.Hash, lockFileRelPath)
+		lock, err := lockfile.ShowAtCommit(projectRepo, meta.Hash, lockFileRelPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read lock file at commit %#q:\n%w", meta.Hash, err)
 		}
@@ -574,7 +574,7 @@ func readLockFileAtHEAD(
 		return nil, fmt.Errorf("failed to get HEAD:\n%w", err)
 	}
 
-	headLock, lockFileErr := showLockFileAtCommit(repo, head.Hash().String(), lockFileRelPath)
+	headLock, lockFileErr := lockfile.ShowAtCommit(repo, head.Hash().String(), lockFileRelPath)
 	if lockFileErr == nil {
 		return &headLock, nil
 	}
@@ -731,45 +731,6 @@ func gitLogFileMetadata(
 	}
 
 	return metas, nil
-}
-
-// showLockFileAtCommit reads the lock file content at a specific commit hash
-// using go-git and parses it into a [lockfile.ComponentLock].
-func showLockFileAtCommit(
-	repo *gogit.Repository,
-	commitHash, lockFileRelPath string,
-) (lockfile.ComponentLock, error) {
-	hash := plumbing.NewHash(commitHash)
-
-	commitObj, err := repo.CommitObject(hash)
-	if err != nil {
-		return lockfile.ComponentLock{}, fmt.Errorf("failed to resolve commit %#q:\n%w", commitHash, err)
-	}
-
-	tree, err := commitObj.Tree()
-	if err != nil {
-		return lockfile.ComponentLock{}, fmt.Errorf("failed to get tree for commit %#q:\n%w", commitHash, err)
-	}
-
-	file, err := tree.File(lockFileRelPath)
-	if err != nil {
-		return lockfile.ComponentLock{}, fmt.Errorf("failed to read %#q at commit %#q:\n%w",
-			lockFileRelPath, commitHash, err)
-	}
-
-	content, err := file.Contents()
-	if err != nil {
-		return lockfile.ComponentLock{}, fmt.Errorf("failed to read contents of %#q at commit %#q:\n%w",
-			lockFileRelPath, commitHash, err)
-	}
-
-	lock, err := lockfile.Parse([]byte(content))
-	if err != nil {
-		return lockfile.ComponentLock{}, fmt.Errorf("failed to parse lock file %#q at commit %#q:\n%w",
-			lockFileRelPath, commitHash, err)
-	}
-
-	return *lock, nil
 }
 
 // commitMetadataFieldCount is the number of NUL-separated fields expected in
