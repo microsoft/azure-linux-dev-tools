@@ -51,8 +51,8 @@ func NewPackageListCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "list [package-name...]",
-		Short: "List resolved configuration for binary packages",
-		Long: `List resolved configuration for binary packages.
+		Short: "List resolved configuration for packages (RPMs and SRPMs)",
+		Long: `List resolved configuration for packages (RPMs and SRPMs).
 
 Use -a to enumerate all packages that have explicit configuration (via package-groups
 or component package overrides).
@@ -115,6 +115,9 @@ Resolution order (lowest to highest priority):
 	cmd.MarkFlagsMutuallyExclusive("rpm-file", "all-packages")
 	cmd.MarkFlagsMutuallyExclusive("rpm-file", "package")
 	cmd.MarkFlagsMutuallyExclusive("rpm-file", "synthesize-debug-packages")
+
+	// Help shells complete '--rpm-file' with .json paths.
+	_ = cmd.MarkFlagFilename("rpm-file", "json")
 
 	azldev.ExportAsMCPTool(cmd)
 
@@ -391,7 +394,6 @@ func resolveComponentConfig(compName string, proj *projectconfig.ProjectConfig) 
 // project default → component group → component.
 func resolveSourcePackageListResult(
 	srpmName string,
-	groupOf map[string]string,
 	proj *projectconfig.ProjectConfig,
 ) (PackageListResult, error) {
 	// The SRPM name is the component name by definition.
@@ -412,7 +414,7 @@ func resolveSourcePackageListResult(
 	return PackageListResult{
 		PackageName: srpmName,
 		Type:        PackageTypeSRPM,
-		Group:       groupOf[srpmName],
+		Group:       "", // SRPMs have no package-group membership in the config model
 		Component:   compName,
 		Channel:     resolved.Publish.SRPMChannel,
 	}, nil
@@ -437,7 +439,7 @@ func resolveFromRPMFile(
 	results := make([]PackageListResult, 0, len(srpmMap))
 
 	for srpmName, rpmNames := range srpmMap {
-		srpmResult, resolveErr := resolveSourcePackageListResult(srpmName, groupOf, proj)
+		srpmResult, resolveErr := resolveSourcePackageListResult(srpmName, proj)
 		if resolveErr != nil {
 			return nil, resolveErr
 		}

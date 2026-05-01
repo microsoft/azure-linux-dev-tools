@@ -488,7 +488,7 @@
      "openWorldHint": true,
      "readOnlyHint": false
     },
-    "description": "List resolved configuration for binary packages",
+    "description": "List resolved configuration for packages (RPMs and SRPMs)",
     "inputSchema": {
      "properties": {
       "accept-all": {
