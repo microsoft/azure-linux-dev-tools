@@ -142,33 +142,23 @@ func getVersionAtUpstreamCommit(
 	return GetVersionTagFromReader(reader)
 }
 
-// CountCommitsSinceVersionChange determines how many synthetic commits should
-// contribute to the static Release bump. It walks the [FingerprintChange] list
-// (chronological, oldest first), reads the Version tag from the dist-git spec
-// at each unique [FingerprintChange.UpstreamCommit], and finds the point where
-// the Version last changed. Only synthetic commits after that point contribute
-// to the count.
+// CountCommitsSinceVersionChange counts how many [FingerprintChange] entries
+// since the last Version tag change should contribute to a static Release bump.
 //
-// When the Version tag cannot be read at a historical commit (e.g. because of
-// a shallow clone, a force-push that rewrote upstream history, or a spec
-// rename), the unresolvable commit is treated as a version boundary and the
-// walk stops — only the already-counted commits contribute. This mirrors how
-// [buildInterleavedSequence] drops orphaned commits rather than placing them on
-// top of the synthetic history.
-//
-// When the resolver is nil (local components with no upstream repo), all
-// changes are counted because there is no version history to consult.
+// Unresolvable upstream commits are treated as version boundaries. A nil
+// resolver (local components) counts all changes. Returns an error if the
+// Version tag contains unexpanded RPM macros (e.g. "%{base_version}").
 func CountCommitsSinceVersionChange(
 	resolver commitResolver,
 	specFileName string,
 	changes []FingerprintChange,
-) int {
+) (int, error) {
 	if len(changes) == 0 {
-		return 0
+		return 0, nil
 	}
 
 	if resolver == nil {
-		return len(changes)
+		return len(changes), nil
 	}
 
 	// Walk changes newest-to-oldest, resolving the Version tag at each unique
@@ -181,6 +171,14 @@ func CountCommitsSinceVersionChange(
 	for idx := len(changes) - 1; idx >= 0; idx-- {
 		hash := changes[idx].UpstreamCommit
 
+		if hash == "" {
+			// Local or synthetic changes are not tied to a resolvable upstream
+			// commit. Count them all since there's no version history to consult.
+			count++
+
+			continue
+		}
+
 		version, ok := versionCache[hash]
 		if !ok {
 			var err error
@@ -191,6 +189,13 @@ func CountCommitsSinceVersionChange(
 					"commit", hash, "error", err)
 
 				break
+			}
+
+			if strings.Contains(version, "%") {
+				return 0, fmt.Errorf(
+					"version tag at commit %#q contains unexpanded macro %#q; "+
+						"version-change detection requires macro expansion which is not available here",
+					hash, version)
 			}
 
 			versionCache[hash] = version
@@ -212,7 +217,7 @@ func CountCommitsSinceVersionChange(
 		"totalChanges", len(changes),
 		"sinceVersionChange", count)
 
-	return count
+	return count, nil
 }
 
 // BumpStaticRelease increments the leading integer in a static Release tag value
@@ -283,7 +288,15 @@ func (p *sourcePreparerImpl) tryBumpStaticRelease(
 	// uses a static release, to avoid unnecessary git tree traversals for
 	// components that use %autorelease or manual mode.
 	specFileName := component.GetName() + ".spec"
-	commitCount := CountCommitsSinceVersionChange(repo, specFileName, changes)
+
+	commitCount, err := CountCommitsSinceVersionChange(repo, specFileName, changes)
+	if err != nil {
+		return fmt.Errorf(
+			"component %#q has a Version tag that cannot be resolved for auto-release calculation; "+
+				"set 'release.calculation = \"manual\"' in the component configuration "+
+				"and add a \"spec-set-tag\" overlay for the Release tag if needed:\n%w",
+			component.GetName(), err)
+	}
 
 	newRelease, err := BumpStaticRelease(releaseValue, commitCount)
 	if err != nil {

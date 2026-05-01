@@ -215,6 +215,7 @@ func TestCountCommitsSinceVersionChange(t *testing.T) {
 	const (
 		nonExistentHash = -1 // valid hex format but not in repo
 		malformedHash   = -2 // invalid hash format
+		emptyHash       = -3 // empty string (local component, no upstream)
 	)
 
 	for _, testCase := range []struct {
@@ -224,17 +225,26 @@ func TestCountCommitsSinceVersionChange(t *testing.T) {
 		upstreamCommits []int
 		specFile        string // override spec filename (default: "package.spec")
 		expected        int
+		expectError     bool
 	}{
-		{"no version change", []string{"1.0"}, []int{0, 0, 0}, "", 3},
-		{"version change mid-stream", []string{"1.0", "2.0"}, []int{0, 0, 1}, "", 1},
-		{"multiple version jumps", []string{"1.0", "2.0", "3.0"}, []int{0, 1, 2, 2}, "", 2},
-		{"same version multiple upstreams", []string{"1.0", "1.0"}, []int{0, 1, 1}, "", 3},
-		{"single change", []string{"1.0"}, []int{0}, "", 1},
-		{"empty changes", []string{"1.0"}, nil, "", 0},
-		{"spec not found", []string{"1.0"}, []int{0, 0}, "nonexistent.spec", 0},
-		{"non-existent commit hash", []string{"1.0"}, []int{nonExistentHash, nonExistentHash, nonExistentHash}, "", 0},
-		{"invalid hash string", []string{"1.0"}, []int{malformedHash, malformedHash}, "", 0},
-		{"partially resolvable", []string{"1.0"}, []int{nonExistentHash, 0, 0}, "", 2},
+		{"no version change", []string{"1.0"}, []int{0, 0, 0}, "", 3, false},
+		{"version change mid-stream", []string{"1.0", "2.0"}, []int{0, 0, 1}, "", 1, false},
+		{"multiple version jumps", []string{"1.0", "2.0", "3.0"}, []int{0, 1, 2, 2}, "", 2, false},
+		{"same version multiple upstreams", []string{"1.0", "1.0"}, []int{0, 1, 1}, "", 3, false},
+		{"single change", []string{"1.0"}, []int{0}, "", 1, false},
+		{"empty changes", []string{"1.0"}, nil, "", 0, false},
+		{"spec not found", []string{"1.0"}, []int{0, 0}, "nonexistent.spec", 0, false},
+		{"non-existent commit hash", []string{"1.0"}, []int{nonExistentHash, nonExistentHash, nonExistentHash}, "", 0, false},
+		{"invalid hash string", []string{"1.0"}, []int{malformedHash, malformedHash}, "", 0, false},
+		{"partially resolvable", []string{"1.0"}, []int{nonExistentHash, 0, 0}, "", 2, false},
+		{"empty upstream (local component)", []string{"1.0"}, []int{emptyHash, emptyHash, emptyHash}, "", 3, false},
+		{"macro version errors", []string{"%{base_version}"}, []int{0, 0, 0}, "", 0, true},
+		{
+			"macro version with multiple upstreams errors",
+			[]string{"%{base_version}", "%{base_version}"},
+			[]int{0, 0, 1},
+			"", 0, true,
+		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			repo, hashes := createRepoWithVersionCommits(t, testCase.versions)
@@ -256,6 +266,8 @@ func TestCountCommitsSinceVersionChange(t *testing.T) {
 					upstream = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 				case idx == malformedHash:
 					upstream = "not-a-valid-hash"
+				case idx == emptyHash:
+					upstream = ""
 				}
 
 				changes = append(changes, sources.FingerprintChange{
@@ -264,8 +276,14 @@ func TestCountCommitsSinceVersionChange(t *testing.T) {
 				})
 			}
 
-			count := sources.CountCommitsSinceVersionChange(repo, specFile, changes)
-			assert.Equal(t, testCase.expected, count)
+			count, err := sources.CountCommitsSinceVersionChange(repo, specFile, changes)
+			if testCase.expectError {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "unexpanded macro")
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, testCase.expected, count)
+			}
 		})
 	}
 }
