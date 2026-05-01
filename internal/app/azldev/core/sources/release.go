@@ -148,8 +148,16 @@ func getVersionAtUpstreamCommit(
 // at each unique [FingerprintChange.UpstreamCommit], and finds the point where
 // the Version last changed. Only synthetic commits after that point contribute
 // to the count.
-// When the Version tag cannot be read at a historical commit (e.g. the spec was
-// renamed), the function falls back to len(changes).
+//
+// When the Version tag cannot be read at a historical commit (e.g. because of
+// a shallow clone, a force-push that rewrote upstream history, or a spec
+// rename), the unresolvable commit is treated as a version boundary and the
+// walk stops — only the already-counted commits contribute. This mirrors how
+// [buildInterleavedSequence] drops orphaned commits rather than placing them on
+// top of the synthetic history.
+//
+// When the resolver is nil (local components with no upstream repo), all
+// changes are counted because there is no version history to consult.
 func CountCommitsSinceVersionChange(
 	resolver commitResolver,
 	specFileName string,
@@ -179,10 +187,10 @@ func CountCommitsSinceVersionChange(
 
 			version, err = getVersionAtUpstreamCommit(resolver, hash, specFileName)
 			if err != nil {
-				slog.Warn("Failed to read Version tag at upstream commit; falling back to total commit count",
+				slog.Warn("Failed to read Version tag at upstream commit; treating as version boundary",
 					"commit", hash, "error", err)
 
-				return len(changes)
+				break
 			}
 
 			versionCache[hash] = version

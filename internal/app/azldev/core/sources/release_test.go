@@ -211,93 +211,61 @@ func createRepoWithVersionCommits(t *testing.T, versions []string) (*gogit.Repos
 	return repo, hashes
 }
 
-func TestCountCommitsSinceVersionChange_NoVersionChange(t *testing.T) {
-	// All synthetic commits reference the same upstream commit → all count.
-	repo, hashes := createRepoWithVersionCommits(t, []string{"1.0"})
+func TestCountCommitsSinceVersionChange(t *testing.T) {
+	const (
+		nonExistentHash = -1 // valid hex format but not in repo
+		malformedHash   = -2 // invalid hash format
+	)
 
-	changes := []sources.FingerprintChange{
-		{CommitMetadata: sources.CommitMetadata{Hash: "a1"}, UpstreamCommit: hashes[0]},
-		{CommitMetadata: sources.CommitMetadata{Hash: "a2"}, UpstreamCommit: hashes[0]},
-		{CommitMetadata: sources.CommitMetadata{Hash: "a3"}, UpstreamCommit: hashes[0]},
+	for _, testCase := range []struct {
+		name     string
+		versions []string // versions to commit in the upstream repo
+		// Index into created hashes; negative values use sentinel literals.
+		upstreamCommits []int
+		specFile        string // override spec filename (default: "package.spec")
+		expected        int
+	}{
+		{"no version change", []string{"1.0"}, []int{0, 0, 0}, "", 3},
+		{"version change mid-stream", []string{"1.0", "2.0"}, []int{0, 0, 1}, "", 1},
+		{"multiple version jumps", []string{"1.0", "2.0", "3.0"}, []int{0, 1, 2, 2}, "", 2},
+		{"same version multiple upstreams", []string{"1.0", "1.0"}, []int{0, 1, 1}, "", 3},
+		{"single change", []string{"1.0"}, []int{0}, "", 1},
+		{"empty changes", []string{"1.0"}, nil, "", 0},
+		{"spec not found", []string{"1.0"}, []int{0, 0}, "nonexistent.spec", 0},
+		{"non-existent commit hash", []string{"1.0"}, []int{nonExistentHash, nonExistentHash, nonExistentHash}, "", 0},
+		{"invalid hash string", []string{"1.0"}, []int{malformedHash, malformedHash}, "", 0},
+		{"partially resolvable", []string{"1.0"}, []int{nonExistentHash, 0, 0}, "", 2},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			repo, hashes := createRepoWithVersionCommits(t, testCase.versions)
+
+			specFile := testCase.specFile
+			if specFile == "" {
+				specFile = "package.spec"
+			}
+
+			var changes []sources.FingerprintChange
+
+			for changeIdx, idx := range testCase.upstreamCommits {
+				var upstream string
+
+				switch {
+				case idx >= 0:
+					upstream = hashes[idx]
+				case idx == nonExistentHash:
+					upstream = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+				case idx == malformedHash:
+					upstream = "not-a-valid-hash"
+				}
+
+				changes = append(changes, sources.FingerprintChange{
+					CommitMetadata: sources.CommitMetadata{Hash: fmt.Sprintf("a%d", changeIdx+1)},
+					UpstreamCommit: upstream,
+				})
+			}
+
+			count := sources.CountCommitsSinceVersionChange(repo, specFile, changes)
+			assert.Equal(t, testCase.expected, count)
+		})
 	}
-
-	count := sources.CountCommitsSinceVersionChange(repo, "package.spec", changes)
-	assert.Equal(t, 3, count)
-}
-
-func TestCountCommitsSinceVersionChange_VersionChangeMidStream(t *testing.T) {
-	// Upstream goes 1.0 → 2.0. Two synthetic commits for 1.0, one for 2.0.
-	// Only the one after 2.0 should count.
-	repo, hashes := createRepoWithVersionCommits(t, []string{"1.0", "2.0"})
-
-	changes := []sources.FingerprintChange{
-		{CommitMetadata: sources.CommitMetadata{Hash: "a1"}, UpstreamCommit: hashes[0]},
-		{CommitMetadata: sources.CommitMetadata{Hash: "a2"}, UpstreamCommit: hashes[0]},
-		{CommitMetadata: sources.CommitMetadata{Hash: "a3"}, UpstreamCommit: hashes[1]},
-	}
-
-	count := sources.CountCommitsSinceVersionChange(repo, "package.spec", changes)
-	assert.Equal(t, 1, count)
-}
-
-func TestCountCommitsSinceVersionChange_MultipleVersionJumps(t *testing.T) {
-	// Upstream goes 1.0 → 2.0 → 3.0. Synth commits: 1 for 1.0, 1 for 2.0, 2 for 3.0.
-	// Only the 2 after 3.0 should count.
-	repo, hashes := createRepoWithVersionCommits(t, []string{"1.0", "2.0", "3.0"})
-
-	changes := []sources.FingerprintChange{
-		{CommitMetadata: sources.CommitMetadata{Hash: "a1"}, UpstreamCommit: hashes[0]},
-		{CommitMetadata: sources.CommitMetadata{Hash: "a2"}, UpstreamCommit: hashes[1]},
-		{CommitMetadata: sources.CommitMetadata{Hash: "a3"}, UpstreamCommit: hashes[2]},
-		{CommitMetadata: sources.CommitMetadata{Hash: "a4"}, UpstreamCommit: hashes[2]},
-	}
-
-	count := sources.CountCommitsSinceVersionChange(repo, "package.spec", changes)
-	assert.Equal(t, 2, count)
-}
-
-func TestCountCommitsSinceVersionChange_SameVersionMultipleUpstreams(t *testing.T) {
-	// Upstream has two commits but Version stays the same → all count (no version change).
-	repo, hashes := createRepoWithVersionCommits(t, []string{"1.0", "1.0"})
-
-	changes := []sources.FingerprintChange{
-		{CommitMetadata: sources.CommitMetadata{Hash: "a1"}, UpstreamCommit: hashes[0]},
-		{CommitMetadata: sources.CommitMetadata{Hash: "a2"}, UpstreamCommit: hashes[1]},
-		{CommitMetadata: sources.CommitMetadata{Hash: "a3"}, UpstreamCommit: hashes[1]},
-	}
-
-	count := sources.CountCommitsSinceVersionChange(repo, "package.spec", changes)
-	assert.Equal(t, 3, count)
-}
-
-func TestCountCommitsSinceVersionChange_SingleChange(t *testing.T) {
-	repo, hashes := createRepoWithVersionCommits(t, []string{"1.0"})
-
-	changes := []sources.FingerprintChange{
-		{CommitMetadata: sources.CommitMetadata{Hash: "a1"}, UpstreamCommit: hashes[0]},
-	}
-
-	count := sources.CountCommitsSinceVersionChange(repo, "package.spec", changes)
-	assert.Equal(t, 1, count)
-}
-
-func TestCountCommitsSinceVersionChange_EmptyChanges(t *testing.T) {
-	repo, _ := createRepoWithVersionCommits(t, []string{"1.0"})
-
-	count := sources.CountCommitsSinceVersionChange(repo, "package.spec", nil)
-	assert.Equal(t, 0, count)
-}
-
-func TestCountCommitsSinceVersionChange_SpecNotFound(t *testing.T) {
-	// When the spec file doesn't exist at a commit, fall back to total count.
-	repo, hashes := createRepoWithVersionCommits(t, []string{"1.0"})
-
-	changes := []sources.FingerprintChange{
-		{CommitMetadata: sources.CommitMetadata{Hash: "a1"}, UpstreamCommit: hashes[0]},
-		{CommitMetadata: sources.CommitMetadata{Hash: "a2"}, UpstreamCommit: hashes[0]},
-	}
-
-	// Use a wrong spec filename to trigger fallback.
-	count := sources.CountCommitsSinceVersionChange(repo, "nonexistent.spec", changes)
-	assert.Equal(t, 2, count)
 }
