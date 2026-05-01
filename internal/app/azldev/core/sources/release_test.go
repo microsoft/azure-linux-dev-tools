@@ -4,8 +4,15 @@
 package sources_test
 
 import (
+	"fmt"
+	"strings"
 	"testing"
+	"time"
 
+	memfs "github.com/go-git/go-billy/v5/memfs"
+	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/storage/memory"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spec"
@@ -132,4 +139,137 @@ func TestGetReleaseTagValue_FileNotFound(t *testing.T) {
 	ctx := testctx.NewCtx()
 	_, err := sources.GetReleaseTagValue(ctx.FS(), "/nonexistent.spec")
 	require.Error(t, err)
+}
+
+func TestGetVersionTagFromReader(t *testing.T) {
+	for _, testCase := range []struct {
+		name, specContent, expected string
+		wantErr                     bool
+	}{
+		{"simple version", "Name: pkg\nVersion: 1.0.0\nRelease: 1\n", "1.0.0", false},
+		{"version with macro", "Name: pkg\nVersion: %{base_version}\nRelease: 1\n", "%{base_version}", false},
+		{"no version tag", "Name: pkg\nRelease: 1\nSummary: Test\n", "", true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			result, err := sources.GetVersionTagFromReader(strings.NewReader(testCase.specContent))
+			if testCase.wantErr {
+				require.ErrorIs(t, err, spec.ErrNoSuchTag)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, testCase.expected, result)
+			}
+		})
+	}
+}
+
+// makeTestSpecContent returns a minimal spec file string with the given version.
+// The index parameter ensures unique file content across commits so go-git
+// doesn't reject them as empty commits.
+func makeTestSpecContent(version string, index int) string {
+	return fmt.Sprintf("Name: package\nVersion: %s\nRelease: 1%%{?dist}\nSummary: Test %d\n", version, index)
+}
+
+// createRepoWithVersionCommits creates an in-memory git repo with commits that have
+// spec files at specified versions. Returns the repo and the commit hashes in order.
+func createRepoWithVersionCommits(t *testing.T, versions []string) (*gogit.Repository, []string) {
+	t.Helper()
+
+	memFS := memfs.New()
+	storer := memory.NewStorage()
+
+	repo, err := gogit.Init(storer, memFS)
+	require.NoError(t, err)
+
+	worktree, err := repo.Worktree()
+	require.NoError(t, err)
+
+	hashes := make([]string, 0, len(versions))
+
+	for versionIdx, version := range versions {
+		file, err := memFS.Create("package.spec")
+		require.NoError(t, err)
+
+		_, err = file.Write([]byte(makeTestSpecContent(version, versionIdx)))
+		require.NoError(t, err)
+		require.NoError(t, file.Close())
+
+		_, err = worktree.Add("package.spec")
+		require.NoError(t, err)
+
+		hash, err := worktree.Commit("upstream: v"+version, &gogit.CommitOptions{
+			Author: &object.Signature{
+				Name:  "Upstream",
+				Email: "upstream@fedora.org",
+				When:  time.Date(2024, 1, 1+versionIdx, 0, 0, 0, 0, time.UTC),
+			},
+		})
+		require.NoError(t, err)
+
+		hashes = append(hashes, hash.String())
+	}
+
+	return repo, hashes
+}
+
+func TestCountCommitsSinceVersionChange(t *testing.T) {
+	const (
+		nonExistentHash = -1 // valid hex format but not in repo
+		malformedHash   = -2 // invalid hash format
+		emptyHash       = -3 // empty string (local component, no upstream)
+	)
+
+	for _, testCase := range []struct {
+		name     string
+		versions []string // versions to commit in the upstream repo
+		// Index into created hashes; negative values use sentinel literals.
+		upstreamCommits []int
+		specFile        string // override spec filename (default: "package.spec")
+		expected        int
+	}{
+		{"no version change", []string{"1.0"}, []int{0, 0, 0}, "", 3},
+		{"version change mid-stream", []string{"1.0", "2.0"}, []int{0, 0, 1}, "", 1},
+		{"multiple version jumps", []string{"1.0", "2.0", "3.0"}, []int{0, 1, 2, 2}, "", 2},
+		{"same version multiple upstreams", []string{"1.0", "1.0"}, []int{0, 1, 1}, "", 3},
+		{"single change", []string{"1.0"}, []int{0}, "", 1},
+		{"empty changes", []string{"1.0"}, nil, "", 0},
+		{"spec not found", []string{"1.0"}, []int{0, 0}, "nonexistent.spec", 0},
+		{"non-existent commit hash", []string{"1.0"}, []int{nonExistentHash, nonExistentHash, nonExistentHash}, "", 0},
+		{"invalid hash string", []string{"1.0"}, []int{malformedHash, malformedHash}, "", 0},
+		{"partially resolvable", []string{"1.0"}, []int{nonExistentHash, 0, 0}, "", 2},
+		{"empty upstream (local component)", []string{"1.0"}, []int{emptyHash, emptyHash, emptyHash}, "", 3},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			repo, hashes := createRepoWithVersionCommits(t, testCase.versions)
+
+			specFile := testCase.specFile
+			if specFile == "" {
+				specFile = "package.spec"
+			}
+
+			var changes []sources.FingerprintChange
+
+			for changeIdx, idx := range testCase.upstreamCommits {
+				var upstream string
+
+				switch {
+				case idx >= 0:
+					upstream = hashes[idx]
+				case idx == nonExistentHash:
+					upstream = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+				case idx == malformedHash:
+					upstream = "not-a-valid-hash"
+				case idx == emptyHash:
+					upstream = ""
+				}
+
+				changes = append(changes, sources.FingerprintChange{
+					CommitMetadata: sources.CommitMetadata{Hash: fmt.Sprintf("a%d", changeIdx+1)},
+					UpstreamCommit: upstream,
+				})
+			}
+
+			count := sources.CountCommitsSinceVersionChange(repo, specFile, changes)
+			assert.Equal(t, testCase.expected, count)
+		})
+	}
 }
