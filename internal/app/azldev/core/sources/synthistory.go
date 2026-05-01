@@ -58,6 +58,7 @@ type interleavedEntry struct {
 func FindFingerprintChanges(
 	ctx context.Context,
 	cmdFactory opctx.CmdFactory,
+	projectRepo *gogit.Repository,
 	projectRepoDir string,
 	lockFileRelPath string,
 ) ([]FingerprintChange, error) {
@@ -80,7 +81,7 @@ func FindFingerprintChanges(
 	var entries []entry //nolint:prealloc // size not known ahead of time.
 
 	for _, meta := range metas {
-		lock, err := lockfile.ShowAtCommit(ctx, cmdFactory, projectRepoDir, meta.Hash, lockFileRelPath)
+		lock, err := lockfile.ShowAtCommit(projectRepo, meta.Hash, lockFileRelPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read lock file at commit %#q:\n%w", meta.Hash, err)
 		}
@@ -481,7 +482,7 @@ func buildSyntheticCommits(
 
 	// Read the lock file at HEAD. If the file is missing (not yet committed),
 	// synthetic history is skipped.
-	headLock, err := readLockFileAtHEAD(ctx, cmdFactory, projectRepoDir, lockFileRelPath)
+	headLock, err := readLockFileAtHEAD(projectRepo, lockFileRelPath)
 	if err != nil {
 		return nil, "", err
 	}
@@ -492,7 +493,7 @@ func buildSyntheticCommits(
 
 	importCommit = headLock.ImportCommit
 
-	fpChanges, err := FindFingerprintChanges(ctx, cmdFactory, projectRepoDir, lockFileRelPath)
+	fpChanges, err := FindFingerprintChanges(ctx, cmdFactory, projectRepo, projectRepoDir, lockFileRelPath)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to find fingerprint changes for lock file %#q:\n%w",
 			lockFileRelPath, err)
@@ -561,20 +562,23 @@ func openProjectRepo(
 // have never had overlays. Returns a non-nil error for real failures (TOML
 // parse errors, unexpected git object errors, etc.).
 func readLockFileAtHEAD(
-	ctx context.Context,
-	cmdFactory opctx.CmdFactory,
-	repoDir string,
+	repo *gogit.Repository,
 	lockFileRelPath string,
 ) (*lockfile.ComponentLock, error) {
-	headLock, lockFileErr := lockfile.ShowAtCommit(ctx, cmdFactory, repoDir, "HEAD", lockFileRelPath)
+	head, err := repo.Head()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get HEAD:\n%w", err)
+	}
+
+	headLock, lockFileErr := lockfile.ShowAtCommit(repo, head.Hash().String(), lockFileRelPath)
 	if lockFileErr == nil {
 		return &headLock, nil
 	}
 
-	// Tolerate file-not-found — this covers both missing files and missing
-	// parent directories. This is the normal case for components that have
-	// never had overlays.
-	if !errors.Is(lockFileErr, git.ErrFileNotFound) {
+	// Tolerate both file-not-found and directory-not-found — the latter
+	// occurs when the locks directory has never been created in the repo.
+	if !errors.Is(lockFileErr, object.ErrFileNotFound) &&
+		!errors.Is(lockFileErr, object.ErrDirectoryNotFound) {
 		return nil, fmt.Errorf("failed to read lock file %#q at HEAD:\n%w",
 			lockFileRelPath, lockFileErr)
 	}

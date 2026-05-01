@@ -4,35 +4,47 @@
 package lockfile
 
 import (
-	"context"
 	"fmt"
 
-	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
-	"github.com/microsoft/azure-linux-dev-tools/internal/utils/git"
+	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
 )
 
-// ShowAtCommit reads and parses a lock file at a specific git revision using the
-// CLI ('git show'). This is more efficient than go-git for large repositories.
-//
-// Returns [git.ErrFileNotFound] (wrapped) when the lock file does not exist in
-// the revision — callers can check with [errors.Is].
+// ShowAtCommit reads and parses a lock file at a specific commit hash
+// using go-git and parses it into a [ComponentLock].
 func ShowAtCommit(
-	ctx context.Context,
-	cmdFactory opctx.CmdFactory,
-	repoDir string,
-	revision string,
+	repo *gogit.Repository,
+	commitHash string,
 	lockFileRelPath string,
 ) (ComponentLock, error) {
-	content, err := git.ShowFileAtCommit(ctx, cmdFactory, repoDir, revision, lockFileRelPath)
+	hash := plumbing.NewHash(commitHash)
+
+	commitObj, err := repo.CommitObject(hash)
 	if err != nil {
-		return ComponentLock{}, fmt.Errorf("failed to read lock file %#q at revision %#q:\n%w",
-			lockFileRelPath, revision, err)
+		return ComponentLock{}, fmt.Errorf("failed to resolve commit %#q:\n%w", commitHash, err)
+	}
+
+	tree, err := commitObj.Tree()
+	if err != nil {
+		return ComponentLock{}, fmt.Errorf("failed to get tree for commit %#q:\n%w", commitHash, err)
+	}
+
+	file, err := tree.File(lockFileRelPath)
+	if err != nil {
+		return ComponentLock{}, fmt.Errorf("failed to read %#q at commit %#q:\n%w",
+			lockFileRelPath, commitHash, err)
+	}
+
+	content, err := file.Contents()
+	if err != nil {
+		return ComponentLock{}, fmt.Errorf("failed to read contents of %#q at commit %#q:\n%w",
+			lockFileRelPath, commitHash, err)
 	}
 
 	lock, err := Parse([]byte(content))
 	if err != nil {
-		return ComponentLock{}, fmt.Errorf("failed to parse lock file %#q at revision %#q:\n%w",
-			lockFileRelPath, revision, err)
+		return ComponentLock{}, fmt.Errorf("failed to parse lock file %#q at commit %#q:\n%w",
+			lockFileRelPath, commitHash, err)
 	}
 
 	return *lock, nil
