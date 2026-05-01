@@ -629,7 +629,7 @@ func collectUpstreamCommits(
 	for {
 		commit, err := repo.CommitObject(currentHash)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read commit %s:\n%w", currentHash, err)
+			return nil, fmt.Errorf("failed to read commit %#q:\n%w", currentHash.String(), err)
 		}
 
 		hash := commit.Hash.String()
