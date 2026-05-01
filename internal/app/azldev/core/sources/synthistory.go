@@ -541,7 +541,10 @@ func openProjectRepo(
 
 	repo, err := gogit.PlainOpenWithOptions(
 		filepath.Dir(configFilePath),
-		&gogit.PlainOpenOptions{DetectDotGit: true},
+		&gogit.PlainOpenOptions{
+			DetectDotGit:          true,
+			EnableDotGitCommonDir: true,
+		},
 	)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to find project repository for config file %#q:\n%w",
