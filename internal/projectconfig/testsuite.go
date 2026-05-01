@@ -4,6 +4,7 @@
 package projectconfig
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 
@@ -16,6 +17,8 @@ type TestType string
 const (
 	// TestTypePytest uses pytest to run static/offline validation checks.
 	TestTypePytest TestType = "pytest"
+	// TestTypeLisa uses the LISA framework to run live VM tests.
+	TestTypeLisa TestType = "lisa"
 )
 
 var (
@@ -28,12 +31,12 @@ var (
 	// ErrUndefinedTestSuite is returned when an image references a test suite name that is not defined.
 	ErrUndefinedTestSuite = errors.New("undefined test suite reference")
 	// ErrMismatchedTestSubtable is returned when a test config has a subtable that does not
-	// match its declared type. Currently only one test type (pytest) exists, so this cannot
-	// trigger yet. When adding a new test type with its own subtable field, add cross-checks
-	// in [TestSuiteConfig.Validate] to ensure only the matching subtable is populated.
+	// match its declared type.
 	ErrMismatchedTestSubtable = errors.New("mismatched test subtable")
 	// ErrInvalidInstallMode is returned when a [PytestConfig.Install] value is not recognized.
 	ErrInvalidInstallMode = errors.New("invalid install mode")
+	// ErrInvalidGitRef is returned when a git ref is not a valid hex commit SHA.
+	ErrInvalidGitRef = errors.New("invalid git ref")
 )
 
 // TestSuiteConfig defines a named test suite.
@@ -45,10 +48,13 @@ type TestSuiteConfig struct {
 	Description string `toml:"description,omitempty" json:"description,omitempty" jsonschema:"title=Description,description=Description of this test suite"`
 
 	// Type indicates the test framework to use.
-	Type TestType `toml:"type" json:"type" jsonschema:"required,enum=pytest,title=Type,description=Type of test framework (pytest)"`
+	Type TestType `toml:"type" json:"type" jsonschema:"required,enum=pytest lisa,title=Type,description=Type of test framework (pytest or lisa)"`
 
 	// Pytest holds pytest-specific configuration. Required when Type is "pytest".
 	Pytest *PytestConfig `toml:"pytest,omitempty" json:"pytest,omitempty" jsonschema:"title=Pytest config,description=Pytest-specific configuration (required when type is pytest)"`
+
+	// Lisa holds LISA-specific configuration. Required when Type is "lisa".
+	Lisa *LisaConfig `toml:"lisa,omitempty" json:"lisa,omitempty" jsonschema:"title=LISA config,description=LISA-specific configuration (required when type is lisa)"`
 
 	// Reference to the source config file that this definition came from; not present
 	// in serialized files.
@@ -91,6 +97,92 @@ type PytestConfig struct {
 	Install PytestInstallMode `toml:"install,omitempty" json:"install,omitempty" jsonschema:"enum=pyproject,enum=requirements,enum=none,title=Install mode,description=How to install Python dependencies: pyproject\\, requirements\\, or none (default)"`
 }
 
+// LisaConfig holds configuration specific to LISA-based test suites.
+type LisaConfig struct {
+	// Framework identifies the git source for the LISA framework itself.
+	Framework GitSourceConfig `toml:"framework" json:"framework" jsonschema:"required,title=Framework,description=Git source for the LISA framework"`
+
+	// Runbook identifies the git source and path for the LISA runbook to run.
+	Runbook LisaRunbookConfig `toml:"runbook" json:"runbook" jsonschema:"required,title=Runbook,description=Git source and path for the LISA runbook"`
+
+	// PipPreInstall lists pip packages to install before the LISA framework itself.
+	// This can be used to override framework version pins that conflict with the local
+	// environment (e.g., installing a system-matching libvirt-python version).
+	PipPreInstall []string `toml:"pip-pre-install,omitempty" json:"pipPreInstall,omitempty" jsonschema:"title=Pip pre-install,description=Pip packages to install before the framework (for overriding version pins)"`
+
+	// PipExtras lists pip extras to install from the LISA framework package (e.g., "azure",
+	// "legacy"). These are appended to the pip install command as pip install -e ".[extra1,extra2]".
+	PipExtras []string `toml:"pip-extras,omitempty" json:"pipExtras,omitempty" jsonschema:"title=Pip extras,description=Pip extras to install from the LISA framework package"`
+
+	// ExtraArgs is the list of additional arguments to pass to LISA. These are passed
+	// verbatim after placeholder substitution. Supports {image-path}, {image-name},
+	// and {capabilities} placeholders.
+	ExtraArgs []string `toml:"extra-args,omitempty" json:"extraArgs,omitempty" jsonschema:"title=Extra arguments,description=Additional arguments passed to LISA. Supports {image-path} {image-name} {capabilities} placeholders."`
+}
+
+// GitSourceConfig identifies a git repository at a specific commit.
+type GitSourceConfig struct {
+	// GitURL is the URL of the git repository.
+	GitURL string `toml:"git-url" json:"gitUrl" jsonschema:"required,title=Git URL,description=URL of the git repository"`
+
+	// Ref is the commit SHA to check out. Must be a full hex commit hash.
+	Ref string `toml:"ref" json:"ref" jsonschema:"required,title=Ref,description=Commit SHA to check out (full hex hash)"`
+}
+
+// Validate checks that the [GitSourceConfig] has required fields and a valid ref.
+func (g *GitSourceConfig) Validate(context string) error {
+	if g.GitURL == "" {
+		return fmt.Errorf("%w: %s requires 'git-url'", ErrMissingTestField, context)
+	}
+
+	if g.Ref == "" {
+		return fmt.Errorf("%w: %s requires 'ref'", ErrMissingTestField, context)
+	}
+
+	if err := validateCommitSHA(g.Ref); err != nil {
+		return fmt.Errorf("%s: %w", context, err)
+	}
+
+	return nil
+}
+
+// LisaRunbookConfig identifies a LISA runbook within a git repository.
+type LisaRunbookConfig struct {
+	GitSourceConfig `toml:",inline"`
+
+	// Path is the path to the runbook YAML file within the repository.
+	Path string `toml:"path" json:"path" jsonschema:"required,title=Path,description=Path to the runbook YAML file within the repository"`
+}
+
+// Validate checks that the [LisaRunbookConfig] has required fields.
+func (r *LisaRunbookConfig) Validate(context string) error {
+	if err := r.GitSourceConfig.Validate(context); err != nil {
+		return err
+	}
+
+	if r.Path == "" {
+		return fmt.Errorf("%w: %s requires 'path'", ErrMissingTestField, context)
+	}
+
+	return nil
+}
+
+// validateCommitSHA checks that s is a valid full-length hex commit SHA (40 characters).
+func validateCommitSHA(ref string) error {
+	const commitSHALength = 40
+
+	if len(ref) != commitSHALength {
+		return fmt.Errorf("%w: expected %d hex characters, got %d: %#q",
+			ErrInvalidGitRef, commitSHALength, len(ref), ref)
+	}
+
+	if _, err := hex.DecodeString(ref); err != nil {
+		return fmt.Errorf("%w: not a valid hex string: %#q", ErrInvalidGitRef, ref)
+	}
+
+	return nil
+}
+
 // Validate checks that the test suite config has valid type-specific required fields and that
 // only the matching subtable is present.
 func (t *TestSuiteConfig) Validate() error {
@@ -110,10 +202,31 @@ func (t *TestSuiteConfig) Validate() error {
 			return fmt.Errorf("test suite %#q: %w", t.Name, err)
 		}
 
-		// NOTE: When adding a new test type with its own subtable field (e.g., Lisa *LisaConfig),
-		// add a mismatch check here:
-		//   if t.Lisa != nil { return fmt.Errorf("%w: ...", ErrMismatchedTestSubtable) }
-		// and add the symmetric check in the new type's case branch.
+		if t.Lisa != nil {
+			return fmt.Errorf("%w: test suite %#q of type %#q must not have a [lisa] subtable",
+				ErrMismatchedTestSubtable, t.Name, t.Type)
+		}
+
+	case TestTypeLisa:
+		if t.Lisa == nil {
+			return fmt.Errorf("%w: test suite %#q of type %#q requires a [lisa] subtable",
+				ErrMissingTestField, t.Name, t.Type)
+		}
+
+		frameworkContext := fmt.Sprintf("test suite %#q lisa.framework", t.Name)
+		if err := t.Lisa.Framework.Validate(frameworkContext); err != nil {
+			return err
+		}
+
+		runbookContext := fmt.Sprintf("test suite %#q lisa.runbook", t.Name)
+		if err := t.Lisa.Runbook.Validate(runbookContext); err != nil {
+			return err
+		}
+
+		if t.Pytest != nil {
+			return fmt.Errorf("%w: test suite %#q of type %#q must not have a [pytest] subtable",
+				ErrMismatchedTestSubtable, t.Name, t.Type)
+		}
 
 	default:
 		return fmt.Errorf("%w: %#q (test suite: %#q)", ErrUnknownTestType, t.Type, t.Name)
@@ -192,6 +305,16 @@ func (t *TestSuiteConfig) WithAbsolutePaths(referenceDir string) *TestSuiteConfi
 			TestPaths:  append([]string(nil), t.Pytest.TestPaths...),
 			ExtraArgs:  append([]string(nil), t.Pytest.ExtraArgs...),
 			Install:    t.Pytest.Install,
+		}
+	}
+
+	if t.Lisa != nil {
+		result.Lisa = &LisaConfig{
+			Framework:     t.Lisa.Framework,
+			Runbook:       t.Lisa.Runbook,
+			PipPreInstall: t.Lisa.PipPreInstall,
+			PipExtras:     t.Lisa.PipExtras,
+			ExtraArgs:     t.Lisa.ExtraArgs,
 		}
 	}
 

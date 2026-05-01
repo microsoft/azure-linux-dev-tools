@@ -521,6 +521,26 @@
         "release-ver"
       ]
     },
+    "GitSourceConfig": {
+      "properties": {
+        "git-url": {
+          "type": "string",
+          "title": "Git URL",
+          "description": "URL of the git repository"
+        },
+        "ref": {
+          "type": "string",
+          "title": "Ref",
+          "description": "Commit SHA to check out (full hex hash)"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "git-url",
+        "ref"
+      ]
+    },
     "ImageCapabilities": {
       "properties": {
         "machine-bootable": {
@@ -637,6 +657,76 @@
       },
       "additionalProperties": false,
       "type": "object"
+    },
+    "LisaConfig": {
+      "properties": {
+        "framework": {
+          "$ref": "#/$defs/GitSourceConfig",
+          "title": "Framework",
+          "description": "Git source for the LISA framework"
+        },
+        "runbook": {
+          "$ref": "#/$defs/LisaRunbookConfig",
+          "title": "Runbook",
+          "description": "Git source and path for the LISA runbook"
+        },
+        "pip-pre-install": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Pip pre-install",
+          "description": "Pip packages to install before the framework (for overriding version pins)"
+        },
+        "pip-extras": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Pip extras",
+          "description": "Pip extras to install from the LISA framework package"
+        },
+        "extra-args": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Extra arguments",
+          "description": "Additional arguments passed to LISA. Supports {image-path} {image-name} {capabilities} placeholders."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "framework",
+        "runbook"
+      ]
+    },
+    "LisaRunbookConfig": {
+      "properties": {
+        "git-url": {
+          "type": "string",
+          "title": "Git URL",
+          "description": "URL of the git repository"
+        },
+        "ref": {
+          "type": "string",
+          "title": "Ref",
+          "description": "Commit SHA to check out (full hex hash)"
+        },
+        "path": {
+          "type": "string",
+          "title": "Path",
+          "description": "Path to the runbook YAML file within the repository"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "git-url",
+        "ref",
+        "path"
+      ]
     },
     "Origin": {
       "properties": {
@@ -932,15 +1022,20 @@
         "type": {
           "type": "string",
           "enum": [
-            "pytest"
+            "pytest lisa"
           ],
           "title": "Type",
-          "description": "Type of test framework (pytest)"
+          "description": "Type of test framework (pytest or lisa)"
         },
         "pytest": {
           "$ref": "#/$defs/PytestConfig",
           "title": "Pytest config",
           "description": "Pytest-specific configuration (required when type is pytest)"
+        },
+        "lisa": {
+          "$ref": "#/$defs/LisaConfig",
+          "title": "LISA config",
+          "description": "LISA-specific configuration (required when type is lisa)"
         }
       },
       "additionalProperties": false,
