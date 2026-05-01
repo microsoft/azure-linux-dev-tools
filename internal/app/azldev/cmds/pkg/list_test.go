@@ -492,3 +492,71 @@ func TestListPackages_SRPMFile_UsesSRPMChannel(t *testing.T) {
 	// so it correctly inherits the curl component's RPMChannel.
 	assert.Equal(t, "rpm-base", rpmCurlDevel.Channel, "binary RPM should use RPMChannel from its SRPM's component")
 }
+
+// TestListPackages_RPMFile_Validation exercises the JSON parsing and validation
+// error paths in 'loadRPMFile' (invalid JSON, missing fields, conflicting
+// mappings) and the silent dedup path for repeated identical mappings.
+func TestListPackages_RPMFile_Validation(t *testing.T) {
+	const path = "/test-rpm-map.json"
+
+	cases := []struct {
+		name        string
+		body        string // raw file contents (not necessarily valid JSON)
+		wantErrSub  string // expected substring in the returned error; empty means success
+		wantResults int    // expected number of results on success
+	}{
+		{
+			name:       "invalid json",
+			body:       "not json",
+			wantErrSub: "parsing RPM source map",
+		},
+		{
+			name:       "empty packageName",
+			body:       `[{"packageName":"","sourcePackageName":"bash"}]`,
+			wantErrSub: "missing non-empty 'packageName'",
+		},
+		{
+			name:       "empty sourcePackageName",
+			body:       `[{"packageName":"bash","sourcePackageName":""}]`,
+			wantErrSub: "missing non-empty 'sourcePackageName'",
+		},
+		{
+			name: "conflicting source package names",
+			body: `[
+				{"packageName":"bash","sourcePackageName":"bash"},
+				{"packageName":"bash","sourcePackageName":"other"}
+			]`,
+			wantErrSub: "conflicting source package names",
+		},
+		{
+			// Identical duplicate mappings must not produce duplicate entries:
+			// one SRPM result + one RPM result, not one SRPM + two RPMs.
+			name: "duplicate identical mappings dedup",
+			body: `[
+				{"packageName":"bash","sourcePackageName":"bash"},
+				{"packageName":"bash","sourcePackageName":"bash"}
+			]`,
+			wantResults: 2,
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			testEnv := testutils.NewTestEnv(t)
+			require.NoError(t, fileutils.WriteFile(testEnv.TestFS, path, []byte(testCase.body), fileperms.PublicFile))
+
+			results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{RPMFile: path})
+
+			if testCase.wantErrSub != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), testCase.wantErrSub)
+				assert.Nil(t, results)
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Len(t, results, testCase.wantResults)
+		})
+	}
+}

@@ -2,11 +2,11 @@
 
 ## azldev package list
 
-List resolved configuration for binary packages
+List resolved configuration for packages (RPMs and SRPMs)
 
 ### Synopsis
 
-List resolved configuration for binary packages.
+List resolved configuration for packages (RPMs and SRPMs).
 
 Use -a to enumerate all packages that have explicit configuration (via package-groups
 or component package overrides).
