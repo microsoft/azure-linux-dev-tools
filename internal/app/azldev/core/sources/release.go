@@ -181,6 +181,14 @@ func CountCommitsSinceVersionChange(
 	for idx := len(changes) - 1; idx >= 0; idx-- {
 		hash := changes[idx].UpstreamCommit
 
+		if hash == "" {
+			// Local or synthetic changes are not tied to a resolvable upstream
+			// commit. Count them all since there's no version history to consult.
+			count++
+
+			continue
+		}
+
 		version, ok := versionCache[hash]
 		if !ok {
 			var err error

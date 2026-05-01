@@ -215,6 +215,7 @@ func TestCountCommitsSinceVersionChange(t *testing.T) {
 	const (
 		nonExistentHash = -1 // valid hex format but not in repo
 		malformedHash   = -2 // invalid hash format
+		emptyHash       = -3 // empty string (local component, no upstream)
 	)
 
 	for _, testCase := range []struct {
@@ -235,6 +236,7 @@ func TestCountCommitsSinceVersionChange(t *testing.T) {
 		{"non-existent commit hash", []string{"1.0"}, []int{nonExistentHash, nonExistentHash, nonExistentHash}, "", 0},
 		{"invalid hash string", []string{"1.0"}, []int{malformedHash, malformedHash}, "", 0},
 		{"partially resolvable", []string{"1.0"}, []int{nonExistentHash, 0, 0}, "", 2},
+		{"empty upstream (local component)", []string{"1.0"}, []int{emptyHash, emptyHash, emptyHash}, "", 3},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			repo, hashes := createRepoWithVersionCommits(t, testCase.versions)
@@ -256,6 +258,8 @@ func TestCountCommitsSinceVersionChange(t *testing.T) {
 					upstream = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 				case idx == malformedHash:
 					upstream = "not-a-valid-hash"
+				case idx == emptyHash:
+					upstream = ""
 				}
 
 				changes = append(changes, sources.FingerprintChange{
