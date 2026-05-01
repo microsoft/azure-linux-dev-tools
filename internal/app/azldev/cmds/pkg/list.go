@@ -4,13 +4,17 @@
 package pkg
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
+	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/spf13/cobra"
 )
 
@@ -18,6 +22,10 @@ import (
 type ListPackageOptions struct {
 	// All selects all packages that appear in any package-group or component package override.
 	All bool
+
+	// RPMFile is the path to a JSON RPM source map file (array of {packageName, sourcePackageName}
+	// records). When set, all source packages (SRPMs) and their binary RPMs are resolved and listed.
+	RPMFile string
 
 	// PackageNames contains specific binary package names to look up.
 	// If a package is not in any explicit config it is still resolved using project defaults.
@@ -43,13 +51,21 @@ func NewPackageListCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "list [package-name...]",
-		Short: "List resolved configuration for binary packages",
-		Long: `List resolved configuration for binary packages.
+		Short: "List resolved configuration for packages (RPMs and SRPMs)",
+		Long: `List resolved configuration for packages (RPMs and SRPMs).
 
-Use -a to enumerate all packages that have explicit configuration (via
-package-groups or component package overrides). Use -p (or positional args)
-to look up one or more specific packages by exact name — including packages
-that are not explicitly configured (they resolve using only project defaults).
+Use -a to enumerate all packages that have explicit configuration (via package-groups
+or component package overrides).
+
+Use --rpm-file <file> to enumerate all source packages (SRPMs) and their binary RPMs
+from a JSON RPM source map file (an array of {"packageName":"bash","sourcePackageName":"bash"} records).
+Each SRPM is resolved against the component with the same name; each binary RPM is
+resolved using the full publish-channel stack. Results include a 'type' column
+("srpm" or "rpm") to distinguish the two.
+
+Use -p (or positional args) to look up one or more specific packages by exact name —
+including packages that are not explicitly configured (they resolve using only project
+defaults).
 
 Resolution order (lowest to highest priority):
   1. Project default-component-config publish settings
@@ -60,6 +76,9 @@ Resolution order (lowest to highest priority):
 		Example: `  # List all explicitly-configured packages
   azldev package list -a
 
+  # List all packages from an RPM source map file
+  azldev package list --rpm-file rpm_source_map.json
+
   # Look up a specific package
   azldev package list -p curl
 
@@ -67,7 +86,17 @@ Resolution order (lowest to highest priority):
   azldev package list -p curl -p wget
 
   # Output as JSON for scripting
-  azldev package list -a -q -O json`,
+  azldev package list -a -q -O json
+  azldev package list --rpm-file rpm_source_map.json -q -O json`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			// Positional package names aren't flags, so they can't participate in cobra's
+			// flag-group machinery; enforce the '--rpm-file' incompatibility here.
+			if cmd.Flags().Changed("rpm-file") && len(args) > 0 {
+				return errors.New("'--rpm-file' cannot be used with positional package name arguments")
+			}
+
+			return nil
+		},
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
 			options.PackageNames = append(args, options.PackageNames...)
 
@@ -76,30 +105,62 @@ Resolution order (lowest to highest priority):
 	}
 
 	cmd.Flags().BoolVarP(&options.All, "all-packages", "a", false, "List all explicitly-configured binary packages")
+	cmd.Flags().StringVar(&options.RPMFile, "rpm-file", "",
+		"Path to a JSON RPM source map file (lists all SRPMs and their binary RPMs)")
 	cmd.Flags().StringArrayVarP(&options.PackageNames, "package", "p", []string{}, "Package name to look up (repeatable)")
 	cmd.Flags().BoolVar(&options.SynthesizeDebugPackages, "synthesize-debug-packages", false,
 		"Also synthesize '-debuginfo' packages (per reported package) and '-debugsource' packages (per component)")
+
+	// '--rpm-file' is mutually exclusive with the other selection / augmentation flags.
+	cmd.MarkFlagsMutuallyExclusive("rpm-file", "all-packages")
+	cmd.MarkFlagsMutuallyExclusive("rpm-file", "package")
+	cmd.MarkFlagsMutuallyExclusive("rpm-file", "synthesize-debug-packages")
+
+	// Help shells complete '--rpm-file' with .json paths.
+	_ = cmd.MarkFlagFilename("rpm-file", "json")
 
 	azldev.ExportAsMCPTool(cmd)
 
 	return cmd
 }
 
-// PackageListResult holds the resolved configuration for a single binary package.
+// PackageListResult holds the resolved configuration for a single binary package or source package.
 type PackageListResult struct {
-	// PackageName is the binary package name (RPM Name tag).
+	// PackageName is the RPM Name tag (binary or source package name).
 	PackageName string `json:"packageName" table:"Package"`
+
+	// Type is the package type: [PackageTypeSRPM] for source packages, [PackageTypeRPM] for binary
+	// packages. Always [PackageTypeRPM] for '-a' and '-p' lookups; either value for '--rpm-file'.
+	Type string `json:"type" table:"Type"`
 
 	// Group is the package-group this package belongs to, or empty if it is not in any group.
 	Group string `json:"group" table:"Group"`
 
-	// Component is the component that has an explicit per-package override for this package,
-	// or empty if the package is only configured via a group or project default.
+	// Component is the resolved component name for this package.
+	// When using '-a' or '-p', it is the component with an explicit [projectconfig.ComponentConfig.Packages]
+	// override for this package, or the component whose name matches the package name, or empty if
+	// no component association can be determined.
 	Component string `json:"component" table:"Component"`
 
 	// Channel is the resolved publish channel after applying all config layers.
 	// Empty means no channel has been configured.
 	Channel string `json:"publishChannel" table:"Publish Channel"`
+}
+
+const (
+	// PackageTypeSRPM is the [PackageListResult.Type] value for source packages (SRPMs).
+	PackageTypeSRPM = "srpm"
+
+	// PackageTypeRPM is the [PackageListResult.Type] value for binary packages (RPMs).
+	PackageTypeRPM = "rpm"
+)
+
+// rpmSourceEntry is one record in the RPM source map JSON file.
+// The file is a JSON array of these objects, each mapping a binary package name to the
+// source package (SRPM) name that produced it.
+type rpmSourceEntry struct {
+	PackageName       string `json:"packageName"`
+	SourcePackageName string `json:"sourcePackageName"`
 }
 
 // buildComponentPackageIndex builds a map from binary package name to the component
@@ -125,16 +186,56 @@ func buildComponentPackageIndex(components map[string]projectconfig.ComponentCon
 	return compOf, nil
 }
 
+// listPackagesFromRPMFile implements the '--rpm-file' path of [ListPackages].
+// Mutual exclusivity with '-a', '-p', '--synthesize-debug-packages', and positional
+// package name arguments is enforced by cobra (see [NewPackageListCommand]).
+func listPackagesFromRPMFile(
+	env *azldev.Env,
+	options *ListPackageOptions,
+	groupOf map[string]string,
+	proj *projectconfig.ProjectConfig,
+) ([]PackageListResult, error) {
+	results, err := resolveFromRPMFile(env.FS(), options.RPMFile, groupOf, proj)
+	if err != nil {
+		return nil, err
+	}
+
+	// Sort for deterministic output. [resolveFromRPMFile] iterates over a map,
+	// so the order of results is non-deterministic without this sort. Use
+	// additional tie-breakers so entries that share the same package name (for
+	// example, an SRPM and an RPM from '--rpm-file') also have a stable order.
+	sort.Slice(results, func(left, right int) bool {
+		if results[left].PackageName != results[right].PackageName {
+			return results[left].PackageName < results[right].PackageName
+		}
+
+		if results[left].Type != results[right].Type {
+			return results[left].Type < results[right].Type
+		}
+
+		return results[left].Component < results[right].Component
+	})
+
+	return results, nil
+}
+
 // ListPackages returns the resolved [PackageListResult] for the packages selected by options.
 //
 // If [ListPackageOptions.All] is true, all packages with explicit configuration (via
 // package groups or component [projectconfig.ComponentConfig.Packages] maps) are included.
-// Specific package names in [ListPackageOptions.PackageNames] are always included regardless
+//
+// If [ListPackageOptions.RPMFile] is set, all source packages and their binary RPMs from
+// the JSON file are resolved. Each SRPM uses [projectconfig.ComponentPublishConfig.SRPMChannel]
+// from its matching component; each RPM uses the full package-level publish-channel stack with
+// the JSON-derived component association.
+//
+// Specific package names in [ListPackageOptions.PackageNames] are always resolved regardless
 // of whether they have explicit configuration.
 func ListPackages(env *azldev.Env, options *ListPackageOptions) ([]PackageListResult, error) {
 	proj := env.Config()
 
 	// Build an index: pkgName → groupName for packages in any package-group.
+	// Used by '-a', '--rpm-file', and '-p' modes for group attribution and channel resolution.
 	groupOf := make(map[string]string)
 
 	for groupName, group := range proj.PackageGroups {
@@ -143,13 +244,20 @@ func ListPackages(env *azldev.Env, options *ListPackageOptions) ([]PackageListRe
 		}
 	}
 
+	results := make([]PackageListResult, 0)
+
+	if options.RPMFile != "" {
+		return listPackagesFromRPMFile(env, options, groupOf, proj)
+	}
+
 	// Build an index: pkgName → componentName for packages with explicit component overrides.
+	// Needed for '-a' and '-p' lookups.
 	compOf, err := buildComponentPackageIndex(proj.Components)
 	if err != nil {
 		return nil, err
 	}
 
-	// Collect the set of package names to resolve.
+	// Collect the set of package names to resolve for '-a' and '-p' modes.
 	toResolve := make(map[string]struct{})
 
 	if options.All {
@@ -171,8 +279,6 @@ func ListPackages(env *azldev.Env, options *ListPackageOptions) ([]PackageListRe
 
 		return nil, nil
 	}
-
-	results := make([]PackageListResult, 0, len(toResolve))
 
 	for pkgName := range toResolve {
 		result, err := resolvePackageListResult(pkgName, compOf, groupOf, proj)
@@ -234,6 +340,7 @@ func resolvePackageListResult(
 
 	return PackageListResult{
 		PackageName: pkgName,
+		Type:        PackageTypeRPM,
 		Group:       groupOf[pkgName],
 		Component:   compName,
 		Channel:     channel,
@@ -280,6 +387,142 @@ func resolveComponentConfig(compName string, proj *projectconfig.ProjectConfig) 
 	return projectconfig.ComponentConfig{Name: compName}
 }
 
+// resolveSourcePackageListResult resolves the publish channel for a source package (SRPM).
+// The SRPM name is always equal to the component name, so no compOf lookup is needed.
+// It reads [projectconfig.ComponentPublishConfig.SRPMChannel] from the fully-merged component
+// config, which already reflects the full inheritance chain:
+// project default → component group → component.
+func resolveSourcePackageListResult(
+	srpmName string,
+	proj *projectconfig.ProjectConfig,
+) (PackageListResult, error) {
+	// The SRPM name is the component name by definition.
+	compName := srpmName
+	compConfig := resolveComponentConfig(compName, proj)
+
+	resolved, err := projectconfig.ResolveComponentConfig(
+		compConfig,
+		proj.DefaultComponentConfig,
+		projectconfig.ComponentConfig{}, // no distro context at this call site
+		proj.ComponentGroups,
+		proj.GroupsByComponent[compName],
+	)
+	if err != nil {
+		return PackageListResult{}, fmt.Errorf("failed to resolve defaults for component %#q:\n%w", compName, err)
+	}
+
+	return PackageListResult{
+		PackageName: srpmName,
+		Type:        PackageTypeSRPM,
+		Group:       "", // SRPMs have no package-group membership in the config model
+		Component:   compName,
+		Channel:     resolved.Publish.SRPMChannel,
+	}, nil
+}
+
+// resolveFromRPMFile loads a source map file and resolves all SRPMs and their RPMs.
+// Returns a flat list of SRPM and RPM entries derived from the file. The returned slice is
+// not ordered by contract; callers may sort or otherwise reorder the flattened results. The
+// JSON file is parsed once by [loadRPMFile] to produce both the SRPM → RPMs map and the
+// authoritative RPM → component index.
+func resolveFromRPMFile(
+	fs opctx.FS,
+	path string,
+	groupOf map[string]string,
+	proj *projectconfig.ProjectConfig,
+) ([]PackageListResult, error) {
+	srpmMap, rpmCompOf, err := loadRPMFile(fs, path)
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]PackageListResult, 0, len(srpmMap))
+
+	for srpmName, rpmNames := range srpmMap {
+		srpmResult, resolveErr := resolveSourcePackageListResult(srpmName, proj)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+
+		results = append(results, srpmResult)
+
+		for _, rpmName := range rpmNames {
+			rpmResult, resolveErr := resolvePackageListResult(rpmName, rpmCompOf, groupOf, proj)
+			if resolveErr != nil {
+				return nil, resolveErr
+			}
+
+			results = append(results, rpmResult)
+		}
+	}
+
+	return results, nil
+}
+
+// loadRPMFile reads and parses a JSON RPM source map from path on fs.
+// The file is a JSON array of [rpmSourceEntry] records.
+// Returns:
+//   - srpmMap: source package name → ordered list of binary RPM names it produces
+//   - rpmCompOf: binary RPM name → source package (component) name
+//
+// Both maps are built in a single pass over the JSON entries.
+func loadRPMFile(fs opctx.FS, path string) (srpmMap map[string][]string, rpmCompOf map[string]string, err error) {
+	data, readErr := fileutils.ReadFile(fs, path)
+	if readErr != nil {
+		return nil, nil, fmt.Errorf("reading RPM source map %#q:\n%w", path, readErr)
+	}
+
+	var entries []rpmSourceEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, nil, fmt.Errorf("parsing RPM source map %#q:\n%w", path, err)
+	}
+
+	srpmMap = make(map[string][]string)
+	rpmCompOf = make(map[string]string, len(entries))
+
+	for idx, e := range entries {
+		packageName := e.PackageName
+		sourcePackageName := e.SourcePackageName
+
+		if packageName == "" {
+			return nil, nil, fmt.Errorf(
+				"invalid RPM source map %#q entry %d:\nmissing non-empty 'packageName'",
+				path,
+				idx,
+			)
+		}
+
+		if sourcePackageName == "" {
+			return nil, nil, fmt.Errorf(
+				"invalid RPM source map %#q entry %d for package %#q:\nmissing non-empty 'sourcePackageName'",
+				path,
+				idx,
+				packageName,
+			)
+		}
+
+		if existingSourcePackageName, exists := rpmCompOf[packageName]; exists {
+			if existingSourcePackageName != sourcePackageName {
+				return nil, nil, fmt.Errorf(
+					"invalid RPM source map %#q entry %d for package %#q:\nconflicting source package names %#q and %#q",
+					path,
+					idx,
+					packageName,
+					existingSourcePackageName,
+					sourcePackageName,
+				)
+			}
+			// Ignore repeated identical mappings so [srpmMap] does not accumulate duplicates.
+			continue
+		}
+
+		srpmMap[sourcePackageName] = append(srpmMap[sourcePackageName], packageName)
+		rpmCompOf[packageName] = sourcePackageName
+	}
+
+	return srpmMap, rpmCompOf, nil
+}
+
 // synthesizeDebugPackages augments results with synthetic '-debuginfo' packages (one per
 // already-resolved package, using a parallel publish channel derived from the original
 // package's publish channel by appending '-debuginfo', except when the original channel is
@@ -320,6 +563,7 @@ func synthesizeDebugPackages(
 		existing[name] = struct{}{}
 		debugInfoEntries = append(debugInfoEntries, PackageListResult{
 			PackageName: name,
+			Type:        PackageTypeRPM,
 			Group:       result.Group,
 			Component:   result.Component,
 			Channel:     debugChannelName(result.Channel),
@@ -353,6 +597,7 @@ func synthesizeDebugPackages(
 
 		results = append(results, PackageListResult{
 			PackageName: name,
+			Type:        PackageTypeRPM,
 			Component:   compName,
 			Channel:     debugChannelName(pkgConfig.Publish.EffectiveRPMChannel()),
 		})

@@ -4,11 +4,14 @@
 package pkg_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	pkgcmds "github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/pkg"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -36,7 +39,7 @@ func TestListPackages_NoCriteria(t *testing.T) {
 func TestListPackages_Empty(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
 
-	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{All: true})
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{})
 
 	require.NoError(t, err)
 	assert.Empty(t, results)
@@ -53,7 +56,9 @@ func TestListPackages_FromPackageGroup(t *testing.T) {
 		},
 	}
 
-	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{All: true})
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{
+		PackageNames: []string{"curl-devel", "wget2-devel"},
+	})
 
 	require.NoError(t, err)
 	require.Len(t, results, 2)
@@ -80,7 +85,7 @@ func TestListPackages_FromComponentPackageOverride(t *testing.T) {
 		},
 	}
 
-	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{All: true})
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{PackageNames: []string{"curl-minimal"}})
 
 	require.NoError(t, err)
 	require.Len(t, results, 1)
@@ -109,7 +114,7 @@ func TestListPackages_ComponentOverrideWinsOverGroup(t *testing.T) {
 		},
 	}
 
-	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{All: true})
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{PackageNames: []string{"curl-devel"}})
 
 	require.NoError(t, err)
 	require.Len(t, results, 1)
@@ -128,7 +133,9 @@ func TestListPackages_SortedByName(t *testing.T) {
 		},
 	}
 
-	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{All: true})
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{
+		PackageNames: []string{"zzz-pkg", "aaa-pkg", "mmm-pkg"},
+	})
 
 	require.NoError(t, err)
 	require.Len(t, results, 3)
@@ -207,7 +214,7 @@ func TestListPackages_DuplicatePackageAcrossComponents_ReturnsError(t *testing.T
 		},
 	}
 
-	_, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{All: true})
+	_, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{PackageNames: []string{"shared-pkg"}})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "shared-pkg")
@@ -233,7 +240,7 @@ func TestListPackages_SynthesizeDebugPackages(t *testing.T) {
 	testEnv.Config.Components["wget"] = projectconfig.ComponentConfig{Name: "wget"}
 
 	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{
-		All:                     true,
+		PackageNames:            []string{"curl-devel"},
 		SynthesizeDebugPackages: true,
 	})
 
@@ -283,7 +290,7 @@ func TestListPackages_SynthesizeDebugPackages_SkipsExisting(t *testing.T) {
 	}
 
 	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{
-		All:                     true,
+		PackageNames:            []string{"curl", "curl-debuginfo", "curl-debugsource"},
 		SynthesizeDebugPackages: true,
 	})
 
@@ -376,7 +383,7 @@ func TestListPackages_SynthesizeDebugPackages_ChannelSuffixRules(t *testing.T) {
 	}
 
 	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{
-		All:                     true,
+		PackageNames:            []string{"pkg-none", "pkg-empty", "pkg-already"},
 		SynthesizeDebugPackages: true,
 	})
 
@@ -420,4 +427,136 @@ func TestListPackages_ComponentGroupPublishChannel(t *testing.T) {
 	assert.Equal(t, "jq", results[0].PackageName)
 	// The group's rpm-base channel must win over the project default rpm-sdk.
 	assert.Equal(t, "rpm-base", results[0].Channel)
+}
+
+func TestListPackages_SRPMFile_UsesSRPMChannel(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	// Project default component config sets both RPM and SRPM channels.
+	testEnv.Config.DefaultComponentConfig = projectconfig.ComponentConfig{
+		Publish: projectconfig.ComponentPublishConfig{
+			RPMChannel:  "rpm-sdk",
+			SRPMChannel: "rpm-sdk-srpm",
+		},
+	}
+
+	// Component with a higher-priority SRPM channel override.
+	testEnv.Config.Components["curl"] = projectconfig.ComponentConfig{
+		Name: "curl",
+		Publish: projectconfig.ComponentPublishConfig{
+			RPMChannel:  "rpm-base",
+			SRPMChannel: "rpm-base-srpm",
+		},
+	}
+
+	const srpmMapPath = "/test-srpm-map.json"
+
+	entries := []map[string]string{
+		// 389-ds-base has no component entry — resolves from project default.
+		{"packageName": "389-ds-base", "sourcePackageName": "389-ds-base"},
+		{"packageName": "389-ds-base-devel", "sourcePackageName": "389-ds-base"},
+		// curl has an explicit component entry — resolves from component config.
+		{"packageName": "curl", "sourcePackageName": "curl"},
+		{"packageName": "curl-devel", "sourcePackageName": "curl"},
+	}
+
+	data, jsonErr := json.Marshal(entries)
+	require.NoError(t, jsonErr)
+	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, srpmMapPath, data, fileperms.PublicFile))
+
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{RPMFile: srpmMapPath})
+	require.NoError(t, err)
+
+	byName := make(map[string]pkgcmds.PackageListResult, len(results))
+	for _, r := range results {
+		byName[r.PackageName+"#"+r.Type] = r
+	}
+
+	// SRPMs must use SRPMChannel, not RPMChannel.
+	srpm389 := byName["389-ds-base#"+pkgcmds.PackageTypeSRPM]
+	assert.Equal(t, pkgcmds.PackageTypeSRPM, srpm389.Type)
+	assert.Equal(t, "rpm-sdk-srpm", srpm389.Channel, "SRPM should use SRPMChannel from project default")
+
+	srpmCurl := byName["curl#"+pkgcmds.PackageTypeSRPM]
+	assert.Equal(t, pkgcmds.PackageTypeSRPM, srpmCurl.Type)
+	assert.Equal(t, "rpm-base-srpm", srpmCurl.Channel, "SRPM should use SRPMChannel from component config")
+
+	// RPMs must use RPMChannel, not SRPMChannel.
+	rpm389 := byName["389-ds-base#"+pkgcmds.PackageTypeRPM]
+	assert.Equal(t, pkgcmds.PackageTypeRPM, rpm389.Type)
+	assert.Equal(t, "rpm-sdk", rpm389.Channel, "binary RPM should use RPMChannel from project default")
+
+	rpmCurlDevel := byName["curl-devel#"+pkgcmds.PackageTypeRPM]
+	assert.Equal(t, pkgcmds.PackageTypeRPM, rpmCurlDevel.Type)
+	// curl-devel's component is resolved from the JSON (sourcePackageName = "curl"),
+	// so it correctly inherits the curl component's RPMChannel.
+	assert.Equal(t, "rpm-base", rpmCurlDevel.Channel, "binary RPM should use RPMChannel from its SRPM's component")
+}
+
+// TestListPackages_RPMFile_Validation exercises the JSON parsing and validation
+// error paths in 'loadRPMFile' (invalid JSON, missing fields, conflicting
+// mappings) and the silent dedup path for repeated identical mappings.
+func TestListPackages_RPMFile_Validation(t *testing.T) {
+	const path = "/test-rpm-map.json"
+
+	cases := []struct {
+		name        string
+		body        string // raw file contents (not necessarily valid JSON)
+		wantErrSub  string // expected substring in the returned error; empty means success
+		wantResults int    // expected number of results on success
+	}{
+		{
+			name:       "invalid json",
+			body:       "not json",
+			wantErrSub: "parsing RPM source map",
+		},
+		{
+			name:       "empty packageName",
+			body:       `[{"packageName":"","sourcePackageName":"bash"}]`,
+			wantErrSub: "missing non-empty 'packageName'",
+		},
+		{
+			name:       "empty sourcePackageName",
+			body:       `[{"packageName":"bash","sourcePackageName":""}]`,
+			wantErrSub: "missing non-empty 'sourcePackageName'",
+		},
+		{
+			name: "conflicting source package names",
+			body: `[
+				{"packageName":"bash","sourcePackageName":"bash"},
+				{"packageName":"bash","sourcePackageName":"other"}
+			]`,
+			wantErrSub: "conflicting source package names",
+		},
+		{
+			// Identical duplicate mappings must not produce duplicate entries:
+			// one SRPM result + one RPM result, not one SRPM + two RPMs.
+			name: "duplicate identical mappings dedup",
+			body: `[
+				{"packageName":"bash","sourcePackageName":"bash"},
+				{"packageName":"bash","sourcePackageName":"bash"}
+			]`,
+			wantResults: 2,
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			testEnv := testutils.NewTestEnv(t)
+			require.NoError(t, fileutils.WriteFile(testEnv.TestFS, path, []byte(testCase.body), fileperms.PublicFile))
+
+			results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{RPMFile: path})
+
+			if testCase.wantErrSub != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), testCase.wantErrSub)
+				assert.Nil(t, results)
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Len(t, results, testCase.wantResults)
+		})
+	}
 }
