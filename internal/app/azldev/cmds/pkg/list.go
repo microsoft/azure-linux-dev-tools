@@ -88,6 +88,15 @@ Resolution order (lowest to highest priority):
   # Output as JSON for scripting
   azldev package list -a -q -O json
   azldev package list --rpm-file rpm_source_map.json -q -O json`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			// Positional package names aren't flags, so they can't participate in cobra's
+			// flag-group machinery; enforce the '--rpm-file' incompatibility here.
+			if cmd.Flags().Changed("rpm-file") && len(args) > 0 {
+				return errors.New("'--rpm-file' cannot be used with positional package name arguments")
+			}
+
+			return nil
+		},
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
 			options.PackageNames = append(args, options.PackageNames...)
 
@@ -101,6 +110,11 @@ Resolution order (lowest to highest priority):
 	cmd.Flags().StringArrayVarP(&options.PackageNames, "package", "p", []string{}, "Package name to look up (repeatable)")
 	cmd.Flags().BoolVar(&options.SynthesizeDebugPackages, "synthesize-debug-packages", false,
 		"Also synthesize '-debuginfo' packages (per reported package) and '-debugsource' packages (per component)")
+
+	// '--rpm-file' is mutually exclusive with the other selection / augmentation flags.
+	cmd.MarkFlagsMutuallyExclusive("rpm-file", "all-packages")
+	cmd.MarkFlagsMutuallyExclusive("rpm-file", "package")
+	cmd.MarkFlagsMutuallyExclusive("rpm-file", "synthesize-debug-packages")
 
 	azldev.ExportAsMCPTool(cmd)
 
@@ -170,28 +184,20 @@ func buildComponentPackageIndex(components map[string]projectconfig.ComponentCon
 }
 
 // listPackagesFromRPMFile implements the '--rpm-file' path of [ListPackages].
-// It validates that '-a', '-p', and '--synthesize-debug-packages' are not also set,
-// resolves all SRPMs and binary RPMs from the JSON file, and returns a sorted result list.
+// Mutual exclusivity with '-a', '-p', '--synthesize-debug-packages', and positional
+// package name arguments is enforced by cobra (see [NewPackageListCommand]).
 func listPackagesFromRPMFile(
 	env *azldev.Env,
 	options *ListPackageOptions,
 	groupOf map[string]string,
 	proj *projectconfig.ProjectConfig,
 ) ([]PackageListResult, error) {
-	if options.All || len(options.PackageNames) > 0 {
-		return nil, errors.New("'--rpm-file' cannot be used with '-a' or package name arguments ('-p' / positional args)")
-	}
-
-	if options.SynthesizeDebugPackages {
-		return nil, errors.New("'--rpm-file' cannot be used together with '--synthesize-debug-packages'")
-	}
-
-	results, err := resolveFromSRPMFile(env.FS(), options.RPMFile, groupOf, proj)
+	results, err := resolveFromRPMFile(env.FS(), options.RPMFile, groupOf, proj)
 	if err != nil {
 		return nil, err
 	}
 
-	// Sort for deterministic output. [resolveFromSRPMFile] iterates over a map,
+	// Sort for deterministic output. [resolveFromRPMFile] iterates over a map,
 	// so the order of results is non-deterministic without this sort. Use
 	// additional tie-breakers so entries that share the same package name (for
 	// example, an SRPM and an RPM from '--rpm-file') also have a stable order.
@@ -412,18 +418,18 @@ func resolveSourcePackageListResult(
 	}, nil
 }
 
-// resolveFromSRPMFile loads a source map file and resolves all SRPMs and their RPMs.
+// resolveFromRPMFile loads a source map file and resolves all SRPMs and their RPMs.
 // Returns a flat list of SRPM and RPM entries derived from the file. The returned slice is
 // not ordered by contract; callers may sort or otherwise reorder the flattened results. The
-// JSON file is parsed once by [loadSRPMFile] to produce both the SRPM → RPMs map and the
+// JSON file is parsed once by [loadRPMFile] to produce both the SRPM → RPMs map and the
 // authoritative RPM → component index.
-func resolveFromSRPMFile(
+func resolveFromRPMFile(
 	fs opctx.FS,
 	path string,
 	groupOf map[string]string,
 	proj *projectconfig.ProjectConfig,
 ) ([]PackageListResult, error) {
-	srpmMap, rpmCompOf, err := loadSRPMFile(fs, path)
+	srpmMap, rpmCompOf, err := loadRPMFile(fs, path)
 	if err != nil {
 		return nil, err
 	}
@@ -451,14 +457,14 @@ func resolveFromSRPMFile(
 	return results, nil
 }
 
-// loadSRPMFile reads and parses a JSON RPM source map from path on fs.
+// loadRPMFile reads and parses a JSON RPM source map from path on fs.
 // The file is a JSON array of [rpmSourceEntry] records.
 // Returns:
 //   - srpmMap: source package name → ordered list of binary RPM names it produces
 //   - rpmCompOf: binary RPM name → source package (component) name
 //
 // Both maps are built in a single pass over the JSON entries.
-func loadSRPMFile(fs opctx.FS, path string) (srpmMap map[string][]string, rpmCompOf map[string]string, err error) {
+func loadRPMFile(fs opctx.FS, path string) (srpmMap map[string][]string, rpmCompOf map[string]string, err error) {
 	data, readErr := fileutils.ReadFile(fs, path)
 	if readErr != nil {
 		return nil, nil, fmt.Errorf("reading RPM source map %#q:\n%w", path, readErr)
@@ -473,8 +479,8 @@ func loadSRPMFile(fs opctx.FS, path string) (srpmMap map[string][]string, rpmCom
 	rpmCompOf = make(map[string]string, len(entries))
 
 	for idx, e := range entries {
-		packageName := strings.TrimSpace(e.PackageName)
-		sourcePackageName := strings.TrimSpace(e.SourcePackageName)
+		packageName := e.PackageName
+		sourcePackageName := e.SourcePackageName
 
 		if packageName == "" {
 			return nil, nil, fmt.Errorf(
