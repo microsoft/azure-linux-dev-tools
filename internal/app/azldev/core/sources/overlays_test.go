@@ -1287,3 +1287,69 @@ make
 		assert.Contains(t, err.Error(), "not found")
 	})
 }
+
+func TestApplyRemoveSubpackageOverlay(t *testing.T) {
+	t.Run("removes all sections for a sub-package", func(t *testing.T) {
+		specContent := `Name: test
+Version: 1.0
+
+%description
+Main description.
+
+%package devel
+Summary: Devel files
+Requires: test = 1.0
+
+%description devel
+Devel description.
+
+%files
+/usr/bin/test
+
+%files devel
+/usr/include/test.h
+
+%post devel
+echo posting
+`
+		overlay := projectconfig.ComponentOverlay{
+			Type:        projectconfig.ComponentOverlayRemoveSubpackage,
+			PackageName: "devel",
+		}
+
+		result, err := applyOverlayToSpecContents(t, overlay, specContent)
+		require.NoError(t, err)
+
+		// Main package content should remain.
+		assert.Contains(t, result, "Main description.")
+		assert.Contains(t, result, "/usr/bin/test")
+
+		// All devel-scoped sections should be gone.
+		assert.NotContains(t, result, "%package devel")
+		assert.NotContains(t, result, "%description devel")
+		assert.NotContains(t, result, "%files devel")
+		assert.NotContains(t, result, "%post devel")
+		assert.NotContains(t, result, "Devel description.")
+		assert.NotContains(t, result, "/usr/include/test.h")
+		assert.NotContains(t, result, "echo posting")
+	})
+
+	t.Run("fails when sub-package has no sections", func(t *testing.T) {
+		specContent := `Name: test
+
+%description
+Main.
+
+%files
+/usr/bin/test
+`
+		overlay := projectconfig.ComponentOverlay{
+			Type:        projectconfig.ComponentOverlayRemoveSubpackage,
+			PackageName: "devel",
+		}
+
+		_, err := applyOverlayToSpecContents(t, overlay, specContent)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}

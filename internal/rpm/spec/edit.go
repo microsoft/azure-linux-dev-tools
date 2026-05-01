@@ -734,9 +734,14 @@ func (s *Spec) GetHighestPatchTagNumber() (int, error) {
 	return highest, err
 }
 
-// RemoveSection removes an entire section from the spec, including its header line and all
-// body lines. The section is identified by name and optional package qualifier. Returns
-// [ErrSectionNotFound] if the section doesn't exist.
+// RemoveSection removes every section from the spec whose name and package qualifier
+// match the supplied values, including each section's header line and all body lines.
+//
+// In valid RPM specs the `(sectionName, packageName)` pair is unique, so this is
+// effectively a single-section removal. When a spec lexically contains multiple
+// sections with the same identity (e.g. inside mutually-exclusive `%if`/`%else`
+// branches), every such section is removed. Returns [ErrSectionNotFound] if no
+// matching section exists.
 func (s *Spec) RemoveSection(sectionName, packageName string) error {
 	slog.Debug("Removing section from spec", "section", sectionName, "package", packageName)
 
@@ -744,45 +749,120 @@ func (s *Spec) RemoveSection(sectionName, packageName string) error {
 		return errors.New("cannot remove the global/preamble section")
 	}
 
-	// Find the start and end line numbers for the section.
-	startLine := -1
-	endLine := -1
-
-	err := s.Visit(func(ctx *Context) error {
-		if startLine >= 0 && endLine >= 0 {
-			// Already found the section boundaries.
-			return nil
-		}
-
-		if ctx.Target.TargetType == SectionStartTarget {
-			if ctx.CurrentSection.SectName == sectionName && ctx.CurrentSection.Package == packageName {
-				startLine = ctx.CurrentLineNum
-			}
-		}
-
-		if ctx.Target.TargetType == SectionEndTarget {
-			if ctx.CurrentSection.SectName == sectionName && ctx.CurrentSection.Package == packageName {
-				endLine = ctx.CurrentLineNum
-			}
-		}
-
-		return nil
+	ranges, err := s.collectSectionRanges(func(sn, pn string) bool {
+		return sn == sectionName && pn == packageName
 	})
 	if err != nil {
 		return fmt.Errorf("failed to scan spec for section %#q (package=%#q):\n%w", sectionName, packageName, err)
 	}
 
-	if startLine < 0 {
+	if len(ranges) == 0 {
 		return fmt.Errorf("section %#q (package=%#q) not found:\n%w", sectionName, packageName, ErrSectionNotFound)
 	}
 
-	// endLine is the virtual end marker at the start of the next section (or EOF).
-	// We remove rawLines[startLine..endLine-1] inclusive.
-	if endLine < 0 {
-		endLine = len(s.rawLines)
-	}
-
-	s.RemoveLines(startLine, endLine)
+	s.removeRanges(ranges)
 
 	return nil
+}
+
+// RemoveSubpackage removes every section in the spec that is associated with the given
+// sub-package name (i.e. every section whose package qualifier equals packageName).
+// This includes the sub-package's own `%package` preamble section as well as any
+// per-section directives that target it (e.g. `%description -n pkg`, `%files pkg`,
+// `%post pkg`, etc.).
+//
+// Returns an error if packageName is empty or if the spec contains no sections
+// associated with the given sub-package.
+//
+// packageName matching: RPM permits two forms for declaring sub-package sections — the
+// suffix form (e.g. `%package devel`, which declares a sub-package named `<base>-devel`)
+// and the absolute form (e.g. `%package -n my-pkg`). Each section is matched against
+// packageName using the form that appears on its header line; callers should pass
+// whichever form the spec uses. Specs that mix both forms for the same sub-package
+// (uncommon but legal) require a call per form.
+//
+// Limitation: this method operates on whole-section line ranges and does not understand
+// `%if`/`%endif` conditionals. Sub-packages wrapped in a conditional block will leave
+// an unbalanced `%if` (the `%endif` is typically consumed as part of the trailing
+// sub-package section). Callers that need to handle conditionalized sub-packages must
+// adjust the conditionals themselves.
+func (s *Spec) RemoveSubpackage(packageName string) error {
+	slog.Debug("Removing sub-package from spec", "package", packageName)
+
+	if packageName == "" {
+		return errors.New("cannot remove sub-package with empty name")
+	}
+
+	ranges, err := s.collectSectionRanges(func(_, pn string) bool {
+		return pn == packageName
+	})
+	if err != nil {
+		return fmt.Errorf("failed to scan spec for sub-package %#q:\n%w", packageName, err)
+	}
+
+	if len(ranges) == 0 {
+		return fmt.Errorf("sub-package %#q not found:\n%w", packageName, ErrSectionNotFound)
+	}
+
+	s.removeRanges(ranges)
+
+	return nil
+}
+
+// sectionLineRange identifies a half-open `[start, end)` range of raw line numbers
+// covering one section, from its header line through (but not including) the start
+// of the next section.
+type sectionLineRange struct {
+	start int
+	end   int
+}
+
+// collectSectionRanges walks the spec and returns one [sectionLineRange] for every
+// section whose `(sectName, packageName)` pair satisfies the predicate, in the order
+// they appear in the spec.
+func (s *Spec) collectSectionRanges(
+	matches func(sectName, packageName string) bool,
+) ([]sectionLineRange, error) {
+	var (
+		ranges   []sectionLineRange
+		curStart = -1
+	)
+
+	err := s.Visit(func(ctx *Context) error {
+		matched := matches(ctx.CurrentSection.SectName, ctx.CurrentSection.Package)
+
+		//nolint:exhaustive // We intentionally only react to section boundaries.
+		switch ctx.Target.TargetType {
+		case SectionStartTarget:
+			if matched {
+				curStart = ctx.CurrentLineNum
+			}
+		case SectionEndTarget:
+			if matched && curStart >= 0 {
+				ranges = append(ranges, sectionLineRange{start: curStart, end: ctx.CurrentLineNum})
+				curStart = -1
+			}
+		}
+
+		return nil
+	})
+
+	// Defensive fallback: today [Spec.Visit] always emits a trailing SectionEndTarget at
+	// EOF, so this branch is unreachable. We keep it so that this helper does not silently
+	// misbehave if that invariant ever changes (a section running to EOF would otherwise
+	// be silently dropped from the result).
+	if curStart >= 0 {
+		ranges = append(ranges, sectionLineRange{start: curStart, end: len(s.rawLines)})
+	}
+
+	return ranges, err
+}
+
+// removeRanges deletes the given line ranges from the spec. Ranges must be
+// non-overlapping and in ascending order (as produced by [Spec.collectSectionRanges]);
+// they are removed from last to first so earlier indices remain valid.
+func (s *Spec) removeRanges(ranges []sectionLineRange) {
+	for i := len(ranges) - 1; i >= 0; i-- {
+		s.RemoveLines(ranges[i].start, ranges[i].end)
+	}
 }

@@ -214,6 +214,7 @@
             "spec-append-lines",
             "spec-search-replace",
             "spec-remove-section",
+            "spec-remove-subpackage",
             "patch-add",
             "patch-remove",
             "file-prepend-lines",
