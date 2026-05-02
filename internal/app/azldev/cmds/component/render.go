@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 )
 
@@ -59,10 +61,13 @@ Unlike prepare-sources, render skips downloading source tarballs from the
 lookaside cache — only spec files, patches, scripts, and other git-tracked
 sidecar files are included. Multiple components can be rendered at once.
 
-When rendering all components (-a), the --clean-stale flag removes rendered
-directories that no longer correspond to any current component. Stale cleanup
-is skipped when rendering individual components to avoid accidentally removing
-directories for components not included in the filter.`,
+When rendering all components (-a), the --clean-stale flag removes the
+letter-prefix subdirectories of the output directory before rendering.
+Only single-character subdirectories (e.g., 'a/', 'c/', 'l/' — the layout
+azldev itself produces) are removed; any other files or directories at
+the output root are preserved. An interrupted run with --clean-stale
+leaves the output directory partially populated; recover with
+'git checkout'. This flag is only valid with -a.`,
 		Example: `  # Render all components (output dir from config)
   azldev component render -a
 
@@ -99,7 +104,7 @@ directories for components not included in the filter.`,
 		"allow overwriting existing rendered component directories")
 
 	cmd.Flags().BoolVar(&options.CleanStale, "clean-stale", false,
-		"remove stale rendered directories not matching any current component (only with -a)")
+		"remove letter-prefix subdirectories of the output directory before rendering (only with -a)")
 
 	return cmd
 }
@@ -178,21 +183,39 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 	results := make([]*RenderResult, len(componentList))
 
 	// ── Phase 1: Parallel source preparation ──
-	prepared := parallelPrepare(env, componentList, stagingDir, options.OutputDir, options.Force, results)
+	prepared := parallelPrepare(env, componentList, stagingDir, options.OutputDir, results)
 
 	// ── Phase 2: Batch mock processing ──
 	mockResultMap := batchMockProcess(env, mockProcessor, stagingDir, prepared)
+
+	// Wipe stale letter-prefix subdirectories of the output dir between mock
+	// processing (slow: clone + chroot) and the per-component copy in phase 3.
+	// This keeps Ctrl-C-during-mock from leaving the user with no output and
+	// nothing fresh either; if they cancel before this point the existing
+	// output is untouched. Once we reach phase 3 we're moments away from
+	// writing replacement content anyway.
+	//
+	// We only remove single-character subdirectories — the layout azldev itself
+	// produces (see RenderedSpecDir). Files and other directories at the output
+	// root are preserved, which keeps a typo'd '-o /tmp' from nuking unrelated
+	// content. This also drops sibling alias symlinks created to bridge the
+	// percent-encoded path mismatch with our build pipeline; see writeAliasSymlink.
+	if options.CleanStale {
+		if wipeErr := wipeLetterPrefixSubdirs(env.FS(), options.OutputDir); wipeErr != nil {
+			return nil, fmt.Errorf("clearing output directory %#q:\n%w", options.OutputDir, wipeErr)
+		}
+	}
 
 	// ── Phase 3: Parallel finishing ──
 	parallelFinish(env, prepared, mockResultMap, results, stagingDir,
 		options.Force)
 
-	// Clean up stale rendered directories when explicitly requested.
-	if options.CleanStale && options.ComponentFilter.IncludeAllComponents {
-		if cleanupErr := cleanupStaleRenders(env.FS(), comps, options.OutputDir); cleanupErr != nil {
-			return results, fmt.Errorf("cleaning up stale rendered output:\n%w", cleanupErr)
-		}
-	}
+	// Write RENDER_FAILED markers for any component that errored in phase 1
+	// (source preparation) or phase 3 (mock result application + copy).
+	// Centralizing this here makes it idempotent with the --clean-stale wipe
+	// (which sits between phases 2 and 3) and keeps the per-phase code free
+	// of bookkeeping.
+	writeFailureMarkers(env.FS(), results, options.Force)
 
 	// Sort results alphabetically for consistent output.
 	sortRenderResults(results)
@@ -282,7 +305,6 @@ func parallelPrepare(
 	comps []components.Component,
 	stagingDir string,
 	outputDir string,
-	allowOverwrite bool,
 	results []*RenderResult,
 ) []*preparedComponent {
 	progressEvent := env.StartEvent("Preparing component sources", "count", len(comps))
@@ -302,7 +324,7 @@ func parallelPrepare(
 		go func(idx int, comp components.Component) {
 			defer waitGroup.Done()
 
-			resultsChan <- prepWithSemaphore(workerEnv, semaphore, idx, comp, stagingDir, outputDir, allowOverwrite)
+			resultsChan <- prepWithSemaphore(workerEnv, semaphore, idx, comp, stagingDir, outputDir)
 		}(compIdx, comp)
 	}
 
@@ -337,7 +359,6 @@ func prepWithSemaphore(
 	comp components.Component,
 	stagingDir string,
 	outputDir string,
-	allowOverwrite bool,
 ) prepResult {
 	componentName := comp.GetName()
 
@@ -369,16 +390,6 @@ func prepWithSemaphore(
 	if err != nil {
 		slog.Error("Failed to prepare component sources",
 			"component", componentName, "error", err)
-
-		// Write error marker so the failure is visible in git diff.
-		if allowOverwrite {
-			if removeErr := env.FS().RemoveAll(compOutputDir); removeErr != nil {
-				slog.Debug("Failed to clean output before writing error marker",
-					"path", compOutputDir, "error", removeErr)
-			}
-		}
-
-		writeRenderErrorMarker(env.FS(), compOutputDir)
 
 		return prepResult{index: index, result: &RenderResult{
 			Component: componentName,
@@ -603,17 +614,6 @@ func finishOneComponent(
 
 		result.Status = renderStatusError
 		result.Error = err.Error()
-
-		// Clean any stale good output before writing the failure marker.
-		// Only allowed for managed (project-local) output directories.
-		if allowOverwrite {
-			if removeErr := env.FS().RemoveAll(compOutputDir); removeErr != nil {
-				slog.Debug("Failed to clean output before writing error marker",
-					"path", compOutputDir, "error", removeErr)
-			}
-		}
-
-		writeRenderErrorMarker(env.FS(), compOutputDir)
 	}
 
 	return result
@@ -673,10 +673,94 @@ func finishComponentRender(
 		return copyErr
 	}
 
+	// Best-effort: create a sibling symlink at the URL-encoded component name to
+	// bridge a path-encoding mismatch. We percent-encode component names like
+	// 'libxml++' into 'libxml%2B%2B' when building the SCM URL fragment passed to
+	// the build host (koji), but the build system then uses that fragment as a
+	// filesystem path without decoding it. The symlink lets the build host find
+	// the component under either form.
+	//
+	//nolint:godox // tracked by TODO(koji-fragment-decode) tag.
+	// TODO(koji-fragment-decode): remove once the build system decodes fragments.
+	if aliasErr := writeAliasSymlink(env.FS(), prep.compOutputDir, componentName); aliasErr != nil {
+		slog.Warn("Failed to create rendered-spec alias symlink; downstream build steps"+
+			" that consume the percent-encoded path may fail to locate this component",
+			"component", componentName, "error", aliasErr)
+	}
+
 	slog.Info("Rendered component", "component", componentName,
 		"output", prep.compOutputDir)
 
 	return nil
+}
+
+// writeAliasSymlink creates a sibling symlink alongside componentOutputDir at the
+// URL-encoded form of componentName, pointing back at the real directory with a
+// relative target.
+//
+// No-ops when no encoding is needed (plain ASCII names) or when the underlying
+// filesystem doesn't support symlinks (e.g., in-memory test FS).
+//
+// Refuses to overwrite a non-symlink at the alias path — if a real component
+// directory already lives there (the hypothetical 'gtk%2B' next to 'gtk+'
+// case), bail with an error rather than silently destroying that component's
+// rendered output. RPM names don't use '%' in practice, so this is belt-and
+// suspenders.
+func writeAliasSymlink(fileSystem opctx.FS, componentOutputDir, componentName string) error {
+	aliasName := components.RenderedSpecDirAliasName(componentName)
+	if aliasName == "" {
+		return nil
+	}
+
+	linker, ok := fileSystem.(afero.Linker)
+	if !ok {
+		slog.Debug("Filesystem doesn't support symlinks; skipping rendered-spec alias",
+			"component", componentName)
+
+		return nil
+	}
+
+	parentDir := filepath.Dir(componentOutputDir)
+	aliasPath := filepath.Join(parentDir, aliasName)
+
+	// Inspect any existing entry at the alias path. We only ever clobber a
+	// pre-existing symlink (a stale alias from a previous render); a real
+	// directory or file there means a name collision with another component
+	// and must be reported, not silently destroyed.
+	info, lstatErr := lstatIfPossible(fileSystem, aliasPath)
+	switch {
+	case lstatErr == nil && info.Mode()&os.ModeSymlink == 0:
+		return fmt.Errorf(
+			"alias path %#q is already occupied by a non-symlink entry; refusing to overwrite",
+			aliasPath)
+	case lstatErr == nil:
+		// Existing symlink — remove and replace below.
+		if removeErr := fileSystem.Remove(aliasPath); removeErr != nil {
+			return fmt.Errorf("removing existing alias symlink %#q:\n%w", aliasPath, removeErr)
+		}
+	case !errors.Is(lstatErr, os.ErrNotExist):
+		return fmt.Errorf("inspecting alias path %#q:\n%w", aliasPath, lstatErr)
+	}
+
+	// Use a relative target so the rendered tree stays portable.
+	target := filepath.Base(componentOutputDir)
+	if symErr := linker.SymlinkIfPossible(target, aliasPath); symErr != nil {
+		return fmt.Errorf("creating alias symlink %#q -> %#q:\n%w", aliasPath, target, symErr)
+	}
+
+	return nil
+}
+
+// lstatIfPossible returns the link info at path without following symlinks, if
+// the underlying filesystem supports it. Falls back to a regular Stat otherwise.
+func lstatIfPossible(fileSystem opctx.FS, path string) (os.FileInfo, error) {
+	if lstater, ok := fileSystem.(afero.Lstater); ok {
+		info, _, err := lstater.LstatIfPossible(path)
+
+		return info, err //nolint:wrapcheck // pass-through to the caller.
+	}
+
+	return fileSystem.Stat(path) //nolint:wrapcheck // pass-through to the caller.
 }
 
 // copyRenderedOutput copies the rendered files from tempDir to the component's output directory.
@@ -792,65 +876,6 @@ func findSpecFile(fs opctx.FS, dir, componentName string) (string, error) {
 	return specPath, nil
 }
 
-// cleanupStaleRenders removes rendered output directories for components that
-// no longer exist in the current configuration. Only called during full renders (-a).
-// The output directory uses letter-prefix subdirectories (e.g., SPECS/c/curl),
-// so this walks two levels: letter directories, then component directories within each.
-func cleanupStaleRenders(fs opctx.FS, currentComponents *components.ComponentSet, outputDir string) error {
-	exists, existsErr := fileutils.Exists(fs, outputDir)
-	if existsErr != nil {
-		return fmt.Errorf("checking output directory %#q:\n%w", outputDir, existsErr)
-	}
-
-	if !exists {
-		return nil
-	}
-
-	letterEntries, err := fileutils.ReadDir(fs, outputDir)
-	if err != nil {
-		return fmt.Errorf("reading output directory %#q:\n%w", outputDir, err)
-	}
-
-	// Build a set of current component names.
-	currentNames := make(map[string]bool, currentComponents.Len())
-	for _, comp := range currentComponents.Components() {
-		currentNames[comp.GetName()] = true
-	}
-
-	for _, letterEntry := range letterEntries {
-		if !letterEntry.IsDir() {
-			continue
-		}
-
-		letterDir := filepath.Join(outputDir, letterEntry.Name())
-
-		compEntries, readErr := fileutils.ReadDir(fs, letterDir)
-		if readErr != nil {
-			return fmt.Errorf("reading letter directory %#q:\n%w", letterDir, readErr)
-		}
-
-		for _, compEntry := range compEntries {
-			if !compEntry.IsDir() {
-				continue
-			}
-
-			if currentNames[compEntry.Name()] {
-				continue
-			}
-
-			stalePath := filepath.Join(letterDir, compEntry.Name())
-
-			slog.Info("Removing stale rendered output", "directory", stalePath)
-
-			if removeErr := fs.RemoveAll(stalePath); removeErr != nil {
-				return fmt.Errorf("removing stale directory %#q:\n%w", stalePath, removeErr)
-			}
-		}
-	}
-
-	return nil
-}
-
 // renderErrorMarkerFile is the name of the marker file written to a component's
 // output directory when rendering fails. This makes the failure visible in git diff
 // when the issue is later fixed (the marker file disappears, replaced by real output).
@@ -901,8 +926,8 @@ func resolveAndValidateOutputDir(env *azldev.Env, options *RenderOptions) error 
 	return validateOutputDir(options.OutputDir)
 }
 
-// validateOutputDir rejects output directory values that could cause
-// cleanupStaleRenders to delete unrelated directories.
+// validateOutputDir rejects output directory values that could cause the
+// --clean-stale wipe to delete unrelated directories.
 func validateOutputDir(outputDir string) error {
 	cleaned := filepath.Clean(outputDir)
 	if cleaned == "." || cleaned == string(filepath.Separator) ||
@@ -912,6 +937,64 @@ func validateOutputDir(outputDir string) error {
 	}
 
 	return nil
+}
+
+// wipeLetterPrefixSubdirs removes every direct child of outputDir whose name
+// is a single character — matching the canonical layout produced by
+// RenderedSpecDir (e.g., 'a/', 'c/', 'l/'). Anything else (top-level files,
+// multi-character directories) is left alone. Missing outputDir is a no-op.
+func wipeLetterPrefixSubdirs(fileSystem opctx.FS, outputDir string) error {
+	exists, existsErr := fileutils.DirExists(fileSystem, outputDir)
+	if existsErr != nil {
+		return fmt.Errorf("checking output directory %#q:\n%w", outputDir, existsErr)
+	}
+
+	if !exists {
+		return nil
+	}
+
+	entries, readErr := fileutils.ReadDir(fileSystem, outputDir)
+	if readErr != nil {
+		return fmt.Errorf("reading output directory %#q:\n%w", outputDir, readErr)
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() || len(entry.Name()) != 1 {
+			continue
+		}
+
+		subPath := filepath.Join(outputDir, entry.Name())
+		if removeErr := fileSystem.RemoveAll(subPath); removeErr != nil {
+			return fmt.Errorf("removing %#q:\n%w", subPath, removeErr)
+		}
+	}
+
+	return nil
+}
+
+// writeFailureMarkers walks the final results slice and writes a RENDER_FAILED
+// marker into each errored component's output directory. When allowOverwrite
+// is set, any pre-existing content at the path is removed first so the marker
+// isn't surrounded by stale render output.
+//
+// Cancelled components are intentionally skipped — a Ctrl-C is not a render
+// failure, just an incomplete run, and silently planting markers under those
+// circumstances would lie in git diff.
+func writeFailureMarkers(fileSystem opctx.FS, results []*RenderResult, allowOverwrite bool) {
+	for _, result := range results {
+		if result == nil || result.Status != renderStatusError {
+			continue
+		}
+
+		if allowOverwrite {
+			if removeErr := fileSystem.RemoveAll(result.OutputDir); removeErr != nil {
+				slog.Debug("Failed to clean output before writing error marker",
+					"path", result.OutputDir, "error", removeErr)
+			}
+		}
+
+		writeRenderErrorMarker(fileSystem, result.OutputDir)
+	}
 }
 
 // createMockProcessor creates a [sources.MockProcessor] using the project's

@@ -4,17 +4,15 @@
 package component
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
-	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components/components_testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/mock/gomock"
 )
 
 func TestFindSpecFile(t *testing.T) {
@@ -78,74 +76,6 @@ func TestWriteRenderErrorMarker(t *testing.T) {
 		exists, err := fileutils.Exists(fs, "/new/deep/path/"+renderErrorMarkerFile)
 		require.NoError(t, err)
 		assert.True(t, exists)
-	})
-}
-
-func TestCleanupStaleRenders(t *testing.T) {
-	t.Run("removes directories not in component set", func(t *testing.T) {
-		testFS := afero.NewMemMapFs()
-		ctrl := gomock.NewController(t)
-
-		// Create letter-prefixed output directories for curl, wget, and stale-pkg.
-		for _, name := range []string{"curl", "wget", "stale-pkg"} {
-			prefix := string(name[0])
-			dir := filepath.Join("/output", prefix, name)
-			require.NoError(t, fileutils.MkdirAll(testFS, dir))
-			require.NoError(t, fileutils.WriteFile(testFS,
-				filepath.Join(dir, name+".spec"),
-				[]byte("Name: "+name), fileperms.PublicFile))
-		}
-
-		// Only curl and wget are current components.
-		compSet := components.NewComponentSet()
-
-		for _, name := range []string{"curl", "wget"} {
-			mock := components_testutils.NewMockComponent(ctrl)
-			mock.EXPECT().GetName().AnyTimes().Return(name)
-			compSet.Add(mock)
-		}
-
-		err := cleanupStaleRenders(testFS, compSet, "/output")
-		require.NoError(t, err)
-
-		// curl and wget should still exist.
-		for _, name := range []string{"curl", "wget"} {
-			prefix := string(name[0])
-			exists, existsErr := fileutils.Exists(testFS, filepath.Join("/output", prefix, name))
-			require.NoError(t, existsErr)
-			assert.True(t, exists, "%s should still exist", name)
-		}
-
-		// stale-pkg should be removed.
-		exists, err := fileutils.Exists(testFS, "/output/s/stale-pkg")
-		require.NoError(t, err)
-		assert.False(t, exists, "stale-pkg should be removed")
-	})
-
-	t.Run("skips non-directory entries", func(t *testing.T) {
-		testFS := afero.NewMemMapFs()
-
-		require.NoError(t, fileutils.MkdirAll(testFS, "/output"))
-		require.NoError(t, fileutils.WriteFile(testFS, "/output/README.md", []byte("# readme"), fileperms.PublicFile))
-
-		compSet := components.NewComponentSet()
-
-		err := cleanupStaleRenders(testFS, compSet, "/output")
-		require.NoError(t, err)
-
-		// File should still exist (only directories are cleaned up).
-		exists, err := fileutils.Exists(testFS, "/output/README.md")
-		require.NoError(t, err)
-		assert.True(t, exists)
-	})
-
-	t.Run("no-op when output directory does not exist", func(t *testing.T) {
-		fs := afero.NewMemMapFs()
-
-		compSet := components.NewComponentSet()
-
-		err := cleanupStaleRenders(fs, compSet, "/nonexistent")
-		require.NoError(t, err)
 	})
 }
 
@@ -360,4 +290,285 @@ func TestFindUnexpandedMacro(t *testing.T) {
 			assert.Equal(t, tc.want, result)
 		})
 	}
+}
+
+// TestWriteAliasSymlink exercises the real (afero.OsFs) symlink path. MemMapFs
+// doesn't implement afero.Linker, so the production code paths can only be
+// covered against the OS filesystem. Each subtest gets its own t.TempDir().
+func TestWriteAliasSymlink(t *testing.T) {
+	// Helpers that perform the type assertions once (osFS is afero.OsFs which
+	// implements all three interfaces); the linter dislikes inline assertions.
+	osLstat := func(t *testing.T, fs afero.Fs, path string) os.FileInfo {
+		t.Helper()
+
+		lstater, ok := fs.(afero.Lstater)
+		require.True(t, ok, "OsFs must implement afero.Lstater")
+
+		info, _, err := lstater.LstatIfPossible(path)
+		require.NoError(t, err)
+
+		return info
+	}
+	osReadlink := func(t *testing.T, fs afero.Fs, path string) string {
+		t.Helper()
+
+		reader, ok := fs.(afero.LinkReader)
+		require.True(t, ok, "OsFs must implement afero.LinkReader")
+
+		target, err := reader.ReadlinkIfPossible(path)
+		require.NoError(t, err)
+
+		return target
+	}
+	osSymlink := func(t *testing.T, fs afero.Fs, target, linkPath string) {
+		t.Helper()
+
+		linker, ok := fs.(afero.Linker)
+		require.True(t, ok, "OsFs must implement afero.Linker")
+		require.NoError(t, linker.SymlinkIfPossible(target, linkPath))
+	}
+
+	t.Run("creates relative symlink for encoded name", func(t *testing.T) {
+		osFS := afero.NewOsFs()
+		root := t.TempDir()
+		letterDir := filepath.Join(root, "l")
+		realDir := filepath.Join(letterDir, "libxml++")
+		require.NoError(t, fileutils.MkdirAll(osFS, realDir))
+
+		err := writeAliasSymlink(osFS, realDir, "libxml++")
+		require.NoError(t, err)
+
+		aliasPath := filepath.Join(letterDir, "libxml%2B%2B")
+
+		linkInfo := osLstat(t, osFS, aliasPath)
+		assert.NotZero(t, linkInfo.Mode()&os.ModeSymlink, "alias should be a symlink")
+
+		// Relative target — must be just the basename, not absolute.
+		assert.Equal(t, "libxml++", osReadlink(t, osFS, aliasPath))
+	})
+
+	t.Run("no-op for plain ASCII name", func(t *testing.T) {
+		osFS := afero.NewOsFs()
+		root := t.TempDir()
+		letterDir := filepath.Join(root, "v")
+		realDir := filepath.Join(letterDir, "vim")
+		require.NoError(t, fileutils.MkdirAll(osFS, realDir))
+
+		err := writeAliasSymlink(osFS, realDir, "vim")
+		require.NoError(t, err)
+
+		entries, err := fileutils.ReadDir(osFS, letterDir)
+		require.NoError(t, err)
+		assert.Len(t, entries, 1, "no alias should be created for plain ASCII")
+	})
+
+	t.Run("replaces stale alias symlink", func(t *testing.T) {
+		osFS := afero.NewOsFs()
+		root := t.TempDir()
+		letterDir := filepath.Join(root, "g")
+		realDir := filepath.Join(letterDir, "gtk+")
+		require.NoError(t, fileutils.MkdirAll(osFS, realDir))
+
+		// Pre-existing stale symlink pointing somewhere wrong.
+		aliasPath := filepath.Join(letterDir, "gtk%2B")
+		osSymlink(t, osFS, "nonexistent-target", aliasPath)
+
+		err := writeAliasSymlink(osFS, realDir, "gtk+")
+		require.NoError(t, err)
+
+		assert.Equal(t, "gtk+", osReadlink(t, osFS, aliasPath), "stale symlink should be replaced")
+	})
+
+	t.Run("refuses to overwrite a non-symlink at alias path", func(t *testing.T) {
+		osFS := afero.NewOsFs()
+		root := t.TempDir()
+		letterDir := filepath.Join(root, "g")
+		realDir := filepath.Join(letterDir, "gtk+")
+		require.NoError(t, fileutils.MkdirAll(osFS, realDir))
+
+		// Hypothetical collision: a real component named 'gtk%2B' already exists
+		// at the alias path. RPM names don't use '%' in practice, but the guard
+		// must protect against it.
+		collisionDir := filepath.Join(letterDir, "gtk%2B")
+		require.NoError(t, fileutils.MkdirAll(osFS, collisionDir))
+
+		err := writeAliasSymlink(osFS, realDir, "gtk+")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "non-symlink")
+
+		// Collision dir must still exist — the guard MUST NOT have destroyed it.
+		exists, existsErr := fileutils.DirExists(osFS, collisionDir)
+		require.NoError(t, existsErr)
+		assert.True(t, exists, "non-symlink at alias path must be preserved")
+	})
+
+	t.Run("no-op on filesystem without symlink support", func(t *testing.T) {
+		// MemMapFs does NOT implement afero.Linker — function should silently no-op.
+		memFS := afero.NewMemMapFs()
+		require.NoError(t, fileutils.MkdirAll(memFS, "/SPECS/l/libxml++"))
+
+		err := writeAliasSymlink(memFS, "/SPECS/l/libxml++", "libxml++")
+		assert.NoError(t, err, "must not fail when FS doesn't support symlinks")
+	})
+}
+
+func TestWipeLetterPrefixSubdirs(t *testing.T) {
+	t.Parallel()
+
+	t.Run("missing directory is a no-op", func(t *testing.T) {
+		t.Parallel()
+
+		fs := afero.NewMemMapFs()
+		assert.NoError(t, wipeLetterPrefixSubdirs(fs, "/output"))
+	})
+
+	t.Run("empty directory is a no-op", func(t *testing.T) {
+		t.Parallel()
+
+		fs := afero.NewMemMapFs()
+		require.NoError(t, fileutils.MkdirAll(fs, "/output"))
+
+		assert.NoError(t, wipeLetterPrefixSubdirs(fs, "/output"))
+	})
+
+	t.Run("removes single-character subdirectories", func(t *testing.T) {
+		t.Parallel()
+
+		testFS := afero.NewMemMapFs()
+		for _, letter := range []string{"a", "c", "l"} {
+			require.NoError(t, fileutils.MkdirAll(testFS, filepath.Join("/output", letter, "pkg")))
+		}
+
+		require.NoError(t, wipeLetterPrefixSubdirs(testFS, "/output"))
+
+		entries, err := fileutils.ReadDir(testFS, "/output")
+		require.NoError(t, err)
+		assert.Empty(t, entries, "all letter-prefix subdirectories should be removed")
+	})
+
+	t.Run("preserves top-level files", func(t *testing.T) {
+		t.Parallel()
+
+		testFS := afero.NewMemMapFs()
+		require.NoError(t, fileutils.MkdirAll(testFS, "/output/l/libxml++"))
+		require.NoError(t, fileutils.WriteFile(testFS, "/output/README.md", []byte("keep me"), fileperms.PublicFile))
+
+		require.NoError(t, wipeLetterPrefixSubdirs(testFS, "/output"))
+
+		// File survives.
+		exists, err := fileutils.Exists(testFS, "/output/README.md")
+		require.NoError(t, err)
+		assert.True(t, exists, "top-level file must be preserved")
+
+		// Letter-prefix subdir wiped.
+		exists, err = fileutils.DirExists(testFS, "/output/l")
+		require.NoError(t, err)
+		assert.False(t, exists, "letter-prefix subdirectory must be removed")
+	})
+
+	t.Run("preserves multi-character subdirectories", func(t *testing.T) {
+		t.Parallel()
+
+		// Hypothetical typo: '-o /tmp' instead of '-o /tmp/specs'. Real-world
+		// directories at /tmp have multi-character names (.X11-unix, Documents,
+		// systemd-private-*) — the single-character filter leaves them alone.
+		testFS := afero.NewMemMapFs()
+		require.NoError(t, fileutils.MkdirAll(testFS, "/tmp/.X11-unix"))
+		require.NoError(t, fileutils.MkdirAll(testFS, "/tmp/Documents"))
+		require.NoError(t, fileutils.MkdirAll(testFS, "/tmp/systemd-private-abc"))
+
+		require.NoError(t, wipeLetterPrefixSubdirs(testFS, "/tmp"))
+
+		for _, name := range []string{".X11-unix", "Documents", "systemd-private-abc"} {
+			exists, err := fileutils.DirExists(testFS, filepath.Join("/tmp", name))
+			require.NoError(t, err)
+			assert.True(t, exists, "%s must be preserved (multi-character name)", name)
+		}
+	})
+}
+
+func TestWriteFailureMarkers(t *testing.T) {
+	t.Parallel()
+
+	t.Run("writes markers for error results", func(t *testing.T) {
+		t.Parallel()
+
+		testFS := afero.NewMemMapFs()
+		results := []*RenderResult{
+			{Component: "broken-pkg", OutputDir: "/output/b/broken-pkg", Status: renderStatusError},
+			{Component: "ok-pkg", OutputDir: "/output/o/ok-pkg", Status: renderStatusOK},
+			{Component: "cancelled-pkg", OutputDir: "/output/c/cancelled-pkg", Status: renderStatusCancelled},
+			nil, // gap from a still-pending phase-3 slot.
+		}
+
+		writeFailureMarkers(testFS, results, false)
+
+		// Error result → marker present.
+		exists, err := fileutils.Exists(testFS, "/output/b/broken-pkg/"+renderErrorMarkerFile)
+		require.NoError(t, err)
+		assert.True(t, exists, "error result should have a marker")
+
+		// Non-error results → no marker.
+		nonErrorPaths := []string{
+			"/output/o/ok-pkg/" + renderErrorMarkerFile,
+			"/output/c/cancelled-pkg/" + renderErrorMarkerFile,
+		}
+		for _, path := range nonErrorPaths {
+			exists, err := fileutils.Exists(testFS, path)
+			require.NoError(t, err)
+			assert.False(t, exists, "non-error result must not have a marker (%s)", path)
+		}
+	})
+
+	t.Run("clears stale output before marker when allowOverwrite", func(t *testing.T) {
+		t.Parallel()
+
+		// Pre-existing successful render content that should be wiped before
+		// the failure marker is dropped.
+		testFS := afero.NewMemMapFs()
+		require.NoError(t, fileutils.MkdirAll(testFS, "/output/b/broken-pkg"))
+		require.NoError(t, fileutils.WriteFile(testFS,
+			"/output/b/broken-pkg/broken-pkg.spec",
+			[]byte("Name: broken-pkg"), fileperms.PublicFile))
+
+		results := []*RenderResult{
+			{Component: "broken-pkg", OutputDir: "/output/b/broken-pkg", Status: renderStatusError},
+		}
+
+		writeFailureMarkers(testFS, results, true)
+
+		// Stale spec gone.
+		exists, err := fileutils.Exists(testFS, "/output/b/broken-pkg/broken-pkg.spec")
+		require.NoError(t, err)
+		assert.False(t, exists, "stale render output should be cleared before marker")
+
+		// Marker present.
+		exists, err = fileutils.Exists(testFS, "/output/b/broken-pkg/"+renderErrorMarkerFile)
+		require.NoError(t, err)
+		assert.True(t, exists)
+	})
+
+	t.Run("preserves stale output when allowOverwrite is false", func(t *testing.T) {
+		t.Parallel()
+
+		// Without --force, a previous successful render's content stays in
+		// place — the marker just appears alongside it. (Realistically this
+		// scenario can't happen with the current call sites, but the helper
+		// must respect its allowOverwrite contract.)
+		testFS := afero.NewMemMapFs()
+		require.NoError(t, fileutils.MkdirAll(testFS, "/output/b/broken-pkg"))
+		require.NoError(t, fileutils.WriteFile(testFS,
+			"/output/b/broken-pkg/broken-pkg.spec",
+			[]byte("Name: broken-pkg"), fileperms.PublicFile))
+
+		results := []*RenderResult{
+			{Component: "broken-pkg", OutputDir: "/output/b/broken-pkg", Status: renderStatusError},
+		}
+
+		writeFailureMarkers(testFS, results, false)
+
+		exists, err := fileutils.Exists(testFS, "/output/b/broken-pkg/broken-pkg.spec")
+		require.NoError(t, err)
+		assert.True(t, exists, "spec should be preserved when overwrite is not allowed")
+	})
 }
