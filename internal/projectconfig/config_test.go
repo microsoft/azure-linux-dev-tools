@@ -103,9 +103,9 @@ output-dir = "/from/user/out"
 	assert.Equal(t, filepath.Join(testProjectDir, "from-project/logs"), config.Project.LogDir)
 }
 
-// TestLoadProjectConfig_UserConfigOverridesExtraConfigFile verifies that the user config
-// is applied AFTER any --config-file extras.
-func TestLoadProjectConfig_UserConfigOverridesExtraConfigFile(t *testing.T) {
+// TestLoadProjectConfig_ExtraConfigFileOverridesUserConfig verifies that --config-file
+// extras (invocation-specific) take precedence over the user-level config (user-specific).
+func TestLoadProjectConfig_ExtraConfigFileOverridesUserConfig(t *testing.T) {
 	setXDGConfigHome(t)
 
 	ctx := testctx.NewCtx()
@@ -137,7 +137,7 @@ description = "`+testUserDesc+`"
 	)
 	require.NoError(t, err)
 	require.NotNil(t, config)
-	assert.Equal(t, testUserDesc, config.Project.Description)
+	assert.Equal(t, "from extra", config.Project.Description)
 }
 
 // TestLoadProjectConfig_UserConfigIncludesAreResolved verifies that the user-level config

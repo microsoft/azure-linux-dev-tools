@@ -53,14 +53,12 @@ func LoadProjectConfig(
 	// Load the project config file next.
 	configFilePaths = append(configFilePaths, projectFilePath)
 
-	// Append any extra config files specified by the user (e.g., via --config-file flags).
-	// These are loaded last, so they can override/merge with settings from the project config.
-	configFilePaths = append(configFilePaths, extraConfigFilePaths...)
-
-	// Finally, look for a user-level config file under the XDG config home (e.g.,
-	// `~/.config/azldev/config.toml`). When present, it is loaded after every other config
-	// source so that user-specific overrides take precedence over both project config and
-	// any explicitly requested extra config files.
+	// Next, look for a user-level config file under the XDG config home (e.g.,
+	// `~/.config/azldev/config.toml`). When present, it is loaded after the project config
+	// so that user-specific overrides take precedence over project config -- but before any
+	// invocation-specific extras supplied via the command line, which retain the highest
+	// priority. This follows the typical convention used by other tools:
+	//   project (working dir) < user (home dir) < invocation (command line / env)
 	userConfigFilePath, err := findUserConfigFileIfExists(fs)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to locate user config file:\n%w", err)
@@ -71,6 +69,11 @@ func LoadProjectConfig(
 
 		configFilePaths = append(configFilePaths, userConfigFilePath)
 	}
+
+	// Finally, append any extra config files specified by the user on the command line
+	// (e.g., via --config-file flags). These are loaded last so that invocation-specific
+	// settings can override both the project config and the user-level config.
+	configFilePaths = append(configFilePaths, extraConfigFilePaths...)
 
 	// Actually load and process the config file (and any linked config files it references).
 	//
