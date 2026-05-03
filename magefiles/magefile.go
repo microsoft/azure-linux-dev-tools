@@ -20,7 +20,7 @@ import (
 	//mage:import
 	_ "github.com/microsoft/azure-linux-dev-tools/magefiles/completions"
 	//mage:import
-	_ "github.com/microsoft/azure-linux-dev-tools/magefiles/magesrc"
+	"github.com/microsoft/azure-linux-dev-tools/magefiles/magesrc"
 )
 
 func init() {
@@ -42,6 +42,13 @@ func init() {
 			os.Setenv(mageutil.MageColorEnableEnvVar, "true")
 		}
 	}
+}
+
+// Generate builds the azldev binary and regenerates all generated files (CLI docs and JSON schema).
+func Generate() error {
+	mg.SerialDeps(magebuild.Build)
+
+	return magesrc.GenerateSchema()
 }
 
 // All runs the tests, builds the code, and checks for any issues.

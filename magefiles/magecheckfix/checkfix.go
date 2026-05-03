@@ -36,7 +36,7 @@ var (
 // Check one of: [all, mod, lint, static, licenses].
 // BASH-COMPLETION: This is scanned by the bash completion script, keep it in sync with the script.
 func Check(target string) error {
-	mg.SerialDeps(magesrc.Generate)
+	mg.SerialDeps(magesrc.GenerateCode)
 
 	mageutil.MagePrintln(mageutil.MsgStart, "Checking...")
 
@@ -64,7 +64,7 @@ func Check(target string) error {
 // Fix one of: [all, mod, lint].
 // BASH-COMPLETION: This is scanned by the bash completion script, keep it in sync with the script.
 func Fix(target string) error {
-	mg.SerialDeps(magesrc.Generate)
+	mg.SerialDeps(magesrc.GenerateCode)
 
 	mageutil.MagePrintln(mageutil.MsgStart, "Fixing...")
 
