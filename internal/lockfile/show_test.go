@@ -148,3 +148,127 @@ func TestShowAtCommit(t *testing.T) {
 		assert.Contains(t, err.Error(), "failed to resolve commit")
 	})
 }
+
+func TestReadAllAtCommit(t *testing.T) {
+	const lockDir = "locks"
+
+	t.Run("reads all locks", func(t *testing.T) {
+		testFS := memfs.New()
+		repo, err := gogit.Init(memory.NewStorage(), testFS)
+		require.NoError(t, err)
+
+		commitFile(t, repo, testFS, "locks/curl.lock", validLockTOML, "add curl lock")
+		commitHash := commitFile(t, repo, testFS,
+			"locks/bash.lock",
+			"version = 1\nimport-commit = \"bash111\"\nupstream-commit = \"bash222\"\ninput-fingerprint = \"bashfp\"\n",
+			"add bash lock",
+		)
+
+		locks, readErr := lockfile.ReadAllAtCommit(repo, commitHash, lockDir)
+		require.NoError(t, readErr)
+		assert.Len(t, locks, 2)
+		assert.Equal(t, "fff000", locks["curl"].InputFingerprint)
+		assert.Equal(t, "bashfp", locks["bash"].InputFingerprint)
+	})
+
+	t.Run("empty when no lock dir", func(t *testing.T) {
+		testFS := memfs.New()
+		repo, err := gogit.Init(memory.NewStorage(), testFS)
+		require.NoError(t, err)
+
+		commitHash := commitFile(t, repo, testFS, "other/file.txt", "data", "init")
+
+		locks, readErr := lockfile.ReadAllAtCommit(repo, commitHash, lockDir)
+		require.NoError(t, readErr)
+		assert.Empty(t, locks)
+	})
+
+	t.Run("skips non-lock files", func(t *testing.T) {
+		testFS := memfs.New()
+		repo, err := gogit.Init(memory.NewStorage(), testFS)
+		require.NoError(t, err)
+
+		commitFile(t, repo, testFS, "locks/curl.lock", validLockTOML, "add lock")
+		commitHash := commitFile(t, repo, testFS, "locks/README.md", "# Locks", "add readme")
+
+		locks, readErr := lockfile.ReadAllAtCommit(repo, commitHash, lockDir)
+		require.NoError(t, readErr)
+		assert.Len(t, locks, 1)
+		assert.Contains(t, locks, "curl")
+	})
+
+	t.Run("skips dot-prefixed lock files", func(t *testing.T) {
+		testFS := memfs.New()
+		repo, err := gogit.Init(memory.NewStorage(), testFS)
+		require.NoError(t, err)
+
+		commitFile(t, repo, testFS, "locks/curl.lock", validLockTOML, "add lock")
+		commitHash := commitFile(t, repo, testFS, "locks/.hidden.lock", validLockTOML, "add hidden")
+
+		locks, readErr := lockfile.ReadAllAtCommit(repo, commitHash, lockDir)
+		require.NoError(t, readErr)
+		assert.Len(t, locks, 1)
+		assert.Contains(t, locks, "curl")
+	})
+
+	t.Run("error on unparseable lock", func(t *testing.T) {
+		testFS := memfs.New()
+		repo, err := gogit.Init(memory.NewStorage(), testFS)
+		require.NoError(t, err)
+
+		commitHash := commitFile(t, repo, testFS, "locks/bad.lock", "not valid {{{", "add bad")
+
+		_, readErr := lockfile.ReadAllAtCommit(repo, commitHash, lockDir)
+		require.Error(t, readErr)
+		assert.Contains(t, readErr.Error(), "failed to parse")
+	})
+
+	t.Run("reads root-level locks with dot dir", func(t *testing.T) {
+		testFS := memfs.New()
+		repo, err := gogit.Init(memory.NewStorage(), testFS)
+		require.NoError(t, err)
+
+		commitHash := commitFile(t, repo, testFS, "curl.lock", validLockTOML, "add root lock")
+
+		locks, readErr := lockfile.ReadAllAtCommit(repo, commitHash, ".")
+		require.NoError(t, readErr)
+		assert.Len(t, locks, 1)
+		assert.Equal(t, "fff000", locks["curl"].InputFingerprint)
+	})
+
+	t.Run("normalizes ./locks to locks", func(t *testing.T) {
+		testFS := memfs.New()
+		repo, err := gogit.Init(memory.NewStorage(), testFS)
+		require.NoError(t, err)
+
+		commitHash := commitFile(t, repo, testFS, "locks/curl.lock", validLockTOML, "add lock")
+
+		locks, readErr := lockfile.ReadAllAtCommit(repo, commitHash, "./locks")
+		require.NoError(t, readErr)
+		assert.Len(t, locks, 1)
+	})
+
+	t.Run("rejects absolute path", func(t *testing.T) {
+		testFS := memfs.New()
+		repo, err := gogit.Init(memory.NewStorage(), testFS)
+		require.NoError(t, err)
+
+		commitFile(t, repo, testFS, "locks/curl.lock", validLockTOML, "add lock")
+
+		_, readErr := lockfile.ReadAllAtCommit(repo, "dummy", "/abs/locks")
+		require.Error(t, readErr)
+		assert.Contains(t, readErr.Error(), "repo-relative")
+	})
+
+	t.Run("rejects path traversal", func(t *testing.T) {
+		testFS := memfs.New()
+		repo, err := gogit.Init(memory.NewStorage(), testFS)
+		require.NoError(t, err)
+
+		commitFile(t, repo, testFS, "locks/curl.lock", validLockTOML, "add lock")
+
+		_, readErr := lockfile.ReadAllAtCommit(repo, "dummy", "../escape")
+		require.Error(t, readErr)
+		assert.Contains(t, readErr.Error(), "escapes repository root")
+	})
+}
