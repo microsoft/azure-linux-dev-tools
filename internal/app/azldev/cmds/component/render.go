@@ -61,13 +61,12 @@ Unlike prepare-sources, render skips downloading source tarballs from the
 lookaside cache — only spec files, patches, scripts, and other git-tracked
 sidecar files are included. Multiple components can be rendered at once.
 
-When rendering all components (-a), the --clean-stale flag removes the
-letter-prefix subdirectories of the output directory before rendering.
-Only single-character subdirectories (e.g., 'a/', 'c/', 'l/' — the layout
-azldev itself produces) are removed; any other files or directories at
-the output root are preserved. An interrupted run with --clean-stale
-leaves the output directory partially populated; recover with
-'git checkout'. This flag is only valid with -a.`,
+When rendering all components (-a), the --clean-stale flag removes all
+contents of the output directory before rendering, leaving the directory
+itself in place. When using a custom output directory (--output-dir),
+--force is required alongside --clean-stale as a safety measure. An
+interrupted run with --clean-stale leaves the output directory partially
+populated; recover with 'git checkout'. This flag is only valid with -a.`,
 		Example: `  # Render all components (output dir from config)
   azldev component render -a
 
@@ -104,7 +103,7 @@ leaves the output directory partially populated; recover with
 		"allow overwriting existing rendered component directories")
 
 	cmd.Flags().BoolVar(&options.CleanStale, "clean-stale", false,
-		"remove letter-prefix subdirectories of the output directory before rendering (only with -a)")
+		"remove contents of the output directory before rendering (only with -a; requires -f with -o)")
 
 	return cmd
 }
@@ -134,8 +133,14 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 		return nil, err
 	}
 
-	if options.CleanStale && !options.ComponentFilter.IncludeAllComponents {
-		return nil, errors.New("--clean-stale requires -a (render all components)")
+	if options.CleanStale {
+		if !options.ComponentFilter.IncludeAllComponents {
+			return nil, errors.New("--clean-stale requires -a (render all components)")
+		}
+
+		if options.OutputDirExplicit && !options.Force {
+			return nil, errors.New("--clean-stale with --output-dir requires --force (-f)")
+		}
 	}
 
 	resolver := components.NewResolver(env)
@@ -188,20 +193,13 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 	// ── Phase 2: Batch mock processing ──
 	mockResultMap := batchMockProcess(env, mockProcessor, stagingDir, prepared)
 
-	// Wipe stale letter-prefix subdirectories of the output dir between mock
-	// processing (slow: clone + chroot) and the per-component copy in phase 3.
-	// This keeps Ctrl-C-during-mock from leaving the user with no output and
-	// nothing fresh either; if they cancel before this point the existing
-	// output is untouched. Once we reach phase 3 we're moments away from
-	// writing replacement content anyway.
-	//
-	// We only remove single-character subdirectories — the layout azldev itself
-	// produces (see RenderedSpecDir). Files and other directories at the output
-	// root are preserved, which keeps a typo'd '-o /tmp' from nuking unrelated
-	// content. This also drops sibling alias symlinks created to bridge the
-	// percent-encoded path mismatch with our build pipeline; see writeAliasSymlink.
+	// Wipe contents of the output dir between mock processing (slow: clone +
+	// chroot) and the per-component copy in phase 3. This keeps Ctrl-C-during-mock
+	// from leaving the user with no output and nothing fresh either; if they cancel
+	// before this point the existing output is untouched. Once we reach phase 3
+	// we're moments away from writing replacement content anyway.
 	if options.CleanStale {
-		if wipeErr := wipeLetterPrefixSubdirs(env.FS(), options.OutputDir); wipeErr != nil {
+		if wipeErr := wipeOutputDirContents(env.FS(), options.OutputDir); wipeErr != nil {
 			return nil, fmt.Errorf("clearing output directory %#q:\n%w", options.OutputDir, wipeErr)
 		}
 	}
@@ -939,11 +937,10 @@ func validateOutputDir(outputDir string) error {
 	return nil
 }
 
-// wipeLetterPrefixSubdirs removes every direct child of outputDir whose name
-// is a single character — matching the canonical layout produced by
-// RenderedSpecDir (e.g., 'a/', 'c/', 'l/'). Anything else (top-level files,
-// multi-character directories) is left alone. Missing outputDir is a no-op.
-func wipeLetterPrefixSubdirs(fileSystem opctx.FS, outputDir string) error {
+// wipeOutputDirContents removes every direct child of outputDir (files and
+// directories alike) but leaves the directory itself in place.
+// Missing outputDir is a no-op.
+func wipeOutputDirContents(fileSystem opctx.FS, outputDir string) error {
 	exists, existsErr := fileutils.DirExists(fileSystem, outputDir)
 	if existsErr != nil {
 		return fmt.Errorf("checking output directory %#q:\n%w", outputDir, existsErr)
@@ -959,13 +956,9 @@ func wipeLetterPrefixSubdirs(fileSystem opctx.FS, outputDir string) error {
 	}
 
 	for _, entry := range entries {
-		if !entry.IsDir() || len(entry.Name()) != 1 {
-			continue
-		}
-
-		subPath := filepath.Join(outputDir, entry.Name())
-		if removeErr := fileSystem.RemoveAll(subPath); removeErr != nil {
-			return fmt.Errorf("removing %#q:\n%w", subPath, removeErr)
+		childPath := filepath.Join(outputDir, entry.Name())
+		if removeErr := fileSystem.RemoveAll(childPath); removeErr != nil {
+			return fmt.Errorf("removing %#q:\n%w", childPath, removeErr)
 		}
 	}
 

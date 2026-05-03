@@ -412,14 +412,14 @@ func TestWriteAliasSymlink(t *testing.T) {
 	})
 }
 
-func TestWipeLetterPrefixSubdirs(t *testing.T) {
+func TestWipeOutputDirContents(t *testing.T) {
 	t.Parallel()
 
 	t.Run("missing directory is a no-op", func(t *testing.T) {
 		t.Parallel()
 
 		fs := afero.NewMemMapFs()
-		assert.NoError(t, wipeLetterPrefixSubdirs(fs, "/output"))
+		assert.NoError(t, wipeOutputDirContents(fs, "/output"))
 	})
 
 	t.Run("empty directory is a no-op", func(t *testing.T) {
@@ -428,10 +428,10 @@ func TestWipeLetterPrefixSubdirs(t *testing.T) {
 		fs := afero.NewMemMapFs()
 		require.NoError(t, fileutils.MkdirAll(fs, "/output"))
 
-		assert.NoError(t, wipeLetterPrefixSubdirs(fs, "/output"))
+		assert.NoError(t, wipeOutputDirContents(fs, "/output"))
 	})
 
-	t.Run("removes single-character subdirectories", func(t *testing.T) {
+	t.Run("removes all children but keeps directory", func(t *testing.T) {
 		t.Parallel()
 
 		testFS := afero.NewMemMapFs()
@@ -439,51 +439,20 @@ func TestWipeLetterPrefixSubdirs(t *testing.T) {
 			require.NoError(t, fileutils.MkdirAll(testFS, filepath.Join("/output", letter, "pkg")))
 		}
 
-		require.NoError(t, wipeLetterPrefixSubdirs(testFS, "/output"))
+		require.NoError(t, fileutils.WriteFile(testFS, "/output/README.md", []byte("keep me"), fileperms.PublicFile))
+		require.NoError(t, fileutils.MkdirAll(testFS, "/output/multi-char-dir"))
 
+		require.NoError(t, wipeOutputDirContents(testFS, "/output"))
+
+		// Directory itself still exists.
+		exists, err := fileutils.DirExists(testFS, "/output")
+		require.NoError(t, err)
+		assert.True(t, exists, "output directory itself must be preserved")
+
+		// All children removed.
 		entries, err := fileutils.ReadDir(testFS, "/output")
 		require.NoError(t, err)
-		assert.Empty(t, entries, "all letter-prefix subdirectories should be removed")
-	})
-
-	t.Run("preserves top-level files", func(t *testing.T) {
-		t.Parallel()
-
-		testFS := afero.NewMemMapFs()
-		require.NoError(t, fileutils.MkdirAll(testFS, "/output/l/libxml++"))
-		require.NoError(t, fileutils.WriteFile(testFS, "/output/README.md", []byte("keep me"), fileperms.PublicFile))
-
-		require.NoError(t, wipeLetterPrefixSubdirs(testFS, "/output"))
-
-		// File survives.
-		exists, err := fileutils.Exists(testFS, "/output/README.md")
-		require.NoError(t, err)
-		assert.True(t, exists, "top-level file must be preserved")
-
-		// Letter-prefix subdir wiped.
-		exists, err = fileutils.DirExists(testFS, "/output/l")
-		require.NoError(t, err)
-		assert.False(t, exists, "letter-prefix subdirectory must be removed")
-	})
-
-	t.Run("preserves multi-character subdirectories", func(t *testing.T) {
-		t.Parallel()
-
-		// Hypothetical typo: '-o /tmp' instead of '-o /tmp/specs'. Real-world
-		// directories at /tmp have multi-character names (.X11-unix, Documents,
-		// systemd-private-*) — the single-character filter leaves them alone.
-		testFS := afero.NewMemMapFs()
-		require.NoError(t, fileutils.MkdirAll(testFS, "/tmp/.X11-unix"))
-		require.NoError(t, fileutils.MkdirAll(testFS, "/tmp/Documents"))
-		require.NoError(t, fileutils.MkdirAll(testFS, "/tmp/systemd-private-abc"))
-
-		require.NoError(t, wipeLetterPrefixSubdirs(testFS, "/tmp"))
-
-		for _, name := range []string{".X11-unix", "Documents", "systemd-private-abc"} {
-			exists, err := fileutils.DirExists(testFS, filepath.Join("/tmp", name))
-			require.NoError(t, err)
-			assert.True(t, exists, "%s must be preserved (multi-character name)", name)
-		}
+		assert.Empty(t, entries, "all contents should be removed")
 	})
 }
 

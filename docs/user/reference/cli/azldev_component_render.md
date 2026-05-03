@@ -20,13 +20,12 @@ Unlike prepare-sources, render skips downloading source tarballs from the
 lookaside cache — only spec files, patches, scripts, and other git-tracked
 sidecar files are included. Multiple components can be rendered at once.
 
-When rendering all components (-a), the --clean-stale flag removes the
-letter-prefix subdirectories of the output directory before rendering.
-Only single-character subdirectories (e.g., 'a/', 'c/', 'l/' — the layout
-azldev itself produces) are removed; any other files or directories at
-the output root are preserved. An interrupted run with --clean-stale
-leaves the output directory partially populated; recover with
-'git checkout'. This flag is only valid with -a.
+When rendering all components (-a), the --clean-stale flag removes all
+contents of the output directory before rendering, leaving the directory
+itself in place. When using a custom output directory (--output-dir),
+--force is required alongside --clean-stale as a safety measure. An
+interrupted run with --clean-stale leaves the output directory partially
+populated; recover with 'git checkout'. This flag is only valid with -a.
 
 ```
 azldev component render [flags]
@@ -52,7 +51,7 @@ azldev component render [flags]
 
 ```
   -a, --all-components                Include all components
-      --clean-stale                   remove letter-prefix subdirectories of the output directory before rendering (only with -a)
+      --clean-stale                   remove contents of the output directory before rendering (only with -a; requires -f with -o)
   -p, --component stringArray         Component name pattern
   -g, --component-group stringArray   Component group name
       --fail-on-error                 exit with error if any component fails to render (useful for CI)

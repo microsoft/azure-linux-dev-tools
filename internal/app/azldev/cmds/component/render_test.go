@@ -84,3 +84,16 @@ func TestRenderCmd_CleanStaleRequiresAll(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--clean-stale requires -a")
 }
+
+func TestRenderCmd_CleanStaleCustomOutDirRequiresForce(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	cmd := componentcmds.NewRenderCmd()
+	cmd.SetArgs([]string{"-a", "-o", "SPECS", "--clean-stale"})
+
+	err := cmd.ExecuteContext(testEnv.Env)
+
+	// --clean-stale with -o but without -f should fail.
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--clean-stale with --output-dir requires --force")
+}
