@@ -6,6 +6,7 @@ require (
 	dario.cat/mergo v1.0.2
 	github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d
 	github.com/acobaugh/osrelease v0.1.0
+	github.com/adrg/xdg v0.5.3
 	github.com/auribuo/stylishcobra v1.0.1
 	github.com/binalyze/ctxio v0.0.0-20210917063359-64c39a15e009
 	github.com/bmatcuk/doublestar/v4 v4.10.0
@@ -63,7 +64,6 @@ require (
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProtonMail/go-crypto v1.1.6 // indirect
-	github.com/adrg/xdg v0.5.3 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect

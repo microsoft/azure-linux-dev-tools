@@ -5,6 +5,7 @@ package projectconfig
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/microsoft/azure-linux-dev-tools/defaultconfigs"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
@@ -55,6 +56,21 @@ func LoadProjectConfig(
 	// Append any extra config files specified by the user (e.g., via --config-file flags).
 	// These are loaded last, so they can override/merge with settings from the project config.
 	configFilePaths = append(configFilePaths, extraConfigFilePaths...)
+
+	// Finally, look for a user-level config file under the XDG config home (e.g.,
+	// `~/.config/azldev/config.toml`). When present, it is loaded after every other config
+	// source so that user-specific overrides take precedence over both project config and
+	// any explicitly requested extra config files.
+	userConfigFilePath, err := findUserConfigFileIfExists(fs)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to locate user config file:\n%w", err)
+	}
+
+	if userConfigFilePath != "" {
+		slog.Debug("Loading user config", "filePath", userConfigFilePath)
+
+		configFilePaths = append(configFilePaths, userConfigFilePath)
+	}
 
 	// Actually load and process the config file (and any linked config files it references).
 	//

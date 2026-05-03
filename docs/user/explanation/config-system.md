@@ -8,13 +8,16 @@ For field-level reference documentation, see the [Reference](../reference/config
 
 azldev searches for its root config file (`azldev.toml`) by walking up the directory tree from the current working directory. The first `azldev.toml` found becomes the project root, and all relative paths in the configuration are resolved from that file's location.
 
+In addition to the project config, azldev also looks for an optional user-level config file at `${XDG_CONFIG_HOME:-$HOME/.config}/azldev/config.toml`. If present, it is loaded after every other config source and may override any setting (see [Load Order](#load-order)). If the file is missing, it is silently ignored.
+
 ## Load Order
 
-Configuration is loaded in three phases, in this order:
+Configuration is loaded in four phases, in this order:
 
 1. **Embedded defaults** — azldev ships with built-in default values (e.g., tool container tags). These are loaded first and provide baseline configuration.
 2. **Project config** — the `azldev.toml` file and all of its transitive includes.
 3. **Extra config files** — any additional config files passed via `--config-file` CLI flags.
+4. **User config** — an optional user-level config file at `${XDG_CONFIG_HOME:-$HOME/.config}/azldev/config.toml`. If the file does not exist, this phase is skipped silently. When present, the file (and any of its transitive `includes`) is loaded last so that user-level overrides take precedence over both the project config and any `--config-file` extras. The location follows the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/), so on Linux the default path is `~/.config/azldev/config.toml`.
 
 Later phases can override values from earlier phases according to the [merge rules](#merge-rules) described below.
 
