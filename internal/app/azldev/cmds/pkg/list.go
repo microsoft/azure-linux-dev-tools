@@ -467,8 +467,10 @@ func resolveFromRPMFile(
 //
 // Both maps are built in a single pass over the JSON entries. If the same
 // binary package name appears more than once, the first entry wins and later
-// entries are silently skipped (whether they agree with the first mapping or
-// not), keeping srpmMap and rpmCompOf aligned.
+// entries are skipped, keeping srpmMap and rpmCompOf aligned. Identical
+// duplicates are skipped silently; conflicting duplicates (same packageName
+// with a different sourcePackageName) emit a warning so operators can detect
+// and remediate bad inputs.
 func loadRPMFile(fs opctx.FS, path string) (srpmMap map[string][]string, rpmCompOf map[string]string, err error) {
 	data, readErr := fileutils.ReadFile(fs, path)
 	if readErr != nil {
@@ -504,11 +506,10 @@ func loadRPMFile(fs opctx.FS, path string) (srpmMap map[string][]string, rpmComp
 			)
 		}
 
-		if _, exists := rpmCompOf[packageName]; exists {
-			// First mapping wins. Skipping later entries (whether the source package
-			// name matches or differs) keeps [srpmMap] and [rpmCompOf] aligned: each
-			// binary RPM appears exactly once in [srpmMap] under exactly the source
-			// package recorded in [rpmCompOf].
+		if existingSource, exists := rpmCompOf[packageName]; exists {
+			// First mapping wins. Skipping later entries keeps [srpmMap] and
+			// [rpmCompOf] aligned: each binary RPM appears exactly once in
+			// [srpmMap] under exactly the source package recorded in [rpmCompOf].
 			//
 			//nolint:godox // intentional temporary workaround documented below.
 			// TODO: this is a temporary workaround tolerating
@@ -516,6 +517,16 @@ func loadRPMFile(fs opctx.FS, path string) (srpmMap map[string][]string, rpmComp
 			// sourcePackageName values. Once those duplicates are resolved at the
 			// source, restore the stricter behavior: error on conflicting
 			// sourcePackageName, only dedup identical mappings.
+			if existingSource != sourcePackageName {
+				slog.Warn(
+					"RPM source map contains conflicting source package mappings; first mapping wins",
+					"path", path,
+					"packageName", packageName,
+					"keptSourcePackageName", existingSource,
+					"skippedSourcePackageName", sourcePackageName,
+				)
+			}
+
 			continue
 		}
 
