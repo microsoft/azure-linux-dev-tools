@@ -171,17 +171,21 @@ func TestSaveComponentLocks_SkipsErrorAndSkipped(t *testing.T) {
 	assert.False(t, exists2)
 }
 
-func TestSaveComponentLocks_ErrorOnNilConfig(t *testing.T) {
+func TestSaveComponentLocks_SkipsNilConfig(t *testing.T) {
 	env := testutils.NewTestEnv(t)
 	store := newTestStore(t, env)
 
+	// nil config means the component was skipped by freshness check —
+	// saveComponentLocks should silently skip it, not error.
 	results := []UpdateResult{
-		{Component: "bad", UpstreamCommit: "abc", Changed: true, config: nil},
+		{Component: "skipped-fresh", UpstreamCommit: "abc", config: nil},
 	}
 
 	err := saveComponentLocks(env.Env, store, results)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no resolved config")
+	require.NoError(t, err)
+
+	exists, _ := store.Exists("skipped-fresh")
+	assert.False(t, exists, "nil-config component should not get a lock file")
 }
 
 func TestSaveComponentLocks_PreservesManualBump(t *testing.T) {

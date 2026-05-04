@@ -50,6 +50,7 @@ azldev component update [flags]
       --bump                          increment the manual-rebuild counter to trigger a new release
   -p, --component stringArray         Component name pattern
   -g, --component-group stringArray   Component group name
+      --force-recalculate             disable optimizations that skip work for unchanged components
   -h, --help                          help for update
       --skip-lock-validation          skip lock file consistency checks (default true)
   -s, --spec-path stringArray         Spec path
