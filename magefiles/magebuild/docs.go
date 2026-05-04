@@ -61,7 +61,7 @@ func generateSchema() error {
 	}
 
 	// Write the schema to file. Append a trailing newline to match the output of fmt.Println.
-	err = os.WriteFile(schemaPath, []byte(output+"\n"), fileperms.PrivateFile)
+	err = os.WriteFile(schemaPath, []byte(output+"\n"), fileperms.PublicFile)
 	if err != nil {
 		return mageutil.PrintAndReturnError("Failed to write schema file.", ErrBuild, err)
 	}
