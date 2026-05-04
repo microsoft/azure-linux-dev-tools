@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -41,7 +42,7 @@ func patchProjectForLocal(t *testing.T, projectDir string) {
 	require.NoError(t, err)
 
 	// Inject includes at the top (before any table headers) and default-distro
-	// under the existing [project] section by appending the key after the table.
+	// immediately after the [project] header.
 	content := string(data)
 	content = "includes = [\"distro.toml\"]\n" + content
 
@@ -325,8 +326,16 @@ func setupProjectWithGit(
 		opts = append(opts, projecttest.AddComponent(comp))
 	}
 
-	for path, content := range extraFiles {
-		opts = append(opts, projecttest.AddFile(path, content))
+	// Sort keys for deterministic option ordering.
+	extraKeys := make([]string, 0, len(extraFiles))
+	for path := range extraFiles {
+		extraKeys = append(extraKeys, path)
+	}
+
+	sort.Strings(extraKeys)
+
+	for _, path := range extraKeys {
+		opts = append(opts, projecttest.AddFile(path, extraFiles[path]))
 	}
 
 	project := projecttest.NewDynamicTestProject(opts...)

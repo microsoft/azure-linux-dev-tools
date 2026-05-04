@@ -24,7 +24,9 @@ const (
 	testSpecsDirSPECS  = "/SPECS"
 )
 
-// testRepoCommit represents the file state for a single commit.
+// testRepoCommit represents the files added or updated in a single commit.
+// Files from previous commits that are not listed here remain unchanged;
+// no deletions are modeled.
 type testRepoCommit struct {
 	files map[string][]byte
 }
