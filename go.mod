@@ -6,7 +6,6 @@ require (
 	dario.cat/mergo v1.0.2
 	github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d
 	github.com/acobaugh/osrelease v0.1.0
-	github.com/adrg/xdg v0.5.3
 	github.com/auribuo/stylishcobra v1.0.1
 	github.com/binalyze/ctxio v0.0.0-20210917063359-64c39a15e009
 	github.com/bmatcuk/doublestar/v4 v4.10.0

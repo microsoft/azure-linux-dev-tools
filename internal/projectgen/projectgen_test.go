@@ -31,6 +31,7 @@ func requireProjectHasValidDefaultConfig(t *testing.T, ctx opctx.Ctx, projectPat
 	_, config, err := projectconfig.LoadProjectConfig(
 		ctx,
 		ctx.FS(),
+		ctx.OSEnv(),
 		projectPath,
 		true, /*disable default config?*/
 		t.TempDir(),
@@ -66,7 +67,7 @@ default-distro = { name = "other", version = "42.42" }
 
 	// Load the project.
 	foundProjectDir, config, err := projectconfig.LoadProjectConfig(
-		ctx, ctx.FS(), testProjectPath, false /*disable default config?*/, t.TempDir(), nil, false,
+		ctx, ctx.FS(), ctx.OSEnv(), testProjectPath, false /*disable default config?*/, t.TempDir(), nil, false,
 	)
 
 	require.NoError(t, err)

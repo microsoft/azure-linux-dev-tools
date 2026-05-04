@@ -20,6 +20,7 @@ import (
 func LoadProjectConfig(
 	dryRunnable opctx.DryRunnable,
 	fs opctx.FS,
+	osEnv opctx.OSEnv,
 	referenceDir string,
 	disableDefaultConfig bool,
 	tempDirPath string,
@@ -59,7 +60,7 @@ func LoadProjectConfig(
 	// invocation-specific extras supplied via the command line, which retain the highest
 	// priority. This follows the typical convention used by other tools:
 	//   project (working dir) < user (home dir) < invocation (command line / env)
-	userConfigFilePath, err := findUserConfigFileIfExists(fs)
+	userConfigFilePath, err := findUserConfigFileIfExists(fs, osEnv)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to locate user config file:\n%w", err)
 	}

@@ -532,6 +532,7 @@ func (a *App) findAndLoadConfig(dryRunnable opctx.DryRunnable, tempDirPath strin
 	projectDir, config, err = projectconfig.LoadProjectConfig(
 		dryRunnable,
 		a.fsFactory.FS(),
+		a.osEnvFactory.OSEnv(),
 		referenceDir,
 		a.disableDefaultConfig,
 		tempDirPath,

@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/adrg/xdg"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
@@ -23,19 +22,14 @@ const (
 	testUserDesc    = "from user"
 )
 
-// setXDGConfigHome points adrg/xdg at a deterministic location for the duration of the
-// test. Callers must NOT use t.Parallel() since adrg/xdg uses package-level state.
-func setXDGConfigHome(t *testing.T) {
-	t.Helper()
+// newTestCtxWithXDGConfigHome returns a [*testctx.TestCtx] whose [opctx.OSEnv] reports
+// `XDG_CONFIG_HOME` as [testXDGHome], so that user-config discovery is driven by the
+// injected environment abstraction rather than the host process environment.
+func newTestCtxWithXDGConfigHome() *testctx.TestCtx {
+	osEnv := testctx.NewTestOSEnv()
+	osEnv.SetEnv("XDG_CONFIG_HOME", testXDGHome)
 
-	t.Setenv("XDG_CONFIG_HOME", testXDGHome)
-	xdg.Reload()
-
-	t.Cleanup(func() {
-		// Reload one more time after the test-scoped env var has been unset so the
-		// global state is restored from the real environment.
-		xdg.Reload()
-	})
+	return testctx.NewCtx(testctx.WithOSEnv(osEnv))
 }
 
 func writeProjectConfig(t *testing.T, ctx *testctx.TestCtx, contents string) {
@@ -50,16 +44,14 @@ func writeProjectConfig(t *testing.T, ctx *testctx.TestCtx, contents string) {
 // TestLoadProjectConfig_NoUserConfig verifies that loading succeeds (and produces a
 // project-derived value) when no user-level config file is present.
 func TestLoadProjectConfig_NoUserConfig(t *testing.T) {
-	setXDGConfigHome(t)
-
-	ctx := testctx.NewCtx()
+	ctx := newTestCtxWithXDGConfigHome()
 	writeProjectConfig(t, ctx, `
 [project]
 description = "`+testProjectDesc+`"
 `)
 
 	_, config, err := projectconfig.LoadProjectConfig(
-		ctx, ctx.FS(), testProjectDir, true /*disableDefaultConfig*/, t.TempDir(), nil, false,
+		ctx, ctx.FS(), ctx.OSEnv(), testProjectDir, true /*disableDefaultConfig*/, t.TempDir(), nil, false,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, config)
@@ -69,9 +61,7 @@ description = "`+testProjectDesc+`"
 // TestLoadProjectConfig_UserConfigOverridesProject verifies that values defined in the
 // user-level config file override those defined by the project config file.
 func TestLoadProjectConfig_UserConfigOverridesProject(t *testing.T) {
-	setXDGConfigHome(t)
-
-	ctx := testctx.NewCtx()
+	ctx := newTestCtxWithXDGConfigHome()
 	writeProjectConfig(t, ctx, `
 [project]
 description = "`+testProjectDesc+`"
@@ -79,7 +69,7 @@ log-dir = "from-project/logs"
 `)
 
 	// Write a user-level config under the XDG config home.
-	userConfigPath := projectconfig.UserConfigFilePath()
+	userConfigPath := projectconfig.UserConfigFilePath(ctx.OSEnv())
 	require.Equal(t, filepath.Join(testXDGHome, "azldev", "config.toml"), userConfigPath)
 	require.NoError(t, fileutils.MkdirAll(ctx.FS(), filepath.Dir(userConfigPath)))
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), userConfigPath, []byte(`
@@ -89,7 +79,7 @@ output-dir = "/from/user/out"
 `), fileperms.PublicFile))
 
 	_, config, err := projectconfig.LoadProjectConfig(
-		ctx, ctx.FS(), testProjectDir, true /*disableDefaultConfig*/, t.TempDir(), nil, false,
+		ctx, ctx.FS(), ctx.OSEnv(), testProjectDir, true /*disableDefaultConfig*/, t.TempDir(), nil, false,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, config)
@@ -106,9 +96,7 @@ output-dir = "/from/user/out"
 // TestLoadProjectConfig_ExtraConfigFileOverridesUserConfig verifies that --config-file
 // extras (invocation-specific) take precedence over the user-level config (user-specific).
 func TestLoadProjectConfig_ExtraConfigFileOverridesUserConfig(t *testing.T) {
-	setXDGConfigHome(t)
-
-	ctx := testctx.NewCtx()
+	ctx := newTestCtxWithXDGConfigHome()
 	writeProjectConfig(t, ctx, `
 [project]
 description = "`+testProjectDesc+`"
@@ -124,7 +112,7 @@ description = "from extra"
 `), fileperms.PublicFile))
 
 	// User config.
-	userConfigPath := projectconfig.UserConfigFilePath()
+	userConfigPath := projectconfig.UserConfigFilePath(ctx.OSEnv())
 	require.NoError(t, fileutils.MkdirAll(ctx.FS(), filepath.Dir(userConfigPath)))
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), userConfigPath, []byte(`
 [project]
@@ -132,7 +120,7 @@ description = "`+testUserDesc+`"
 `), fileperms.PublicFile))
 
 	_, config, err := projectconfig.LoadProjectConfig(
-		ctx, ctx.FS(), testProjectDir, true /*disableDefaultConfig*/, t.TempDir(),
+		ctx, ctx.FS(), ctx.OSEnv(), testProjectDir, true /*disableDefaultConfig*/, t.TempDir(),
 		[]string{extraConfigPath}, false,
 	)
 	require.NoError(t, err)
@@ -143,16 +131,14 @@ description = "`+testUserDesc+`"
 // TestLoadProjectConfig_UserConfigIncludesAreResolved verifies that the user-level config
 // file participates fully in include resolution.
 func TestLoadProjectConfig_UserConfigIncludesAreResolved(t *testing.T) {
-	setXDGConfigHome(t)
-
-	ctx := testctx.NewCtx()
+	ctx := newTestCtxWithXDGConfigHome()
 	writeProjectConfig(t, ctx, `
 [project]
 description = "`+testProjectDesc+`"
 `)
 
 	// User config that pulls in another file via includes.
-	userConfigPath := projectconfig.UserConfigFilePath()
+	userConfigPath := projectconfig.UserConfigFilePath(ctx.OSEnv())
 	userConfigDir := filepath.Dir(userConfigPath)
 	require.NoError(t, fileutils.MkdirAll(ctx.FS(), userConfigDir))
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), userConfigPath, []byte(`
@@ -165,7 +151,7 @@ description = "`+testUserDesc+`"
 `), fileperms.PublicFile))
 
 	_, config, err := projectconfig.LoadProjectConfig(
-		ctx, ctx.FS(), testProjectDir, true /*disableDefaultConfig*/, t.TempDir(), nil, false,
+		ctx, ctx.FS(), ctx.OSEnv(), testProjectDir, true /*disableDefaultConfig*/, t.TempDir(), nil, false,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, config)
