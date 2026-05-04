@@ -20,7 +20,7 @@ import (
 	//mage:import
 	_ "github.com/microsoft/azure-linux-dev-tools/magefiles/completions"
 	//mage:import
-	"github.com/microsoft/azure-linux-dev-tools/magefiles/magesrc"
+	_ "github.com/microsoft/azure-linux-dev-tools/magefiles/magesrc"
 )
 
 func init() {
@@ -44,15 +44,8 @@ func init() {
 	}
 }
 
-// Generate builds the azldev binary and regenerates all generated files (CLI docs and JSON schema).
-func Generate() error {
-	mg.SerialDeps(magesrc.GenerateCode, magebuild.Build)
-
-	return magesrc.GenerateSchema()
-}
-
 // All runs the tests, builds the code, and checks for any issues.
 func All() error {
-	mg.SerialDeps(magebuild.Build, magebuild.Unit, mg.F(magecheckfix.Check, magecheckfix.TargetAll), magescenario.Scenario)
+	mg.SerialDeps(magebuild.Build, magebuild.Unit, mg.F(magecheckfix.Check, magecheckfix.TargetAll), magescenario.Scenario, magebuild.Docs)
 	return nil
 }

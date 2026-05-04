@@ -55,7 +55,7 @@ func getBuildLdflags() (string, error) {
 
 // Build all the go code.
 func Build() error {
-	mg.SerialDeps(checkForBuildErrors, mageutil.CreateBinDir, magesrc.GenerateCode)
+	mg.SerialDeps(checkForBuildErrors, mageutil.CreateBinDir, magesrc.Generate)
 
 	mageutil.MagePrintln(mageutil.MsgStart, "Building...")
 
@@ -70,12 +70,6 @@ func Build() error {
 	}
 
 	mageutil.MagePrintf(mageutil.MsgSuccess, "Placed tools in %s\n", mageutil.BinDir())
-
-	// Generate CLI reference docs from the built binary.
-	err = magesrc.GenerateDocs()
-	if err != nil {
-		return fmt.Errorf("generating CLI reference docs:\n%w", err)
-	}
 
 	return nil
 }
@@ -137,7 +131,7 @@ func Clean() error {
 func Unit() error {
 	mageutil.MagePrintln(mageutil.MsgStart, "Testing...")
 
-	mg.SerialDeps(magesrc.GenerateCode)
+	mg.SerialDeps(magesrc.Generate)
 
 	output, err := sh.Output(mg.GoCmd(), "test", "./...")
 	if err != nil {
@@ -163,7 +157,7 @@ func displayTestFailures(testOutput string) {
 
 // checkForBuildErrors checks for build and syntax errors in the source code.
 func checkForBuildErrors() error {
-	mg.SerialDeps(magesrc.GenerateCode)
+	mg.SerialDeps(magesrc.Generate)
 
 	mageutil.MagePrintln(mageutil.MsgStart, "Checking for build errors...")
 
@@ -194,7 +188,7 @@ func selectTestPackages() ([]string, error) {
 
 // testData Generate the raw test data for coverage.
 func testData() error {
-	mg.SerialDeps(mageutil.CreateBuildDir, magesrc.GenerateCode)
+	mg.SerialDeps(mageutil.CreateBuildDir, magesrc.Generate)
 
 	mageutil.MagePrintln(mageutil.MsgStart, "Generating test data...")
 

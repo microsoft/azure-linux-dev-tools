@@ -122,11 +122,14 @@ New component subcommands (`internal/app/azldev/cmds/component/`) require:
 - **No-match test**: call `cmd.ExecuteContext(testEnv.Env)` with a nonexistent component
   to verify error handling
 - **Snapshot update**: if the command changes CLI help text or schema, run
-  `mage build` (regenerates CLI docs) then `mage scenarioUpdate` (updates snapshots)
+  `mage docs` (regenerates CLI docs and JSON schema) then `mage scenarioUpdate` (updates snapshots)
 
 ## Build System
 
-- Use `mage unit` (NOT `go test`) to run tests — it includes code generation
-- Use `mage check all` to verify lint, formatting, and static analysis
-- Use `mage scenario` for end-to-end tests (slow, requires containers)
-- Use `mage scenarioUpdate` when test expectations change (updates snapshots)
+- `mage unit` (NOT `go test`) — runs code generation then tests
+- `mage check all` — lint, formatting, static analysis
+- `mage fix all` — auto-fix formatting/lint issues
+- `mage scenario` — end-to-end tests (slow, requires containers)
+- `mage scenarioUpdate` — update snapshot baselines (review diffs!)
+- `mage generate` — standalone codegen (runs implicitly with build/unit)
+- `mage docs` — build binary + regenerate CLI docs and JSON schema

@@ -8,11 +8,12 @@ on:
   workflow_dispatch:
   schedule:
     # Run every night at 3:15am PST (11:15am UTC)
-    - cron: '15 11 * * *'
+    - cron: "15 11 * * *"
 
 # Cancel in-progress runs of this workflow if a new run is triggered.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number ||
+    github.run_id }}
   cancel-in-progress: true
 
 permissions: {}
@@ -35,11 +36,15 @@ jobs:
         run: |
           mage -v generate
 
+      - name: Run docs generation
+        run: |
+          mage -v docs
+
       - name: Check for changes
         run: |
           if [ -n "$(git status --porcelain)" ]; then
             git diff
-            echo "::error::Generated code is not up to date - see changes above. Please run 'mage generate' locally and commit the changes."
+            echo "::error::Generated code is not up to date - see changes above. Please run 'mage generate' and 'mage docs' locally and commit the changes."
             exit 1
           else
             echo "Generated code is up to date."

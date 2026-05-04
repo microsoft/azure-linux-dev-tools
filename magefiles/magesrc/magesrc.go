@@ -14,8 +14,8 @@ import (
 
 var ErrSrcCode = errors.New("source code generation failed")
 
-// GenerateCode runs the code generation tools needed for building.
-func GenerateCode() error {
+// Generate runs the code generation tools needed for building.
+func Generate() error {
 	mageutil.MagePrintln(mageutil.MsgStart, "Running code generation...")
 
 	// We run code generation for all packages in parallel, up to the number of CPU cores.

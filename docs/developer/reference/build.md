@@ -14,15 +14,15 @@ This repo contains configs for the `golangci-lint` linter. It is installed as pa
 |---------|-------------|-------------|
 | `mage -l` | List all available targets | To see all options |
 | `mage all` | Full build, test, and check pipeline | Before submitting PR |
-| `mage build` | Build Go binaries + regenerate CLI docs | After code changes |
+| `mage build` | Build Go binaries | After code changes |
 | `mage install` | Build Go binaries and install | Outer-loop testing |
 | `mage unit` | Run unit tests | After writing tests |
 | `mage scenario` | Run scenario tests (SLOW) | For major changes |
 | `mage scenarioUpdate` | Update test snapshots | When test expectations change |
 | `mage check all` | Run all quality checks | Before committing |
 | `mage fix all` | Auto-fix code issues | When linting fails |
-| `mage generate` | Rebuild binary + regenerate CLI docs and JSON schema | After changing config structs or CLI commands |
-| `mage generateCode` | Run `go generate ./...` only (no binary needed) | Seldom needed directly; used automatically by build/test |
+| `mage generate` | Run `go generate ./...` (mockgen, stringer, etc.) | Seldom needed directly; runs automatically with build/test |
+| `mage docs` | Build binary + regenerate CLI docs and JSON schema | After changing config structs or CLI commands |
 
 **Note**: Dependencies run automatically in correct order
 (i.e. `mage build` and `mage unit` automatically run code generation as needed).
@@ -38,9 +38,9 @@ The project uses automatic code generation including:
 
 There are two generation stages:
 
-1. **`mage generateCode`** — runs `go generate ./...` for all packages. This is the fast, no-binary-required stage that is a prerequisite for building. It runs automatically with `mage build` and `mage unit`.
-2. **`mage generate`** — builds the binary first (which also regenerates CLI docs in `docs/user/reference/cli/`), then regenerates `schemas/azldev.schema.json`. Run this after changing config structs (schema) or Cobra command descriptions (CLI docs).
+1. **`mage generate`** — runs `go generate ./...` for all packages (mockgen, stringer, etc.). This is a prerequisite for building and runs automatically with `mage build` and `mage unit`.
+2. **`mage docs`** — builds the binary, then regenerates CLI docs (`docs/user/reference/cli/`) and JSON schema (`schemas/azldev.schema.json`). Run this after changing config structs (schema) or Cobra command descriptions (CLI docs).
 
-You typically don't need to run either manually; `mage build` covers the inner stage automatically. Run `mage generate` explicitly when you want to update the schema or CLI docs without running the full scenario test suite.
+You typically don't need to run `mage generate` manually; `mage build` runs it automatically. Run `mage docs` explicitly when you want to update the schema or CLI docs without running the full scenario test suite.
 
 See [tools documentation](../../../tools/README.md#invoking-the-tool-as-part-of-gogenerate) for more details on how to use tools with `go tool` in `go:generate` directives.
