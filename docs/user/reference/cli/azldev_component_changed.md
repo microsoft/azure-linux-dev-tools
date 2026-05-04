@@ -50,8 +50,7 @@ azldev component changed [flags]
   -g, --component-group stringArray   Component group name
       --from string                   Git ref to compare from (required)
   -h, --help                          help for changed
-      --include-unchanged             Include unchanged components in output
-      --skip-lock-validation          skip lock file consistency checks (default true)
+      --include-unchanged             Include unchanged components in output (only applies to broad -a scans; explicit selections always show status)
   -s, --spec-path stringArray         Spec path
       --to string                     Git ref to compare to (default "HEAD")
 ```

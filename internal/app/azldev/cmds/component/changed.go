@@ -85,9 +85,14 @@ When rendered-specs-dir is not configured, sources change reports "unknown".`,
 
 	cmd.Flags().StringVar(&options.From, "from", "", "Git ref to compare from (required)")
 	cmd.Flags().StringVar(&options.To, "to", "HEAD", "Git ref to compare to")
-	cmd.Flags().BoolVar(&options.IncludeUnchanged, "include-unchanged", false, "Include unchanged components in output")
+	cmd.Flags().BoolVar(&options.IncludeUnchanged, "include-unchanged", false,
+		"Include unchanged components in output (only applies to broad -a scans; explicit selections always show status)")
 
 	_ = cmd.MarkFlagRequired("from")
+
+	// Hide inherited flag — this command always skips lock validation since
+	// it inspects historical locks at arbitrary refs.
+	_ = cmd.Flags().MarkHidden("skip-lock-validation")
 
 	azldev.ExportAsMCPTool(cmd)
 

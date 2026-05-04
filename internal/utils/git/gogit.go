@@ -8,8 +8,9 @@ import (
 )
 
 // OpenProjectRepo opens a go-git repository from a path within the project,
-// detecting the .git directory and supporting linked worktrees. All go-git
-// repo opens in the codebase should use this to ensure consistent options.
+// detecting the .git directory and supporting linked worktrees. Use this for
+// opening the project-config repo (not source checkouts, which may have
+// different options).
 func OpenProjectRepo(path string) (*gogit.Repository, error) {
 	//nolint:wrapcheck // thin wrapper; callers add their own context.
 	return gogit.PlainOpenWithOptions(path, &gogit.PlainOpenOptions{

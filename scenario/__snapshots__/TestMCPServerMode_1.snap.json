@@ -51,7 +51,7 @@
       },
       "include-unchanged": {
        "default": false,
-       "description": "Include unchanged components in output",
+       "description": "Include unchanged components in output (only applies to broad -a scans; explicit selections always show status)",
        "type": "boolean"
       },
       "network-retries": {
@@ -81,11 +81,6 @@
       "quiet": {
        "default": false,
        "description": "only enable minimal output",
-       "type": "boolean"
-      },
-      "skip-lock-validation": {
-       "default": true,
-       "description": "skip lock file consistency checks",
        "type": "boolean"
       },
       "spec-path": {
