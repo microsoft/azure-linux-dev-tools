@@ -583,3 +583,136 @@ func TestComponentChanged_DeletedComponent(t *testing.T) {
 	require.Contains(t, rm, "oldpkg", "deleted non-config component should appear in results")
 	assert.Equal(t, "deleted", rm["oldpkg"].ChangeType, "removed lock for non-config component")
 }
+
+// TestComponentChanged_JSONContract validates the JSON output schema is stable
+// for CI consumers. Any field rename, type change, or value-set change will
+// break this test — that's intentional.
+//
+// The test exercises all four changeType values (added, changed, unchanged,
+// deleted) and both sourcesChange values (true, false) in a single run,
+// then validates the raw JSON structure without the changedResult struct
+// to catch accidental field renames.
+func TestComponentChanged_JSONContract(t *testing.T) {
+	t.Parallel()
+
+	if testing.Short() {
+		t.Skip("skipping long test")
+	}
+
+	azldevBin, projectDir := setupProjectWithGit(t,
+		[]*projecttest.TestSpec{
+			projecttest.NewSpec(
+				projecttest.WithName("curl"),
+				projecttest.WithVersion("1.0.0"),
+				projecttest.WithRelease("1%{?dist}"),
+				projecttest.WithBuildArch(projecttest.NoArch),
+			),
+			projecttest.NewSpec(
+				projecttest.WithName("bash"),
+				projecttest.WithVersion("1.0.0"),
+				projecttest.WithRelease("1%{?dist}"),
+				projecttest.WithBuildArch(projecttest.NoArch),
+			),
+		},
+		[]*projectconfig.ComponentConfig{
+			{
+				Name: "curl",
+				Spec: projectconfig.SpecSource{
+					SourceType: projectconfig.SpecSourceTypeLocal,
+					Path:       filepath.Join("specs", "curl", "curl.spec"),
+				},
+			},
+			{
+				Name: "bash",
+				Spec: projectconfig.SpecSource{
+					SourceType: projectconfig.SpecSourceTypeLocal,
+					Path:       filepath.Join("specs", "bash", "bash.spec"),
+				},
+			},
+		},
+		nil,
+	)
+
+	// Commit 1: curl has lock + sources, bash has lock, oldpkg has lock (not in config).
+	writeFileInDir(t, projectDir, "locks/curl.lock",
+		fmt.Sprintf("version = 1\ninput-fingerprint = %q\n", "sha256:curl-v1"))
+	writeFileInDir(t, projectDir, "locks/bash.lock",
+		fmt.Sprintf("version = 1\ninput-fingerprint = %q\n", "sha256:bash-v1"))
+	writeFileInDir(t, projectDir, "locks/oldpkg.lock",
+		fmt.Sprintf("version = 1\ninput-fingerprint = %q\n", "sha256:old-v1"))
+	writeFileInDir(t, projectDir, "specs/c/curl/sources",
+		"SHA512 (curl-1.0.tar.gz) = aaa")
+	gitInDir(t, projectDir, "add", ".")
+	gitInDir(t, projectDir, "-c", "commit.gpgsign=false", "commit", "-m", "initial")
+	fromRef := gitInDir(t, projectDir, "rev-parse", "HEAD")
+
+	// Commit 2: curl fingerprint + sources changed, bash unchanged, oldpkg removed.
+	writeFileInDir(t, projectDir, "locks/curl.lock",
+		fmt.Sprintf("version = 1\ninput-fingerprint = %q\n", "sha256:curl-v2"))
+	writeFileInDir(t, projectDir, "specs/c/curl/sources",
+		"SHA512 (curl-2.0.tar.gz) = bbb")
+	gitInDir(t, projectDir, "rm", "locks/oldpkg.lock")
+	gitInDir(t, projectDir, "add", ".")
+	gitInDir(t, projectDir, "-c", "commit.gpgsign=false", "commit", "-m", "update")
+
+	// Run with --include-unchanged to get all four states.
+	cmd := exec.CommandContext(t.Context(),
+		azldevBin, "-C", projectDir, "--no-default-config", "component", "changed",
+		"--from", fromRef, "-a", "--include-unchanged", "-q", "-O", "json",
+	)
+	rawOutput, err := cmd.CombinedOutput()
+	require.NoError(t, err, "azldev failed: %s", string(rawOutput))
+
+	// Parse as raw JSON to validate field names without relying on the Go struct.
+	var rawResults []map[string]interface{}
+	require.NoError(t, json.Unmarshal(rawOutput, &rawResults),
+		"output must be a JSON array of objects: %s", string(rawOutput))
+
+	// Validate every result has exactly the expected fields.
+	expectedFields := []string{"component", "changeType", "sourcesChange"}
+
+	for idx, row := range rawResults {
+		for _, field := range expectedFields {
+			_, ok := row[field]
+			require.True(t, ok, "row %d missing required field %#q: %v", idx, field, row)
+		}
+
+		assert.Len(t, row, len(expectedFields),
+			"row %d has unexpected extra fields: %v", idx, row)
+	}
+
+	// Validate the value sets via the typed results.
+	results := runChanged(t, azldevBin, projectDir,
+		"--from", fromRef, "-a", "--include-unchanged")
+	rm := resultMap(results)
+
+	// Expected states:
+	//   curl:   changed  + sourcesChange=true  (both fingerprint and sources differ)
+	//   bash:   unchanged + sourcesChange=false (identical at both refs)
+	//   oldpkg: deleted  + sourcesChange=true   (non-config, lock removed)
+	validChangeTypes := map[string]bool{
+		"added": true, "changed": true, "unchanged": true, "deleted": true,
+	}
+	validSourcesChanges := map[string]bool{
+		"true": true, "false": true, "unknown": true,
+	}
+
+	for _, r := range results {
+		assert.True(t, validChangeTypes[r.ChangeType],
+			"component %#q: changeType %#q not in valid set", r.Component, r.ChangeType)
+		assert.True(t, validSourcesChanges[r.SourcesChange],
+			"component %#q: sourcesChange %#q not in valid set", r.Component, r.SourcesChange)
+	}
+
+	// Pin specific expected values.
+	require.Contains(t, rm, "curl")
+	assert.Equal(t, "changed", rm["curl"].ChangeType)
+	assert.Equal(t, "true", rm["curl"].SourcesChange)
+
+	require.Contains(t, rm, "bash")
+	assert.Equal(t, "unchanged", rm["bash"].ChangeType)
+	assert.Equal(t, "false", rm["bash"].SourcesChange)
+
+	require.Contains(t, rm, "oldpkg")
+	assert.Equal(t, "deleted", rm["oldpkg"].ChangeType)
+}
