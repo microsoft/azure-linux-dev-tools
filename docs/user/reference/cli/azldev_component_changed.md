@@ -48,6 +48,7 @@ azldev component changed [flags]
   -a, --all-components                Include all components
   -p, --component stringArray         Component name pattern
   -g, --component-group stringArray   Component group name
+      --force-recalculate             Disable optimizations that skip work for unchanged components
       --from string                   Git ref to compare from (required)
   -h, --help                          help for changed
       --include-unchanged             Include unchanged components in output (only applies to broad -a scans; explicit selections always show status)

@@ -30,6 +30,10 @@ type ChangedComponentOptions struct {
 	To string
 	// IncludeUnchanged includes unchanged components in the output.
 	IncludeUnchanged bool
+	// ForceRecalculate disables optimizations that skip work for unchanged
+	// components (e.g., sources comparison). Useful when you suspect stale
+	// data or want to verify correctness.
+	ForceRecalculate bool
 }
 
 func changedOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
@@ -87,6 +91,8 @@ When rendered-specs-dir is not configured, sources change reports "unknown".`,
 	cmd.Flags().StringVar(&options.To, "to", "HEAD", "Git ref to compare to")
 	cmd.Flags().BoolVar(&options.IncludeUnchanged, "include-unchanged", false,
 		"Include unchanged components in output (only applies to broad -a scans; explicit selections always show status)")
+	cmd.Flags().BoolVar(&options.ForceRecalculate, "force-recalculate", false,
+		"Disable optimizations that skip work for unchanged components")
 
 	_ = cmd.MarkFlagRequired("from")
 
@@ -173,6 +179,7 @@ func ChangedComponents(
 	return buildResults(
 		comps, fromLocks, toLocks, ctx, fromTree, toTree,
 		options.IncludeUnchanged, options.ComponentFilter.IncludeAllComponents,
+		options.ForceRecalculate,
 	)
 }
 
@@ -217,7 +224,7 @@ func buildResults(
 	fromLocks, toLocks map[string]lockfile.ComponentLock,
 	ctx *changedContext,
 	fromTree, toTree *object.Tree,
-	includeUnchanged, includeAllComponents bool,
+	includeUnchanged, includeAllComponents, forceRecalculate bool,
 ) ([]ChangedResult, error) {
 	configNames := make(map[string]bool, comps.Len())
 	results := make([]ChangedResult, 0, comps.Len())
@@ -235,6 +242,25 @@ func buildResults(
 			result.ChangeType = changeTypeChanged
 		}
 
+		// Unchanged fingerprint implies unchanged sources — skip the
+		// expensive git tree comparison. Use --force-recalculate to
+		// override and verify sources anyway.
+		if result.ChangeType == changeTypeUnchanged && !forceRecalculate {
+			result.SourcesChange = sourcesChangeFalse
+
+			// In broad scans (-a), drop unchanged rows from output
+			// unless --include-unchanged is set.
+			if includeAllComponents && !includeUnchanged {
+				continue
+			}
+
+			results = append(results, result)
+
+			continue
+		}
+
+		// Changed/added/deleted components (or --force-recalculate):
+		// compare rendered sources files between the two refs.
 		sourcesChange, srcErr := compareSources(ctx.repoRoot, fromTree, toTree, ctx.renderedSpecsDir, name)
 		if srcErr != nil {
 			return nil, fmt.Errorf("comparing sources for %#q:\n%w", name, srcErr)
@@ -242,9 +268,9 @@ func buildResults(
 
 		result.SourcesChange = sourcesChange
 
-		// Only filter unchanged rows during broad scans (-a). When the user
-		// explicitly selected components (-p, -g, -s, positional args), always
-		// show them — the user asked for data on those specific packages.
+		// When --force-recalculate is set, unchanged components reach
+		// here after sources comparison. Still filter them from broad
+		// scans unless --include-unchanged or sources actually changed.
 		if includeAllComponents && !includeUnchanged &&
 			result.ChangeType == changeTypeUnchanged &&
 			result.SourcesChange != sourcesChangeTrue {
@@ -268,6 +294,7 @@ func buildResults(
 
 	nonConfigResults, err := buildNonConfigResults(
 		fromLocks, toLocks, configNames, ctx, fromTree, toTree, includeUnchanged,
+		forceRecalculate,
 	)
 	if err != nil {
 		return nil, err
@@ -290,7 +317,7 @@ func buildNonConfigResults(
 	configNames map[string]bool,
 	ctx *changedContext,
 	fromTree, toTree *object.Tree,
-	includeUnchanged bool,
+	includeUnchanged, forceRecalculate bool,
 ) ([]ChangedResult, error) {
 	nonConfigNames := make(map[string]bool)
 
@@ -318,6 +345,21 @@ func buildNonConfigResults(
 	for _, name := range sortedNames {
 		result := classifyComponent(name, fromLocks, toLocks)
 
+		// Unchanged fingerprint implies unchanged sources — skip the
+		// expensive git tree comparison unless --force-recalculate.
+		if result.ChangeType == changeTypeUnchanged && !forceRecalculate {
+			// Drop unchanged non-config components unless requested.
+			if !includeUnchanged {
+				continue
+			}
+
+			result.SourcesChange = sourcesChangeFalse
+			results = append(results, result)
+
+			continue
+		}
+
+		// Changed/added/deleted (or --force-recalculate): compare sources.
 		sourcesChange, srcErr := compareSources(ctx.repoRoot, fromTree, toTree, ctx.renderedSpecsDir, name)
 		if srcErr != nil {
 			return nil, fmt.Errorf("comparing sources for non-config component %#q:\n%w", name, srcErr)
@@ -325,6 +367,8 @@ func buildNonConfigResults(
 
 		result.SourcesChange = sourcesChange
 
+		// With --force-recalculate, unchanged components reach here.
+		// Still filter unless --include-unchanged or sources changed.
 		if !includeUnchanged &&
 			result.ChangeType == changeTypeUnchanged &&
 			result.SourcesChange != sourcesChangeTrue {
