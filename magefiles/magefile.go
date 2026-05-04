@@ -46,7 +46,7 @@ func init() {
 
 // Generate builds the azldev binary and regenerates all generated files (CLI docs and JSON schema).
 func Generate() error {
-	mg.SerialDeps(magebuild.Build)
+	mg.SerialDeps(magesrc.GenerateCode, magebuild.Build)
 
 	return magesrc.GenerateSchema()
 }
