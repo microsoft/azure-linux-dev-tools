@@ -5,6 +5,38 @@ description: "Testing conventions for the azldev Go codebase. IMPORTANT: Always 
 
 # Go Testing Conventions
 
+## Test Tiers
+
+The repo has a multi-layered testing strategy. Tests are classified by
+**side-effect surface**, not scope — a multi-stage workflow is still "unit"
+if it uses memfs and mocks.
+
+| Tier | Mage Target | Build Tag | Purpose |
+|------|-------------|-----------|---------|
+| Unit | `mage unit` | (none) | Fast, isolated, in-memory |
+| Scenario | `mage scenario` | `//go:build scenario` | End-to-end CLI with snapshot validation |
+
+### Sub-Tiers Within `mage unit`
+
+| Sub-tier | FS backing | When to use |
+|----------|------------|-------------|
+| **Pure unit** | none | Single function/type validation |
+| **In-memory project** | `afero.MemMapFs` via `testutils.NewTestEnv(t)` | Full workflows with mock commands |
+| **In-memory go-git** | `go-git/memory.NewStorage()` + `go-git/memfs` | Git tree/commit operations without real repos |
+| **Real-FS** | `t.TempDir()` | Only when kernel/OS semantics can't be replicated in-memory (e.g., `openat2`, real `git` CLI) |
+
+Real-FS tests should be rare and justified. Existing examples:
+`rootfs_test.go` (kernel `openat2`), `showfile_test.go` (real git CLI).
+
+### Scenario Tests
+
+Live in `scenario/` with `//go:build scenario` tag. Two execution modes:
+
+- `Locally()` — fast, no isolation, no file mounting. For smoke/help tests.
+- `InContainer()` — slow, full Docker isolation. For integration tests needing fs state.
+
+Use `mage scenarioUpdate` to update snapshots (review diffs — don't blindly accept).
+
 ## Test Environment
 
 Use `testutils.NewTestEnv(t)` for tests that need an `azldev.Env`. It provides:
@@ -126,7 +158,18 @@ New component subcommands (`internal/app/azldev/cmds/component/`) require:
 
 ## Build System
 
-- Use `mage unit` (NOT `go test`) to run tests — it includes code generation
-- Use `mage check all` to verify lint, formatting, and static analysis
-- Use `mage scenario` for end-to-end tests (slow, requires containers)
-- Use `mage scenarioUpdate` when test expectations change (updates snapshots)
+- `mage unit` (NOT `go test`) — runs code generation (mockgen, stringer) then tests
+- `mage check all` — lint, formatting, static analysis
+- `mage fix all` — auto-fix formatting/lint issues
+- `mage scenario` — end-to-end tests (slow, requires containers)
+- `mage scenarioUpdate` — update snapshot baselines (review diffs!)
+- `mage generate` — standalone codegen (also runs implicitly with unit/build)
+- `mage build` — regenerates CLI docs under `docs/user/reference/cli/`
+
+## Common Pitfalls
+
+- **Forgetting `mage generate`** after editing an interface → stale mocks → confusing failures
+- **Hand-rolled mocks** when `MockComponent` / `MockComponentSpec` already exist
+- **Bypassing `CmdFactory`** with raw `exec.Command` → test spawns real process
+- **Updating snapshots blindly** to make a test pass → masks real bugs
+- **Non-deterministic output** in snapshots (timestamps, abs paths) → normalize first
