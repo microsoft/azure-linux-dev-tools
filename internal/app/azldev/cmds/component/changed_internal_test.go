@@ -21,7 +21,6 @@ import (
 const (
 	testFingerprintOld = "sha256:old"
 	testFingerprintNew = "sha256:new"
-	testLockDirChanged = "/locks"
 	testSpecsDirSPECS  = "/SPECS"
 )
 

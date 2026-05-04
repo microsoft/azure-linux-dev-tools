@@ -44,9 +44,15 @@ func patchProjectForLocal(t *testing.T, projectDir string) {
 	// under the existing [project] section by appending the key after the table.
 	content := string(data)
 	content = "includes = [\"distro.toml\"]\n" + content
+
+	const projectHeader = "[project]"
+
+	require.True(t, strings.Contains(content, projectHeader),
+		"azldev.toml must contain %#q for patchProjectForLocal to work", projectHeader)
+
 	content = strings.Replace(content,
-		"[project]",
-		"[project]\ndefault-distro = { name = \"testdistro\", version = \"1.0\" }",
+		projectHeader,
+		projectHeader+"\ndefault-distro = { name = \"testdistro\", version = \"1.0\" }",
 		1,
 	)
 
@@ -82,7 +88,18 @@ func writeFileInDir(t *testing.T, dir, relPath, content string) {
 }
 
 // TestComponentChanged_E2E exercises the full `azldev component changed` command
-// with a real git repository, verifying JSON output across multiple scenarios.
+// with a real git repository, verifying JSON output for multi-component change
+// detection.
+//
+// Flow:
+//  1. Create a project with two local components (curl, bash) and a minimal
+//     distro config patched in for local (non-container) execution.
+//  2. Commit initial lock files for both components with distinct fingerprints.
+//  3. In a second commit, update only curl's lock file (new fingerprint).
+//  4. Run `azldev component changed --from <commit1> -a --include-unchanged`
+//     to compare the two commits with JSON output.
+//  5. Assert curl is reported as "changed" (fingerprint differs between refs)
+//     and bash as "unchanged" (fingerprint identical at both refs).
 func TestComponentChanged_E2E(t *testing.T) {
 	t.Parallel()
 
@@ -133,7 +150,8 @@ func TestComponentChanged_E2E(t *testing.T) {
 	project.Serialize(t, projectDir)
 	patchProjectForLocal(t, projectDir)
 
-	// Init git repo and make first commit with lock files.
+	// Step 2: Initialize git repo. Create lock files for both components
+	// with version 1 fingerprints, then commit everything as the baseline.
 	gitInDir(t, projectDir, "init")
 	gitInDir(t, projectDir, "config", "user.email", "test@test.com")
 	gitInDir(t, projectDir, "config", "user.name", "Test")
@@ -248,4 +266,320 @@ func TestComponentChanged_SameRef(t *testing.T) {
 	for _, result := range results {
 		assert.Equal(t, "unchanged", result.ChangeType, "no changes expected for same-ref comparison: %s", result.Component)
 	}
+}
+
+// runChanged runs `azldev component changed` with the given args and returns
+// parsed JSON results. Fails the test on any error.
+func runChanged(t *testing.T, azldevBin, projectDir string, extraArgs ...string) []changedResult {
+	t.Helper()
+
+	args := []string{"-C", projectDir, "--no-default-config", "component", "changed"}
+	args = append(args, extraArgs...)
+	args = append(args, "-q", "-O", "json")
+
+	cmd := exec.CommandContext(t.Context(), azldevBin, args...)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "azldev failed: %s", string(out))
+
+	var results []changedResult
+	require.NoError(t, json.Unmarshal(out, &results), "failed to parse JSON: %s", string(out))
+
+	return results
+}
+
+// resultMap converts a slice of changedResult into a map keyed by component name.
+func resultMap(results []changedResult) map[string]changedResult {
+	m := make(map[string]changedResult, len(results))
+	for _, r := range results {
+		m[r.Component] = r
+	}
+
+	return m
+}
+
+// setupProjectWithGit creates a project with the given specs and components,
+// initializes a git repo, and returns (azldevBin, projectDir). The project has
+// a minimal distro config patched in for local execution.
+func setupProjectWithGit(
+	t *testing.T,
+	specs []*projecttest.TestSpec,
+	components []*projectconfig.ComponentConfig,
+	extraFiles map[string]string,
+) (string, string) {
+	t.Helper()
+
+	azldevBin, err := testhelpers.FindTestBinary()
+	require.NoError(t, err)
+
+	projectDir := t.TempDir()
+
+	opts := []projecttest.DynamicTestProjectOption{
+		projecttest.AddFile("distro.toml", minimalDistroTOML),
+	}
+
+	for _, spec := range specs {
+		opts = append(opts, projecttest.AddSpec(spec))
+	}
+
+	for _, comp := range components {
+		opts = append(opts, projecttest.AddComponent(comp))
+	}
+
+	for path, content := range extraFiles {
+		opts = append(opts, projecttest.AddFile(path, content))
+	}
+
+	project := projecttest.NewDynamicTestProject(opts...)
+	project.Serialize(t, projectDir)
+	patchProjectForLocal(t, projectDir)
+
+	gitInDir(t, projectDir, "init")
+	gitInDir(t, projectDir, "config", "user.email", "test@test.com")
+	gitInDir(t, projectDir, "config", "user.name", "Test")
+
+	return azldevBin, projectDir
+}
+
+// TestComponentChanged_SourcesChange verifies that the sources change column
+// correctly reflects rendered sources file changes.
+//
+// Flow:
+//  1. Create a project with one component (curl) and a rendered-specs-dir.
+//  2. Commit initial lock + sources file.
+//  3. In a second commit, update the lock fingerprint AND the sources file.
+//  4. Assert changeType="changed" and sourcesChange="true".
+//  5. In a third commit, update only the lock (not sources).
+//  6. Compare commit 2→3: assert changeType="changed", sourcesChange="false"
+//     (rebuild needed but no tarball re-upload).
+func TestComponentChanged_SourcesChange(t *testing.T) {
+	t.Parallel()
+
+	if testing.Short() {
+		t.Skip("skipping long test")
+	}
+
+	azldevBin, projectDir := setupProjectWithGit(t,
+		[]*projecttest.TestSpec{
+			projecttest.NewSpec(
+				projecttest.WithName("curl"),
+				projecttest.WithVersion("8.0.0"),
+				projecttest.WithRelease("1%{?dist}"),
+				projecttest.WithBuildArch(projecttest.NoArch),
+			),
+		},
+		[]*projectconfig.ComponentConfig{{
+			Name: "curl",
+			Spec: projectconfig.SpecSource{
+				SourceType: projectconfig.SpecSourceTypeLocal,
+				Path:       filepath.Join("specs", "curl", "curl.spec"),
+			},
+		}},
+		nil,
+	)
+
+	// Commit 1: initial lock + rendered sources.
+	writeFileInDir(t, projectDir, "locks/curl.lock",
+		fmt.Sprintf("version = 1\ninput-fingerprint = %q\n", "sha256:v1"))
+	writeFileInDir(t, projectDir, "specs/c/curl/sources",
+		"SHA512 (curl-8.0.tar.gz) = aaa111")
+	gitInDir(t, projectDir, "add", ".")
+	gitInDir(t, projectDir, "-c", "commit.gpgsign=false", "commit", "-m", "initial")
+	ref1 := gitInDir(t, projectDir, "rev-parse", "HEAD")
+
+	// Commit 2: change lock fingerprint AND sources (new tarball).
+	writeFileInDir(t, projectDir, "locks/curl.lock",
+		fmt.Sprintf("version = 1\ninput-fingerprint = %q\n", "sha256:v2"))
+	writeFileInDir(t, projectDir, "specs/c/curl/sources",
+		"SHA512 (curl-8.1.tar.gz) = bbb222")
+	gitInDir(t, projectDir, "add", ".")
+	gitInDir(t, projectDir, "-c", "commit.gpgsign=false", "commit", "-m", "update sources")
+	ref2 := gitInDir(t, projectDir, "rev-parse", "HEAD")
+
+	// Commit 3: change lock fingerprint only (config tweak, same tarball).
+	writeFileInDir(t, projectDir, "locks/curl.lock",
+		fmt.Sprintf("version = 1\ninput-fingerprint = %q\n", "sha256:v3"))
+	gitInDir(t, projectDir, "add", ".")
+	gitInDir(t, projectDir, "-c", "commit.gpgsign=false", "commit", "-m", "config change")
+
+	// ref1 → ref2: fingerprint AND sources changed.
+	results := runChanged(t, azldevBin, projectDir, "--from", ref1, "--to", ref2, "-a")
+	rm := resultMap(results)
+	require.Contains(t, rm, "curl")
+	assert.Equal(t, "changed", rm["curl"].ChangeType)
+	assert.Equal(t, "true", rm["curl"].SourcesChange, "sources file changed between refs")
+
+	// ref2 → HEAD: fingerprint changed, sources unchanged.
+	results = runChanged(t, azldevBin, projectDir, "--from", ref2, "-a")
+	rm = resultMap(results)
+	require.Contains(t, rm, "curl")
+	assert.Equal(t, "changed", rm["curl"].ChangeType)
+	assert.Equal(t, "false", rm["curl"].SourcesChange, "sources file identical — rebuild without re-upload")
+}
+
+// TestComponentChanged_InvertedRefs verifies that swapping --from and --to
+// produces correct results in the reverse direction.
+//
+// Flow:
+//  1. Create a project with one component, commit two versions of its lock.
+//  2. Compare forward (old→new): changeType="changed".
+//  3. Compare backward (new→old): also changeType="changed" (fingerprint
+//     still differs, just in the other direction).
+func TestComponentChanged_InvertedRefs(t *testing.T) {
+	t.Parallel()
+
+	if testing.Short() {
+		t.Skip("skipping long test")
+	}
+
+	azldevBin, projectDir := setupProjectWithGit(t,
+		[]*projecttest.TestSpec{
+			projecttest.NewSpec(
+				projecttest.WithName("curl"),
+				projecttest.WithVersion("1.0.0"),
+				projecttest.WithRelease("1%{?dist}"),
+				projecttest.WithBuildArch(projecttest.NoArch),
+			),
+		},
+		[]*projectconfig.ComponentConfig{{
+			Name: "curl",
+			Spec: projectconfig.SpecSource{
+				SourceType: projectconfig.SpecSourceTypeLocal,
+				Path:       filepath.Join("specs", "curl", "curl.spec"),
+			},
+		}},
+		nil,
+	)
+
+	// Commit 1: v1 lock.
+	writeFileInDir(t, projectDir, "locks/curl.lock",
+		fmt.Sprintf("version = 1\ninput-fingerprint = %q\n", "sha256:old"))
+	gitInDir(t, projectDir, "add", ".")
+	gitInDir(t, projectDir, "-c", "commit.gpgsign=false", "commit", "-m", "v1")
+	oldRef := gitInDir(t, projectDir, "rev-parse", "HEAD")
+
+	// Commit 2: v2 lock.
+	writeFileInDir(t, projectDir, "locks/curl.lock",
+		fmt.Sprintf("version = 1\ninput-fingerprint = %q\n", "sha256:new"))
+	gitInDir(t, projectDir, "add", ".")
+	gitInDir(t, projectDir, "-c", "commit.gpgsign=false", "commit", "-m", "v2")
+	newRef := gitInDir(t, projectDir, "rev-parse", "HEAD")
+
+	// Forward: old → new.
+	forward := runChanged(t, azldevBin, projectDir, "--from", oldRef, "--to", newRef, "-a")
+	rm := resultMap(forward)
+	require.Contains(t, rm, "curl")
+	assert.Equal(t, "changed", rm["curl"].ChangeType, "forward: fingerprint differs")
+
+	// Backward: new → old (inverted).
+	backward := runChanged(t, azldevBin, projectDir, "--from", newRef, "--to", oldRef, "-a")
+	rm = resultMap(backward)
+	require.Contains(t, rm, "curl")
+	assert.Equal(t, "changed", rm["curl"].ChangeType, "backward: fingerprint still differs")
+}
+
+// TestComponentChanged_NewComponent verifies that a component whose lock file
+// appears between the two refs is reported as "added".
+//
+// Flow:
+//  1. Commit with no lock files.
+//  2. Add a lock file for curl.
+//  3. Compare: curl should be "added".
+func TestComponentChanged_NewComponent(t *testing.T) {
+	t.Parallel()
+
+	if testing.Short() {
+		t.Skip("skipping long test")
+	}
+
+	azldevBin, projectDir := setupProjectWithGit(t,
+		[]*projecttest.TestSpec{
+			projecttest.NewSpec(
+				projecttest.WithName("curl"),
+				projecttest.WithVersion("1.0.0"),
+				projecttest.WithRelease("1%{?dist}"),
+				projecttest.WithBuildArch(projecttest.NoArch),
+			),
+		},
+		[]*projectconfig.ComponentConfig{{
+			Name: "curl",
+			Spec: projectconfig.SpecSource{
+				SourceType: projectconfig.SpecSourceTypeLocal,
+				Path:       filepath.Join("specs", "curl", "curl.spec"),
+			},
+		}},
+		nil,
+	)
+
+	// Commit 1: no lock files, just a placeholder.
+	writeFileInDir(t, projectDir, "placeholder", "x")
+	gitInDir(t, projectDir, "add", ".")
+	gitInDir(t, projectDir, "-c", "commit.gpgsign=false", "commit", "-m", "empty")
+	fromRef := gitInDir(t, projectDir, "rev-parse", "HEAD")
+
+	// Commit 2: add curl lock.
+	writeFileInDir(t, projectDir, "locks/curl.lock",
+		fmt.Sprintf("version = 1\ninput-fingerprint = %q\n", "sha256:first"))
+	gitInDir(t, projectDir, "add", ".")
+	gitInDir(t, projectDir, "-c", "commit.gpgsign=false", "commit", "-m", "add curl")
+
+	results := runChanged(t, azldevBin, projectDir, "--from", fromRef, "-a")
+	rm := resultMap(results)
+	require.Contains(t, rm, "curl")
+	assert.Equal(t, "added", rm["curl"].ChangeType, "new lock file should be reported as added")
+}
+
+// TestComponentChanged_DeletedComponent verifies that a non-config component
+// whose lock existed at --from but not at --to is reported as "deleted".
+//
+// Flow:
+//  1. Commit lock files for curl (in config) and oldpkg (NOT in config).
+//  2. Remove oldpkg's lock file in a second commit.
+//  3. Compare with -a: oldpkg should appear as "deleted".
+func TestComponentChanged_DeletedComponent(t *testing.T) {
+	t.Parallel()
+
+	if testing.Short() {
+		t.Skip("skipping long test")
+	}
+
+	azldevBin, projectDir := setupProjectWithGit(t,
+		[]*projecttest.TestSpec{
+			projecttest.NewSpec(
+				projecttest.WithName("curl"),
+				projecttest.WithVersion("1.0.0"),
+				projecttest.WithRelease("1%{?dist}"),
+				projecttest.WithBuildArch(projecttest.NoArch),
+			),
+		},
+		[]*projectconfig.ComponentConfig{{
+			Name: "curl",
+			Spec: projectconfig.SpecSource{
+				SourceType: projectconfig.SpecSourceTypeLocal,
+				Path:       filepath.Join("specs", "curl", "curl.spec"),
+			},
+		}},
+		nil,
+	)
+
+	// Commit 1: lock files for curl (in config) and oldpkg (NOT in config).
+	writeFileInDir(t, projectDir, "locks/curl.lock",
+		fmt.Sprintf("version = 1\ninput-fingerprint = %q\n", "sha256:curl-v1"))
+	writeFileInDir(t, projectDir, "locks/oldpkg.lock",
+		fmt.Sprintf("version = 1\ninput-fingerprint = %q\n", "sha256:oldpkg-v1"))
+	gitInDir(t, projectDir, "add", ".")
+	gitInDir(t, projectDir, "-c", "commit.gpgsign=false", "commit", "-m", "initial")
+	fromRef := gitInDir(t, projectDir, "rev-parse", "HEAD")
+
+	// Commit 2: remove oldpkg's lock file.
+	gitInDir(t, projectDir, "rm", "locks/oldpkg.lock")
+	gitInDir(t, projectDir, "-c", "commit.gpgsign=false", "commit", "-m", "remove oldpkg")
+
+	// Compare with -a to enable non-config component detection.
+	results := runChanged(t, azldevBin, projectDir, "--from", fromRef, "-a")
+	rm := resultMap(results)
+
+	// curl should be unchanged (same fingerprint).
+	// oldpkg (not in config, lock removed) should be "deleted".
+	require.Contains(t, rm, "oldpkg", "deleted non-config component should appear in results")
+	assert.Equal(t, "deleted", rm["oldpkg"].ChangeType, "removed lock for non-config component")
 }
