@@ -91,7 +91,7 @@ func cleanLockRelDir(lockRelDir string) (string, error) {
 		return "", fmt.Errorf("lockRelDir must be repo-relative, got absolute path %#q", lockRelDir)
 	}
 
-	if strings.HasPrefix(lockRelDir, "..") {
+	if lockRelDir == ".." || strings.HasPrefix(lockRelDir, "../") {
 		return "", fmt.Errorf("lockRelDir %#q escapes repository root", lockRelDir)
 	}
 
