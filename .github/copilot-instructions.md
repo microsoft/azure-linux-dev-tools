@@ -29,7 +29,7 @@ Documentation structure: `docs/user/reference/cli/` (auto-generated CLI docs, re
 
 The TOML config files in `defaultconfigs/` are loaded via `internal/projectconfig/`.
 
-**IMPORTANT**: Code generation runs automatically with build/test commands. `mage generate` (runs `go generate ./...`) is a prerequisite for building and runs automatically with `mage build` and `mage unit`. `mage docs` rebuilds the binary and updates the JSON schema (`schemas/azldev.schema.json`) and CLI docs (`docs/user/reference/cli/`). Run `mage docs` explicitly after changing config structs or Cobra command descriptions so that checked-in generated files stay current (checked by PR gates).
+**IMPORTANT**: Code generation runs automatically with build/test commands. `mage generate` (runs `go generate` for each package in parallel) is a prerequisite for building and runs automatically with `mage build` and `mage unit`. `mage docs` rebuilds the binary and updates the JSON schema (`schemas/azldev.schema.json`) and CLI docs (`docs/user/reference/cli/`). Run `mage docs` explicitly after changing config structs or Cobra command descriptions so that checked-in generated files stay current (checked by PR gates).
 
 **CRITICAL**: Run `mage scenarioUpdate` when test expectations change (updates snapshots).
 
