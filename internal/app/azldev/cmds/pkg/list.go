@@ -465,7 +465,10 @@ func resolveFromRPMFile(
 //   - srpmMap: source package name → ordered list of binary RPM names it produces
 //   - rpmCompOf: binary RPM name → source package (component) name
 //
-// Both maps are built in a single pass over the JSON entries.
+// Both maps are built in a single pass over the JSON entries. If the same
+// binary package name appears more than once, the first entry wins and later
+// entries are silently skipped (whether they agree with the first mapping or
+// not), keeping srpmMap and rpmCompOf aligned.
 func loadRPMFile(fs opctx.FS, path string) (srpmMap map[string][]string, rpmCompOf map[string]string, err error) {
 	data, readErr := fileutils.ReadFile(fs, path)
 	if readErr != nil {
@@ -501,18 +504,18 @@ func loadRPMFile(fs opctx.FS, path string) (srpmMap map[string][]string, rpmComp
 			)
 		}
 
-		if existingSourcePackageName, exists := rpmCompOf[packageName]; exists {
-			if existingSourcePackageName != sourcePackageName {
-				return nil, nil, fmt.Errorf(
-					"invalid RPM source map %#q entry %d for package %#q:\nconflicting source package names %#q and %#q",
-					path,
-					idx,
-					packageName,
-					existingSourcePackageName,
-					sourcePackageName,
-				)
-			}
-			// Ignore repeated identical mappings so [srpmMap] does not accumulate duplicates.
+		if _, exists := rpmCompOf[packageName]; exists {
+			// First mapping wins. Skipping later entries (whether the source package
+			// name matches or differs) keeps [srpmMap] and [rpmCompOf] aligned: each
+			// binary RPM appears exactly once in [srpmMap] under exactly the source
+			// package recorded in [rpmCompOf].
+			//
+			//nolint:godox // intentional temporary workaround documented below.
+			// TODO: this is a temporary workaround tolerating
+			// upstream RPM source maps that list the same packageName under different
+			// sourcePackageName values. Once those duplicates are resolved at the
+			// source, restore the stricter behavior: error on conflicting
+			// sourcePackageName, only dedup identical mappings.
 			continue
 		}
 

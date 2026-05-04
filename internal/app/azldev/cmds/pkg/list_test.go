@@ -521,12 +521,14 @@ func TestListPackages_RPMFile_Validation(t *testing.T) {
 			wantErrSub: "missing non-empty 'sourcePackageName'",
 		},
 		{
-			name: "conflicting source package names",
+			// Conflicting source package names must dedup (first mapping wins):
+			// one SRPM result for "bash" + one RPM result, not two of either.
+			name: "conflicting source package names dedup",
 			body: `[
 				{"packageName":"bash","sourcePackageName":"bash"},
 				{"packageName":"bash","sourcePackageName":"other"}
 			]`,
-			wantErrSub: "conflicting source package names",
+			wantResults: 2,
 		},
 		{
 			// Identical duplicate mappings must not produce duplicate entries:
