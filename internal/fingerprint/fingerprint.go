@@ -173,3 +173,51 @@ func writeField(writer io.Writer, label string, value string) {
 	// via values containing newlines.
 	fmt.Fprintf(writer, "%d:%s=%d:%s\n", len(label), label, len(value), value)
 }
+
+// ResolutionInputs holds the effective inputs that determine which upstream
+// commit gets resolved. These must be the *resolved* values after inheritance
+// and fallback — not the raw component spec fields.
+type ResolutionInputs struct {
+	// Snapshot is the resolved snapshot timestamp.
+	Snapshot string
+	// DistroName is the resolved distro name.
+	DistroName string
+	// DistroVersion is the resolved distro version.
+	DistroVersion string
+	// DistGitBranch is the resolved dist-git branch (e.g., "f43").
+	DistGitBranch string
+	// DistGitBaseURI is the resolved dist-git base URI template.
+	DistGitBaseURI string
+	// UpstreamCommitPin is an explicit commit hash pin (overrides snapshot).
+	UpstreamCommitPin string
+	// UpstreamName is the upstream package name (if different from component).
+	UpstreamName string
+}
+
+// ComputeResolutionHash produces a deterministic hash of the effective inputs
+// that affect upstream commit resolution. When this hash matches the stored
+// value in a lock file, re-resolving the upstream commit can be skipped — the
+// resolution inputs haven't changed so the same commit would be produced.
+//
+// This prevents two classes of problems:
+//   - Unnecessary re-resolution when only build inputs changed (e.g., overlay edit)
+//   - Snapshot instability where upstream branches receive new commits (mass
+//     rebuilds, cherry-picks) that change what 'git rev-list --before' resolves
+//     to, even though the snapshot timestamp itself is unchanged
+//
+// Callers must resolve distro inheritance/fallbacks before calling this — the
+// hash must reflect the *actual* values used during resolution, not the raw
+// per-component config which may be empty when defaults apply.
+func ComputeResolutionHash(inputs ResolutionInputs) string {
+	hasher := sha256.New()
+
+	writeField(hasher, "snapshot", inputs.Snapshot)
+	writeField(hasher, "distro_name", inputs.DistroName)
+	writeField(hasher, "distro_version", inputs.DistroVersion)
+	writeField(hasher, "dist_git_branch", inputs.DistGitBranch)
+	writeField(hasher, "dist_git_base_uri", inputs.DistGitBaseURI)
+	writeField(hasher, "upstream_commit_pin", inputs.UpstreamCommitPin)
+	writeField(hasher, "upstream_name", inputs.UpstreamName)
+
+	return "sha256:" + hex.EncodeToString(hasher.Sum(nil))
+}
