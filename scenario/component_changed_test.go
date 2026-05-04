@@ -64,7 +64,7 @@ func patchProjectForLocal(t *testing.T, projectDir string) {
 type changedResult struct {
 	Component     string `json:"component"`
 	ChangeType    string `json:"changeType"`
-	SourcesChange string `json:"sourcesChange"`
+	SourcesChange bool   `json:"sourcesChange"`
 }
 
 // gitInDir runs a git command in the specified directory.
@@ -415,14 +415,14 @@ func TestComponentChanged_SourcesChange(t *testing.T) {
 	rm := resultMap(results)
 	require.Contains(t, rm, "curl")
 	assert.Equal(t, "changed", rm["curl"].ChangeType)
-	assert.Equal(t, "true", rm["curl"].SourcesChange, "sources file changed between refs")
+	assert.True(t, rm["curl"].SourcesChange, "sources file changed between refs")
 
 	// ref2 → HEAD: fingerprint changed, sources unchanged.
 	results = runChanged(t, azldevBin, projectDir, "--from", ref2, "-a")
 	rm = resultMap(results)
 	require.Contains(t, rm, "curl")
 	assert.Equal(t, "changed", rm["curl"].ChangeType)
-	assert.Equal(t, "false", rm["curl"].SourcesChange, "sources file identical — rebuild without re-upload")
+	assert.False(t, rm["curl"].SourcesChange, "sources file identical — rebuild without re-upload")
 }
 
 // TestComponentChanged_InvertedRefs verifies that swapping --from and --to
@@ -702,25 +702,20 @@ func TestComponentChanged_JSONContract(t *testing.T) {
 	validChangeTypes := map[string]bool{
 		"added": true, "changed": true, "unchanged": true, "deleted": true,
 	}
-	validSourcesChanges := map[string]bool{
-		"true": true, "false": true, "unknown": true,
-	}
 
 	for _, r := range results {
 		assert.True(t, validChangeTypes[r.ChangeType],
 			"component %#q: changeType %#q not in valid set", r.Component, r.ChangeType)
-		assert.True(t, validSourcesChanges[r.SourcesChange],
-			"component %#q: sourcesChange %#q not in valid set", r.Component, r.SourcesChange)
 	}
 
 	// Pin specific expected values.
 	require.Contains(t, rm, "curl")
 	assert.Equal(t, "changed", rm["curl"].ChangeType)
-	assert.Equal(t, "true", rm["curl"].SourcesChange)
+	assert.True(t, rm["curl"].SourcesChange)
 
 	require.Contains(t, rm, "bash")
 	assert.Equal(t, "unchanged", rm["bash"].ChangeType)
-	assert.Equal(t, "false", rm["bash"].SourcesChange)
+	assert.False(t, rm["bash"].SourcesChange)
 
 	require.Contains(t, rm, "oldpkg")
 	assert.Equal(t, "deleted", rm["oldpkg"].ChangeType)

@@ -20,8 +20,6 @@ refs. For accurate results, run this command from a checkout that matches the
 --to ref (e.g., after merging a PR). Components not in the current config are
 detected via lock file presence in the compared refs when using -a.
 
-When rendered-specs-dir is not configured, sources change reports "unknown".
-
 ```
 azldev component changed [flags]
 ```

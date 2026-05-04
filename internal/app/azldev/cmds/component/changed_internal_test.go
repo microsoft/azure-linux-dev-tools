@@ -190,7 +190,7 @@ func TestCompareSources_Changed(t *testing.T) {
 
 	result, err := compareSources("/", fromTree, toTree, testSpecsDirSPECS, "curl")
 	require.NoError(t, err)
-	assert.Equal(t, sourcesChangeTrue, result)
+	assert.True(t, result)
 }
 
 func TestCompareSources_Unchanged(t *testing.T) {
@@ -209,7 +209,7 @@ func TestCompareSources_Unchanged(t *testing.T) {
 
 	result, err := compareSources("/", fromTree, toTree, testSpecsDirSPECS, "curl")
 	require.NoError(t, err)
-	assert.Equal(t, sourcesChangeFalse, result)
+	assert.False(t, result)
 }
 
 func TestCompareSources_Appeared(t *testing.T) {
@@ -229,24 +229,7 @@ func TestCompareSources_Appeared(t *testing.T) {
 
 	result, err := compareSources("/", fromTree, toTree, testSpecsDirSPECS, "curl")
 	require.NoError(t, err)
-	assert.Equal(t, sourcesChangeTrue, result, "sources file appeared")
-}
-
-func TestCompareSources_NoRenderedSpecsDir(t *testing.T) {
-	repo, fromRef, toRef := testRepoWithTwoCommits(t,
-		map[string][]byte{"placeholder": []byte("x")},
-		map[string][]byte{"placeholder": []byte("x")},
-	)
-
-	fromTree, err := resolveTree(repo, fromRef)
-	require.NoError(t, err)
-
-	toTree, err := resolveTree(repo, toRef)
-	require.NoError(t, err)
-
-	result, err := compareSources("/", fromTree, toTree, "", "curl")
-	require.NoError(t, err)
-	assert.Equal(t, sourcesChangeUnknown, result)
+	assert.True(t, result, "sources file appeared")
 }
 
 func TestCompareSources_NoSourcesAtEitherRef(t *testing.T) {
@@ -263,7 +246,7 @@ func TestCompareSources_NoSourcesAtEitherRef(t *testing.T) {
 
 	result, err := compareSources("/", fromTree, toTree, testSpecsDirSPECS, "curl")
 	require.NoError(t, err)
-	assert.Equal(t, sourcesChangeFalse, result, "no sources at either ref")
+	assert.False(t, result, "no sources at either ref")
 }
 
 // --- Multi-component batch test ---
@@ -324,12 +307,12 @@ func TestIncrementalUpdates(t *testing.T) {
 		fromIdx       int
 		toIdx         int
 		changeType    string
-		sourcesChange string
+		sourcesChange bool
 	}{
-		{"v1-v2", 0, 1, changeTypeChanged, sourcesChangeTrue},
-		{"v2-v3", 1, 2, changeTypeChanged, sourcesChangeTrue},
-		{"v1-v3 skip middle", 0, 2, changeTypeChanged, sourcesChangeTrue},
-		{"v2-v2 same ref", 1, 1, changeTypeUnchanged, sourcesChangeFalse},
+		{"v1-v2", 0, 1, changeTypeChanged, true},
+		{"v2-v3", 1, 2, changeTypeChanged, true},
+		{"v1-v3 skip middle", 0, 2, changeTypeChanged, true},
+		{"v2-v2 same ref", 1, 1, changeTypeUnchanged, false},
 	}
 
 	for _, testCase := range tests {

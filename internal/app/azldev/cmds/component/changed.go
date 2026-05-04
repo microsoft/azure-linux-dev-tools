@@ -59,9 +59,7 @@ Note: component selection and directory paths (lock-dir, rendered-specs-dir)
 are resolved from the current checkout's configuration, not from the compared
 refs. For accurate results, run this command from a checkout that matches the
 --to ref (e.g., after merging a PR). Components not in the current config are
-detected via lock file presence in the compared refs when using -a.
-
-When rendered-specs-dir is not configured, sources change reports "unknown".`,
+detected via lock file presence in the compared refs when using -a.`,
 		Example: `  # Show changed components between a branch and HEAD
   azldev component changed --from main -a
 
@@ -109,7 +107,7 @@ When rendered-specs-dir is not configured, sources change reports "unknown".`,
 type ChangedResult struct {
 	Component     string `json:"component"`
 	ChangeType    string `json:"changeType"`
-	SourcesChange string `json:"sourcesChange"`
+	SourcesChange bool   `json:"sourcesChange"`
 }
 
 // Change type constants for [ChangedResult.ChangeType].
@@ -118,13 +116,6 @@ const (
 	changeTypeChanged   = "changed"
 	changeTypeUnchanged = "unchanged"
 	changeTypeDeleted   = "deleted"
-)
-
-// Sources change constants for [ChangedResult.SourcesChange].
-const (
-	sourcesChangeTrue    = "true"
-	sourcesChangeFalse   = "false"
-	sourcesChangeUnknown = "unknown"
 )
 
 // ChangedComponents compares component lock files and rendered sources between
@@ -246,7 +237,7 @@ func buildResults(
 		// expensive git tree comparison. Use --force-recalculate to
 		// override and verify sources anyway.
 		if result.ChangeType == changeTypeUnchanged && !forceRecalculate {
-			result.SourcesChange = sourcesChangeFalse
+			result.SourcesChange = false
 
 			// In broad scans (-a), drop unchanged rows from output
 			// unless --include-unchanged is set.
@@ -273,7 +264,7 @@ func buildResults(
 		// scans unless --include-unchanged or sources actually changed.
 		if includeAllComponents && !includeUnchanged &&
 			result.ChangeType == changeTypeUnchanged &&
-			result.SourcesChange != sourcesChangeTrue {
+			!result.SourcesChange {
 			continue
 		}
 
@@ -353,7 +344,7 @@ func buildNonConfigResults(
 				continue
 			}
 
-			result.SourcesChange = sourcesChangeFalse
+			result.SourcesChange = false
 			results = append(results, result)
 
 			continue
@@ -371,7 +362,7 @@ func buildNonConfigResults(
 		// Still filter unless --include-unchanged or sources changed.
 		if !includeUnchanged &&
 			result.ChangeType == changeTypeUnchanged &&
-			result.SourcesChange != sourcesChangeTrue {
+			!result.SourcesChange {
 			continue
 		}
 
@@ -388,9 +379,8 @@ func classifyComponent(
 	fromLocks, toLocks map[string]lockfile.ComponentLock,
 ) ChangedResult {
 	result := ChangedResult{
-		Component:     name,
-		ChangeType:    changeTypeUnchanged,
-		SourcesChange: sourcesChangeUnknown,
+		Component:  name,
+		ChangeType: changeTypeUnchanged,
 	}
 
 	fromLock, inFrom := fromLocks[name]
@@ -413,48 +403,39 @@ func classifyComponent(
 }
 
 // compareSources compares the rendered sources file between two git trees.
-// Returns [sourcesChangeTrue], [sourcesChangeFalse], or [sourcesChangeUnknown].
 func compareSources(
 	repoRoot string,
 	fromTree, toTree *object.Tree,
 	renderedSpecsDir, name string,
-) (string, error) {
+) (bool, error) {
 	renderedDir, err := components.RenderedSpecDir(renderedSpecsDir, name)
 	if err != nil {
-		return sourcesChangeUnknown, fmt.Errorf("resolving rendered spec dir:\n%w", err)
-	}
-
-	if renderedDir == "" {
-		return sourcesChangeUnknown, nil
+		return false, fmt.Errorf("resolving rendered spec dir:\n%w", err)
 	}
 
 	sourcesRelPath, err := repoRelPath(repoRoot, filepath.Join(renderedDir, "sources"))
 	if err != nil {
-		return sourcesChangeUnknown, fmt.Errorf("computing repo-relative sources path:\n%w", err)
+		return false, fmt.Errorf("computing repo-relative sources path:\n%w", err)
 	}
 
 	fromSources, fromNotFound, fromErr := readFileFromTreeSafe(fromTree, sourcesRelPath)
 	toSources, toNotFound, toErr := readFileFromTreeSafe(toTree, sourcesRelPath)
 
 	if fromErr != nil {
-		return sourcesChangeUnknown, fmt.Errorf("reading sources at --from:\n%w", fromErr)
+		return false, fmt.Errorf("reading sources at --from:\n%w", fromErr)
 	}
 
 	if toErr != nil {
-		return sourcesChangeUnknown, fmt.Errorf("reading sources at --to:\n%w", toErr)
+		return false, fmt.Errorf("reading sources at --to:\n%w", toErr)
 	}
 
 	switch {
 	case fromNotFound && toNotFound:
-		return sourcesChangeFalse, nil
+		return false, nil
 	case fromNotFound || toNotFound:
-		return sourcesChangeTrue, nil
+		return true, nil
 	default:
-		if bytes.Equal(fromSources, toSources) {
-			return sourcesChangeFalse, nil
-		}
-
-		return sourcesChangeTrue, nil
+		return !bytes.Equal(fromSources, toSources), nil
 	}
 }
 

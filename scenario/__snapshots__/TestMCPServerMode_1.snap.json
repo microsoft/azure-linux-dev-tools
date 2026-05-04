@@ -44,6 +44,11 @@
        "description": "dry run only (do not take action)",
        "type": "boolean"
       },
+      "force-recalculate": {
+       "default": false,
+       "description": "Disable optimizations that skip work for unchanged components",
+       "type": "boolean"
+      },
       "from": {
        "default": "",
        "description": "Git ref to compare from (required)",
