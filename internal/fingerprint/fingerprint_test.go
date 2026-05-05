@@ -4,6 +4,7 @@
 package fingerprint_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/fingerprint"
@@ -672,4 +673,92 @@ func TestComputeIdentity_DifferentCheckoutPaths(t *testing.T) {
 
 	assert.Equal(t, fp1, fp2,
 		"same component in different checkout directories must produce identical fingerprints")
+}
+
+func testUpstreamCommitResolutionInputs() fingerprint.UpstreamCommitResolutionInputs {
+	return fingerprint.UpstreamCommitResolutionInputs{
+		Snapshot:       "2025-01-01T00:00:00Z",
+		DistroName:     "fedora",
+		DistroVersion:  "41",
+		DistGitBranch:  "f41",
+		DistGitBaseURI: "https://src.fedoraproject.org/rpms/$pkg.git",
+		UpstreamName:   "curl",
+	}
+}
+
+func TestComputeResolutionHash_SnapshotChangeAffectsHash(t *testing.T) {
+	inputs := testUpstreamCommitResolutionInputs()
+	hashBefore := fingerprint.ComputeResolutionHash(inputs)
+
+	inputs.Snapshot = "2026-06-15T00:00:00Z"
+	hashAfter := fingerprint.ComputeResolutionHash(inputs)
+
+	assert.NotEqual(t, hashBefore, hashAfter,
+		"snapshot change must change resolution hash")
+}
+
+func TestComputeResolutionHash_UpstreamNameChangeAffectsHash(t *testing.T) {
+	inputs := testUpstreamCommitResolutionInputs()
+	hashBefore := fingerprint.ComputeResolutionHash(inputs)
+
+	inputs.UpstreamName = "wget"
+	hashAfter := fingerprint.ComputeResolutionHash(inputs)
+
+	assert.NotEqual(t, hashBefore, hashAfter,
+		"upstream name change must change resolution hash")
+}
+
+func TestComputeResolutionHash_Deterministic(t *testing.T) {
+	inputs := testUpstreamCommitResolutionInputs()
+
+	hashFirst := fingerprint.ComputeResolutionHash(inputs)
+	hashSecond := fingerprint.ComputeResolutionHash(inputs)
+
+	assert.Equal(t, hashFirst, hashSecond, "same inputs must produce same hash")
+	assert.True(t, strings.HasPrefix(hashFirst, "sha256:"), "hash must have sha256 prefix")
+}
+
+func TestComputeResolutionHash_PinChangeAffectsHash(t *testing.T) {
+	inputs := testUpstreamCommitResolutionInputs()
+	hashNoPin := fingerprint.ComputeResolutionHash(inputs)
+
+	inputs.UpstreamCommitPin = "abc123def456"
+	hashWithPin := fingerprint.ComputeResolutionHash(inputs)
+
+	assert.NotEqual(t, hashNoPin, hashWithPin,
+		"adding an upstream commit pin must change resolution hash")
+}
+
+func TestComputeResolutionHash_DistroVersionChangeAffectsHash(t *testing.T) {
+	inputs := testUpstreamCommitResolutionInputs()
+	hashV41 := fingerprint.ComputeResolutionHash(inputs)
+
+	inputs.DistroVersion = "42"
+	inputs.DistGitBranch = "f42"
+	hashV42 := fingerprint.ComputeResolutionHash(inputs)
+
+	assert.NotEqual(t, hashV41, hashV42,
+		"distro version change must change resolution hash")
+}
+
+func TestComputeResolutionHash_BranchChangeAffectsHash(t *testing.T) {
+	inputs := testUpstreamCommitResolutionInputs()
+	hashBefore := fingerprint.ComputeResolutionHash(inputs)
+
+	inputs.DistGitBranch = "f41-stabilization"
+	hashAfter := fingerprint.ComputeResolutionHash(inputs)
+
+	assert.NotEqual(t, hashBefore, hashAfter,
+		"dist-git branch change must change resolution hash")
+}
+
+func TestComputeResolutionHash_BaseURIChangeAffectsHash(t *testing.T) {
+	inputs := testUpstreamCommitResolutionInputs()
+	hashBefore := fingerprint.ComputeResolutionHash(inputs)
+
+	inputs.DistGitBaseURI = "https://internal-mirror.example.com/rpms/$pkg.git"
+	hashAfter := fingerprint.ComputeResolutionHash(inputs)
+
+	assert.NotEqual(t, hashBefore, hashAfter,
+		"dist-git base URI change must change resolution hash")
 }
