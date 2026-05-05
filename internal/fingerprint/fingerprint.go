@@ -174,10 +174,10 @@ func writeField(writer io.Writer, label string, value string) {
 	fmt.Fprintf(writer, "%d:%s=%d:%s\n", len(label), label, len(value), value)
 }
 
-// ResolutionInputs holds the effective inputs that determine which upstream
+// UpstreamCommitResolutionInputs holds the effective inputs that determine which upstream
 // commit gets resolved. These must be the *resolved* values after inheritance
 // and fallback — not the raw component spec fields.
-type ResolutionInputs struct {
+type UpstreamCommitResolutionInputs struct {
 	// Snapshot is the resolved snapshot timestamp.
 	Snapshot string
 	// DistroName is the resolved distro name.
@@ -208,7 +208,7 @@ type ResolutionInputs struct {
 // Callers must resolve distro inheritance/fallbacks before calling this — the
 // hash must reflect the *actual* values used during resolution, not the raw
 // per-component config which may be empty when defaults apply.
-func ComputeResolutionHash(inputs ResolutionInputs) string {
+func ComputeResolutionHash(inputs UpstreamCommitResolutionInputs) string {
 	hasher := sha256.New()
 
 	writeField(hasher, "snapshot", inputs.Snapshot)

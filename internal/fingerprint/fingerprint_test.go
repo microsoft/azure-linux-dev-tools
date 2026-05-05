@@ -675,8 +675,8 @@ func TestComputeIdentity_DifferentCheckoutPaths(t *testing.T) {
 		"same component in different checkout directories must produce identical fingerprints")
 }
 
-func testResolutionInputs() fingerprint.ResolutionInputs {
-	return fingerprint.ResolutionInputs{
+func testUpstreamCommitResolutionInputs() fingerprint.UpstreamCommitResolutionInputs {
+	return fingerprint.UpstreamCommitResolutionInputs{
 		Snapshot:       "2025-01-01T00:00:00Z",
 		DistroName:     "fedora",
 		DistroVersion:  "41",
@@ -687,7 +687,7 @@ func testResolutionInputs() fingerprint.ResolutionInputs {
 }
 
 func TestComputeResolutionHash_SnapshotChangeAffectsHash(t *testing.T) {
-	inputs := testResolutionInputs()
+	inputs := testUpstreamCommitResolutionInputs()
 	hashBefore := fingerprint.ComputeResolutionHash(inputs)
 
 	inputs.Snapshot = "2026-06-15T00:00:00Z"
@@ -697,21 +697,19 @@ func TestComputeResolutionHash_SnapshotChangeAffectsHash(t *testing.T) {
 		"snapshot change must change resolution hash")
 }
 
-func TestComputeResolutionHash_BuildOptionDoesNotAffectHash(t *testing.T) {
-	// Build options are not part of ResolutionInputs — they only affect
-	// InputFingerprint. Verify the hash is stable regardless.
-	inputs := testResolutionInputs()
+func TestComputeResolutionHash_UpstreamNameChangeAffectsHash(t *testing.T) {
+	inputs := testUpstreamCommitResolutionInputs()
 	hashBefore := fingerprint.ComputeResolutionHash(inputs)
 
-	// Re-compute with identical inputs (build options are external).
+	inputs.UpstreamName = "wget"
 	hashAfter := fingerprint.ComputeResolutionHash(inputs)
 
-	assert.Equal(t, hashBefore, hashAfter,
-		"resolution hash must not be affected by build options")
+	assert.NotEqual(t, hashBefore, hashAfter,
+		"upstream name change must change resolution hash")
 }
 
 func TestComputeResolutionHash_Deterministic(t *testing.T) {
-	inputs := testResolutionInputs()
+	inputs := testUpstreamCommitResolutionInputs()
 
 	hashFirst := fingerprint.ComputeResolutionHash(inputs)
 	hashSecond := fingerprint.ComputeResolutionHash(inputs)
@@ -721,7 +719,7 @@ func TestComputeResolutionHash_Deterministic(t *testing.T) {
 }
 
 func TestComputeResolutionHash_PinChangeAffectsHash(t *testing.T) {
-	inputs := testResolutionInputs()
+	inputs := testUpstreamCommitResolutionInputs()
 	hashNoPin := fingerprint.ComputeResolutionHash(inputs)
 
 	inputs.UpstreamCommitPin = "abc123def456"
@@ -732,7 +730,7 @@ func TestComputeResolutionHash_PinChangeAffectsHash(t *testing.T) {
 }
 
 func TestComputeResolutionHash_DistroVersionChangeAffectsHash(t *testing.T) {
-	inputs := testResolutionInputs()
+	inputs := testUpstreamCommitResolutionInputs()
 	hashV41 := fingerprint.ComputeResolutionHash(inputs)
 
 	inputs.DistroVersion = "42"
@@ -744,7 +742,7 @@ func TestComputeResolutionHash_DistroVersionChangeAffectsHash(t *testing.T) {
 }
 
 func TestComputeResolutionHash_BranchChangeAffectsHash(t *testing.T) {
-	inputs := testResolutionInputs()
+	inputs := testUpstreamCommitResolutionInputs()
 	hashBefore := fingerprint.ComputeResolutionHash(inputs)
 
 	inputs.DistGitBranch = "f41-stabilization"
@@ -755,7 +753,7 @@ func TestComputeResolutionHash_BranchChangeAffectsHash(t *testing.T) {
 }
 
 func TestComputeResolutionHash_BaseURIChangeAffectsHash(t *testing.T) {
-	inputs := testResolutionInputs()
+	inputs := testUpstreamCommitResolutionInputs()
 	hashBefore := fingerprint.ComputeResolutionHash(inputs)
 
 	inputs.DistGitBaseURI = "https://internal-mirror.example.com/rpms/$pkg.git"
