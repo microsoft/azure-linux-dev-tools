@@ -143,10 +143,10 @@ const (
 	// fallbacks that confuse auto-detection.
 	ReleaseCalculationAutorelease ReleaseCalculation = "autorelease"
 
-	// ReleaseCalculationStatic explicitly declares that the spec uses a static integer
-	// release. azldev bumps the integer by the synthetic commit count during rendering.
-	// Use this for specs with conditional Release tags where auto-detection picks the
-	// wrong branch.
+	// ReleaseCalculationStatic explicitly declares that the spec uses a static
+	// release tag. azldev parses and bumps the release value during rendering.
+	// Use this for specs with conditional Release tags where auto-detection
+	// picks the wrong branch but the static release logic still works correctly.
 	ReleaseCalculationStatic ReleaseCalculation = "static"
 
 	// ReleaseCalculationManual skips all automatic Release tag manipulation. Use this for

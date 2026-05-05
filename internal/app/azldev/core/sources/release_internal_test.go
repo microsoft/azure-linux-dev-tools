@@ -195,5 +195,5 @@ func TestTryBumpStaticRelease_ExplicitStaticErrorsOnAutorelease(t *testing.T) {
 
 	err := preparer.tryBumpStaticRelease(comp, filepath.Join(testSourcesDir, "test-pkg"), 3)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot be auto-bumped")
+	assert.Contains(t, err.Error(), `release.calculation = "autorelease"`)
 }

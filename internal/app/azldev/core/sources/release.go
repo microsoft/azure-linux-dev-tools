@@ -120,10 +120,10 @@ func (p *sourcePreparerImpl) tryBumpStaticRelease(
 		return nil
 
 	case projectconfig.ReleaseCalculationStatic:
-		return p.bumpStaticRelease(component, sourcesDirPath, commitCount)
+		return p.readAndBumpRelease(component, sourcesDirPath, commitCount, true)
 
 	case projectconfig.ReleaseCalculationAuto:
-		return p.autoBumpStaticRelease(component, sourcesDirPath, commitCount)
+		return p.readAndBumpRelease(component, sourcesDirPath, commitCount, false)
 
 	default:
 		return fmt.Errorf("component %#q has unknown release calculation mode %#q",
@@ -131,12 +131,15 @@ func (p *sourcePreparerImpl) tryBumpStaticRelease(
 	}
 }
 
-// autoBumpStaticRelease auto-detects the release mode from the spec's Release tag value.
-// If the tag uses %autorelease, it's a no-op. Otherwise it attempts a static bump.
-func (p *sourcePreparerImpl) autoBumpStaticRelease(
+// readAndBumpRelease reads the Release tag from the spec and bumps its static integer.
+// When requireStaticRelease is true (explicit static mode), encountering %autorelease
+// produces an error telling the user to switch to 'release.calculation = "autorelease"'.
+// When false (auto mode), specs using %autorelease are silently skipped.
+func (p *sourcePreparerImpl) readAndBumpRelease(
 	component components.Component,
 	sourcesDirPath string,
 	commitCount int,
+	requireStaticRelease bool,
 ) error {
 	specPath, err := p.resolveSpecPath(component, sourcesDirPath)
 	if err != nil {
@@ -150,41 +153,19 @@ func (p *sourcePreparerImpl) autoBumpStaticRelease(
 	}
 
 	if ReleaseUsesAutorelease(releaseValue) {
+		if requireStaticRelease {
+			return fmt.Errorf(
+				"component %#q has 'release.calculation = \"static\"' but its Release tag "+
+					"uses %%autorelease; set 'release.calculation = \"autorelease\"' instead",
+				component.GetName())
+		}
+
 		slog.Debug("Spec uses %%autorelease; skipping static release bump",
 			"component", component.GetName())
 
 		return nil
 	}
 
-	return p.applyStaticBump(component, specPath, releaseValue, commitCount)
-}
-
-// bumpStaticRelease unconditionally bumps the static integer release.
-func (p *sourcePreparerImpl) bumpStaticRelease(
-	component components.Component,
-	sourcesDirPath string,
-	commitCount int,
-) error {
-	specPath, err := p.resolveSpecPath(component, sourcesDirPath)
-	if err != nil {
-		return err
-	}
-
-	releaseValue, err := GetReleaseTagValue(p.fs, specPath)
-	if err != nil {
-		return fmt.Errorf("failed to read Release tag for component %#q:\n%w",
-			component.GetName(), err)
-	}
-
-	return p.applyStaticBump(component, specPath, releaseValue, commitCount)
-}
-
-// applyStaticBump bumps a static integer release value and writes the result back to the spec.
-func (p *sourcePreparerImpl) applyStaticBump(
-	component components.Component,
-	specPath, releaseValue string,
-	commitCount int,
-) error {
 	newRelease, err := BumpStaticRelease(releaseValue, commitCount)
 	if err != nil {
 		return fmt.Errorf(
