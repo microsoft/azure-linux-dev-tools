@@ -228,6 +228,16 @@ func TestReleaseCalculationValidation(t *testing.T) {
 		Calculation: projectconfig.ReleaseCalculationManual,
 	}))
 
+	// Explicit "autorelease" is valid.
+	require.NoError(t, validate.Struct(&projectconfig.ReleaseConfig{
+		Calculation: projectconfig.ReleaseCalculationAutorelease,
+	}))
+
+	// Explicit "static" is valid.
+	require.NoError(t, validate.Struct(&projectconfig.ReleaseConfig{
+		Calculation: projectconfig.ReleaseCalculationStatic,
+	}))
+
 	// Invalid value is rejected.
 	require.Error(t, validate.Struct(&projectconfig.ReleaseConfig{
 		Calculation: "manaul",
