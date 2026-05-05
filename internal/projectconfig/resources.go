@@ -4,6 +4,7 @@
 package projectconfig
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"path/filepath"
@@ -59,10 +60,12 @@ func (ResourcesConfig) JSONSchemaExtend(s *jsonschema.Schema) {
 	if s.Properties == nil {
 		return
 	}
+
 	repos, ok := s.Properties.Get("rpm-repos")
 	if !ok || repos == nil {
 		return
 	}
+
 	repos.PropertyNames = &jsonschema.Schema{
 		Type:        "string",
 		Pattern:     rpmRepoNameRE.String(),
@@ -233,7 +236,7 @@ var rpmRepoNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]*$`)
 
 func validateRpmRepoName(name string) error {
 	if name == "" {
-		return fmt.Errorf("rpm-repo name must not be empty")
+		return errors.New("rpm-repo name must not be empty")
 	}
 
 	if !rpmRepoNameRE.MatchString(name) {

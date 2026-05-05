@@ -24,6 +24,7 @@ package mockconfig
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -63,12 +64,12 @@ func PrepareForRPMBuild(env *azldev.Env) (string, error) {
 
 	srcCfgPath := distroVerDef.MockConfigPath
 	if srcCfgPath == "" {
-		return "", fmt.Errorf("no mock config file configured for active distro version")
+		return "", errors.New("no mock config file configured for active distro version")
 	}
 
 	cfg := env.Config()
 	if cfg == nil {
-		return "", fmt.Errorf("no project config loaded")
+		return "", errors.New("no project config loaded")
 	}
 
 	repoNames := distroVerDef.Inputs.RpmBuild

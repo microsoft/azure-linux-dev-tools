@@ -294,9 +294,8 @@ func addConfiguredImageBuildRepos(
 
 	repoNames := distroVerDef.Inputs.ImageBuild
 	if len(repoNames) == 0 {
-		return fmt.Errorf(
-			"no rpm repos configured for image-build on the active distro version; " +
-				"define inputs.image-build under the appropriate [distros.X.versions.Y]",
+		return errors.New("no rpm repos configured for image-build on the active distro version; " +
+			"define inputs.image-build under the appropriate [distros.X.versions.Y]",
 		)
 	}
 

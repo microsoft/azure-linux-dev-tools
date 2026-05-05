@@ -26,8 +26,10 @@ func captureKiwiAddRepoArgs(t *testing.T, setup func(*kiwi.Runner) error) []stri
 	ctx := testctx.NewCtx()
 
 	var captured []string
+
 	ctx.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
 		captured = cmd.Args
+
 		return nil
 	}
 
@@ -37,11 +39,13 @@ func captureKiwiAddRepoArgs(t *testing.T, setup func(*kiwi.Runner) error) []stri
 	require.NoError(t, runner.Build(context.Background()))
 
 	var args []string
+
 	for i, a := range captured {
 		if a == addRepoFlag && i+1 < len(captured) {
 			args = append(args, captured[i+1])
 		}
 	}
+
 	return args
 }
 

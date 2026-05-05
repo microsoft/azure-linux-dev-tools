@@ -64,6 +64,7 @@ func TestValidateRpmRepo(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			err := validateRpmRepo("test", &tc.repo)
 			if tc.wantErr == "" {
 				assert.NoError(t, err)
@@ -92,6 +93,7 @@ func TestWithAbsolutePaths_GPGKey(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			cfg := &ResourcesConfig{
 				RpmRepos: map[string]RpmRepoResource{
 					"r": {BaseURI: "https://x/", GPGKey: tc.in},
@@ -116,7 +118,7 @@ func TestMergeUpdatesFrom_WholesaleReplace(t *testing.T) {
 	b := &ResourcesConfig{
 		RpmRepos: map[string]RpmRepoResource{
 			// disable-gpg-check is the zero value; must still take effect.
-			"r": {BaseURI: "https://new/", GPGKey: "https://new/key"},
+			"r":  {BaseURI: "https://new/", GPGKey: "https://new/key"},
 			"r2": {BaseURI: "https://r2/", DisableGPGCheck: true},
 		},
 	}
@@ -126,7 +128,7 @@ func TestMergeUpdatesFrom_WholesaleReplace(t *testing.T) {
 	got := a.RpmRepos["r"]
 	assert.Equal(t, "https://new/", got.BaseURI)
 	assert.False(t, got.DisableGPGCheck, "zero value must override true")
-	assert.Equal(t, "", got.Description, "wholesale replace must drop old description")
+	assert.Empty(t, got.Description, "wholesale replace must drop old description")
 	assert.Equal(t, "https://new/key", got.GPGKey)
 	// New entry preserved.
 	assert.Equal(t, "https://r2/", a.RpmRepos["r2"].BaseURI)
