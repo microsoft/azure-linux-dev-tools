@@ -209,6 +209,66 @@ func newChangedContext(env *azldev.Env) (*changedContext, error) {
 	}, nil
 }
 
+// classifyOpts controls per-component classification behavior. Config and
+// non-config components use different opts because they have different
+// semantics — see [buildResults] and [buildNonConfigResults].
+type classifyOpts struct {
+	// remapDeleted converts "deleted" to "changed". This matters for
+	// config components: a missing lock file means the component needs its
+	// lock regenerated (e.g., after a reset or manual deletion), but the
+	// component itself still exists in the project config. Reporting
+	// "deleted" would be misleading — it's a "changed" component that
+	// needs a rebuild. For non-config components (only known from lock
+	// files), a missing lock genuinely means the component was removed
+	// from the project, so "deleted" is correct.
+	remapDeleted bool
+	// includeUnchanged keeps unchanged components in the output.
+	includeUnchanged bool
+	// forceRecalculate disables the sources-comparison skip optimization.
+	forceRecalculate bool
+}
+
+// classifyAndCompareSources classifies a component and optionally compares its
+// rendered sources file. Returns the result and whether it should be included
+// in output.
+func classifyAndCompareSources(
+	name string,
+	fromLocks, toLocks map[string]lockfile.ComponentLock,
+	ctx *changedContext,
+	fromTree, toTree *object.Tree,
+	opts classifyOpts,
+) (ChangedResult, bool, error) {
+	result := classifyComponent(name, fromLocks, toLocks)
+
+	if opts.remapDeleted && result.ChangeType == changeTypeDeleted {
+		result.ChangeType = changeTypeChanged
+	}
+
+	// Unchanged fingerprint implies unchanged sources — skip the
+	// expensive git tree comparison. Use --force-recalculate to override.
+	if result.ChangeType == changeTypeUnchanged && !opts.forceRecalculate {
+		result.SourcesChange = false
+
+		return result, opts.includeUnchanged, nil
+	}
+
+	// Changed/added/deleted (or --force-recalculate): compare sources.
+	sourcesChange, err := compareSources(ctx.repoRoot, fromTree, toTree, ctx.renderedSpecsDir, name)
+	if err != nil {
+		return result, false, fmt.Errorf("comparing sources for %#q:\n%w", name, err)
+	}
+
+	result.SourcesChange = sourcesChange
+
+	// With --force-recalculate, unchanged components reach here after
+	// sources comparison. Still filter unless sources actually changed.
+	if result.ChangeType == changeTypeUnchanged && !result.SourcesChange && !opts.includeUnchanged {
+		return result, false, nil
+	}
+
+	return result, true, nil
+}
+
 // buildResults compares all components and detects deletions.
 func buildResults(
 	comps *components.ComponentSet,
@@ -220,55 +280,30 @@ func buildResults(
 	configNames := make(map[string]bool, comps.Len())
 	results := make([]ChangedResult, 0, comps.Len())
 
+	// Config components: remap deleted→changed (lock missing doesn't mean
+	// component is gone, just that the lock needs regeneration). Always
+	// show when explicitly selected (-p, -g, -s); only filter unchanged
+	// in broad scans (-a).
+	opts := classifyOpts{
+		remapDeleted:     true,
+		includeUnchanged: !includeAllComponents || includeUnchanged,
+		forceRecalculate: forceRecalculate,
+	}
+
 	for _, comp := range comps.Components() {
 		name := comp.GetName()
 		configNames[name] = true
 
-		result := classifyComponent(name, fromLocks, toLocks)
-
-		// Components in the current config that have their lock removed
-		// between refs are "changed" (need rebuild), not "deleted" — they
-		// still exist in the project.
-		if result.ChangeType == changeTypeDeleted {
-			result.ChangeType = changeTypeChanged
+		result, include, err := classifyAndCompareSources(
+			name, fromLocks, toLocks, ctx, fromTree, toTree, opts,
+		)
+		if err != nil {
+			return nil, err
 		}
 
-		// Unchanged fingerprint implies unchanged sources — skip the
-		// expensive git tree comparison. Use --force-recalculate to
-		// override and verify sources anyway.
-		if result.ChangeType == changeTypeUnchanged && !forceRecalculate {
-			result.SourcesChange = false
-
-			// In broad scans (-a), drop unchanged rows from output
-			// unless --include-unchanged is set.
-			if includeAllComponents && !includeUnchanged {
-				continue
-			}
-
+		if include {
 			results = append(results, result)
-
-			continue
 		}
-
-		// Changed/added/deleted components (or --force-recalculate):
-		// compare rendered sources files between the two refs.
-		sourcesChange, srcErr := compareSources(ctx.repoRoot, fromTree, toTree, ctx.renderedSpecsDir, name)
-		if srcErr != nil {
-			return nil, fmt.Errorf("comparing sources for %#q:\n%w", name, srcErr)
-		}
-
-		result.SourcesChange = sourcesChange
-
-		// When --force-recalculate is set, unchanged components reach
-		// here after sources comparison. Still filter them from broad
-		// scans unless --include-unchanged or sources actually changed.
-		if includeAllComponents && !includeUnchanged &&
-			result.ChangeType == changeTypeUnchanged &&
-			!result.SourcesChange {
-			continue
-		}
-
-		results = append(results, result)
 	}
 
 	// Skip non-config component detection for filtered runs (-p, -g, -s,
@@ -331,42 +366,27 @@ func buildNonConfigResults(
 
 	sort.Strings(sortedNames)
 
-	var results []ChangedResult //nolint:prealloc // size not known ahead of time.
+	// Non-config components: keep deleted as-is (genuinely removed from
+	// the project, not just a missing lock for an existing component).
+	opts := classifyOpts{
+		remapDeleted:     false,
+		includeUnchanged: includeUnchanged,
+		forceRecalculate: forceRecalculate,
+	}
+
+	var results []ChangedResult
 
 	for _, name := range sortedNames {
-		result := classifyComponent(name, fromLocks, toLocks)
+		result, include, err := classifyAndCompareSources(
+			name, fromLocks, toLocks, ctx, fromTree, toTree, opts,
+		)
+		if err != nil {
+			return nil, err
+		}
 
-		// Unchanged fingerprint implies unchanged sources — skip the
-		// expensive git tree comparison unless --force-recalculate.
-		if result.ChangeType == changeTypeUnchanged && !forceRecalculate {
-			// Drop unchanged non-config components unless requested.
-			if !includeUnchanged {
-				continue
-			}
-
-			result.SourcesChange = false
+		if include {
 			results = append(results, result)
-
-			continue
 		}
-
-		// Changed/added/deleted (or --force-recalculate): compare sources.
-		sourcesChange, srcErr := compareSources(ctx.repoRoot, fromTree, toTree, ctx.renderedSpecsDir, name)
-		if srcErr != nil {
-			return nil, fmt.Errorf("comparing sources for non-config component %#q:\n%w", name, srcErr)
-		}
-
-		result.SourcesChange = sourcesChange
-
-		// With --force-recalculate, unchanged components reach here.
-		// Still filter unless --include-unchanged or sources changed.
-		if !includeUnchanged &&
-			result.ChangeType == changeTypeUnchanged &&
-			!result.SourcesChange {
-			continue
-		}
-
-		results = append(results, result)
 	}
 
 	return results, nil
