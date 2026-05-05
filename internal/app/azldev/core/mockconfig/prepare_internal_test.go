@@ -124,7 +124,8 @@ func TestPrepareForRPMBuild_StagesAndGenerates(t *testing.T) {
 	assert.True(t, strings.HasSuffix(cfgPath, "/mock.cfg"))
 
 	// site-defaults.cfg must be present and contain azl_repos.
-	siteDefaults, readErr := fileutils.ReadFile(testEnv.TestFS, strings.TrimSuffix(cfgPath, "mock.cfg")+"site-defaults.cfg")
+	siteDefaultsPath := strings.TrimSuffix(cfgPath, "mock.cfg") + "site-defaults.cfg"
+	siteDefaults, readErr := fileutils.ReadFile(testEnv.TestFS, siteDefaultsPath)
 	require.NoError(t, readErr)
 	assert.Contains(t, string(siteDefaults), "config_opts['azl_repos']")
 	assert.Contains(t, string(siteDefaults), "test-repo")
@@ -148,7 +149,8 @@ func TestPrepareForRPMBuild_NoInputs_StagesEmptyAndWarns(t *testing.T) {
 	// Even with no inputs, we still stage and generate an (empty) site-defaults.cfg.
 	assert.True(t, strings.HasPrefix(cfgPath, "/work/"))
 
-	siteDefaults, readErr := fileutils.ReadFile(testEnv.TestFS, strings.TrimSuffix(cfgPath, "mock.cfg")+"site-defaults.cfg")
+	siteDefaultsPath := strings.TrimSuffix(cfgPath, "mock.cfg") + "site-defaults.cfg"
+	siteDefaults, readErr := fileutils.ReadFile(testEnv.TestFS, siteDefaultsPath)
 	require.NoError(t, readErr)
 	assert.Contains(t, string(siteDefaults), "config_opts['azl_repos'] = [\n]")
 }

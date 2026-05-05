@@ -282,8 +282,11 @@ func createKiwiRunner(
 
 // addConfiguredImageBuildRepos resolves the active distro version's
 // inputs.image-build list to RPM repo resources and registers each with the kiwi
-// runner. Fails strictly if no inputs are configured for image-build, or if all
-// configured repos are filtered out for the target architecture.
+// runner. When no inputs are configured for image-build the function is a no-op:
+// images may still get their repos from the .kiwi description and/or user-supplied
+// --repo flags. When inputs *are* configured but every entry is filtered out for
+// the target architecture, that is treated as an error (it would otherwise
+// silently produce a no-repo image).
 func addConfiguredImageBuildRepos(
 	env *azldev.Env, runner *kiwi.Runner, options *ImageBuildOptions,
 ) error {
@@ -294,9 +297,11 @@ func addConfiguredImageBuildRepos(
 
 	repoNames := distroVerDef.Inputs.ImageBuild
 	if len(repoNames) == 0 {
-		return errors.New("no rpm repos configured for image-build on the active distro version; " +
-			"define inputs.image-build under the appropriate [distros.X.versions.Y]",
-		)
+		// No TOML-driven image-build repos. The .kiwi description and/or
+		// user-supplied --repo flags are expected to supply repos.
+		slog.Info("No TOML-driven image-build inputs configured; relying on .kiwi/--repo for repositories")
+
+		return nil
 	}
 
 	cfg := env.Config()

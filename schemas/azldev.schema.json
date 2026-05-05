@@ -896,6 +896,28 @@
       "type": "object"
     },
     "RpmRepoResource": {
+      "oneOf": [
+        {
+          "not": {
+            "required": [
+              "metalink"
+            ]
+          },
+          "required": [
+            "base-uri"
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "base-uri"
+            ]
+          },
+          "required": [
+            "metalink"
+          ]
+        }
+      ],
       "properties": {
         "description": {
           "type": "string",
@@ -931,9 +953,9 @@
         },
         "gpg-key": {
           "type": "string",
-          "pattern": "^\\S+$",
+          "pattern": "^((https?|file)://\\S+|[^\\s:]\\S*)$",
           "title": "GPG key",
-          "description": "Path or URI to the GPG key file. Bare paths are resolved relative to the defining TOML file. Accepted URI schemes: http"
+          "description": "Path or URI to the GPG key file. Accepted URI schemes: http, https, file. Bare paths are resolved relative to the defining TOML file."
         },
         "arches": {
           "items": {

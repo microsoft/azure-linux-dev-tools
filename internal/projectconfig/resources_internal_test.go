@@ -59,18 +59,53 @@ func TestValidateRpmRepo(t *testing.T) {
 			repo:    RpmRepoResource{Type: "weird", BaseURI: "https://x/", DisableGPGCheck: true},
 			wantErr: "unsupported type",
 		},
+		{
+			name:    "opaque base-uri rejected",
+			repo:    RpmRepoResource{BaseURI: "https:example.com", DisableGPGCheck: true},
+			wantErr: "opaque URI",
+		},
+		{
+			name:    "base-uri with empty host rejected",
+			repo:    RpmRepoResource{BaseURI: "https:///path", DisableGPGCheck: true},
+			wantErr: "must include a host",
+		},
+		{
+			name:    "opaque metalink rejected",
+			repo:    RpmRepoResource{Metalink: "https:example.com/ml", DisableGPGCheck: true},
+			wantErr: "opaque URI",
+		},
+		{
+			name:    "opaque gpg-key https rejected",
+			repo:    RpmRepoResource{BaseURI: "https://x/", GPGKey: "https:example.com/key"},
+			wantErr: "opaque URI",
+		},
+		{
+			name:    "opaque gpg-key file rejected",
+			repo:    RpmRepoResource{BaseURI: "https://x/", GPGKey: "file:relative.gpg"},
+			wantErr: "opaque URI",
+		},
+		{
+			name:    "file gpg-key with host rejected",
+			repo:    RpmRepoResource{BaseURI: "https://x/", GPGKey: "file://server/share/key.gpg"},
+			wantErr: "file:///absolute/path",
+		},
+		{
+			name:    "https gpg-key with no host rejected",
+			repo:    RpmRepoResource{BaseURI: "https://x/", GPGKey: "https:///path/key.gpg"},
+			wantErr: "must include a host",
+		},
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := validateRpmRepo("test", &tc.repo)
-			if tc.wantErr == "" {
+			err := validateRpmRepo("test", &testCase.repo)
+			if testCase.wantErr == "" {
 				assert.NoError(t, err)
 			} else {
 				require.Error(t, err)
-				assert.Contains(t, err.Error(), tc.wantErr)
+				assert.Contains(t, err.Error(), testCase.wantErr)
 			}
 		})
 	}
@@ -90,19 +125,19 @@ func TestWithAbsolutePaths_GPGKey(t *testing.T) {
 		{name: "bare absolute", in: "/etc/pki/key", want: "file:///etc/pki/key"},
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
 			cfg := &ResourcesConfig{
 				RpmRepos: map[string]RpmRepoResource{
-					"r": {BaseURI: "https://x/", GPGKey: tc.in},
+					"r": {BaseURI: "https://x/", GPGKey: testCase.in},
 				},
 			}
 			got := cfg.WithAbsolutePaths("/ref")
-			assert.Equal(t, tc.want, got.RpmRepos["r"].GPGKey)
+			assert.Equal(t, testCase.want, got.RpmRepos["r"].GPGKey)
 			// Original must be untouched (deep copy semantics).
-			assert.Equal(t, tc.in, cfg.RpmRepos["r"].GPGKey)
+			assert.Equal(t, testCase.in, cfg.RpmRepos["r"].GPGKey)
 		})
 	}
 }
@@ -110,12 +145,12 @@ func TestWithAbsolutePaths_GPGKey(t *testing.T) {
 func TestMergeUpdatesFrom_WholesaleReplace(t *testing.T) {
 	t.Parallel()
 
-	a := &ResourcesConfig{
+	earlier := &ResourcesConfig{
 		RpmRepos: map[string]RpmRepoResource{
 			"r": {BaseURI: "https://old/", DisableGPGCheck: true, Description: "old"},
 		},
 	}
-	b := &ResourcesConfig{
+	later := &ResourcesConfig{
 		RpmRepos: map[string]RpmRepoResource{
 			// disable-gpg-check is the zero value; must still take effect.
 			"r":  {BaseURI: "https://new/", GPGKey: "https://new/key"},
@@ -123,35 +158,35 @@ func TestMergeUpdatesFrom_WholesaleReplace(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, a.MergeUpdatesFrom(b))
+	require.NoError(t, earlier.MergeUpdatesFrom(later))
 
-	got := a.RpmRepos["r"]
+	got := earlier.RpmRepos["r"]
 	assert.Equal(t, "https://new/", got.BaseURI)
 	assert.False(t, got.DisableGPGCheck, "zero value must override true")
 	assert.Empty(t, got.Description, "wholesale replace must drop old description")
 	assert.Equal(t, "https://new/key", got.GPGKey)
 	// New entry preserved.
-	assert.Equal(t, "https://r2/", a.RpmRepos["r2"].BaseURI)
+	assert.Equal(t, "https://r2/", earlier.RpmRepos["r2"].BaseURI)
 }
 
 func TestMergeUpdatesFrom_NilOther(t *testing.T) {
 	t.Parallel()
 
-	a := &ResourcesConfig{}
-	require.NoError(t, a.MergeUpdatesFrom(nil))
-	assert.Empty(t, a.RpmRepos)
+	cfg := &ResourcesConfig{}
+	require.NoError(t, cfg.MergeUpdatesFrom(nil))
+	assert.Empty(t, cfg.RpmRepos)
 }
 
 func TestRpmRepoResource_IsAvailableForArch(t *testing.T) {
 	t.Parallel()
 
-	r := RpmRepoResource{}
-	assert.True(t, r.IsAvailableForArch("x86_64"))
-	assert.True(t, r.IsAvailableForArch("aarch64"))
+	repo := RpmRepoResource{}
+	assert.True(t, repo.IsAvailableForArch("x86_64"))
+	assert.True(t, repo.IsAvailableForArch("aarch64"))
 
-	r.Arches = []string{"x86_64"}
-	assert.True(t, r.IsAvailableForArch("x86_64"))
-	assert.False(t, r.IsAvailableForArch("aarch64"))
+	repo.Arches = []string{"x86_64"}
+	assert.True(t, repo.IsAvailableForArch("x86_64"))
+	assert.False(t, repo.IsAvailableForArch("aarch64"))
 }
 
 func TestHasURIScheme(t *testing.T) {

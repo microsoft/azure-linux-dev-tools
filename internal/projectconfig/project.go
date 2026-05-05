@@ -128,9 +128,9 @@ func validateDistroVersionInputs(
 				if repo.IsLocalGPGKey() {
 					return fmt.Errorf(
 						"distro %q version %q inputs.rpm-build references rpm-repo %q which has a local "+
-							"`gpg-key` (%q). Local keys are not yet supported for mock builds (mock would "+
-							"evaluate the path inside the chroot). Use an http(s) URI, or only reference this "+
-							"repo from inputs.image-build.",
+							"`gpg-key` (%q); local keys are not yet supported for mock builds (mock would "+
+							"evaluate the path inside the chroot) — use an http(s) URI, or only reference "+
+							"this repo from inputs.image-build",
 						distroName, versionName, name, repo.GPGKey,
 					)
 				}

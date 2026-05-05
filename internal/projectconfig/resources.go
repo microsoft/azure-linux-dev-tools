@@ -43,6 +43,12 @@ func (t RpmRepoType) IsValid() bool {
 // The container is intentionally namespaced (e.g., resources.rpm-repos rather than
 // rpm-repos) so that future sibling resource types (container registries, signing
 // keys, etc.) can live under the same top-level key without crowding the schema.
+//
+// JSONSchemaExtend uses a value receiver because the invopop/jsonschema library
+// only invokes value-receiver methods when reflecting on the type; the rest of
+// the methods use pointer receivers because they mutate.
+//
+//nolint:recvcheck // intentional mixed receivers (see comment above).
 type ResourcesConfig struct {
 	// RpmRepos is the set of reusable RPM repository definitions, keyed by name.
 	RpmRepos map[string]RpmRepoResource `toml:"rpm-repos,omitempty" json:"rpmRepos,omitempty" jsonschema:"title=RPM repositories,description=Reusable named RPM repository definitions"`
@@ -56,12 +62,12 @@ func (r *ResourcesConfig) IsEmpty() bool {
 // JSONSchemaExtend tightens the generated schema for the rpm-repos map so editors
 // can flag invalid repo names at edit time. The runtime validator
 // ([validateRpmRepoName]) is the source of truth; this keeps the schema in sync.
-func (ResourcesConfig) JSONSchemaExtend(s *jsonschema.Schema) {
-	if s.Properties == nil {
+func (ResourcesConfig) JSONSchemaExtend(schema *jsonschema.Schema) {
+	if schema.Properties == nil {
 		return
 	}
 
-	repos, ok := s.Properties.Get("rpm-repos")
+	repos, ok := schema.Properties.Get("rpm-repos")
 	if !ok || repos == nil {
 		return
 	}
@@ -106,6 +112,12 @@ func (r *ResourcesConfig) MergeUpdatesFrom(other *ResourcesConfig) error {
 // **GPG checking defaults to enabled** (the safe default). Set
 // `disable-gpg-check = true` to opt out. A repo with GPG checking enabled and no
 // `gpg-key` is invalid; load-time validation rejects it.
+//
+// JSONSchemaExtend uses a value receiver because the invopop/jsonschema library
+// only invokes value-receiver methods when reflecting on the type; the rest of
+// the methods use pointer receivers because they read shared state.
+//
+//nolint:recvcheck // intentional mixed receivers (see comment above).
 type RpmRepoResource struct {
 	// Description is a human-readable description of the repository. Used only
 	// for `azldev config dump` and similar diagnostics; not projected into dnf
@@ -137,7 +149,7 @@ type RpmRepoResource struct {
 	//     for portability across consumers.
 	//   * Bare path: resolved at TOML-load time relative to the directory containing the
 	//     defining TOML file, then emitted to consumers as a `file://` URI.
-	GPGKey string `toml:"gpg-key,omitempty" json:"gpgKey,omitempty" jsonschema:"pattern=^\\S+$,title=GPG key,description=Path or URI to the GPG key file. Bare paths are resolved relative to the defining TOML file. Accepted URI schemes: http, https, file."`
+	GPGKey string `toml:"gpg-key,omitempty" json:"gpgKey,omitempty" jsonschema:"pattern=^\\S+$,title=GPG key,description=Path or URI to the GPG key file. Accepted URI schemes: http\\, https\\, file. Bare paths are resolved relative to the defining TOML file."`
 
 	// Arches optionally restricts the repository to a specific list of target architectures
 	// (e.g., ["x86_64"]). When empty, the repository is available for all architectures.
@@ -152,6 +164,30 @@ func (r *RpmRepoResource) EffectiveType() RpmRepoType {
 	}
 
 	return r.Type
+}
+
+// JSONSchemaExtend tightens the generated schema for an [RpmRepoResource] so that
+// editors can flag invalid TOML at edit time. Mirrors the runtime constraints in
+// [validateRpmRepo]:
+//
+//   - exactly one of `base-uri` / `metalink` must be set;
+//   - `gpg-key` must be a bare path or an `http://` / `https://` / `file://` URI.
+//
+// The runtime validator is the source of truth; this keeps the schema in sync.
+func (RpmRepoResource) JSONSchemaExtend(schema *jsonschema.Schema) {
+	// Exactly one of base-uri/metalink. Encoded as oneOf with `required` on each.
+	schema.OneOf = []*jsonschema.Schema{
+		{Required: []string{"base-uri"}, Not: &jsonschema.Schema{Required: []string{"metalink"}}},
+		{Required: []string{"metalink"}, Not: &jsonschema.Schema{Required: []string{"base-uri"}}},
+	}
+
+	// gpg-key: bare path OR http(s)/file URI. The struct tag pattern is just
+	// "no whitespace"; this tightens it to one of the supported shapes.
+	if schema.Properties != nil {
+		if gpg, ok := schema.Properties.Get("gpg-key"); ok && gpg != nil {
+			gpg.Pattern = `^((https?|file)://\S+|[^\s:]\S*)$`
+		}
+	}
 }
 
 // IsAvailableForArch reports whether the repository is available for the given target
@@ -188,8 +224,17 @@ func validateRpmRepo(name string, repo *RpmRepoResource) error {
 		return err
 	}
 
-	switch repo.EffectiveType() {
-	case RpmRepoTypeRpmMd:
+	if err := validateRpmRepoSource(name, repo); err != nil {
+		return err
+	}
+
+	return validateRpmRepoGPG(name, repo)
+}
+
+// validateRpmRepoSource validates the source-defining fields of a repo (`base-uri`
+// and `metalink`) for the active [RpmRepoResource.EffectiveType].
+func validateRpmRepoSource(name string, repo *RpmRepoResource) error {
+	if repo.EffectiveType() == RpmRepoTypeRpmMd {
 		if repo.BaseURI == "" && repo.Metalink == "" {
 			return fmt.Errorf("rpm-repo %#q must specify exactly one of `base-uri` or `metalink`", name)
 		}
@@ -211,6 +256,11 @@ func validateRpmRepo(name string, repo *RpmRepoResource) error {
 		}
 	}
 
+	return nil
+}
+
+// validateRpmRepoGPG validates the GPG-related fields (`disable-gpg-check`, `gpg-key`).
+func validateRpmRepoGPG(name string, repo *RpmRepoResource) error {
 	if !repo.DisableGPGCheck && repo.GPGKey == "" {
 		return fmt.Errorf(
 			"rpm-repo %#q has GPG checking enabled (the default) but no `gpg-key`; "+
@@ -234,6 +284,13 @@ func validateRpmRepo(name string, repo *RpmRepoResource) error {
 // arguments) unambiguous and free of escaping concerns.
 var rpmRepoNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]*$`)
 
+// URI scheme constants used by the validators.
+const (
+	schemeHTTP  = "http"
+	schemeHTTPS = "https"
+	schemeFile  = "file"
+)
+
 func validateRpmRepoName(name string) error {
 	if name == "" {
 		return errors.New("rpm-repo name must not be empty")
@@ -255,14 +312,20 @@ func validateRpmRepoName(name string) error {
 // defense-in-depth check: even for trusted TOML sources, unsanitized newlines or NUL
 // bytes here produce baffling downstream failures.
 func validateNoUnsafeChars(field, repoName, value string) error {
-	for i, r := range value {
-		switch {
-		case r == '\r' || r == '\n':
-			return fmt.Errorf("rpm-repo %#q `%s` must be a single line (no embedded CR/LF at byte %d)", repoName, field, i)
-		case r == 0:
-			return fmt.Errorf("rpm-repo %#q `%s` must not contain NUL bytes (at byte %d)", repoName, field, i)
-		case r == '\u2028' || r == '\u2029':
-			return fmt.Errorf("rpm-repo %#q `%s` must not contain Unicode line separators (at byte %d)", repoName, field, i)
+	for byteIndex, char := range value {
+		switch char {
+		case '\r', '\n':
+			return fmt.Errorf(
+				"rpm-repo %#q `%s` must be a single line (no embedded CR/LF at byte %d)",
+				repoName, field, byteIndex)
+		case 0:
+			return fmt.Errorf(
+				"rpm-repo %#q `%s` must not contain NUL bytes (at byte %d)",
+				repoName, field, byteIndex)
+		case '\u2028', '\u2029':
+			return fmt.Errorf(
+				"rpm-repo %#q `%s` must not contain Unicode line separators (at byte %d)",
+				repoName, field, byteIndex)
 		}
 	}
 
@@ -273,30 +336,57 @@ func validateNoUnsafeChars(field, repoName, value string) error {
 // an http or https scheme. Local schemes (file://) are deliberately disallowed for the
 // repo source: kiwi.AddRemoteRepo only handles remote URIs, and supporting file:// here
 // would require split-by-consumer staging that we don't do today.
+//
+// Also rejects opaque (non-hierarchical) URIs like `https:example.com` (no `//`) and
+// requires a non-empty `Host`, so the value is always something downstream tools will
+// recognize as `http(s)://...`.
 func validateRemoteURI(field, repoName, raw string) error {
 	if err := validateNoUnsafeChars(field, repoName, raw); err != nil {
 		return err
 	}
 
-	u, err := url.Parse(raw)
+	parsed, err := url.Parse(raw)
 	if err != nil {
 		return fmt.Errorf("rpm-repo %#q `%s` is not a valid URI: %w", repoName, field, err)
 	}
 
-	switch strings.ToLower(u.Scheme) {
-	case "http", "https":
-		return nil
+	switch strings.ToLower(parsed.Scheme) {
 	case "":
-		return fmt.Errorf("rpm-repo %#q `%s` is missing a scheme; expected http(s)://...", repoName, field)
+		return fmt.Errorf("rpm-repo %#q `%s` is missing a scheme (expected an http or https URL)", repoName, field)
+	case schemeHTTP, schemeHTTPS:
+		// fall through to hierarchical-form checks below.
 	default:
-		return fmt.Errorf("rpm-repo %#q `%s` uses unsupported scheme %q; only http and https are accepted", repoName, field, u.Scheme)
+		return fmt.Errorf(
+			"rpm-repo %#q `%s` uses unsupported scheme %q; only http and https are accepted",
+			repoName, field, parsed.Scheme,
+		)
 	}
+
+	if parsed.Opaque != "" {
+		return fmt.Errorf(
+			"rpm-repo %#q `%s` must use the `scheme://host/path` form (got opaque URI %q)",
+			repoName, field, raw,
+		)
+	}
+
+	if parsed.Host == "" {
+		return fmt.Errorf("rpm-repo %#q `%s` must include a host (got %q)", repoName, field, raw)
+	}
+
+	return nil
 }
 
 // validateGPGKey checks the in-isolation form of a `gpg-key` value. A bare path is
 // allowed at this stage (resolved to an absolute file:// URI by [WithAbsolutePaths]);
 // rejection of bare paths for rpm-build consumers happens in
 // [validateDistroVersionInputs], not here.
+//
+// For URI-shaped values, the supported schemes are `http`, `https`, and `file`. We
+// require hierarchical (`scheme://...`) forms — opaque URIs like `file:relative` or
+// `https:example.com` are rejected since they wouldn't behave the way callers expect.
+// `http(s)` requires a non-empty `Host`; `file` requires an empty `Host` and an absolute
+// `Path` (so it really is a `file:///abs/path` reference rather than e.g.
+// `file://server/share`).
 func validateGPGKey(repoName, raw string) error {
 	if err := validateNoUnsafeChars("gpg-key", repoName, raw); err != nil {
 		return err
@@ -307,17 +397,51 @@ func validateGPGKey(repoName, raw string) error {
 		return nil
 	}
 
-	u, err := url.Parse(raw)
+	parsed, err := url.Parse(raw)
 	if err != nil {
 		return fmt.Errorf("rpm-repo %#q `gpg-key` is not a valid URI: %w", repoName, err)
 	}
 
-	switch strings.ToLower(u.Scheme) {
-	case "http", "https", "file":
-		return nil
+	scheme := strings.ToLower(parsed.Scheme)
+	switch scheme {
+	case schemeHTTP, schemeHTTPS, schemeFile:
+		// fall through to per-scheme shape checks.
 	default:
-		return fmt.Errorf("rpm-repo %#q `gpg-key` uses unsupported scheme %q; expected http, https, or file", repoName, u.Scheme)
+		return fmt.Errorf(
+			"rpm-repo %#q `gpg-key` uses unsupported scheme %q; expected http, https, or file",
+			repoName, parsed.Scheme,
+		)
 	}
+
+	if parsed.Opaque != "" {
+		return fmt.Errorf(
+			"rpm-repo %#q `gpg-key` must use the `scheme://...` form (got opaque URI %q)",
+			repoName, raw,
+		)
+	}
+
+	switch scheme {
+	case schemeHTTP, schemeHTTPS:
+		if parsed.Host == "" {
+			return fmt.Errorf("rpm-repo %#q `gpg-key` must include a host (got %q)", repoName, raw)
+		}
+	case schemeFile:
+		if parsed.Host != "" {
+			return fmt.Errorf(
+				"rpm-repo %#q `gpg-key` must be of the form `file:///absolute/path` (got host %q in %q)",
+				repoName, parsed.Host, raw,
+			)
+		}
+
+		if !filepath.IsAbs(parsed.Path) {
+			return fmt.Errorf(
+				"rpm-repo %#q `gpg-key` must be an absolute `file://` path (got %q)",
+				repoName, raw,
+			)
+		}
+	}
+
+	return nil
 }
 
 // IsLocalGPGKey reports whether the repo's gpg-key (if any) refers to a local filesystem
@@ -332,12 +456,12 @@ func (r *RpmRepoResource) IsLocalGPGKey() bool {
 		return true
 	}
 
-	u, err := url.Parse(r.GPGKey)
+	parsed, err := url.Parse(r.GPGKey)
 	if err != nil {
 		return false
 	}
 
-	return strings.EqualFold(u.Scheme, "file")
+	return strings.EqualFold(parsed.Scheme, schemeFile)
 }
 
 // WithAbsolutePaths returns a copy of the ResourcesConfig with relative path-shaped
@@ -378,15 +502,15 @@ func absolutizeKeyPath(key, referenceDir string) string {
 
 	abs = filepath.Clean(abs)
 
-	return (&url.URL{Scheme: "file", Path: abs}).String()
+	return (&url.URL{Scheme: schemeFile, Path: abs}).String()
 }
 
 // hasURIScheme reports whether s starts with "<alpha>[<alphanumeric>+-.]*:".
 // Cheap and dependency-free; we don't need full RFC 3986 here.
 func hasURIScheme(s string) bool {
-	for i, r := range s {
+	for i, char := range s {
 		if i == 0 {
-			if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')) {
+			if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') {
 				return false
 			}
 
@@ -394,12 +518,12 @@ func hasURIScheme(s string) bool {
 		}
 
 		switch {
-		case r >= 'a' && r <= 'z',
-			r >= 'A' && r <= 'Z',
-			r >= '0' && r <= '9',
-			r == '+', r == '-', r == '.':
+		case char >= 'a' && char <= 'z',
+			char >= 'A' && char <= 'Z',
+			char >= '0' && char <= '9',
+			char == '+', char == '-', char == '.':
 			continue
-		case r == ':':
+		case char == ':':
 			return true
 		default:
 			return false
