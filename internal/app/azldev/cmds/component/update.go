@@ -88,7 +88,10 @@ toolchain bug, static library update). Orphan pruning is skipped under --bump.`,
 	cmd.Flags().BoolVar(&options.Bump, "bump", false,
 		"increment the manual-rebuild counter to trigger a new release")
 	cmd.Flags().BoolVar(&options.ForceRecalculate, "force-recalculate", false,
-		"disable optimizations that skip work for unchanged components")
+		"force re-resolution of all components, ignoring freshness checks that "+
+			"would skip unchanged components. Use when upstream state may have "+
+			"changed independently of the snapshot time and the new commit is "+
+			"preferred")
 
 	return cmd
 }
@@ -113,6 +116,12 @@ type UpdateResult struct {
 	// for local components this is a content hash of the spec directory.
 	// Used as SourceIdentity input for fingerprint computation.
 	sourceIdentity string `json:"-" table:"-"`
+
+	// upToDate is set by the freshness check (Case 1) when both the input
+	// fingerprint and resolution hash match the lock. Components marked
+	// upToDate are skipped by [saveComponentLocks] — no re-fingerprinting
+	// or lock rewrite is needed.
+	upToDate bool `json:"-" table:"-"`
 }
 
 // UpdateComponents resolves source identities for all selected components and
@@ -228,7 +237,7 @@ func saveComponentLocks(env *azldev.Env, store *lockfile.Store, results []Update
 	}()
 
 	for idx := range results {
-		if results[idx].Error != "" || results[idx].Skipped || results[idx].config == nil {
+		if results[idx].Error != "" || results[idx].Skipped || results[idx].upToDate {
 			continue
 		}
 
@@ -306,15 +315,8 @@ func updateComponentLock(env *azldev.Env, store *lockfile.Store, result *UpdateR
 
 	lock.InputFingerprint = identity.Fingerprint
 
-	// Update resolution input hash (snapshot, distro ref, branch, pin).
-	resInputs, resErr := buildUpstreamCommitResolutionInputs(env, result.config)
-	if resErr != nil {
-		return false, fmt.Errorf("building resolution inputs for %#q:\n%w", result.Component, resErr)
-	}
-
-	resHash := fingerprint.ComputeResolutionHash(resInputs)
-	resHashChanged := lock.ResolutionInputHash != resHash
-	lock.ResolutionInputHash = resHash
+	// Update resolution input hash for upstream components.
+	resHashChanged := updateResolutionHash(env, result.config, lock)
 
 	// Write if either hash changed. ResolutionInputHash updates are silent
 	// (don't set Changed) since they don't affect build outputs.
@@ -327,6 +329,31 @@ func updateComponentLock(env *azldev.Env, store *lockfile.Store, result *UpdateR
 	}
 
 	return true, nil
+}
+
+// updateResolutionHash computes and stores the resolution input hash for
+// upstream components. Returns true if the hash changed. Local components
+// don't use upstream resolution, so the hash is left empty for them.
+func updateResolutionHash(
+	env *azldev.Env, config *projectconfig.ComponentConfig, lock *lockfile.ComponentLock,
+) bool {
+	if config.Spec.SourceType != projectconfig.SpecSourceTypeUpstream {
+		return false
+	}
+
+	resInputs, resErr := components.BuildUpstreamCommitResolutionInputs(env, config)
+	if resErr != nil {
+		slog.Debug("Cannot compute resolution hash",
+			"component", config.Name, "error", resErr)
+
+		return false
+	}
+
+	resHash := fingerprint.ComputeResolutionHash(resInputs)
+	changed := lock.ResolutionInputHash != resHash
+	lock.ResolutionInputHash = resHash
+
+	return changed
 }
 
 // bumpComponents re-fingerprints each matched component's lock file with an
@@ -558,15 +585,17 @@ func resolveSourceIdentitiesParallel(
 			// Case 1: fully up-to-date — skip.
 			results[idx].UpstreamCommit = locked.UpstreamCommit
 			results[idx].sourceIdentity = comp.GetConfig().EffectiveUpstreamCommit()
+			results[idx].upToDate = true
 
 			continue
 		}
 
 		if isUpstream && locked != nil && locked.Freshness == projectconfig.FreshnessStale &&
-			!locked.ResolutionStale {
+			!locked.ResolutionStale && locked.UpstreamCommit != "" {
 			// Case 2: build inputs changed but resolution inputs unchanged.
 			// Reuse the locked commit — re-resolving would yield the same hash.
 			results[idx].UpstreamCommit = locked.UpstreamCommit
+			results[idx].PreviousCommit = locked.UpstreamCommit
 			results[idx].sourceIdentity = comp.GetConfig().EffectiveUpstreamCommit()
 			results[idx].config = comp.GetConfig()
 
@@ -699,36 +728,4 @@ func resolveReleaseVer(env *azldev.Env, config *projectconfig.ComponentConfig) (
 	}
 
 	return distroVer.ReleaseVer, nil
-}
-
-// buildUpstreamCommitResolutionInputs resolves the effective distro for a component and
-// builds [fingerprint.UpstreamCommitResolutionInputs] for resolution hash computation.
-// Uses the resolved (inherited) config values — not raw spec fields — so
-// that default-distro and distro-version-level snapshots are captured.
-func buildUpstreamCommitResolutionInputs(
-	env *azldev.Env, config *projectconfig.ComponentConfig,
-) (fingerprint.UpstreamCommitResolutionInputs, error) {
-	ref := config.Spec.UpstreamDistro
-	if ref.Name == "" {
-		ref = env.Config().Project.DefaultDistro
-	}
-
-	distroDef, distroVer, err := env.ResolveDistroRef(ref)
-	if err != nil {
-		return fingerprint.UpstreamCommitResolutionInputs{},
-			fmt.Errorf("resolving distro ref %#q:\n%w", ref.Name, err)
-	}
-
-	return fingerprint.UpstreamCommitResolutionInputs{
-		// Use resolved config's snapshot — not ref.Snapshot — because the
-		// snapshot may come from distro-version-level default-component-config
-		// inheritance, which is merged into config.Spec before we get here.
-		Snapshot:          config.Spec.UpstreamDistro.Snapshot,
-		DistroName:        ref.Name,
-		DistroVersion:     ref.Version,
-		DistGitBranch:     distroVer.DistGitBranch,
-		DistGitBaseURI:    distroDef.DistGitBaseURI,
-		UpstreamCommitPin: config.Spec.UpstreamCommit,
-		UpstreamName:      config.Spec.UpstreamName,
-	}, nil
 }

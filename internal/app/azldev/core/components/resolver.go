@@ -585,13 +585,20 @@ func (r *Resolver) computeFreshnessStatus(config *projectconfig.ComponentConfig)
 		return
 	}
 
+	// Freshness optimization only applies to upstream components. Local
+	// components resolve via filesystem hashing (cheap), and their empty
+	// UpstreamCommit can't serve as source identity for fingerprint checks.
+	if config.Spec.SourceType != projectconfig.SpecSourceTypeUpstream {
+		return
+	}
+
 	// Need at least one stored hash to compare against.
 	if config.Locked.InputFingerprint == "" && config.Locked.ResolutionInputHash == "" {
 		return
 	}
 
 	// Check resolution inputs (cheap, no I/O beyond distro resolution).
-	resInputs, resolveErr := r.buildUpstreamCommitResolutionInputs(config)
+	resInputs, resolveErr := BuildUpstreamCommitResolutionInputs(r.env, config)
 	if resolveErr != nil {
 		slog.Debug("Cannot compute resolution hash (distro resolve failed)",
 			"component", config.Name, "error", resolveErr)
@@ -619,13 +626,14 @@ func (r *Resolver) computeFreshnessStatus(config *projectconfig.ComponentConfig)
 
 	switch {
 	case config.Locked.ResolutionInputHash == "":
-		// Legacy lock — ResolutionInputHash was not populated. Force one
-		// re-resolution to backfill the field. Use ResolutionStale=false
-		// so Case 2 fires (reuse commit, update hashes) rather than
-		// Case 3 (full re-resolve), since the commit is likely still valid.
+		// Legacy lock — ResolutionInputHash was not populated. Force full
+		// re-resolution to ensure the commit matches current resolution
+		// inputs. The old commit may have been resolved under different
+		// snapshot/distro settings.
+		config.Locked.ResolutionStale = true
 		config.Locked.Freshness = projectconfig.FreshnessStale
 
-		slog.Debug("Legacy lock missing resolution hash; will backfill",
+		slog.Debug("Legacy lock missing resolution hash; will re-resolve",
 			"component", config.Name)
 
 		return
@@ -711,19 +719,20 @@ func (r *Resolver) resolveReleaseVer(config *projectconfig.ComponentConfig) (str
 	return distroVer.ReleaseVer, nil
 }
 
-// buildUpstreamCommitResolutionInputs resolves the effective distro and builds the
-// [fingerprint.UpstreamCommitResolutionInputs] struct for resolution hash computation.
-// Uses the resolved (inherited) config values — not raw spec fields — so
-// that default-distro and distro-version-level snapshots are captured.
-func (r *Resolver) buildUpstreamCommitResolutionInputs(
-	config *projectconfig.ComponentConfig,
+// BuildUpstreamCommitResolutionInputs resolves the effective distro for a
+// component and builds [fingerprint.UpstreamCommitResolutionInputs] for
+// resolution hash computation. Uses the resolved (inherited) config values —
+// not raw spec fields — so that default-distro and distro-version-level
+// snapshots are captured.
+func BuildUpstreamCommitResolutionInputs(
+	env *azldev.Env, config *projectconfig.ComponentConfig,
 ) (fingerprint.UpstreamCommitResolutionInputs, error) {
 	ref := config.Spec.UpstreamDistro
 	if ref.Name == "" {
-		ref = r.env.Config().Project.DefaultDistro
+		ref = env.Config().Project.DefaultDistro
 	}
 
-	distroDef, distroVer, err := r.env.ResolveDistroRef(ref)
+	distroDef, distroVer, err := env.ResolveDistroRef(ref)
 	if err != nil {
 		return fingerprint.UpstreamCommitResolutionInputs{}, fmt.Errorf("resolving distro ref %#q:\n%w", ref.Name, err)
 	}

@@ -23,8 +23,13 @@ const testComponentName = "curl"
 
 // setupMockGitWithCounter configures mock git that tracks all git command invocations.
 // Returns a pointer to the atomic counter so tests can assert network usage.
-// Any git command (clone, rev-list, rev-parse) counts as "network" since the
-// Fedora source provider needs network access for all of them.
+//
+// The counter treats every git invocation (clone, rev-list, rev-parse, etc.)
+// as a single signal because the Fedora source provider chains multiple git
+// commands per resolution (clone → rev-list/rev-parse). Tests reset the
+// counter between updates and assert zero vs. positive — not exact counts —
+// so the signal is robust against internal provider changes that add or
+// reorder git calls.
 func setupMockGitWithCounter(env *testutils.TestEnv, commitHash string) *atomic.Int32 {
 	var gitCalls atomic.Int32
 
@@ -404,4 +409,107 @@ func TestFreshness_LocalComponent_LegacyLock_ReUpdateSucceeds(t *testing.T) {
 	require.NoError(t, err,
 		"update of local component with legacy lock must not fail "+
 			"(was: 'source identity is required for component with source type local')")
+}
+
+// TestFreshness_ForceRecalculate_BypassesFreshness verifies that
+// --force-recalculate causes all components to be re-resolved even when
+// their freshness status says they're current.
+func TestFreshness_ForceRecalculate_BypassesFreshness(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	const commit = "aabbccdd11223344"
+
+	gitCalls := setupMockGitWithCounter(env, commit)
+	addUpstreamComponent(env, testComponentName)
+	setDistroSnapshot(env, "2025-01-01T00:00:00Z")
+
+	_, _ = initialUpdate(t, env)
+
+	gitCalls.Store(0)
+
+	// Second update with --force-recalculate — should re-resolve even
+	// though nothing changed.
+	opts := allComponentsFilter()
+	opts.ForceRecalculate = true
+
+	_, err := componentcmds.UpdateComponents(env.Env, opts)
+	require.NoError(t, err)
+
+	assert.Positive(t, gitCalls.Load(),
+		"--force-recalculate must bypass freshness and trigger re-resolution")
+}
+
+// TestFreshness_HeadTracking_AlwaysReResolves verifies that upstream
+// components with no snapshot and no pin (HEAD-tracking) always re-resolve.
+// The freshness optimization assumes "same inputs → same commit," which
+// doesn't hold for HEAD-tracking components since upstream pushes change
+// the result without any config edit.
+func TestFreshness_HeadTracking_AlwaysReResolves(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	const commit = "aabbccdd11223344"
+
+	gitCalls := setupMockGitWithCounter(env, commit)
+	addUpstreamComponent(env, testComponentName)
+
+	// Explicitly clear snapshot — HEAD-tracking means no snapshot, no pin.
+	setDistroSnapshot(env, "")
+
+	require.NoError(t, fileutils.MkdirAll(env.TestFS, testLockDir))
+
+	// Initial update.
+	_, err := componentcmds.UpdateComponents(env.Env, allComponentsFilter())
+	require.NoError(t, err)
+
+	gitCalls.Store(0)
+
+	// Second update — nothing changed in config, but HEAD-tracking
+	// components must always re-resolve.
+	_, err = componentcmds.UpdateComponents(env.Env, allComponentsFilter())
+	require.NoError(t, err)
+
+	assert.Positive(t, gitCalls.Load(),
+		"HEAD-tracking component (no snapshot/pin) must always re-resolve")
+}
+
+// TestFreshness_UpstreamLegacyLock_ReResolves verifies that upstream
+// components with a legacy lock file (InputFingerprint set but no
+// ResolutionInputHash) trigger a full re-resolution to backfill the hash.
+// Without this, legacy locks would be permanently treated as "current"
+// because the empty-hash comparison was skipped.
+func TestFreshness_UpstreamLegacyLock_ReResolves(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	const commit = "aabbccdd11223344"
+
+	gitCalls := setupMockGitWithCounter(env, commit)
+	addUpstreamComponent(env, testComponentName)
+	setDistroSnapshot(env, "2025-01-01T00:00:00Z")
+
+	require.NoError(t, fileutils.MkdirAll(env.TestFS, testLockDir))
+
+	// Write a legacy lock — has fingerprint + commit but no resolution hash.
+	legacyLock := lockfile.New()
+	legacyLock.InputFingerprint = "sha256:legacy-placeholder"
+	legacyLock.UpstreamCommit = commit
+	env.WriteLock(t, testComponentName, legacyLock)
+
+	gitCalls.Store(0)
+
+	// Update with legacy lock — must re-resolve to backfill resolution hash.
+	_, err := componentcmds.UpdateComponents(env.Env, allComponentsFilter())
+	require.NoError(t, err)
+
+	assert.Positive(t, gitCalls.Load(),
+		"upstream component with legacy lock (no resolution hash) must re-resolve")
+
+	// Verify resolution hash was backfilled.
+	store := lockfile.NewStore(env.TestFS, testLockDir)
+
+	lock, lockErr := store.Get(testComponentName)
+	require.NoError(t, lockErr)
+	assert.NotEmpty(t, lock.ResolutionInputHash,
+		"resolution hash should be populated after re-resolution")
+	assert.Equal(t, commit, lock.UpstreamCommit,
+		"commit should be unchanged (mock returns same hash)")
 }
