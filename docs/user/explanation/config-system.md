@@ -8,15 +8,18 @@ For field-level reference documentation, see the [Reference](../reference/config
 
 azldev searches for its root config file (`azldev.toml`) by walking up the directory tree from the current working directory. The first `azldev.toml` found becomes the project root, and all relative paths in the configuration are resolved from that file's location.
 
+In addition to the project config, azldev also looks for an optional user-level config file at `${XDG_CONFIG_HOME:-$HOME/.config}/azldev/config.toml`. If present, it is loaded after the project config and may override its settings; any `--config-file` extras still override the user config (see [Load Order](#load-order)). If the file is missing, it is silently ignored.
+
 ## Load Order
 
-Configuration is loaded in three phases, in this order:
+Configuration is loaded in four phases, in this order:
 
 1. **Embedded defaults** — azldev ships with built-in default values (e.g., tool container tags). These are loaded first and provide baseline configuration.
-2. **Project config** — the `azldev.toml` file and all of its transitive includes.
-3. **Extra config files** — any additional config files passed via `--config-file` CLI flags.
+2. **Project config** — the `azldev.toml` file and all of its transitive includes (project-specific).
+3. **User config** — an optional user-level config file at `${XDG_CONFIG_HOME:-$HOME/.config}/azldev/config.toml` (user-specific). If the file does not exist, this phase is skipped silently. When present, the file (and any of its transitive `includes`) is loaded after the project config so that user-level settings override the project config. The location follows the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/), so on Linux the default path is `~/.config/azldev/config.toml`.
+4. **Extra config files** — any additional config files passed via `--config-file` CLI flags (invocation-specific). These are loaded last and have the highest priority, so an explicit invocation can always override both the project and the user config.
 
-Later phases can override values from earlier phases according to the [merge rules](#merge-rules) described below.
+Later phases can override values from earlier phases according to the [merge rules](#merge-rules) described below. The progression project → user → invocation matches the conventional priority order used by most command-line tools.
 
 ## Include Resolution
 

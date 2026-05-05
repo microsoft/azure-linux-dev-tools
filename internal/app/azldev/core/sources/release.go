@@ -91,34 +91,56 @@ func BumpStaticRelease(releaseValue string, commitCount int) (string, error) {
 	return fmt.Sprintf("%d%s", newRelease, suffix), nil
 }
 
-// tryBumpStaticRelease checks whether the component's spec uses %autorelease.
-// If not, it bumps the static Release tag by commitCount and applies the change
-// as an overlay to the spec file in-place. This ensures that components with static
-// release numbers get deterministic version bumps matching the number of synthetic
-// commits applied from the project repository.
+// tryBumpStaticRelease manages the Release tag based on the component's release
+// calculation mode. It may bump, skip, or auto-detect depending on configuration:
 //
-// When the component's release calculation is "manual", this function is a no-op.
-//
-// When the spec uses %autorelease, this function is a no-op because rpmautospec
-// already resolves the release number from git history.
-//
-// When the Release tag uses a non-standard value (not %autorelease and not a leading
-// integer, e.g. %{pkg_release}), the component must set release.calculation to
-// "manual", and likely define an explicit overlay that sets the Release tag.
-// If a non-standard Release is found and release.calculation is not "manual",
-// an error is returned.
+//   - "manual":      no-op — component manages its own release numbering.
+//   - "autorelease": no-op — rpmautospec resolves the release from git history.
+//   - "static":      always bumps the static integer release by commitCount.
+//   - "auto":        auto-detects from the spec's Release tag value; skips if
+//     %autorelease is found, otherwise bumps the static integer.
 func (p *sourcePreparerImpl) tryBumpStaticRelease(
 	component components.Component,
 	sourcesDirPath string,
 	commitCount int,
 ) error {
-	if component.GetConfig().Release.Calculation == projectconfig.ReleaseCalculationManual {
+	calc := component.GetConfig().Release.Calculation
+
+	switch calc {
+	case projectconfig.ReleaseCalculationManual:
 		slog.Debug("Component uses manual release calculation; skipping static release bump",
 			"component", component.GetName())
 
 		return nil
-	}
 
+	case projectconfig.ReleaseCalculationAutorelease:
+		slog.Debug("Component uses autorelease calculation; skipping static release bump",
+			"component", component.GetName())
+
+		return nil
+
+	case projectconfig.ReleaseCalculationStatic:
+		return p.readAndBumpRelease(component, sourcesDirPath, commitCount, true)
+
+	case projectconfig.ReleaseCalculationAuto:
+		return p.readAndBumpRelease(component, sourcesDirPath, commitCount, false)
+
+	default:
+		return fmt.Errorf("component %#q has unknown release calculation mode %#q",
+			component.GetName(), calc)
+	}
+}
+
+// readAndBumpRelease reads the Release tag from the spec and bumps its static integer.
+// When requireStaticRelease is true (explicit static mode), encountering %autorelease
+// produces an error telling the user to switch to 'release.calculation = "autorelease"'.
+// When false (auto mode), specs using %autorelease are silently skipped.
+func (p *sourcePreparerImpl) readAndBumpRelease(
+	component components.Component,
+	sourcesDirPath string,
+	commitCount int,
+	requireStaticRelease bool,
+) error {
 	specPath, err := p.resolveSpecPath(component, sourcesDirPath)
 	if err != nil {
 		return err
@@ -131,6 +153,13 @@ func (p *sourcePreparerImpl) tryBumpStaticRelease(
 	}
 
 	if ReleaseUsesAutorelease(releaseValue) {
+		if requireStaticRelease {
+			return fmt.Errorf(
+				"component %#q has 'release.calculation = \"static\"' but its Release tag "+
+					"uses %%autorelease; set 'release.calculation = \"autorelease\"' instead",
+				component.GetName())
+		}
+
 		slog.Debug("Spec uses %%autorelease; skipping static release bump",
 			"component", component.GetName())
 
@@ -139,8 +168,6 @@ func (p *sourcePreparerImpl) tryBumpStaticRelease(
 
 	newRelease, err := BumpStaticRelease(releaseValue, commitCount)
 	if err != nil {
-		// The Release tag does not start with an integer (e.g. %{pkg_release})
-		// and the user did not set release.calculation to "manual".
 		return fmt.Errorf(
 			"component %#q has a non-standard Release tag value %#q that cannot be auto-bumped; "+
 				"set 'release.calculation = \"manual\"' in the component configuration "+

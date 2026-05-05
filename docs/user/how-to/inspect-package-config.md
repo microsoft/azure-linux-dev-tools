@@ -30,21 +30,22 @@ azldev package list -a
 Example output:
 
 ```
-╭──────────────────┬────────────────┬───────────┬─────────────────╮
-│ PACKAGE          │ GROUP          │ COMPONENT │ PUBLISH CHANNEL │
-├──────────────────┼────────────────┼───────────┼─────────────────┤
-│ curl-debugsource │ debug-packages │           │ rpm-debug       │
-│ libcurl          │ base-packages  │           │ rpm-base        │
-│ libcurl-devel    │ devel-packages │ curl      │ rpm-base        │
-│ wget2-wget       │                │ wget2     │ rpm-base        │
-╰──────────────────┴────────────────┴───────────┴─────────────────╯
+╭──────────────────┬──────┬────────────────┬───────────┬─────────────────╮
+│ PACKAGE          │ TYPE │ GROUP          │ COMPONENT │ PUBLISH CHANNEL │
+├──────────────────┼──────┼────────────────┼───────────┼─────────────────┤
+│ curl-debugsource │ rpm  │ debug-packages │           │ rpm-debug       │
+│ libcurl          │ rpm  │ base-packages  │           │ rpm-base        │
+│ libcurl-devel    │ rpm  │ devel-packages │ curl      │ rpm-base        │
+│ wget2-wget       │ rpm  │                │ wget2     │ rpm-base        │
+╰──────────────────┴──────┴────────────────┴───────────┴─────────────────╯
 ```
 
 ### Column meanings
 
 | Column | Meaning |
-|--------|---------|
-| **Package** | Binary package name (RPM `Name` tag) |
+|--------|----------|
+| **Package** | Binary or source package name (RPM `Name` tag) |
+| **Type** | `rpm` for binary packages, `srpm` for source packages (set when using `--rpm-file`) |
 | **Group** | Package-group whose `packages` list contains this package, if any |
 | **Component** | Component that has an explicit `packages.<name>` override for this package, if any |
 | **Publish Channel** | Effective publish channel after all config layers are applied |
@@ -72,6 +73,22 @@ azldev package list libcurl libcurl-devel curl-debugsource
 
 You can combine `-a` and `-p` — the results are the union of both selections.
 
+## List Packages From an RPM Source Map File
+
+Use `--rpm-file` to enumerate all source packages (SRPMs) and their binary RPMs from a
+JSON RPM source map file. Each entry in the file maps a binary package name to the source
+package (SRPM) name that produced it:
+
+```bash
+azldev package list --rpm-file rpm_source_map.json
+```
+
+The output includes a `type` column to distinguish SRPMs (`srpm`) from binary RPMs (`rpm`).
+SRPM entries use the component's `srpm-channel`; binary RPM entries use the full
+publish-channel resolution stack.
+
+> **Note:** `--rpm-file` is mutually exclusive with `-a`, `-p`, and `--synthesize-debug-packages`.
+
 ## Machine-Readable Output
 
 Pass `-q -O json` to get JSON output suitable for scripting:
@@ -84,12 +101,19 @@ azldev package list -a -q -O json
 [
   {
     "packageName": "libcurl",
+    "type": "rpm",
     "group": "base-packages",
     "component": "",
     "publishChannel": "rpm-base"
   },
   ...
 ]
+```
+
+For an RPM source map file:
+
+```bash
+azldev package list --rpm-file rpm_source_map.json -q -O json
 ```
 
 ## Alias

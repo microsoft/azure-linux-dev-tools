@@ -834,6 +834,8 @@
           "type": "string",
           "enum": [
             "auto",
+            "autorelease",
+            "static",
             "manual"
           ],
           "title": "Release calculation",

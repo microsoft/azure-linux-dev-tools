@@ -93,10 +93,7 @@
        "type": "boolean"
       }
      },
-     "required": [
-      "output-file",
-      "project"
-     ],
+     "required": [],
      "type": "object"
     },
     "name": "component-diff-sources"
@@ -186,9 +183,7 @@
        "type": "boolean"
       }
      },
-     "required": [
-      "project"
-     ],
+     "required": [],
      "type": "object"
     },
     "name": "component-list"
@@ -260,9 +255,7 @@
        "type": "boolean"
       }
      },
-     "required": [
-      "project"
-     ],
+     "required": [],
      "type": "object"
     },
     "name": "config-dump"
@@ -330,9 +323,7 @@
        "type": "boolean"
       }
      },
-     "required": [
-      "project"
-     ],
+     "required": [],
      "type": "object"
     },
     "name": "config-generate-schema"
@@ -416,8 +407,7 @@
       }
      },
      "required": [
-      "output-dir",
-      "project"
+      "output-dir"
      ],
      "type": "object"
     },
@@ -486,9 +476,7 @@
        "type": "boolean"
       }
      },
-     "required": [
-      "project"
-     ],
+     "required": [],
      "type": "object"
     },
     "name": "image-list"
@@ -500,7 +488,7 @@
      "openWorldHint": true,
      "readOnlyHint": false
     },
-    "description": "List resolved configuration for binary packages",
+    "description": "List resolved configuration for packages (RPMs and SRPMs)",
     "inputSchema": {
      "properties": {
       "accept-all": {
@@ -559,6 +547,11 @@
        "description": "only enable minimal output",
        "type": "boolean"
       },
+      "rpm-file": {
+       "default": "",
+       "description": "Path to a JSON RPM source map file (lists all SRPMs and their binary RPMs)",
+       "type": "string"
+      },
       "synthesize-debug-packages": {
        "default": false,
        "description": "Also synthesize '-debuginfo' packages (per reported package) and '-debugsource' packages (per component)",
@@ -570,9 +563,7 @@
        "type": "boolean"
       }
      },
-     "required": [
-      "project"
-     ],
+     "required": [],
      "type": "object"
     },
     "name": "package-list"

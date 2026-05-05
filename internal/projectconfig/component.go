@@ -133,10 +133,21 @@ func (g ComponentGroupConfig) WithAbsolutePaths(referenceDir string) ComponentGr
 type ReleaseCalculation string
 
 const (
-	// ReleaseCalculationAuto is the default. azldev auto-bumps the Release tag based on
-	// synthetic commit history. Static integer releases are incremented; %autorelease
-	// is handled by rpmautospec.
+	// ReleaseCalculationAuto is the default. azldev auto-detects whether the spec uses
+	// %autorelease or a static integer release, and handles each accordingly.
 	ReleaseCalculationAuto ReleaseCalculation = "auto"
+
+	// ReleaseCalculationAutorelease explicitly declares that the spec uses %autorelease.
+	// azldev skips all Release tag manipulation, letting rpmautospec resolve the release
+	// number from git history. Use this for specs with conditional %autorelease/%else
+	// fallbacks that confuse auto-detection.
+	ReleaseCalculationAutorelease ReleaseCalculation = "autorelease"
+
+	// ReleaseCalculationStatic explicitly declares that the spec uses a static
+	// release tag. azldev parses and bumps the release value during rendering.
+	// Use this for specs with conditional Release tags where auto-detection
+	// picks the wrong branch but the static release logic still works correctly.
+	ReleaseCalculationStatic ReleaseCalculation = "static"
 
 	// ReleaseCalculationManual skips all automatic Release tag manipulation. Use this for
 	// components that manage their own release numbering (e.g. kernel).
@@ -146,7 +157,7 @@ const (
 // ReleaseConfig holds release-related configuration for a component.
 type ReleaseConfig struct {
 	// Calculation controls how the Release tag is managed during rendering.
-	Calculation ReleaseCalculation `toml:"calculation,omitempty" json:"calculation,omitempty" validate:"omitempty,oneof=auto manual" jsonschema:"enum=auto,enum=manual,default=auto,title=Release calculation,description=Controls how the Release tag is managed during rendering. Empty or omitted means auto."`
+	Calculation ReleaseCalculation `toml:"calculation,omitempty" json:"calculation,omitempty" validate:"omitempty,oneof=auto autorelease static manual" jsonschema:"enum=auto,enum=autorelease,enum=static,enum=manual,default=auto,title=Release calculation,description=Controls how the Release tag is managed during rendering. Empty or omitted means auto."`
 }
 
 // ComponentLockData holds resolved lock file state attached to a component at
