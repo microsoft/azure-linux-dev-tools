@@ -104,11 +104,25 @@ The `[components.<name>.release]` section controls how azldev manages the Releas
 
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
-| Calculation | `calculation` | string | No | `"auto"` (default) = auto-bump; `"manual"` = skip all automatic Release manipulation |
+| Calculation | `calculation` | string | No | One of `"auto"` (default), `"autorelease"`, `"static"`, or `"manual"` |
 
-Most components use auto mode (the default) and need no release configuration. Set `calculation = "manual"` for components that manage their own release numbering, such as kernel:
+### Calculation Modes
+
+| Mode | Behavior |
+|------|----------|
+| `auto` | Auto-detects from the spec's Release tag value. If `%autorelease` is found, rpmautospec handles it. If a static integer is found, it is bumped by the synthetic commit count. |
+| `autorelease` | Explicitly declares the spec uses `%autorelease`. Skips all Release manipulation. Use this for specs with conditional `%autorelease`/`%else` fallbacks that confuse auto-detection. |
+| `static` | Explicitly declares the spec uses a static integer release. Always bumps it by the synthetic commit count. |
+| `manual` | Skips all automatic Release manipulation. Use for components that manage their own release numbering (e.g. kernel). |
+
+Most components use `auto` (the default) and need no release configuration. Examples:
 
 ```toml
+# Spec with conditional %autorelease that auto-detection gets wrong:
+[components.gvisor-tap-vsock.release]
+calculation = "autorelease"
+
+# Component that manages its own release numbering:
 [components.kernel.release]
 calculation = "manual"
 ```

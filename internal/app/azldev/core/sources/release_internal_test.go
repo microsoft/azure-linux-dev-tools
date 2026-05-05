@@ -138,3 +138,62 @@ func TestTryBumpStaticRelease_NonStandardSucceedsWithManual(t *testing.T) {
 	err := preparer.tryBumpStaticRelease(comp, filepath.Join(testSourcesDir, "kernel"), 3)
 	require.NoError(t, err)
 }
+
+func TestTryBumpStaticRelease_ExplicitAutoreleaseSkips(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	memFS := afero.NewMemMapFs()
+	preparer := newTestPreparer(memFS)
+
+	// Spec has a static release, but config says autorelease — should skip.
+	comp := mockComponent(ctrl, "gvisor", &projectconfig.ComponentConfig{
+		Release: projectconfig.ReleaseConfig{
+			Calculation: projectconfig.ReleaseCalculationAutorelease,
+		},
+	})
+
+	// No spec file needed — should skip before reading anything.
+	err := preparer.tryBumpStaticRelease(comp, testSourcesDir, 3)
+	require.NoError(t, err)
+}
+
+func TestTryBumpStaticRelease_ExplicitStaticBumps(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	memFS := afero.NewMemMapFs()
+	preparer := newTestPreparer(memFS)
+
+	writeTestSpec(t, memFS, "test-pkg", "1%{?dist}")
+
+	comp := mockComponent(ctrl, "test-pkg", &projectconfig.ComponentConfig{
+		Release: projectconfig.ReleaseConfig{
+			Calculation: projectconfig.ReleaseCalculationStatic,
+		},
+	})
+
+	err := preparer.tryBumpStaticRelease(comp, filepath.Join(testSourcesDir, "test-pkg"), 3)
+	require.NoError(t, err)
+
+	// Verify the spec was updated.
+	specPath := filepath.Join(testSourcesDir, "test-pkg", "test-pkg.spec")
+	content, err := fileutils.ReadFile(memFS, specPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "Release: 4%{?dist}")
+}
+
+func TestTryBumpStaticRelease_ExplicitStaticErrorsOnAutorelease(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	memFS := afero.NewMemMapFs()
+	preparer := newTestPreparer(memFS)
+
+	// Spec uses %autorelease, but config says static — should error.
+	writeTestSpec(t, memFS, "test-pkg", "%autorelease")
+
+	comp := mockComponent(ctrl, "test-pkg", &projectconfig.ComponentConfig{
+		Release: projectconfig.ReleaseConfig{
+			Calculation: projectconfig.ReleaseCalculationStatic,
+		},
+	})
+
+	err := preparer.tryBumpStaticRelease(comp, filepath.Join(testSourcesDir, "test-pkg"), 3)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot be auto-bumped")
+}
