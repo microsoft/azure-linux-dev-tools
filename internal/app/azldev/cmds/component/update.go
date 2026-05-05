@@ -4,6 +4,7 @@
 package component
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -499,8 +500,15 @@ func resolveSourceIdentitiesParallel(
 ) []UpdateResult {
 	results := make([]UpdateResult, len(comps))
 
+	progressEvent := env.StartEvent("Resolving source identities", "count", len(comps))
+	defer progressEvent.End()
+
 	workerEnv, cancel := env.WithCancel()
 	defer cancel()
+
+	// Channel signals goroutine completions so the main goroutine
+	// can update progress as results arrive.
+	doneChan := make(chan struct{}, len(comps))
 
 	var waitGroup sync.WaitGroup
 
@@ -515,51 +523,75 @@ func resolveSourceIdentitiesParallel(
 
 		go func() {
 			defer waitGroup.Done()
+			defer func() { doneChan <- struct{}{} }()
 
-			// Context-aware semaphore acquisition.
-			select {
-			case semaphore <- struct{}{}:
-				defer func() { <-semaphore }()
-			case <-workerEnv.Done():
-				results[idx].Skipped = true
-				results[idx].SkipReason = "cancelled"
-
-				return
-			}
-
-			// Drop populated lock data so the source provider re-resolves
-			// from upstream (snapshot/HEAD or pinned commit) or re-hashes
-			// local spec content instead of short-circuiting with stale
-			// locked values. We're about to overwrite the lock anyway.
-			comp.GetConfig().Locked = nil
-
-			identity, resolveErr := resolveOneSourceIdentity(workerEnv, comp)
-			if resolveErr != nil {
-				results[idx].Error = resolveErr.Error()
-
-				// Cancel remaining goroutines on first real failure.
-				cancel()
-
-				return
-			}
-
-			results[idx].sourceIdentity = identity
-			results[idx].config = comp.GetConfig()
-
-			// For upstream components, the identity IS the commit hash.
-			// For local components, UpstreamCommit stays empty.
-			if comp.GetConfig().Spec.SourceType == projectconfig.SpecSourceTypeUpstream {
-				results[idx].UpstreamCommit = identity
-			}
-
-			// Check existing lock to determine if the component changed.
-			checkLockChanged(store, comp.GetName(), &results[idx])
+			resolveAndRecordIdentity(workerEnv, semaphore, cancel, comp, store, &results[idx])
 		}()
 	}
 
-	waitGroup.Wait()
+	// Close doneChan once all goroutines finish.
+	go func() { waitGroup.Wait(); close(doneChan) }()
+
+	total := int64(len(comps))
+
+	var completed int64
+
+	for range doneChan {
+		completed++
+		progressEvent.SetProgress(completed, total)
+	}
 
 	return results
+}
+
+// resolveAndRecordIdentity resolves a single component's source identity and
+// records the result. Called from a goroutine in [resolveSourceIdentitiesParallel].
+func resolveAndRecordIdentity(
+	env *azldev.Env,
+	semaphore chan struct{},
+	cancel context.CancelFunc,
+	comp components.Component,
+	store *lockfile.Store,
+	result *UpdateResult,
+) {
+	// Context-aware semaphore acquisition.
+	select {
+	case semaphore <- struct{}{}:
+		defer func() { <-semaphore }()
+	case <-env.Done():
+		result.Skipped = true
+		result.SkipReason = "cancelled"
+
+		return
+	}
+
+	// Drop populated lock data so the source provider re-resolves
+	// from upstream (snapshot/HEAD or pinned commit) or re-hashes
+	// local spec content instead of short-circuiting with stale
+	// locked values. We're about to overwrite the lock anyway.
+	comp.GetConfig().Locked = nil
+
+	identity, resolveErr := resolveOneSourceIdentity(env, comp)
+	if resolveErr != nil {
+		result.Error = resolveErr.Error()
+
+		// Cancel remaining goroutines on first real failure.
+		cancel()
+
+		return
+	}
+
+	result.sourceIdentity = identity
+	result.config = comp.GetConfig()
+
+	// For upstream components, the identity IS the commit hash.
+	// For local components, UpstreamCommit stays empty.
+	if comp.GetConfig().Spec.SourceType == projectconfig.SpecSourceTypeUpstream {
+		result.UpstreamCommit = identity
+	}
+
+	// Check existing lock to determine if the component changed.
+	checkLockChanged(store, comp.GetName(), result)
 }
 
 // checkLockChanged compares the resolved upstream commit against the existing
@@ -615,7 +647,7 @@ func resolveOneSourceIdentity(
 		return "", fmt.Errorf("resolving identity for %#q:\n%w", componentName, err)
 	}
 
-	slog.Info("Resolved source identity", "component", componentName, "identity", identity)
+	slog.Debug("Resolved source identity", "component", componentName, "identity", identity)
 
 	return identity, nil
 }
