@@ -104,8 +104,7 @@
       }
      },
      "required": [
-      "from",
-      "project"
+      "from"
      ],
      "type": "object"
     },
