@@ -26,6 +26,10 @@ type UpdateComponentOptions struct {
 	// Bump increments the manual-rebuild counter on matched components'
 	// lock files. Used for mass-rebuild scenarios.
 	Bump bool
+	// ForceRecalculate disables freshness optimizations that skip
+	// re-resolution for unchanged components. When set, all components
+	// are re-resolved regardless of their freshness status.
+	ForceRecalculate bool
 }
 
 func updateOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
@@ -83,6 +87,11 @@ toolchain bug, static library update). Orphan pruning is skipped under --bump.`,
 
 	cmd.Flags().BoolVar(&options.Bump, "bump", false,
 		"increment the manual-rebuild counter to trigger a new release")
+	cmd.Flags().BoolVar(&options.ForceRecalculate, "force-recalculate", false,
+		"force re-resolution of all components, ignoring freshness checks that "+
+			"would skip unchanged components. Use when upstream state may have "+
+			"changed independently of the snapshot time and the new commit is "+
+			"preferred")
 
 	return cmd
 }
@@ -107,6 +116,12 @@ type UpdateResult struct {
 	// for local components this is a content hash of the spec directory.
 	// Used as SourceIdentity input for fingerprint computation.
 	sourceIdentity string `json:"-" table:"-"`
+
+	// upToDate is set by the freshness check (Case 1) when both the input
+	// fingerprint and resolution hash match the lock. Components marked
+	// upToDate are skipped by [saveComponentLocks] — no re-fingerprinting
+	// or lock rewrite is needed.
+	upToDate bool `json:"-" table:"-"`
 }
 
 // UpdateComponents resolves source identities for all selected components and
@@ -116,6 +131,11 @@ func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]Updat
 	// Suppress staleness warnings — we're about to refresh the locks ourselves,
 	// so warning the user to "run component update" would be self-referential noise.
 	resolver.SuppressLockWarnings = true
+	// Enable freshness checking so the resolver computes FreshnessStatus for
+	// each component. This lets resolveSourceIdentitiesParallel skip
+	// re-resolution for components whose resolution inputs haven't changed.
+	// Disabled when --force-recalculate is set.
+	resolver.CheckFreshness = !options.ForceRecalculate
 
 	resolved, err := resolver.FindComponents(&options.ComponentFilter)
 	if err != nil {
@@ -217,7 +237,7 @@ func saveComponentLocks(env *azldev.Env, store *lockfile.Store, results []Update
 	}()
 
 	for idx := range results {
-		if results[idx].Error != "" || results[idx].Skipped {
+		if results[idx].Error != "" || results[idx].Skipped || results[idx].upToDate {
 			continue
 		}
 
@@ -287,15 +307,20 @@ func updateComponentLock(env *azldev.Env, store *lockfile.Store, result *UpdateR
 	}
 
 	// Mark as changed if fingerprint differs (catches config/overlay edits
-	// even when the upstream commit is unchanged).
+	// even when the upstream commit is unchanged). This is the user-visible
+	// "changed" flag — it drives render/build decisions.
 	if lock.InputFingerprint != identity.Fingerprint {
 		result.Changed = true
 	}
 
 	lock.InputFingerprint = identity.Fingerprint
 
-	// Only write if something actually changed.
-	if !result.Changed {
+	// Update resolution input hash for upstream components.
+	resHashChanged := updateResolutionHash(env, result.config, lock)
+
+	// Write if either hash changed. ResolutionInputHash updates are silent
+	// (don't set Changed) since they don't affect build outputs.
+	if !result.Changed && !resHashChanged {
 		return false, nil
 	}
 
@@ -304,6 +329,31 @@ func updateComponentLock(env *azldev.Env, store *lockfile.Store, result *UpdateR
 	}
 
 	return true, nil
+}
+
+// updateResolutionHash computes and stores the resolution input hash for
+// upstream components. Returns true if the hash changed. Local components
+// don't use upstream resolution, so the hash is left empty for them.
+func updateResolutionHash(
+	env *azldev.Env, config *projectconfig.ComponentConfig, lock *lockfile.ComponentLock,
+) bool {
+	if config.Spec.SourceType != projectconfig.SpecSourceTypeUpstream {
+		return false
+	}
+
+	resInputs, resErr := components.BuildUpstreamCommitResolutionInputs(env, config)
+	if resErr != nil {
+		slog.Debug("Cannot compute resolution hash",
+			"component", config.Name, "error", resErr)
+
+		return false
+	}
+
+	resHash := fingerprint.ComputeResolutionHash(resInputs)
+	changed := lock.ResolutionInputHash != resHash
+	lock.ResolutionInputHash = resHash
+
+	return changed
 }
 
 // bumpComponents re-fingerprints each matched component's lock file with an
@@ -462,7 +512,7 @@ func checkUpdateErrors(results []UpdateResult) error {
 // logUpdateSummary logs the final update summary. Called after saveComponentLocks
 // so that Changed counts reflect fingerprint-only diffs.
 func logUpdateSummary(results []UpdateResult) {
-	var changed, skipped int
+	var changed, skipped, upToDate int
 
 	for idx := range results {
 		switch {
@@ -470,16 +520,21 @@ func logUpdateSummary(results []UpdateResult) {
 			skipped++
 		case results[idx].Changed:
 			changed++
+		default:
+			upToDate++
 		}
 	}
 
 	slog.Info("Update complete",
 		"total", len(results),
 		"changed", changed,
+		"upToDate", upToDate,
 		"skipped", skipped)
 }
 
 // filterDisplayResults returns changed and skipped results for table display.
+// Up-to-date components (not Changed, not Skipped) are excluded — they
+// represent the common "nothing to do" case and would dominate the output.
 func filterDisplayResults(results []UpdateResult) []UpdateResult {
 	var tableResults []UpdateResult
 
@@ -511,6 +566,43 @@ func resolveSourceIdentitiesParallel(
 	for idx, comp := range comps {
 		results[idx].Component = comp.GetName()
 
+		locked := comp.GetConfig().Locked
+
+		// Three-way freshness check (when lock data is available).
+		// Only applies to upstream components — local components resolve via
+		// filesystem hashing (cheap, no network), so skipping gains little
+		// and their empty UpstreamCommit can't serve as source identity.
+		//
+		// 1. FreshnessCurrent → nothing changed, skip entirely (no re-resolution).
+		// 2. FreshnessStale + resolution fresh → only build inputs changed
+		//    (e.g., overlay edit). Reuse locked commit, but enter save path
+		//    to update the fingerprint.
+		// 3. FreshnessStale + resolution stale → resolution inputs changed
+		//    (e.g., snapshot bump). Must re-resolve upstream.
+		isUpstream := comp.GetConfig().Spec.SourceType == projectconfig.SpecSourceTypeUpstream
+
+		if isUpstream && locked != nil && locked.Freshness == projectconfig.FreshnessCurrent {
+			// Case 1: fully up-to-date — skip.
+			results[idx].UpstreamCommit = locked.UpstreamCommit
+			results[idx].sourceIdentity = comp.GetConfig().EffectiveUpstreamCommit()
+			results[idx].upToDate = true
+
+			continue
+		}
+
+		if isUpstream && locked != nil && locked.Freshness == projectconfig.FreshnessStale &&
+			!locked.ResolutionStale && locked.UpstreamCommit != "" {
+			// Case 2: build inputs changed but resolution inputs unchanged.
+			// Reuse the locked commit — re-resolving would yield the same hash.
+			results[idx].UpstreamCommit = locked.UpstreamCommit
+			results[idx].PreviousCommit = locked.UpstreamCommit
+			results[idx].sourceIdentity = comp.GetConfig().EffectiveUpstreamCommit()
+			results[idx].config = comp.GetConfig()
+
+			continue
+		}
+
+		// Case 3: resolution stale, unknown, or no lock — must re-resolve.
 		waitGroup.Add(1)
 
 		go func() {
