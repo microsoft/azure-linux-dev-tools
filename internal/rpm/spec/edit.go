@@ -718,8 +718,8 @@ func (s *Spec) removePatchlistEntriesMatching(pattern string) (int, error) {
 // GetHighestPatchTagNumber scans the spec for all PatchN tags (where N is a decimal number)
 // across all packages and returns the highest N found. Unnumbered "Patch:" tags (no numeric
 // suffix) are treated as auto-numbered starting from 0, consistent with RPM's behavior.
-// Returns -1 if no patch tags exist at all. Tags with non-numeric suffixes (e.g., macro-based
-// names like Patch%{n}) are silently skipped.
+// Returns -1 if no numbered PatchN tags and no unnumbered "Patch:" tags are found. Tags with
+// non-numeric suffixes (e.g., macro-based names like Patch%{n}) are silently skipped.
 func (s *Spec) GetHighestPatchTagNumber() (int, error) {
 	highest := -1
 	unnumberedCount := 0
