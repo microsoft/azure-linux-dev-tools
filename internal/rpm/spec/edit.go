@@ -716,20 +716,31 @@ func (s *Spec) removePatchlistEntriesMatching(pattern string) (int, error) {
 }
 
 // GetHighestPatchTagNumber scans the spec for all PatchN tags (where N is a decimal number)
-// across all packages and returns the highest N found. Returns -1 if no numeric patch tags
-// exist. Tags with non-numeric suffixes (e.g., macro-based names like Patch%{n}) are silently
-// skipped.
+// across all packages and returns the highest N found. Unnumbered "Patch:" tags (no numeric
+// suffix) are treated as auto-numbered starting from 0, consistent with RPM's behavior.
+// Returns -1 if no numbered PatchN tags and no unnumbered "Patch:" tags are found. Tags with
+// non-numeric suffixes (e.g., macro-based names like Patch%{n}) are silently skipped.
 func (s *Spec) GetHighestPatchTagNumber() (int, error) {
 	highest := -1
+	unnumberedCount := 0
 
 	err := s.VisitTags(func(tagLine *TagLine, _ *Context) error {
 		num, isPatchTag := ParsePatchTagNumber(tagLine.Tag)
 		if isPatchTag && num > highest {
 			highest = num
+		} else if strings.EqualFold(tagLine.Tag, "patch") {
+			// Bare "Patch:" with no numeric suffix — RPM auto-numbers these
+			// sequentially starting from 0.
+			unnumberedCount++
 		}
 
 		return nil
 	})
+
+	// Unnumbered patches occupy slots 0..unnumberedCount-1.
+	if unnumberedCount > 0 && (unnumberedCount-1) > highest {
+		highest = unnumberedCount - 1
+	}
 
 	return highest, err
 }
