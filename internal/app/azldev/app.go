@@ -120,7 +120,7 @@ lives), or use -C to point to one.`,
 			slog.Debug("Command annotations", "annotations", command.Annotations)
 
 			if _, ok := command.Annotations[CommandAnnotationRootOK]; !ok && os.Geteuid() == 0 &&
-				app.osEnvFactory.OSEnv().Getenv("AZLDEV_DISABLE_ROOT_SECURITY") != "1" {
+				app.osEnvFactory.OSEnv().Getenv("AZLDEV_ALLOW_ROOT") != "1" {
 				return errors.New("this command may not be run as root")
 			}
 
