@@ -10,6 +10,113 @@
      "openWorldHint": true,
      "readOnlyHint": false
     },
+    "description": "Detect which components changed between two git refs",
+    "inputSchema": {
+     "properties": {
+      "accept-all": {
+       "default": false,
+       "description": "accept all prompts",
+       "type": "boolean"
+      },
+      "all-components": {
+       "default": false,
+       "description": "Include all components",
+       "type": "boolean"
+      },
+      "color": {
+       "description": "output colorization mode {always, auto, never}",
+       "type": "string"
+      },
+      "component": {
+       "description": "Component name pattern",
+       "type": "string"
+      },
+      "component-group": {
+       "description": "Component group name",
+       "type": "string"
+      },
+      "config-file": {
+       "description": "additional TOML config file(s) to merge (may be repeated)",
+       "type": "string"
+      },
+      "dry-run": {
+       "default": false,
+       "description": "dry run only (do not take action)",
+       "type": "boolean"
+      },
+      "force-recalculate": {
+       "default": false,
+       "description": "Disable optimizations that skip work for unchanged components",
+       "type": "boolean"
+      },
+      "from": {
+       "default": "",
+       "description": "Git ref to compare from (required)",
+       "type": "string"
+      },
+      "include-unchanged": {
+       "default": false,
+       "description": "Include unchanged components in output (only applies to broad -a scans; explicit selections always show status)",
+       "type": "boolean"
+      },
+      "network-retries": {
+       "default": 3,
+       "description": "maximum number of attempts for network operations (minimum 1)",
+       "type": "number"
+      },
+      "no-default-config": {
+       "default": false,
+       "description": "disable default configuration",
+       "type": "boolean"
+      },
+      "output-format": {
+       "description": "output format {csv, json, markdown, table}",
+       "type": "string"
+      },
+      "permissive-config": {
+       "default": false,
+       "description": "do not fail on unknown fields in TOML config files",
+       "type": "boolean"
+      },
+      "project": {
+       "default": "",
+       "description": "path to Azure Linux project",
+       "type": "string"
+      },
+      "quiet": {
+       "default": false,
+       "description": "only enable minimal output",
+       "type": "boolean"
+      },
+      "spec-path": {
+       "description": "Spec path",
+       "type": "string"
+      },
+      "to": {
+       "default": "HEAD",
+       "description": "Git ref to compare to",
+       "type": "string"
+      },
+      "verbose": {
+       "default": false,
+       "description": "enable verbose output",
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "from"
+     ],
+     "type": "object"
+    },
+    "name": "component-changed"
+   },
+   {
+    "annotations": {
+     "destructiveHint": true,
+     "idempotentHint": false,
+     "openWorldHint": true,
+     "readOnlyHint": false
+    },
     "description": "Show the diff that overlays apply to a component's sources",
     "inputSchema": {
      "properties": {
