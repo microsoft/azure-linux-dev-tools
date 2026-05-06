@@ -71,12 +71,6 @@ func Build() error {
 
 	mageutil.MagePrintf(mageutil.MsgSuccess, "Placed tools in %s\n", mageutil.BinDir())
 
-	// Generate CLI reference docs from the built binary.
-	err = magesrc.GenerateDocs()
-	if err != nil {
-		return fmt.Errorf("generating CLI reference docs:\n%w", err)
-	}
-
 	return nil
 }
 

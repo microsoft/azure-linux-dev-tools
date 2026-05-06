@@ -46,12 +46,13 @@ func main() {
 	mcpServer.AddTool(buildTool(), buildHandler(projectRootDir))
 	mcpServer.AddTool(unitTool(), unitHandler(projectRootDir))
 	mcpServer.AddTool(generateTool(), generateHandler(projectRootDir))
+	mcpServer.AddTool(docsTool(), docsHandler(projectRootDir))
 	mcpServer.AddTool(checkAllTool(), checkAllHandler(projectRootDir))
 	mcpServer.AddTool(fixAllTool(), fixAllHandler(projectRootDir))
 	mcpServer.AddTool(scenarioUpdateTool(), scenarioUpdateHandler(projectRootDir))
 	mcpServer.AddTool(scenarioTool(), scenarioHandler(projectRootDir))
 	mcpServer.AddTool(allTool(), allHandler(projectRootDir))
-	fmt.Fprintf(os.Stderr, "Registered 8 MCP tools\n")
+	fmt.Fprintf(os.Stderr, "Registered 9 MCP tools\n")
 
 	// Start the server
 	fmt.Fprintf(os.Stderr, "Starting MCP server on stdio...\n")
@@ -93,6 +94,17 @@ func generateTool() mcp.Tool {
 			"create generated Go code, including string enums, mocks, and other auto-generated files. Code " +
 			"generation runs automatically during build and test, but you can run it standalone to update " +
 			"generated files after making changes to source code that affects generation.",
+		InputSchema: verboseSchema(),
+	}
+}
+
+func docsTool() mcp.Tool {
+	return mcp.Tool{
+		Name: "mage_docs",
+		Description: "Regenerate CLI reference docs and JSON schema for the azldev project. This builds the " +
+			"binary and then runs it to produce markdown CLI docs under docs/user/reference/cli/ and the " +
+			"JSON schema at schemas/azldev.schema.json. Use this after changing Cobra command descriptions, " +
+			"flags, or config structs that affect the schema.",
 		InputSchema: verboseSchema(),
 	}
 }
@@ -185,6 +197,10 @@ func unitHandler(projectRootDir string) server.ToolHandlerFunc {
 
 func generateHandler(projectRootDir string) server.ToolHandlerFunc {
 	return createMageHandler(projectRootDir, "generate")
+}
+
+func docsHandler(projectRootDir string) server.ToolHandlerFunc {
+	return createMageHandler(projectRootDir, "docs")
 }
 
 func checkAllHandler(projectRootDir string) server.ToolHandlerFunc {
