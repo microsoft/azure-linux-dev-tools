@@ -1184,6 +1184,21 @@ func TestGetHighestPatchTagNumber(t *testing.T) {
 			input:    "Name: test\nPatch0: main.patch\n\n%package devel\nPatch5: devel.patch\n",
 			expected: 5,
 		},
+		{
+			name:     "unnumbered patch tags counted as auto-numbered from 0",
+			input:    "Name: test\nPatch: fix1.patch\nPatch: fix2.patch\n",
+			expected: 1,
+		},
+		{
+			name:     "unnumbered and numbered patch tags mixed",
+			input:    "Name: test\nPatch: fix1.patch\nPatch: fix2.patch\nPatch5: fix5.patch\n",
+			expected: 5,
+		},
+		{
+			name:     "single unnumbered patch tag",
+			input:    "Name: test\nPatch: fix.patch\n",
+			expected: 0,
+		},
 	}
 
 	for _, testCase := range tests {
