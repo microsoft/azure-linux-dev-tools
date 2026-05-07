@@ -23,6 +23,7 @@ type TemplatedTestProjectOption func(*templatedTestProject)
 type templatedTestProject struct {
 	templateDir           string
 	useTestDefaultConfigs bool
+	initGitRepo           bool
 }
 
 // TemplatedUseTestDefaultConfigs configures the templated project to include the test default configs.
@@ -32,6 +33,15 @@ type templatedTestProject struct {
 func TemplatedUseTestDefaultConfigs() TemplatedTestProjectOption {
 	return func(p *templatedTestProject) {
 		p.useTestDefaultConfigs = true
+	}
+}
+
+// TemplatedWithGitRepo initializes the project directory as a git repository with an
+// initial commit containing all project files. Required for commands that use synthetic
+// history (e.g., [component build], [component render]).
+func TemplatedWithGitRepo() TemplatedTestProjectOption {
+	return func(p *templatedTestProject) {
+		p.initGitRepo = true
 	}
 }
 
@@ -96,6 +106,11 @@ func (p *templatedTestProject) Serialize(t *testing.T, projectDir string) {
 
 		require.NoError(t, afero.WriteFile(osFS, configFilePath, modifiedBytes, fileperms.PublicFile),
 			"failed to write config file with test default configs")
+	}
+
+	// Initialize a git repo if requested.
+	if p.initGitRepo {
+		initProjectGitRepo(t, projectDir)
 	}
 }
 

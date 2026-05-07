@@ -29,7 +29,7 @@ type ComponentBuildOptions struct {
 
 	ContinueOnError   bool
 	NoCheck           bool
-	WithGitRepo       bool
+	WithoutGitRepo    bool
 	SourcePackageOnly bool
 	BuildEnvPolicy    BuildEnvPreservePolicy
 
@@ -131,8 +131,8 @@ builds can consume.`,
 	cmd.Flags().BoolVarP(&options.ContinueOnError, "continue-on-error", "k", false,
 		"Continue building when some components fail")
 	cmd.Flags().BoolVar(&options.NoCheck, "no-check", false, "Skip package %check tests")
-	cmd.Flags().BoolVar(&options.WithGitRepo, "with-git", false,
-		"Create a dist-git repository with synthetic commit history (requires a project git repository)")
+	cmd.Flags().BoolVar(&options.WithoutGitRepo, "without-git", false,
+		"Skip creating a dist-git repository with synthetic commit history")
 	cmd.Flags().BoolVar(&options.SourcePackageOnly, "srpm-only", false, "Build SRPM (source RPM) *only*")
 	cmd.Flags().Var(&options.BuildEnvPolicy, "preserve-buildenv",
 		fmt.Sprintf("Preserve build environment {%s, %s, %s}",
@@ -252,7 +252,7 @@ func BuildComponent(
 	}, &err)
 
 	var preparerOpts []sources.PreparerOption
-	if options.WithGitRepo {
+	if !options.WithoutGitRepo {
 		preparerOpts = append(preparerOpts, sources.WithGitRepo(env, env.LockReader()))
 	}
 

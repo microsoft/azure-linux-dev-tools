@@ -42,7 +42,7 @@ azldev component prepare-sources [flags]
       --skip-lock-validation          skip lock file consistency checks (default true)
       --skip-overlays                 skip applying overlays to prepared sources
   -s, --spec-path stringArray         Spec path
-      --with-git                      Create a dist-git repository with synthetic commit history (requires a project git repository)
+      --without-git                   Disable dist-git repository creation (enabled by default)
 ```
 
 ### Options inherited from parent commands

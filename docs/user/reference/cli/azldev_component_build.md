@@ -60,7 +60,7 @@ azldev component build [flags]
       --skip-lock-validation             skip lock file consistency checks (default true)
   -s, --spec-path stringArray            Spec path
       --srpm-only                        Build SRPM (source RPM) *only*
-      --with-git                         Create a dist-git repository with synthetic commit history (requires a project git repository)
+      --without-git                      Skip creating a dist-git repository with synthetic commit history
 ```
 
 ### Options inherited from parent commands
