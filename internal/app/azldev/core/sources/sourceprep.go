@@ -383,10 +383,7 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 	componentName := component.GetName()
 
 	// Compute the current fingerprint for uncommitted-change detection.
-	currentFingerprint, fpErr := computeCurrentFingerprint(p.fs, config, p.releaseVer)
-	if fpErr != nil {
-		return fmt.Errorf("failed to compute current fingerprint:\n%w", fpErr)
-	}
+	currentFingerprint := computeCurrentFingerprint(p.fs, config, p.releaseVer)
 
 	changes, importCommit, err := buildSyntheticCommits(
 		ctx, p.cmdFactory, config, componentName, p.lockReader.LockDir(),
@@ -452,14 +449,14 @@ func computeCurrentFingerprint(
 	fs opctx.FS,
 	config *projectconfig.ComponentConfig,
 	releaseVer string,
-) (string, error) {
+) string {
 	if config == nil {
-		return "", nil
+		return ""
 	}
 
 	sourceIdentity := config.EffectiveUpstreamCommit()
 	if sourceIdentity == "" {
-		return "", nil
+		return ""
 	}
 
 	var manualBump int
@@ -477,10 +474,15 @@ func computeCurrentFingerprint(
 		},
 	)
 	if err != nil {
-		return "", fmt.Errorf("computing fingerprint:\n%w", err)
+		slog.Debug("Skipping dirty detection because current fingerprint could not be computed",
+			"component", config.Name,
+			"releaseVer", releaseVer,
+			"error", err)
+
+		return ""
 	}
 
-	return identity.Fingerprint, nil
+	return identity.Fingerprint
 }
 
 // removeSubmoduleEntries strips gitlink (mode 160000) entries from the repository

@@ -447,9 +447,9 @@ func updateHead(repo *gogit.Repository, commitHash plumbing.Hash) error {
 // buildSyntheticCommits resolves the project repository from the component's
 // config file, walks the lock file's git history for fingerprint changes, and
 // returns the matching [FingerprintChange] entries sorted chronologically.
-// Returns an error if the lock file exists but has no fingerprint changes.
-// The second return value is the import-commit hash from the lock file, used
-// to scope the upstream commit walk in [CommitInterleavedHistory].
+// Returns (nil, "", nil) when there are no changes to represent — either the
+// lock file is missing, has no fingerprint changes (with a warning), or the
+// current fingerprint matches the committed one.
 //
 // When currentFingerprint is non-empty it is compared against the fingerprint
 // stored in the HEAD commit's lock file. If they differ a "dirty" entry is
