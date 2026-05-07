@@ -451,6 +451,11 @@ func updateHead(repo *gogit.Repository, commitHash plumbing.Hash) error {
 // The second return value is the import-commit hash from the lock file, used
 // to scope the upstream commit walk in [CommitInterleavedHistory].
 //
+// When currentFingerprint is non-empty it is compared against the fingerprint
+// stored in the HEAD commit's lock file. If they differ a "dirty" entry is
+// appended so that uncommitted config/overlay changes are represented in the
+// synthetic history.
+//
 // The lockDir is the absolute path to the lock file directory. It is converted
 // to a repo-relative path internally once the git repository root is known.
 func buildSyntheticCommits(
@@ -459,6 +464,7 @@ func buildSyntheticCommits(
 	config *projectconfig.ComponentConfig,
 	componentName string,
 	lockDir string,
+	currentFingerprint string,
 ) (changes []FingerprintChange, importCommit string, err error) {
 	projectRepo, projectRepoDir, err := openProjectRepo(config, componentName)
 	if err != nil {
@@ -510,6 +516,15 @@ func buildSyntheticCommits(
 				lockFileRelPath)
 		}
 
+		// Even with no committed fingerprint changes, there may be
+		// uncommitted ("dirty") changes worth representing.
+		if dirty := BuildDirtyChange(currentFingerprint, headLock, fpChanges); dirty != nil {
+			slog.Info("Current fingerprint differs from HEAD lock file; adding dirty entry",
+				"lockFile", lockFileRelPath)
+
+			return []FingerprintChange{*dirty}, importCommit, nil
+		}
+
 		slog.Warn("Lock file has no fingerprint changes; skipping synthetic history",
 			"lockFile", lockFileRelPath)
 
@@ -520,7 +535,49 @@ func buildSyntheticCommits(
 		"lockFile", lockFileRelPath,
 		"changeCount", len(fpChanges))
 
+	// Check for uncommitted ("dirty") changes by comparing the caller-provided
+	// current fingerprint against the fingerprint stored in the HEAD lock file.
+	if dirty := BuildDirtyChange(currentFingerprint, headLock, fpChanges); dirty != nil {
+		slog.Info("Current fingerprint differs from HEAD lock file; adding dirty entry",
+			"lockFile", lockFileRelPath)
+
+		fpChanges = append(fpChanges, *dirty)
+	}
+
 	return fpChanges, importCommit, nil
+}
+
+// BuildDirtyChange returns a [FingerprintChange] representing uncommitted
+// config/overlay changes. Returns nil when currentFingerprint is empty or
+// matches the HEAD lock file's fingerprint.
+func BuildDirtyChange(
+	currentFingerprint string,
+	headLock *lockfile.ComponentLock,
+	existingChanges []FingerprintChange,
+) *FingerprintChange {
+	if currentFingerprint == "" {
+		return nil
+	}
+
+	if currentFingerprint == headLock.InputFingerprint {
+		return nil
+	}
+
+	slog.Debug("Dirty fingerprint detected",
+		"current", currentFingerprint,
+		"head", headLock.InputFingerprint,
+		"existingChanges", len(existingChanges))
+
+	return &FingerprintChange{
+		CommitMetadata: CommitMetadata{
+			Hash:        "dirty",
+			Author:      "azldev",
+			AuthorEmail: "azldev@local",
+			Timestamp:   time.Now().Unix(),
+			Message:     "Local changes (uncommitted)",
+		},
+		UpstreamCommit: headLock.UpstreamCommit,
+	}
 }
 
 // openProjectRepo opens the git repository that contains the component's

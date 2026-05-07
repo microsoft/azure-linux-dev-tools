@@ -18,6 +18,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
+	"github.com/microsoft/azure-linux-dev-tools/internal/fingerprint"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
@@ -66,14 +67,18 @@ type PreparerOption func(*sourcePreparerImpl)
 //
 // The cmdFactory is used to shell out to git for fingerprint change detection.
 // The lockReader provides access to per-component lock files and their directory.
+// The releaseVer is the distro's formal release version (e.g., "4.0"), used to
+// compute the current fingerprint for uncommitted-change detection.
 func WithGitRepo(
 	cmdFactory opctx.CmdFactory,
 	lockReader lockfile.LockReader,
+	releaseVer string,
 ) PreparerOption {
 	return func(p *sourcePreparerImpl) {
 		p.withGitRepo = true
 		p.cmdFactory = cmdFactory
 		p.lockReader = lockReader
+		p.releaseVer = releaseVer
 	}
 }
 
@@ -134,6 +139,10 @@ type sourcePreparerImpl struct {
 	// allowNoHashes, when true, allows source file references without hash
 	// values. Missing hashes are computed from the downloaded files.
 	allowNoHashes bool
+
+	// releaseVer is the distro's formal release version. Used to compute the
+	// current fingerprint for uncommitted-change detection. Set via [WithGitRepo].
+	releaseVer string
 }
 
 // NewPreparer creates a new [SourcePreparer] instance. All positional arguments
@@ -373,9 +382,15 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 	config := component.GetConfig()
 	componentName := component.GetName()
 
-	// Build commit metadata from lock file fingerprint changes.
+	// Compute the current fingerprint for uncommitted-change detection.
+	currentFingerprint, fpErr := computeCurrentFingerprint(p.fs, config, p.releaseVer)
+	if fpErr != nil {
+		return fmt.Errorf("failed to compute current fingerprint:\n%w", fpErr)
+	}
+
 	changes, importCommit, err := buildSyntheticCommits(
 		ctx, p.cmdFactory, config, componentName, p.lockReader.LockDir(),
+		currentFingerprint,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to build synthetic commits:\n%w", err)
@@ -427,6 +442,45 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 	}
 
 	return nil
+}
+
+// computeCurrentFingerprint computes the current input fingerprint for a
+// component from its resolved config. Returns an empty string for local
+// components or when the source identity cannot be determined — these cases
+// skip uncommitted-change detection gracefully.
+func computeCurrentFingerprint(
+	fs opctx.FS,
+	config *projectconfig.ComponentConfig,
+	releaseVer string,
+) (string, error) {
+	if config == nil {
+		return "", nil
+	}
+
+	sourceIdentity := config.EffectiveUpstreamCommit()
+	if sourceIdentity == "" {
+		return "", nil
+	}
+
+	var manualBump int
+	if config.Locked != nil {
+		manualBump = config.Locked.ManualBump
+	}
+
+	identity, err := fingerprint.ComputeIdentity(
+		fs,
+		*config,
+		releaseVer,
+		fingerprint.IdentityOptions{
+			ManualBump:     manualBump,
+			SourceIdentity: sourceIdentity,
+		},
+	)
+	if err != nil {
+		return "", fmt.Errorf("computing fingerprint:\n%w", err)
+	}
+
+	return identity.Fingerprint, nil
 }
 
 // removeSubmoduleEntries strips gitlink (mode 160000) entries from the repository

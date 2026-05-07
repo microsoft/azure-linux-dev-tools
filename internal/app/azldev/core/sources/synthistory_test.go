@@ -13,6 +13,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/storage/memory"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
+	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -715,6 +716,71 @@ func TestParseCommitMetadata(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Equal(t, test.want, got)
+		})
+	}
+}
+
+func TestBuildDirtyChange(t *testing.T) {
+	tests := []struct {
+		name               string
+		currentFingerprint string
+		headLock           *lockfile.ComponentLock
+		existingChanges    []sources.FingerprintChange
+		wantNil            bool
+		wantUpstream       string
+	}{
+		{
+			name:               "empty fingerprint disables detection",
+			currentFingerprint: "",
+			headLock:           &lockfile.ComponentLock{InputFingerprint: "sha256:abc123", UpstreamCommit: "upc"},
+			wantNil:            true,
+		},
+		{
+			name:               "matching fingerprint returns nil",
+			currentFingerprint: "sha256:abc123",
+			headLock:           &lockfile.ComponentLock{InputFingerprint: "sha256:abc123", UpstreamCommit: "upc"},
+			wantNil:            true,
+		},
+		{
+			name:               "different fingerprint creates dirty entry",
+			currentFingerprint: "sha256:new",
+			headLock:           &lockfile.ComponentLock{InputFingerprint: "sha256:old", UpstreamCommit: "upc"},
+			wantUpstream:       "upc",
+		},
+		{
+			name:               "dirty entry created even with existing changes",
+			currentFingerprint: "sha256:new",
+			headLock:           &lockfile.ComponentLock{InputFingerprint: "sha256:old", UpstreamCommit: "upc"},
+			existingChanges: []sources.FingerprintChange{
+				{CommitMetadata: sources.CommitMetadata{Hash: "abc"}, UpstreamCommit: "upc"},
+			},
+			wantUpstream: "upc",
+		},
+		{
+			name:               "empty upstream commit preserved for local components",
+			currentFingerprint: "sha256:new",
+			headLock:           &lockfile.ComponentLock{InputFingerprint: "sha256:old", UpstreamCommit: ""},
+			wantUpstream:       "",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := sources.BuildDirtyChange(test.currentFingerprint, test.headLock, test.existingChanges)
+
+			if test.wantNil {
+				assert.Nil(t, result)
+
+				return
+			}
+
+			require.NotNil(t, result)
+			assert.Equal(t, "dirty", result.Hash)
+			assert.Equal(t, "azldev", result.Author)
+			assert.Equal(t, "azldev@local", result.AuthorEmail)
+			assert.Equal(t, "Local changes (uncommitted)", result.Message)
+			assert.Equal(t, test.wantUpstream, result.UpstreamCommit)
+			assert.NotZero(t, result.Timestamp)
 		})
 	}
 }
