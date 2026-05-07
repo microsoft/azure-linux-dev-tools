@@ -28,6 +28,11 @@ Resolution order (lowest to highest priority):
   4. Package-group default-package-config
   5. Component packages.<name> override
 
+The 'group' column shows the package-group whose 'packages' list contains the package.
+If the package is not in any package-group (or it is an SRPM, which never has package-group
+membership), the column falls back to the component-group(s) the resolved component belongs to,
+comma-joined and sorted. It is empty when no attribution can be determined.
+
 ```
 azldev package list [package-name...] [flags]
 ```

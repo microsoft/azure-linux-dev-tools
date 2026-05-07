@@ -562,3 +562,130 @@ func TestListPackages_RPMFile_Validation(t *testing.T) {
 		})
 	}
 }
+
+// TestListPackages_GroupFallsBackToComponentGroup verifies that when a binary package
+// is not in any package-group, the Group field falls back to the component-group(s) of
+// the resolved component. Multiple component-group memberships are sorted and
+// comma-joined for deterministic output.
+func TestListPackages_GroupFallsBackToComponentGroup(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	testEnv.Config.ComponentGroups["base-published"] = projectconfig.ComponentGroupConfig{
+		Components: []string{"jq"},
+	}
+	testEnv.Config.ComponentGroups["alpha"] = projectconfig.ComponentGroupConfig{
+		Components: []string{"jq"},
+	}
+
+	// Loader normally builds GroupsByComponent; tests that mutate ComponentGroups
+	// directly must keep the reverse index aligned. Insert in non-sorted order to
+	// confirm componentGroupLabel sorts before joining.
+	testEnv.Config.GroupsByComponent["jq"] = []string{"base-published", "alpha"}
+
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{PackageNames: []string{"jq"}})
+
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, "jq", results[0].PackageName)
+	assert.Equal(t, "alpha,base-published", results[0].Group,
+		"Group should fall back to sorted, comma-joined component-group names")
+}
+
+// TestListPackages_GroupPackageGroupWinsOverComponentGroup verifies that an explicit
+// package-group attribution still wins over the component-group fallback.
+func TestListPackages_GroupPackageGroupWinsOverComponentGroup(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	testEnv.Config.PackageGroups = map[string]projectconfig.PackageGroupConfig{
+		"devel-packages": {Packages: []string{"jq"}},
+	}
+	testEnv.Config.ComponentGroups["base-published"] = projectconfig.ComponentGroupConfig{
+		Components: []string{"jq"},
+	}
+	testEnv.Config.GroupsByComponent["jq"] = []string{"base-published"}
+
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{PackageNames: []string{"jq"}})
+
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, "devel-packages", results[0].Group,
+		"package-group attribution must win over the component-group fallback")
+}
+
+// TestListPackages_RPMFile_GroupFromComponentGroup verifies that --rpm-file rows
+// (both SRPM and binary RPM) get their Group from the resolved component's
+// component-group(s) when no package-group contains them.
+func TestListPackages_RPMFile_GroupFromComponentGroup(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	testEnv.Config.Components["curl"] = projectconfig.ComponentConfig{Name: "curl"}
+	testEnv.Config.ComponentGroups["base-published"] = projectconfig.ComponentGroupConfig{
+		Components: []string{"curl"},
+	}
+	testEnv.Config.GroupsByComponent["curl"] = []string{"base-published"}
+
+	const srpmMapPath = "/test-srpm-map.json"
+
+	entries := []map[string]string{
+		{"packageName": "curl", "sourcePackageName": "curl"},
+		{"packageName": "curl-devel", "sourcePackageName": "curl"},
+	}
+
+	data, jsonErr := json.Marshal(entries)
+	require.NoError(t, jsonErr)
+	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, srpmMapPath, data, fileperms.PublicFile))
+
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{RPMFile: srpmMapPath})
+	require.NoError(t, err)
+
+	byKey := make(map[string]pkgcmds.PackageListResult, len(results))
+	for _, r := range results {
+		byKey[r.PackageName+"#"+r.Type] = r
+	}
+
+	srpm := byKey["curl#"+pkgcmds.PackageTypeSRPM]
+	assert.Equal(t, "base-published", srpm.Group,
+		"SRPM Group should fall back to its component's component-group")
+
+	rpm := byKey["curl-devel#"+pkgcmds.PackageTypeRPM]
+	assert.Equal(t, "base-published", rpm.Group,
+		"binary RPM Group should fall back to its component's component-group when no package-group matches")
+}
+
+// TestListPackages_SynthesizeDebugPackages_DebugsourcePackageGroupOverridesComponentGroup verifies
+// that a synthesized '-debugsource' entry uses the package-group attribution when its name is
+// listed in a package-group, overriding the component-group baseline. This mirrors the
+// resolution used by [resolvePackageListResult] for regular RPMs.
+func TestListPackages_SynthesizeDebugPackages_DebugsourcePackageGroupOverridesComponentGroup(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	testEnv.Config.Components["curl"] = projectconfig.ComponentConfig{Name: "curl"}
+
+	// Component-group provides the baseline attribution.
+	testEnv.Config.ComponentGroups["base-published"] = projectconfig.ComponentGroupConfig{
+		Components: []string{"curl"},
+	}
+	testEnv.Config.GroupsByComponent["curl"] = []string{"base-published"}
+
+	// Package-group explicitly lists 'curl-debugsource' — this should win over the
+	// component-group baseline for the synthesized entry.
+	testEnv.Config.PackageGroups = map[string]projectconfig.PackageGroupConfig{
+		"debug-packages": {Packages: []string{"curl-debugsource"}},
+	}
+
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{
+		PackageNames:            []string{"curl"},
+		SynthesizeDebugPackages: true,
+	})
+
+	require.NoError(t, err)
+
+	byName := make(map[string]pkgcmds.PackageListResult, len(results))
+	for _, result := range results {
+		byName[result.PackageName] = result
+	}
+
+	require.Contains(t, byName, "curl-debugsource")
+	assert.Equal(t, "debug-packages", byName["curl-debugsource"].Group,
+		"synthesized -debugsource Group should be overridden by an explicit package-group membership")
+}

@@ -46,7 +46,7 @@ Example output:
 |--------|----------|
 | **Package** | Binary or source package name (RPM `Name` tag) |
 | **Type** | `rpm` for binary packages, `srpm` for source packages (set when using `--rpm-file`) |
-| **Group** | Package-group whose `packages` list contains this package, if any |
+| **Group** | Package-group whose `packages` list contains this package. Falls back to the resolved component's component-group(s) (sorted, comma-joined) when there is no package-group match, or for SRPM rows. |
 | **Component** | Component that has an explicit `packages.<name>` override for this package, if any |
 | **Publish Channel** | Effective publish channel after all config layers are applied |
 

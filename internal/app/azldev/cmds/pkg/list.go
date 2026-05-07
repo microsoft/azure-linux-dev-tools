@@ -72,7 +72,12 @@ Resolution order (lowest to highest priority):
   2. Component-group default-component-config publish settings
   3. Component publish settings
   4. Package-group default-package-config
-  5. Component packages.<name> override`,
+  5. Component packages.<name> override
+
+The 'group' column shows the package-group whose 'packages' list contains the package.
+If the package is not in any package-group (or it is an SRPM, which never has package-group
+membership), the column falls back to the component-group(s) the resolved component belongs to,
+comma-joined and sorted. It is empty when no attribution can be determined.`,
 		Example: `  # List all explicitly-configured packages
   azldev package list -a
 
@@ -133,7 +138,12 @@ type PackageListResult struct {
 	// packages. Always [PackageTypeRPM] for '-a' and '-p' lookups; either value for '--rpm-file'.
 	Type string `json:"type" table:"Type"`
 
-	// Group is the package-group this package belongs to, or empty if it is not in any group.
+	// Group is the group this package is attributed to. For binary packages it is the
+	// package-group whose 'packages' list contains the package; if the package is not in
+	// any package-group it falls back to the comma-joined names of the component-groups
+	// the resolved component belongs to. For source packages (SRPMs), only the
+	// component-group fallback applies (SRPMs have no package-group membership in the
+	// config model). Empty if no attribution can be determined.
 	Group string `json:"group" table:"Group"`
 
 	// Component is the resolved component name for this package.
@@ -193,9 +203,10 @@ func listPackagesFromRPMFile(
 	env *azldev.Env,
 	options *ListPackageOptions,
 	groupOf map[string]string,
+	compGroupLabelOf map[string]string,
 	proj *projectconfig.ProjectConfig,
 ) ([]PackageListResult, error) {
-	results, err := resolveFromRPMFile(env.FS(), options.RPMFile, groupOf, proj)
+	results, err := resolveFromRPMFile(env.FS(), options.RPMFile, groupOf, compGroupLabelOf, proj)
 	if err != nil {
 		return nil, err
 	}
@@ -244,10 +255,15 @@ func ListPackages(env *azldev.Env, options *ListPackageOptions) ([]PackageListRe
 		}
 	}
 
+	// Precompute a deterministic component-group label per component so the
+	// per-package fallback path is a cheap map lookup instead of an allocate-sort-join
+	// on every call. See [buildComponentGroupLabels].
+	compGroupLabelOf := buildComponentGroupLabels(proj)
+
 	results := make([]PackageListResult, 0)
 
 	if options.RPMFile != "" {
-		return listPackagesFromRPMFile(env, options, groupOf, proj)
+		return listPackagesFromRPMFile(env, options, groupOf, compGroupLabelOf, proj)
 	}
 
 	// Build an index: pkgName → componentName for packages with explicit component overrides.
@@ -281,7 +297,7 @@ func ListPackages(env *azldev.Env, options *ListPackageOptions) ([]PackageListRe
 	}
 
 	for pkgName := range toResolve {
-		result, err := resolvePackageListResult(pkgName, compOf, groupOf, proj)
+		result, err := resolvePackageListResult(pkgName, compOf, groupOf, compGroupLabelOf, proj)
 		if err != nil {
 			return nil, err
 		}
@@ -293,7 +309,7 @@ func ListPackages(env *azldev.Env, options *ListPackageOptions) ([]PackageListRe
 		slog.Warn("'--synthesize-debug-packages' is a transitional flag and may change or be removed " +
 			"once first-class debug-package configuration is supported.")
 
-		results, err = synthesizeDebugPackages(results, proj)
+		results, err = synthesizeDebugPackages(results, groupOf, compGroupLabelOf, proj)
 		if err != nil {
 			return nil, err
 		}
@@ -313,6 +329,7 @@ func resolvePackageListResult(
 	pkgName string,
 	compOf map[string]string,
 	groupOf map[string]string,
+	compGroupLabelOf map[string]string,
 	proj *projectconfig.ProjectConfig,
 ) (PackageListResult, error) {
 	compName := resolveComponentName(pkgName, compOf, proj)
@@ -338,13 +355,47 @@ func resolvePackageListResult(
 		return PackageListResult{}, fmt.Errorf("failed to resolve publish channel for package %#q:\n%w", pkgName, err)
 	}
 
+	group := groupOf[pkgName]
+	if group == "" {
+		group = compGroupLabelOf[compName]
+	}
+
 	return PackageListResult{
 		PackageName: pkgName,
 		Type:        PackageTypeRPM,
-		Group:       groupOf[pkgName],
+		Group:       group,
 		Component:   compName,
 		Channel:     channel,
 	}, nil
+}
+
+// buildComponentGroupLabels precomputes a deterministic, comma-joined label of the
+// component-groups each component belongs to. The label is the sorted, comma-joined
+// list of component-group names from [projectconfig.ProjectConfig.GroupsByComponent].
+// The returned map is keyed by component name and is intended to be built once per
+// command invocation so the per-package [PackageListResult.Group] fallback is a
+// cheap map lookup instead of an allocate-sort-join on every call.
+//
+// Components with no component-group memberships are omitted (a missing key reads as
+// the zero value "", which matches the desired behavior).
+//
+// Note: the separator is a plain comma; component-group names that themselves contain a
+// comma would render ambiguously. There is no convention in the project today that
+// disallows commas in group names, but they are not expected in practice.
+func buildComponentGroupLabels(proj *projectconfig.ProjectConfig) map[string]string {
+	labels := make(map[string]string, len(proj.GroupsByComponent))
+
+	for compName, groups := range proj.GroupsByComponent {
+		if len(groups) == 0 {
+			continue
+		}
+
+		sorted := append([]string(nil), groups...)
+		sort.Strings(sorted)
+		labels[compName] = strings.Join(sorted, ",")
+	}
+
+	return labels
 }
 
 // resolveComponentName returns the component name for a binary package. It first
@@ -394,6 +445,7 @@ func resolveComponentConfig(compName string, proj *projectconfig.ProjectConfig) 
 // project default → component group → component.
 func resolveSourcePackageListResult(
 	srpmName string,
+	compGroupLabelOf map[string]string,
 	proj *projectconfig.ProjectConfig,
 ) (PackageListResult, error) {
 	// The SRPM name is the component name by definition.
@@ -414,9 +466,11 @@ func resolveSourcePackageListResult(
 	return PackageListResult{
 		PackageName: srpmName,
 		Type:        PackageTypeSRPM,
-		Group:       "", // SRPMs have no package-group membership in the config model
-		Component:   compName,
-		Channel:     resolved.Publish.SRPMChannel,
+		// SRPMs have no package-group membership in the config model, so attribute them
+		// to their component's component-group(s) instead.
+		Group:     compGroupLabelOf[compName],
+		Component: compName,
+		Channel:   resolved.Publish.SRPMChannel,
 	}, nil
 }
 
@@ -429,6 +483,7 @@ func resolveFromRPMFile(
 	fs opctx.FS,
 	path string,
 	groupOf map[string]string,
+	compGroupLabelOf map[string]string,
 	proj *projectconfig.ProjectConfig,
 ) ([]PackageListResult, error) {
 	srpmMap, rpmCompOf, err := loadRPMFile(fs, path)
@@ -439,7 +494,7 @@ func resolveFromRPMFile(
 	results := make([]PackageListResult, 0, len(srpmMap))
 
 	for srpmName, rpmNames := range srpmMap {
-		srpmResult, resolveErr := resolveSourcePackageListResult(srpmName, proj)
+		srpmResult, resolveErr := resolveSourcePackageListResult(srpmName, compGroupLabelOf, proj)
 		if resolveErr != nil {
 			return nil, resolveErr
 		}
@@ -447,7 +502,7 @@ func resolveFromRPMFile(
 		results = append(results, srpmResult)
 
 		for _, rpmName := range rpmNames {
-			rpmResult, resolveErr := resolvePackageListResult(rpmName, rpmCompOf, groupOf, proj)
+			rpmResult, resolveErr := resolvePackageListResult(rpmName, rpmCompOf, groupOf, compGroupLabelOf, proj)
 			if resolveErr != nil {
 				return nil, resolveErr
 			}
@@ -543,6 +598,10 @@ func loadRPMFile(fs opctx.FS, path string) (srpmMap map[string][]string, rpmComp
 // "" or "none") and '-debugsource' packages (one per component in the project, with the
 // publish channel resolved through the normal component → project default chain).
 //
+// Group attribution mirrors [resolvePackageListResult]: '-debuginfo' entries inherit the
+// originating package's Group; '-debugsource' entries use the component-group baseline,
+// overridden by an explicit '<comp>-debugsource' package-group membership when present.
+//
 // Note: '-debugsource' entries are emitted for every component in the project regardless of
 // which packages were requested via '-p'. Components own packages via [ComponentConfig.Packages],
 // but most listed packages come from package groups with no component association — so scoping
@@ -553,7 +612,10 @@ func loadRPMFile(fs opctx.FS, path string) (srpmMap map[string][]string, rpmComp
 // real configuration always wins. Source packages whose names already end in '-debuginfo' or
 // '-debugsource' do not get a doubled suffix synthesized.
 func synthesizeDebugPackages(
-	results []PackageListResult, proj *projectconfig.ProjectConfig,
+	results []PackageListResult,
+	groupOf map[string]string,
+	compGroupLabelOf map[string]string,
+	proj *projectconfig.ProjectConfig,
 ) ([]PackageListResult, error) {
 	existing := make(map[string]struct{}, len(results))
 	for _, result := range results {
@@ -609,9 +671,18 @@ func synthesizeDebugPackages(
 			return nil, fmt.Errorf("failed to resolve config for synthesized package %#q:\n%w", name, err)
 		}
 
+		// Apply the same package-group-overrides-component-group precedence used for
+		// regular RPMs: an explicit '<comp>-debugsource' package-group membership wins
+		// over the component-group baseline.
+		group := compGroupLabelOf[compName]
+		if pg, ok := groupOf[name]; ok {
+			group = pg
+		}
+
 		results = append(results, PackageListResult{
 			PackageName: name,
 			Type:        PackageTypeRPM,
+			Group:       group,
 			Component:   compName,
 			Channel:     debugChannelName(pkgConfig.Publish.EffectiveRPMChannel()),
 		})
