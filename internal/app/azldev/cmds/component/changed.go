@@ -270,7 +270,13 @@ func classifyAndCompareSources(
 
 	result.SourcesChange = sourcesChange
 
-	if result.ChangeType == changeTypeUnchanged && result.SourcesChange {
+	// Record an integrity violation only when both refs have a lock AND the
+	// two fingerprints actually agree. The classifier reports unchanged for
+	// the no-lock-on-either-side case too (e.g. an arbitrary --from/--to pair
+	// where the component didn't exist as a managed package), but there's no
+	// fingerprint to vouch for the rendered sources in that case -- a sources
+	// diff is just a sources diff, not cache-poisoning evidence.
+	if result.SourcesChange && haveMatchingFingerprints(name, fromLocks, toLocks) {
 		ctx.integrityViolations = append(ctx.integrityViolations, name)
 	}
 
@@ -431,6 +437,20 @@ func classifyComponent(
 	}
 
 	return result
+}
+
+// haveMatchingFingerprints reports whether a lock exists at both refs and
+// the two recorded InputFingerprint values are equal. Used to gate
+// integrity-violation reporting so that components which simply lack locks
+// on one or both sides aren't accused of fingerprint-vs-sources drift.
+func haveMatchingFingerprints(
+	name string,
+	fromLocks, toLocks map[string]lockfile.ComponentLock,
+) bool {
+	fromLock, inFrom := fromLocks[name]
+	toLock, inTo := toLocks[name]
+
+	return inFrom && inTo && fromLock.InputFingerprint == toLock.InputFingerprint
 }
 
 // compareSources compares the rendered sources file between two git trees.
