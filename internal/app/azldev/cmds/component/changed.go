@@ -30,10 +30,6 @@ type ChangedComponentOptions struct {
 	To string
 	// IncludeUnchanged includes unchanged components in the output.
 	IncludeUnchanged bool
-	// ForceRecalculate disables optimizations that skip work for unchanged
-	// components (e.g., sources comparison). Useful when you suspect stale
-	// data or want to verify correctness.
-	ForceRecalculate bool
 }
 
 func changedOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
@@ -55,6 +51,12 @@ changed (sources change).
 This is useful for CI/CD pipelines to determine which components need to be
 rebuilt or have their lookaside tarballs re-uploaded after a PR merge.
 
+Fails with an error if any component's fingerprint is unchanged between refs
+but its rendered sources file drifted. This combination cannot occur from a
+clean render -- it usually means the rendered sources were edited by hand (a
+cache-poisoning vector if blindly uploaded) or the renderer is non-
+deterministic.
+
 Note: component selection and directory paths (lock-dir, rendered-specs-dir)
 are resolved from the current checkout's configuration, not from the compared
 refs. For accurate results, run this command from a checkout that matches the
@@ -74,7 +76,7 @@ detected via lock file presence in the compared refs when using -a.`,
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
 			options.ComponentFilter.ComponentNamePatterns = append(args, options.ComponentFilter.ComponentNamePatterns...)
 
-			// Skip lock validation — this command inspects historical locks at
+			// Skip lock validation -- this command inspects historical locks at
 			// arbitrary refs, so HEAD-state validation is irrelevant.
 			options.ComponentFilter.SkipLockValidation = true
 
@@ -89,12 +91,10 @@ detected via lock file presence in the compared refs when using -a.`,
 	cmd.Flags().StringVar(&options.To, "to", "HEAD", "Git ref to compare to")
 	cmd.Flags().BoolVar(&options.IncludeUnchanged, "include-unchanged", false,
 		"Include unchanged components in output (only applies to broad -a scans; explicit selections always show status)")
-	cmd.Flags().BoolVar(&options.ForceRecalculate, "force-recalculate", false,
-		"Disable optimizations that skip work for unchanged components")
 
 	_ = cmd.MarkFlagRequired("from")
 
-	// Hide inherited flag — this command always skips lock validation since
+	// Hide inherited flag -- this command always skips lock validation since
 	// it inspects historical locks at arbitrary refs.
 	_ = cmd.Flags().MarkHidden("skip-lock-validation")
 
@@ -167,11 +167,23 @@ func ChangedComponents(
 		return nil, fmt.Errorf("resolving tree for --to:\n%w", err)
 	}
 
-	return buildResults(
+	results, err := buildResults(
 		comps, fromLocks, toLocks, ctx, fromTree, toTree,
 		options.IncludeUnchanged, options.ComponentFilter.IncludeAllComponents,
-		options.ForceRecalculate,
 	)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(ctx.integrityViolations) > 0 {
+		return nil, fmt.Errorf(
+			"found %d component(s) with unchanged fingerprint but drifted rendered sources "+
+				"(re-render with `azldev component render` and commit the result): %s",
+			len(ctx.integrityViolations),
+			strings.Join(ctx.integrityViolations, ", "))
+	}
+
+	return results, nil
 }
 
 // changedContext holds resolved repo state for change detection.
@@ -180,6 +192,12 @@ type changedContext struct {
 	repoRoot         string
 	lockRelDir       string
 	renderedSpecsDir string
+	// integrityViolations collects components whose fingerprint is
+	// unchanged between refs but whose rendered sources file drifted.
+	// This indicates manual tampering with the rendered output (a cache
+	// poisoning vector -- see [classifyAndCompareSources]) or a renderer
+	// non-determinism bug.
+	integrityViolations []string
 }
 
 // newChangedContext opens the project repository and resolves paths.
@@ -211,26 +229,27 @@ func newChangedContext(env *azldev.Env) (*changedContext, error) {
 
 // classifyOpts controls per-component classification behavior. Config and
 // non-config components use different opts because they have different
-// semantics — see [buildResults] and [buildNonConfigResults].
+// semantics -- see [buildResults] and [buildNonConfigResults].
 type classifyOpts struct {
 	// remapDeleted converts "deleted" to "changed". This matters for
 	// config components: a missing lock file means the component needs its
 	// lock regenerated (e.g., after a reset or manual deletion), but the
 	// component itself still exists in the project config. Reporting
-	// "deleted" would be misleading — it's a "changed" component that
+	// "deleted" would be misleading -- it's a "changed" component that
 	// needs a rebuild. For non-config components (only known from lock
 	// files), a missing lock genuinely means the component was removed
 	// from the project, so "deleted" is correct.
 	remapDeleted bool
 	// includeUnchanged keeps unchanged components in the output.
 	includeUnchanged bool
-	// forceRecalculate disables the sources-comparison skip optimization.
-	forceRecalculate bool
 }
 
-// classifyAndCompareSources classifies a component and optionally compares its
-// rendered sources file. Returns the result and whether it should be included
-// in output.
+// classifyAndCompareSources classifies a component and compares its rendered
+// sources file. Returns the result and whether it should be included in
+// output. When an unchanged component shows a drifted sources file, the
+// component name is appended to ctx.integrityViolations so [ChangedComponents]
+// can fail the run -- fingerprint-unchanged + sources-drifted is a cache-
+// poisoning vector (see security review of `comp changed`).
 func classifyAndCompareSources(
 	name string,
 	fromLocks, toLocks map[string]lockfile.ComponentLock,
@@ -244,15 +263,6 @@ func classifyAndCompareSources(
 		result.ChangeType = changeTypeChanged
 	}
 
-	// Unchanged fingerprint implies unchanged sources — skip the
-	// expensive git tree comparison. Use --force-recalculate to override.
-	if result.ChangeType == changeTypeUnchanged && !opts.forceRecalculate {
-		result.SourcesChange = false
-
-		return result, opts.includeUnchanged, nil
-	}
-
-	// Changed/added/deleted (or --force-recalculate): compare sources.
 	sourcesChange, err := compareSources(ctx.repoRoot, fromTree, toTree, ctx.renderedSpecsDir, name)
 	if err != nil {
 		return result, false, fmt.Errorf("comparing sources for %#q:\n%w", name, err)
@@ -260,8 +270,12 @@ func classifyAndCompareSources(
 
 	result.SourcesChange = sourcesChange
 
-	// With --force-recalculate, unchanged components reach here after
-	// sources comparison. Still filter unless sources actually changed.
+	if result.ChangeType == changeTypeUnchanged && result.SourcesChange {
+		ctx.integrityViolations = append(ctx.integrityViolations, name)
+	}
+
+	// Filter unchanged components from broad-scan output unless their
+	// sources changed or the caller asked to see them.
 	if result.ChangeType == changeTypeUnchanged && !result.SourcesChange && !opts.includeUnchanged {
 		return result, false, nil
 	}
@@ -275,19 +289,18 @@ func buildResults(
 	fromLocks, toLocks map[string]lockfile.ComponentLock,
 	ctx *changedContext,
 	fromTree, toTree *object.Tree,
-	includeUnchanged, includeAllComponents, forceRecalculate bool,
+	includeUnchanged, includeAllComponents bool,
 ) ([]ChangedResult, error) {
 	configNames := make(map[string]bool, comps.Len())
 	results := make([]ChangedResult, 0, comps.Len())
 
-	// Config components: remap deleted→changed (lock missing doesn't mean
+	// Config components: remap deleted->changed (lock missing doesn't mean
 	// component is gone, just that the lock needs regeneration). Always
 	// show when explicitly selected (-p, -g, -s); only filter unchanged
 	// in broad scans (-a).
 	opts := classifyOpts{
 		remapDeleted:     true,
 		includeUnchanged: !includeAllComponents || includeUnchanged,
-		forceRecalculate: forceRecalculate,
 	}
 
 	for _, comp := range comps.Components() {
@@ -307,7 +320,7 @@ func buildResults(
 	}
 
 	// Skip non-config component detection for filtered runs (-p, -g, -s,
-	// positional args) — only check historical locks when scanning all
+	// positional args) -- only check historical locks when scanning all
 	// components (-a).
 	if !includeAllComponents {
 		// Sort for deterministic output across runs.
@@ -320,7 +333,6 @@ func buildResults(
 
 	nonConfigResults, err := buildNonConfigResults(
 		fromLocks, toLocks, configNames, ctx, fromTree, toTree, includeUnchanged,
-		forceRecalculate,
 	)
 	if err != nil {
 		return nil, err
@@ -337,13 +349,13 @@ func buildResults(
 }
 
 // buildNonConfigResults detects components not in the current config that
-// changed between refs — deleted, added, or modified historical components.
+// changed between refs -- deleted, added, or modified historical components.
 func buildNonConfigResults(
 	fromLocks, toLocks map[string]lockfile.ComponentLock,
 	configNames map[string]bool,
 	ctx *changedContext,
 	fromTree, toTree *object.Tree,
-	includeUnchanged, forceRecalculate bool,
+	includeUnchanged bool,
 ) ([]ChangedResult, error) {
 	nonConfigNames := make(map[string]bool)
 
@@ -371,7 +383,6 @@ func buildNonConfigResults(
 	opts := classifyOpts{
 		remapDeleted:     false,
 		includeUnchanged: includeUnchanged,
-		forceRecalculate: forceRecalculate,
 	}
 
 	var results []ChangedResult
