@@ -51,6 +51,7 @@ azldev component render [flags]
 
 ```
   -a, --all-components                Include all components
+      --check-only                    render to a staging area and compare against the existing on-disk output without writing anything. Exits 0 when nothing would change and 1 when any component would drift. With -a + --clean-stale, also fails on orphan rendered-spec directories. Intended for CI gates.
       --clean-stale                   remove contents of the output directory before rendering (only with -a; requires -f with -o)
   -p, --component stringArray         Component name pattern
   -g, --component-group stringArray   Component group name
