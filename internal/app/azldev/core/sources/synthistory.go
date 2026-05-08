@@ -506,42 +506,31 @@ func buildSyntheticCommits(
 			lockFileRelPath, err)
 	}
 
+	// In a shallow clone the commit that added the lock file may have been
+	// pruned. Detect this before falling through to dirty detection.
 	if len(fpChanges) == 0 {
-		// In a shallow clone the commit that added the lock file may have
-		// been pruned, so check explicitly.
 		shallowCommits, _ := projectRepo.Storer.Shallow()
 		if len(shallowCommits) > 0 {
 			return nil, "", fmt.Errorf(
 				"lock file %#q has no git history; a full clone is required",
 				lockFileRelPath)
 		}
-
-		// Even with no committed fingerprint changes, there may be
-		// uncommitted ("dirty") changes worth representing.
-		if dirty := BuildDirtyChange(currentFingerprint, headLock, fpChanges); dirty != nil {
-			slog.Info("Current fingerprint differs from HEAD lock file; adding dirty entry",
-				"lockFile", lockFileRelPath)
-
-			return []FingerprintChange{*dirty}, importCommit, nil
-		}
-
-		slog.Warn("Lock file has no fingerprint changes; skipping synthetic history",
-			"lockFile", lockFileRelPath)
-
-		return nil, "", nil
 	}
-
-	slog.Info("Found fingerprint changes",
-		"lockFile", lockFileRelPath,
-		"changeCount", len(fpChanges))
 
 	// Check for uncommitted ("dirty") changes by comparing the caller-provided
 	// current fingerprint against the fingerprint stored in the HEAD lock file.
-	if dirty := BuildDirtyChange(currentFingerprint, headLock, fpChanges); dirty != nil {
+	if dirty := BuildDirtyChange(currentFingerprint, headLock, config.EffectiveUpstreamCommit()); dirty != nil {
 		slog.Info("Current fingerprint differs from HEAD lock file; adding dirty entry",
 			"lockFile", lockFileRelPath)
 
 		fpChanges = append(fpChanges, *dirty)
+	}
+
+	if len(fpChanges) == 0 {
+		slog.Warn("Lock file has no fingerprint changes; skipping synthetic history",
+			"lockFile", lockFileRelPath)
+
+		return nil, "", nil
 	}
 
 	return fpChanges, importCommit, nil
@@ -550,12 +539,22 @@ func buildSyntheticCommits(
 // BuildDirtyChange returns a [FingerprintChange] representing uncommitted
 // config/overlay changes. Returns nil when currentFingerprint is empty or
 // matches the HEAD lock file's fingerprint.
+//
+// currentUpstreamCommit is the effective upstream commit from the on-disk
+// (possibly uncommitted) lock file. This is used instead of
+// [headLock.UpstreamCommit] so that upstream commit changes from
+// 'component update' (written to disk but not yet committed) are reflected
+// in the dirty entry.
 func BuildDirtyChange(
 	currentFingerprint string,
 	headLock *lockfile.ComponentLock,
-	existingChanges []FingerprintChange,
+	currentUpstreamCommit string,
 ) *FingerprintChange {
 	if currentFingerprint == "" {
+		return nil
+	}
+
+	if headLock == nil || headLock.InputFingerprint == "" {
 		return nil
 	}
 
@@ -565,8 +564,7 @@ func BuildDirtyChange(
 
 	slog.Debug("Dirty fingerprint detected",
 		"current", currentFingerprint,
-		"head", headLock.InputFingerprint,
-		"existingChanges", len(existingChanges))
+		"head", headLock.InputFingerprint)
 
 	return &FingerprintChange{
 		CommitMetadata: CommitMetadata{
@@ -576,7 +574,7 @@ func BuildDirtyChange(
 			Timestamp:   time.Now().Unix(),
 			Message:     "Local changes (uncommitted)",
 		},
-		UpstreamCommit: headLock.UpstreamCommit,
+		UpstreamCommit: currentUpstreamCommit,
 	}
 }
 

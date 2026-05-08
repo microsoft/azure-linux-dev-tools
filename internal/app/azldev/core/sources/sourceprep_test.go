@@ -45,6 +45,19 @@ func TestNewPreparer_NilArgs(t *testing.T) {
 	require.Contains(t, err.Error(), "filesystem")
 }
 
+func TestNewPreparer_DirtyDetectionWithoutGitRepo(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	sourceManager := sourceproviders_test.NewMockSourceManager(ctrl)
+	ctx := testctx.NewCtx()
+
+	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx,
+		sources.WithDirtyDetection(),
+	)
+	require.Nil(t, preparer)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "WithDirtyDetection requires WithGitRepo")
+}
+
 func TestPrepareSources_Success(t *testing.T) {
 	const (
 		testSpecName   = "test-component.spec"

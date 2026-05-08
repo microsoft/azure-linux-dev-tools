@@ -722,51 +722,60 @@ func TestParseCommitMetadata(t *testing.T) {
 
 func TestBuildDirtyChange(t *testing.T) {
 	tests := []struct {
-		name               string
-		currentFingerprint string
-		headLock           *lockfile.ComponentLock
-		existingChanges    []sources.FingerprintChange
-		wantNil            bool
-		wantUpstream       string
+		name                  string
+		currentFingerprint    string
+		headLock              *lockfile.ComponentLock
+		currentUpstreamCommit string
+		wantNil               bool
+		wantUpstream          string
 	}{
 		{
-			name:               "empty fingerprint disables detection",
-			currentFingerprint: "",
-			headLock:           &lockfile.ComponentLock{InputFingerprint: "sha256:abc123", UpstreamCommit: "upc"},
-			wantNil:            true,
+			name:                  "empty fingerprint disables detection",
+			currentFingerprint:    "",
+			headLock:              &lockfile.ComponentLock{InputFingerprint: "sha256:abc123", UpstreamCommit: "old"},
+			currentUpstreamCommit: "new",
+			wantNil:               true,
 		},
 		{
-			name:               "matching fingerprint returns nil",
-			currentFingerprint: "sha256:abc123",
-			headLock:           &lockfile.ComponentLock{InputFingerprint: "sha256:abc123", UpstreamCommit: "upc"},
-			wantNil:            true,
+			name:                  "matching fingerprint returns nil",
+			currentFingerprint:    "sha256:abc123",
+			headLock:              &lockfile.ComponentLock{InputFingerprint: "sha256:abc123", UpstreamCommit: "old"},
+			currentUpstreamCommit: "new",
+			wantNil:               true,
 		},
 		{
-			name:               "different fingerprint creates dirty entry",
-			currentFingerprint: "sha256:new",
-			headLock:           &lockfile.ComponentLock{InputFingerprint: "sha256:old", UpstreamCommit: "upc"},
-			wantUpstream:       "upc",
+			name:                  "nil headLock returns nil",
+			currentFingerprint:    "sha256:abc123",
+			headLock:              nil,
+			currentUpstreamCommit: "new",
+			wantNil:               true,
 		},
 		{
-			name:               "dirty entry created even with existing changes",
-			currentFingerprint: "sha256:new",
-			headLock:           &lockfile.ComponentLock{InputFingerprint: "sha256:old", UpstreamCommit: "upc"},
-			existingChanges: []sources.FingerprintChange{
-				{CommitMetadata: sources.CommitMetadata{Hash: "abc"}, UpstreamCommit: "upc"},
-			},
-			wantUpstream: "upc",
+			name:                  "different fingerprint uses current upstream commit",
+			currentFingerprint:    "sha256:new",
+			headLock:              &lockfile.ComponentLock{InputFingerprint: "sha256:old", UpstreamCommit: "old-commit"},
+			currentUpstreamCommit: "new-commit",
+			wantUpstream:          "new-commit",
 		},
 		{
-			name:               "empty upstream commit preserved for local components",
-			currentFingerprint: "sha256:new",
-			headLock:           &lockfile.ComponentLock{InputFingerprint: "sha256:old", UpstreamCommit: ""},
-			wantUpstream:       "",
+			name:                  "uses current upstream even when it matches head lock",
+			currentFingerprint:    "sha256:new",
+			headLock:              &lockfile.ComponentLock{InputFingerprint: "sha256:old", UpstreamCommit: "same-commit"},
+			currentUpstreamCommit: "same-commit",
+			wantUpstream:          "same-commit",
+		},
+		{
+			name:                  "empty current upstream preserved for local components",
+			currentFingerprint:    "sha256:new",
+			headLock:              &lockfile.ComponentLock{InputFingerprint: "sha256:old", UpstreamCommit: ""},
+			currentUpstreamCommit: "",
+			wantUpstream:          "",
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			result := sources.BuildDirtyChange(test.currentFingerprint, test.headLock, test.existingChanges)
+			result := sources.BuildDirtyChange(test.currentFingerprint, test.headLock, test.currentUpstreamCommit)
 
 			if test.wantNil {
 				assert.Nil(t, result)

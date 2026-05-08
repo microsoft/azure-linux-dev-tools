@@ -12,6 +12,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/format/index"
 	"github.com/go-git/go-git/v5/storage/memory"
+	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/spf13/afero"
@@ -162,4 +163,121 @@ func TestRemoveSubmoduleEntries_PreservesNormalEntriesWithMixedModes(t *testing.
 	require.Len(t, updatedIdx.Entries, 2)
 	assert.Equal(t, "build.sh", updatedIdx.Entries[0].Name)
 	assert.Equal(t, "pkg.spec", updatedIdx.Entries[1].Name)
+}
+
+func TestComputeCurrentFingerprint(t *testing.T) {
+	memFS := afero.NewMemMapFs()
+
+	lockedConfig := func(commit string, manualBump int) *projectconfig.ComponentConfig {
+		return &projectconfig.ComponentConfig{
+			Name: "test",
+			Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeUpstream},
+			Locked: &projectconfig.ComponentLockData{
+				UpstreamCommit: commit,
+				ManualBump:     manualBump,
+			},
+		}
+	}
+
+	tests := []struct {
+		name      string
+		config    *projectconfig.ComponentConfig
+		wantEmpty bool
+		wantErr   bool
+	}{
+		{
+			name:      "nil config returns empty",
+			config:    nil,
+			wantEmpty: true,
+		},
+		{
+			name:      "no upstream commit returns empty",
+			config:    &projectconfig.ComponentConfig{Name: "test"},
+			wantEmpty: true,
+		},
+		{
+			name: "empty spec upstream commit without lock returns empty",
+			config: &projectconfig.ComponentConfig{
+				Name: "test",
+				Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeUpstream},
+			},
+			wantEmpty: true,
+		},
+		{
+			name:   "locked upstream commit produces fingerprint",
+			config: lockedConfig("abc123def456", 0),
+		},
+		{
+			name: "spec upstream commit fallback produces fingerprint",
+			config: &projectconfig.ComponentConfig{
+				Name: "test",
+				Spec: projectconfig.SpecSource{
+					SourceType:     projectconfig.SpecSourceTypeUpstream,
+					UpstreamCommit: "abc123def456",
+				},
+			},
+		},
+		{
+			name:   "locked manual bump produces fingerprint",
+			config: lockedConfig("abc123def456", 5),
+		},
+		{
+			name: "source file without hash returns error",
+			config: &projectconfig.ComponentConfig{
+				Name: "test",
+				Spec: projectconfig.SpecSource{
+					SourceType:     projectconfig.SpecSourceTypeUpstream,
+					UpstreamCommit: "abc123def456",
+				},
+				SourceFiles: []projectconfig.SourceFileReference{
+					{Filename: "extra.tar.gz"},
+				},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := computeCurrentFingerprint(memFS, test.config, "3.0")
+
+			if test.wantErr {
+				assert.Error(t, err)
+
+				return
+			}
+
+			require.NoError(t, err)
+
+			if test.wantEmpty {
+				assert.Empty(t, result)
+			} else {
+				assert.NotEmpty(t, result)
+			}
+		})
+	}
+
+	// Determinism: same inputs → same fingerprint.
+	fp1, err := computeCurrentFingerprint(memFS, lockedConfig("abc123def456", 0), "3.0")
+	require.NoError(t, err)
+
+	fp2, err := computeCurrentFingerprint(memFS, lockedConfig("abc123def456", 0), "3.0")
+	require.NoError(t, err)
+
+	require.NotEmpty(t, fp1)
+	assert.Equal(t, fp1, fp2, "identical inputs should produce identical fingerprint")
+
+	// Sensitivity: changing any input changes the fingerprint.
+	fpDiffRelease, err := computeCurrentFingerprint(memFS, lockedConfig("abc123def456", 0), "4.0")
+	require.NoError(t, err)
+
+	fpDiffCommit, err := computeCurrentFingerprint(memFS, lockedConfig("999888777666", 0), "3.0")
+	require.NoError(t, err)
+
+	fpDiffBump, err := computeCurrentFingerprint(memFS, lockedConfig("abc123def456", 1), "3.0")
+	require.NoError(t, err)
+
+	assert.NotEqual(t, fp1, fpDiffRelease, "different releaseVer should change fingerprint")
+	assert.NotEqual(t, fp1, fpDiffCommit, "different upstream commit should change fingerprint")
+	assert.NotEqual(t, fp1, fpDiffBump, "different manual bump should change fingerprint")
 }

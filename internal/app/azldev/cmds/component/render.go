@@ -442,6 +442,7 @@ func prepareComponentSources(
 	// sidecar files are needed for rendering.
 	preparerOpts := []sources.PreparerOption{
 		sources.WithGitRepo(env, env.LockReader(), distro.Version.ReleaseVer),
+		sources.WithDirtyDetection(),
 		sources.WithSkipLookaside(),
 	}
 

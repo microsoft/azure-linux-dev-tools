@@ -67,8 +67,9 @@ type PreparerOption func(*sourcePreparerImpl)
 //
 // The cmdFactory is used to shell out to git for fingerprint change detection.
 // The lockReader provides access to per-component lock files and their directory.
-// The releaseVer is the distro's formal release version (e.g., "4.0"), used to
-// compute the current fingerprint for uncommitted-change detection.
+// The releaseVer must be the per-component resolved distro release version
+// (e.g., "4.0"), not the project default — components may override the distro
+// via [projectconfig.SpecSource.UpstreamDistro].
 func WithGitRepo(
 	cmdFactory opctx.CmdFactory,
 	lockReader lockfile.LockReader,
@@ -79,6 +80,21 @@ func WithGitRepo(
 		p.cmdFactory = cmdFactory
 		p.lockReader = lockReader
 		p.releaseVer = releaseVer
+	}
+}
+
+// WithDirtyDetection returns a [PreparerOption] that enables uncommitted-change
+// detection during synthetic history generation. When set, the current input
+// fingerprint is compared against the committed lock file; if they differ, a
+// "dirty" synthetic commit is appended to represent the uncommitted changes.
+// Without this option, only committed fingerprint changes produce synthetic commits.
+//
+// This should be enabled for commands that operate on the working tree state
+// (build, render, prepare-sources) and left disabled for commands that should
+// only reflect committed state.
+func WithDirtyDetection() PreparerOption {
+	return func(p *sourcePreparerImpl) {
+		p.dirtyDetection = true
 	}
 }
 
@@ -140,8 +156,12 @@ type sourcePreparerImpl struct {
 	// values. Missing hashes are computed from the downloaded files.
 	allowNoHashes bool
 
-	// releaseVer is the distro's formal release version. Used to compute the
-	// current fingerprint for uncommitted-change detection. Set via [WithGitRepo].
+	// dirtyDetection, when true, enables uncommitted-change detection during
+	// synthetic history generation. Set via [WithDirtyDetection].
+	dirtyDetection bool
+
+	// releaseVer is the per-component resolved distro release version, not the
+	// project default. Set via [WithGitRepo].
 	releaseVer string
 }
 
@@ -181,6 +201,11 @@ func NewPreparer(
 		if opt != nil {
 			opt(impl)
 		}
+	}
+
+	if impl.dirtyDetection && !impl.withGitRepo {
+		return nil, errors.New("WithDirtyDetection requires WithGitRepo; " +
+			"dirty detection compares fingerprints against committed lock files in the git history")
 	}
 
 	return impl, nil
@@ -383,7 +408,18 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 	componentName := component.GetName()
 
 	// Compute the current fingerprint for uncommitted-change detection.
-	currentFingerprint := computeCurrentFingerprint(p.fs, config, p.releaseVer)
+	// Only computed when dirty detection is enabled (e.g., build, render).
+	// An empty fingerprint skips dirty detection in buildSyntheticCommits.
+	var currentFingerprint string
+
+	if p.dirtyDetection {
+		var fpErr error
+
+		currentFingerprint, fpErr = computeCurrentFingerprint(p.fs, config, p.releaseVer)
+		if fpErr != nil {
+			return fmt.Errorf("dirty detection failed for component %#q:\n%w", componentName, fpErr)
+		}
+	}
 
 	changes, importCommit, err := buildSyntheticCommits(
 		ctx, p.cmdFactory, config, componentName, p.lockReader.LockDir(),
@@ -442,21 +478,22 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 }
 
 // computeCurrentFingerprint computes the current input fingerprint for a
-// component from its resolved config. Returns an empty string for local
-// components or when the source identity cannot be determined — these cases
-// skip uncommitted-change detection gracefully.
+// component from its resolved config. Returns ("", nil) for local components
+// or when the source identity cannot be determined — dirty detection is
+// silently skipped for these. Returns a non-nil error when the fingerprint
+// computation itself fails.
 func computeCurrentFingerprint(
 	fs opctx.FS,
 	config *projectconfig.ComponentConfig,
 	releaseVer string,
-) string {
+) (string, error) {
 	if config == nil {
-		return ""
+		return "", nil
 	}
 
 	sourceIdentity := config.EffectiveUpstreamCommit()
 	if sourceIdentity == "" {
-		return ""
+		return "", nil
 	}
 
 	var manualBump int
@@ -474,15 +511,10 @@ func computeCurrentFingerprint(
 		},
 	)
 	if err != nil {
-		slog.Debug("Skipping dirty detection because current fingerprint could not be computed",
-			"component", config.Name,
-			"releaseVer", releaseVer,
-			"error", err)
-
-		return ""
+		return "", fmt.Errorf("computing current fingerprint for %#q:\n%w", config.Name, err)
 	}
 
-	return identity.Fingerprint
+	return identity.Fingerprint, nil
 }
 
 // removeSubmoduleEntries strips gitlink (mode 160000) entries from the repository
