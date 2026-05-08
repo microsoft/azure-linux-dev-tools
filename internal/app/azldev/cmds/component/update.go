@@ -106,8 +106,8 @@ Cannot be combined with --bump.`,
 	cmd.Flags().BoolVar(&options.CheckOnly, "check-only", false,
 		"resolve identities and recompute fingerprints but do not write lock files "+
 			"or prune orphans. Exits 0 when nothing would change and 1 when any "+
-			"component is stale or any lock would be pruned. Intended for CI gates. "+
-			"Cannot be combined with --bump")
+			"component is stale (or, with --all-components, when any orphan lock "+
+			"would be pruned). Intended for CI gates. Cannot be combined with --bump")
 	cmd.Flags().BoolVar(&options.ForceRecalculate, "force-recalculate", false,
 		"force re-resolution of all components, ignoring freshness checks that "+
 			"would skip unchanged components. Use when upstream state may have "+
@@ -215,7 +215,12 @@ func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]Updat
 	}
 
 	// Log summary after save so Changed counts include fingerprint-only diffs.
-	logUpdateSummary(results)
+	// Skipped in --check-only mode -- the "changed" counter would lie about a
+	// run that wrote nothing, and the structured error returned below already
+	// names every affected component.
+	if !options.CheckOnly {
+		logUpdateSummary(results)
+	}
 
 	// Prune orphan lock files when updating all components.
 	// Use the resolved component set (not raw config) to include
@@ -250,7 +255,11 @@ func handleOrphanLocks(
 	}
 
 	if len(comps) == 0 {
-		slog.Warn("No components resolved; all existing lock files will be treated as orphans")
+		if options.CheckOnly {
+			slog.Warn("No components resolved; all existing lock files would be treated as orphans")
+		} else {
+			slog.Warn("No components resolved; all existing lock files will be treated as orphans")
+		}
 	}
 
 	resolvedNames := make(map[string]projectconfig.ComponentConfig, len(comps))
@@ -280,11 +289,15 @@ func handleOrphanLocks(
 }
 
 // checkOnlyResult inspects the results of a --check-only update run and
-// returns (nil, error) when any component would change or any lock file
-// would be pruned. The error is structured as a sentinel-style message that
-// names the affected components so CI logs are useful at a glance. Returns
-// (nil, nil) when nothing would change -- the caller exits 0.
-func checkOnlyResult(results []UpdateResult, wouldPrune []string) ([]UpdateResult, error) {
+// returns (results, error) when any component would change or any lock file
+// would be pruned. The error names the affected components so CI logs are
+// useful at a glance. Returns (results, nil) when nothing would change --
+// the caller exits 0. Results are returned in both cases so structured
+// consumers (e.g. -O json) retain the per-component data the pipeline just
+// computed.
+func checkOnlyResult(
+	results []UpdateResult, wouldPrune []string,
+) ([]UpdateResult, error) {
 	var changed []string
 
 	for idx := range results {
@@ -293,11 +306,13 @@ func checkOnlyResult(results []UpdateResult, wouldPrune []string) ([]UpdateResul
 		}
 	}
 
+	display := filterDisplayResults(results)
+
 	if len(changed) == 0 && len(wouldPrune) == 0 {
-		return nil, nil
+		return display, nil
 	}
 
-	parts := make([]string, 0)
+	var parts []string
 	if len(changed) > 0 {
 		parts = append(parts, fmt.Sprintf("%d component(s) would change: %s",
 			len(changed), strings.Join(changed, ", ")))
@@ -308,7 +323,7 @@ func checkOnlyResult(results []UpdateResult, wouldPrune []string) ([]UpdateResul
 			len(wouldPrune), strings.Join(wouldPrune, ", ")))
 	}
 
-	return nil, fmt.Errorf("lock files are stale; %s. Run 'azldev component update -a' to refresh",
+	return display, fmt.Errorf("lock files are stale; %s. Run 'azldev component update -a' to refresh",
 		strings.Join(parts, "; "))
 }
 

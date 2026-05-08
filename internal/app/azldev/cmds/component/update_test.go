@@ -426,13 +426,31 @@ func TestUpdateComponents_CheckOnly_StaleReturnsError(t *testing.T) {
 	addUpstreamComponent(env, "curl")
 	setupMockGit(env, advancedCommit)
 
-	_, err := componentcmds.UpdateComponents(env.Env, &componentcmds.UpdateComponentOptions{
+	results, err := componentcmds.UpdateComponents(env.Env, &componentcmds.UpdateComponentOptions{
 		ComponentFilter: components.ComponentFilter{IncludeAllComponents: true},
 		CheckOnly:       true,
 	})
 	require.Error(t, err, "stale lock must produce a non-nil error in --check-only mode")
 	assert.Contains(t, err.Error(), "stale", "error message should mention staleness")
 	assert.Contains(t, err.Error(), "curl", "error message should name the stale component")
+	assert.Contains(t, err.Error(), "azldev component update -a",
+		"-a-scoped run should suggest the same -a invocation to refresh")
+
+	// Results slice must be returned alongside the error so structured
+	// consumers (e.g. -O json) retain per-component data on stale runs.
+	require.NotEmpty(t, results, "results must be returned even when stale")
+
+	var foundCurl bool
+
+	for _, r := range results {
+		if r.Component == "curl" {
+			foundCurl = true
+
+			assert.True(t, r.Changed, "stale curl must surface as Changed in returned results")
+		}
+	}
+
+	assert.True(t, foundCurl, "stale curl must appear in returned results slice")
 
 	// Lock on disk must still hold the OLD commit -- --check-only must not write.
 	freshStore := lockfile.NewStore(env.TestFS, testLockDir)
