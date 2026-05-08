@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	componentcmds "github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/component"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
@@ -383,4 +384,138 @@ func TestUpdateComponents_AdvancesStaleLock(t *testing.T) {
 	require.NoError(t, loadErr)
 	assert.Equal(t, advancedCommit, updatedLock.UpstreamCommit,
 		"lock file on disk must contain the new commit")
+}
+
+// TestUpdateComponents_CheckOnlyAndBumpRejected verifies that callers (CLI or
+// programmatic) cannot combine --bump and --check-only. Cobra rejects this at
+// flag-parse time on the CLI, but UpdateComponents must also enforce it for
+// in-process callers; otherwise --bump would silently override --check-only's
+// no-write contract since the bump branch runs first.
+func TestUpdateComponents_CheckOnlyAndBumpRejected(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	addUpstreamComponent(env, "curl")
+	require.NoError(t, fileutils.MkdirAll(env.TestFS, testLockDir))
+
+	_, err := componentcmds.UpdateComponents(env.Env, &componentcmds.UpdateComponentOptions{
+		ComponentFilter: components.ComponentFilter{IncludeAllComponents: true},
+		Bump:            true,
+		CheckOnly:       true,
+	})
+	require.Error(t, err)
+	require.ErrorIs(t, err, azldev.ErrInvalidUsage,
+		"combining --bump and --check-only must surface as ErrInvalidUsage")
+}
+
+// TestUpdateComponents_CheckOnly_StaleReturnsError verifies that --check-only
+// returns a non-nil error (-> exit 1) when a component's lock is stale, and
+// that no lock file is written.
+func TestUpdateComponents_CheckOnly_StaleReturnsError(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	const initialCommit = "initial-aaa111"
+
+	const advancedCommit = "advanced-bbb222"
+
+	// Pre-populate a lock at initialCommit, then move upstream forward.
+	require.NoError(t, fileutils.MkdirAll(env.TestFS, testLockDir))
+	preStore := lockfile.NewStore(env.TestFS, testLockDir)
+	preLock := lockfile.New()
+	preLock.UpstreamCommit = initialCommit
+	require.NoError(t, preStore.Save("curl", preLock))
+
+	addUpstreamComponent(env, "curl")
+	setupMockGit(env, advancedCommit)
+
+	_, err := componentcmds.UpdateComponents(env.Env, &componentcmds.UpdateComponentOptions{
+		ComponentFilter: components.ComponentFilter{IncludeAllComponents: true},
+		CheckOnly:       true,
+	})
+	require.Error(t, err, "stale lock must produce a non-nil error in --check-only mode")
+	assert.Contains(t, err.Error(), "stale", "error message should mention staleness")
+	assert.Contains(t, err.Error(), "curl", "error message should name the stale component")
+
+	// Lock on disk must still hold the OLD commit -- --check-only must not write.
+	freshStore := lockfile.NewStore(env.TestFS, testLockDir)
+	lock, loadErr := freshStore.Get("curl")
+	require.NoError(t, loadErr)
+	assert.Equal(t, initialCommit, lock.UpstreamCommit,
+		"--check-only must not modify the lock file on disk")
+}
+
+// TestUpdateComponents_CheckOnly_FreshReturnsNil verifies that --check-only
+// returns nil (-> exit 0) when all locks are already fresh.
+func TestUpdateComponents_CheckOnly_FreshReturnsNil(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	const commit = "fresh-commit-aaa"
+
+	setupMockGit(env, commit)
+	addUpstreamComponent(env, "curl")
+	require.NoError(t, fileutils.MkdirAll(env.TestFS, testLockDir))
+
+	options := &componentcmds.UpdateComponentOptions{
+		ComponentFilter: components.ComponentFilter{IncludeAllComponents: true},
+	}
+
+	// Phase 1: populate the lock with a real update run.
+	_, err := componentcmds.UpdateComponents(env.Env, options)
+	require.NoError(t, err)
+
+	// Snapshot the on-disk lock state so we can assert nothing was rewritten.
+	freshStore := lockfile.NewStore(env.TestFS, testLockDir)
+	before, loadErr := freshStore.Get("curl")
+	require.NoError(t, loadErr)
+
+	// Phase 2: --check-only against the now-fresh lock. Must return nil.
+	options.CheckOnly = true
+	_, err = componentcmds.UpdateComponents(env.Env, options)
+	require.NoError(t, err, "fresh locks must return nil error in --check-only mode")
+
+	// Lock on disk must be byte-identical (no rewrite, no timestamp churn).
+	freshStore = lockfile.NewStore(env.TestFS, testLockDir)
+	after, loadErr := freshStore.Get("curl")
+	require.NoError(t, loadErr)
+	assert.Equal(t, before.InputFingerprint, after.InputFingerprint)
+	assert.Equal(t, before.UpstreamCommit, after.UpstreamCommit)
+}
+
+// TestUpdateComponents_CheckOnly_DetectsOrphans verifies that --check-only
+// returns an error when an orphan lock file would be pruned by a normal run,
+// and that the orphan is NOT actually deleted.
+func TestUpdateComponents_CheckOnly_DetectsOrphans(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	const commit = "fresh-commit-aaa"
+
+	setupMockGit(env, commit)
+	addUpstreamComponent(env, "curl")
+	require.NoError(t, fileutils.MkdirAll(env.TestFS, testLockDir))
+
+	// First, do a real update so curl's lock is fresh -- isolates the orphan as
+	// the only thing --check-only should flag.
+	_, err := componentcmds.UpdateComponents(env.Env, &componentcmds.UpdateComponentOptions{
+		ComponentFilter: components.ComponentFilter{IncludeAllComponents: true},
+	})
+	require.NoError(t, err)
+
+	// Plant an orphan lock AFTER the update -- a normal update would have
+	// pruned it. The orphan does NOT correspond to any component in config.
+	preStore := lockfile.NewStore(env.TestFS, testLockDir)
+	orphanLock := lockfile.New()
+	orphanLock.UpstreamCommit = "orphan-commit"
+	require.NoError(t, preStore.Save("removed-pkg", orphanLock))
+
+	// --check-only must report the orphan and not delete it.
+	_, err = componentcmds.UpdateComponents(env.Env, &componentcmds.UpdateComponentOptions{
+		ComponentFilter: components.ComponentFilter{IncludeAllComponents: true},
+		CheckOnly:       true,
+	})
+	require.Error(t, err, "orphan lock must produce an error in --check-only mode")
+	assert.Contains(t, err.Error(), "orphan")
+	assert.Contains(t, err.Error(), "removed-pkg")
+
+	// Orphan lock must still exist on disk.
+	freshStore := lockfile.NewStore(env.TestFS, testLockDir)
+	_, loadErr := freshStore.Get("removed-pkg")
+	require.NoError(t, loadErr, "--check-only must not prune orphan locks")
 }

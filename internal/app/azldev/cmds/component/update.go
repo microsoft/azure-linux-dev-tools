@@ -27,6 +27,13 @@ type UpdateComponentOptions struct {
 	// Bump increments the manual-rebuild counter on matched components'
 	// lock files. Used for mass-rebuild scenarios.
 	Bump bool
+	// CheckOnly runs the full update pipeline (resolve identities,
+	// recompute fingerprints) but does not write lock files or prune
+	// orphans. Returns a non-nil error when any component would be
+	// changed or any lock file would be pruned. Intended for CI gates:
+	// `azldev component update -a --check-only` exits 0 when locks are
+	// fresh and 1 when something is stale.
+	CheckOnly bool
 	// ForceRecalculate disables freshness optimizations that skip
 	// re-resolution for unchanged components. When set, all components
 	// are re-resolved regardless of their freshness status.
@@ -59,7 +66,12 @@ accidentally removing lock files for components not included in the filter.
 
 The --bump flag updates matching lock files to increment the manual-rebuild
 counter, triggering a new release. Useful for mass-rebuild scenarios (e.g.,
-toolchain bug, static library update). Orphan pruning is skipped under --bump.`,
+toolchain bug, static library update). Orphan pruning is skipped under --bump.
+
+The --check-only flag runs the full pipeline but does NOT write lock files or
+prune orphans. The command exits 0 when nothing would change and exits 1 when
+any component is stale or any lock would be pruned. Intended for CI gates.
+Cannot be combined with --bump.`,
 		Example: `  # Update all components
   azldev component update -a
 
@@ -70,9 +82,12 @@ toolchain bug, static library update). Orphan pruning is skipped under --bump.`,
   azldev component update -g core
 
   # Bump rebuild counter for a component (triggers new release)
-  azldev component update --bump curl`,
+  azldev component update --bump curl
+
+  # CI gate: exit 0 if locks are fresh, 1 if anything would change
+  azldev component update -a --check-only -q`,
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
-			// Skip lock validation — update is the lock file writer.
+			// Skip lock validation -- update is the lock file writer.
 			options.ComponentFilter.SkipLockValidation = true
 
 			options.ComponentFilter.ComponentNamePatterns = append(
@@ -88,11 +103,18 @@ toolchain bug, static library update). Orphan pruning is skipped under --bump.`,
 
 	cmd.Flags().BoolVar(&options.Bump, "bump", false,
 		"increment the manual-rebuild counter to trigger a new release")
+	cmd.Flags().BoolVar(&options.CheckOnly, "check-only", false,
+		"resolve identities and recompute fingerprints but do not write lock files "+
+			"or prune orphans. Exits 0 when nothing would change and 1 when any "+
+			"component is stale or any lock would be pruned. Intended for CI gates. "+
+			"Cannot be combined with --bump")
 	cmd.Flags().BoolVar(&options.ForceRecalculate, "force-recalculate", false,
 		"force re-resolution of all components, ignoring freshness checks that "+
 			"would skip unchanged components. Use when upstream state may have "+
 			"changed independently of the snapshot time and the new commit is "+
 			"preferred")
+
+	cmd.MarkFlagsMutuallyExclusive("bump", "check-only")
 
 	return cmd
 }
@@ -128,6 +150,10 @@ type UpdateResult struct {
 // UpdateComponents resolves source identities for all selected components and
 // writes the results to per-component lock files under locks/.
 func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]UpdateResult, error) {
+	if options.Bump && options.CheckOnly {
+		return nil, fmt.Errorf("%w: --bump and --check-only are mutually exclusive", azldev.ErrInvalidUsage)
+	}
+
 	resolver := components.NewResolver(env)
 	// Suppress staleness warnings — we're about to refresh the locks ourselves,
 	// so warning the user to "run component update" would be self-referential noise.
@@ -183,7 +209,8 @@ func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]Updat
 
 	// Write per-component lock files only on full success.
 	// saveComponentLocks may flip Changed for fingerprint-only diffs.
-	if err := saveComponentLocks(env, store, results); err != nil {
+	// In --check-only mode it computes everything but skips disk writes.
+	if err := saveComponentLocks(env, store, results, options.CheckOnly); err != nil {
 		return results, err
 	}
 
@@ -195,28 +222,94 @@ func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]Updat
 	// spec-glob-discovered components that aren't in config directly.
 	// Lock files are version controlled, so pruning is safe even if the
 	// resolved set is empty (e.g., all components removed from config).
-	if options.ComponentFilter.IncludeAllComponents {
-		if len(comps) == 0 {
-			slog.Warn("No components resolved; all existing lock files will be treated as orphans")
-		}
+	wouldPrune, orphanErr := handleOrphanLocks(store, comps, options)
+	if orphanErr != nil {
+		return results, orphanErr
+	}
 
-		resolvedNames := make(map[string]projectconfig.ComponentConfig, len(comps))
-		for _, comp := range comps {
-			resolvedNames[comp.GetName()] = *comp.GetConfig()
-		}
-
-		pruned, pruneErr := store.PruneOrphans(resolvedNames)
-		if pruneErr != nil {
-			return results, fmt.Errorf("pruning orphan lock files:\n%w", pruneErr)
-		}
-
-		if pruned > 0 {
-			slog.Info("Pruned orphan lock files", "count", pruned)
-		}
+	if options.CheckOnly {
+		return checkOnlyResult(results, wouldPrune)
 	}
 
 	// Filter results for table output: show changed and skipped components.
 	return filterDisplayResults(results), nil
+}
+
+// handleOrphanLocks reconciles the lockfile directory with the resolved
+// component set. In normal mode it deletes orphan locks; in --check-only
+// mode it returns the list of orphans that would be deleted without
+// touching disk. Returns (nil, nil) when not running with --all-components,
+// since orphan handling is scoped to whole-set updates.
+func handleOrphanLocks(
+	store *lockfile.Store,
+	comps []components.Component,
+	options *UpdateComponentOptions,
+) ([]string, error) {
+	if !options.ComponentFilter.IncludeAllComponents {
+		return nil, nil
+	}
+
+	if len(comps) == 0 {
+		slog.Warn("No components resolved; all existing lock files will be treated as orphans")
+	}
+
+	resolvedNames := make(map[string]projectconfig.ComponentConfig, len(comps))
+	for _, comp := range comps {
+		resolvedNames[comp.GetName()] = *comp.GetConfig()
+	}
+
+	if options.CheckOnly {
+		orphans, findErr := store.FindOrphanLockFiles(resolvedNames)
+		if findErr != nil {
+			return nil, fmt.Errorf("finding orphan lock files:\n%w", findErr)
+		}
+
+		return orphans, nil
+	}
+
+	pruned, pruneErr := store.PruneOrphans(resolvedNames)
+	if pruneErr != nil {
+		return nil, fmt.Errorf("pruning orphan lock files:\n%w", pruneErr)
+	}
+
+	if pruned > 0 {
+		slog.Info("Pruned orphan lock files", "count", pruned)
+	}
+
+	return nil, nil
+}
+
+// checkOnlyResult inspects the results of a --check-only update run and
+// returns (nil, error) when any component would change or any lock file
+// would be pruned. The error is structured as a sentinel-style message that
+// names the affected components so CI logs are useful at a glance. Returns
+// (nil, nil) when nothing would change -- the caller exits 0.
+func checkOnlyResult(results []UpdateResult, wouldPrune []string) ([]UpdateResult, error) {
+	var changed []string
+
+	for idx := range results {
+		if results[idx].Changed {
+			changed = append(changed, results[idx].Component)
+		}
+	}
+
+	if len(changed) == 0 && len(wouldPrune) == 0 {
+		return nil, nil
+	}
+
+	parts := make([]string, 0)
+	if len(changed) > 0 {
+		parts = append(parts, fmt.Sprintf("%d component(s) would change: %s",
+			len(changed), strings.Join(changed, ", ")))
+	}
+
+	if len(wouldPrune) > 0 {
+		parts = append(parts, fmt.Sprintf("%d orphan lock file(s) would be pruned: %s",
+			len(wouldPrune), strings.Join(wouldPrune, ", ")))
+	}
+
+	return nil, fmt.Errorf("lock files are stale; %s. Run 'azldev component update -a' to refresh",
+		strings.Join(parts, "; "))
 }
 
 // saveComponentLocks recomputes fingerprints and writes lock files for all
@@ -224,7 +317,10 @@ func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]Updat
 // or the input fingerprint has changed. The fingerprint is recomputed on every
 // update, so config/overlay changes are detected even when the upstream commit
 // stays the same.
-func saveComponentLocks(env *azldev.Env, store *lockfile.Store, results []UpdateResult) error {
+//
+// When checkOnly is true, fingerprints are still recomputed and Changed flags
+// are still set on the results, but no lock files are written to disk.
+func saveComponentLocks(env *azldev.Env, store *lockfile.Store, results []UpdateResult, checkOnly bool) error {
 	saved := make([]string, 0, len(results))
 
 	// Log partially-saved components on any error so the user knows which
@@ -242,7 +338,7 @@ func saveComponentLocks(env *azldev.Env, store *lockfile.Store, results []Update
 			continue
 		}
 
-		written, err := updateComponentLock(env, store, &results[idx])
+		written, err := updateComponentLock(env, store, &results[idx], checkOnly)
 		if err != nil {
 			retErr = err
 
@@ -260,7 +356,11 @@ func saveComponentLocks(env *azldev.Env, store *lockfile.Store, results []Update
 // updateComponentLock recomputes the fingerprint for a single component and
 // writes its lock file if anything changed. Returns true when the lock file
 // was written.
-func updateComponentLock(env *azldev.Env, store *lockfile.Store, result *UpdateResult) (bool, error) {
+//
+// When checkOnly is true, the fingerprint is still recomputed and result.Changed
+// is still flipped if anything would change, but no lock file is written. The
+// returned 'written' flag is always false in check-only mode.
+func updateComponentLock(env *azldev.Env, store *lockfile.Store, result *UpdateResult, checkOnly bool) (bool, error) {
 	lock, lockErr := store.GetOrNew(result.Component)
 	if lockErr != nil {
 		return false, fmt.Errorf("loading lock for %#q:\n%w", result.Component, lockErr)
@@ -322,6 +422,13 @@ func updateComponentLock(env *azldev.Env, store *lockfile.Store, result *UpdateR
 	// Write if either hash changed. ResolutionInputHash updates are silent
 	// (don't set Changed) since they don't affect build outputs.
 	if !result.Changed && !resHashChanged {
+		return false, nil
+	}
+
+	// In check-only mode the caller wants to know what *would* change without
+	// touching disk. Skip the write but keep result.Changed flipped so the
+	// caller can build the user-visible diff list.
+	if checkOnly {
 		return false, nil
 	}
 
