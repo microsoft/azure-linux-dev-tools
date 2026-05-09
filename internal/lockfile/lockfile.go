@@ -55,16 +55,13 @@ type ComponentLock struct {
 
 	// ResolutionInputHash is a hash of the config inputs that affect upstream
 	// commit resolution (snapshot timestamp, distro reference, explicit pin).
-	// Used for offline staleness detection: if the current config's resolution
-	// inputs produce a different hash than what's stored, the lock may be stale
-	// and `component update` will need to re-resolve the upstream commit via
-	// network.
+	// Used for staleness detection: if the current config's resolution inputs
+	// produce a different hash than what's stored, the locked upstream commit
+	// may no longer be correct and 'component update' will re-resolve it.
 	//
-	// This enables a fast offline check without re-resolving upstream commits:
-	//   - Hash matches → resolution inputs unchanged, lock is probably fresh
-	//   - Hash differs → resolution inputs changed, run update to re-resolve
-	//
-	// Not yet populated in v1 — reserved for future use.
+	// This enables a fast check without re-resolving upstream commits:
+	//   - Hash matches → resolution inputs unchanged, reuse locked commit
+	//   - Hash differs → resolution inputs changed, re-resolve required
 	ResolutionInputHash string `toml:"resolution-input-hash,omitempty"`
 }
 

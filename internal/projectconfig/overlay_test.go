@@ -385,6 +385,33 @@ func TestComponentOverlay_Validate(t *testing.T) {
 			errorExpected: true,
 			errorContains: "section",
 		},
+		// spec-remove-subpackage tests
+		{
+			name: "spec-remove-subpackage valid",
+			overlay: projectconfig.ComponentOverlay{
+				Type:        projectconfig.ComponentOverlayRemoveSubpackage,
+				PackageName: "devel",
+			},
+			errorExpected: false,
+		},
+		{
+			name: "spec-remove-subpackage missing package",
+			overlay: projectconfig.ComponentOverlay{
+				Type: projectconfig.ComponentOverlayRemoveSubpackage,
+			},
+			errorExpected: true,
+			errorContains: "package",
+		},
+		{
+			name: "spec-remove-subpackage rejects section field",
+			overlay: projectconfig.ComponentOverlay{
+				Type:        projectconfig.ComponentOverlayRemoveSubpackage,
+				PackageName: "devel",
+				SectionName: "%files",
+			},
+			errorExpected: true,
+			errorContains: "section",
+		},
 	}
 
 	for _, testCase := range testCases {
@@ -417,6 +444,7 @@ func TestComponentOverlay_ModifiesSpec(t *testing.T) {
 		projectconfig.ComponentOverlayAppendSpecLines,
 		projectconfig.ComponentOverlaySearchAndReplaceInSpec,
 		projectconfig.ComponentOverlayRemoveSection,
+		projectconfig.ComponentOverlayRemoveSubpackage,
 		projectconfig.ComponentOverlayAddPatch,
 		projectconfig.ComponentOverlayRemovePatch,
 	}

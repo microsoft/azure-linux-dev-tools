@@ -145,10 +145,21 @@ func (g ComponentGroupConfig) WithAbsolutePaths(referenceDir string) ComponentGr
 type ReleaseCalculation string
 
 const (
-	// ReleaseCalculationAuto is the default. azldev auto-bumps the Release tag based on
-	// synthetic commit history. Static integer releases are incremented; %autorelease
-	// is handled by rpmautospec.
+	// ReleaseCalculationAuto is the default. azldev auto-detects whether the spec uses
+	// %autorelease or a static integer release, and handles each accordingly.
 	ReleaseCalculationAuto ReleaseCalculation = "auto"
+
+	// ReleaseCalculationAutorelease explicitly declares that the spec uses %autorelease.
+	// azldev skips all Release tag manipulation, letting rpmautospec resolve the release
+	// number from git history. Use this for specs with conditional %autorelease/%else
+	// fallbacks that confuse auto-detection.
+	ReleaseCalculationAutorelease ReleaseCalculation = "autorelease"
+
+	// ReleaseCalculationStatic explicitly declares that the spec uses a static
+	// release tag. azldev parses and bumps the release value during rendering.
+	// Use this for specs with conditional Release tags where auto-detection
+	// picks the wrong branch but the static release logic still works correctly.
+	ReleaseCalculationStatic ReleaseCalculation = "static"
 
 	// ReleaseCalculationManual skips all automatic Release tag manipulation. Use this for
 	// components that manage their own release numbering (e.g. kernel).
@@ -158,7 +169,39 @@ const (
 // ReleaseConfig holds release-related configuration for a component.
 type ReleaseConfig struct {
 	// Calculation controls how the Release tag is managed during rendering.
-	Calculation ReleaseCalculation `toml:"calculation,omitempty" json:"calculation,omitempty" validate:"omitempty,oneof=auto manual" jsonschema:"enum=auto,enum=manual,default=auto,title=Release calculation,description=Controls how the Release tag is managed during rendering. Empty or omitted means auto."`
+	Calculation ReleaseCalculation `toml:"calculation,omitempty" json:"calculation,omitempty" validate:"omitempty,oneof=auto autorelease static manual" jsonschema:"enum=auto,enum=autorelease,enum=static,enum=manual,default=auto,title=Release calculation,description=Controls how the Release tag is managed during rendering. Empty or omitted means auto."`
+}
+
+// FreshnessStatus indicates whether a component's current config matches
+// its locked state. Computed at resolve time when freshness checking is
+// enabled; [FreshnessUnknown] otherwise.
+type FreshnessStatus int
+
+const (
+	// FreshnessUnknown means freshness was not computed (no lock, no stored
+	// fingerprint, or freshness checking not requested).
+	FreshnessUnknown FreshnessStatus = iota
+	// FreshnessCurrent means both the input fingerprint and resolution hash
+	// match the lock — the component is fully up-to-date.
+	FreshnessCurrent
+	// FreshnessStale means the recomputed fingerprint or resolution hash
+	// differs from the lock — config, overlays, snapshot, or other inputs
+	// changed since the last update.
+	FreshnessStale
+)
+
+// String returns a human-readable label for the freshness status.
+func (f FreshnessStatus) String() string {
+	switch f {
+	case FreshnessUnknown:
+		return "unknown"
+	case FreshnessCurrent:
+		return "current"
+	case FreshnessStale:
+		return "stale"
+	default:
+		return "unknown"
+	}
 }
 
 // ComponentLockData holds resolved lock file state attached to a component at
@@ -179,7 +222,21 @@ type ComponentLockData struct {
 	// ManualBump is the extra rebuild counter.
 	ManualBump int `json:"manualBump,omitempty"`
 	// InputFingerprint is the stored fingerprint from the last update.
+	// Covers build inputs (config, overlays, commit, manual bump, release ver)
+	// but excludes resolution inputs like snapshot timestamp.
 	InputFingerprint string `json:"inputFingerprint,omitempty"`
+	// ResolutionInputHash is the stored hash of resolution inputs (snapshot,
+	// distro ref, pin, upstream name). Used to determine if the locked commit
+	// needs re-resolution.
+	ResolutionInputHash string `json:"resolutionInputHash,omitempty"`
+	// Freshness indicates whether the component's config matches its lock.
+	// Runtime-only — computed by the resolver when freshness checking is enabled.
+	Freshness FreshnessStatus `json:"-"`
+	// ResolutionStale indicates whether resolution inputs specifically changed,
+	// as opposed to build-only inputs. When true, re-resolution is needed.
+	// When false but Freshness is Stale, only build inputs changed and the
+	// locked commit can be reused.
+	ResolutionStale bool `json:"-"`
 }
 
 // Defines a component.

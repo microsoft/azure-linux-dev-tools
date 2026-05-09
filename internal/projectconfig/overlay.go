@@ -17,7 +17,7 @@ import (
 // ComponentOverlay represents an overlay that may be applied to a component's spec and/or its sources.
 type ComponentOverlay struct {
 	// The type of overlay to apply.
-	Type ComponentOverlayType `toml:"type" json:"type" validate:"required" jsonschema:"enum=spec-add-tag,enum=spec-insert-tag,enum=spec-set-tag,enum=spec-update-tag,enum=spec-remove-tag,enum=spec-prepend-lines,enum=spec-append-lines,enum=spec-search-replace,enum=spec-remove-section,enum=patch-add,enum=patch-remove,enum=file-prepend-lines,enum=file-search-replace,enum=file-add,enum=file-remove,enum=file-rename,title=Overlay type,description=The type of overlay to apply"`
+	Type ComponentOverlayType `toml:"type" json:"type" validate:"required" jsonschema:"enum=spec-add-tag,enum=spec-insert-tag,enum=spec-set-tag,enum=spec-update-tag,enum=spec-remove-tag,enum=spec-prepend-lines,enum=spec-append-lines,enum=spec-search-replace,enum=spec-remove-section,enum=spec-remove-subpackage,enum=patch-add,enum=patch-remove,enum=file-prepend-lines,enum=file-search-replace,enum=file-add,enum=file-remove,enum=file-rename,title=Overlay type,description=The type of overlay to apply"`
 	// Human readable description of overlay; primarily present to document the need for the change.
 	Description string `toml:"description,omitempty" json:"description,omitempty" jsonschema:"title=Description,description=Human readable description of overlay" fingerprint:"-"`
 
@@ -114,6 +114,7 @@ func (c *ComponentOverlay) ModifiesSpec() bool {
 		c.Type == ComponentOverlayAppendSpecLines ||
 		c.Type == ComponentOverlaySearchAndReplaceInSpec ||
 		c.Type == ComponentOverlayRemoveSection ||
+		c.Type == ComponentOverlayRemoveSubpackage ||
 		c.Type == ComponentOverlayAddPatch ||
 		c.Type == ComponentOverlayRemovePatch
 }
@@ -159,6 +160,11 @@ const (
 	// ComponentOverlayRemoveSection is an overlay that removes an entire section from the spec;
 	// fails if the section doesn't exist.
 	ComponentOverlayRemoveSection ComponentOverlayType = "spec-remove-section"
+	// ComponentOverlayRemoveSubpackage is an overlay that removes every section in the spec
+	// that belongs to a given sub-package (e.g. its `%package`, `%description`, `%files`,
+	// `%post`, `%postun`, etc. sections). Fails if the spec has no sections matching the
+	// indicated sub-package.
+	ComponentOverlayRemoveSubpackage ComponentOverlayType = "spec-remove-subpackage"
 	// ComponentOverlayAddPatch is an overlay that adds a patch file and registers it in the spec.
 	// It copies the source file into the component sources and adds a PatchN tag (or appends to
 	// %%patchlist if one exists).
@@ -190,6 +196,10 @@ func (c *ComponentOverlay) Validate() error {
 
 	missingField := func(fieldName string) error {
 		return fmt.Errorf("overlay type %#q requires %#q field: %s", c.Type, fieldName, desc)
+	}
+
+	unexpectedField := func(fieldName string) error {
+		return fmt.Errorf("overlay type %#q does not accept %#q field: %s", c.Type, fieldName, desc)
 	}
 
 	requireRelativePath := func(fieldName, value string) error {
@@ -291,6 +301,14 @@ func (c *ComponentOverlay) Validate() error {
 	case ComponentOverlayRemoveSection:
 		if c.SectionName == "" {
 			return missingField("section")
+		}
+	case ComponentOverlayRemoveSubpackage:
+		if c.PackageName == "" {
+			return missingField("package")
+		}
+
+		if c.SectionName != "" {
+			return unexpectedField("section")
 		}
 	case ComponentOverlayAddPatch:
 		if c.Source == "" {

@@ -17,7 +17,6 @@ import (
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/plumbing/storer"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
@@ -81,7 +80,7 @@ func FindFingerprintChanges(
 	var entries []entry //nolint:prealloc // size not known ahead of time.
 
 	for _, meta := range metas {
-		lock, err := showLockFileAtCommit(projectRepo, meta.Hash, lockFileRelPath)
+		lock, err := lockfile.ShowAtCommit(projectRepo, meta.Hash, lockFileRelPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read lock file at commit %#q:\n%w", meta.Hash, err)
 		}
@@ -326,16 +325,18 @@ func replayInterleavedHistory(
 }
 
 // replayUpstreamCommit recreates an upstream commit with a new parent, preserving
-// tree content, author, committer, and message. Returns an error if the commit
-// is a merge commit (multiple parents), since the replay assumes linear history.
+// tree content, author, committer, and message. Merge commits (multiple parents)
+// are linearized by replaying them as single-parent commits — the tree hash is
+// preserved so the merged content is retained.
 func replayUpstreamCommit(
 	repo *gogit.Repository,
 	commit *object.Commit,
 	parentHash plumbing.Hash,
 ) (plumbing.Hash, error) {
 	if len(commit.ParentHashes) > 1 {
-		return plumbing.ZeroHash, fmt.Errorf("upstream commit %s is a merge commit; linear history expected",
-			commit.Hash)
+		slog.Debug("Linearizing merge commit in upstream history",
+			"commit", commit.Hash,
+			"parentCount", len(commit.ParentHashes))
 	}
 
 	hash, err := createCommitObject(repo, commit.TreeHash, parentHash,
@@ -539,10 +540,7 @@ func openProjectRepo(
 
 	configFilePath := config.SourceConfigFile.SourcePath()
 
-	repo, err := gogit.PlainOpenWithOptions(
-		filepath.Dir(configFilePath),
-		&gogit.PlainOpenOptions{DetectDotGit: true},
-	)
+	repo, err := git.OpenProjectRepo(filepath.Dir(configFilePath))
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to find project repository for config file %#q:\n%w",
 			configFilePath, err)
@@ -570,7 +568,7 @@ func readLockFileAtHEAD(
 		return nil, fmt.Errorf("failed to get HEAD:\n%w", err)
 	}
 
-	headLock, lockFileErr := showLockFileAtCommit(repo, head.Hash().String(), lockFileRelPath)
+	headLock, lockFileErr := lockfile.ShowAtCommit(repo, head.Hash().String(), lockFileRelPath)
 	if lockFileErr == nil {
 		return &headLock, nil
 	}
@@ -601,8 +599,9 @@ func readLockFileAtHEAD(
 
 // collectUpstreamCommits returns commits in the repository in chronological
 // order (oldest first), bounded by importCommit (inclusive start) and
-// upstreamCommit (inclusive end). The walk stops as soon as the import-commit
-// is reached to avoid traversing the entire history.
+// upstreamCommit (inclusive end). Only first-parent links are followed so that
+// merge commits are included but side-branch commits are excluded, producing a
+// linear mainline history suitable for replay.
 func collectUpstreamCommits(
 	repo *gogit.Repository, importCommit, upstreamCommit string,
 ) ([]*object.Commit, error) {
@@ -611,21 +610,22 @@ func collectUpstreamCommits(
 		return nil, fmt.Errorf("failed to get HEAD reference:\n%w", err)
 	}
 
-	iter, err := repo.Log(&gogit.LogOptions{From: head.Hash()})
-	if err != nil {
-		return nil, fmt.Errorf("failed to iterate commit log:\n%w", err)
-	}
-
-	// Walk newest-first. Collect commits until we pass the upstream-commit
-	// boundary, then keep collecting until we reach the import-commit.
+	// Walk newest-first following only first parents.  Collect commits
+	// between upstreamCommit (newest boundary) and importCommit (oldest).
 	var (
 		commits       []*object.Commit
 		foundUpstream bool
 		foundImport   bool
 		collecting    = upstreamCommit == "" // if no upper bound, collect from start.
+		currentHash   = head.Hash()
 	)
 
-	err = iter.ForEach(func(commit *object.Commit) error {
+	for {
+		commit, err := repo.CommitObject(currentHash)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read commit %#q:\n%w", currentHash.String(), err)
+		}
+
 		hash := commit.Hash.String()
 
 		// Start collecting once we see the upstream-commit (newest boundary).
@@ -645,13 +645,15 @@ func collectUpstreamCommits(
 		if importCommit != "" && hash == importCommit {
 			foundImport = true
 
-			return storer.ErrStop
+			break
 		}
 
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to walk commit log:\n%w", err)
+		// Follow only the first parent to stay on the mainline.
+		if len(commit.ParentHashes) == 0 {
+			break
+		}
+
+		currentHash = commit.ParentHashes[0]
 	}
 
 	if upstreamCommit != "" && !foundUpstream {
@@ -723,45 +725,6 @@ func gitLogFileMetadata(
 	}
 
 	return metas, nil
-}
-
-// showLockFileAtCommit reads the lock file content at a specific commit hash
-// using go-git and parses it into a [lockfile.ComponentLock].
-func showLockFileAtCommit(
-	repo *gogit.Repository,
-	commitHash, lockFileRelPath string,
-) (lockfile.ComponentLock, error) {
-	hash := plumbing.NewHash(commitHash)
-
-	commitObj, err := repo.CommitObject(hash)
-	if err != nil {
-		return lockfile.ComponentLock{}, fmt.Errorf("failed to resolve commit %#q:\n%w", commitHash, err)
-	}
-
-	tree, err := commitObj.Tree()
-	if err != nil {
-		return lockfile.ComponentLock{}, fmt.Errorf("failed to get tree for commit %#q:\n%w", commitHash, err)
-	}
-
-	file, err := tree.File(lockFileRelPath)
-	if err != nil {
-		return lockfile.ComponentLock{}, fmt.Errorf("failed to read %#q at commit %#q:\n%w",
-			lockFileRelPath, commitHash, err)
-	}
-
-	content, err := file.Contents()
-	if err != nil {
-		return lockfile.ComponentLock{}, fmt.Errorf("failed to read contents of %#q at commit %#q:\n%w",
-			lockFileRelPath, commitHash, err)
-	}
-
-	lock, err := lockfile.Parse([]byte(content))
-	if err != nil {
-		return lockfile.ComponentLock{}, fmt.Errorf("failed to parse lock file %#q at commit %#q:\n%w",
-			lockFileRelPath, commitHash, err)
-	}
-
-	return *lock, nil
 }
 
 // commitMetadataFieldCount is the number of NUL-separated fields expected in

@@ -9,6 +9,7 @@ import (
 
 	memfs "github.com/go-git/go-billy/v5/memfs"
 	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/storage/memory"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
@@ -489,6 +490,188 @@ func TestCommitInterleavedHistory_LocalComponent(t *testing.T) {
 	content, err := entry.Contents()
 	require.NoError(t, err)
 	assert.Contains(t, content, "# overlays applied")
+}
+
+func TestCommitInterleavedHistory_MergeCommitInUpstream(t *testing.T) {
+	// When the upstream dist-git contains merge commits, the replay should
+	// linearize them: follow only first parents and preserve the merge
+	// commit's tree content.
+	memFS := memfs.New()
+	storer := memory.NewStorage()
+
+	repo, err := gogit.Init(storer, memFS)
+	require.NoError(t, err)
+
+	worktree, err := repo.Worktree()
+	require.NoError(t, err)
+
+	// Upstream commit A (root).
+	fileA, err := memFS.Create("package.spec")
+	require.NoError(t, err)
+
+	_, err = fileA.Write([]byte("Name: package\nVersion: 1.0\n"))
+	require.NoError(t, err)
+	require.NoError(t, fileA.Close())
+
+	_, err = worktree.Add("package.spec")
+	require.NoError(t, err)
+
+	commitA, err := worktree.Commit("upstream: v1.0", &gogit.CommitOptions{
+		Author: &object.Signature{
+			Name:  "Upstream",
+			Email: "upstream@fedora.org",
+			When:  time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+		},
+	})
+	require.NoError(t, err)
+
+	commitAObj, err := repo.CommitObject(commitA)
+	require.NoError(t, err)
+
+	// Upstream commit B (child of A, on main branch).
+	fileB, err := memFS.Create("package.spec")
+	require.NoError(t, err)
+
+	_, err = fileB.Write([]byte("Name: package\nVersion: 2.0\n"))
+	require.NoError(t, err)
+	require.NoError(t, fileB.Close())
+
+	_, err = worktree.Add("package.spec")
+	require.NoError(t, err)
+
+	commitB, err := worktree.Commit("upstream: v2.0", &gogit.CommitOptions{
+		Author: &object.Signature{
+			Name:  "Upstream",
+			Email: "upstream@fedora.org",
+			When:  time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC),
+		},
+	})
+	require.NoError(t, err)
+
+	commitBObj, err := repo.CommitObject(commitB)
+	require.NoError(t, err)
+
+	// Create a side-branch commit F (parent: A) to serve as second parent of merge.
+	featureAuthor := object.Signature{
+		Name:  "Feature",
+		Email: "feature@fedora.org",
+		When:  time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC),
+	}
+
+	featureCommitObj := &object.Commit{
+		Author:       featureAuthor,
+		Committer:    featureAuthor,
+		Message:      "feature: add widget",
+		TreeHash:     commitAObj.TreeHash,
+		ParentHashes: []plumbing.Hash{commitA},
+	}
+
+	featureEncoded := repo.Storer.NewEncodedObject()
+	err = featureCommitObj.Encode(featureEncoded)
+	require.NoError(t, err)
+
+	featureHash, err := repo.Storer.SetEncodedObject(featureEncoded)
+	require.NoError(t, err)
+
+	// Create merge commit M (parents: [B, F], tree: B's tree).
+	mergeAuthor := object.Signature{
+		Name:  "Upstream",
+		Email: "upstream@fedora.org",
+		When:  time.Date(2024, 4, 1, 0, 0, 0, 0, time.UTC),
+	}
+
+	mergeCommitObj := &object.Commit{
+		Author:       mergeAuthor,
+		Committer:    mergeAuthor,
+		Message:      "Merge branch 'feature'",
+		TreeHash:     commitBObj.TreeHash,
+		ParentHashes: []plumbing.Hash{commitB, featureHash},
+	}
+
+	mergeEncoded := repo.Storer.NewEncodedObject()
+	err = mergeCommitObj.Encode(mergeEncoded)
+	require.NoError(t, err)
+
+	mergeHash, err := repo.Storer.SetEncodedObject(mergeEncoded)
+	require.NoError(t, err)
+
+	// Update HEAD to point to the merge commit.
+	head, err := repo.Storer.Reference(plumbing.HEAD)
+	require.NoError(t, err)
+
+	branchName := head.Target()
+	err = repo.Storer.SetReference(plumbing.NewHashReference(branchName, mergeHash))
+	require.NoError(t, err)
+
+	// Simulate overlay modification in working tree.
+	specFile, err := memFS.Create("package.spec")
+	require.NoError(t, err)
+
+	_, err = specFile.Write([]byte("Name: package\nVersion: 2.0\n# overlay applied\n"))
+	require.NoError(t, err)
+	require.NoError(t, specFile.Close())
+
+	// Fingerprint change references the merge commit as upstream.
+	changes := []sources.FingerprintChange{
+		{
+			CommitMetadata: sources.CommitMetadata{
+				Hash:        "proj-merge",
+				Author:      "Alice",
+				AuthorEmail: "alice@example.com",
+				Timestamp:   time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC).Unix(),
+				Message:     "Fix for merged version",
+			},
+			UpstreamCommit: mergeHash.String(),
+		},
+	}
+
+	err = sources.CommitInterleavedHistory(repo, changes, commitA.String())
+	require.NoError(t, err)
+
+	// Expected order (newest first):
+	// 1. "Fix for merged version" (synthetic, with overlay content)
+	// 2. "Merge branch 'feature'" (replayed merge, linearized)
+	// 3. "upstream: v2.0" (replayed)
+	// 4. "upstream: v1.0" (import-commit, kept as-is)
+	// The side-branch commit F should NOT appear.
+	newHead, err := repo.Head()
+	require.NoError(t, err)
+
+	commitIter, err := repo.Log(&gogit.LogOptions{From: newHead.Hash()})
+	require.NoError(t, err)
+
+	var logCommits []*object.Commit
+
+	err = commitIter.ForEach(func(c *object.Commit) error {
+		logCommits = append(logCommits, c)
+
+		return nil
+	})
+	require.NoError(t, err)
+
+	require.Len(t, logCommits, 4, "should have 3 upstream (A, B, M linearized) + 1 synthetic")
+
+	assert.Contains(t, logCommits[0].Message, "Fix for merged version") // synthetic
+	assert.Contains(t, logCommits[1].Message, "Merge branch 'feature'") // linearized merge
+	assert.Contains(t, logCommits[2].Message, "upstream: v2.0")         // replayed
+	assert.Contains(t, logCommits[3].Message, "upstream: v1.0")         // import-commit
+
+	// All replayed commits should have exactly 1 parent (linearized).
+	for i := range 3 {
+		assert.Len(t, logCommits[i].ParentHashes, 1,
+			"commit %d (%s) should have exactly 1 parent", i, logCommits[i].Message)
+	}
+
+	// Verify the synthetic commit carries overlay content.
+	tree, err := logCommits[0].Tree()
+	require.NoError(t, err)
+
+	entry, err := tree.File("package.spec")
+	require.NoError(t, err)
+
+	content, err := entry.Contents()
+	require.NoError(t, err)
+	assert.Contains(t, content, "# overlay applied")
 }
 
 func TestParseCommitMetadata(t *testing.T) {

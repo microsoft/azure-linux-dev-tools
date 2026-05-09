@@ -1184,6 +1184,21 @@ func TestGetHighestPatchTagNumber(t *testing.T) {
 			input:    "Name: test\nPatch0: main.patch\n\n%package devel\nPatch5: devel.patch\n",
 			expected: 5,
 		},
+		{
+			name:     "unnumbered patch tags counted as auto-numbered from 0",
+			input:    "Name: test\nPatch: fix1.patch\nPatch: fix2.patch\n",
+			expected: 1,
+		},
+		{
+			name:     "unnumbered and numbered patch tags mixed",
+			input:    "Name: test\nPatch: fix1.patch\nPatch: fix2.patch\nPatch5: fix5.patch\n",
+			expected: 5,
+		},
+		{
+			name:     "single unnumbered patch tag",
+			input:    "Name: test\nPatch: fix.patch\n",
+			expected: 0,
+		},
 	}
 
 	for _, testCase := range tests {
@@ -1613,6 +1628,40 @@ make
 make
 `,
 		},
+		{
+			// Locks in the contract documented on RemoveSection: when a spec lexically
+			// contains multiple sections with the same (section, package) identity (e.g.
+			// inside mutually-exclusive %if/%else branches), every such section is removed.
+			name: "removes every match when (section, package) appears more than once",
+			input: `Name: test
+
+%description
+Main.
+
+%files devel
+/usr/include/v1.h
+
+%files
+/usr/bin/test
+
+%files devel
+/usr/include/v2.h
+
+%changelog
+`,
+			sectionName: "%files",
+			packageName: "devel",
+			expectedOutput: `Name: test
+
+%description
+Main.
+
+%files
+/usr/bin/test
+
+%changelog
+`,
+		},
 	}
 
 	for _, testCase := range tests {
@@ -1621,6 +1670,186 @@ make
 			require.NoError(t, err)
 
 			err = specFile.RemoveSection(testCase.sectionName, testCase.packageName)
+
+			if testCase.errorExpected {
+				require.Error(t, err)
+
+				if testCase.errorContains != "" {
+					assert.Contains(t, err.Error(), testCase.errorContains)
+				}
+
+				return
+			}
+
+			require.NoError(t, err)
+
+			var buf bytes.Buffer
+			require.NoError(t, specFile.Serialize(&buf))
+			assert.Equal(t, testCase.expectedOutput, buf.String())
+		})
+	}
+}
+
+func TestRemoveSubpackage(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		packageName    string
+		expectedOutput string
+		errorExpected  bool
+		errorContains  string
+	}{
+		{
+			name: "removes all sections for a sub-package",
+			input: `Name: test
+Version: 1.0
+
+%description
+Main description.
+
+%package devel
+Summary: Devel files
+Requires: test = 1.0
+
+%description devel
+Devel description.
+
+%files
+/usr/bin/test
+
+%files devel
+/usr/include/test.h
+
+%post devel
+echo posting
+
+%changelog
+`,
+			packageName: "devel",
+			expectedOutput: `Name: test
+Version: 1.0
+
+%description
+Main description.
+
+%files
+/usr/bin/test
+
+%changelog
+`,
+		},
+		{
+			name: "handles -n style sub-package",
+			input: `Name: test
+
+%description
+Main.
+
+%package -n other-pkg
+Summary: Other
+
+%description -n other-pkg
+Other description.
+
+%files -n other-pkg
+/usr/bin/other
+
+%files
+/usr/bin/test
+`,
+			packageName: "other-pkg",
+			expectedOutput: `Name: test
+
+%description
+Main.
+
+%files
+/usr/bin/test
+`,
+		},
+		{
+			name: "removes sub-package whose final section runs to EOF",
+			input: `Name: test
+
+%description
+Main.
+
+%package devel
+Summary: Devel
+
+%files devel
+/usr/include/test.h
+`,
+			packageName: "devel",
+			expectedOutput: `Name: test
+
+%description
+Main.
+
+`,
+		},
+		{
+			name: "fails when sub-package has no sections",
+			input: `Name: test
+
+%description
+Main.
+
+%files
+/usr/bin/test
+`,
+			packageName:   "devel",
+			errorExpected: true,
+			errorContains: "not found",
+		},
+		{
+			name: "fails on empty package name",
+			input: `Name: test
+%description
+Main.
+`,
+			packageName:   "",
+			errorExpected: true,
+			errorContains: "empty",
+		},
+		{
+			name: "does not affect main-package sections with the same name",
+			input: `Name: test
+
+%description
+Main description.
+
+%package devel
+Summary: Devel
+
+%description devel
+Devel description.
+
+%files
+/usr/bin/test
+
+%files devel
+/usr/include/test.h
+`,
+			packageName: "devel",
+			expectedOutput: `Name: test
+
+%description
+Main description.
+
+%files
+/usr/bin/test
+
+`,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			specFile, err := spec.OpenSpec(strings.NewReader(testCase.input))
+			require.NoError(t, err)
+
+			err = specFile.RemoveSubpackage(testCase.packageName)
 
 			if testCase.errorExpected {
 				require.Error(t, err)

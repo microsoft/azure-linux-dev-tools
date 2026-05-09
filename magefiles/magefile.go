@@ -46,6 +46,6 @@ func init() {
 
 // All runs the tests, builds the code, and checks for any issues.
 func All() error {
-	mg.SerialDeps(magebuild.Build, magebuild.Unit, mg.F(magecheckfix.Check, magecheckfix.TargetAll), magescenario.Scenario)
+	mg.SerialDeps(magebuild.Build, magebuild.Unit, mg.F(magecheckfix.Check, magecheckfix.TargetAll), magescenario.Scenario, magebuild.Docs)
 	return nil
 }
