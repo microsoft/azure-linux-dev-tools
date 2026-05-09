@@ -23,6 +23,11 @@ The --bump flag updates matching lock files to increment the manual-rebuild
 counter, triggering a new release. Useful for mass-rebuild scenarios (e.g.,
 toolchain bug, static library update). Orphan pruning is skipped under --bump.
 
+The --check-only flag runs the full pipeline but does NOT write lock files or
+prune orphans. The command exits 0 when nothing would change and exits 1 when
+any component is stale or any lock would be pruned. Intended for CI gates.
+Cannot be combined with --bump.
+
 ```
 azldev component update [flags]
 ```
@@ -41,6 +46,9 @@ azldev component update [flags]
 
   # Bump rebuild counter for a component (triggers new release)
   azldev component update --bump curl
+
+  # CI gate: exit 0 if locks are fresh, 1 if anything would change
+  azldev component update -a --check-only -q
 ```
 
 ### Options
@@ -48,6 +56,7 @@ azldev component update [flags]
 ```
   -a, --all-components                Include all components
       --bump                          increment the manual-rebuild counter to trigger a new release
+      --check-only                    resolve identities and recompute fingerprints but do not write lock files or prune orphans. Exits 0 when nothing would change and 1 when any component is stale (or, with --all-components, when any orphan lock would be pruned). Intended for CI gates. Cannot be combined with --bump
   -p, --component stringArray         Component name pattern
   -g, --component-group stringArray   Component group name
       --force-recalculate             force re-resolution of all components, ignoring freshness checks that would skip unchanged components. Use when upstream state may have changed independently of the snapshot time and the new commit is preferred

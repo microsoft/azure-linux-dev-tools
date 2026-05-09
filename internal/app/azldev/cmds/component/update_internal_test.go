@@ -76,7 +76,7 @@ func TestSaveComponentLocks_ComputesFingerprint(t *testing.T) {
 		makeResult("curl", testCommitHash, baseConfig("curl")),
 	}
 
-	err := saveComponentLocks(env.Env, store, results)
+	err := saveComponentLocks(env.Env, store, results, false)
 	require.NoError(t, err)
 
 	lock := readLock(t, store, "curl")
@@ -93,7 +93,7 @@ func TestSaveComponentLocks_DetectsFingerprintChange(t *testing.T) {
 	config1 := baseConfig("curl")
 	results1 := []UpdateResult{makeResult("curl", testCommitHash, config1)}
 
-	require.NoError(t, saveComponentLocks(env.Env, store, results1))
+	require.NoError(t, saveComponentLocks(env.Env, store, results1, false))
 
 	fp1 := readLock(t, store, "curl").InputFingerprint
 	require.NotEmpty(t, fp1)
@@ -112,7 +112,7 @@ func TestSaveComponentLocks_DetectsFingerprintChange(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, saveComponentLocks(env.Env, store, results2))
+	require.NoError(t, saveComponentLocks(env.Env, store, results2, false))
 
 	fp2 := readLock(t, store, "curl").InputFingerprint
 	assert.NotEqual(t, fp1, fp2, "fingerprint should change when config changes")
@@ -127,7 +127,7 @@ func TestSaveComponentLocks_SkipsUnchanged(t *testing.T) {
 
 	// First save.
 	results1 := []UpdateResult{makeResult("curl", testCommitHash, config)}
-	require.NoError(t, saveComponentLocks(env.Env, store, results1))
+	require.NoError(t, saveComponentLocks(env.Env, store, results1, false))
 
 	fp1 := readLock(t, store, "curl").InputFingerprint
 
@@ -142,7 +142,7 @@ func TestSaveComponentLocks_SkipsUnchanged(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, saveComponentLocks(env.Env, store, results2))
+	require.NoError(t, saveComponentLocks(env.Env, store, results2, false))
 
 	assert.False(t, results2[0].Changed, "should remain unchanged when fingerprint matches")
 
@@ -160,7 +160,7 @@ func TestSaveComponentLocks_SkipsErrorAndSkipped(t *testing.T) {
 		{Component: "skipped", Skipped: true, SkipReason: "local", config: baseConfig("skipped")},
 	}
 
-	err := saveComponentLocks(env.Env, store, results)
+	err := saveComponentLocks(env.Env, store, results, false)
 	require.NoError(t, err)
 
 	// Neither should have lock files.
@@ -181,7 +181,7 @@ func TestSaveComponentLocks_SkipsUpToDate(t *testing.T) {
 		{Component: "skipped-fresh", UpstreamCommit: "abc", upToDate: true},
 	}
 
-	err := saveComponentLocks(env.Env, store, results)
+	err := saveComponentLocks(env.Env, store, results, false)
 	require.NoError(t, err)
 
 	exists, _ := store.Exists("skipped-fresh")
@@ -202,7 +202,7 @@ func TestSaveComponentLocks_PreservesManualBump(t *testing.T) {
 	// Update with new commit.
 	results := []UpdateResult{makeResult("curl", "new-commit", baseConfig("curl"))}
 
-	require.NoError(t, saveComponentLocks(env.Env, store, results))
+	require.NoError(t, saveComponentLocks(env.Env, store, results, false))
 
 	lock := readLock(t, store, "curl")
 	assert.Equal(t, "new-commit", lock.UpstreamCommit)
@@ -217,7 +217,7 @@ func TestSaveComponentLocks_ManualBumpAffectsFingerprint(t *testing.T) {
 
 	// Save with ManualBump = 0.
 	results1 := []UpdateResult{makeResult("curl", testCommitHash, config)}
-	require.NoError(t, saveComponentLocks(env.Env, store, results1))
+	require.NoError(t, saveComponentLocks(env.Env, store, results1, false))
 
 	fp1 := readLock(t, store, "curl").InputFingerprint
 
@@ -234,7 +234,7 @@ func TestSaveComponentLocks_ManualBumpAffectsFingerprint(t *testing.T) {
 		{Component: "curl", UpstreamCommit: testCommitHash, Changed: false, config: config, sourceIdentity: testCommitHash},
 	}
 
-	require.NoError(t, saveComponentLocks(env.Env, store, results2))
+	require.NoError(t, saveComponentLocks(env.Env, store, results2, false))
 
 	fp2 := readLock(t, store, "curl").InputFingerprint
 	assert.NotEqual(t, fp1, fp2, "ManualBump change should produce different fingerprint")
