@@ -188,7 +188,7 @@ func ChangedComponents(
 
 		return nil, fmt.Errorf(
 			"found %d component(s) with unchanged fingerprint but drifted rendered sources "+
-				"(re-render with `azldev component render` and commit the result): %s",
+				"(run 'azldev component render' and commit the result): %s",
 			len(ctx.integrityViolations),
 			strings.Join(quotedIntegrityViolations, ", "))
 	}
