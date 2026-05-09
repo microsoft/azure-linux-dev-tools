@@ -181,11 +181,16 @@ func ChangedComponents(
 		// logs and snapshot tests need a stable error string.
 		sort.Strings(ctx.integrityViolations)
 
+		quotedIntegrityViolations := make([]string, len(ctx.integrityViolations))
+		for idx, componentName := range ctx.integrityViolations {
+			quotedIntegrityViolations[idx] = fmt.Sprintf("%#q", componentName)
+		}
+
 		return nil, fmt.Errorf(
 			"found %d component(s) with unchanged fingerprint but drifted rendered sources "+
 				"(re-render with `azldev component render` and commit the result): %s",
 			len(ctx.integrityViolations),
-			strings.Join(ctx.integrityViolations, ", "))
+			strings.Join(quotedIntegrityViolations, ", "))
 	}
 
 	return results, nil
