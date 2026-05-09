@@ -115,9 +115,9 @@ valid with -a.`,
 
 	cmd.Flags().BoolVar(&options.CheckOnly, "check-only", false,
 		"render to a staging area and compare against the existing on-disk output "+
-			"without writing anything. Exits 0 when nothing would change and 1 when "+
-			"any component would drift. With -a + --clean-stale, also fails on orphan "+
-			"rendered-spec directories. Intended for CI gates.")
+			"without modifying the output directory. Exits 0 when nothing would change "+
+			"and 1 when any component would drift. With -a + --clean-stale, also fails "+
+			"on orphan rendered-spec directories. Intended for CI gates.")
 
 	// --check-only is a read-only diff against on-disk state; --fail-on-error
 	// is the loud-failure-per-run knob. Combining them is semantically
