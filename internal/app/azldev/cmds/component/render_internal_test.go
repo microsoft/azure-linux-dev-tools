@@ -752,4 +752,22 @@ func TestFindOrphanRenderedDirs(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, orphans, "multi-char top-level dirs must be left alone")
 	})
+
+	t.Run("ignores non-directory children inside letter dirs", func(t *testing.T) {
+		t.Parallel()
+
+		// Regression: a stray file like .gitkeep or an editor swap file
+		// inside a letter prefix dir is not a rendered-spec component dir
+		// and must NOT be flagged for removal.
+		testFS := afero.NewMemMapFs()
+		require.NoError(t, fileutils.MkdirAll(testFS, "/out/c/curl"))
+		require.NoError(t, fileutils.WriteFile(testFS, "/out/c/.gitkeep",
+			[]byte(""), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(testFS, "/out/c/.curl.spec.swp",
+			[]byte("vim swap"), fileperms.PublicFile))
+
+		orphans, err := findOrphanRenderedDirs(testFS, "/out", []string{"curl"})
+		require.NoError(t, err)
+		assert.Empty(t, orphans, "non-directory children must not be flagged as orphan dirs")
+	})
 }

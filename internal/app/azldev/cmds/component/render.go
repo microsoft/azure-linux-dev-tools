@@ -1300,6 +1300,13 @@ func findOrphanRenderedDirs(
 		}
 
 		for _, child := range children {
+			// Component output is always a directory. Stray files (e.g. an
+			// editor's swap file or a hand-placed .gitkeep) are not orphan
+			// rendered-spec dirs and must not be flagged for removal.
+			if !child.IsDir() {
+				continue
+			}
+
 			if _, ok := expectedNames[child.Name()]; !ok {
 				orphans = append(orphans, filepath.Join(letterEntry.Name(), child.Name()))
 			}
