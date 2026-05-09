@@ -729,7 +729,7 @@ func (p *sourcePreparerImpl) processSourceRef(
 
 	formatted = fedorasource.FormatSourcesEntry(ref.Filename, hashType, hash)
 
-	if hasUpstream && ref.ReplaceUpstream {
+	if ref.ReplaceUpstream {
 		slog.Warn("Replacing upstream 'sources' entry from 'source-files' configuration",
 			"component", componentName,
 			"filename", ref.Filename,
@@ -743,6 +743,7 @@ func (p *sourcePreparerImpl) processSourceRef(
 	}
 
 	slog.Debug("New 'sources' file entry",
+		"component", componentName,
 		"filename", ref.Filename,
 		"hashType", hashType,
 		"hash", hash)
