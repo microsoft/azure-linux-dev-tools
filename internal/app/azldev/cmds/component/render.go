@@ -64,12 +64,15 @@ Unlike prepare-sources, render skips downloading source tarballs from the
 lookaside cache — only spec files, patches, scripts, and other git-tracked
 sidecar files are included. Multiple components can be rendered at once.
 
-When rendering all components (-a), the --clean-stale flag removes all
-contents of the output directory before rendering, leaving the directory
-itself in place. When using a custom output directory (--output-dir),
---force is required alongside --clean-stale as a safety measure. An
-interrupted run with --clean-stale leaves the output directory partially
-populated; recover with 'git checkout'. This flag is only valid with -a.`,
+When rendering all components (-a), the --clean-stale flag prunes orphan
+rendered-spec directories (per-component dirs that no longer correspond to
+any component in the project config). Per-component dirs that ARE in config
+are overwritten in place by the render itself; this means each render's
+result table accurately reflects which components actually changed on disk.
+Top-level non-component siblings (e.g. a hand-placed README.md) are
+preserved. When using a custom output directory (--output-dir), --force is
+required alongside --clean-stale as a safety measure. This flag is only
+valid with -a.`,
 		Example: `  # Render all components (output dir from config)
   azldev component render -a
 
@@ -106,13 +109,21 @@ populated; recover with 'git checkout'. This flag is only valid with -a.`,
 		"allow overwriting existing rendered component directories")
 
 	cmd.Flags().BoolVar(&options.CleanStale, "clean-stale", false,
-		"remove contents of the output directory before rendering (only with -a; requires -f with -o)")
+		"prune rendered-spec directories that no longer correspond to a configured "+
+			"component (only with -a; requires -f with -o). Top-level non-component "+
+			"siblings are preserved.")
 
 	cmd.Flags().BoolVar(&options.CheckOnly, "check-only", false,
 		"render to a staging area and compare against the existing on-disk output "+
 			"without writing anything. Exits 0 when nothing would change and 1 when "+
 			"any component would drift. With -a + --clean-stale, also fails on orphan "+
 			"rendered-spec directories. Intended for CI gates.")
+
+	// --check-only is a read-only diff against on-disk state; --fail-on-error
+	// is the loud-failure-per-run knob. Combining them is semantically
+	// muddled (CI would fail on stale failures even when on-disk markers
+	// already record them) and forcing a choice keeps the contract crisp.
+	cmd.MarkFlagsMutuallyExclusive("fail-on-error", "check-only")
 
 	return cmd
 }
@@ -123,7 +134,7 @@ type RenderResult struct {
 	OutputDir string `json:"outputDir"       table:"Output"`
 	Status    string `json:"status"          table:"Status"`
 	Error     string `json:"error,omitempty" table:"Error,omitempty"`
-	Changed   bool   `json:"changed" table:"Changed"`
+	Changed   bool   `json:"changed"         table:"Changed"`
 }
 
 // Render status constants.
@@ -996,9 +1007,10 @@ func writeRenderErrorMarker(fs opctx.FS, componentOutputDir string) {
 	}
 
 	markerPath := filepath.Join(componentOutputDir, renderErrorMarkerFile)
-	content := "Rendering failed. See azldev logs for details.\n"
 
-	if writeErr := fileutils.WriteFile(fs, markerPath, []byte(content), fileperms.PublicFile); writeErr != nil {
+	if writeErr := fileutils.WriteFile(
+		fs, markerPath, []byte(renderErrorMarkerContent), fileperms.PublicFile,
+	); writeErr != nil {
 		slog.Debug("Failed to write render error marker", "path", markerPath, "error", writeErr)
 	}
 }
@@ -1094,11 +1106,12 @@ func writeFailureMarkers(
 		}
 
 		if checkOnly {
-			drifted, err := isFailureMarkerOnly(fileSystem, result.OutputDir)
+			drifted, err := outputDriftsFromMarker(fileSystem, result.OutputDir)
 			if err != nil {
-				// Treat inspection errors as drift -- safer to fail loudly
-				// in CI than to silently skip.
-				slog.Debug("Failed to inspect output dir for failure-marker check",
+				// Surface inspection errors at Warn so a CI failure is
+				// debuggable. Treat them as drift -- safer to fail loudly
+				// than silently pass.
+				slog.Warn("Failed to inspect output dir for failure-marker check; treating as drift",
 					"path", result.OutputDir, "error", err)
 
 				result.Changed = true
@@ -1195,13 +1208,13 @@ func diffRenderedOutput(fileSystem opctx.FS, expectedDir, actualDir string) (boo
 	return len(result.Files) > 0, nil
 }
 
-// isFailureMarkerOnly reports whether outputDir's contents diverge from a
+// outputDriftsFromMarker reports whether outputDir's contents diverge from a
 // fresh failure write -- i.e., a single RENDER_FAILED file containing the
 // canonical marker body. Returns true when the on-disk state would change
 // if a real failure write ran. Used by --check-only to enforce 1:1 parity:
 // a component that would fail must already be marked failed on disk, with
 // no extra stale output around it.
-func isFailureMarkerOnly(fileSystem opctx.FS, outputDir string) (bool, error) {
+func outputDriftsFromMarker(fileSystem opctx.FS, outputDir string) (bool, error) {
 	exists, err := fileutils.DirExists(fileSystem, outputDir)
 	if err != nil {
 		return false, fmt.Errorf("checking output dir %#q:\n%w", outputDir, err)
@@ -1267,6 +1280,15 @@ func findOrphanRenderedDirs(
 
 	for _, letterEntry := range letterDirs {
 		if !letterEntry.IsDir() {
+			continue
+		}
+
+		// Only descend into single-character prefix dirs (a/, c/, ...) --
+		// matches the layout written by [components.RenderedSpecDir]. A
+		// hand-placed sibling like 'tooling/' or 'overlays/' is left
+		// alone; treating its children as orphans would silently delete
+		// unrelated content on the next --clean-stale run.
+		if len(letterEntry.Name()) != 1 {
 			continue
 		}
 

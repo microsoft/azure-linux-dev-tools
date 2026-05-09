@@ -20,12 +20,15 @@ Unlike prepare-sources, render skips downloading source tarballs from the
 lookaside cache — only spec files, patches, scripts, and other git-tracked
 sidecar files are included. Multiple components can be rendered at once.
 
-When rendering all components (-a), the --clean-stale flag removes all
-contents of the output directory before rendering, leaving the directory
-itself in place. When using a custom output directory (--output-dir),
---force is required alongside --clean-stale as a safety measure. An
-interrupted run with --clean-stale leaves the output directory partially
-populated; recover with 'git checkout'. This flag is only valid with -a.
+When rendering all components (-a), the --clean-stale flag prunes orphan
+rendered-spec directories (per-component dirs that no longer correspond to
+any component in the project config). Per-component dirs that ARE in config
+are overwritten in place by the render itself; this means each render's
+result table accurately reflects which components actually changed on disk.
+Top-level non-component siblings (e.g. a hand-placed README.md) are
+preserved. When using a custom output directory (--output-dir), --force is
+required alongside --clean-stale as a safety measure. This flag is only
+valid with -a.
 
 ```
 azldev component render [flags]
@@ -52,7 +55,7 @@ azldev component render [flags]
 ```
   -a, --all-components                Include all components
       --check-only                    render to a staging area and compare against the existing on-disk output without writing anything. Exits 0 when nothing would change and 1 when any component would drift. With -a + --clean-stale, also fails on orphan rendered-spec directories. Intended for CI gates.
-      --clean-stale                   remove contents of the output directory before rendering (only with -a; requires -f with -o)
+      --clean-stale                   prune rendered-spec directories that no longer correspond to a configured component (only with -a; requires -f with -o). Top-level non-component siblings are preserved.
   -p, --component stringArray         Component name pattern
   -g, --component-group stringArray   Component group name
       --fail-on-error                 exit with error if any component fails to render (useful for CI)

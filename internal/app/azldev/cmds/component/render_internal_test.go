@@ -635,14 +635,14 @@ func TestDiffRenderedOutput(t *testing.T) {
 	})
 }
 
-func TestIsFailureMarkerOnly(t *testing.T) {
+func TestOutputDriftsFromMarker(t *testing.T) {
 	t.Parallel()
 
 	t.Run("missing dir -> drift", func(t *testing.T) {
 		t.Parallel()
 
 		testFS := afero.NewMemMapFs()
-		drifted, err := isFailureMarkerOnly(testFS, "/missing")
+		drifted, err := outputDriftsFromMarker(testFS, "/missing")
 		require.NoError(t, err)
 		assert.True(t, drifted)
 	})
@@ -656,7 +656,7 @@ func TestIsFailureMarkerOnly(t *testing.T) {
 			"/out/"+renderErrorMarkerFile,
 			[]byte(renderErrorMarkerContent), fileperms.PublicFile))
 
-		drifted, err := isFailureMarkerOnly(testFS, "/out")
+		drifted, err := outputDriftsFromMarker(testFS, "/out")
 		require.NoError(t, err)
 		assert.False(t, drifted)
 	})
@@ -670,7 +670,7 @@ func TestIsFailureMarkerOnly(t *testing.T) {
 			"/out/"+renderErrorMarkerFile,
 			[]byte("hand-edited"), fileperms.PublicFile))
 
-		drifted, err := isFailureMarkerOnly(testFS, "/out")
+		drifted, err := outputDriftsFromMarker(testFS, "/out")
 		require.NoError(t, err)
 		assert.True(t, drifted)
 	})
@@ -686,7 +686,7 @@ func TestIsFailureMarkerOnly(t *testing.T) {
 		require.NoError(t, fileutils.WriteFile(testFS,
 			"/out/curl.spec", []byte("stale"), fileperms.PublicFile))
 
-		drifted, err := isFailureMarkerOnly(testFS, "/out")
+		drifted, err := outputDriftsFromMarker(testFS, "/out")
 		require.NoError(t, err)
 		assert.True(t, drifted)
 	})
@@ -734,5 +734,22 @@ func TestFindOrphanRenderedDirs(t *testing.T) {
 		orphans, err := findOrphanRenderedDirs(testFS, "/out", []string{"curl"})
 		require.NoError(t, err)
 		assert.Empty(t, orphans)
+	})
+
+	t.Run("ignores multi-character top-level directories", func(t *testing.T) {
+		t.Parallel()
+
+		// Regression: an unrelated multi-char sibling directory like
+		// 'tooling/' or 'overlays/' must NOT have its children walked
+		// and flagged as orphans, or pruneOrphanRenderedDirs would
+		// silently delete them on the next --clean-stale run.
+		testFS := afero.NewMemMapFs()
+		require.NoError(t, fileutils.MkdirAll(testFS, "/out/c/curl"))
+		require.NoError(t, fileutils.MkdirAll(testFS, "/out/tooling/build.sh"))
+		require.NoError(t, fileutils.MkdirAll(testFS, "/out/overlays/curl-fix"))
+
+		orphans, err := findOrphanRenderedDirs(testFS, "/out", []string{"curl"})
+		require.NoError(t, err)
+		assert.Empty(t, orphans, "multi-char top-level dirs must be left alone")
 	})
 }
