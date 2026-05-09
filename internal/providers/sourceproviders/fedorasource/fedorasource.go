@@ -339,10 +339,16 @@ func parseSourcesFile(content string, packageName string, lookasideBaseURI strin
 // the list of source file entries. It supports both the modern format
 // (e.g., "SHA512 (file.tar.gz) = abc123...") and the legacy MD5 format
 // (e.g., "abc123...  file.tar.gz").
+//
+// If the same filename appears more than once, the duplicate is logged at WARN
+// level and the entry's value is overwritten with the most-recently-seen line;
+// the entry retains the position of its first occurrence in the returned slice.
 func ReadSourcesFileEntries(content string) ([]SourcesFileEntry, error) {
 	lines := strings.Split(content, "\n")
 
 	entries := make([]SourcesFileEntry, 0, len(lines))
+	indexByName := make(map[string]int, len(lines))
+
 	for lineNum, line := range lines {
 		line = strings.TrimSpace(line)
 
@@ -376,11 +382,32 @@ func ReadSourcesFileEntries(content string) ([]SourcesFileEntry, error) {
 			hashType = string(fileutils.HashTypeMD5)
 		}
 
-		entries = append(entries, SourcesFileEntry{
+		newEntry := SourcesFileEntry{
 			Filename: fileName,
 			HashType: fileutils.HashType(hashType),
 			Hash:     hash,
-		})
+		}
+
+		if existingIdx, exists := indexByName[fileName]; exists {
+			previous := entries[existingIdx]
+			slog.Warn(
+				"Duplicate filename in 'sources' file; "+
+					"overwriting the previous entry with the most-recently-seen value "+
+					"(the entry keeps its original position)",
+				"filename", fileName,
+				"line", lineNum+1,
+				"previousHashType", previous.HashType,
+				"previousHash", previous.Hash,
+				"newHashType", newEntry.HashType,
+				"newHash", newEntry.Hash,
+			)
+			entries[existingIdx] = newEntry
+
+			continue
+		}
+
+		indexByName[fileName] = len(entries)
+		entries = append(entries, newEntry)
 	}
 
 	return entries, nil

@@ -160,6 +160,7 @@ func (f ConfigFile) Validate() error {
 //   - Hash type must be a supported algorithm when specified.
 //   - Hash value without a hash type is not allowed.
 //   - Origin must be present and valid for each source file.
+//   - 'replace-upstream' and 'replace-reason' must be set together.
 func validateSourceFiles(sourceFiles []SourceFileReference, componentName string) error {
 	seen := make(map[string]bool, len(sourceFiles))
 
@@ -189,9 +190,35 @@ func validateSourceFiles(sourceFiles []SourceFileReference, componentName string
 				ref.Filename, componentName)
 		}
 
+		if err := validateReplaceUpstream(ref, componentName); err != nil {
+			return err
+		}
+
 		if err := validateOrigin(ref.Origin, ref.Filename, componentName); err != nil {
 			return err
 		}
+	}
+
+	return nil
+}
+
+// validateReplaceUpstream enforces the pairing rules for the 'replace-upstream' and
+// 'replace-reason' fields on a [SourceFileReference]:
+//   - 'replace-upstream = true' requires a non-empty 'replace-reason'.
+//   - 'replace-reason' may only be set when 'replace-upstream = true'.
+func validateReplaceUpstream(ref SourceFileReference, componentName string) error {
+	if ref.ReplaceUpstream && ref.ReplaceReason == "" {
+		return fmt.Errorf(
+			"source file %#q in component %#q has 'replace-upstream = true' but no 'replace-reason'; "+
+				"a non-empty 'replace-reason' is required to document the override",
+			ref.Filename, componentName)
+	}
+
+	if !ref.ReplaceUpstream && ref.ReplaceReason != "" {
+		return fmt.Errorf(
+			"source file %#q in component %#q has 'replace-reason' set but 'replace-upstream' is not true; "+
+				"'replace-reason' is only valid when 'replace-upstream = true'",
+			ref.Filename, componentName)
 	}
 
 	return nil

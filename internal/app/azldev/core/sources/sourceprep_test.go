@@ -636,12 +636,13 @@ func TestDiffSources_FetchError(t *testing.T) {
 func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 	validOrigin := projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/new-source.tar.gz"}
 	tests := []struct {
-		name                   string
-		sourceFiles            []projectconfig.SourceFileReference
-		existingSourcesContent string
-		expectError            bool
-		errorContains          []string
-		expectedSourceEntries  []string
+		name                        string
+		sourceFiles                 []projectconfig.SourceFileReference
+		existingSourcesContent      string
+		expectError                 bool
+		errorContains               []string
+		expectedSourceEntries       []string
+		expectedSourceEntriesAbsent []string
 	}{
 		{
 			name: "adds new entry to existing sources file",
@@ -660,7 +661,7 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 			},
 		},
 		{
-			name: "error on duplicate filename in sources file",
+			name: "error on filename collision when replace-upstream is not set",
 			sourceFiles: []projectconfig.SourceFileReference{
 				{
 					Filename: "existing.tar.gz", // Already in sources file.
@@ -674,6 +675,98 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 			errorContains: []string{
 				"existing.tar.gz",
 				"conflicts with an existing entry",
+				"replace-upstream = true",
+			},
+		},
+		{
+			name: "replaces upstream entry in place when replace-upstream is true",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename:        "existing.tar.gz", // Already in sources file.
+					Hash:            "deadbeefcafe",
+					HashType:        fileutils.HashTypeSHA512,
+					Origin:          validOrigin,
+					ReplaceUpstream: true,
+					ReplaceReason:   "patched to fix CVE-2026-0001",
+				},
+			},
+			existingSourcesContent: "SHA512 (existing.tar.gz) = aabbccdd1122\nSHA512 (other.tar.gz) = 99887766\n",
+			// The replacement must occupy the original position of 'existing.tar.gz' (line 1),
+			// not be shuffled to the end. Order is asserted by the surrounding test logic.
+			expectedSourceEntries: []string{
+				"SHA512 (existing.tar.gz) = deadbeefcafe",
+				"SHA512 (other.tar.gz) = 99887766",
+			},
+			expectedSourceEntriesAbsent: []string{
+				"SHA512 (existing.tar.gz) = aabbccdd1122",
+			},
+		},
+		{
+			name: "new entries are appended after upstream entries",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename:        "existing.tar.gz", // Replacement (in-place).
+					Hash:            "deadbeefcafe",
+					HashType:        fileutils.HashTypeSHA512,
+					Origin:          validOrigin,
+					ReplaceUpstream: true,
+					ReplaceReason:   "patched",
+				},
+				{
+					Filename: "brand-new.tar.gz", // Net-new (appended).
+					Hash:     "abc123def456",
+					HashType: fileutils.HashTypeSHA512,
+					Origin:   validOrigin,
+				},
+			},
+			existingSourcesContent: "SHA512 (existing.tar.gz) = aabbccdd1122\nSHA512 (other.tar.gz) = 99887766\n",
+			// Order matters: replacement keeps line 1; line 2 is the untouched upstream entry;
+			// brand-new entry is appended at the end.
+			expectedSourceEntries: []string{
+				"SHA512 (existing.tar.gz) = deadbeefcafe",
+				"SHA512 (other.tar.gz) = 99887766",
+				"SHA512 (brand-new.tar.gz) = abc123def456",
+			},
+		},
+		{
+			name: "duplicate filename in upstream sources file is collapsed to most-recent value",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename: "extra.tar.gz",
+					Hash:     "abc123",
+					HashType: fileutils.HashTypeSHA512,
+					Origin:   validOrigin,
+				},
+			},
+			// Same filename appears twice with different hashes; the parser keeps the most
+			// recent value at the original position and emits a WARN log.
+			existingSourcesContent: "SHA512 (dup.tar.gz) = aaaa1111\nSHA512 (dup.tar.gz) = bbbb2222\n",
+			expectedSourceEntries: []string{
+				"SHA512 (dup.tar.gz) = bbbb2222",
+				"SHA512 (extra.tar.gz) = abc123",
+			},
+			expectedSourceEntriesAbsent: []string{
+				"SHA512 (dup.tar.gz) = aaaa1111",
+			},
+		},
+		{
+			name: "error when replace-upstream true but no matching upstream entry",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename:        "not-in-upstream.tar.gz",
+					Hash:            "abc123",
+					HashType:        fileutils.HashTypeSHA512,
+					Origin:          validOrigin,
+					ReplaceUpstream: true,
+					ReplaceReason:   "intended to override (typo demo)",
+				},
+			},
+			existingSourcesContent: "SHA512 (existing.tar.gz) = aabbccdd1122\n",
+			expectError:            true,
+			errorContains: []string{
+				"not-in-upstream.tar.gz",
+				"replace-upstream = true",
+				"no entry with that filename exists",
 			},
 		},
 		{
@@ -764,13 +857,30 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 
 			require.NoError(t, err)
 
-			if len(testCase.expectedSourceEntries) > 0 {
+			if len(testCase.expectedSourceEntries) > 0 || len(testCase.expectedSourceEntriesAbsent) > 0 {
 				sourcesFilePath := filepath.Join(testOutputDir, fedorasource.SourcesFileName)
 				sourcesContent, err := fileutils.ReadFile(ctx.FS(), sourcesFilePath)
 				require.NoError(t, err)
 
+				// Verify substrings are present and appear in the same order they were
+				// declared in expectedSourceEntries (catches accidental reordering, e.g. an
+				// in-place replacement being shuffled to the end of the file).
+				lastIdx := -1
+
 				for _, expectedEntry := range testCase.expectedSourceEntries {
-					assert.Contains(t, string(sourcesContent), expectedEntry)
+					idx := strings.Index(string(sourcesContent), expectedEntry)
+					assert.GreaterOrEqual(t, idx, 0,
+						"expected entry %q not found in sources file content:\n%s",
+						expectedEntry, string(sourcesContent))
+					assert.Greater(t, idx, lastIdx,
+						"expected entry %q appears before earlier entry; ordering violated",
+						expectedEntry)
+					lastIdx = idx
+				}
+
+				for _, absentEntry := range testCase.expectedSourceEntriesAbsent {
+					assert.NotContains(t, string(sourcesContent), absentEntry,
+						"upstream entry should have been removed by replace-upstream")
 				}
 			}
 		})

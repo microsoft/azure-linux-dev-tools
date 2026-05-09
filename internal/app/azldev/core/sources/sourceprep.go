@@ -531,13 +531,21 @@ func (p *sourcePreparerImpl) DiffSources(
 	return result, nil
 }
 
-// updateSourcesFile appends entries to the 'sources' file for any extra source files
-// defined in the component's [projectconfig.SourceFileReference] configuration. Each source file reference
-// must have both [projectconfig.SourceFileReference.Hash] and [projectconfig.SourceFileReference.HashType]
-// specified unless [sourcePreparerImpl.allowNoHashes] is set, in which case
-// missing hashes are computed from the downloaded files in outputDir.
-// Conflicts between existing entries in the 'sources' file and sources introduced through
-// the [projectconfig.SourceFileReference] configuration are also treated as errors.
+// updateSourcesFile rewrites the 'sources' file so that it lists the merged set of
+// upstream entries plus entries declared in the component's [projectconfig.SourceFileReference]
+// configuration.
+//
+// Each source file reference must have both [projectconfig.SourceFileReference.Hash] and
+// [projectconfig.SourceFileReference.HashType] specified unless [sourcePreparerImpl.allowNoHashes]
+// is set, in which case missing hashes are computed from the downloaded files in outputDir.
+//
+// Filename collisions between an upstream entry and a [projectconfig.SourceFileReference] are
+// errors by default. Setting [projectconfig.SourceFileReference.ReplaceUpstream] = true on a
+// collision intentionally substitutes the user-defined entry in the upstream entry's original
+// position (a [projectconfig.SourceFileReference.ReplaceReason] is required when doing so,
+// enforced by [projectconfig.ConfigFile.Validate]). Setting `ReplaceUpstream` = true without
+// a matching upstream entry is also an error: the user expressed intent to replace something
+// that isn't there, which almost certainly indicates a stale config or filename typo.
 func (p *sourcePreparerImpl) updateSourcesFile(component components.Component, outputDir string) error {
 	sourceFiles := component.GetConfig().SourceFiles
 	if len(sourceFiles) == 0 {
@@ -556,28 +564,12 @@ func (p *sourcePreparerImpl) updateSourcesFile(component components.Component, o
 		return fmt.Errorf("failed to parse existing sources file %#q:\n%w", sourcesFilePath, err)
 	}
 
-	existingFilenames := make(map[string]bool, len(existingEntries))
-	for _, entry := range existingEntries {
-		if existingFilenames[entry.Filename] {
-			return fmt.Errorf(
-				"failed to process existing 'sources' file %#q: duplicate filename %#q",
-				sourcesFilePath, entry.Filename)
-		}
-
-		existingFilenames[entry.Filename] = true
-	}
-
-	newEntries, err := p.buildSourceEntries(sourceFiles, existingFilenames, component.GetName(), outputDir)
+	mergedLines, err := p.buildSourceEntries(sourceFiles, existingEntries, component.GetName(), outputDir)
 	if err != nil {
 		return err
 	}
 
-	// Ensure existing content ends with a newline before appending.
-	if existingContent != "" && !strings.HasSuffix(existingContent, "\n") {
-		existingContent += "\n"
-	}
-
-	newContent := existingContent + strings.Join(newEntries, "\n") + "\n"
+	newContent := strings.Join(mergedLines, "\n") + "\n"
 
 	if err := fileutils.WriteFile(
 		p.fs,
@@ -587,10 +579,6 @@ func (p *sourcePreparerImpl) updateSourcesFile(component components.Component, o
 	); err != nil {
 		return fmt.Errorf("failed to write sources file %#q:\n%w", sourcesFilePath, err)
 	}
-
-	slog.Info("Updated sources file with extra source file entries",
-		"count", len(newEntries),
-		"path", sourcesFilePath)
 
 	return nil
 }
@@ -614,46 +602,152 @@ func (p *sourcePreparerImpl) readSourcesFileIfExists(sourcesFilePath string) (st
 	return string(data), nil
 }
 
-// buildSourceEntries validates [projectconfig.SourceFileReference] and collects formatted entries.
-// When [sourcePreparerImpl.allowNoHashes] is true, missing hashes are computed from the downloaded files
-// in [outputDir]. When [sourcePreparerImpl.skipLookaside] is also true, hash computation is skipped
-// because the source files were not downloaded.
+// buildSourceEntries validates [projectconfig.SourceFileReference] entries and returns
+// the merged set of lines ready to be written to the 'sources' file. Before returning,
+// it logs an INFO-level event indicating that the 'sources' file is about to be updated,
+// including the counts of newly added and replaced entries.
+//
+// Output ordering:
+//   - Upstream entries are emitted in their original order. When an upstream entry is
+//     replaced, the user-defined entry takes its place (same position, new hash/value).
+//   - Brand-new entries (no upstream filename collision) are appended after the upstream
+//     entries in the order they appear in [sourceFiles].
+//
+// Collision rules and hash resolution are documented on [sourcePreparerImpl.processSourceRef].
 func (p *sourcePreparerImpl) buildSourceEntries(
 	sourceFiles []projectconfig.SourceFileReference,
-	existingFilenames map[string]bool,
+	existingEntries []fedorasource.SourcesFileEntry,
 	componentName string,
 	outputDir string,
-) ([]string, error) {
-	newEntries := make([]string, 0, len(sourceFiles))
+) (mergedLines []string, err error) {
+	// Index upstream entries by filename for O(1) collision lookup. The slice is assumed
+	// to be free of duplicate filenames; [fedorasource.ReadSourcesFileEntries] collapses
+	// duplicates with a WARN-level log entry.
+	existingByName := lo.SliceToMap(
+		existingEntries,
+		func(entry fedorasource.SourcesFileEntry) (string, fedorasource.SourcesFileEntry) {
+			return entry.Filename, entry
+		},
+	)
+
+	// First pass: process each ref into a formatted line, classifying it as either an
+	// in-place replacement (keyed by upstream filename) or a brand-new entry to append.
+	replacementByName := make(map[string]string, len(sourceFiles))
+	appendLines := make([]string, 0, len(sourceFiles))
 
 	for _, ref := range sourceFiles {
-		if err := fileutils.ValidateFilename(ref.Filename); err != nil {
-			return nil, fmt.Errorf("invalid filename %#q in 'source-files' configuration:\n%w", ref.Filename, err)
-		}
-
-		if existingFilenames[ref.Filename] {
-			return nil, fmt.Errorf(
-				"source file %#q in 'source-files' configuration conflicts with an existing entry in the 'sources' file; "+
-					"to overwrite the existing entry, ensure it's removed first; "+
-					"if this is unintentional, use a different filename",
-				ref.Filename)
-		}
-
-		hash, hashType, err := p.resolveSourceHash(ref, componentName, outputDir)
+		formatted, isReplacement, err := p.processSourceRef(ref, existingByName, componentName, outputDir)
 		if err != nil {
 			return nil, err
 		}
 
-		entry := fedorasource.FormatSourcesEntry(ref.Filename, hashType, hash)
-		newEntries = append(newEntries, entry)
-
-		slog.Debug("New 'sources' file entry",
-			"filename", ref.Filename,
-			"hashType", hashType,
-			"hash", hash)
+		if isReplacement {
+			replacementByName[ref.Filename] = formatted
+		} else {
+			appendLines = append(appendLines, formatted)
+		}
 	}
 
-	return newEntries, nil
+	// Second pass: emit upstream entries in their original order, swapping in any
+	// in-place replacements; then append the brand-new entries.
+	mergedLines = make([]string, 0, len(existingEntries)+len(appendLines))
+
+	for _, entry := range existingEntries {
+		if line, ok := replacementByName[entry.Filename]; ok {
+			mergedLines = append(mergedLines, line)
+
+			continue
+		}
+
+		mergedLines = append(mergedLines, fedorasource.FormatSourcesEntry(entry.Filename, entry.HashType, entry.Hash))
+	}
+
+	mergedLines = append(mergedLines, appendLines...)
+
+	slog.Info("Updating 'sources' file with extra source file entries",
+		"added", len(appendLines),
+		"replacedUpstream", len(replacementByName),
+		"path", filepath.Join(outputDir, fedorasource.SourcesFileName))
+
+	return mergedLines, nil
+}
+
+// processSourceRef validates a single [projectconfig.SourceFileReference], resolves its
+// hash, formats it as a 'sources' file line, and emits the appropriate per-entry log
+// event. It returns the formatted line and a flag indicating whether the entry should
+// replace an existing upstream entry (true) or be appended as a new entry (false).
+//
+// Collision rules:
+//   - Filename collision with an upstream entry AND
+//     [projectconfig.SourceFileReference.ReplaceUpstream] = true → returns isReplacement
+//     = true and emits a WARN-level event citing the
+//     [projectconfig.SourceFileReference.ReplaceReason].
+//   - Filename collision with an upstream entry AND `ReplaceUpstream` = false → error.
+//   - No filename collision AND `ReplaceUpstream` = true → error (the user expressed
+//     intent to replace something that doesn't exist; almost certainly a stale config
+//     or a filename typo).
+//   - No collision AND `ReplaceUpstream` = false → returns isReplacement = false and
+//     emits a DEBUG-level event.
+//
+// When [sourcePreparerImpl.allowNoHashes] is true, missing hashes are computed from the
+// downloaded files in outputDir. When [sourcePreparerImpl.skipLookaside] is also true,
+// hash computation is skipped because the source files were not downloaded.
+func (p *sourcePreparerImpl) processSourceRef(
+	ref projectconfig.SourceFileReference,
+	existingByName map[string]fedorasource.SourcesFileEntry,
+	componentName string,
+	outputDir string,
+) (formatted string, isReplacement bool, err error) {
+	if err := fileutils.ValidateFilename(ref.Filename); err != nil {
+		return "", false, fmt.Errorf(
+			"invalid filename %#q in 'source-files' configuration:\n%w", ref.Filename, err)
+	}
+
+	existing, hasUpstream := existingByName[ref.Filename]
+
+	switch {
+	case hasUpstream && !ref.ReplaceUpstream:
+		return "", false, fmt.Errorf(
+			"source file %#q in 'source-files' configuration conflicts with an existing entry "+
+				"in the 'sources' file; to intentionally replace the upstream entry, set "+
+				"'replace-upstream = true' (with a non-empty 'replace-reason') on the "+
+				"'source-files' entry; if this collision is unintentional, use a different filename",
+			ref.Filename)
+
+	case !hasUpstream && ref.ReplaceUpstream:
+		return "", false, fmt.Errorf(
+			"source file %#q in 'source-files' configuration has 'replace-upstream = true' "+
+				"but no entry with that filename exists in the upstream 'sources' file; "+
+				"remove 'replace-upstream' or correct the filename to match the upstream entry",
+			ref.Filename)
+	}
+
+	hash, hashType, err := p.resolveSourceHash(ref, componentName, outputDir)
+	if err != nil {
+		return "", false, err
+	}
+
+	formatted = fedorasource.FormatSourcesEntry(ref.Filename, hashType, hash)
+
+	if hasUpstream && ref.ReplaceUpstream {
+		slog.Warn("Replacing upstream 'sources' entry from 'source-files' configuration",
+			"component", componentName,
+			"filename", ref.Filename,
+			"upstreamHashType", existing.HashType,
+			"upstreamHash", existing.Hash,
+			"newHashType", hashType,
+			"newHash", hash,
+			"reason", ref.ReplaceReason)
+
+		return formatted, true, nil
+	}
+
+	slog.Debug("New 'sources' file entry",
+		"filename", ref.Filename,
+		"hashType", hashType,
+		"hash", hash)
+
+	return formatted, false, nil
 }
 
 // resolveSourceHash returns the hash and hash type for a source file reference.

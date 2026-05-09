@@ -288,6 +288,28 @@ func TestParseSourcesFile(t *testing.T) {
 	})
 }
 
+func TestReadSourcesFileEntries_DuplicateFilenameCollapsedToLatest(t *testing.T) {
+	// Same filename appears three times with different hashes; the parser must keep
+	// the most-recently-seen value at the original (first-occurrence) position and
+	// must not error.
+	content := "SHA512 (dup.tar.gz) = aaaa1111\n" +
+		"SHA512 (other.tar.gz) = bbbb2222\n" +
+		"SHA512 (dup.tar.gz) = cccc3333\n" +
+		"SHA512 (dup.tar.gz) = dddd4444\n"
+
+	entries, err := ReadSourcesFileEntries(content)
+
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+
+	// 'dup.tar.gz' keeps its first-occurrence position (index 0) but holds the latest hash.
+	assert.Equal(t, "dup.tar.gz", entries[0].Filename)
+	assert.Equal(t, "dddd4444", entries[0].Hash)
+
+	assert.Equal(t, "other.tar.gz", entries[1].Filename)
+	assert.Equal(t, "bbbb2222", entries[1].Hash)
+}
+
 func TestBuildLookasideURL(t *testing.T) {
 	tests := []struct {
 		name          string

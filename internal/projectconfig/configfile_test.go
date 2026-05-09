@@ -199,6 +199,81 @@ func TestProjectConfigFileValidation_HashWithoutHashType(t *testing.T) {
 	assert.Contains(t, err.Error(), "test-component")
 }
 
+func TestProjectConfigFileValidation_ReplaceUpstreamRequiresReason(t *testing.T) {
+	origin := projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/source.tar.gz"}
+
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"test-component": {
+				SourceFiles: []projectconfig.SourceFileReference{
+					{
+						Filename:        "source.tar.gz",
+						Hash:            "abc123",
+						HashType:        fileutils.HashTypeSHA256,
+						Origin:          origin,
+						ReplaceUpstream: true,
+						// ReplaceReason intentionally empty.
+					},
+				},
+			},
+		},
+	}
+	err := file.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "replace-upstream = true")
+	assert.Contains(t, err.Error(), "no 'replace-reason'")
+	assert.Contains(t, err.Error(), "source.tar.gz")
+	assert.Contains(t, err.Error(), "test-component")
+}
+
+func TestProjectConfigFileValidation_ReplaceReasonRequiresReplaceUpstream(t *testing.T) {
+	origin := projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/source.tar.gz"}
+
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"test-component": {
+				SourceFiles: []projectconfig.SourceFileReference{
+					{
+						Filename:      "source.tar.gz",
+						Hash:          "abc123",
+						HashType:      fileutils.HashTypeSHA256,
+						Origin:        origin,
+						ReplaceReason: "stray reason without the flag",
+						// ReplaceUpstream intentionally false.
+					},
+				},
+			},
+		},
+	}
+	err := file.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "'replace-reason' is only valid when 'replace-upstream = true'")
+	assert.Contains(t, err.Error(), "source.tar.gz")
+	assert.Contains(t, err.Error(), "test-component")
+}
+
+func TestProjectConfigFileValidation_ReplaceUpstreamWithReasonAccepted(t *testing.T) {
+	origin := projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/source.tar.gz"}
+
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"test-component": {
+				SourceFiles: []projectconfig.SourceFileReference{
+					{
+						Filename:        "source.tar.gz",
+						Hash:            "abc123",
+						HashType:        fileutils.HashTypeSHA256,
+						Origin:          origin,
+						ReplaceUpstream: true,
+						ReplaceReason:   "patched to fix upstream regression",
+					},
+				},
+			},
+		},
+	}
+	assert.NoError(t, file.Validate())
+}
+
 func TestProjectConfigFileValidation_MissingOrigin(t *testing.T) {
 	file := projectconfig.ConfigFile{
 		Components: map[string]projectconfig.ComponentConfig{
