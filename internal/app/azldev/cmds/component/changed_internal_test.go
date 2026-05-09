@@ -187,6 +187,9 @@ func TestHaveMatchingFingerprints(t *testing.T) {
 		"curl": {InputFingerprint: "sha256:def"},
 	}
 	empty := map[string]lockfile.ComponentLock{}
+	emptyFingerprint := map[string]lockfile.ComponentLock{
+		"curl": {InputFingerprint: ""},
+	}
 
 	tests := []struct {
 		name string
@@ -199,6 +202,10 @@ func TestHaveMatchingFingerprints(t *testing.T) {
 		{"only from has a lock", fromHas, empty, false},
 		{"only to has a lock", empty, toHas, false},
 		{"neither ref has a lock (regression: must NOT report violation)", empty, empty, false},
+		{
+			"both refs have lock but fingerprint field is empty (regression: must NOT report violation)",
+			emptyFingerprint, emptyFingerprint, false,
+		},
 	}
 
 	for _, tt := range tests {

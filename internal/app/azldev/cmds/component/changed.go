@@ -176,6 +176,11 @@ func ChangedComponents(
 	}
 
 	if len(ctx.integrityViolations) > 0 {
+		// Sort for deterministic output -- the slice is appended in
+		// component-resolution order, which depends on map iteration. CI
+		// logs and snapshot tests need a stable error string.
+		sort.Strings(ctx.integrityViolations)
+
 		return nil, fmt.Errorf(
 			"found %d component(s) with unchanged fingerprint but drifted rendered sources "+
 				"(re-render with `azldev component render` and commit the result): %s",
@@ -440,9 +445,13 @@ func classifyComponent(
 }
 
 // haveMatchingFingerprints reports whether a lock exists at both refs and
-// the two recorded InputFingerprint values are equal. Used to gate
-// integrity-violation reporting so that components which simply lack locks
-// on one or both sides aren't accused of fingerprint-vs-sources drift.
+// the two recorded InputFingerprint values are equal AND non-empty. Used to
+// gate integrity-violation reporting so that components which simply lack
+// locks on one or both sides aren't accused of fingerprint-vs-sources drift.
+// The non-empty guard rejects the degenerate "" == "" case: two locks
+// missing the input-fingerprint field aren't a verified-fingerprint match,
+// they're an unverified pair, and a sources diff between them is just a
+// sources diff -- not cache-poisoning evidence.
 func haveMatchingFingerprints(
 	name string,
 	fromLocks, toLocks map[string]lockfile.ComponentLock,
@@ -450,7 +459,9 @@ func haveMatchingFingerprints(
 	fromLock, inFrom := fromLocks[name]
 	toLock, inTo := toLocks[name]
 
-	return inFrom && inTo && fromLock.InputFingerprint == toLock.InputFingerprint
+	return inFrom && inTo &&
+		fromLock.InputFingerprint != "" &&
+		fromLock.InputFingerprint == toLock.InputFingerprint
 }
 
 // compareSources compares the rendered sources file between two git trees.
