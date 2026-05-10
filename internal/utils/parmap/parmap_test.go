@@ -185,6 +185,74 @@ func TestMap_ProgressCallback(t *testing.T) {
 	}
 }
 
+func TestMap_ProgressIsMonotonicAndSerialized(t *testing.T) {
+	t.Parallel()
+
+	const (
+		items = 200
+		limit = 16
+	)
+
+	inputs := make([]int, items)
+	for i := range inputs {
+		inputs[i] = i
+	}
+
+	var (
+		// Track concurrent entries into the callback. Map serializes
+		// onProgress under an internal mutex, so this must never exceed 1.
+		inCallback    atomic.Int64
+		maxInCallback atomic.Int64
+		// observed[k] is the k-th completed value passed to the callback;
+		// reading them back in append order verifies monotonicity.
+		mutex    sync.Mutex
+		observed []int
+	)
+
+	parmap.Map(
+		t.Context(),
+		limit,
+		inputs,
+		func(completed, _ int) {
+			cur := inCallback.Add(1)
+			defer inCallback.Add(-1)
+
+			for {
+				prev := maxInCallback.Load()
+				if cur <= prev || maxInCallback.CompareAndSwap(prev, cur) {
+					break
+				}
+			}
+
+			mutex.Lock()
+
+			observed = append(observed, completed)
+
+			mutex.Unlock()
+		},
+		func(_ context.Context, n int) int { return n },
+	)
+
+	if peak := maxInCallback.Load(); peak > 1 {
+		t.Fatalf("onProgress saw %d concurrent invocations; expected serialized", peak)
+	}
+
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	if len(observed) != items {
+		t.Fatalf("expected %d progress callbacks, got %d", items, len(observed))
+	}
+
+	for i, val := range observed {
+		if val != i+1 {
+			t.Fatalf(
+				"progress callback %d saw completed=%d, want %d (non-monotonic): %v",
+				i, val, i+1, observed)
+		}
+	}
+}
+
 func TestMap_NilProgressIsSafe(t *testing.T) {
 	t.Parallel()
 

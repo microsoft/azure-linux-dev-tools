@@ -23,7 +23,7 @@ package parmap
 
 import (
 	"context"
-	"sync/atomic"
+	"sync"
 
 	"golang.org/x/sync/errgroup"
 )
@@ -46,9 +46,12 @@ type Result[T any] struct {
 // Behaviour:
 //   - Returns nil for an empty items slice.
 //   - limit < 1 is treated as 1.
-//   - onProgress, when non-nil, is invoked after each item completes
-//     (success or cancelled). Callers must ensure onProgress is safe to
-//     call concurrently; it is given (completed, total).
+//   - onProgress, when non-nil, is invoked once per completed item (success
+//     or cancelled). Invocations are serialized under an internal mutex and
+//     observe a monotonically increasing 'completed' value, so callers do
+//     not need to add their own synchronization. The callback is invoked
+//     synchronously from worker goroutines: keep it fast, since a slow
+//     callback backpressures the entire worker pool.
 //   - Items that never start because ctx is done set Result.Cancelled = true
 //     and never call worker. Items that did start always call worker with
 //     ctx; it is the worker function's job to react to ctx cancellation
@@ -74,15 +77,25 @@ func Map[In, Out any](
 	results := make([]Result[Out], len(items))
 	total := len(items)
 
-	var completed atomic.Int64
+	// progressMu serializes the (increment, callback) pair so onProgress
+	// always observes a monotonically increasing 'completed' value. Holding
+	// the mutex across the callback also lets callers assume the callback
+	// will never be invoked concurrently with itself.
+	var (
+		progressMu sync.Mutex
+		completed  int
+	)
 
 	notifyProgress := func() {
 		if onProgress == nil {
 			return
 		}
 
-		done := int(completed.Add(1))
-		onProgress(done, total)
+		progressMu.Lock()
+		defer progressMu.Unlock()
+
+		completed++
+		onProgress(completed, total)
 	}
 
 	group, groupCtx := errgroup.WithContext(ctx)
