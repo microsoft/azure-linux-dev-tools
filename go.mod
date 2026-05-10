@@ -54,6 +54,7 @@ require (
 	github.com/ulikunitz/xz v0.5.15
 	go.szostok.io/version v1.2.0
 	go.uber.org/mock v0.6.0
+	golang.org/x/sync v0.20.0
 	golang.org/x/sys v0.43.0
 	gopkg.in/yaml.v3 v3.0.1
 )
