@@ -16,6 +16,8 @@ type TestType string
 const (
 	// TestTypePytest uses pytest to run static/offline validation checks.
 	TestTypePytest TestType = "pytest"
+	// TestTypeLisa uses LISA (Linux Integration Services Automation) to run VM-level tests.
+	TestTypeLisa TestType = "lisa"
 )
 
 var (
@@ -28,9 +30,7 @@ var (
 	// ErrUndefinedTestSuite is returned when an image references a test suite name that is not defined.
 	ErrUndefinedTestSuite = errors.New("undefined test suite reference")
 	// ErrMismatchedTestSubtable is returned when a test config has a subtable that does not
-	// match its declared type. Currently only one test type (pytest) exists, so this cannot
-	// trigger yet. When adding a new test type with its own subtable field, add cross-checks
-	// in [TestSuiteConfig.Validate] to ensure only the matching subtable is populated.
+	// match its declared type.
 	ErrMismatchedTestSubtable = errors.New("mismatched test subtable")
 	// ErrInvalidInstallMode is returned when a [PytestConfig.Install] value is not recognized.
 	ErrInvalidInstallMode = errors.New("invalid install mode")
@@ -45,7 +45,7 @@ type TestSuiteConfig struct {
 	Description string `toml:"description,omitempty" json:"description,omitempty" jsonschema:"title=Description,description=Description of this test suite"`
 
 	// Type indicates the test framework to use.
-	Type TestType `toml:"type" json:"type" jsonschema:"required,enum=pytest,title=Type,description=Type of test framework (pytest)"`
+	Type TestType `toml:"type" json:"type" jsonschema:"required,enum=pytest,enum=lisa,title=Type,description=Type of test framework (pytest or lisa)"`
 
 	// Pytest holds pytest-specific configuration. Required when Type is "pytest".
 	Pytest *PytestConfig `toml:"pytest,omitempty" json:"pytest,omitempty" jsonschema:"title=Pytest config,description=Pytest-specific configuration (required when type is pytest)"`
@@ -110,10 +110,9 @@ func (t *TestSuiteConfig) Validate() error {
 			return fmt.Errorf("test suite %#q: %w", t.Name, err)
 		}
 
-		// NOTE: When adding a new test type with its own subtable field (e.g., Lisa *LisaConfig),
-		// add a mismatch check here:
-		//   if t.Lisa != nil { return fmt.Errorf("%w: ...", ErrMismatchedTestSubtable) }
-		// and add the symmetric check in the new type's case branch.
+	case TestTypeLisa:
+		// LISA is an external test framework not executed by azldev.
+		// Suites of this type serve as metadata for external orchestration (e.g. control tower).
 
 	default:
 		return fmt.Errorf("%w: %#q (test suite: %#q)", ErrUnknownTestType, t.Type, t.Name)

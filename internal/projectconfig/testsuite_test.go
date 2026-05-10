@@ -181,6 +181,23 @@ func TestTestSuiteConfig_Validate(t *testing.T) {
 		assert.Contains(t, err.Error(), "[pytest]")
 	})
 
+	t.Run("valid lisa type", func(t *testing.T) {
+		testConfig := projectconfig.TestSuiteConfig{
+			Name: "vm-tests",
+			Type: projectconfig.TestTypeLisa,
+		}
+		assert.NoError(t, testConfig.Validate())
+	})
+
+	t.Run("valid lisa type with description", func(t *testing.T) {
+		testConfig := projectconfig.TestSuiteConfig{
+			Name:        "vm-tests",
+			Description: "VM integration tests using LISA",
+			Type:        projectconfig.TestTypeLisa,
+		}
+		assert.NoError(t, testConfig.Validate())
+	})
+
 	t.Run("unknown test type", func(t *testing.T) {
 		testConfig := projectconfig.TestSuiteConfig{
 			Name: "bad",

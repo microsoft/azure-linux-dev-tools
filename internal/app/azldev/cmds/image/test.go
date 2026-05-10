@@ -257,6 +257,10 @@ func runTestSuite(
 	case projectconfig.TestTypePytest:
 		return RunPytestSuite(env, suiteConfig, imageConfig, options)
 
+	case projectconfig.TestTypeLisa:
+		return fmt.Errorf("LISA test suites cannot be run locally via 'azldev image test'; "+
+			"test suite %#q must be run through the LISA infrastructure", suiteConfig.Name)
+
 	default:
 		return fmt.Errorf("unsupported test type %#q for test suite %#q", suiteConfig.Type, suiteConfig.Name)
 	}
