@@ -59,6 +59,9 @@ type Result[T any] struct {
 //   - Internally uses [errgroup.Group.SetLimit]: worker goroutines are
 //     launched lazily, so peak goroutine count is bounded by limit
 //     regardless of items length.
+//   - Panics inside worker are NOT recovered — they propagate through
+//     errgroup and crash the program. This matches [errgroup.Group.Go]'s
+//     contract; recover inside worker if you need different behaviour.
 func Map[In, Out any](
 	ctx context.Context,
 	limit int,
@@ -102,10 +105,13 @@ func Map[In, Out any](
 	group.SetLimit(limit)
 
 	for idx, item := range items {
-		// If ctx is already done, don't bother launching — mark every
-		// remaining item as Cancelled. group.Go would block waiting for a
-		// slot, but [errgroup.Group.SetLimit] does not consult ctx, so we
-		// must short-circuit here ourselves.
+		// If ctx is already done, short-circuit the rest of the launch loop
+		// and mark remaining items as Cancelled. Without this, group.Go
+		// would still try to acquire a slot — [errgroup.Group.SetLimit]
+		// blocks on a free slot without consulting ctx, so a cancelled run
+		// with a saturated pool could still queue more workers behind the
+		// currently-running ones. The in-worker groupCtx.Err() check then
+		// catches whatever did slip through.
 		if groupCtx.Err() != nil {
 			for j := idx; j < len(items); j++ {
 				results[j].Cancelled = true

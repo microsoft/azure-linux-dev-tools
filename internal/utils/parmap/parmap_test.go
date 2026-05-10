@@ -293,18 +293,21 @@ func TestMap_CancelledBeforeStart(t *testing.T) {
 		t.Fatalf("expected 5 results, got %d", len(got))
 	}
 
-	// With an already-cancelled context, the select on semaphore acquisition
-	// may pick either branch (semaphore has spare slots, ctx is done). The
-	// strict invariants are:
-	//   - every result that ran has Cancelled=false and a valid Value.
-	//   - every result that didn't run has Cancelled=true and zero Value.
+	// With an already-cancelled context, errgroup.WithContext(ctx)'s
+	// derived context is also already done. The launch loop's pre-Go
+	// check fires on iteration 0 and short-circuits every item to
+	// Cancelled=true; worker is never invoked for any item.
+	if n := ran.Load(); n != 0 {
+		t.Errorf("worker ran %d times despite pre-cancelled ctx; expected 0", n)
+	}
+
 	for idx, result := range got {
-		if result.Cancelled && result.Value != 0 {
-			t.Errorf("item %d: cancelled but Value=%d (want zero)", idx, result.Value)
+		if !result.Cancelled {
+			t.Errorf("item %d: expected Cancelled=true, got false (Value=%d)", idx, result.Value)
 		}
 
-		if !result.Cancelled && result.Value != idx+1 {
-			t.Errorf("item %d: ran but Value=%d (want %d)", idx, result.Value, idx+1)
+		if result.Value != 0 {
+			t.Errorf("item %d: expected zero Value, got %d", idx, result.Value)
 		}
 	}
 }
@@ -323,8 +326,9 @@ func TestMap_CancelMidFlight(t *testing.T) {
 	}
 
 	// Cancel as soon as the first worker enters fn. With a small limit (2),
-	// only a handful of workers will ever acquire a slot; the rest must
-	// observe ctx.Done() at the semaphore select and surface Cancelled=true.
+	// only a handful of workers will ever acquire a slot; the rest hit the
+	// launch loop's pre-Go ctx check (or the in-worker check, racing) and
+	// surface Cancelled=true.
 	var firstOnce sync.Once
 
 	got := parmap.Map(
