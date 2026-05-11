@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/dirdiff"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/spf13/afero"
@@ -32,6 +34,7 @@ type RenderOptions struct {
 	FailOnError       bool
 	Force             bool
 	CleanStale        bool
+	CheckOnly         bool
 }
 
 func renderOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
@@ -61,12 +64,15 @@ Unlike prepare-sources, render skips downloading source tarballs from the
 lookaside cache — only spec files, patches, scripts, and other git-tracked
 sidecar files are included. Multiple components can be rendered at once.
 
-When rendering all components (-a), the --clean-stale flag removes all
-contents of the output directory before rendering, leaving the directory
-itself in place. When using a custom output directory (--output-dir),
---force is required alongside --clean-stale as a safety measure. An
-interrupted run with --clean-stale leaves the output directory partially
-populated; recover with 'git checkout'. This flag is only valid with -a.`,
+When rendering all components (-a), the --clean-stale flag prunes orphan
+rendered-spec directories (per-component dirs that no longer correspond to
+any component in the project config). Per-component dirs that ARE in config
+are overwritten in place by the render itself; this means each render's
+result table accurately reflects which components actually changed on disk.
+Top-level non-component siblings (e.g. a hand-placed README.md) are
+preserved. When using a custom output directory (--output-dir), --force is
+required alongside --clean-stale as a safety measure. This flag is only
+valid with -a.`,
 		Example: `  # Render all components (output dir from config)
   azldev component render -a
 
@@ -103,7 +109,21 @@ populated; recover with 'git checkout'. This flag is only valid with -a.`,
 		"allow overwriting existing rendered component directories")
 
 	cmd.Flags().BoolVar(&options.CleanStale, "clean-stale", false,
-		"remove contents of the output directory before rendering (only with -a; requires -f with -o)")
+		"prune rendered-spec directories that no longer correspond to a configured "+
+			"component (only with -a; requires -f with -o). Top-level non-component "+
+			"siblings are preserved.")
+
+	cmd.Flags().BoolVar(&options.CheckOnly, "check-only", false,
+		"render to a staging area and compare against the existing on-disk output "+
+			"without modifying the output directory. Exits 0 when nothing would change "+
+			"and 1 when any component would drift. With -a + --clean-stale, also fails "+
+			"on orphan rendered-spec directories. Intended for CI gates.")
+
+	// --check-only is a read-only diff against on-disk state; --fail-on-error
+	// is the loud-failure-per-run knob. Combining them is semantically
+	// muddled (CI would fail on stale failures even when on-disk markers
+	// already record them) and forcing a choice keeps the contract crisp.
+	cmd.MarkFlagsMutuallyExclusive("fail-on-error", "check-only")
 
 	return cmd
 }
@@ -114,6 +134,7 @@ type RenderResult struct {
 	OutputDir string `json:"outputDir"       table:"Output"`
 	Status    string `json:"status"          table:"Status"`
 	Error     string `json:"error,omitempty" table:"Error,omitempty"`
+	Changed   bool   `json:"changed"         table:"Changed"`
 }
 
 // Render status constants.
@@ -133,14 +154,8 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 		return nil, err
 	}
 
-	if options.CleanStale {
-		if !options.ComponentFilter.IncludeAllComponents {
-			return nil, errors.New("--clean-stale requires -a (render all components)")
-		}
-
-		if options.OutputDirExplicit && !options.Force {
-			return nil, errors.New("--clean-stale with --output-dir requires --force (-f)")
-		}
+	if err := validateCleanStaleOptions(options); err != nil {
+		return nil, err
 	}
 
 	resolver := components.NewResolver(env)
@@ -193,32 +208,103 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 	// ── Phase 2: Batch mock processing ──
 	mockResultMap := batchMockProcess(env, mockProcessor, stagingDir, prepared)
 
-	// Wipe contents of the output dir between mock processing (slow: clone +
-	// chroot) and the per-component copy in phase 3. This keeps Ctrl-C-during-mock
-	// from leaving the user with no output and nothing fresh either; if they cancel
-	// before this point the existing output is untouched. Once we reach phase 3
-	// we're moments away from writing replacement content anyway.
-	if options.CleanStale {
-		if wipeErr := wipeOutputDirContents(env.FS(), options.OutputDir); wipeErr != nil {
-			return nil, fmt.Errorf("clearing output directory %#q:\n%w", options.OutputDir, wipeErr)
+	// Prune orphan component dirs (components removed from config) when
+	// --clean-stale is set. Per-component output dirs that match the resolved
+	// component set are NOT touched here; phase 3 will RemoveAll+rewrite each
+	// of them via copyRenderedOutput. This keeps the diff against existing
+	// output meaningful (so result.Changed reflects actual content drift
+	// instead of being unconditionally true after a blanket wipe) and reduces
+	// the blast radius of a Ctrl-C: we only ever delete dirs that wouldn't
+	// have been re-rendered anyway.
+	//
+	// Skipped in --check-only mode -- check-only must never touch disk; the
+	// orphan list is computed read-only later via checkOnlyRenderResult.
+	if options.CleanStale && !options.CheckOnly {
+		names := make([]string, len(componentList))
+		for idx, comp := range componentList {
+			names[idx] = comp.GetName()
+		}
+
+		if pruneErr := pruneOrphanRenderedDirs(env.FS(), options.OutputDir, names); pruneErr != nil {
+			return nil, fmt.Errorf("pruning orphan rendered-spec dirs in %#q:\n%w", options.OutputDir, pruneErr)
 		}
 	}
 
 	// ── Phase 3: Parallel finishing ──
 	parallelFinish(env, prepared, mockResultMap, results, stagingDir,
-		options.Force)
+		options.Force, options.CheckOnly)
 
 	// Write RENDER_FAILED markers for any component that errored in phase 1
 	// (source preparation) or phase 3 (mock result application + copy).
 	// Centralizing this here makes it idempotent with the --clean-stale wipe
 	// (which sits between phases 2 and 3) and keeps the per-phase code free
-	// of bookkeeping.
-	writeFailureMarkers(env.FS(), results, options.Force)
+	// of bookkeeping. In --check-only mode this verifies that on-disk state
+	// matches the expected single-marker shape and flags drift on mismatch.
+	writeFailureMarkers(env.FS(), results, options.Force, options.CheckOnly)
 
 	// Sort results alphabetically for consistent output.
 	sortRenderResults(results)
 
+	if options.CheckOnly {
+		return results, checkOnlyRenderResult(env.FS(), options, componentList, results)
+	}
+
 	return results, checkRenderErrors(results, options.FailOnError)
+}
+
+// checkOnlyRenderResult inspects results from a --check-only run and returns
+// a non-nil error when any component changed or any orphan rendered-spec
+// directory was detected. Orphan detection runs only with -a + --clean-stale
+// (the only configuration where a normal run would actually remove orphans).
+// The error message names every changed component and orphan so CI logs are
+// useful at a glance.
+func checkOnlyRenderResult(
+	fileSystem opctx.FS,
+	options *RenderOptions,
+	resolvedComps []components.Component,
+	results []*RenderResult,
+) error {
+	var changed []string
+
+	for _, result := range results {
+		if result != nil && result.Changed {
+			changed = append(changed, result.Component)
+		}
+	}
+
+	var orphans []string
+
+	if options.ComponentFilter.IncludeAllComponents && options.CleanStale {
+		names := make([]string, len(resolvedComps))
+		for idx, comp := range resolvedComps {
+			names[idx] = comp.GetName()
+		}
+
+		found, err := findOrphanRenderedDirs(fileSystem, options.OutputDir, names)
+		if err != nil {
+			return fmt.Errorf("checking for orphan rendered-spec dirs:\n%w", err)
+		}
+
+		orphans = found
+	}
+
+	if len(changed) == 0 && len(orphans) == 0 {
+		return nil
+	}
+
+	parts := make([]string, 0)
+	if len(changed) > 0 {
+		parts = append(parts, fmt.Sprintf("%d component(s) would change: %s",
+			len(changed), strings.Join(changed, ", ")))
+	}
+
+	if len(orphans) > 0 {
+		parts = append(parts, fmt.Sprintf("%d orphan rendered-spec dir(s): %s",
+			len(orphans), strings.Join(orphans, ", ")))
+	}
+
+	return fmt.Errorf("rendered output is stale; %s. Run 'azldev component render -a' to refresh",
+		strings.Join(parts, "; "))
 }
 
 // sortRenderResults sorts render results alphabetically by component name,
@@ -441,7 +527,8 @@ func prepareComponentSources(
 	// WithSkipLookaside avoids expensive tarball downloads — only spec +
 	// sidecar files are needed for rendering.
 	preparerOpts := []sources.PreparerOption{
-		sources.WithGitRepo(env, env.LockReader()),
+		sources.WithGitRepo(env, env.LockReader(), distro.Version.ReleaseVer),
+		sources.WithDirtyDetection(),
 		sources.WithSkipLookaside(),
 	}
 
@@ -518,7 +605,9 @@ func batchMockProcess(
 // ──────────────────────────────────────────────────────────────────────────────
 
 // parallelFinish applies mock results (file filtering, .git removal) and copies
-// rendered output for all successfully prepared components.
+// rendered output for all successfully prepared components. In --check-only
+// mode, the copy step is replaced with a tree comparison and no disk writes
+// happen.
 func parallelFinish(
 	env *azldev.Env,
 	prepared []*preparedComponent,
@@ -526,6 +615,7 @@ func parallelFinish(
 	results []*RenderResult,
 	stagingDir string,
 	allowOverwrite bool,
+	checkOnly bool,
 ) {
 	if len(prepared) == 0 {
 		return
@@ -553,7 +643,9 @@ func parallelFinish(
 		go func(prep *preparedComponent) {
 			defer waitGroup.Done()
 
-			result := finishOneComponent(workerEnv, env, prep, mockResultMap, semaphore, stagingDir, allowOverwrite)
+			result := finishOneComponent(
+				workerEnv, env, prep, mockResultMap, semaphore, stagingDir, allowOverwrite, checkOnly,
+			)
 			resultsChan <- finishResult{index: prep.index, result: result}
 		}(prep)
 	}
@@ -582,6 +674,7 @@ func finishOneComponent(
 	semaphore chan struct{},
 	stagingDir string,
 	allowOverwrite bool,
+	checkOnly bool,
 ) *RenderResult {
 	componentName := prep.comp.GetName()
 	compOutputDir := prep.compOutputDir
@@ -605,7 +698,7 @@ func finishOneComponent(
 		Status:    renderStatusOK,
 	}
 
-	err := finishComponentRender(env, prep, mockResultMap, stagingDir, allowOverwrite)
+	drifted, err := finishComponentRender(env, prep, mockResultMap, stagingDir, allowOverwrite, checkOnly)
 	if err != nil {
 		slog.Error("Failed to finish rendering component",
 			"component", componentName, "error", err)
@@ -614,19 +707,28 @@ func finishOneComponent(
 		result.Error = err.Error()
 	}
 
+	result.Changed = drifted
+
 	return result
 }
 
 // finishComponentRender applies mock results, filters unreferenced files,
-// removes .git, and copies rendered output for a single component.
+// removes .git, diffs the staging tree against the existing on-disk output,
+// and (unless checkOnly is set) copies the staging tree to the output dir.
 // stagingDir is the root staging directory containing the component's subdirectory.
+//
+// Returns changed=true when the staging tree differs from the existing output
+// (or no existing output is present). The diff is computed unconditionally so
+// every render run gets a meaningful 'Changed' value in its result table; the
+// disk write is the only thing gated by checkOnly.
 func finishComponentRender(
 	env *azldev.Env,
 	prep *preparedComponent,
 	mockResultMap map[string]*sources.ComponentMockResult,
 	stagingDir string,
 	allowOverwrite bool,
-) error {
+	checkOnly bool,
+) (bool, error) {
 	componentName := prep.comp.GetName()
 	componentDir := filepath.Join(stagingDir, componentName)
 	specPath := filepath.Join(componentDir, prep.specFilename)
@@ -634,12 +736,12 @@ func finishComponentRender(
 	// Check mock result.
 	mockResult, hasMockResult := mockResultMap[componentName]
 	if !hasMockResult {
-		return fmt.Errorf(
+		return false, fmt.Errorf(
 			"no mock result for %#q (batch mock processing failed; see earlier errors)", componentName)
 	}
 
 	if mockResult.Error != nil {
-		return fmt.Errorf(
+		return false, fmt.Errorf(
 			"mock processing failed for %#q:\n%w", componentName, mockResult.Error)
 	}
 
@@ -656,7 +758,7 @@ func finishComponentRender(
 	} else if filterErr := removeUnreferencedFiles(
 		env.FS(), componentDir, specPath, mockResult.SpecFiles, componentName,
 	); filterErr != nil {
-		return fmt.Errorf("filtering unreferenced files for %#q:\n%w", componentName, filterErr)
+		return false, fmt.Errorf("filtering unreferenced files for %#q:\n%w", componentName, filterErr)
 	}
 
 	// Remove .git directory — must not appear in rendered output.
@@ -666,9 +768,21 @@ func finishComponentRender(
 		slog.Debug("Failed to remove .git directory", "path", gitDir, "error", removeErr)
 	}
 
+	// Compare staging tree to existing output. Always done so the result table
+	// reflects which components actually changed on disk this run, not just
+	// in --check-only mode.
+	changed, diffErr := diffRenderedOutput(env.FS(), componentDir, prep.compOutputDir)
+	if diffErr != nil {
+		return false, fmt.Errorf("comparing rendered output for %#q:\n%w", componentName, diffErr)
+	}
+
+	if checkOnly {
+		return changed, nil
+	}
+
 	// Copy rendered files to the component's output directory.
 	if copyErr := copyRenderedOutput(env, componentDir, prep.compOutputDir, allowOverwrite); copyErr != nil {
-		return copyErr
+		return changed, copyErr
 	}
 
 	// Best-effort: create a sibling symlink at the URL-encoded component name to
@@ -689,7 +803,7 @@ func finishComponentRender(
 	slog.Info("Rendered component", "component", componentName,
 		"output", prep.compOutputDir)
 
-	return nil
+	return changed, nil
 }
 
 // writeAliasSymlink creates a sibling symlink alongside componentOutputDir at the
@@ -894,9 +1008,10 @@ func writeRenderErrorMarker(fs opctx.FS, componentOutputDir string) {
 	}
 
 	markerPath := filepath.Join(componentOutputDir, renderErrorMarkerFile)
-	content := "Rendering failed. See azldev logs for details.\n"
 
-	if writeErr := fileutils.WriteFile(fs, markerPath, []byte(content), fileperms.PublicFile); writeErr != nil {
+	if writeErr := fileutils.WriteFile(
+		fs, markerPath, []byte(renderErrorMarkerContent), fileperms.PublicFile,
+	); writeErr != nil {
 		slog.Debug("Failed to write render error marker", "path", markerPath, "error", writeErr)
 	}
 }
@@ -937,29 +1052,32 @@ func validateOutputDir(outputDir string) error {
 	return nil
 }
 
-// wipeOutputDirContents removes every direct child of outputDir (files and
-// directories alike) but leaves the directory itself in place.
-// Missing outputDir is a no-op.
-func wipeOutputDirContents(fileSystem opctx.FS, outputDir string) error {
-	exists, existsErr := fileutils.DirExists(fileSystem, outputDir)
-	if existsErr != nil {
-		return fmt.Errorf("checking output directory %#q:\n%w", outputDir, existsErr)
+// pruneOrphanRenderedDirs removes per-component rendered-spec directories
+// under outputDir that don't correspond to any component in resolvedComps.
+// Per-component dirs that ARE in resolvedComps are left alone -- phase 3 will
+// overwrite them via copyRenderedOutput, and leaving the prior content here
+// lets the unconditional diff in finishComponentRender produce a meaningful
+// result.Changed value for the user-visible table.
+//
+// Top-level non-letter entries (e.g. a hand-placed README.md at the root of
+// SPECS/) are intentionally NOT removed. The previous implementation wiped
+// them too, but in practice the only callers want orphan cleanup, not a
+// blanket sweep.
+func pruneOrphanRenderedDirs(
+	fileSystem opctx.FS, outputDir string, componentNames []string,
+) error {
+	orphans, err := findOrphanRenderedDirs(fileSystem, outputDir, componentNames)
+	if err != nil {
+		return err
 	}
 
-	if !exists {
-		return nil
-	}
-
-	entries, readErr := fileutils.ReadDir(fileSystem, outputDir)
-	if readErr != nil {
-		return fmt.Errorf("reading output directory %#q:\n%w", outputDir, readErr)
-	}
-
-	for _, entry := range entries {
-		childPath := filepath.Join(outputDir, entry.Name())
-		if removeErr := fileSystem.RemoveAll(childPath); removeErr != nil {
-			return fmt.Errorf("removing %#q:\n%w", childPath, removeErr)
+	for _, rel := range orphans {
+		fullPath := filepath.Join(outputDir, rel)
+		if removeErr := fileSystem.RemoveAll(fullPath); removeErr != nil {
+			return fmt.Errorf("removing orphan rendered-spec dir %#q:\n%w", fullPath, removeErr)
 		}
+
+		slog.Info("Removed orphan rendered-spec dir", "path", fullPath)
 	}
 
 	return nil
@@ -973,9 +1091,39 @@ func wipeOutputDirContents(fileSystem opctx.FS, outputDir string) error {
 // Cancelled components are intentionally skipped — a Ctrl-C is not a render
 // failure, just an incomplete run, and silently planting markers under those
 // circumstances would lie in git diff.
-func writeFailureMarkers(fileSystem opctx.FS, results []*RenderResult, allowOverwrite bool) {
+//
+// In --check-only mode, no marker is written. Instead, the existing on-disk
+// state for each errored component is verified to be exactly the standard
+// failure marker; any deviation flips result.Changed so the caller can fail
+// the run. This delivers the 1:1 invariant the user asked for: a component
+// that would fail must already be marked as failed on disk, with no extra
+// stale output around it.
+func writeFailureMarkers(
+	fileSystem opctx.FS, results []*RenderResult, allowOverwrite, checkOnly bool,
+) {
 	for _, result := range results {
 		if result == nil || result.Status != renderStatusError {
+			continue
+		}
+
+		if checkOnly {
+			drifted, err := outputDriftsFromMarker(fileSystem, result.OutputDir)
+			if err != nil {
+				// Surface inspection errors at Warn so a CI failure is
+				// debuggable. Treat them as drift -- safer to fail loudly
+				// than silently pass.
+				slog.Warn("Failed to inspect output dir for failure-marker check; treating as drift",
+					"path", result.OutputDir, "error", err)
+
+				result.Changed = true
+
+				continue
+			}
+
+			if drifted {
+				result.Changed = true
+			}
+
 			continue
 		}
 
@@ -1010,4 +1158,163 @@ func createMockProcessor(env *azldev.Env) *sources.MockProcessor {
 	slog.Info("Mock processor available", "mockConfig", distroVerDef.MockConfigPath)
 
 	return sources.NewMockProcessor(env, distroVerDef.MockConfigPath)
+}
+
+// validateCleanStaleOptions enforces the constraints around --clean-stale.
+// Extracted from RenderComponents to keep its complexity below the linter's
+// cyclomatic threshold.
+func validateCleanStaleOptions(options *RenderOptions) error {
+	if !options.CleanStale {
+		return nil
+	}
+
+	if !options.ComponentFilter.IncludeAllComponents {
+		return errors.New("--clean-stale requires -a (render all components)")
+	}
+
+	if options.OutputDirExplicit && !options.Force {
+		return errors.New("--clean-stale with --output-dir requires --force (-f)")
+	}
+
+	return nil
+}
+
+// renderErrorMarkerContent is the static body of the RENDER_FAILED marker file.
+// It must match exactly what writeRenderErrorMarker writes; --check-only relies
+// on this constant to verify on-disk failure markers are byte-identical to a
+// fresh run's output.
+const renderErrorMarkerContent = "Rendering failed. See azldev logs for details.\n"
+
+// diffRenderedOutput compares the rendered staging tree (expectedDir) against
+// the existing on-disk output (actualDir) and returns true when they differ.
+// A missing actualDir always counts as drift. Symlinks are compared by target
+// (filesystems without symlink support skip that check; matches production
+// render behavior).
+func diffRenderedOutput(fileSystem opctx.FS, expectedDir, actualDir string) (bool, error) {
+	actualExists, err := fileutils.DirExists(fileSystem, actualDir)
+	if err != nil {
+		return false, fmt.Errorf("checking actual output dir %#q:\n%w", actualDir, err)
+	}
+
+	if !actualExists {
+		// First-time render -- every file in expectedDir is drift.
+		return true, nil
+	}
+
+	result, err := dirdiff.DiffDirs(fileSystem, actualDir, expectedDir)
+	if err != nil {
+		return false, fmt.Errorf("diffing %#q vs %#q:\n%w", actualDir, expectedDir, err)
+	}
+
+	return len(result.Files) > 0, nil
+}
+
+// outputDriftsFromMarker reports whether outputDir's contents diverge from a
+// fresh failure write -- i.e., a single RENDER_FAILED file containing the
+// canonical marker body. Returns true when the on-disk state would change
+// if a real failure write ran. Used by --check-only to enforce 1:1 parity:
+// a component that would fail must already be marked failed on disk, with
+// no extra stale output around it.
+func outputDriftsFromMarker(fileSystem opctx.FS, outputDir string) (bool, error) {
+	exists, err := fileutils.DirExists(fileSystem, outputDir)
+	if err != nil {
+		return false, fmt.Errorf("checking output dir %#q:\n%w", outputDir, err)
+	}
+
+	if !exists {
+		return true, nil
+	}
+
+	entries, err := fileutils.ReadDir(fileSystem, outputDir)
+	if err != nil {
+		return false, fmt.Errorf("reading output dir %#q:\n%w", outputDir, err)
+	}
+
+	if len(entries) != 1 || entries[0].Name() != renderErrorMarkerFile {
+		return true, nil
+	}
+
+	content, err := fileutils.ReadFile(fileSystem, filepath.Join(outputDir, renderErrorMarkerFile))
+	if err != nil {
+		return false, fmt.Errorf("reading marker %#q:\n%w", outputDir, err)
+	}
+
+	return string(content) != renderErrorMarkerContent, nil
+}
+
+// findOrphanRenderedDirs returns the names of rendered-spec directories under
+// outputDir that don't correspond to any resolved component (or its alias).
+// Names are returned as "<letter>/<name>" relative paths and sorted.
+//
+// Only meaningful with -a (we know the full component set) and --clean-stale
+// (the only configuration where a normal run would actually remove orphans).
+// Top-level non-letter entries are intentionally NOT flagged -- that matches
+// the existing wipe semantics where users may store unrelated siblings in a
+// custom output dir; flagging them here would surprise CI gates.
+func findOrphanRenderedDirs(
+	fileSystem opctx.FS, outputDir string, componentNames []string,
+) ([]string, error) {
+	exists, err := fileutils.DirExists(fileSystem, outputDir)
+	if err != nil {
+		return nil, fmt.Errorf("checking output dir %#q:\n%w", outputDir, err)
+	}
+
+	if !exists {
+		return nil, nil
+	}
+
+	expectedNames := make(map[string]struct{}, len(componentNames)*2) //nolint:mnd // name + optional alias
+	for _, name := range componentNames {
+		expectedNames[name] = struct{}{}
+
+		if alias := components.RenderedSpecDirAliasName(name); alias != "" {
+			expectedNames[alias] = struct{}{}
+		}
+	}
+
+	letterDirs, err := fileutils.ReadDir(fileSystem, outputDir)
+	if err != nil {
+		return nil, fmt.Errorf("reading output dir %#q:\n%w", outputDir, err)
+	}
+
+	var orphans []string
+
+	for _, letterEntry := range letterDirs {
+		if !letterEntry.IsDir() {
+			continue
+		}
+
+		// Only descend into single-character prefix dirs (a/, c/, ...) --
+		// matches the layout written by [components.RenderedSpecDir]. A
+		// hand-placed sibling like 'tooling/' or 'overlays/' is left
+		// alone; treating its children as orphans would silently delete
+		// unrelated content on the next --clean-stale run.
+		if len(letterEntry.Name()) != 1 {
+			continue
+		}
+
+		letterPath := filepath.Join(outputDir, letterEntry.Name())
+
+		children, readErr := fileutils.ReadDir(fileSystem, letterPath)
+		if readErr != nil {
+			return nil, fmt.Errorf("reading letter dir %#q:\n%w", letterPath, readErr)
+		}
+
+		for _, child := range children {
+			// Component output is always a directory. Stray files (e.g. an
+			// editor's swap file or a hand-placed .gitkeep) are not orphan
+			// rendered-spec dirs and must not be flagged for removal.
+			if !child.IsDir() {
+				continue
+			}
+
+			if _, ok := expectedNames[child.Name()]; !ok {
+				orphans = append(orphans, filepath.Join(letterEntry.Name(), child.Name()))
+			}
+		}
+	}
+
+	sort.Strings(orphans)
+
+	return orphans, nil
 }

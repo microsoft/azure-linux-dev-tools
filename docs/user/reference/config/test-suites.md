@@ -9,7 +9,7 @@ Test suite names must be simple identifiers (no path separators, traversal segme
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
 | Description | `description` | string | No | Human-readable description of the test suite |
-| Type | `type` | string | Yes | Test framework to use. Currently only `"pytest"` is supported. |
+| Type | `type` | string | Yes | Test framework to use: `"pytest"` or `"lisa"`. |
 | Pytest | `pytest` | table | When `type = "pytest"` | Pytest-specific configuration (see below) |
 
 Test suites are referenced by images through the [`[images.<name>.tests]`](images.md#image-tests) subtable. Each image can reference one or more test suites by name.
@@ -46,6 +46,7 @@ The following placeholders may appear in `extra-args` and are substituted at run
 | `{image-path}` | Absolute path to the image artifact under test |
 | `{image-name}` | Name of the image being tested |
 | `{capabilities}` | Comma-separated list of capability names enabled on the image |
+
 
 ## Examples
 
@@ -97,6 +98,16 @@ type = "pytest"
 [test-suites.preinstalled.pytest]
 # install defaults to "none" — pytest must already be available.
 test-paths = ["/opt/preinstalled-tests/test_*.py"]
+```
+
+### LISA suite (external)
+
+LISA test suites are metadata-only — they are not executed by `azldev` but are used by external orchestration systems.
+
+```toml
+[test-suites.vm-integration]
+description = "VM integration tests using LISA"
+type = "lisa"
 ```
 
 ### Referencing test suites from an image

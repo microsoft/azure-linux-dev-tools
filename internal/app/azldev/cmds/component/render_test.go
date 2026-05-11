@@ -44,6 +44,10 @@ func TestNewRenderCmd_Flags(t *testing.T) {
 	cleanStaleFlag := cmd.Flags().Lookup("clean-stale")
 	require.NotNil(t, cleanStaleFlag, "clean-stale flag should be registered")
 	assert.Equal(t, "false", cleanStaleFlag.DefValue)
+
+	checkOnlyFlag := cmd.Flags().Lookup("check-only")
+	require.NotNil(t, checkOnlyFlag, "check-only flag should be registered")
+	assert.Equal(t, "false", checkOnlyFlag.DefValue)
 }
 
 func TestRenderCmd_NoComponents(t *testing.T) {

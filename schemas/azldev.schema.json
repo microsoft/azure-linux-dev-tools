@@ -944,10 +944,11 @@
         "type": {
           "type": "string",
           "enum": [
-            "pytest"
+            "pytest",
+            "lisa"
           ],
           "title": "Type",
-          "description": "Type of test framework (pytest)"
+          "description": "Type of test framework (pytest or lisa)"
         },
         "pytest": {
           "$ref": "#/$defs/PytestConfig",

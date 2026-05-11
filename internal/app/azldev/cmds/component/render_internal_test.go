@@ -162,7 +162,7 @@ func TestRemoveUnreferencedFiles(t *testing.T) {
 		require.NoError(t, fileutils.WriteFile(testFS, "/render/patches/fix.patch", []byte("patch"), fileperms.PublicFile))
 		require.NoError(t, fileutils.WriteFile(testFS, "/render/unrelated.txt", []byte("junk"), fileperms.PublicFile))
 
-		// spectool reports "patches/fix.patch" — top-level "patches" dir should be kept.
+		// spectool reports "patches/fix.patch" -- top-level "patches" dir should be kept.
 		specFiles := []string{"patches/fix.patch"}
 
 		err := removeUnreferencedFiles(testFS, "/render", "/render/curl.spec", specFiles, "curl")
@@ -343,7 +343,7 @@ func TestWriteAliasSymlink(t *testing.T) {
 		linkInfo := osLstat(t, osFS, aliasPath)
 		assert.NotZero(t, linkInfo.Mode()&os.ModeSymlink, "alias should be a symlink")
 
-		// Relative target — must be just the basename, not absolute.
+		// Relative target -- must be just the basename, not absolute.
 		assert.Equal(t, "libxml++", osReadlink(t, osFS, aliasPath))
 	})
 
@@ -396,14 +396,14 @@ func TestWriteAliasSymlink(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "non-symlink")
 
-		// Collision dir must still exist — the guard MUST NOT have destroyed it.
+		// Collision dir must still exist -- the guard MUST NOT have destroyed it.
 		exists, existsErr := fileutils.DirExists(osFS, collisionDir)
 		require.NoError(t, existsErr)
 		assert.True(t, exists, "non-symlink at alias path must be preserved")
 	})
 
 	t.Run("no-op on filesystem without symlink support", func(t *testing.T) {
-		// MemMapFs does NOT implement afero.Linker — function should silently no-op.
+		// MemMapFs does NOT implement afero.Linker -- function should silently no-op.
 		memFS := afero.NewMemMapFs()
 		require.NoError(t, fileutils.MkdirAll(memFS, "/SPECS/l/libxml++"))
 
@@ -412,47 +412,37 @@ func TestWriteAliasSymlink(t *testing.T) {
 	})
 }
 
-func TestWipeOutputDirContents(t *testing.T) {
+func TestPruneOrphanRenderedDirs(t *testing.T) {
 	t.Parallel()
 
-	t.Run("missing directory is a no-op", func(t *testing.T) {
-		t.Parallel()
-
-		fs := afero.NewMemMapFs()
-		assert.NoError(t, wipeOutputDirContents(fs, "/output"))
-	})
-
-	t.Run("empty directory is a no-op", func(t *testing.T) {
-		t.Parallel()
-
-		fs := afero.NewMemMapFs()
-		require.NoError(t, fileutils.MkdirAll(fs, "/output"))
-
-		assert.NoError(t, wipeOutputDirContents(fs, "/output"))
-	})
-
-	t.Run("removes all children but keeps directory", func(t *testing.T) {
+	t.Run("removes only orphan dirs, leaves resolved components", func(t *testing.T) {
 		t.Parallel()
 
 		testFS := afero.NewMemMapFs()
-		for _, letter := range []string{"a", "c", "l"} {
-			require.NoError(t, fileutils.MkdirAll(testFS, filepath.Join("/output", letter, "pkg")))
-		}
+		require.NoError(t, fileutils.MkdirAll(testFS, "/out/c/curl"))
+		require.NoError(t, fileutils.WriteFile(testFS, "/out/c/curl/curl.spec",
+			[]byte("Name: curl"), fileperms.PublicFile))
+		require.NoError(t, fileutils.MkdirAll(testFS, "/out/r/removed-pkg"))
+		require.NoError(t, fileutils.WriteFile(testFS, "/out/README.md",
+			[]byte("docs"), fileperms.PublicFile))
 
-		require.NoError(t, fileutils.WriteFile(testFS, "/output/README.md", []byte("keep me"), fileperms.PublicFile))
-		require.NoError(t, fileutils.MkdirAll(testFS, "/output/multi-char-dir"))
-
-		require.NoError(t, wipeOutputDirContents(testFS, "/output"))
-
-		// Directory itself still exists.
-		exists, err := fileutils.DirExists(testFS, "/output")
+		err := pruneOrphanRenderedDirs(testFS, "/out", []string{"curl"})
 		require.NoError(t, err)
-		assert.True(t, exists, "output directory itself must be preserved")
 
-		// All children removed.
-		entries, err := fileutils.ReadDir(testFS, "/output")
+		// Resolved component is preserved (content untouched).
+		spec, err := fileutils.ReadFile(testFS, "/out/c/curl/curl.spec")
 		require.NoError(t, err)
-		assert.Empty(t, entries, "all contents should be removed")
+		assert.Equal(t, "Name: curl", string(spec))
+
+		// Orphan removed.
+		exists, err := fileutils.DirExists(testFS, "/out/r/removed-pkg")
+		require.NoError(t, err)
+		assert.False(t, exists)
+
+		// Top-level non-letter entry preserved.
+		exists, err = fileutils.Exists(testFS, "/out/README.md")
+		require.NoError(t, err)
+		assert.True(t, exists, "top-level non-letter siblings must NOT be pruned")
 	})
 }
 
@@ -470,14 +460,14 @@ func TestWriteFailureMarkers(t *testing.T) {
 			nil, // gap from a still-pending phase-3 slot.
 		}
 
-		writeFailureMarkers(testFS, results, false)
+		writeFailureMarkers(testFS, results, false, false)
 
-		// Error result → marker present.
+		// Error result -> marker present.
 		exists, err := fileutils.Exists(testFS, "/output/b/broken-pkg/"+renderErrorMarkerFile)
 		require.NoError(t, err)
 		assert.True(t, exists, "error result should have a marker")
 
-		// Non-error results → no marker.
+		// Non-error results -> no marker.
 		nonErrorPaths := []string{
 			"/output/o/ok-pkg/" + renderErrorMarkerFile,
 			"/output/c/cancelled-pkg/" + renderErrorMarkerFile,
@@ -504,7 +494,7 @@ func TestWriteFailureMarkers(t *testing.T) {
 			{Component: "broken-pkg", OutputDir: "/output/b/broken-pkg", Status: renderStatusError},
 		}
 
-		writeFailureMarkers(testFS, results, true)
+		writeFailureMarkers(testFS, results, true, false)
 
 		// Stale spec gone.
 		exists, err := fileutils.Exists(testFS, "/output/b/broken-pkg/broken-pkg.spec")
@@ -521,7 +511,7 @@ func TestWriteFailureMarkers(t *testing.T) {
 		t.Parallel()
 
 		// Without --force, a previous successful render's content stays in
-		// place — the marker just appears alongside it. (Realistically this
+		// place -- the marker just appears alongside it. (Realistically this
 		// scenario can't happen with the current call sites, but the helper
 		// must respect its allowOverwrite contract.)
 		testFS := afero.NewMemMapFs()
@@ -534,10 +524,250 @@ func TestWriteFailureMarkers(t *testing.T) {
 			{Component: "broken-pkg", OutputDir: "/output/b/broken-pkg", Status: renderStatusError},
 		}
 
-		writeFailureMarkers(testFS, results, false)
+		writeFailureMarkers(testFS, results, false, false)
 
 		exists, err := fileutils.Exists(testFS, "/output/b/broken-pkg/broken-pkg.spec")
 		require.NoError(t, err)
 		assert.True(t, exists, "spec should be preserved when overwrite is not allowed")
+	})
+
+	t.Run("check-only flips Drifted when on-disk state diverges from marker", func(t *testing.T) {
+		t.Parallel()
+
+		testFS := afero.NewMemMapFs()
+
+		// Component "missing-marker": output dir has the standard marker (no drift).
+		require.NoError(t, fileutils.MkdirAll(testFS, "/output/o/ok-pkg"))
+		require.NoError(t, fileutils.WriteFile(testFS,
+			"/output/o/ok-pkg/"+renderErrorMarkerFile,
+			[]byte(renderErrorMarkerContent), fileperms.PublicFile))
+
+		// Component "extra-files": dir has the marker AND stale render output -> drift.
+		require.NoError(t, fileutils.MkdirAll(testFS, "/output/e/extra-pkg"))
+		require.NoError(t, fileutils.WriteFile(testFS,
+			"/output/e/extra-pkg/"+renderErrorMarkerFile,
+			[]byte(renderErrorMarkerContent), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(testFS,
+			"/output/e/extra-pkg/extra-pkg.spec",
+			[]byte("Name: extra-pkg"), fileperms.PublicFile))
+
+		// Component "no-marker": dir exists but the marker is absent -> drift.
+		require.NoError(t, fileutils.MkdirAll(testFS, "/output/n/no-marker"))
+
+		// Component "no-dir": output dir doesn't exist at all -> drift.
+
+		results := []*RenderResult{
+			{Component: "ok-pkg", OutputDir: "/output/o/ok-pkg", Status: renderStatusError},
+			{Component: "extra-pkg", OutputDir: "/output/e/extra-pkg", Status: renderStatusError},
+			{Component: "no-marker", OutputDir: "/output/n/no-marker", Status: renderStatusError},
+			{Component: "no-dir", OutputDir: "/output/x/no-dir", Status: renderStatusError},
+		}
+
+		writeFailureMarkers(testFS, results, false, true)
+
+		assert.False(t, results[0].Changed, "matching marker -> no drift")
+		assert.True(t, results[1].Changed, "extra files alongside marker -> drift")
+		assert.True(t, results[2].Changed, "missing marker file -> drift")
+		assert.True(t, results[3].Changed, "missing output dir -> drift")
+
+		// Disk must be untouched in check-only mode -- no markers planted on no-marker/no-dir.
+		exists, err := fileutils.Exists(testFS, "/output/n/no-marker/"+renderErrorMarkerFile)
+		require.NoError(t, err)
+		assert.False(t, exists, "check-only must not write markers")
+
+		exists, err = fileutils.DirExists(testFS, "/output/x/no-dir")
+		require.NoError(t, err)
+		assert.False(t, exists, "check-only must not create output dirs")
+	})
+}
+
+func TestDiffRenderedOutput(t *testing.T) {
+	t.Parallel()
+
+	t.Run("identical trees -> no drift", func(t *testing.T) {
+		t.Parallel()
+
+		testFS := afero.NewMemMapFs()
+		require.NoError(t, fileutils.WriteFile(testFS, "/exp/curl.spec", []byte("Name: curl"), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(testFS, "/exp/sources", []byte("hash"), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(testFS, "/act/curl.spec", []byte("Name: curl"), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(testFS, "/act/sources", []byte("hash"), fileperms.PublicFile))
+
+		drifted, err := diffRenderedOutput(testFS, "/exp", "/act")
+		require.NoError(t, err)
+		assert.False(t, drifted)
+	})
+
+	t.Run("missing actual dir -> drift", func(t *testing.T) {
+		t.Parallel()
+
+		testFS := afero.NewMemMapFs()
+		require.NoError(t, fileutils.WriteFile(testFS, "/exp/curl.spec", []byte("x"), fileperms.PublicFile))
+
+		drifted, err := diffRenderedOutput(testFS, "/exp", "/missing")
+		require.NoError(t, err)
+		assert.True(t, drifted)
+	})
+
+	t.Run("content difference -> drift", func(t *testing.T) {
+		t.Parallel()
+
+		testFS := afero.NewMemMapFs()
+		require.NoError(t, fileutils.WriteFile(testFS, "/exp/curl.spec", []byte("v2"), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(testFS, "/act/curl.spec", []byte("v1"), fileperms.PublicFile))
+
+		drifted, err := diffRenderedOutput(testFS, "/exp", "/act")
+		require.NoError(t, err)
+		assert.True(t, drifted)
+	})
+
+	t.Run("extra file in actual -> drift", func(t *testing.T) {
+		t.Parallel()
+
+		testFS := afero.NewMemMapFs()
+		require.NoError(t, fileutils.WriteFile(testFS, "/exp/curl.spec", []byte("x"), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(testFS, "/act/curl.spec", []byte("x"), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(testFS, "/act/stale.patch", []byte("y"), fileperms.PublicFile))
+
+		drifted, err := diffRenderedOutput(testFS, "/exp", "/act")
+		require.NoError(t, err)
+		assert.True(t, drifted)
+	})
+}
+
+func TestOutputDriftsFromMarker(t *testing.T) {
+	t.Parallel()
+
+	t.Run("missing dir -> drift", func(t *testing.T) {
+		t.Parallel()
+
+		testFS := afero.NewMemMapFs()
+		drifted, err := outputDriftsFromMarker(testFS, "/missing")
+		require.NoError(t, err)
+		assert.True(t, drifted)
+	})
+
+	t.Run("dir with only the canonical marker -> no drift", func(t *testing.T) {
+		t.Parallel()
+
+		testFS := afero.NewMemMapFs()
+		require.NoError(t, fileutils.MkdirAll(testFS, "/out"))
+		require.NoError(t, fileutils.WriteFile(testFS,
+			"/out/"+renderErrorMarkerFile,
+			[]byte(renderErrorMarkerContent), fileperms.PublicFile))
+
+		drifted, err := outputDriftsFromMarker(testFS, "/out")
+		require.NoError(t, err)
+		assert.False(t, drifted)
+	})
+
+	t.Run("marker with wrong content -> drift", func(t *testing.T) {
+		t.Parallel()
+
+		testFS := afero.NewMemMapFs()
+		require.NoError(t, fileutils.MkdirAll(testFS, "/out"))
+		require.NoError(t, fileutils.WriteFile(testFS,
+			"/out/"+renderErrorMarkerFile,
+			[]byte("hand-edited"), fileperms.PublicFile))
+
+		drifted, err := outputDriftsFromMarker(testFS, "/out")
+		require.NoError(t, err)
+		assert.True(t, drifted)
+	})
+
+	t.Run("dir with extra files alongside marker -> drift", func(t *testing.T) {
+		t.Parallel()
+
+		testFS := afero.NewMemMapFs()
+		require.NoError(t, fileutils.MkdirAll(testFS, "/out"))
+		require.NoError(t, fileutils.WriteFile(testFS,
+			"/out/"+renderErrorMarkerFile,
+			[]byte(renderErrorMarkerContent), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(testFS,
+			"/out/curl.spec", []byte("stale"), fileperms.PublicFile))
+
+		drifted, err := outputDriftsFromMarker(testFS, "/out")
+		require.NoError(t, err)
+		assert.True(t, drifted)
+	})
+}
+
+func TestFindOrphanRenderedDirs(t *testing.T) {
+	t.Parallel()
+
+	t.Run("missing output dir -> no orphans", func(t *testing.T) {
+		t.Parallel()
+
+		testFS := afero.NewMemMapFs()
+		orphans, err := findOrphanRenderedDirs(testFS, "/missing", nil)
+		require.NoError(t, err)
+		assert.Empty(t, orphans)
+	})
+
+	t.Run("returns orphan component dirs sorted", func(t *testing.T) {
+		t.Parallel()
+
+		testFS := afero.NewMemMapFs()
+		// Resolved components: curl, bash.
+		require.NoError(t, fileutils.MkdirAll(testFS, "/out/c/curl"))
+		require.NoError(t, fileutils.MkdirAll(testFS, "/out/b/bash"))
+		// Orphans: removed-pkg, ancient-pkg.
+		require.NoError(t, fileutils.MkdirAll(testFS, "/out/r/removed-pkg"))
+		require.NoError(t, fileutils.MkdirAll(testFS, "/out/a/ancient-pkg"))
+
+		orphans, err := findOrphanRenderedDirs(testFS, "/out", []string{"curl", "bash"})
+		require.NoError(t, err)
+		assert.Equal(t, []string{
+			filepath.Join("a", "ancient-pkg"),
+			filepath.Join("r", "removed-pkg"),
+		}, orphans)
+	})
+
+	t.Run("ignores top-level non-letter entries", func(t *testing.T) {
+		t.Parallel()
+
+		testFS := afero.NewMemMapFs()
+		require.NoError(t, fileutils.MkdirAll(testFS, "/out/c/curl"))
+		// README at top level -- not flagged.
+		require.NoError(t, fileutils.WriteFile(testFS, "/out/README.md", []byte("docs"), fileperms.PublicFile))
+
+		orphans, err := findOrphanRenderedDirs(testFS, "/out", []string{"curl"})
+		require.NoError(t, err)
+		assert.Empty(t, orphans)
+	})
+
+	t.Run("ignores multi-character top-level directories", func(t *testing.T) {
+		t.Parallel()
+
+		// Regression: an unrelated multi-char sibling directory like
+		// 'tooling/' or 'overlays/' must NOT have its children walked
+		// and flagged as orphans, or pruneOrphanRenderedDirs would
+		// silently delete them on the next --clean-stale run.
+		testFS := afero.NewMemMapFs()
+		require.NoError(t, fileutils.MkdirAll(testFS, "/out/c/curl"))
+		require.NoError(t, fileutils.MkdirAll(testFS, "/out/tooling/build.sh"))
+		require.NoError(t, fileutils.MkdirAll(testFS, "/out/overlays/curl-fix"))
+
+		orphans, err := findOrphanRenderedDirs(testFS, "/out", []string{"curl"})
+		require.NoError(t, err)
+		assert.Empty(t, orphans, "multi-char top-level dirs must be left alone")
+	})
+
+	t.Run("ignores non-directory children inside letter dirs", func(t *testing.T) {
+		t.Parallel()
+
+		// Regression: a stray file like .gitkeep or an editor swap file
+		// inside a letter prefix dir is not a rendered-spec component dir
+		// and must NOT be flagged for removal.
+		testFS := afero.NewMemMapFs()
+		require.NoError(t, fileutils.MkdirAll(testFS, "/out/c/curl"))
+		require.NoError(t, fileutils.WriteFile(testFS, "/out/c/.gitkeep",
+			[]byte(""), fileperms.PublicFile))
+		require.NoError(t, fileutils.WriteFile(testFS, "/out/c/.curl.spec.swp",
+			[]byte("vim swap"), fileperms.PublicFile))
+
+		orphans, err := findOrphanRenderedDirs(testFS, "/out", []string{"curl"})
+		require.NoError(t, err)
+		assert.Empty(t, orphans, "non-directory children must not be flagged as orphan dirs")
 	})
 }

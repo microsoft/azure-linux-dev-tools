@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 
 	"github.com/charmbracelet/x/term"
 	"github.com/mattn/go-isatty"
@@ -233,6 +234,19 @@ func createReflectableOptions(env *Env, format reflectable.Format) *reflectable.
 
 // Displays the results of a command to stdout in JSON format.
 func reportResultsAsJSON(env *Env, results interface{}) error {
+	// Normalize a typed-nil slice/map to an empty one so it marshals as `[]`
+	// or `{}` rather than `null`. This keeps JSON output friendly for
+	// downstream pipelines (e.g., `jq '.[]'` and `jq 'keys'` work whether or
+	// not there are results).
+	value := reflect.ValueOf(results)
+	if value.IsValid() && value.Kind() == reflect.Slice && value.IsNil() {
+		results = reflect.MakeSlice(value.Type(), 0, 0).Interface()
+	}
+
+	if value.IsValid() && value.Kind() == reflect.Map && value.IsNil() {
+		results = reflect.MakeMap(value.Type()).Interface()
+	}
+
 	jsonBytes, err := json.MarshalIndent(results, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal command results to JSON:\n%w", err)

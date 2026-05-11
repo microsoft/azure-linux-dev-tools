@@ -720,3 +720,75 @@ func TestComponentChanged_JSONContract(t *testing.T) {
 	require.Contains(t, rm, "oldpkg")
 	assert.Equal(t, "deleted", rm["oldpkg"].ChangeType)
 }
+
+// TestComponentChanged_IntegrityViolation verifies that a manually-edited
+// rendered sources file with no corresponding fingerprint change causes
+// `azldev component changed` to fail with a non-zero exit code.
+//
+// This is the cache-poisoning vector: a malicious PR commits an attacker-
+// chosen (filename, hash) pair into a rendered sources file without touching
+// the lock that drives re-rendering. The CLI fails hard on this combination
+// because it cannot occur from a clean render.
+//
+// Flow:
+//  1. Commit 1: lock + matching rendered sources file.
+//  2. Commit 2: edit ONLY the sources file (lock fingerprint identical).
+//  3. Run `azldev component changed`: must fail with an error naming the
+//     affected component.
+func TestComponentChanged_IntegrityViolation(t *testing.T) {
+	t.Parallel()
+
+	if testing.Short() {
+		t.Skip("skipping long test")
+	}
+
+	azldevBin, projectDir := setupProjectWithGit(t,
+		[]*projecttest.TestSpec{
+			projecttest.NewSpec(
+				projecttest.WithName("curl"),
+				projecttest.WithVersion("8.0.0"),
+				projecttest.WithRelease("1%{?dist}"),
+				projecttest.WithBuildArch(projecttest.NoArch),
+			),
+		},
+		[]*projectconfig.ComponentConfig{{
+			Name: "curl",
+			Spec: projectconfig.SpecSource{
+				SourceType: projectconfig.SpecSourceTypeLocal,
+				Path:       filepath.Join("specs", "curl", "curl.spec"),
+			},
+		}},
+		nil,
+	)
+
+	// Commit 1: lock + matching rendered sources.
+	writeFileInDir(t, projectDir, "locks/curl.lock",
+		fmt.Sprintf("version = 1\ninput-fingerprint = %q\n", "sha256:v1"))
+	writeFileInDir(t, projectDir, "specs/c/curl/sources",
+		"SHA512 (curl-8.0.tar.gz) = aaa111")
+	gitInDir(t, projectDir, "add", ".")
+	gitInDir(t, projectDir, "-c", "commit.gpgsign=false", "commit", "-m", "initial")
+	fromRef := gitInDir(t, projectDir, "rev-parse", "HEAD")
+
+	// Commit 2: edit ONLY the rendered sources file. Lock fingerprint
+	// identical -- no legitimate render would produce this drift.
+	writeFileInDir(t, projectDir, "specs/c/curl/sources",
+		"SHA512 (evil-payload.tar.gz) = deadbeef")
+	gitInDir(t, projectDir, "add", ".")
+	gitInDir(t, projectDir, "-c", "commit.gpgsign=false", "commit", "-m", "tamper")
+
+	cmd := exec.CommandContext(t.Context(),
+		azldevBin, "-C", projectDir, "--no-default-config", "component", "changed",
+		"--from", fromRef, "-a", "-q", "-O", "json",
+	)
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+
+	require.Error(t, err, "integrity violation must fail the command")
+	assert.Contains(t, stderr.String(), "drifted rendered sources",
+		"error should explain the integrity violation")
+	assert.Contains(t, stderr.String(), "curl",
+		"error should name the affected component")
+}

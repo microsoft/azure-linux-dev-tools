@@ -14,6 +14,12 @@ changed (sources change).
 This is useful for CI/CD pipelines to determine which components need to be
 rebuilt or have their lookaside tarballs re-uploaded after a PR merge.
 
+Fails with an error if any component's fingerprint is unchanged between refs
+but its rendered sources file drifted. This combination cannot occur from a
+clean render -- it usually means the rendered sources were edited by hand (a
+cache-poisoning vector if blindly uploaded) or the renderer is non-
+deterministic.
+
 Note: component selection and directory paths (lock-dir, rendered-specs-dir)
 are resolved from the current checkout's configuration, not from the compared
 refs. For accurate results, run this command from a checkout that matches the
@@ -46,7 +52,6 @@ azldev component changed [flags]
   -a, --all-components                Include all components
   -p, --component stringArray         Component name pattern
   -g, --component-group stringArray   Component group name
-      --force-recalculate             Disable optimizations that skip work for unchanged components
       --from string                   Git ref to compare from (required)
   -h, --help                          help for changed
       --include-unchanged             Include unchanged components in output (only applies to broad -a scans; explicit selections always show status)

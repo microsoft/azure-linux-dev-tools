@@ -170,6 +170,53 @@ func TestClassifyComponent_NeverExisted(t *testing.T) {
 	assert.Equal(t, changeTypeUnchanged, result.ChangeType)
 }
 
+// --- haveMatchingFingerprints tests ---
+
+func TestHaveMatchingFingerprints(t *testing.T) {
+	t.Parallel()
+
+	const fingerprint = "sha256:abc"
+
+	fromHas := map[string]lockfile.ComponentLock{
+		"curl": {InputFingerprint: fingerprint},
+	}
+	toHas := map[string]lockfile.ComponentLock{
+		"curl": {InputFingerprint: fingerprint},
+	}
+	toDifferent := map[string]lockfile.ComponentLock{
+		"curl": {InputFingerprint: "sha256:def"},
+	}
+	empty := map[string]lockfile.ComponentLock{}
+	emptyFingerprint := map[string]lockfile.ComponentLock{
+		"curl": {InputFingerprint: ""},
+	}
+
+	tests := []struct {
+		name string
+		from map[string]lockfile.ComponentLock
+		to   map[string]lockfile.ComponentLock
+		want bool
+	}{
+		{"both refs have lock with same fingerprint", fromHas, toHas, true},
+		{"both refs have lock but fingerprints differ", fromHas, toDifferent, false},
+		{"only from has a lock", fromHas, empty, false},
+		{"only to has a lock", empty, toHas, false},
+		{"neither ref has a lock (regression: must NOT report violation)", empty, empty, false},
+		{
+			"both refs have lock but fingerprint field is empty (regression: must NOT report violation)",
+			emptyFingerprint, emptyFingerprint, false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tt.want, haveMatchingFingerprints("curl", tt.from, tt.to))
+		})
+	}
+}
+
 // --- compareSources tests ---
 
 func TestCompareSources_Changed(t *testing.T) {

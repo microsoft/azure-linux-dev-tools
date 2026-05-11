@@ -447,9 +447,14 @@ func updateHead(repo *gogit.Repository, commitHash plumbing.Hash) error {
 // buildSyntheticCommits resolves the project repository from the component's
 // config file, walks the lock file's git history for fingerprint changes, and
 // returns the matching [FingerprintChange] entries sorted chronologically.
-// Returns an error if the lock file exists but has no fingerprint changes.
-// The second return value is the import-commit hash from the lock file, used
-// to scope the upstream commit walk in [CommitInterleavedHistory].
+// Returns (nil, "", nil) when there are no changes to represent — either the
+// lock file is missing, has no fingerprint changes (with a warning), or the
+// current fingerprint matches the committed one.
+//
+// When currentFingerprint is non-empty it is compared against the fingerprint
+// stored in the HEAD commit's lock file. If they differ a "dirty" entry is
+// appended so that uncommitted config/overlay changes are represented in the
+// synthetic history.
 //
 // The lockDir is the absolute path to the lock file directory. It is converted
 // to a repo-relative path internally once the git repository root is known.
@@ -459,6 +464,7 @@ func buildSyntheticCommits(
 	config *projectconfig.ComponentConfig,
 	componentName string,
 	lockDir string,
+	currentFingerprint string,
 ) (changes []FingerprintChange, importCommit string, err error) {
 	projectRepo, projectRepoDir, err := openProjectRepo(config, componentName)
 	if err != nil {
@@ -500,27 +506,76 @@ func buildSyntheticCommits(
 			lockFileRelPath, err)
 	}
 
+	// In a shallow clone the commit that added the lock file may have been
+	// pruned. Detect this before falling through to dirty detection.
 	if len(fpChanges) == 0 {
-		// In a shallow clone the commit that added the lock file may have
-		// been pruned, so check explicitly.
 		shallowCommits, _ := projectRepo.Storer.Shallow()
 		if len(shallowCommits) > 0 {
 			return nil, "", fmt.Errorf(
 				"lock file %#q has no git history; a full clone is required",
 				lockFileRelPath)
 		}
+	}
 
+	// Check for uncommitted ("dirty") changes by comparing the caller-provided
+	// current fingerprint against the fingerprint stored in the HEAD lock file.
+	if dirty := BuildDirtyChange(currentFingerprint, headLock, config.EffectiveUpstreamCommit()); dirty != nil {
+		slog.Info("Current fingerprint differs from HEAD lock file; adding dirty entry",
+			"lockFile", lockFileRelPath)
+
+		fpChanges = append(fpChanges, *dirty)
+	}
+
+	if len(fpChanges) == 0 {
 		slog.Warn("Lock file has no fingerprint changes; skipping synthetic history",
 			"lockFile", lockFileRelPath)
 
 		return nil, "", nil
 	}
 
-	slog.Info("Found fingerprint changes",
-		"lockFile", lockFileRelPath,
-		"changeCount", len(fpChanges))
-
 	return fpChanges, importCommit, nil
+}
+
+// BuildDirtyChange returns a [FingerprintChange] representing uncommitted
+// config/overlay changes. Returns nil when currentFingerprint is empty or
+// matches the HEAD lock file's fingerprint.
+//
+// currentUpstreamCommit is the effective upstream commit from the on-disk
+// (possibly uncommitted) lock file. This is used instead of
+// [headLock.UpstreamCommit] so that upstream commit changes from
+// 'component update' (written to disk but not yet committed) are reflected
+// in the dirty entry.
+func BuildDirtyChange(
+	currentFingerprint string,
+	headLock *lockfile.ComponentLock,
+	currentUpstreamCommit string,
+) *FingerprintChange {
+	if currentFingerprint == "" {
+		return nil
+	}
+
+	if headLock == nil || headLock.InputFingerprint == "" {
+		return nil
+	}
+
+	if currentFingerprint == headLock.InputFingerprint {
+		return nil
+	}
+
+	slog.Debug("Dirty fingerprint detected",
+		"current", currentFingerprint,
+		"head", headLock.InputFingerprint)
+
+	return &FingerprintChange{
+		CommitMetadata: CommitMetadata{
+			Hash:        "dirty",
+			Author:      "azldev",
+			AuthorEmail: "azldev@local",
+			Timestamp:   time.Now().Unix(),
+			Message:     "Local changes (uncommitted)",
+		},
+		UpstreamCommit: currentUpstreamCommit,
+	}
 }
 
 // openProjectRepo opens the git repository that contains the component's
