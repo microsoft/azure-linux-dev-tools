@@ -350,7 +350,7 @@ func TestReadSourcesFile(t *testing.T) {
 		require.NotNil(t, lines[0].Entry)
 	})
 
-	t.Run("preserves a final blank line when content has no terminating newline", func(t *testing.T) {
+	t.Run("preserves an intentional blank line near EOF when content ends with a newline", func(t *testing.T) {
 		// "a\n\n" splits to ["a", "", ""]; the trailing "" is dropped, leaving the
 		// intentional middle blank line intact.
 		lines, err := ReadSourcesFile("SHA512 (a.tar.gz) = abc\n\n")
