@@ -198,6 +198,22 @@ func TestTestSuiteConfig_Validate(t *testing.T) {
 		assert.NoError(t, testConfig.Validate())
 	})
 
+	t.Run("lisa rejects pytest subtable", func(t *testing.T) {
+		testConfig := projectconfig.TestSuiteConfig{
+			Name: "vm-tests",
+			Type: projectconfig.TestTypeLisa,
+			Pytest: &projectconfig.PytestConfig{
+				WorkingDir: "tests",
+			},
+		}
+
+		err := testConfig.Validate()
+		require.Error(t, err)
+		require.ErrorIs(t, err, projectconfig.ErrMismatchedTestSubtable)
+		assert.Contains(t, err.Error(), "vm-tests")
+		assert.Contains(t, err.Error(), string(projectconfig.TestTypeLisa))
+	})
+
 	t.Run("unknown test type", func(t *testing.T) {
 		testConfig := projectconfig.TestSuiteConfig{
 			Name: "bad",

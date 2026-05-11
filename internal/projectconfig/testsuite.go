@@ -113,6 +113,14 @@ func (t *TestSuiteConfig) Validate() error {
 	case TestTypeLisa:
 		// LISA is an external test framework not executed by azldev.
 		// Suites of this type serve as metadata for external orchestration (e.g. control tower).
+		if t.Pytest != nil {
+			return fmt.Errorf(
+				"%w: test suite %#q of type %#q cannot include subtable 'pytest'",
+				ErrMismatchedTestSubtable,
+				t.Name,
+				t.Type,
+			)
+		}
 
 	default:
 		return fmt.Errorf("%w: %#q (test suite: %#q)", ErrUnknownTestType, t.Type, t.Name)
