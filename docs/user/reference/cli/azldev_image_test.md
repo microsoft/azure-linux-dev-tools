@@ -11,7 +11,7 @@ project configuration.
 
 Test suites are defined in the [test-suites] section of azldev.toml and referenced
 by images via the [images.NAME.tests] subtable. Each test suite specifies a type
-and framework-specific configuration in a matching subtable.
+(pytest or lisa) and framework-specific configuration in a matching subtable.
 
 By default, all test suites associated with the named image are run. Use
 --test-suite to select specific suites (may be repeated).
@@ -24,6 +24,9 @@ dependencies from pyproject.toml in the working directory, and runs pytest
 with the configured test paths and extra arguments. Use {image-path} in
 extra-args to insert the image path. Glob patterns (including **) in
 test-paths are expanded automatically.
+
+For LISA tests, the test runner executes on the host and boots the image in a
+QEMU VM.
 
 ```
 azldev image test IMAGE_NAME [flags]
