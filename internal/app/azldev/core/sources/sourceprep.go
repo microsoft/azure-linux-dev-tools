@@ -559,12 +559,7 @@ func (p *sourcePreparerImpl) updateSourcesFile(component components.Component, o
 		return err
 	}
 
-	existingEntries, err := fedorasource.ReadSourcesFileEntries(existingContent)
-	if err != nil {
-		return fmt.Errorf("failed to parse existing sources file %#q:\n%w", sourcesFilePath, err)
-	}
-
-	mergedLines, err := p.buildSourceEntries(sourceFiles, existingEntries, component.GetName(), outputDir)
+	mergedLines, err := p.buildSourceEntries(sourceFiles, existingContent, component.GetName(), outputDir)
 	if err != nil {
 		return err
 	}
@@ -577,17 +572,17 @@ func (p *sourcePreparerImpl) updateSourcesFile(component components.Component, o
 		[]byte(newContent),
 		fileperms.PublicFile,
 	); err != nil {
-		return fmt.Errorf("failed to write sources file %#q:\n%w", sourcesFilePath, err)
+		return fmt.Errorf("failed to write 'sources' file %#q:\n%w", sourcesFilePath, err)
 	}
 
 	return nil
 }
 
-// readSourcesFileIfExists reads the sources file content if it exists, returning empty string if not.
+// readSourcesFileIfExists reads the 'sources' file content if it exists, returning empty string if not.
 func (p *sourcePreparerImpl) readSourcesFileIfExists(sourcesFilePath string) (string, error) {
 	exists, err := fileutils.Exists(p.fs, sourcesFilePath)
 	if err != nil {
-		return "", fmt.Errorf("failed to check if sources file %#q exists:\n%w", sourcesFilePath, err)
+		return "", fmt.Errorf("failed to check if 'sources' file %#q exists:\n%w", sourcesFilePath, err)
 	}
 
 	if !exists {
@@ -596,7 +591,7 @@ func (p *sourcePreparerImpl) readSourcesFileIfExists(sourcesFilePath string) (st
 
 	data, err := fileutils.ReadFile(p.fs, sourcesFilePath)
 	if err != nil {
-		return "", fmt.Errorf("failed to read sources file %#q:\n%w", sourcesFilePath, err)
+		return "", fmt.Errorf("failed to read 'sources' file %#q:\n%w", sourcesFilePath, err)
 	}
 
 	return string(data), nil
@@ -604,34 +599,40 @@ func (p *sourcePreparerImpl) readSourcesFileIfExists(sourcesFilePath string) (st
 
 // buildSourceEntries validates [projectconfig.SourceFileReference] entries and returns
 // the merged set of lines ready to be written to the 'sources' file. Before returning,
-// it logs an INFO-level event indicating that the 'sources' file is about to be updated,
+// it logs an INFO-level event indicating that the 'sources' file will be updated,
 // including the counts of newly added and replaced entries.
 //
-// Output ordering:
-//   - Upstream entries are emitted in their original order. When an upstream entry is
-//     replaced, the user-defined entry takes its place (same position, new hash/value).
+// Output ordering and preservation:
+//   - Each line of [existingContent] is emitted verbatim, except for entry lines whose
+//     filename matches a replacement, which are swapped for the new formatted entry.
+//     Comments and blank lines from the original file are kept in their original positions.
 //   - Brand-new entries (no upstream filename collision) are appended after the upstream
-//     entries in the order they appear in [sourceFiles].
+//     content in the order they appear in [sourceFiles].
 //
 // Collision rules and hash resolution are documented on [sourcePreparerImpl.processSourceRef].
 func (p *sourcePreparerImpl) buildSourceEntries(
 	sourceFiles []projectconfig.SourceFileReference,
-	existingEntries []fedorasource.SourcesFileEntry,
+	existingContent string,
 	componentName string,
 	outputDir string,
 ) (mergedLines []string, err error) {
-	// Index upstream entries by filename for O(1) collision lookup. The slice is assumed
-	// to be free of duplicate filenames; [fedorasource.ReadSourcesFileEntries] collapses
-	// duplicates with a WARN-level log entry.
-	existingByName := lo.SliceToMap(
-		existingEntries,
-		func(entry fedorasource.SourcesFileEntry) (string, fedorasource.SourcesFileEntry) {
-			return entry.Filename, entry
-		},
-	)
+	existingLines, err := fedorasource.ReadSourcesFile(existingContent)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to parse existing 'sources' file at %#q:\n%w",
+			filepath.Join(outputDir, fedorasource.SourcesFileName), err)
+	}
 
-	// First pass: process each ref into a formatted line, classifying it as either an
-	// in-place replacement (keyed by upstream filename) or a brand-new entry to append.
+	// Index upstream entries by filename for O(1) collision lookup. The parser
+	// (fedorasource.ReadSourcesFile) errors on duplicate filenames, so the
+	// entries are guaranteed unique by the time we get here.
+	existingByName := make(map[string]fedorasource.SourcesFileEntry, len(existingLines))
+	for _, line := range existingLines {
+		if line.Entry != nil {
+			existingByName[line.Entry.Filename] = *line.Entry
+		}
+	}
+
 	replacementByName := make(map[string]string, len(sourceFiles))
 	appendLines := make([]string, 0, len(sourceFiles))
 
@@ -648,23 +649,25 @@ func (p *sourcePreparerImpl) buildSourceEntries(
 		}
 	}
 
-	// Second pass: emit upstream entries in their original order, swapping in any
-	// in-place replacements; then append the brand-new entries.
-	mergedLines = make([]string, 0, len(existingEntries)+len(appendLines))
+	// Emit each upstream line verbatim from its raw form, swapping in the new line
+	// when the entry's filename matches a replacement; this preserves comments and
+	// blank lines at their original positions. Brand-new entries are appended last.
+	mergedLines = make([]string, 0, len(existingLines)+len(appendLines))
+	for _, line := range existingLines {
+		if line.Entry != nil {
+			if replacement, ok := replacementByName[line.Entry.Filename]; ok {
+				mergedLines = append(mergedLines, replacement)
 
-	for _, entry := range existingEntries {
-		if line, ok := replacementByName[entry.Filename]; ok {
-			mergedLines = append(mergedLines, line)
-
-			continue
+				continue
+			}
 		}
 
-		mergedLines = append(mergedLines, fedorasource.FormatSourcesEntry(entry.Filename, entry.HashType, entry.Hash))
+		mergedLines = append(mergedLines, line.Raw)
 	}
 
 	mergedLines = append(mergedLines, appendLines...)
 
-	slog.Info("Updating 'sources' file with extra source file entries",
+	slog.Info("Will update 'sources' file with extra source file entries",
 		"added", len(appendLines),
 		"replacedUpstream", len(replacementByName),
 		"path", filepath.Join(outputDir, fedorasource.SourcesFileName))

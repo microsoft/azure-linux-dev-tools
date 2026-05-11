@@ -633,6 +633,7 @@ func TestDiffSources_FetchError(t *testing.T) {
 	require.ErrorIs(t, err, expectedErr)
 }
 
+//nolint:maintidx // Test table complexity scales with the number of source-file merge scenarios.
 func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 	validOrigin := projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/new-source.tar.gz"}
 	tests := []struct {
@@ -643,9 +644,14 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 		errorContains               []string
 		expectedSourceEntries       []string
 		expectedSourceEntriesAbsent []string
+		// expectedExactContent, when non-empty, asserts the merged 'sources' file matches
+		// this string byte-for-byte. Use this for cases where blank-line and comment
+		// preservation must be verified exactly (substring checks alone don't catch
+		// dropped or extra blank lines).
+		expectedExactContent string
 	}{
 		{
-			name: "adds new entry to existing sources file",
+			name: "adds new entry to existing 'sources' file",
 			sourceFiles: []projectconfig.SourceFileReference{
 				{
 					Filename: "extra-source.tar.gz",
@@ -664,7 +670,7 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 			name: "error on filename collision when replace-upstream is not set",
 			sourceFiles: []projectconfig.SourceFileReference{
 				{
-					Filename: "existing.tar.gz", // Already in sources file.
+					Filename: "existing.tar.gz", // Already in 'sources' file.
 					Hash:     "11223344aabb",
 					HashType: fileutils.HashTypeSHA512,
 					Origin:   validOrigin,
@@ -682,7 +688,7 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 			name: "replaces upstream entry in place when replace-upstream is true",
 			sourceFiles: []projectconfig.SourceFileReference{
 				{
-					Filename:        "existing.tar.gz", // Already in sources file.
+					Filename:        "existing.tar.gz", // Already in 'sources' file.
 					Hash:            "deadbeefcafe",
 					HashType:        fileutils.HashTypeSHA512,
 					Origin:          validOrigin,
@@ -729,7 +735,99 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 			},
 		},
 		{
-			name: "duplicate filename in upstream sources file is collapsed to most-recent value",
+			name: "multiple replace-upstream entries are all swapped in place",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename:        "first.tar.gz",
+					Hash:            "1111aaaa",
+					HashType:        fileutils.HashTypeSHA512,
+					Origin:          validOrigin,
+					ReplaceUpstream: true,
+					ReplaceReason:   "patched first",
+				},
+				{
+					Filename:        "third.tar.gz",
+					Hash:            "3333cccc",
+					HashType:        fileutils.HashTypeSHA512,
+					Origin:          validOrigin,
+					ReplaceUpstream: true,
+					ReplaceReason:   "patched third",
+				},
+				{
+					Filename: "appended.tar.gz",
+					Hash:     "9999ffff",
+					HashType: fileutils.HashTypeSHA512,
+					Origin:   validOrigin,
+				},
+			},
+			existingSourcesContent: "SHA512 (first.tar.gz) = aaaa1111\n" +
+				"SHA512 (second.tar.gz) = bbbb2222\n" +
+				"SHA512 (third.tar.gz) = cccc3333\n",
+			// Both replacements occupy their original positions; the untouched 'second'
+			// entry stays between them; brand-new entry lands at the end.
+			expectedSourceEntries: []string{
+				"SHA512 (first.tar.gz) = 1111aaaa",
+				"SHA512 (second.tar.gz) = bbbb2222",
+				"SHA512 (third.tar.gz) = 3333cccc",
+				"SHA512 (appended.tar.gz) = 9999ffff",
+			},
+			expectedSourceEntriesAbsent: []string{
+				"SHA512 (first.tar.gz) = aaaa1111",
+				"SHA512 (third.tar.gz) = cccc3333",
+			},
+		},
+		{
+			name: "comments and blank lines in upstream 'sources' file are preserved verbatim",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename:        "patched.tar.gz",
+					Hash:            "deadbeefcafe",
+					HashType:        fileutils.HashTypeSHA512,
+					Origin:          validOrigin,
+					ReplaceUpstream: true,
+					ReplaceReason:   "patched",
+				},
+				{
+					Filename: "extra.tar.gz",
+					Hash:     "abc123",
+					HashType: fileutils.HashTypeSHA512,
+					Origin:   validOrigin,
+				},
+			},
+			// The blank lines between entries and the comments above each entry must be
+			// preserved at their original positions; only the matching entry line is swapped.
+			existingSourcesContent: "# top-level comment about the package\n" +
+				"\n" +
+				"# comment about the patched archive\n" +
+				"SHA512 (patched.tar.gz) = aabbccdd1122\n" +
+				"\n" +
+				"# comment about the untouched archive\n" +
+				"SHA512 (untouched.tar.gz) = 99887766\n",
+			// Asserting byte-for-byte equality here is what guarantees that the blank
+			// lines (between the top-level comment and the patched-archive section, and
+			// between the patched and untouched sections) survive the merge intact.
+			expectedExactContent: "# top-level comment about the package\n" +
+				"\n" +
+				"# comment about the patched archive\n" +
+				"SHA512 (patched.tar.gz) = deadbeefcafe\n" +
+				"\n" +
+				"# comment about the untouched archive\n" +
+				"SHA512 (untouched.tar.gz) = 99887766\n" +
+				"SHA512 (extra.tar.gz) = abc123\n",
+			expectedSourceEntries: []string{
+				"# top-level comment about the package",
+				"# comment about the patched archive",
+				"SHA512 (patched.tar.gz) = deadbeefcafe",
+				"# comment about the untouched archive",
+				"SHA512 (untouched.tar.gz) = 99887766",
+				"SHA512 (extra.tar.gz) = abc123",
+			},
+			expectedSourceEntriesAbsent: []string{
+				"SHA512 (patched.tar.gz) = aabbccdd1122",
+			},
+		},
+		{
+			name: "duplicate filename in upstream 'sources' file is rejected as malformed",
 			sourceFiles: []projectconfig.SourceFileReference{
 				{
 					Filename: "extra.tar.gz",
@@ -738,15 +836,14 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 					Origin:   validOrigin,
 				},
 			},
-			// Same filename appears twice with different hashes; the parser keeps the most
-			// recent value at the original position and emits a WARN log.
+			// Two entries for the same filename in the upstream file is malformed; merge
+			// must error rather than silently picking one.
 			existingSourcesContent: "SHA512 (dup.tar.gz) = aaaa1111\nSHA512 (dup.tar.gz) = bbbb2222\n",
-			expectedSourceEntries: []string{
-				"SHA512 (dup.tar.gz) = bbbb2222",
-				"SHA512 (extra.tar.gz) = abc123",
-			},
-			expectedSourceEntriesAbsent: []string{
-				"SHA512 (dup.tar.gz) = aaaa1111",
+			expectError:            true,
+			errorContains: []string{
+				"failed to parse existing 'sources' file",
+				"duplicate filename",
+				"dup.tar.gz",
 			},
 		},
 		{
@@ -796,7 +893,7 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 			errorContains: []string{"missing-hashtype.tar.gz", "has a 'hash' value but no 'hash-type'"},
 		},
 		{
-			name: "creates sources file if not exists",
+			name: "creates 'sources' file if not exists",
 			sourceFiles: []projectconfig.SourceFileReference{
 				{
 					Filename: "new-source.tar.gz",
@@ -828,7 +925,7 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 			sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil)
 			sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).DoAndReturn(
 				func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
-					// Create existing sources file if specified.
+					// Create existing 'sources' file if specified.
 					if testCase.existingSourcesContent != "" {
 						err := fileutils.WriteFile(ctx.FS(), filepath.Join(outputDir, fedorasource.SourcesFileName),
 							[]byte(testCase.existingSourcesContent), fileperms.PublicFile)
@@ -857,10 +954,17 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 
 			require.NoError(t, err)
 
-			if len(testCase.expectedSourceEntries) > 0 || len(testCase.expectedSourceEntriesAbsent) > 0 {
+			if len(testCase.expectedSourceEntries) > 0 || len(testCase.expectedSourceEntriesAbsent) > 0 ||
+				testCase.expectedExactContent != "" {
 				sourcesFilePath := filepath.Join(testOutputDir, fedorasource.SourcesFileName)
 				sourcesContent, err := fileutils.ReadFile(ctx.FS(), sourcesFilePath)
 				require.NoError(t, err)
+
+				if testCase.expectedExactContent != "" {
+					assert.Equal(t, testCase.expectedExactContent, string(sourcesContent),
+						"merged 'sources' file does not match expected byte content "+
+							"(blank-line / comment preservation regression?)")
+				}
 
 				// Verify substrings are present and appear in the same order they were
 				// declared in expectedSourceEntries (catches accidental reordering, e.g. an
@@ -870,7 +974,7 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 				for _, expectedEntry := range testCase.expectedSourceEntries {
 					idx := strings.Index(string(sourcesContent), expectedEntry)
 					assert.GreaterOrEqual(t, idx, 0,
-						"expected entry %q not found in sources file content:\n%s",
+						"expected entry %q not found in 'sources' file content:\n%s",
 						expectedEntry, string(sourcesContent))
 					assert.Greater(t, idx, lastIdx,
 						"expected entry %q appears before earlier entry; ordering violated",

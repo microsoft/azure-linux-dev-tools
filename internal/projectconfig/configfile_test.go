@@ -274,6 +274,33 @@ func TestProjectConfigFileValidation_ReplaceUpstreamWithReasonAccepted(t *testin
 	assert.NoError(t, file.Validate())
 }
 
+func TestProjectConfigFileValidation_ReplaceReasonWhitespaceOnlyRejected(t *testing.T) {
+	origin := projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/source.tar.gz"}
+
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"test-component": {
+				SourceFiles: []projectconfig.SourceFileReference{
+					{
+						Filename:        "source.tar.gz",
+						Hash:            "abc123",
+						HashType:        fileutils.HashTypeSHA256,
+						Origin:          origin,
+						ReplaceUpstream: true,
+						// Whitespace-only reason must be rejected just like an empty string;
+						// it provides no auditable explanation for the override.
+						ReplaceReason: "   \t  ",
+					},
+				},
+			},
+		},
+	}
+	err := file.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no 'replace-reason'")
+	assert.Contains(t, err.Error(), "source.tar.gz")
+}
+
 func TestProjectConfigFileValidation_MissingOrigin(t *testing.T) {
 	file := projectconfig.ConfigFile{
 		Components: map[string]projectconfig.ComponentConfig{

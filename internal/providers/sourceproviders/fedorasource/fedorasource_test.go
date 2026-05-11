@@ -7,6 +7,7 @@ package fedorasource
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
@@ -135,10 +136,10 @@ func TestExtractSourcesFromRepoValidation(t *testing.T) {
 		assert.Contains(t, err.Error(), "lookaside base URI cannot be empty")
 	})
 
-	t.Run("missing sources file", func(t *testing.T) {
+	t.Run("missing 'sources' file", func(t *testing.T) {
 		require.NoError(t, ctx.FS().MkdirAll(testEmptyRepoDir, fileperms.PublicDir))
 
-		// Missing sources file is valid - it means no external sources to download
+		// Missing 'sources' file is valid - it means no external sources to download
 		err := extractor.ExtractSourcesFromRepo(
 			context.Background(), testEmptyRepoDir, testPackageName, testLookasideURI, nil,
 		)
@@ -190,7 +191,7 @@ func TestExtractSourcesFromRepoHashMismatch(t *testing.T) {
 	assert.Contains(t, err.Error(), "hash mismatch")
 }
 
-// setupSourcesFile creates a sources file in the specified directory with the given content.
+// setupSourcesFile creates a 'sources' file in the specified directory with the given content.
 func setupSourcesFile(t *testing.T, fs afero.Fs, repoDir string, content string) {
 	t.Helper()
 
@@ -288,26 +289,222 @@ func TestParseSourcesFile(t *testing.T) {
 	})
 }
 
-func TestReadSourcesFileEntries_DuplicateFilenameCollapsedToLatest(t *testing.T) {
-	// Same filename appears three times with different hashes; the parser must keep
-	// the most-recently-seen value at the original (first-occurrence) position and
-	// must not error.
-	content := "SHA512 (dup.tar.gz) = aaaa1111\n" +
-		"SHA512 (other.tar.gz) = bbbb2222\n" +
-		"SHA512 (dup.tar.gz) = cccc3333\n" +
-		"SHA512 (dup.tar.gz) = dddd4444\n"
+func TestReadSourcesFile(t *testing.T) {
+	t.Run("empty content yields nil slice", func(t *testing.T) {
+		lines, err := ReadSourcesFile("")
 
-	entries, err := ReadSourcesFileEntries(content)
+		require.NoError(t, err)
+		assert.Nil(t, lines)
+	})
 
-	require.NoError(t, err)
-	require.Len(t, entries, 2)
+	t.Run("preserves comments and blank lines verbatim alongside entries", func(t *testing.T) {
+		// Each element is one line of the input 'sources' file. Joining with "\n"
+		// plus a trailing "\n" yields the on-disk form, while keeping the per-line
+		// view that lets us assert lines[i].Raw == content[i] in a loop.
+		content := []string{
+			"# top comment",
+			"",
+			"SHA512 (one.tar.gz) = aabbcc",
+			"# inline comment",
+			"",
+			"SHA256 (two.patch) = ddeeff",
+		}
 
-	// 'dup.tar.gz' keeps its first-occurrence position (index 0) but holds the latest hash.
-	assert.Equal(t, "dup.tar.gz", entries[0].Filename)
-	assert.Equal(t, "dddd4444", entries[0].Hash)
+		lines, err := ReadSourcesFile(strings.Join(content, "\n") + "\n")
 
-	assert.Equal(t, "other.tar.gz", entries[1].Filename)
-	assert.Equal(t, "bbbb2222", entries[1].Hash)
+		require.NoError(t, err)
+		require.Len(t, lines, len(content))
+
+		// Every line's Raw text must be preserved verbatim, in order.
+		for i, expectedRaw := range content {
+			assert.Equal(t, expectedRaw, lines[i].Raw, "lines[%d].Raw mismatch", i)
+		}
+
+		// Comment and blank lines have no parsed entry.
+		assert.Nil(t, lines[0].Entry, "top-level comment must not have an Entry")
+		assert.Nil(t, lines[1].Entry, "leading blank line must not have an Entry")
+		assert.Nil(t, lines[3].Entry, "inline comment must not have an Entry")
+		assert.Nil(t, lines[4].Entry, "blank line between entries must not have an Entry")
+
+		// Entry lines have a fully-populated parsed entry.
+		require.NotNil(t, lines[2].Entry)
+		assert.Equal(t, "one.tar.gz", lines[2].Entry.Filename)
+		assert.Equal(t, fileutils.HashTypeSHA512, lines[2].Entry.HashType)
+		assert.Equal(t, "aabbcc", lines[2].Entry.Hash)
+
+		require.NotNil(t, lines[5].Entry)
+		assert.Equal(t, "two.patch", lines[5].Entry.Filename)
+		assert.Equal(t, fileutils.HashTypeSHA256, lines[5].Entry.HashType)
+		assert.Equal(t, "ddeeff", lines[5].Entry.Hash)
+	})
+
+	t.Run("drops trailing empty element produced by terminating newline", func(t *testing.T) {
+		// "foo\n" splits to ["foo", ""]. Re-joining ["foo"] with "\n" + final "\n" gives
+		// "foo\n" (well-formed). If the trailing "" weren't dropped, the result would be
+		// "foo\n\n" — a doubled blank line at the end.
+		lines, err := ReadSourcesFile("SHA512 (only.tar.gz) = abc123\n")
+
+		require.NoError(t, err)
+		require.Len(t, lines, 1)
+		assert.Equal(t, "SHA512 (only.tar.gz) = abc123", lines[0].Raw)
+		require.NotNil(t, lines[0].Entry)
+	})
+
+	t.Run("preserves a final blank line when content has no terminating newline", func(t *testing.T) {
+		// "a\n\n" splits to ["a", "", ""]; the trailing "" is dropped, leaving the
+		// intentional middle blank line intact.
+		lines, err := ReadSourcesFile("SHA512 (a.tar.gz) = abc\n\n")
+
+		require.NoError(t, err)
+		require.Len(t, lines, 2)
+		assert.Equal(t, "SHA512 (a.tar.gz) = abc", lines[0].Raw)
+		require.NotNil(t, lines[0].Entry)
+		assert.Empty(t, lines[1].Raw)
+		assert.Nil(t, lines[1].Entry)
+	})
+
+	t.Run("malformed line returns error citing the line number and inner cause", func(t *testing.T) {
+		content := "SHA512 (good.tar.gz) = abc123\n" +
+			"this is not a valid entry line\n"
+
+		lines, err := ReadSourcesFile(content)
+
+		require.Error(t, err)
+		assert.Nil(t, lines)
+		// Outer wrapping from ReadSourcesFile.
+		assert.Contains(t, err.Error(), "invalid entry in 'sources' file")
+		assert.Contains(t, err.Error(), "line 2")
+		// Inner cause from parseSourcesEntryLine, including the offending text.
+		assert.Contains(t, err.Error(), "does not match")
+		assert.Contains(t, err.Error(), "this is not a valid entry line")
+	})
+
+	t.Run("duplicate filename is an error citing both line numbers", func(t *testing.T) {
+		content := "SHA512 (dup.tar.gz) = aaaa\n" +
+			"# spacer comment\n" +
+			"SHA512 (dup.tar.gz) = bbbb\n"
+
+		lines, err := ReadSourcesFile(content)
+
+		require.Error(t, err)
+		assert.Nil(t, lines)
+		assert.Contains(t, err.Error(), "duplicate filename")
+		assert.Contains(t, err.Error(), "dup.tar.gz")
+		// The intervening comment line counts toward the line numbering.
+		assert.Contains(t, err.Error(), "line 3")
+		assert.Contains(t, err.Error(), "line 1")
+	})
+}
+
+func TestIsBlankOrComment(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+		want bool
+	}{
+		{name: "empty string is blank", line: "", want: true},
+		{name: "whitespace-only is blank", line: "   \t  ", want: true},
+		{name: "leading hash is comment", line: "# hello", want: true},
+		{name: "indented hash is comment", line: "   # indented", want: true},
+		{name: "tab-indented hash is comment", line: "\t# tabbed", want: true},
+		{name: "valid modern entry is not blank/comment", line: "SHA512 (a.tar.gz) = abc", want: false},
+		{name: "valid legacy entry is not blank/comment", line: "abc123  a.tar.gz", want: false},
+		{name: "hash mid-line is not comment", line: "SHA512 # not a comment", want: false},
+		{name: "garbage non-empty line is not blank/comment", line: "garbage here", want: false},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			assert.Equal(t, testCase.want, isBlankOrComment(testCase.line))
+		})
+	}
+}
+
+func TestParseSourcesEntryLine(t *testing.T) {
+	tests := []struct {
+		name              string
+		line              string
+		wantErr           bool
+		wantErrSubstrings []string
+		wantFilename      string
+		wantHashType      fileutils.HashType
+		wantHash          string
+	}{
+		{
+			name:         "modern SHA512 entry parses",
+			line:         "SHA512 (file.tar.gz) = abc123",
+			wantFilename: "file.tar.gz",
+			wantHashType: fileutils.HashTypeSHA512,
+			wantHash:     "abc123",
+		},
+		{
+			name:         "modern SHA256 entry parses",
+			line:         "SHA256 (patch-1.patch) = deadbeef",
+			wantFilename: "patch-1.patch",
+			wantHashType: fileutils.HashTypeSHA256,
+			wantHash:     "deadbeef",
+		},
+		{
+			name:         "legacy MD5 entry parses with implicit MD5 hash type",
+			line:         "abc123def456  legacy.tar.gz",
+			wantFilename: "legacy.tar.gz",
+			wantHashType: fileutils.HashTypeMD5,
+			wantHash:     "abc123def456",
+		},
+		{
+			name:         "leading and trailing whitespace are trimmed before matching",
+			line:         "   SHA512 (file.tar.gz) = abc123   ",
+			wantFilename: "file.tar.gz",
+			wantHashType: fileutils.HashTypeSHA512,
+			wantHash:     "abc123",
+		},
+		{
+			name:              "empty line is rejected (caller is expected to skip blanks first)",
+			line:              "",
+			wantErr:           true,
+			wantErrSubstrings: []string{"does not match"},
+		},
+		{
+			name:              "comment line is rejected (caller is expected to skip comments first)",
+			line:              "# a comment",
+			wantErr:           true,
+			wantErrSubstrings: []string{"does not match"},
+		},
+		{
+			name:              "garbage text is rejected with the offending line in the error",
+			line:              "this is not a 'sources' line",
+			wantErr:           true,
+			wantErrSubstrings: []string{"does not match", "this is not a 'sources' line"},
+		},
+		{
+			name:              "modern format with non-hex hash is rejected",
+			line:              "SHA512 (file.tar.gz) = not-hex-here",
+			wantErr:           true,
+			wantErrSubstrings: []string{"does not match"},
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			entry, err := parseSourcesEntryLine(testCase.line)
+
+			if testCase.wantErr {
+				require.Error(t, err)
+				assert.Equal(t, SourcesFileEntry{}, entry)
+
+				for _, substring := range testCase.wantErrSubstrings {
+					assert.Contains(t, err.Error(), substring)
+				}
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, testCase.wantFilename, entry.Filename)
+			assert.Equal(t, testCase.wantHashType, entry.HashType)
+			assert.Equal(t, testCase.wantHash, entry.Hash)
+		})
+	}
 }
 
 func TestBuildLookasideURL(t *testing.T) {

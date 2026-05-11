@@ -45,7 +45,7 @@ type extractOptions struct {
 type ExtractOption func(*extractOptions)
 
 // WithOutputDir specifies a separate directory for downloaded files.
-// When set, the sources file is read from repoDir but files are
+// When set, the 'sources' file is read from repoDir but files are
 // downloaded into outputDir instead.
 func WithOutputDir(dir string) ExtractOption {
 	return func(o *extractOptions) {
@@ -73,7 +73,7 @@ var _ FedoraSourceDownloader = (*FedoraSourceDownloaderImpl)(nil)
 //	3: Hash value (e.g., "a1b2c3d4e5f6...")
 var sourcesFilePattern = regexp.MustCompile(`^([A-Z0-9]+)\s+\(([^)]+)\)\s+=\s+([a-fA-F0-9]+)$`)
 
-// sourcesFileLegacyPattern matches lines in the legacy sources file format.
+// sourcesFileLegacyPattern matches lines in the legacy 'sources' file format.
 // This is the older format used by some packages, typically with MD5 hashes.
 // Example line: "7b74551e63f8ee6aab6fbc86676c0d37  zip30.tar.gz"
 // Capture groups:
@@ -103,8 +103,21 @@ type sourceFileInfo struct {
 	expectedHash string
 }
 
-// SourcesFileEntry represents a parsed entry from a Fedora/RHEL sources file.
-// This struct is used for both reading existing sources files and generating new entries.
+// SourcesFileLine represents a single line of a Fedora/RHEL 'sources' file in
+// the form returned by [ReadSourcesFile]. The original line text is always
+// preserved in [SourcesFileLine.Raw] so that comments and blank lines can be
+// emitted verbatim during in-place merges. [SourcesFileLine.Entry] is non-nil
+// only when the line contains a valid 'sources' entry.
+type SourcesFileLine struct {
+	// Raw is the original line as it appeared in the file (without the
+	// terminating newline).
+	Raw string
+	// Entry is the parsed entry for this line, or nil for blank/comment lines.
+	Entry *SourcesFileEntry
+}
+
+// SourcesFileEntry represents a parsed entry from a Fedora/RHEL 'sources' file.
+// This struct is used for both reading existing 'sources' files and generating new entries.
 type SourcesFileEntry struct {
 	Filename string
 	HashType fileutils.HashType
@@ -177,10 +190,10 @@ func (g *FedoraSourceDownloaderImpl) ExtractSourcesFromRepo(
 
 	sourcesExists, err := fileutils.Exists(g.fileSystem, sourcesFilePath)
 	if err != nil {
-		return fmt.Errorf("failed to check if sources file exists at %#q:\n%w", sourcesFilePath, err)
+		return fmt.Errorf("failed to check if 'sources' file exists at %#q:\n%w", sourcesFilePath, err)
 	}
 
-	// If the sources file does not exist, there are no external sources to download.
+	// If the 'sources' file does not exist, there are no external sources to download.
 	if !sourcesExists {
 		slog.Info("No 'sources' file found, nothing to download", "dir", repoDir)
 
@@ -189,12 +202,12 @@ func (g *FedoraSourceDownloaderImpl) ExtractSourcesFromRepo(
 
 	sourcesContent, err := fileutils.ReadFile(g.fileSystem, sourcesFilePath)
 	if err != nil {
-		return fmt.Errorf("failed to read sources file at %#q:\n%w", sourcesFilePath, err)
+		return fmt.Errorf("failed to read 'sources' file at %#q:\n%w", sourcesFilePath, err)
 	}
 
 	sourceFiles, err := parseSourcesFile(string(sourcesContent), packageName, lookasideBaseURI)
 	if err != nil {
-		return fmt.Errorf("failed to parse sources file at %#q:\n%w", sourcesFilePath, err)
+		return fmt.Errorf("failed to parse 'sources' file at %#q:\n%w", sourcesFilePath, err)
 	}
 
 	skipSet := make(map[string]bool, len(skipFileNames))
@@ -298,19 +311,25 @@ func (g *FedoraSourceDownloaderImpl) validateDownloadedFile(
 	return nil
 }
 
-// parseSourcesFile parses the content of a Fedora/RHEL sources file and returns
+// parseSourcesFile parses the content of a Fedora/RHEL 'sources' file and returns
 // the list of source files to download. It supports both the modern format
 // (e.g., "SHA512 (file.tar.gz) = abc123...") and the legacy MD5 format
 // (e.g., "abc123...  file.tar.gz").
 func parseSourcesFile(content string, packageName string, lookasideBaseURI string) ([]sourceFileInfo, error) {
-	entries, err := ReadSourcesFileEntries(content)
+	parsedLines, err := ReadSourcesFile(content)
 	if err != nil {
 		return nil, err
 	}
 
-	sourceFiles := make([]sourceFileInfo, 0, len(entries))
+	sourceFiles := make([]sourceFileInfo, 0, len(parsedLines))
 
-	for _, entry := range entries {
+	for _, line := range parsedLines {
+		if line.Entry == nil {
+			continue
+		}
+
+		entry := *line.Entry
+
 		sourceURI, err := BuildLookasideURL(
 			lookasideBaseURI, packageName, entry.Filename,
 			string(entry.HashType), entry.Hash,
@@ -321,7 +340,7 @@ func parseSourcesFile(content string, packageName string, lookasideBaseURI strin
 
 		// Validate the filename to prevent path traversal attacks from crafted sources entries.
 		if err := fileutils.ValidateFilename(entry.Filename); err != nil {
-			return nil, fmt.Errorf("unsafe filename in sources file %#q:\n%w", entry.Filename, err)
+			return nil, fmt.Errorf("unsafe filename in 'sources' file %#q:\n%w", entry.Filename, err)
 		}
 
 		sourceFiles = append(sourceFiles, sourceFileInfo{
@@ -335,85 +354,101 @@ func parseSourcesFile(content string, packageName string, lookasideBaseURI strin
 	return sourceFiles, nil
 }
 
-// ReadSourcesFileEntries parses the content of a Fedora/RHEL sources file and returns
-// the list of source file entries. It supports both the modern format
+// ReadSourcesFile parses the content of a Fedora/RHEL 'sources' file and returns
+// every line in order, preserving comments and blank lines verbatim alongside
+// parsed entries. It supports both the modern format
 // (e.g., "SHA512 (file.tar.gz) = abc123...") and the legacy MD5 format
 // (e.g., "abc123...  file.tar.gz").
 //
-// If the same filename appears more than once, the duplicate is logged at WARN
-// level and the entry's value is overwritten with the most-recently-seen line;
-// the entry retains the position of its first occurrence in the returned slice.
-func ReadSourcesFileEntries(content string) ([]SourcesFileEntry, error) {
-	lines := strings.Split(content, "\n")
-
-	entries := make([]SourcesFileEntry, 0, len(lines))
-	indexByName := make(map[string]int, len(lines))
-
-	for lineNum, line := range lines {
-		line = strings.TrimSpace(line)
-
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-
-		var (
-			hashType string
-			fileName string
-			hash     string
-		)
-
-		// Try modern format first
-		matches := sourcesFilePattern.FindStringSubmatch(line)
-		if matches != nil {
-			hashType = matches[sourcesPatternHashTypeIndex]
-			fileName = matches[sourcesPatternFilenameIndex]
-			hash = matches[sourcesPatternHashValueIndex]
-		} else {
-			// Try legacy format before failing
-			legacyMatches := sourcesFileLegacyPattern.FindStringSubmatch(line)
-			if legacyMatches == nil {
-				return nil, fmt.Errorf("invalid format in sources file at line %d: %#q", lineNum+1, line)
-			}
-
-			hash = legacyMatches[sourcesLegacyPatternHashValueIndex]
-			fileName = legacyMatches[sourcesLegacyPatternFilenameIndex]
-
-			// Legacy format historically only used MD5
-			hashType = string(fileutils.HashTypeMD5)
-		}
-
-		newEntry := SourcesFileEntry{
-			Filename: fileName,
-			HashType: fileutils.HashType(hashType),
-			Hash:     hash,
-		}
-
-		if existingIdx, exists := indexByName[fileName]; exists {
-			previous := entries[existingIdx]
-			slog.Warn(
-				"Duplicate filename in 'sources' file; "+
-					"overwriting the previous entry with the most-recently-seen value "+
-					"(the entry keeps its original position)",
-				"filename", fileName,
-				"line", lineNum+1,
-				"previousHashType", previous.HashType,
-				"previousHash", previous.Hash,
-				"newHashType", newEntry.HashType,
-				"newHash", newEntry.Hash,
-			)
-			entries[existingIdx] = newEntry
-
-			continue
-		}
-
-		indexByName[fileName] = len(entries)
-		entries = append(entries, newEntry)
+// A duplicate filename in the input is treated as an error: a 'sources' file with
+// two entries for the same filename is malformed and silently picking one would
+// be unsafe. A trailing empty element produced by a final newline in [content]
+// is dropped so that callers can re-join lines with "\n" plus a single
+// terminating newline without producing a doubled trailing blank line.
+func ReadSourcesFile(content string) ([]SourcesFileLine, error) {
+	if content == "" {
+		return nil, nil
 	}
 
-	return entries, nil
+	rawLines := strings.Split(content, "\n")
+
+	// Drop the trailing empty element that strings.Split yields for content
+	// terminated by "\n", so re-joining produces a well-formed file.
+	if rawLines[len(rawLines)-1] == "" {
+		rawLines = rawLines[:len(rawLines)-1]
+	}
+
+	parsedLines := make([]SourcesFileLine, 0, len(rawLines))
+	seen := make(map[string]int, len(rawLines))
+
+	for lineNum, rawLine := range rawLines {
+		if isBlankOrComment(rawLine) {
+			parsedLines = append(parsedLines, SourcesFileLine{Raw: rawLine})
+
+			continue
+		}
+
+		entry, err := parseSourcesEntryLine(rawLine)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"invalid entry in 'sources' file at line %d:\n%w",
+				lineNum+1, err)
+		}
+
+		if previousLine, exists := seen[entry.Filename]; exists {
+			return nil, fmt.Errorf(
+				"duplicate filename %#q in 'sources' file at line %d (already defined at line %d)",
+				entry.Filename, lineNum+1, previousLine)
+		}
+
+		seen[entry.Filename] = lineNum + 1
+		parsedLines = append(parsedLines, SourcesFileLine{Raw: rawLine, Entry: &entry})
+	}
+
+	return parsedLines, nil
 }
 
-// FormatSourcesEntry formats a sources file entry in the modern Fedora/RHEL format.
+// isBlankOrComment reports whether the given line of a Fedora/RHEL 'sources'
+// file is a blank line or a comment line (starts with '#' after trimming
+// whitespace). Such lines are skipped during entry extraction and preserved
+// verbatim during in-place merges.
+func isBlankOrComment(line string) bool {
+	trimmed := strings.TrimSpace(line)
+
+	return trimmed == "" || strings.HasPrefix(trimmed, "#")
+}
+
+// parseSourcesEntryLine parses a single non-blank, non-comment line of a
+// Fedora/RHEL 'sources' file into a [SourcesFileEntry]. It supports both the
+// modern format ("SHA512 (file) = hash") and the legacy MD5 format ("hash file").
+// Returns the parsed entry on success, or an error describing why the line could
+// not be parsed. Callers must use [isBlankOrComment] first to skip lines that
+// are not entries.
+func parseSourcesEntryLine(line string) (SourcesFileEntry, error) {
+	trimmed := strings.TrimSpace(line)
+
+	if matches := sourcesFilePattern.FindStringSubmatch(trimmed); matches != nil {
+		return SourcesFileEntry{
+			Filename: matches[sourcesPatternFilenameIndex],
+			HashType: fileutils.HashType(matches[sourcesPatternHashTypeIndex]),
+			Hash:     matches[sourcesPatternHashValueIndex],
+		}, nil
+	}
+
+	if matches := sourcesFileLegacyPattern.FindStringSubmatch(trimmed); matches != nil {
+		return SourcesFileEntry{
+			Filename: matches[sourcesLegacyPatternFilenameIndex],
+			HashType: fileutils.HashTypeMD5,
+			Hash:     matches[sourcesLegacyPatternHashValueIndex],
+		}, nil
+	}
+
+	return SourcesFileEntry{}, fmt.Errorf(
+		"line %#q does not match the modern 'HASHTYPE (filename) = hash' format "+
+			"or the legacy 'hash filename' format", trimmed)
+}
+
+// FormatSourcesEntry formats a 'sources' file entry in the modern Fedora/RHEL format.
 // Example output: "SHA512 (example-1.0.tar.gz) = a1b2c3d4e5f6..."
 //
 // The [hashType] must be a canonical [fileutils.HashType] constant.

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
@@ -204,17 +205,20 @@ func validateSourceFiles(sourceFiles []SourceFileReference, componentName string
 
 // validateReplaceUpstream enforces the pairing rules for the 'replace-upstream' and
 // 'replace-reason' fields on a [SourceFileReference]:
-//   - 'replace-upstream = true' requires a non-empty 'replace-reason'.
+//   - 'replace-upstream = true' requires a non-empty 'replace-reason' (whitespace-only
+//     values do not count).
 //   - 'replace-reason' may only be set when 'replace-upstream = true'.
 func validateReplaceUpstream(ref SourceFileReference, componentName string) error {
-	if ref.ReplaceUpstream && ref.ReplaceReason == "" {
+	trimmedReason := strings.TrimSpace(ref.ReplaceReason)
+
+	if ref.ReplaceUpstream && trimmedReason == "" {
 		return fmt.Errorf(
 			"source file %#q in component %#q has 'replace-upstream = true' but no 'replace-reason'; "+
 				"a non-empty 'replace-reason' is required to document the override",
 			ref.Filename, componentName)
 	}
 
-	if !ref.ReplaceUpstream && ref.ReplaceReason != "" {
+	if !ref.ReplaceUpstream && trimmedReason != "" {
 		return fmt.Errorf(
 			"source file %#q in component %#q has 'replace-reason' set but 'replace-upstream' is not true; "+
 				"'replace-reason' is only valid when 'replace-upstream = true'",
