@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -638,16 +637,13 @@ func readLockFileAtHEAD(
 
 	// File genuinely missing — the component has no overlays, so the
 	// dist-git is just the upstream as-is and no synthetic commits
-	// are needed.
-	//nolint:godox // tracked by TODO(lockfiles) tag.
-	// TODO(lockfiles): remove env var gate and make this a hard error unconditionally.
-	if os.Getenv("AZLDEV_ENABLE_LOCK_VALIDATION") == "1" {
-		return nil, fmt.Errorf("lock file %#q not found at HEAD:\n%w",
-			lockFileRelPath, lockFileErr)
-	}
-
+	// are needed. This is expected for local components and for
+	// upstream components that haven't been committed yet.
+	// Lock validation (in the resolver) catches missing locks for
+	// upstream components before we reach this point, so a missing
+	// file here is always safe to skip.
 	slog.Debug("No lock file found at HEAD; skipping synthetic history",
-		"lockFile", lockFileRelPath, "error", lockFileErr)
+		"lockFile", lockFileRelPath)
 
 	return nil, nil //nolint:nilnil // nil,nil signals "not found, skip" to caller.
 }
