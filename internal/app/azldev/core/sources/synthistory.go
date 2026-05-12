@@ -642,7 +642,7 @@ func readLockFileAtHEAD(
 	// tree), not in git — so a lock written by 'component update' but not
 	// yet committed passes resolver validation but is absent at HEAD.
 	slog.Debug("No lock file found at HEAD; skipping synthetic history",
-		"lockFile", lockFileRelPath)
+		"lockFile", lockFileRelPath, "reason", lockFileErr)
 
 	return nil, nil //nolint:nilnil // nil,nil signals "not found, skip" to caller.
 }
