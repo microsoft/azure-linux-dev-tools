@@ -343,7 +343,7 @@ func mustGetFingerprint(t *testing.T, store *lockfile.Store, name string) string
 // where a pre-existing lock at commit A and an upstream that has moved to
 // commit B must result in B being written (not A echoed back). Without
 // clearing populated lock data before re-resolution, the source provider's
-// locked-commit short-circuit in CalculateSourceIdentity would return A and the
+// locked-commit short-circuit in ResolveIdentity would return A and the
 // lock would never advance.
 func TestUpdateComponents_AdvancesStaleLock(t *testing.T) {
 	env := testutils.NewTestEnv(t)

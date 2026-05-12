@@ -34,7 +34,7 @@ A guard test (`TestAllFingerprintedFieldsHaveDecision`) reflects over all finger
 ### Adding a New Source Type
 
 1. Implement `SourceIdentityProvider` on your provider (see `ResolveLocalSourceIdentity` in `localidentity.go` for a simple example).
-2. Add a case to `sourceManager.CalculateSourceIdentity()` in `sourcemanager.go`.
+2. Add a case to `sourceManager.ResolveSourceIdentity()` in `sourcemanager.go`.
 3. Add tests in `identityprovider_test.go`.
 
 ## Known Limitations
