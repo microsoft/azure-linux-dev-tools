@@ -646,18 +646,25 @@ func TestDiffSources_FetchError(t *testing.T) {
 	require.ErrorIs(t, err, expectedErr)
 }
 
+//nolint:maintidx // Test table complexity scales with the number of source-file merge scenarios.
 func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 	validOrigin := projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/new-source.tar.gz"}
 	tests := []struct {
-		name                   string
-		sourceFiles            []projectconfig.SourceFileReference
-		existingSourcesContent string
-		expectError            bool
-		errorContains          []string
-		expectedSourceEntries  []string
+		name                        string
+		sourceFiles                 []projectconfig.SourceFileReference
+		existingSourcesContent      string
+		expectError                 bool
+		errorContains               []string
+		expectedSourceEntries       []string
+		expectedSourceEntriesAbsent []string
+		// expectedExactContent, when non-empty, asserts the merged 'sources' file matches
+		// this string byte-for-byte. Use this for cases where blank-line and comment
+		// preservation must be verified exactly (substring checks alone don't catch
+		// dropped or extra blank lines).
+		expectedExactContent string
 	}{
 		{
-			name: "adds new entry to existing sources file",
+			name: "adds new entry to existing 'sources' file",
 			sourceFiles: []projectconfig.SourceFileReference{
 				{
 					Filename: "extra-source.tar.gz",
@@ -673,10 +680,10 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 			},
 		},
 		{
-			name: "error on duplicate filename in sources file",
+			name: "error on filename collision when replace-upstream is not set",
 			sourceFiles: []projectconfig.SourceFileReference{
 				{
-					Filename: "existing.tar.gz", // Already in sources file.
+					Filename: "existing.tar.gz", // Already in 'sources' file.
 					Hash:     "11223344aabb",
 					HashType: fileutils.HashTypeSHA512,
 					Origin:   validOrigin,
@@ -687,6 +694,189 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 			errorContains: []string{
 				"existing.tar.gz",
 				"conflicts with an existing entry",
+				"replace-upstream = true",
+			},
+		},
+		{
+			name: "replaces upstream entry in place when replace-upstream is true",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename:        "existing.tar.gz", // Already in 'sources' file.
+					Hash:            "deadbeefcafe",
+					HashType:        fileutils.HashTypeSHA512,
+					Origin:          validOrigin,
+					ReplaceUpstream: true,
+					ReplaceReason:   "patched to fix CVE-2026-0001",
+				},
+			},
+			existingSourcesContent: "SHA512 (existing.tar.gz) = aabbccdd1122\nSHA512 (other.tar.gz) = 99887766\n",
+			// The replacement must occupy the original position of 'existing.tar.gz' (line 1),
+			// not be shuffled to the end. Order is asserted by the surrounding test logic.
+			expectedSourceEntries: []string{
+				"SHA512 (existing.tar.gz) = deadbeefcafe",
+				"SHA512 (other.tar.gz) = 99887766",
+			},
+			expectedSourceEntriesAbsent: []string{
+				"SHA512 (existing.tar.gz) = aabbccdd1122",
+			},
+		},
+		{
+			name: "new entries are appended after upstream entries",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename:        "existing.tar.gz", // Replacement (in-place).
+					Hash:            "deadbeefcafe",
+					HashType:        fileutils.HashTypeSHA512,
+					Origin:          validOrigin,
+					ReplaceUpstream: true,
+					ReplaceReason:   "patched",
+				},
+				{
+					Filename: "brand-new.tar.gz", // Net-new (appended).
+					Hash:     "abc123def456",
+					HashType: fileutils.HashTypeSHA512,
+					Origin:   validOrigin,
+				},
+			},
+			existingSourcesContent: "SHA512 (existing.tar.gz) = aabbccdd1122\nSHA512 (other.tar.gz) = 99887766\n",
+			// Order matters: replacement keeps line 1; line 2 is the untouched upstream entry;
+			// brand-new entry is appended at the end.
+			expectedSourceEntries: []string{
+				"SHA512 (existing.tar.gz) = deadbeefcafe",
+				"SHA512 (other.tar.gz) = 99887766",
+				"SHA512 (brand-new.tar.gz) = abc123def456",
+			},
+		},
+		{
+			name: "multiple replace-upstream entries are all swapped in place",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename:        "first.tar.gz",
+					Hash:            "1111aaaa",
+					HashType:        fileutils.HashTypeSHA512,
+					Origin:          validOrigin,
+					ReplaceUpstream: true,
+					ReplaceReason:   "patched first",
+				},
+				{
+					Filename:        "third.tar.gz",
+					Hash:            "3333cccc",
+					HashType:        fileutils.HashTypeSHA512,
+					Origin:          validOrigin,
+					ReplaceUpstream: true,
+					ReplaceReason:   "patched third",
+				},
+				{
+					Filename: "appended.tar.gz",
+					Hash:     "9999ffff",
+					HashType: fileutils.HashTypeSHA512,
+					Origin:   validOrigin,
+				},
+			},
+			existingSourcesContent: "SHA512 (first.tar.gz) = aaaa1111\n" +
+				"SHA512 (second.tar.gz) = bbbb2222\n" +
+				"SHA512 (third.tar.gz) = cccc3333\n",
+			// Both replacements occupy their original positions; the untouched 'second'
+			// entry stays between them; brand-new entry lands at the end.
+			expectedSourceEntries: []string{
+				"SHA512 (first.tar.gz) = 1111aaaa",
+				"SHA512 (second.tar.gz) = bbbb2222",
+				"SHA512 (third.tar.gz) = 3333cccc",
+				"SHA512 (appended.tar.gz) = 9999ffff",
+			},
+			expectedSourceEntriesAbsent: []string{
+				"SHA512 (first.tar.gz) = aaaa1111",
+				"SHA512 (third.tar.gz) = cccc3333",
+			},
+		},
+		{
+			name: "comments and blank lines in upstream 'sources' file are preserved verbatim",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename:        "patched.tar.gz",
+					Hash:            "deadbeefcafe",
+					HashType:        fileutils.HashTypeSHA512,
+					Origin:          validOrigin,
+					ReplaceUpstream: true,
+					ReplaceReason:   "patched",
+				},
+				{
+					Filename: "extra.tar.gz",
+					Hash:     "abc123",
+					HashType: fileutils.HashTypeSHA512,
+					Origin:   validOrigin,
+				},
+			},
+			// The blank lines between entries and the comments above each entry must be
+			// preserved at their original positions; only the matching entry line is swapped.
+			existingSourcesContent: "# top-level comment about the package\n" +
+				"\n" +
+				"# comment about the patched archive\n" +
+				"SHA512 (patched.tar.gz) = aabbccdd1122\n" +
+				"\n" +
+				"# comment about the untouched archive\n" +
+				"SHA512 (untouched.tar.gz) = 99887766\n",
+			// Asserting byte-for-byte equality here is what guarantees that the blank
+			// lines (between the top-level comment and the patched-archive section, and
+			// between the patched and untouched sections) survive the merge intact.
+			expectedExactContent: "# top-level comment about the package\n" +
+				"\n" +
+				"# comment about the patched archive\n" +
+				"SHA512 (patched.tar.gz) = deadbeefcafe\n" +
+				"\n" +
+				"# comment about the untouched archive\n" +
+				"SHA512 (untouched.tar.gz) = 99887766\n" +
+				"SHA512 (extra.tar.gz) = abc123\n",
+			expectedSourceEntries: []string{
+				"# top-level comment about the package",
+				"# comment about the patched archive",
+				"SHA512 (patched.tar.gz) = deadbeefcafe",
+				"# comment about the untouched archive",
+				"SHA512 (untouched.tar.gz) = 99887766",
+				"SHA512 (extra.tar.gz) = abc123",
+			},
+			expectedSourceEntriesAbsent: []string{
+				"SHA512 (patched.tar.gz) = aabbccdd1122",
+			},
+		},
+		{
+			name: "duplicate filename in upstream 'sources' file is rejected as malformed",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename: "extra.tar.gz",
+					Hash:     "abc123",
+					HashType: fileutils.HashTypeSHA512,
+					Origin:   validOrigin,
+				},
+			},
+			// Two entries for the same filename in the upstream file is malformed; merge
+			// must error rather than silently picking one.
+			existingSourcesContent: "SHA512 (dup.tar.gz) = aaaa1111\nSHA512 (dup.tar.gz) = bbbb2222\n",
+			expectError:            true,
+			errorContains: []string{
+				"failed to parse existing 'sources' file",
+				"duplicate filename",
+				"dup.tar.gz",
+			},
+		},
+		{
+			name: "error when replace-upstream true but no matching upstream entry",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename:        "not-in-upstream.tar.gz",
+					Hash:            "abc123",
+					HashType:        fileutils.HashTypeSHA512,
+					Origin:          validOrigin,
+					ReplaceUpstream: true,
+					ReplaceReason:   "intended to override (typo demo)",
+				},
+			},
+			existingSourcesContent: "SHA512 (existing.tar.gz) = aabbccdd1122\n",
+			expectError:            true,
+			errorContains: []string{
+				"not-in-upstream.tar.gz",
+				"replace-upstream = true",
+				"no entry with that filename exists",
 			},
 		},
 		{
@@ -716,7 +906,7 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 			errorContains: []string{"missing-hashtype.tar.gz", "has a 'hash' value but no 'hash-type'"},
 		},
 		{
-			name: "creates sources file if not exists",
+			name: "creates 'sources' file if not exists",
 			sourceFiles: []projectconfig.SourceFileReference{
 				{
 					Filename: "new-source.tar.gz",
@@ -748,7 +938,7 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 			sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil)
 			sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).DoAndReturn(
 				func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
-					// Create existing sources file if specified.
+					// Create existing 'sources' file if specified.
 					if testCase.existingSourcesContent != "" {
 						err := fileutils.WriteFile(ctx.FS(), filepath.Join(outputDir, fedorasource.SourcesFileName),
 							[]byte(testCase.existingSourcesContent), fileperms.PublicFile)
@@ -777,13 +967,37 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 
 			require.NoError(t, err)
 
-			if len(testCase.expectedSourceEntries) > 0 {
+			if len(testCase.expectedSourceEntries) > 0 || len(testCase.expectedSourceEntriesAbsent) > 0 ||
+				testCase.expectedExactContent != "" {
 				sourcesFilePath := filepath.Join(testOutputDir, fedorasource.SourcesFileName)
 				sourcesContent, err := fileutils.ReadFile(ctx.FS(), sourcesFilePath)
 				require.NoError(t, err)
 
+				if testCase.expectedExactContent != "" {
+					assert.Equal(t, testCase.expectedExactContent, string(sourcesContent),
+						"merged 'sources' file does not match expected byte content "+
+							"(blank-line / comment preservation regression?)")
+				}
+
+				// Verify substrings are present and appear in the same order they were
+				// declared in expectedSourceEntries (catches accidental reordering, e.g. an
+				// in-place replacement being shuffled to the end of the file).
+				lastIdx := -1
+
 				for _, expectedEntry := range testCase.expectedSourceEntries {
-					assert.Contains(t, string(sourcesContent), expectedEntry)
+					idx := strings.Index(string(sourcesContent), expectedEntry)
+					assert.GreaterOrEqual(t, idx, 0,
+						"expected entry %q not found in 'sources' file content:\n%s",
+						expectedEntry, string(sourcesContent))
+					assert.Greater(t, idx, lastIdx,
+						"expected entry %q appears before earlier entry; ordering violated",
+						expectedEntry)
+					lastIdx = idx
+				}
+
+				for _, absentEntry := range testCase.expectedSourceEntriesAbsent {
+					assert.NotContains(t, string(sourcesContent), absentEntry,
+						"upstream entry should have been removed by replace-upstream")
 				}
 			}
 		})
@@ -810,6 +1024,10 @@ func TestPrepareSources_AllowNoHashes(t *testing.T) {
 		expectError            bool
 		errorContains          []string
 		expectedSourceEntries  []string
+		// forbiddenSourceEntries are substrings that must NOT appear in the
+		// final 'sources' file (e.g. the original upstream hash after a
+		// 'replace-upstream' merge).
+		forbiddenSourceEntries []string
 	}{
 		{
 			name: "computes hash with provided hash type",
@@ -868,6 +1086,39 @@ func TestPrepareSources_AllowNoHashes(t *testing.T) {
 			createFile:    false,
 			expectError:   true,
 			errorContains: []string{"test-file.tar.gz", "downloads were skipped"},
+		},
+		{
+			// Combining 'allow-no-hashes' with 'replace-upstream' must compute the fresh
+			// hash from the on-disk file *and* swap the upstream entry in place, instead
+			// of erroring on the filename collision or appending a duplicate entry.
+			name: "replace-upstream with allow-no-hashes computes fresh hash and replaces upstream entry",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename: "test-file.tar.gz",
+					HashType: fileutils.HashTypeSHA256,
+					Origin: projectconfig.Origin{
+						Type: projectconfig.OriginTypeURI,
+						Uri:  "https://example.com/test-file.tar.gz",
+					},
+					ReplaceUpstream: true,
+					ReplaceReason:   "patched to fix upstream regression",
+				},
+			},
+			preparerOpts: []sources.PreparerOption{sources.WithAllowNoHashes()},
+			createFile:   true,
+			existingSourcesContent: "SHA256 (test-file.tar.gz) = " +
+				"0000000000000000000000000000000000000000000000000000000000000000\n" +
+				"SHA512 (other.tar.gz) = aabbcc\n",
+			expectedSourceEntries: []string{
+				// Replacement entry uses the freshly computed hash, not the upstream value.
+				"SHA256 (test-file.tar.gz) = " + testFileSHA256,
+				// Untouched sibling entry is preserved.
+				"SHA512 (other.tar.gz) = aabbcc",
+			},
+			forbiddenSourceEntries: []string{
+				// The upstream stub hash must be gone; the entry was replaced, not duplicated.
+				"0000000000000000000000000000000000000000000000000000000000000000",
+			},
 		},
 	}
 
@@ -929,13 +1180,19 @@ func TestPrepareSources_AllowNoHashes(t *testing.T) {
 
 			require.NoError(t, err)
 
-			if len(testCase.expectedSourceEntries) > 0 {
+			if len(testCase.expectedSourceEntries) > 0 || len(testCase.forbiddenSourceEntries) > 0 {
 				sourcesFilePath := filepath.Join(testOutputDir, fedorasource.SourcesFileName)
 				sourcesContent, err := fileutils.ReadFile(ctx.FS(), sourcesFilePath)
 				require.NoError(t, err)
 
 				for _, expectedEntry := range testCase.expectedSourceEntries {
 					assert.Contains(t, string(sourcesContent), expectedEntry)
+				}
+
+				for _, forbiddenEntry := range testCase.forbiddenSourceEntries {
+					assert.NotContains(t, string(sourcesContent), forbiddenEntry,
+						"forbidden substring %q must not appear in the merged 'sources' file",
+						forbiddenEntry)
 				}
 			}
 		})
