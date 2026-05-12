@@ -38,7 +38,6 @@ azldev component list [flags]
   -p, --component stringArray         Component name pattern
   -g, --component-group stringArray   Component group name
   -h, --help                          help for list
-      --skip-lock-validation          skip lock file consistency checks (default true)
   -s, --spec-path stringArray         Spec path
 ```
 

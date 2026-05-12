@@ -16,9 +16,49 @@ Use `env.IOBoundConcurrency()` or `env.CPUBoundConcurrency()` from `azldev.Env` 
 
 **Never launch unbounded goroutines.** With 7k+ components, unbounded parallelism will overwhelm the system (loadavg 500+).
 
-## Semaphore Pattern
+## Preferred: `parmap.Map` for slice-parallel work
 
-Use a buffered channel as a semaphore to limit concurrency:
+For the common case — "run a worker over every item in a slice with bounded concurrency" — use [`internal/utils/parmap`](../../internal/utils/parmap/parmap.go) instead of hand-rolling a worker pool. It wraps `golang.org/x/sync/errgroup`, adds per-item results, surfaces "cancelled before start" via `Result.Cancelled`, and serializes the optional progress callback so callers don't need their own mutex.
+
+```go
+workerEnv, cancel := env.WithCancel()
+defer cancel()
+
+progressEvent := env.StartEvent("Doing the thing", "count", len(items))
+defer progressEvent.End()
+
+total := int64(len(items))
+
+results := parmap.Map(
+    workerEnv,                          // workerEnv satisfies context.Context
+    env.IOBoundConcurrency(),
+    items,
+    func(done, _ int) { progressEvent.SetProgress(int64(done), total) },
+    func(ctx context.Context, item Item) Result {
+        // workerEnv (captured) supplies FS, locks, etc.; ctx is the same
+        // cancellation signal, useful for ctx-aware APIs like exec.CommandContext.
+        return doWork(workerEnv, item)
+    },
+)
+
+for idx, r := range results {
+    if r.Cancelled {
+        // worker never ran (ctx ended before parmap reached this item)
+        continue
+    }
+    // consume r.Value
+}
+```
+
+When to skip `parmap.Map` and use the manual pattern below:
+
+- Streaming results before all items finish (e.g. `render.go`'s historical `resultsChan` pattern — though current render code uses parmap).
+- Push-based / event-driven work that isn't a fixed input slice.
+- Cases where the worker really does need an unbuffered, hand-tuned channel topology.
+
+## Manual semaphore pattern
+
+When `parmap.Map` doesn't fit, use a buffered channel as a semaphore to limit concurrency:
 
 ```go
 semaphore := make(chan struct{}, env.IOBoundConcurrency())
@@ -40,10 +80,11 @@ go func() {
 Always support graceful cancellation via `env.WithCancel()`:
 
 1. Create a cancellable child env: `workerEnv, cancel := env.WithCancel(); defer cancel()`
-2. Use context-aware semaphore acquisition (select on semaphore and `workerEnv.Done()`)
-3. Pass `workerEnv` (not `env`) to worker goroutines so they respect cancellation
+2. Pass `workerEnv` (not `env`) to worker goroutines so they respect cancellation
+3. With `parmap.Map`, just pass `workerEnv` as the ctx — cancellation handling is built in
+4. With the manual pattern, use context-aware semaphore acquisition (select on semaphore and `workerEnv.Done()`)
 
-Example from `render.go` and `update.go`:
+Example of the manual pattern:
 
 ```go
 workerEnv, cancel := env.WithCancel()
@@ -78,4 +119,4 @@ The `Env` type provides a set of methods to determine appropriate concurrency li
 
 ## Thread Safety
 
-- Events are currently not thread-safe; control long-running event handling outside of worker goroutines.
+- Events are currently not thread-safe; control long-running event handling outside of worker goroutines. `parmap.Map`'s `onProgress` callback is invoked serialized under an internal mutex, so calling `progressEvent.SetProgress` from there is safe.

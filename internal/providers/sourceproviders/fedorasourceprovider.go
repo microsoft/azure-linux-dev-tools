@@ -249,22 +249,19 @@ func (g *FedoraSourcesProviderImpl) checkoutTargetCommit(
 }
 
 // ResolveIdentity implements [SourceIdentityProvider] by resolving the upstream
-// commit hash for the component. Prefers the locked commit when available;
-// falls back to live resolution (clone + snapshot/HEAD) when no lock exists.
+// commit hash for the component. Ignores [projectconfig.ComponentLockData] —
+// callers that want the cached locked commit should read
+// [projectconfig.ComponentLockData.UpstreamCommit] directly.
+//
+// When [projectconfig.SpecSource.UpstreamCommit] is pinned, returns that commit
+// directly without contacting upstream. Otherwise, clones the dist-git repo to
+// resolve the commit via snapshot time or branch HEAD.
 func (g *FedoraSourcesProviderImpl) ResolveIdentity(
 	ctx context.Context,
 	component components.Component,
 ) (string, error) {
 	if component.GetName() == "" {
 		return "", errors.New("component name cannot be empty")
-	}
-
-	// Use locked commit if available — no clone needed.
-	//nolint:godox // tracked by TODO(lockfiles) tag.
-	// TODO(lockfiles): Once lock validation is default-on, a missing lock is an
-	// error caught before we get here. Remove the fallback to resolveCommit.
-	if locked := component.GetConfig().Locked; locked != nil && locked.UpstreamCommit != "" {
-		return locked.UpstreamCommit, nil
 	}
 
 	upstreamName := component.GetConfig().Spec.UpstreamName

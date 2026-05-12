@@ -62,7 +62,7 @@ azldev component render [flags]
   -f, --force                         allow overwriting existing rendered component directories
   -h, --help                          help for render
   -o, --output-dir string             output directory for rendered specs (overrides rendered-specs-dir from config)
-      --skip-lock-validation          skip lock file consistency checks (default true)
+      --skip-lock-validation          skip lock file consistency checks
   -s, --spec-path stringArray         Spec path
 ```
 

@@ -110,9 +110,9 @@ The `[components.<name>.release]` section controls how azldev manages the Releas
 
 | Mode | Behavior |
 |------|----------|
-| `auto` | Auto-detects from the spec's Release tag value. If `%autorelease` is found, rpmautospec handles it. If a static integer is found, it is bumped by the synthetic commit count. |
+| `auto` | Auto-detects from the spec's Release tag value. If `%autorelease` is found, rpmautospec handles it. If a static integer is found, optionally followed by `%{?dist}` or `%{dist}`, it is bumped by the synthetic commit count. |
 | `autorelease` | Explicitly declares the spec uses `%autorelease`. Skips all Release manipulation. Use this for specs with conditional `%autorelease`/`%else` fallbacks that confuse auto-detection. |
-| `static` | Explicitly declares the spec uses a static integer release. Bumps it by the synthetic commit count only when the Release tag starts with an integer. Non-integer or other non-standard Release values (for example, `%{pkg_release}`) require `manual` or an overlay. |
+| `static` | Explicitly declares the spec uses a static integer release. Bumps it by the synthetic commit count only when the Release tag is an integer, optionally followed by `%{?dist}` or `%{dist}`. Non-integer or other non-standard Release values (for example, `%{pkg_release}`) require `manual` or an overlay. |
 | `manual` | Skips all automatic Release manipulation. Use for components that manage their own release numbering (e.g. kernel). |
 
 Most components use `auto` (the default) and need no release configuration. Examples:

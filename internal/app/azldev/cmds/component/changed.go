@@ -76,10 +76,6 @@ detected via lock file presence in the compared refs when using -a.`,
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
 			options.ComponentFilter.ComponentNamePatterns = append(args, options.ComponentFilter.ComponentNamePatterns...)
 
-			// Skip lock validation -- this command inspects historical locks at
-			// arbitrary refs, so HEAD-state validation is irrelevant.
-			options.ComponentFilter.SkipLockValidation = true
-
 			return ChangedComponents(env, options)
 		}),
 		ValidArgsFunction: components.GenerateComponentNameCompletions,
@@ -123,6 +119,10 @@ const (
 func ChangedComponents(
 	env *azldev.Env, options *ChangedComponentOptions,
 ) ([]ChangedResult, error) {
+	// Changed compares lock files between git refs — skip validation since
+	// the current working-tree locks may legitimately be stale.
+	options.ComponentFilter.SkipLockValidation = true
+
 	resolver := components.NewResolver(env)
 
 	comps, err := resolver.FindComponents(&options.ComponentFilter)
