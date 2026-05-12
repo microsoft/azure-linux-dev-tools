@@ -99,7 +99,9 @@ func setupMockGit(env *testutils.TestEnv, commitHash string) {
 	}
 }
 
-// addUpstreamComponent registers an upstream component in the test config.
+// addUpstreamComponent adds an upstream component to the test config
+// without writing a lock file. Used by update tests where the update command
+// itself creates the lock.
 func addUpstreamComponent(env *testutils.TestEnv, name string) {
 	env.Config.Components[name] = projectconfig.ComponentConfig{
 		Name: name,

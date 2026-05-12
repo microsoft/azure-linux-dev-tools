@@ -39,7 +39,7 @@ azldev component prepare-sources [flags]
       --force                         delete and recreate the output directory if it already exists
   -h, --help                          help for prepare-sources
   -o, --output-dir string             output directory
-      --skip-lock-validation          skip lock file consistency checks (default true)
+      --skip-lock-validation          skip lock file consistency checks
       --skip-overlays                 skip applying overlays to prepared sources
   -s, --spec-path stringArray         Spec path
       --without-git                   Disable dist-git repository creation (enabled by default)

@@ -6,7 +6,6 @@ package projectconfig
 import (
 	"fmt"
 	"net/url"
-	"os"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
@@ -93,20 +92,11 @@ func (f ConfigFile) Validate() error {
 		}
 	}
 
-	// Per-component snapshot timestamps are not allowed when lock validation is
-	// enabled. Components inherit the snapshot from the distro/group
-	// default-component-config or the project's default-distro. Per-component
-	// snapshots would create non-deterministic builds that the lock file cannot
-	// reliably track. Use an explicit 'upstream-commit' pin instead.
-	//
-	// Gated behind AZLDEV_ENABLE_LOCK_VALIDATION during rollout.
-	// NOTE: Once the env var gate is removed, snapshot rejection becomes
-	// unconditional — per-component snapshots are permanently disallowed.
-	// Do NOT move this into [ComponentFilter.SkipLockValidation]: the snapshot check
-	// must not be disableable post-rollout.
-	//nolint:godox // tracked by TODO(lockfiles) tag.
-	// TODO(lockfiles): remove env var gate; snapshot rejection becomes unconditional.
-	lockValidationEnabled := os.Getenv("AZLDEV_ENABLE_LOCK_VALIDATION") == "1"
+	// Per-component snapshot timestamps are not allowed. Components inherit
+	// the snapshot from the distro/group default-component-config or the
+	// project's default-distro. Per-component snapshots would create
+	// non-deterministic builds that the lock file cannot reliably track.
+	// Use an explicit 'upstream-commit' pin instead.
 
 	// Validate overlay configurations for each component.
 	for componentName, component := range f.Components {
@@ -127,7 +117,7 @@ func (f ConfigFile) Validate() error {
 			return err
 		}
 
-		if lockValidationEnabled && component.Spec.UpstreamDistro.Snapshot != "" {
+		if component.Spec.UpstreamDistro.Snapshot != "" {
 			return fmt.Errorf(
 				"component %#q has a per-component 'snapshot' on 'upstream-distro'; "+
 					"snapshots should be set on the distro or group default-component-config, "+

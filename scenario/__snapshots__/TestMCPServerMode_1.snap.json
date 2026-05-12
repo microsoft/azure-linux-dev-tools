@@ -181,7 +181,7 @@
        "type": "boolean"
       },
       "skip-lock-validation": {
-       "default": true,
+       "default": false,
        "description": "skip lock file consistency checks",
        "type": "boolean"
       },
@@ -268,11 +268,6 @@
       "quiet": {
        "default": false,
        "description": "only enable minimal output",
-       "type": "boolean"
-      },
-      "skip-lock-validation": {
-       "default": true,
-       "description": "skip lock file consistency checks",
        "type": "boolean"
       },
       "spec-path": {

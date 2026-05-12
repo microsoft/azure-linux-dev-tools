@@ -301,8 +301,6 @@ func TestProjectConfigFileValidation_UnsupportedOriginType(t *testing.T) {
 }
 
 func TestProjectConfigFileValidation_PerComponentSnapshotDisallowed(t *testing.T) {
-	t.Setenv("AZLDEV_ENABLE_LOCK_VALIDATION", "1")
-
 	file := projectconfig.ConfigFile{
 		Components: map[string]projectconfig.ComponentConfig{
 			"test-component": {
