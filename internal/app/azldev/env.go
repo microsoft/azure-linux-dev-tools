@@ -105,18 +105,20 @@ type fixSuggestionState struct {
 	suggestions []string
 }
 
-func (state *fixSuggestionState) Add(suggestion string) {
-	state.mu.Lock()
-	defer state.mu.Unlock()
+// Add appends a fix suggestion in FIFO order.
+func (suggestions *fixSuggestionState) Add(suggestion string) {
+	suggestions.mu.Lock()
+	defer suggestions.mu.Unlock()
 
-	state.suggestions = append(state.suggestions, suggestion)
+	suggestions.suggestions = append(suggestions.suggestions, suggestion)
 }
 
-func (state *fixSuggestionState) Snapshot() []string {
-	state.mu.Lock()
-	defer state.mu.Unlock()
+// All returns a copy of all collected fix suggestions.
+func (suggestions *fixSuggestionState) All() []string {
+	suggestions.mu.Lock()
+	defer suggestions.mu.Unlock()
 
-	return append([]string(nil), state.suggestions...)
+	return append([]string(nil), suggestions.suggestions...)
 }
 
 // Constructs a new [Env] using specified options.
@@ -325,7 +327,7 @@ func (env *Env) AddFixSuggestion(suggestion string) {
 
 // PrintFixSuggestions prints the current fix suggestions, if any.
 func (env *Env) PrintFixSuggestions() {
-	suggestions := env.fixSuggestions.Snapshot()
+	suggestions := env.fixSuggestions.All()
 
 	if len(suggestions) == 0 {
 		return
