@@ -256,7 +256,12 @@ func createKiwiRunner(
 		runner.WithTargetArch(string(options.TargetArch))
 	}
 
-	// Build per-repo options for remote repositories.
+	// Inject TOML-defined image-build repos for the active distro version.
+	if err := addConfiguredImageBuildRepos(env, runner, options); err != nil {
+		return nil, err
+	}
+
+	// Build per-repo options for user-supplied remote repositories (additive).
 	remoteRepoOptions := &kiwi.RepoOptions{
 		DisableRepoGPGCheck: options.NoRemoteRepoGpgCheck,
 		ImageInclude:        options.RemoteRepoIncludeInImage,
@@ -273,6 +278,113 @@ func createKiwiRunner(
 	}
 
 	return runner, nil
+}
+
+// addConfiguredImageBuildRepos resolves the active distro version's
+// inputs.image-build list to RPM repo resources and registers each with the kiwi
+// runner. When no inputs are configured for image-build the function is a no-op:
+// images may still get their repos from the .kiwi description and/or user-supplied
+// --repo flags. When inputs *are* configured but every entry is filtered out for
+// the target architecture, that is treated as an error (it would otherwise
+// silently produce a no-repo image).
+func addConfiguredImageBuildRepos(
+	env *azldev.Env, runner *kiwi.Runner, options *ImageBuildOptions,
+) error {
+	_, distroVerDef, err := env.Distro()
+	if err != nil {
+		return fmt.Errorf("failed to resolve distro for image build:\n%w", err)
+	}
+
+	repoNames := distroVerDef.Inputs.ImageBuild
+	if len(repoNames) == 0 {
+		// No TOML-driven image-build repos. The .kiwi description and/or
+		// user-supplied --repo flags are expected to supply repos.
+		slog.Info("No TOML-driven image-build inputs configured; relying on .kiwi/--repo for repositories")
+
+		return nil
+	}
+
+	cfg := env.Config()
+	if cfg == nil {
+		return errors.New("no project config loaded; cannot resolve image-build inputs")
+	}
+
+	repos := cfg.Resources.RpmRepos
+
+	targetArch := string(options.TargetArch)
+
+	addedCount := 0
+	skippedForArch := []string{}
+
+	for _, name := range repoNames {
+		repo, ok := repos[name]
+		if !ok {
+			// Should have been caught by load-time validation, but defend defensively.
+			return fmt.Errorf("inputs.image-build references undefined rpm-repo %#q", name)
+		}
+
+		if targetArch != "" && !repo.IsAvailableForArch(targetArch) {
+			slog.Warn("Skipping rpm-repo for image-build (arch mismatch)",
+				"repo", name, "targetArch", targetArch, "repoArches", repo.Arches)
+
+			skippedForArch = append(skippedForArch, name)
+
+			continue
+		}
+
+		if err := addKiwiRepoFromResource(runner, name, &repo); err != nil {
+			return fmt.Errorf("failed to add image-build rpm-repo %#q:\n%w", name, err)
+		}
+
+		addedCount++
+	}
+
+	if addedCount == 0 {
+		return fmt.Errorf(
+			"all %d image-build rpm-repos were filtered out for target arch %q (skipped: %v); "+
+				"check the `arches` settings on these repos",
+			len(repoNames), targetArch, skippedForArch,
+		)
+	}
+
+	return nil
+}
+
+// addKiwiRepoFromResource registers a single [projectconfig.RpmRepoResource] with the
+// kiwi runner via [kiwi.Runner.AddRemoteRepo], applying the repo's GPG-check / signing
+// key and source-type semantics.
+//
+// `disable-gpg-check` is mapped to *both* kiwi GPG knobs (package and repo metadata).
+// dnf treats `gpgcheck=0` as covering package signature verification, and we want the
+// kiwi semantics to mirror that: a single TOML field means "don't enforce signatures
+// at all for this repo". If we ever need finer control we can add a second field.
+func addKiwiRepoFromResource(runner *kiwi.Runner, name string, repo *projectconfig.RpmRepoResource) error {
+	opts := &kiwi.RepoOptions{
+		Alias:                  name,
+		DisablePackageGPGCheck: repo.DisableGPGCheck,
+		DisableRepoGPGCheck:    repo.DisableGPGCheck,
+	}
+
+	if repo.GPGKey != "" {
+		opts.SigningKeys = []string{repo.GPGKey}
+	}
+
+	source := repo.BaseURI
+	if source == "" && repo.Metalink != "" {
+		// kiwi v10.x supports metalink via repo_sourcetype.
+		source = repo.Metalink
+		opts.SourceType = kiwi.RepoSourceTypeMetalink
+	}
+
+	if source == "" {
+		return fmt.Errorf("rpm-repo %#q has neither base-uri nor metalink", name)
+	}
+
+	if err := runner.AddRemoteRepo(source, opts); err != nil {
+		return fmt.Errorf("invalid repo source for %#q:\n%w", name, err)
+	}
+
+	return nil
 }
 
 // linkImageArtifacts hard-links the final image artifacts from the work directory to the
