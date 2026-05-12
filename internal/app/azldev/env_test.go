@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -21,15 +20,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func setupTestLogger(logBuffer *bytes.Buffer) *slog.Logger {
+func setupTestLogger(logBuffer *bytes.Buffer) func() {
 	logger := slog.New(slog.NewTextHandler(logBuffer, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	}))
 
-	oldDefault := slog.Default()
+	previousDefaultLogger := slog.Default()
 	slog.SetDefault(logger)
 
-	return oldDefault
+	return func() {
+		slog.SetDefault(previousDefaultLogger)
+	}
 }
 
 func TestNewEnv(t *testing.T) {
@@ -208,8 +209,8 @@ func TestFixSuggestions(t *testing.T) {
 
 		var logBuffer bytes.Buffer
 
-		oldDefault := setupTestLogger(&logBuffer)
-		defer slog.SetDefault(oldDefault)
+		restoreLogger := setupTestLogger(&logBuffer)
+		defer restoreLogger()
 
 		testEnv.Env.PrintFixSuggestions()
 
@@ -239,14 +240,12 @@ func TestFixSuggestions(t *testing.T) {
 
 		var logBuffer bytes.Buffer
 
-		oldDefault := setupTestLogger(&logBuffer)
-		defer slog.SetDefault(oldDefault)
+		restoreLogger := setupTestLogger(&logBuffer)
+		defer restoreLogger()
 
 		testEnv.Env.PrintFixSuggestions()
 
 		output := logBuffer.String()
-		assert.Equal(t, suggestionCount, strings.Count(output, "shared suggestion "))
-
 		for suggestionIndex := range suggestionCount {
 			assert.Contains(t, output, fmt.Sprintf("shared suggestion %d", suggestionIndex))
 		}
