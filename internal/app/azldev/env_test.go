@@ -21,7 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func setDummyLogger(logBuffer *bytes.Buffer) *slog.Logger {
+func setUpTestLogger(logBuffer *bytes.Buffer) *slog.Logger {
 	logger := slog.New(slog.NewTextHandler(logBuffer, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	}))
@@ -208,7 +208,7 @@ func TestFixSuggestions(t *testing.T) {
 
 		var logBuffer bytes.Buffer
 
-		oldDefault := setDummyLogger(&logBuffer)
+		oldDefault := setUpTestLogger(&logBuffer)
 		defer slog.SetDefault(oldDefault)
 
 		testEnv.Env.PrintFixSuggestions()
@@ -239,7 +239,7 @@ func TestFixSuggestions(t *testing.T) {
 
 		var logBuffer bytes.Buffer
 
-		oldDefault := setDummyLogger(&logBuffer)
+		oldDefault := setUpTestLogger(&logBuffer)
 		defer slog.SetDefault(oldDefault)
 
 		testEnv.Env.PrintFixSuggestions()

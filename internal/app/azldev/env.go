@@ -106,9 +106,7 @@ type fixSuggestionState struct {
 }
 
 func newFixSuggestionState() *fixSuggestionState {
-	return &fixSuggestionState{
-		suggestions: []string{},
-	}
+	return &fixSuggestionState{}
 }
 
 func (state *fixSuggestionState) Add(suggestion string) {
