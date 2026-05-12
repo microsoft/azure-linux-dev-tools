@@ -1044,8 +1044,8 @@ func TestCheckoutTargetCommit_UpstreamCommit(t *testing.T) {
 }
 
 // TestGetComponent_LockedCommitTakesPriorityOverConfigPin verifies that the
-// fetch path (used by render/build) honors the same locked-beats-pin
-// precedence rule as ResolveIdentity. When both Locked.UpstreamCommit and
+// fetch path (used by render/build) uses EffectiveUpstreamCommit, which prefers
+// the locked commit over the config pin. When both Locked.UpstreamCommit and
 // Spec.UpstreamCommit are set, Checkout must be called with the locked value.
 func TestGetComponent_LockedCommitTakesPriorityOverConfigPin(t *testing.T) {
 	env := testutils.NewTestEnv(t)

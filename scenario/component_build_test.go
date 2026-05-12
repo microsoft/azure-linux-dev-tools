@@ -130,7 +130,7 @@ func TestBuildingUpstreamComponent(t *testing.T) {
 	// component update populates lock files first (required by lock validation).
 	results := buildtest.NewBuildTest(project, testComponentName,
 		projecttest.WithTestDefaultConfigs(),
-		projecttest.WithPreCommand("component update -a"),
+		projecttest.WithPreCommand("component", "update", "-a"),
 	).Run(t)
 
 	// Make sure we got 1 SRPM.

@@ -879,7 +879,7 @@ func resolveOneSourceIdentity(
 		return "", fmt.Errorf("creating source manager for %#q:\n%w", componentName, err)
 	}
 
-	identity, err := sourceManager.ResolveSourceIdentity(env.Context(), comp)
+	identity, err := sourceManager.ResolveSourceIdentity(ctx, comp)
 	if err != nil {
 		return "", fmt.Errorf("resolving identity for %#q:\n%w", componentName, err)
 	}
