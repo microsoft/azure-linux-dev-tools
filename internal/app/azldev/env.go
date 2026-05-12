@@ -105,10 +105,6 @@ type fixSuggestionState struct {
 	suggestions []string
 }
 
-func newFixSuggestionState() *fixSuggestionState {
-	return &fixSuggestionState{}
-}
-
 func (state *fixSuggestionState) Add(suggestion string) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
@@ -174,7 +170,7 @@ func NewEnv(ctx context.Context, options EnvOptions) *Env {
 		constructionTime: time.Now(),
 
 		// No fix suggestions to start.
-		fixSuggestions: newFixSuggestionState(),
+		fixSuggestions: &fixSuggestionState{},
 
 		// Lock store: created when we have a project directory.
 		lockStore: newLockStore(options.ProjectDir, options.Config, options.Interfaces.FileSystemFactory),
