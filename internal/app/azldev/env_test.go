@@ -4,8 +4,13 @@
 package azldev_test
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"log/slog"
 	"os"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +20,17 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func setDummyLogger(logBuffer *bytes.Buffer) *slog.Logger {
+	logger := slog.New(slog.NewTextHandler(logBuffer, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
+
+	oldDefault := slog.Default()
+	slog.SetDefault(logger)
+
+	return oldDefault
+}
 
 func TestNewEnv(t *testing.T) {
 	const (
@@ -167,5 +183,72 @@ func TestFixSuggestions(t *testing.T) {
 		assert.NotPanics(t, func() {
 			testEnv.Env.PrintFixSuggestions()
 		})
+	})
+
+	t.Run("suggestions added from child envs are visible on the parent env", func(t *testing.T) {
+		testEnv := testutils.NewTestEnv(t)
+
+		const suggestionCount = 32
+
+		var waitGroup sync.WaitGroup
+		for suggestionIndex := range suggestionCount {
+			waitGroup.Add(1)
+
+			go func(index int) {
+				defer waitGroup.Done()
+
+				childEnv, cancel := testEnv.Env.WithCancel()
+				defer cancel()
+
+				childEnv.AddFixSuggestion(fmt.Sprintf("child suggestion %d", index))
+			}(suggestionIndex)
+		}
+
+		waitGroup.Wait()
+
+		var logBuffer bytes.Buffer
+
+		oldDefault := setDummyLogger(&logBuffer)
+		defer slog.SetDefault(oldDefault)
+
+		testEnv.Env.PrintFixSuggestions()
+
+		output := logBuffer.String()
+		for suggestionIndex := range suggestionCount {
+			assert.Contains(t, output, fmt.Sprintf("child suggestion %d", suggestionIndex))
+		}
+	})
+
+	t.Run("concurrent suggestions on the same env are all preserved", func(t *testing.T) {
+		testEnv := testutils.NewTestEnv(t)
+
+		const suggestionCount = 128
+
+		var waitGroup sync.WaitGroup
+		for suggestionIndex := range suggestionCount {
+			waitGroup.Add(1)
+
+			go func(index int) {
+				defer waitGroup.Done()
+
+				testEnv.Env.AddFixSuggestion(fmt.Sprintf("shared suggestion %d", index))
+			}(suggestionIndex)
+		}
+
+		waitGroup.Wait()
+
+		var logBuffer bytes.Buffer
+
+		oldDefault := setDummyLogger(&logBuffer)
+		defer slog.SetDefault(oldDefault)
+
+		testEnv.Env.PrintFixSuggestions()
+
+		output := logBuffer.String()
+		assert.Equal(t, suggestionCount, strings.Count(output, "shared suggestion "))
+
+		for suggestionIndex := range suggestionCount {
+			assert.Contains(t, output, fmt.Sprintf("shared suggestion %d", suggestionIndex))
+		}
 	})
 }

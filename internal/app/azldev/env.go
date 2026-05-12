@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/gum/confirm"
@@ -92,11 +93,36 @@ type Env struct {
 
 	// Fix suggestion: a list of human readable hints that will be printed after an error to help the user
 	// resolve the issue. Printed in FIFO order.
-	fixSuggestions []string
+	fixSuggestions *fixSuggestionState
 
 	// lockStore provides cached access to per-component lock files.
 	// Nil when no project directory is configured.
 	lockStore *lockfile.Store
+}
+
+type fixSuggestionState struct {
+	mu          sync.Mutex
+	suggestions []string
+}
+
+func newFixSuggestionState() *fixSuggestionState {
+	return &fixSuggestionState{
+		suggestions: []string{},
+	}
+}
+
+func (state *fixSuggestionState) Add(suggestion string) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	state.suggestions = append(state.suggestions, suggestion)
+}
+
+func (state *fixSuggestionState) Snapshot() []string {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	return append([]string(nil), state.suggestions...)
 }
 
 // Constructs a new [Env] using specified options.
@@ -150,7 +176,7 @@ func NewEnv(ctx context.Context, options EnvOptions) *Env {
 		constructionTime: time.Now(),
 
 		// No fix suggestions to start.
-		fixSuggestions: []string{},
+		fixSuggestions: newFixSuggestionState(),
 
 		// Lock store: created when we have a project directory.
 		lockStore: newLockStore(options.ProjectDir, options.Config, options.Interfaces.FileSystemFactory),
@@ -300,12 +326,14 @@ func (env *Env) OutputDir() string {
 // AddFixSuggestion records a human-readable hint that will be printed after an
 // error to help the user resolve the issue. Suggestions are printed in FIFO order.
 func (env *Env) AddFixSuggestion(suggestion string) {
-	env.fixSuggestions = append(env.fixSuggestions, suggestion)
+	env.fixSuggestions.Add(suggestion)
 }
 
 // PrintFixSuggestions prints the current fix suggestions, if any.
 func (env *Env) PrintFixSuggestions() {
-	if len(env.fixSuggestions) == 0 {
+	suggestions := env.fixSuggestions.Snapshot()
+
+	if len(suggestions) == 0 {
 		return
 	}
 
@@ -324,7 +352,7 @@ func (env *Env) PrintFixSuggestions() {
 	paddingSize := len(padding)
 
 	maxMsgLength := 0
-	for _, suggestion := range env.fixSuggestions {
+	for _, suggestion := range suggestions {
 		if len(suggestion) > maxMsgLength {
 			maxMsgLength = len(suggestion)
 		}
@@ -335,7 +363,7 @@ func (env *Env) PrintFixSuggestions() {
 
 	slog.Warn(boxEdgeString)
 
-	for _, suggestion := range env.fixSuggestions {
+	for _, suggestion := range suggestions {
 		slog.Warn(padding + suggestion)
 	}
 
