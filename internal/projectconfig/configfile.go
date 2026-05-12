@@ -207,18 +207,19 @@ func validateSourceFiles(sourceFiles []SourceFileReference, componentName string
 // 'replace-reason' fields on a [SourceFileReference]:
 //   - 'replace-upstream = true' requires a non-empty 'replace-reason' (whitespace-only
 //     values do not count).
-//   - 'replace-reason' may only be set when 'replace-upstream = true'.
+//   - 'replace-reason' may only be set when 'replace-upstream = true'. A non-empty
+//     'replace-reason' (even if it would trim to empty) is rejected when
+//     'replace-upstream' is false, to surface the configuration mistake rather than
+//     silently ignoring the value.
 func validateReplaceUpstream(ref SourceFileReference, componentName string) error {
-	trimmedReason := strings.TrimSpace(ref.ReplaceReason)
-
-	if ref.ReplaceUpstream && trimmedReason == "" {
+	if ref.ReplaceUpstream && strings.TrimSpace(ref.ReplaceReason) == "" {
 		return fmt.Errorf(
 			"source file %#q in component %#q has 'replace-upstream = true' but no 'replace-reason'; "+
 				"a non-empty 'replace-reason' is required to document the override",
 			ref.Filename, componentName)
 	}
 
-	if !ref.ReplaceUpstream && trimmedReason != "" {
+	if !ref.ReplaceUpstream && ref.ReplaceReason != "" {
 		return fmt.Errorf(
 			"source file %#q in component %#q has 'replace-reason' set but 'replace-upstream' is not true; "+
 				"'replace-reason' is only valid when 'replace-upstream = true'",

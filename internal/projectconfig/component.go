@@ -71,7 +71,7 @@ type SourceFileReference struct {
 	// entry must exist or source preparation fails. When false (the default), a filename
 	// collision with an existing 'sources' entry is treated as an error.
 	// [SourceFileReference.ReplaceReason] is required when this is true.
-	ReplaceUpstream bool `toml:"replace-upstream,omitempty" json:"replaceUpstream,omitempty" jsonschema:"title=Replace upstream,description=When true, intentionally replaces a same-named entry in the upstream 'sources' file. Requires 'replace-reason'."`
+	ReplaceUpstream bool `toml:"replace-upstream,omitempty" json:"replaceUpstream,omitempty" jsonschema:"title=Replace upstream,description=When true\\, intentionally replaces a same-named entry in the upstream 'sources' file. Requires 'replace-reason'."`
 
 	// ReplaceReason is a human-readable explanation for why an upstream 'sources' entry is
 	// being replaced. Required when [SourceFileReference.ReplaceUpstream] is true; must be

@@ -1024,6 +1024,10 @@ func TestPrepareSources_AllowNoHashes(t *testing.T) {
 		expectError            bool
 		errorContains          []string
 		expectedSourceEntries  []string
+		// forbiddenSourceEntries are substrings that must NOT appear in the
+		// final 'sources' file (e.g. the original upstream hash after a
+		// 'replace-upstream' merge).
+		forbiddenSourceEntries []string
 	}{
 		{
 			name: "computes hash with provided hash type",
@@ -1082,6 +1086,39 @@ func TestPrepareSources_AllowNoHashes(t *testing.T) {
 			createFile:    false,
 			expectError:   true,
 			errorContains: []string{"test-file.tar.gz", "downloads were skipped"},
+		},
+		{
+			// Combining 'allow-no-hashes' with 'replace-upstream' must compute the fresh
+			// hash from the on-disk file *and* swap the upstream entry in place, instead
+			// of erroring on the filename collision or appending a duplicate entry.
+			name: "replace-upstream with allow-no-hashes computes fresh hash and replaces upstream entry",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename: "test-file.tar.gz",
+					HashType: fileutils.HashTypeSHA256,
+					Origin: projectconfig.Origin{
+						Type: projectconfig.OriginTypeURI,
+						Uri:  "https://example.com/test-file.tar.gz",
+					},
+					ReplaceUpstream: true,
+					ReplaceReason:   "patched to fix upstream regression",
+				},
+			},
+			preparerOpts: []sources.PreparerOption{sources.WithAllowNoHashes()},
+			createFile:   true,
+			existingSourcesContent: "SHA256 (test-file.tar.gz) = " +
+				"0000000000000000000000000000000000000000000000000000000000000000\n" +
+				"SHA512 (other.tar.gz) = aabbcc\n",
+			expectedSourceEntries: []string{
+				// Replacement entry uses the freshly computed hash, not the upstream value.
+				"SHA256 (test-file.tar.gz) = " + testFileSHA256,
+				// Untouched sibling entry is preserved.
+				"SHA512 (other.tar.gz) = aabbcc",
+			},
+			forbiddenSourceEntries: []string{
+				// The upstream stub hash must be gone; the entry was replaced, not duplicated.
+				"0000000000000000000000000000000000000000000000000000000000000000",
+			},
 		},
 	}
 
@@ -1143,13 +1180,19 @@ func TestPrepareSources_AllowNoHashes(t *testing.T) {
 
 			require.NoError(t, err)
 
-			if len(testCase.expectedSourceEntries) > 0 {
+			if len(testCase.expectedSourceEntries) > 0 || len(testCase.forbiddenSourceEntries) > 0 {
 				sourcesFilePath := filepath.Join(testOutputDir, fedorasource.SourcesFileName)
 				sourcesContent, err := fileutils.ReadFile(ctx.FS(), sourcesFilePath)
 				require.NoError(t, err)
 
 				for _, expectedEntry := range testCase.expectedSourceEntries {
 					assert.Contains(t, string(sourcesContent), expectedEntry)
+				}
+
+				for _, forbiddenEntry := range testCase.forbiddenSourceEntries {
+					assert.NotContains(t, string(sourcesContent), forbiddenEntry,
+						"forbidden substring %q must not appear in the merged 'sources' file",
+						forbiddenEntry)
 				}
 			}
 		})
