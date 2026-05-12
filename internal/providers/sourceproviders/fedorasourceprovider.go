@@ -249,10 +249,13 @@ func (g *FedoraSourcesProviderImpl) checkoutTargetCommit(
 }
 
 // ResolveIdentity implements [SourceIdentityProvider] by resolving the upstream
-// commit hash for the component from the dist-git repository. This always
-// contacts upstream (clone + snapshot/HEAD resolution or pin validation) —
+// commit hash for the component. Ignores [projectconfig.ComponentLockData] —
 // callers that want the cached locked commit should read
 // [projectconfig.ComponentLockData.UpstreamCommit] directly.
+//
+// When [projectconfig.SpecSource.UpstreamCommit] is pinned, returns that commit
+// directly without contacting upstream. Otherwise, clones the dist-git repo to
+// resolve the commit via snapshot time or branch HEAD.
 func (g *FedoraSourcesProviderImpl) ResolveIdentity(
 	ctx context.Context,
 	component components.Component,
