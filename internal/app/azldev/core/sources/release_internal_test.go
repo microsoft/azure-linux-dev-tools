@@ -103,6 +103,28 @@ func TestTryBumpStaticRelease_StaticBumps(t *testing.T) {
 	assert.Contains(t, string(content), "Release: 4%{?dist}")
 }
 
+func TestTryBumpStaticRelease_StaticBumpsNonConditionalDist(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	memFS := afero.NewMemMapFs()
+	preparer := newTestPreparer(memFS)
+
+	writeTestSpec(t, memFS, "test-pkg", "1%{dist}")
+
+	comp := mockComponent(ctrl, "test-pkg", &projectconfig.ComponentConfig{
+		Release: projectconfig.ReleaseConfig{
+			Calculation: projectconfig.ReleaseCalculationAuto,
+		},
+	})
+
+	err := preparer.tryBumpStaticRelease(comp, filepath.Join(testSourcesDir, "test-pkg"), 3)
+	require.NoError(t, err)
+
+	specPath := filepath.Join(testSourcesDir, "test-pkg", "test-pkg.spec")
+	content, err := fileutils.ReadFile(memFS, specPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "Release: 4%{dist}")
+}
+
 func TestTryBumpStaticRelease_NonStandardErrorsWithoutManual(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	memFS := afero.NewMemMapFs()
