@@ -99,8 +99,10 @@ func setupMockGit(env *testutils.TestEnv, commitHash string) {
 	}
 }
 
-// addUpstreamComponent registers an upstream component in the test config.
-func addUpstreamComponent(env *testutils.TestEnv, name string) {
+// registerUpstreamComponentConfig adds an upstream component to the test config
+// without writing a lock file. Used by update tests where the update command
+// itself creates the lock.
+func registerUpstreamComponentConfig(env *testutils.TestEnv, name string) {
 	env.Config.Components[name] = projectconfig.ComponentConfig{
 		Name: name,
 		Spec: projectconfig.SpecSource{
@@ -117,7 +119,7 @@ func TestUpdateComponents_WritesFingerprint(t *testing.T) {
 	const commit = "abc123def456"
 
 	setupMockGit(env, commit)
-	addUpstreamComponent(env, "curl")
+	registerUpstreamComponentConfig(env, "curl")
 
 	// Pre-create a lock file so the spec file is writable on memfs.
 	require.NoError(t, fileutils.MkdirAll(env.TestFS, testLockDir))
@@ -148,7 +150,7 @@ func TestUpdateComponents_FingerprintLifecycle(t *testing.T) {
 	const commit = "abc123def456"
 
 	setupMockGit(env, commit)
-	addUpstreamComponent(env, "curl")
+	registerUpstreamComponentConfig(env, "curl")
 
 	require.NoError(t, fileutils.MkdirAll(env.TestFS, testLockDir))
 
@@ -198,8 +200,8 @@ func TestUpdateComponents_MultipleComponents(t *testing.T) {
 	const commit = "multi-commit-hash"
 
 	setupMockGit(env, commit)
-	addUpstreamComponent(env, "curl")
-	addUpstreamComponent(env, "bash")
+	registerUpstreamComponentConfig(env, "curl")
+	registerUpstreamComponentConfig(env, "bash")
 
 	require.NoError(t, fileutils.MkdirAll(env.TestFS, testLockDir))
 
@@ -341,7 +343,7 @@ func mustGetFingerprint(t *testing.T, store *lockfile.Store, name string) string
 // where a pre-existing lock at commit A and an upstream that has moved to
 // commit B must result in B being written (not A echoed back). Without
 // clearing populated lock data before re-resolution, the source provider's
-// locked-commit short-circuit in ResolveIdentity would return A and the
+// locked-commit short-circuit in CalculateSourceIdentity would return A and the
 // lock would never advance.
 func TestUpdateComponents_AdvancesStaleLock(t *testing.T) {
 	env := testutils.NewTestEnv(t)
@@ -359,7 +361,7 @@ func TestUpdateComponents_AdvancesStaleLock(t *testing.T) {
 	store := lockfile.NewStore(env.TestFS, testLockDir)
 	require.NoError(t, store.Save("curl", preExistingLock))
 
-	addUpstreamComponent(env, "curl")
+	registerUpstreamComponentConfig(env, "curl")
 
 	// Mock git now resolves to a NEW commit — upstream moved.
 	setupMockGit(env, advancedCommit)
@@ -393,7 +395,7 @@ func TestUpdateComponents_AdvancesStaleLock(t *testing.T) {
 // no-write contract since the bump branch runs first.
 func TestUpdateComponents_CheckOnlyAndBumpRejected(t *testing.T) {
 	env := testutils.NewTestEnv(t)
-	addUpstreamComponent(env, "curl")
+	registerUpstreamComponentConfig(env, "curl")
 	require.NoError(t, fileutils.MkdirAll(env.TestFS, testLockDir))
 
 	_, err := componentcmds.UpdateComponents(env.Env, &componentcmds.UpdateComponentOptions{
@@ -423,7 +425,7 @@ func TestUpdateComponents_CheckOnly_StaleReturnsError(t *testing.T) {
 	preLock.UpstreamCommit = initialCommit
 	require.NoError(t, preStore.Save("curl", preLock))
 
-	addUpstreamComponent(env, "curl")
+	registerUpstreamComponentConfig(env, "curl")
 	setupMockGit(env, advancedCommit)
 
 	results, err := componentcmds.UpdateComponents(env.Env, &componentcmds.UpdateComponentOptions{
@@ -468,7 +470,7 @@ func TestUpdateComponents_CheckOnly_FreshReturnsNil(t *testing.T) {
 	const commit = "fresh-commit-aaa"
 
 	setupMockGit(env, commit)
-	addUpstreamComponent(env, "curl")
+	registerUpstreamComponentConfig(env, "curl")
 	require.NoError(t, fileutils.MkdirAll(env.TestFS, testLockDir))
 
 	options := &componentcmds.UpdateComponentOptions{
@@ -506,7 +508,7 @@ func TestUpdateComponents_CheckOnly_DetectsOrphans(t *testing.T) {
 	const commit = "fresh-commit-aaa"
 
 	setupMockGit(env, commit)
-	addUpstreamComponent(env, "curl")
+	registerUpstreamComponentConfig(env, "curl")
 	require.NoError(t, fileutils.MkdirAll(env.TestFS, testLockDir))
 
 	// First, do a real update so curl's lock is fresh -- isolates the orphan as

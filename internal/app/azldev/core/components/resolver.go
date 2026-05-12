@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -54,13 +53,10 @@ func NewResolver(env *azldev.Env) *Resolver {
 // Given a component filter, finds all components defined in the environment that match the filter.
 func (r *Resolver) FindComponents(filter *ComponentFilter) (components *ComponentSet, err error) {
 	// The filter's SkipLockValidation field is the primary control. When
-	// created via AddComponentFilterOptionsToCommand, its default comes from
-	// the AZLDEV_ENABLE_LOCK_VALIDATION env var. For programmatic callers
-	// (including tests), also check the env var here so the rollout gate
-	// applies uniformly.
-	//nolint:godox // tracked by TODO(lockfiles) tag.
-	// TODO(lockfiles): remove env var gate; filter.SkipLockValidation becomes sole control.
-	skipValidation := filter.SkipLockValidation || os.Getenv("AZLDEV_ENABLE_LOCK_VALIDATION") != "1"
+	// created via AddComponentFilterOptionsToCommand, its default is false
+	// (validation on). Commands that write locks (update) or are read-only
+	// (list) explicitly set it to true.
+	skipValidation := filter.SkipLockValidation
 
 	// For usability's sake, detect if the caller/user forgot to specify *any* criteria.
 	if filter.HasNoCriteria() {

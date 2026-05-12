@@ -298,11 +298,6 @@ func (c *ComponentConfig) MergeUpdatesFrom(other *ComponentConfig) error {
 // EffectiveUpstreamCommit returns the commit to use for upstream operations.
 // Prefers the locked commit (resolved reality) over the config pin (user intent).
 // Returns empty string when neither is set.
-//
-// TODO(lockfiles): Once lock validation is default-on, drop the Spec.UpstreamCommit
-// fallback - a missing lock will be a hard error before we reach this code.
-//
-//nolint:godox // tracked by TODO(lockfiles) tag.
 func (c *ComponentConfig) EffectiveUpstreamCommit() string {
 	if c.Locked != nil && c.Locked.UpstreamCommit != "" {
 		return c.Locked.UpstreamCommit

@@ -34,7 +34,7 @@ azldev component query [flags]
   -p, --component stringArray         Component name pattern
   -g, --component-group stringArray   Component group name
   -h, --help                          help for query
-      --skip-lock-validation          skip lock file consistency checks (default true)
+      --skip-lock-validation          skip lock file consistency checks
   -s, --spec-path stringArray         Spec path
 ```
 

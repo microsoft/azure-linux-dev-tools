@@ -62,7 +62,7 @@ type IdentityOptions struct {
 	// This is caller-provided because resolving it requires network access (upstream clone) or
 	// filesystem traversal (local content hash). [ComputeIdentity] is a pure combiner — it does
 	// not perform I/O beyond reading overlay files. Callers should resolve source identity via
-	// SourceManager.ResolveSourceIdentity before calling [ComputeIdentity].
+	// SourceManager.CalculateSourceIdentity before calling [ComputeIdentity].
 	SourceIdentity string
 }
 
@@ -91,7 +91,7 @@ func ComputeIdentity(
 	if opts.SourceIdentity == "" && component.Spec.SourceType != "" {
 		return nil, fmt.Errorf(
 			"source identity is required for component with source type %#q; "+
-				"resolve it via SourceManager.ResolveSourceIdentity before calling ComputeIdentity",
+				"resolve it via SourceManager.CalculateSourceIdentity before calling ComputeIdentity",
 			component.Spec.SourceType)
 	}
 

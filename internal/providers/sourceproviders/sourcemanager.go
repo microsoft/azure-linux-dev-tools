@@ -43,12 +43,12 @@ type FileSourceProvider interface {
 // Consumers should treat the returned string as opaque; it is only meaningful for equality
 // comparison between two runs.
 type SourceIdentityProvider interface {
-	// ResolveIdentity returns a deterministic identity string for the component's source.
+	// CalculateSourceIdentity returns a deterministic identity string for the component's source.
 	// Returns an error if the identity cannot be determined (e.g., network failure for upstream sources).
 	// Upstream components must return the resolved commit hash from the dist-git provider, local components
 	// must return a content hash of the spec directory (must be stable, but exact format and algorithm
 	// are up to the provider).
-	ResolveIdentity(ctx context.Context, component components.Component) (string, error)
+	CalculateSourceIdentity(ctx context.Context, component components.Component) (string, error)
 }
 
 // FetchComponentOptions holds optional parameters for component fetching operations.
@@ -125,10 +125,10 @@ type SourceManager interface {
 		opts ...FetchComponentOption,
 	) error
 
-	// ResolveSourceIdentity returns a deterministic identity string for the component's source.
+	// CalculateSourceIdentity returns a deterministic identity string for the component's source.
 	// For local components, this is a content hash of the spec directory.
 	// For upstream components, this is the resolved commit hash from the dist-git provider.
-	ResolveSourceIdentity(ctx context.Context, component components.Component) (string, error)
+	CalculateSourceIdentity(ctx context.Context, component components.Component) (string, error)
 }
 
 // ResolvedDistro holds the fully resolved distro configuration for a component.
@@ -478,7 +478,7 @@ func (m *sourceManager) FetchComponent(
 		component.GetName())
 }
 
-func (m *sourceManager) ResolveSourceIdentity(
+func (m *sourceManager) CalculateSourceIdentity(
 	ctx context.Context, component components.Component,
 ) (string, error) {
 	if component.GetName() == "" {
@@ -515,7 +515,7 @@ func (m *sourceManager) resolveUpstreamSourceIdentity(
 	var lastError error
 
 	for _, provider := range m.upstreamComponentProviders {
-		identity, err := provider.ResolveIdentity(ctx, component)
+		identity, err := provider.CalculateSourceIdentity(ctx, component)
 		if err == nil {
 			return identity, nil
 		}

@@ -197,3 +197,35 @@ func (e *TestEnv) WriteLock(t *testing.T, name string, lock *lockfile.ComponentL
 	store := lockfile.NewStore(e.TestFS, "/project/"+projectconfig.DefaultLockDir)
 	require.NoError(t, store.Save(name, lock))
 }
+
+// TestUpstreamCommit is the default commit hash used by [TestEnv.WriteDefaultLock]
+// and [TestEnv.AddUpstreamComponent].
+const TestUpstreamCommit = "test-upstream-commit-aabb1122"
+
+// WriteDefaultLock writes a minimal valid lock file for the named component.
+// Use this when a test adds a component inline (with custom config) and just
+// needs lock validation to pass.
+func (e *TestEnv) WriteDefaultLock(t *testing.T, name string) {
+	t.Helper()
+
+	lock := lockfile.New()
+	lock.UpstreamCommit = TestUpstreamCommit
+	e.WriteLock(t, name, lock)
+}
+
+// AddUpstreamComponent registers an upstream component in the test config and
+// writes a minimal lock file so lock validation passes. Use this instead of
+// setting env.Config.Components directly when the test doesn't need to
+// customize the lock data.
+func (e *TestEnv) AddUpstreamComponent(t *testing.T, name string) {
+	t.Helper()
+
+	e.Config.Components[name] = projectconfig.ComponentConfig{
+		Name: name,
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeUpstream,
+		},
+	}
+
+	e.WriteDefaultLock(t, name)
+}

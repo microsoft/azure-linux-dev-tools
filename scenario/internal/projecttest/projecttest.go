@@ -48,6 +48,7 @@ func TestDefaultConfigsDir() string {
 type ProjectTest struct {
 	project               TestProject
 	commandArgs           []string
+	preCommands           []string
 	useTestDefaultConfigs bool
 }
 
@@ -60,6 +61,15 @@ type ProjectTestOption func(*ProjectTest)
 func WithTestDefaultConfigs() ProjectTestOption {
 	return func(p *ProjectTest) {
 		p.useTestDefaultConfigs = true
+	}
+}
+
+// WithPreCommand adds a command to run before the main test command. Commands
+// are run in order, each prefixed with 'azldev -C project'. Use this to set up
+// prerequisites like lock files (e.g., "component update -a").
+func WithPreCommand(args string) ProjectTestOption {
+	return func(p *ProjectTest) {
+		p.preCommands = append(p.preCommands, args)
 	}
 }
 
@@ -93,6 +103,12 @@ func (p *ProjectTest) RunInContainer(t *testing.T) *ProjectTestResults {
 	p.project.Serialize(t, projectStagingDir)
 
 	// Create a script that runs the command with the provided arguments.
+	var preCommandLines string
+
+	for _, pre := range p.preCommands {
+		preCommandLines += "\nazldev -C project -v " + pre
+	}
+
 	testScript := fmt.Sprintf(`
 set -x
 
@@ -100,9 +116,9 @@ set -x
 # to the well-known dir created by mock for this purpose.
 rm -rf project/build
 ln -s /var/lib/mock project/build
-
+%s
 azldev -C project -v %s --output-format json >result.json
-`, strings.Join(p.commandArgs, " "))
+`, preCommandLines, strings.Join(p.commandArgs, " "))
 
 	// NOTE: We need to run in a privileged container so 'mock' can create its nested root environment.
 	// NOTE: We need to enable networking so 'mock' can download Azure Linux packages to build a root.

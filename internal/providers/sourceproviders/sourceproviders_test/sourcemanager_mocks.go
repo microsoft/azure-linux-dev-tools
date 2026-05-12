@@ -42,6 +42,21 @@ func (m *MockSourceManager) EXPECT() *MockSourceManagerMockRecorder {
 	return m.recorder
 }
 
+// CalculateSourceIdentity mocks base method.
+func (m *MockSourceManager) CalculateSourceIdentity(ctx context.Context, component components.Component) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CalculateSourceIdentity", ctx, component)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CalculateSourceIdentity indicates an expected call of CalculateSourceIdentity.
+func (mr *MockSourceManagerMockRecorder) CalculateSourceIdentity(ctx, component any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CalculateSourceIdentity", reflect.TypeOf((*MockSourceManager)(nil).CalculateSourceIdentity), ctx, component)
+}
+
 // FetchComponent mocks base method.
 func (m *MockSourceManager) FetchComponent(ctx context.Context, component components.Component, destDirPath string, opts ...sourceproviders.FetchComponentOption) error {
 	m.ctrl.T.Helper()
@@ -73,19 +88,4 @@ func (m *MockSourceManager) FetchFiles(ctx context.Context, component components
 func (mr *MockSourceManagerMockRecorder) FetchFiles(ctx, component, destDirPath any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FetchFiles", reflect.TypeOf((*MockSourceManager)(nil).FetchFiles), ctx, component, destDirPath)
-}
-
-// ResolveSourceIdentity mocks base method.
-func (m *MockSourceManager) ResolveSourceIdentity(ctx context.Context, component components.Component) (string, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ResolveSourceIdentity", ctx, component)
-	ret0, _ := ret[0].(string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ResolveSourceIdentity indicates an expected call of ResolveSourceIdentity.
-func (mr *MockSourceManagerMockRecorder) ResolveSourceIdentity(ctx, component any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResolveSourceIdentity", reflect.TypeOf((*MockSourceManager)(nil).ResolveSourceIdentity), ctx, component)
 }

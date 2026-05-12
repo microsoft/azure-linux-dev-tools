@@ -4,7 +4,6 @@
 package components
 
 import (
-	"os"
 	"strings"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
@@ -25,10 +24,7 @@ type ComponentFilter struct {
 	IncludeAllComponents bool
 	// SkipLockValidation disables lock file consistency checks for this
 	// filter's resolution. Commands that write lock files (update) or are
-	// read-only (list) set this to true. The '--skip-lock-validation' flag
-	// defaults based on AZLDEV_ENABLE_LOCK_VALIDATION during rollout.
-	//nolint:godox // tracked by TODO(lockfiles) tag.
-	// TODO(lockfiles): remove env var gate; default to false (validation on).
+	// read-only (list) set this to true.
 	SkipLockValidation bool
 }
 
@@ -58,7 +54,7 @@ func AddComponentFilterOptionsToCommand(cmd *cobra.Command, filter *ComponentFil
 	_ = cmd.MarkFlagFilename("spec-path", ".spec")
 
 	cmd.Flags().BoolVar(&filter.SkipLockValidation, "skip-lock-validation",
-		os.Getenv("AZLDEV_ENABLE_LOCK_VALIDATION") != "1",
+		false,
 		"skip lock file consistency checks")
 }
 

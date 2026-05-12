@@ -111,7 +111,7 @@ func TestFreshness_NothingChanged_SkipsNetwork(t *testing.T) {
 	const commit = "aabbccdd11223344"
 
 	gitCalls := setupMockGitWithCounter(env, commit)
-	addUpstreamComponent(env, testComponentName)
+	registerUpstreamComponentConfig(env, testComponentName)
 	setDistroSnapshot(env, "2025-01-01T00:00:00Z")
 
 	fpBefore, resHashBefore := initialUpdate(t, env)
@@ -170,7 +170,7 @@ func TestFreshness_SnapshotChanged_SameCommit_UsesNetwork(t *testing.T) {
 	const commit = "aabbccdd11223344"
 
 	gitCalls := setupMockGitWithCounter(env, commit)
-	addUpstreamComponent(env, testComponentName)
+	registerUpstreamComponentConfig(env, testComponentName)
 	setDistroSnapshot(env, "2025-01-01T00:00:00Z")
 
 	fpBefore, resHashBefore := initialUpdate(t, env)
@@ -219,7 +219,7 @@ func TestFreshness_OverlayChanged_SkipsNetwork(t *testing.T) {
 	const commit = "aabbccdd11223344"
 
 	gitCalls := setupMockGitWithCounter(env, commit)
-	addUpstreamComponent(env, testComponentName)
+	registerUpstreamComponentConfig(env, testComponentName)
 	setDistroSnapshot(env, "2025-01-01T00:00:00Z")
 
 	fpBefore, resHashBefore := initialUpdate(t, env)
@@ -277,7 +277,7 @@ func TestFreshness_SnapshotChanged_DifferentCommit(t *testing.T) {
 	)
 
 	gitCalls := setupMockGitWithCounter(env, initialCommit)
-	addUpstreamComponent(env, testComponentName)
+	registerUpstreamComponentConfig(env, testComponentName)
 	setDistroSnapshot(env, "2025-01-01T00:00:00Z")
 
 	fpBefore, resHashBefore := initialUpdate(t, env)
@@ -420,7 +420,7 @@ func TestFreshness_ForceRecalculate_BypassesFreshness(t *testing.T) {
 	const commit = "aabbccdd11223344"
 
 	gitCalls := setupMockGitWithCounter(env, commit)
-	addUpstreamComponent(env, testComponentName)
+	registerUpstreamComponentConfig(env, testComponentName)
 	setDistroSnapshot(env, "2025-01-01T00:00:00Z")
 
 	_, _ = initialUpdate(t, env)
@@ -450,7 +450,7 @@ func TestFreshness_HeadTracking_AlwaysReResolves(t *testing.T) {
 	const commit = "aabbccdd11223344"
 
 	gitCalls := setupMockGitWithCounter(env, commit)
-	addUpstreamComponent(env, testComponentName)
+	registerUpstreamComponentConfig(env, testComponentName)
 
 	// Explicitly clear snapshot — HEAD-tracking means no snapshot, no pin.
 	setDistroSnapshot(env, "")
@@ -483,7 +483,7 @@ func TestFreshness_UpstreamLegacyLock_ReResolves(t *testing.T) {
 	const commit = "aabbccdd11223344"
 
 	gitCalls := setupMockGitWithCounter(env, commit)
-	addUpstreamComponent(env, testComponentName)
+	registerUpstreamComponentConfig(env, testComponentName)
 	setDistroSnapshot(env, "2025-01-01T00:00:00Z")
 
 	require.NoError(t, fileutils.MkdirAll(env.TestFS, testLockDir))

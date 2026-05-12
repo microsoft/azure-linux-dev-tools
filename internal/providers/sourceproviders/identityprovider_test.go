@@ -95,9 +95,9 @@ func TestResolveLocalSourceIdentity_SidecarFileChangesIdentity(t *testing.T) {
 	assert.NotEqual(t, identity1, identity2, "adding a sidecar file must change identity")
 }
 
-// --- FedoraSourcesProviderImpl.ResolveIdentity tests ---
+// --- FedoraSourcesProviderImpl.CalculateSourceIdentity tests ---
 
-func TestFedoraProvider_ResolveIdentity(t *testing.T) {
+func TestFedoraProvider_CalculateSourceIdentity(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockGitProvider := git_test.NewMockGitProvider(ctrl)
 
@@ -123,7 +123,7 @@ func TestFedoraProvider_ResolveIdentity(t *testing.T) {
 			Return(expectedCommit, nil)
 
 		comp := newMockComp(ctrl, testPackageName)
-		identity, resolveErr := provider.ResolveIdentity(t.Context(), comp)
+		identity, resolveErr := provider.CalculateSourceIdentity(t.Context(), comp)
 		require.NoError(t, resolveErr)
 		assert.Equal(t, expectedCommit, identity)
 	})
@@ -134,7 +134,7 @@ func TestFedoraProvider_ResolveIdentity(t *testing.T) {
 			Return(errors.New("network error"))
 
 		comp := newMockComp(ctrl, testPackageName)
-		_, resolveErr := provider.ResolveIdentity(t.Context(), comp)
+		_, resolveErr := provider.CalculateSourceIdentity(t.Context(), comp)
 		require.Error(t, resolveErr)
 		assert.Contains(t, resolveErr.Error(), testPackageName)
 	})
@@ -150,13 +150,13 @@ func TestFedoraProvider_ResolveIdentity(t *testing.T) {
 		})
 
 		// No LsRemoteHead expectation — the pinned commit should be returned directly.
-		identity, resolveErr := provider.ResolveIdentity(t.Context(), comp)
+		identity, resolveErr := provider.CalculateSourceIdentity(t.Context(), comp)
 		require.NoError(t, resolveErr)
 		assert.Equal(t, pinnedCommit, identity)
 	})
 }
 
-func TestFedoraProvider_ResolveIdentity_Snapshot(t *testing.T) {
+func TestFedoraProvider_CalculateSourceIdentity_Snapshot(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockGitProvider := git_test.NewMockGitProvider(ctrl)
 
@@ -186,7 +186,7 @@ func TestFedoraProvider_ResolveIdentity_Snapshot(t *testing.T) {
 			Return(expectedCommit, nil)
 
 		comp := newMockComp(ctrl, testPackageName)
-		identity, resolveErr := provider.ResolveIdentity(t.Context(), comp)
+		identity, resolveErr := provider.CalculateSourceIdentity(t.Context(), comp)
 		require.NoError(t, resolveErr)
 		assert.Equal(t, expectedCommit, identity)
 	})
@@ -202,15 +202,15 @@ func TestFedoraProvider_ResolveIdentity_Snapshot(t *testing.T) {
 		})
 
 		// No Clone/Deepen/GetCommitHashBeforeDate expectations — pinned commit is returned directly.
-		identity, resolveErr := provider.ResolveIdentity(t.Context(), comp)
+		identity, resolveErr := provider.CalculateSourceIdentity(t.Context(), comp)
 		require.NoError(t, resolveErr)
 		assert.Equal(t, pinnedCommit, identity)
 	})
 }
 
-// --- RPMContentsProviderImpl.ResolveIdentity tests ---
+// --- RPMContentsProviderImpl.CalculateSourceIdentity tests ---
 
-func TestRPMProvider_ResolveIdentity(t *testing.T) {
+func TestRPMProvider_CalculateSourceIdentity(t *testing.T) {
 	ctrl := gomock.NewController(t)
 
 	t.Run("hashes downloaded RPM", func(t *testing.T) {
@@ -225,7 +225,7 @@ func TestRPMProvider_ResolveIdentity(t *testing.T) {
 		require.NoError(t, provErr)
 
 		comp := newMockComp(ctrl, "test-pkg")
-		identity, resolveErr := provider.ResolveIdentity(t.Context(), comp)
+		identity, resolveErr := provider.CalculateSourceIdentity(t.Context(), comp)
 		require.NoError(t, resolveErr)
 		assert.Equal(t, "sha256:"+sha256Hex(rpmContent), identity)
 	})
@@ -241,7 +241,7 @@ func TestRPMProvider_ResolveIdentity(t *testing.T) {
 		require.NoError(t, provErr)
 
 		comp := newMockComp(ctrl, "test-pkg")
-		_, resolveErr := provider.ResolveIdentity(t.Context(), comp)
+		_, resolveErr := provider.CalculateSourceIdentity(t.Context(), comp)
 		require.Error(t, resolveErr)
 		assert.Contains(t, resolveErr.Error(), "test-pkg")
 	})
@@ -297,11 +297,13 @@ func (d *noOpDownloader) ExtractSourcesFromRepo(
 	return nil
 }
 
-// --- Lock data integration tests ---
+// --- CalculateSourceIdentity always resolves from upstream ---
 
-// TestFedoraProvider_ResolveIdentity_UsesLockedCommit verifies that ResolveIdentity
-// returns the locked commit immediately without cloning when Locked data is present.
-func TestFedoraProvider_ResolveIdentity_UsesLockedCommit(t *testing.T) {
+// TestFedoraProvider_CalculateSourceIdentity_IgnoresLockedData verifies that
+// CalculateSourceIdentity does not short-circuit on locked data — it always
+// resolves from upstream. Callers that want the cached locked commit should
+// read ComponentLockData.UpstreamCommit directly.
+func TestFedoraProvider_CalculateSourceIdentity_IgnoresLockedData(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockGitProvider := git_test.NewMockGitProvider(ctrl)
 
@@ -315,51 +317,20 @@ func TestFedoraProvider_ResolveIdentity_UsesLockedCommit(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	lockedCommit := "locked-abc123"
+	headCommit := "fresh-upstream-commit"
 
 	comp := newMockCompWithConfig(ctrl, testPackageName, &projectconfig.ComponentConfig{
 		Name: testPackageName,
 		Spec: projectconfig.SpecSource{
 			SourceType: projectconfig.SpecSourceTypeUpstream,
+			// No UpstreamCommit pin → resolves via clone + snapshot/HEAD.
 		},
 		Locked: &projectconfig.ComponentLockData{
-			UpstreamCommit: lockedCommit,
+			UpstreamCommit: "stale-locked-commit",
 		},
 	})
 
-	// No git expectations — locked commit should be returned without any clone.
-	identity, resolveErr := provider.ResolveIdentity(t.Context(), comp)
-	require.NoError(t, resolveErr)
-	assert.Equal(t, lockedCommit, identity, "should return locked commit without cloning")
-}
-
-// TestFedoraProvider_ResolveIdentity_FallsBackWithoutLock verifies that when no
-// Locked data is present, ResolveIdentity falls back to the old resolution path.
-func TestFedoraProvider_ResolveIdentity_FallsBackWithoutLock(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	mockGitProvider := git_test.NewMockGitProvider(ctrl)
-
-	provider, err := sourceproviders.NewFedoraSourcesProviderImpl(
-		afero.NewMemMapFs(),
-		newNoOpDryRunnable(),
-		mockGitProvider,
-		newNoOpDownloader(),
-		testResolvedDistro(),
-		retry.Disabled(),
-	)
-	require.NoError(t, err)
-
-	headCommit := "head-fallback-commit"
-
-	comp := newMockCompWithConfig(ctrl, testPackageName, &projectconfig.ComponentConfig{
-		Name: testPackageName,
-		Spec: projectconfig.SpecSource{
-			SourceType: projectconfig.SpecSourceTypeUpstream,
-			// No UpstreamCommit pin, no Locked data → falls back to clone + HEAD.
-		},
-	})
-
-	// Expect clone + GetCurrentCommit (fallback path).
+	// Expects clone even though Locked data is present.
 	mockGitProvider.EXPECT().
 		Clone(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
@@ -367,14 +338,16 @@ func TestFedoraProvider_ResolveIdentity_FallsBackWithoutLock(t *testing.T) {
 		GetCurrentCommit(gomock.Any(), gomock.Any()).
 		Return(headCommit, nil)
 
-	identity, resolveErr := provider.ResolveIdentity(t.Context(), comp)
+	identity, resolveErr := provider.CalculateSourceIdentity(t.Context(), comp)
 	require.NoError(t, resolveErr)
-	assert.Equal(t, headCommit, identity, "should fall back to HEAD when no lock data")
+	assert.Equal(t, headCommit, identity,
+		"should resolve from upstream, ignoring locked data")
 }
 
-// TestFedoraProvider_ResolveIdentity_LockedTakesPriorityOverConfigPin verifies
-// that Locked.UpstreamCommit is used even when Spec.UpstreamCommit is also set.
-func TestFedoraProvider_ResolveIdentity_LockedTakesPriorityOverConfigPin(t *testing.T) {
+// TestFedoraProvider_CalculateSourceIdentity_UsesConfigPin verifies that
+// when Spec.UpstreamCommit is set, CalculateSourceIdentity returns it
+// directly (even if Locked data is also present).
+func TestFedoraProvider_CalculateSourceIdentity_UsesConfigPin(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockGitProvider := git_test.NewMockGitProvider(ctrl)
 
@@ -395,13 +368,13 @@ func TestFedoraProvider_ResolveIdentity_LockedTakesPriorityOverConfigPin(t *test
 			UpstreamCommit: "config-pinned-commit",
 		},
 		Locked: &projectconfig.ComponentLockData{
-			UpstreamCommit: "locked-commit-wins",
+			UpstreamCommit: "locked-commit-ignored",
 		},
 	})
 
-	// No git expectations — locked commit returned directly.
-	identity, resolveErr := provider.ResolveIdentity(t.Context(), comp)
+	// No clone expected — pinned commit returned directly.
+	identity, resolveErr := provider.CalculateSourceIdentity(t.Context(), comp)
 	require.NoError(t, resolveErr)
-	assert.Equal(t, "locked-commit-wins", identity,
-		"locked commit should take priority over config pin for identity resolution")
+	assert.Equal(t, "config-pinned-commit", identity,
+		"config pin should be used for identity calculation")
 }

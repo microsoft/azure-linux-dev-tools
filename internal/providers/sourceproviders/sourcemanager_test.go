@@ -371,7 +371,7 @@ func TestSourceManager_FetchFiles_Errors(t *testing.T) {
 	}
 }
 
-func TestSourceManager_ResolveSourceIdentity_EmptyComponentName(t *testing.T) {
+func TestSourceManager_CalculateSourceIdentity_EmptyComponentName(t *testing.T) {
 	env := testutils.NewTestEnv(t)
 	ctrl := gomock.NewController(t)
 	component := components_testutils.NewMockComponent(ctrl)
@@ -381,12 +381,12 @@ func TestSourceManager_ResolveSourceIdentity_EmptyComponentName(t *testing.T) {
 	sourceManager, err := sourceproviders.NewSourceManager(env.Env, testDefaultDistro())
 	require.NoError(t, err)
 
-	_, err = sourceManager.ResolveSourceIdentity(t.Context(), component)
+	_, err = sourceManager.CalculateSourceIdentity(t.Context(), component)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "component name is empty")
 }
 
-func TestSourceManager_ResolveSourceIdentity_LocalNoSpecPath(t *testing.T) {
+func TestSourceManager_CalculateSourceIdentity_LocalNoSpecPath(t *testing.T) {
 	env := testutils.NewTestEnv(t)
 	ctrl := gomock.NewController(t)
 	component := components_testutils.NewMockComponent(ctrl)
@@ -403,12 +403,12 @@ func TestSourceManager_ResolveSourceIdentity_LocalNoSpecPath(t *testing.T) {
 	sourceManager, err := sourceproviders.NewSourceManager(env.Env, testDefaultDistro())
 	require.NoError(t, err)
 
-	_, err = sourceManager.ResolveSourceIdentity(t.Context(), component)
+	_, err = sourceManager.CalculateSourceIdentity(t.Context(), component)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no spec path configured")
 }
 
-func TestSourceManager_ResolveSourceIdentity_LocalSuccess(t *testing.T) {
+func TestSourceManager_CalculateSourceIdentity_LocalSuccess(t *testing.T) {
 	env := testutils.NewTestEnv(t)
 	ctrl := gomock.NewController(t)
 	component := components_testutils.NewMockComponent(ctrl)
@@ -429,12 +429,12 @@ func TestSourceManager_ResolveSourceIdentity_LocalSuccess(t *testing.T) {
 	sourceManager, err := sourceproviders.NewSourceManager(env.Env, testDefaultDistro())
 	require.NoError(t, err)
 
-	identity, err := sourceManager.ResolveSourceIdentity(t.Context(), component)
+	identity, err := sourceManager.CalculateSourceIdentity(t.Context(), component)
 	require.NoError(t, err)
 	assert.Contains(t, identity, "sha256:")
 }
 
-func TestSourceManager_ResolveSourceIdentity_UpstreamNoProviders(t *testing.T) {
+func TestSourceManager_CalculateSourceIdentity_UpstreamNoProviders(t *testing.T) {
 	env := testutils.NewTestEnv(t)
 	ctrl := gomock.NewController(t)
 	component := components_testutils.NewMockComponent(ctrl)
@@ -454,12 +454,12 @@ func TestSourceManager_ResolveSourceIdentity_UpstreamNoProviders(t *testing.T) {
 	sourceManager, err := sourceproviders.NewSourceManager(env.Env, emptyDistro)
 	require.NoError(t, err)
 
-	_, err = sourceManager.ResolveSourceIdentity(t.Context(), component)
+	_, err = sourceManager.CalculateSourceIdentity(t.Context(), component)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no upstream providers configured")
 }
 
-func TestSourceManager_ResolveSourceIdentity_UpstreamAllProvidersFail(t *testing.T) {
+func TestSourceManager_CalculateSourceIdentity_UpstreamAllProvidersFail(t *testing.T) {
 	env := testutils.NewTestEnv(t)
 	ctrl := gomock.NewController(t)
 	component := components_testutils.NewMockComponent(ctrl)
@@ -481,7 +481,7 @@ func TestSourceManager_ResolveSourceIdentity_UpstreamAllProvidersFail(t *testing
 	sourceManager, err := sourceproviders.NewSourceManager(env.Env, testDefaultDistro())
 	require.NoError(t, err)
 
-	_, err = sourceManager.ResolveSourceIdentity(t.Context(), component)
+	_, err = sourceManager.CalculateSourceIdentity(t.Context(), component)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to resolve source identity")
 }
@@ -536,7 +536,7 @@ func TestSourceManager_FetchComponent_LocalComponent_WithSkipLookaside(t *testin
 	assert.False(t, tarballExists, "source tarball should not be present when SkipLookaside is set")
 }
 
-func TestSourceManager_ResolveSourceIdentity_UnknownSourceType(t *testing.T) {
+func TestSourceManager_CalculateSourceIdentity_UnknownSourceType(t *testing.T) {
 	env := testutils.NewTestEnv(t)
 	ctrl := gomock.NewController(t)
 	component := components_testutils.NewMockComponent(ctrl)
@@ -553,7 +553,7 @@ func TestSourceManager_ResolveSourceIdentity_UnknownSourceType(t *testing.T) {
 	sourceManager, err := sourceproviders.NewSourceManager(env.Env, testDefaultDistro())
 	require.NoError(t, err)
 
-	_, err = sourceManager.ResolveSourceIdentity(t.Context(), component)
+	_, err = sourceManager.CalculateSourceIdentity(t.Context(), component)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no identity provider for source type")
 }

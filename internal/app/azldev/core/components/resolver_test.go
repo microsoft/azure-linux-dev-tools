@@ -56,6 +56,9 @@ func addTestComponentToConfig(t *testing.T, env *testutils.TestEnv) projectconfi
 
 	env.Config.Components[component.Name] = component
 
+	// Write a minimal lock so lock validation passes.
+	env.WriteDefaultLock(t, component.Name)
+
 	return component
 }
 
@@ -74,12 +77,17 @@ func TestFindComponents_AllComponents(t *testing.T) {
 	filter := &components.ComponentFilter{IncludeAllComponents: true}
 
 	// Find!
-	components, err := components.NewResolver(env.Env).FindComponents(filter)
+	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
 	require.NoError(t, err)
-	require.Len(t, components.Components(), 1)
+	require.Len(t, resolved.Components(), 1)
 
-	actualComponent := components.Components()[0]
-	require.Equal(t, &expectedComponent, actualComponent.GetConfig())
+	actualComponent := resolved.Components()[0]
+
+	// Locked is populated at resolve time from the lock file — clear it
+	// so we can compare just the config fields set by the test.
+	actualConfig := *actualComponent.GetConfig()
+	actualConfig.Locked = nil
+	require.Equal(t, expectedComponent, actualConfig)
 }
 
 func TestFindComponents_NonExistentSpecPaths(t *testing.T) {
@@ -169,7 +177,12 @@ func TestFindComponents_MatchingNamedPattern(t *testing.T) {
 	require.Len(t, components.Components(), 1)
 
 	actualComponent := components.Components()[0]
-	assert.Equal(t, &component, actualComponent.GetConfig())
+
+	// Locked is populated at resolve time from the lock file — clear it
+	// so we can compare just the config fields set by the test.
+	actualConfig := *actualComponent.GetConfig()
+	actualConfig.Locked = nil
+	assert.Equal(t, component, actualConfig)
 }
 
 func TestFindComponents_FoundGroups(t *testing.T) {
@@ -225,7 +238,12 @@ func TestFindAllComponents_SomeComponents(t *testing.T) {
 	require.Len(t, components.Components(), 1)
 
 	actualComponent := components.Components()[0]
-	assert.Equal(t, &expectedComponent, actualComponent.GetConfig())
+
+	// Locked is populated at resolve time from the lock file — clear it
+	// so we can compare just the config fields set by the test.
+	actualConfig := *actualComponent.GetConfig()
+	actualConfig.Locked = nil
+	assert.Equal(t, expectedComponent, actualConfig)
 }
 
 func TestFindAllComponents_MergesComponentPresentBySpecAndConfig(t *testing.T) {
@@ -438,6 +456,8 @@ func TestApplyInheritedDefaults_GroupDefaults(t *testing.T) {
 	}
 	env.Config.Components[component.Name] = component
 
+	env.WriteDefaultLock(t, component.Name)
+
 	// Set up a group with default build config.
 	env.Config.ComponentGroups["my-group"] = projectconfig.ComponentGroupConfig{
 		Components: []string{"my-comp"},
@@ -471,6 +491,8 @@ func TestApplyInheritedDefaults_MultipleGroupsDeterministicOrder(t *testing.T) {
 
 	component := projectconfig.ComponentConfig{Name: "my-comp"}
 	env.Config.Components[component.Name] = component
+
+	env.WriteDefaultLock(t, component.Name)
 
 	// Group "aaa" adds with=["from-aaa"].
 	env.Config.ComponentGroups["aaa"] = projectconfig.ComponentGroupConfig{
@@ -520,6 +542,8 @@ func TestApplyInheritedDefaults_ComponentOverridesGroupDefaults(t *testing.T) {
 	}
 	env.Config.Components[component.Name] = component
 
+	env.WriteDefaultLock(t, component.Name)
+
 	env.Config.ComponentGroups["my-group"] = projectconfig.ComponentGroupConfig{
 		Components: []string{"my-comp"},
 		DefaultComponentConfig: projectconfig.ComponentConfig{
@@ -557,6 +581,8 @@ func TestApplyInheritedDefaults_NoGroupMembership(t *testing.T) {
 	}
 	env.Config.Components[component.Name] = component
 
+	env.WriteDefaultLock(t, component.Name)
+
 	filter := &components.ComponentFilter{IncludeAllComponents: true}
 
 	result, err := components.NewResolver(env.Env).FindComponents(filter)
@@ -590,6 +616,8 @@ func TestApplyInheritedDefaults_ProjectDefault(t *testing.T) {
 		},
 	}
 	env.Config.Components[component.Name] = component
+
+	env.WriteDefaultLock(t, component.Name)
 
 	filter := &components.ComponentFilter{IncludeAllComponents: true}
 
@@ -634,6 +662,8 @@ func TestApplyInheritedDefaults_ProjectDefaultOverriddenByGroup(t *testing.T) {
 
 	component := projectconfig.ComponentConfig{Name: "my-comp"}
 	env.Config.Components[component.Name] = component
+
+	env.WriteDefaultLock(t, component.Name)
 
 	filter := &components.ComponentFilter{IncludeAllComponents: true}
 
@@ -719,19 +749,12 @@ func TestFindComponents_PopulatesLockedData(t *testing.T) {
 		"Spec.UpstreamCommit should remain empty — lock data goes into Locked, not Spec")
 }
 
-// When no lock file exists (e.g., new component that hasn't been updated yet),
-// the Locked field should be nil. Downstream commands will fall back to the old
-// resolution path (snapshot/HEAD) until the user runs 'component update'.
-//
-// TODO(lockfiles): Once lock validation is default-on, a missing lock for an
-// upstream component should be an error, not a silent nil. Update this test to
-// expect FindComponents to return an error, and remove the fallback path.
-//
-//nolint:godox // tracked by TODO(lockfiles) tag.
-func TestFindComponents_LockedNilWhenNoLockFile(t *testing.T) {
+// When no lock file exists for an upstream component, FindComponents should
+// return a validation error telling the user to run 'component update' first.
+func TestFindComponents_ErrorWhenNoLockFile(t *testing.T) {
 	env := testutils.NewTestEnv(t)
 
-	// Add component with no lock file.
+	// Add upstream component with no lock file.
 	env.Config.Components["bash"] = projectconfig.ComponentConfig{
 		Name: "bash",
 		Spec: projectconfig.SpecSource{
@@ -740,6 +763,29 @@ func TestFindComponents_LockedNilWhenNoLockFile(t *testing.T) {
 	}
 
 	filter := &components.ComponentFilter{IncludeAllComponents: true}
+
+	_, err := components.NewResolver(env.Env).FindComponents(filter)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "lock file")
+}
+
+// When SkipLockValidation is set, a missing lock file is tolerated —
+// the component's Locked field is nil instead of causing an error.
+func TestFindComponents_LockedNilWhenValidationSkipped(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	// Add upstream component with no lock file.
+	env.Config.Components["bash"] = projectconfig.ComponentConfig{
+		Name: "bash",
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeUpstream,
+		},
+	}
+
+	filter := &components.ComponentFilter{
+		IncludeAllComponents: true,
+		SkipLockValidation:   true,
+	}
 
 	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
 	require.NoError(t, err)
@@ -772,7 +818,10 @@ func TestFindComponents_ExplicitPinPreserved(t *testing.T) {
 
 	env.WriteLock(t, "curl", lock)
 
-	filter := &components.ComponentFilter{IncludeAllComponents: true}
+	filter := &components.ComponentFilter{
+		IncludeAllComponents: true,
+		SkipLockValidation:   true,
+	}
 
 	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
 	require.NoError(t, err)
@@ -870,7 +919,10 @@ func TestFindComponents_CorruptLockSurfaces(t *testing.T) {
 	require.NoError(t, fileutils.WriteFile(env.TestFS, lockPath,
 		[]byte("this is not valid TOML \x00\x01\x02"), fileperms.PrivateFile))
 
-	filter := &components.ComponentFilter{IncludeAllComponents: true}
+	filter := &components.ComponentFilter{
+		IncludeAllComponents: true,
+		SkipLockValidation:   true,
+	}
 
 	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
 	require.NoError(t, err, "corrupt lock should warn, not fail (validation is separate)")
@@ -901,7 +953,10 @@ func TestFindComponents_PinDiffersFromLock(t *testing.T) {
 
 	env.WriteLock(t, "curl", lock)
 
-	filter := &components.ComponentFilter{IncludeAllComponents: true}
+	filter := &components.ComponentFilter{
+		IncludeAllComponents: true,
+		SkipLockValidation:   true,
+	}
 
 	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
 	require.NoError(t, err)

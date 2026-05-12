@@ -48,10 +48,6 @@ Component name patterns support glob syntax (*, ?, []).`,
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
 			options.ComponentFilter.ComponentNamePatterns = append(args, options.ComponentFilter.ComponentNamePatterns...)
 
-			// List is read-only — skip lock validation so users can always
-			// inspect their components even when locks are stale.
-			options.ComponentFilter.SkipLockValidation = true
-
 			return ListComponentConfigs(env, options)
 		}),
 		ValidArgsFunction: components.GenerateComponentNameCompletions,
@@ -61,6 +57,10 @@ Component name patterns support glob syntax (*, ?, []).`,
 
 	components.AddComponentFilterOptionsToCommand(cmd, &options.ComponentFilter)
 
+	// List always skips lock validation (read-only), so the flag is
+	// meaningless here. Hide it to avoid confusion.
+	_ = cmd.Flags().MarkHidden("skip-lock-validation")
+
 	return cmd
 }
 
@@ -69,6 +69,10 @@ func ListComponentConfigs(
 	env *azldev.Env, options *ListComponentOptions,
 ) (results []projectconfig.ComponentConfig, err error) {
 	var comps *components.ComponentSet
+
+	// List is read-only — skip lock validation so it works even when
+	// locks are missing or stale.
+	options.ComponentFilter.SkipLockValidation = true
 
 	resolver := components.NewResolver(env)
 
