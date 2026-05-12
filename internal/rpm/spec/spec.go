@@ -560,6 +560,8 @@ func GetPackageNameFromSectionHeader(tokens []string) string {
 				index += 2
 			case "-p":
 				index += 2
+			case "-l":
+				index += 2
 			case "-q":
 				index++
 			default:

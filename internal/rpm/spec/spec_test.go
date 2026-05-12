@@ -22,4 +22,9 @@ func TestGetPackageNameFromSectionHeader(t *testing.T) {
 	assert.Equal(t,
 		"foo",
 		spec.GetPackageNameFromSectionHeader([]string{"%package", "-n", "foo"}))
+
+	// -l flag (localized descriptions) should be skipped, not treated as package name
+	assert.Equal(t, "foo", spec.GetPackageNameFromSectionHeader([]string{"%description", "-l", "fr", "foo"}))
+	assert.Empty(t, spec.GetPackageNameFromSectionHeader([]string{"%description", "-l", "fr"}))
+	assert.Equal(t, "foo", spec.GetPackageNameFromSectionHeader([]string{"%description", "-l", "de", "-n", "foo"}))
 }
