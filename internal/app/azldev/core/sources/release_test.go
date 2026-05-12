@@ -59,9 +59,10 @@ func TestBumpStaticRelease(t *testing.T) {
 		expected    string
 		wantErr     bool
 	}{
-		// Accepted forms: bare integer or integer + %{?dist}.
+		// Accepted forms: bare integer or integer + dist macro.
 		{"simple integer", "1", 3, "4", false},
-		{"with dist tag", "1%{?dist}", 2, "3%{?dist}", false},
+		{"with conditional dist tag", "1%{?dist}", 2, "3%{?dist}", false},
+		{"non-conditional dist tag", "1%{dist}", 2, "3%{dist}", false},
 		{"larger base", "10%{?dist}", 5, "15%{?dist}", false},
 		{"single commit", "1%{?dist}", 1, "2%{?dist}", false},
 
@@ -71,7 +72,6 @@ func TestBumpStaticRelease(t *testing.T) {
 
 		// Rejected: unknown macros in suffix.
 		{"other macros", "17%{someothermacro}%{?dist}", 3, "", true},
-		{"non-conditional dist", "1%{dist}", 1, "", true},
 		{"macro before dist", "0%{rc_subver}%{?dist}", 1, "", true},
 
 		// Rejected: dotted decimal releases.
