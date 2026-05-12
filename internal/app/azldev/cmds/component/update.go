@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
@@ -18,6 +17,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/parmap"
 	"github.com/spf13/cobra"
 )
 
@@ -683,32 +683,78 @@ func resolveSourceIdentitiesParallel(
 	workerEnv, cancel := env.WithCancel()
 	defer cancel()
 
-	// Channel signals goroutine completions so the main goroutine
-	// can update progress as results arrive.
-	doneChan := make(chan struct{}, len(comps))
+	total := int64(len(comps))
 
-	var waitGroup sync.WaitGroup
+	// Pre-filter: cases 1 and 2 fill results synchronously (no upstream
+	// contact needed); case 3 needs parallel resolution.
+	parallel, syncCompleted := classifyForResolution(comps, results)
+
+	// Surface sync-skip progress immediately so users see movement even when
+	// the parallel batch is empty or slow to start.
+	if syncCompleted > 0 {
+		progressEvent.SetProgress(syncCompleted, total)
+	}
 
 	// Each resolution may involve network I/O (upstream git clone) or
 	// filesystem traversal (local spec-dir hashing), so we parallelize.
-	semaphore := make(chan struct{}, env.FastConcurrency())
+	parmapResults := parmap.Map(
+		workerEnv,
+		env.FastConcurrency(),
+		parallel,
+		func(done, _ int) {
+			progressEvent.SetProgress(syncCompleted+int64(done), total)
+		},
+		func(ctx context.Context, item parallelItem) struct{} {
+			resolveAndRecordIdentity(ctx, workerEnv, cancel, item.comp, store, &results[item.idx])
+
+			return struct{}{}
+		},
+	)
+
+	// Items that never acquired a worker slot (ctx cancelled mid-flight) get
+	// marked Skipped — matches the legacy semaphore-select behaviour.
+	for i, pr := range parmapResults {
+		if pr.Cancelled {
+			idx := parallel[i].idx
+			results[idx].Skipped = true
+			results[idx].SkipReason = "cancelled"
+		}
+	}
+
+	return results
+}
+
+// parallelItem pairs a component with its result index for parmap workers.
+type parallelItem struct {
+	idx  int
+	comp components.Component
+}
+
+// classifyForResolution applies the three-way freshness check to each
+// component. Cases 1 and 2 (fully fresh / build-input-only changes) are
+// resolved synchronously by mutating results in place. Case 3 components are
+// returned in the parallel slice for upstream resolution. syncCompleted is
+// the count of cases 1+2, used to seed the progress event.
+//
+// Only upstream components qualify for the freshness shortcut — local
+// components resolve via filesystem hashing (cheap, no network), so skipping
+// gains little and their empty UpstreamCommit can't serve as source identity.
+//
+//  1. FreshnessCurrent → nothing changed, skip entirely (no re-resolution).
+//  2. FreshnessStale + resolution fresh → only build inputs changed
+//     (e.g., overlay edit). Reuse locked commit, but enter save path
+//     to update the fingerprint.
+//  3. FreshnessStale + resolution stale → resolution inputs changed
+//     (e.g., snapshot bump). Must re-resolve upstream.
+func classifyForResolution(
+	comps []components.Component, results []UpdateResult,
+) (parallel []parallelItem, syncCompleted int64) {
+	parallel = make([]parallelItem, 0, len(comps))
 
 	for idx, comp := range comps {
 		results[idx].Component = comp.GetName()
 
 		locked := comp.GetConfig().Locked
-
-		// Three-way freshness check (when lock data is available).
-		// Only applies to upstream components — local components resolve via
-		// filesystem hashing (cheap, no network), so skipping gains little
-		// and their empty UpstreamCommit can't serve as source identity.
-		//
-		// 1. FreshnessCurrent → nothing changed, skip entirely (no re-resolution).
-		// 2. FreshnessStale + resolution fresh → only build inputs changed
-		//    (e.g., overlay edit). Reuse locked commit, but enter save path
-		//    to update the fingerprint.
-		// 3. FreshnessStale + resolution stale → resolution inputs changed
-		//    (e.g., snapshot bump). Must re-resolve upstream.
 		isUpstream := comp.GetConfig().Spec.SourceType == projectconfig.SpecSourceTypeUpstream
 
 		if isUpstream && locked != nil && locked.Freshness == projectconfig.FreshnessCurrent {
@@ -716,6 +762,7 @@ func resolveSourceIdentitiesParallel(
 			results[idx].UpstreamCommit = locked.UpstreamCommit
 			results[idx].sourceIdentity = comp.GetConfig().EffectiveUpstreamCommit()
 			results[idx].upToDate = true
+			syncCompleted++
 
 			continue
 		}
@@ -728,64 +775,35 @@ func resolveSourceIdentitiesParallel(
 			results[idx].PreviousCommit = locked.UpstreamCommit
 			results[idx].sourceIdentity = comp.GetConfig().EffectiveUpstreamCommit()
 			results[idx].config = comp.GetConfig()
+			syncCompleted++
 
 			continue
 		}
 
 		// Case 3: resolution stale, unknown, or no lock — must re-resolve.
-		waitGroup.Add(1)
-
-		go func() {
-			defer waitGroup.Done()
-			defer func() { doneChan <- struct{}{} }()
-
-			resolveAndRecordIdentity(workerEnv, semaphore, cancel, comp, store, &results[idx])
-		}()
+		parallel = append(parallel, parallelItem{idx: idx, comp: comp})
 	}
 
-	// Close doneChan once all goroutines finish.
-	go func() { waitGroup.Wait(); close(doneChan) }()
-
-	total := int64(len(comps))
-
-	var completed int64
-
-	for range doneChan {
-		completed++
-		progressEvent.SetProgress(completed, total)
-	}
-
-	return results
+	return parallel, syncCompleted
 }
 
 // resolveAndRecordIdentity resolves a single component's source identity and
-// records the result. Called from a goroutine in [resolveSourceIdentitiesParallel].
+// records the result. Called from a parmap worker in [resolveSourceIdentitiesParallel].
 func resolveAndRecordIdentity(
+	ctx context.Context,
 	env *azldev.Env,
-	semaphore chan struct{},
 	cancel context.CancelFunc,
 	comp components.Component,
 	store *lockfile.Store,
 	result *UpdateResult,
 ) {
-	// Context-aware semaphore acquisition.
-	select {
-	case semaphore <- struct{}{}:
-		defer func() { <-semaphore }()
-	case <-env.Done():
-		result.Skipped = true
-		result.SkipReason = "cancelled"
-
-		return
-	}
-
 	// Drop populated lock data so the source provider re-resolves
 	// from upstream (snapshot/HEAD or pinned commit) or re-hashes
 	// local spec content instead of short-circuiting with stale
 	// locked values. We're about to overwrite the lock anyway.
 	comp.GetConfig().Locked = nil
 
-	identity, resolveErr := resolveOneSourceIdentity(env, comp)
+	identity, resolveErr := resolveOneSourceIdentity(ctx, env, comp)
 	if resolveErr != nil {
 		result.Error = resolveErr.Error()
 
@@ -841,6 +859,7 @@ func checkLockChanged(store *lockfile.Store, componentName string, result *Updat
 }
 
 func resolveOneSourceIdentity(
+	ctx context.Context,
 	env *azldev.Env,
 	comp components.Component,
 ) (string, error) {
@@ -856,7 +875,7 @@ func resolveOneSourceIdentity(
 		return "", fmt.Errorf("creating source manager for %#q:\n%w", componentName, err)
 	}
 
-	identity, err := sourceManager.ResolveSourceIdentity(env.Context(), comp)
+	identity, err := sourceManager.ResolveSourceIdentity(ctx, comp)
 	if err != nil {
 		return "", fmt.Errorf("resolving identity for %#q:\n%w", componentName, err)
 	}
