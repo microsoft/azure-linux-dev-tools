@@ -150,6 +150,8 @@ type UpdateResult struct {
 
 // UpdateComponents resolves source identities for all selected components and
 // writes the results to per-component lock files under locks/.
+// Lock validation is always skipped regardless of the caller's SkipLockValidation
+// value — update is the lock writer.
 func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]UpdateResult, error) {
 	if options.Bump && options.CheckOnly {
 		return nil, fmt.Errorf("%w: --bump and --check-only are mutually exclusive", azldev.ErrInvalidUsage)

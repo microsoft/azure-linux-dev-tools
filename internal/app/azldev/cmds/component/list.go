@@ -64,7 +64,9 @@ Component name patterns support glob syntax (*, ?, []).`,
 	return cmd
 }
 
-// Lists components in the env, in accordance with options. Returns the found components.
+// ListComponentConfigs lists components in the env, in accordance with options.
+// Lock validation is always skipped regardless of the caller's SkipLockValidation
+// value — list is read-only.
 func ListComponentConfigs(
 	env *azldev.Env, options *ListComponentOptions,
 ) (results []projectconfig.ComponentConfig, err error) {

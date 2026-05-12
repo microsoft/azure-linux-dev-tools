@@ -635,13 +635,12 @@ func readLockFileAtHEAD(
 			lockFileRelPath, lockFileErr)
 	}
 
-	// File genuinely missing — the component has no overlays, so the
-	// dist-git is just the upstream as-is and no synthetic commits
-	// are needed. This is expected for local components and for
-	// upstream components that haven't been committed yet.
-	// Lock validation (in the resolver) catches missing locks for
-	// upstream components before we reach this point, so a missing
-	// file here is always safe to skip.
+	// File genuinely missing — no committed lock at HEAD. This is normal
+	// for local components (no upstream commit) and for upstream components
+	// whose lock was created on disk but not yet committed to git.
+	// Note: the resolver validates lock existence on the *filesystem* (working
+	// tree), not in git — so a lock written by 'component update' but not
+	// yet committed passes resolver validation but is absent at HEAD.
 	slog.Debug("No lock file found at HEAD; skipping synthetic history",
 		"lockFile", lockFileRelPath)
 

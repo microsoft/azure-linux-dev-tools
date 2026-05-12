@@ -118,7 +118,7 @@ rm -rf project/build
 ln -s /var/lib/mock project/build
 %s
 azldev -C project -v %s --output-format json >result.json
-`, preCommandLines, strings.Join(p.commandArgs, " "))
+`, preCommandLines, shellquote.Join(p.commandArgs...))
 
 	// NOTE: We need to run in a privileged container so 'mock' can create its nested root environment.
 	// NOTE: We need to enable networking so 'mock' can download Azure Linux packages to build a root.
