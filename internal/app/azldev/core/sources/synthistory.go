@@ -451,9 +451,12 @@ func updateHead(repo *gogit.Repository, commitHash plumbing.Hash) error {
 // current fingerprint matches the committed one.
 //
 // When currentFingerprint is non-empty it is compared against the fingerprint
-// stored in the HEAD commit's lock file. If they differ a "dirty" entry is
-// appended so that uncommitted config/overlay changes are represented in the
-// synthetic history.
+// stored in the HEAD commit's lock file to detect uncommitted changes.
+//
+// When allowDirty is true, uncommitted lock state is used as a fallback when
+// no committed lock exists at HEAD, and fingerprint mismatches produce dirty
+// synthetic entries. When false, only committed state is considered and any
+// detected dirty state is appended to hints for the caller to surface.
 //
 // The lockDir is the absolute path to the lock file directory. It is converted
 // to a repo-relative path internally once the git repository root is known.
@@ -464,6 +467,8 @@ func buildSyntheticCommits(
 	componentName string,
 	lockDir string,
 	currentFingerprint string,
+	allowDirty bool,
+	hints *[]string,
 ) (changes []FingerprintChange, importCommit string, err error) {
 	projectRepo, projectRepoDir, err := openProjectRepo(config, componentName)
 	if err != nil {
@@ -487,14 +492,18 @@ func buildSyntheticCommits(
 	}
 
 	// Read the lock file at HEAD. If the file is missing (not yet committed),
-	// synthetic history is skipped.
+	// fall back to the on-disk lock data from the resolver. This handles the
+	// first-time workflow: 'component update' creates the lock on disk, then
+	// 'component render' runs before the lock is committed. Without this
+	// fallback, the component would get no synthetic history (autorelease=1)
+	// even though the on-disk lock has all the data needed.
 	headLock, err := readLockFileAtHEAD(projectRepo, lockFileRelPath)
 	if err != nil {
 		return nil, "", err
 	}
 
 	if headLock == nil {
-		return nil, "", nil
+		return handleMissingHeadLock(config, componentName, lockFileRelPath, allowDirty, hints)
 	}
 
 	importCommit = headLock.ImportCommit
@@ -518,11 +527,15 @@ func buildSyntheticCommits(
 
 	// Check for uncommitted ("dirty") changes by comparing the caller-provided
 	// current fingerprint against the fingerprint stored in the HEAD lock file.
-	if dirty := BuildDirtyChange(currentFingerprint, headLock, config.EffectiveUpstreamCommit()); dirty != nil {
-		slog.Info("Current fingerprint differs from HEAD lock file; adding dirty entry",
-			"lockFile", lockFileRelPath)
+	dirtyEntry, dirtyErr := handleDirtyState(
+		currentFingerprint, headLock, config, componentName, lockFileRelPath, allowDirty, hints,
+	)
+	if dirtyErr != nil {
+		return nil, "", dirtyErr
+	}
 
-		fpChanges = append(fpChanges, *dirty)
+	if dirtyEntry != nil {
+		fpChanges = append(fpChanges, *dirtyEntry)
 	}
 
 	if len(fpChanges) == 0 {
@@ -533,6 +546,37 @@ func buildSyntheticCommits(
 	}
 
 	return fpChanges, importCommit, nil
+}
+
+// handleDirtyState checks for uncommitted changes and either returns a dirty
+// [FingerprintChange] entry (when allowDirty is true) or an error with a hint
+// (when false). Returns (nil, nil) when no dirty state is detected.
+func handleDirtyState(
+	currentFingerprint string,
+	headLock *lockfile.ComponentLock,
+	config *projectconfig.ComponentConfig,
+	componentName, lockFileRelPath string,
+	allowDirty bool,
+	hints *[]string,
+) (*FingerprintChange, error) {
+	dirty := BuildDirtyChange(currentFingerprint, headLock, config.EffectiveUpstreamCommit())
+	if dirty == nil {
+		return nil, nil //nolint:nilnil // nil,nil signals "not dirty" to caller.
+	}
+
+	if allowDirty {
+		slog.Info("Current fingerprint differs from HEAD lock file; adding dirty entry",
+			"lockFile", lockFileRelPath)
+
+		return dirty, nil
+	}
+
+	*hints = append(*hints,
+		"use '--allow-dirty' ('-d') to proceed with uncommitted changes")
+
+	return nil, fmt.Errorf(
+		"component %#q has uncommitted changes (lock fingerprint differs from HEAD)",
+		componentName)
 }
 
 // BuildDirtyChange returns a [FingerprintChange] representing uncommitted
@@ -645,6 +689,61 @@ func readLockFileAtHEAD(
 		"lockFile", lockFileRelPath, "reason", lockFileErr)
 
 	return nil, nil //nolint:nilnil // nil,nil signals "not found, skip" to caller.
+}
+
+// handleMissingHeadLock handles the case where no committed lock file exists
+// at HEAD. When allowDirty is true and on-disk lock data is available, creates
+// an initial import entry. When false and dirty state is detected, returns an
+// error with a hint. Returns (nil, "", nil) when there's nothing to do.
+func handleMissingHeadLock(
+	config *projectconfig.ComponentConfig,
+	componentName, lockFileRelPath string,
+	allowDirty bool,
+	hints *[]string,
+) ([]FingerprintChange, string, error) {
+	if allowDirty {
+		return initialImportFromDisk(config, lockFileRelPath)
+	}
+
+	// Uncommitted lock exists but --allow-dirty not set — error.
+	if config.Locked != nil && config.Locked.InputFingerprint != "" {
+		*hints = append(*hints,
+			"use '--allow-dirty' ('-d') to proceed with uncommitted lock files")
+
+		return nil, "", fmt.Errorf(
+			"component %#q has an uncommitted lock file",
+			componentName)
+	}
+
+	return nil, "", nil
+}
+
+// initialImportFromDisk creates a single synthetic "initial import" entry from
+// the on-disk lock data when no committed lock exists at HEAD. This handles the
+// first-time workflow: 'component update' creates the lock on disk, then
+// 'component render' runs before the lock is committed.
+// Returns (nil, "", nil) when the on-disk lock has no fingerprint.
+func initialImportFromDisk(
+	config *projectconfig.ComponentConfig,
+	lockFileRelPath string,
+) ([]FingerprintChange, string, error) {
+	if config.Locked == nil || config.Locked.InputFingerprint == "" {
+		return nil, "", nil
+	}
+
+	slog.Warn("No committed lock; using on-disk lock for initial synthetic history",
+		"lockFile", lockFileRelPath)
+
+	return []FingerprintChange{{
+		CommitMetadata: CommitMetadata{
+			Hash:        "initial",
+			Author:      "azldev",
+			AuthorEmail: "azldev@local",
+			Timestamp:   time.Now().Unix(),
+			Message:     "Initial component import (uncommitted)",
+		},
+		UpstreamCommit: config.EffectiveUpstreamCommit(),
+	}}, config.Locked.ImportCommit, nil
 }
 
 // collectUpstreamCommits returns commits in the repository in chronological

@@ -24,6 +24,7 @@ type PrepareSourcesOptions struct {
 	WithoutGitRepo bool
 	Force          bool
 	AllowNoHashes  bool
+	AllowDirty     bool
 }
 
 func prepareOnAppInit(_ *azldev.App, sourceCmd *cobra.Command) {
@@ -73,6 +74,8 @@ Only one component may be selected at a time.`,
 	cmd.Flags().BoolVar(&options.Force, "force", false, "delete and recreate the output directory if it already exists")
 	cmd.Flags().BoolVar(&options.AllowNoHashes, "allow-no-hashes", false,
 		"compute missing hashes by downloading source files from their origin")
+	cmd.Flags().BoolVarP(&options.AllowDirty, "allow-dirty", "d", false,
+		"include uncommitted lock file changes in synthetic history")
 
 	return cmd
 }
@@ -130,8 +133,11 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 	if !options.WithoutGitRepo && !options.SkipOverlays {
 		preparerOpts = append(preparerOpts,
 			sources.WithGitRepo(env, env.LockReader(), distro.Version.ReleaseVer),
-			sources.WithDirtyDetection(),
 		)
+
+		if options.AllowDirty {
+			preparerOpts = append(preparerOpts, sources.WithDirtyDetection())
+		}
 	}
 
 	if options.AllowNoHashes {
@@ -143,9 +149,14 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 		return fmt.Errorf("failed to create source preparer:\n%w", err)
 	}
 
-	err = preparer.PrepareSources(env, component, options.OutputDir, !options.SkipOverlays)
-	if err != nil {
-		return fmt.Errorf("failed to prepare sources for component %q:\n%w", component.GetName(), err)
+	prepErr := preparer.PrepareSources(env, component, options.OutputDir, !options.SkipOverlays)
+
+	for _, hint := range preparer.Hints() {
+		env.AddFixSuggestion(hint)
+	}
+
+	if prepErr != nil {
+		return fmt.Errorf("failed to prepare sources for component %q:\n%w", component.GetName(), prepErr)
 	}
 
 	return nil

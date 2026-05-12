@@ -39,6 +39,8 @@ type ComponentBuildOptions struct {
 	// MockConfigOpts is an optional set of key-value config options that will be passed through
 	// to mock as --config-opts key=value arguments.
 	MockConfigOpts map[string]string
+
+	AllowDirty bool
 }
 
 // RPMResult encapsulates a single binary RPM produced by a component build,
@@ -146,6 +148,8 @@ builds can consume.`,
 		"Path to local repository to include during build and publish built RPMs to")
 	cmd.Flags().StringToStringVar(&options.MockConfigOpts, "mock-config-opt", nil,
 		"Pass a configuration option through to mock (key=value, can be specified multiple times)")
+	cmd.Flags().BoolVarP(&options.AllowDirty, "allow-dirty", "d", false,
+		"include uncommitted lock file changes in synthetic history")
 
 	// Mark flags as mutually exclusive.
 	cmd.MarkFlagsMutuallyExclusive("srpm-only", "local-repo-with-publish")
@@ -255,8 +259,11 @@ func BuildComponent(
 	if !options.WithoutGitRepo {
 		preparerOpts = append(preparerOpts,
 			sources.WithGitRepo(env, env.LockReader(), distro.Version.ReleaseVer),
-			sources.WithDirtyDetection(),
 		)
+
+		if options.AllowDirty {
+			preparerOpts = append(preparerOpts, sources.WithDirtyDetection())
+		}
 	}
 
 	sourcePreparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, preparerOpts...)
@@ -278,6 +285,13 @@ func BuildComponent(
 		options.SourcePackageOnly, options.NoCheck,
 		options.LocalRepoWithPublishPath,
 	)
+
+	// Drain hints from the preparer — the builder calls PrepareSources
+	// internally, so hints are populated after buildComponentUsingBuilder returns.
+	for _, hint := range sourcePreparer.Hints() {
+		env.AddFixSuggestion(hint)
+	}
+
 	if err != nil {
 		return results, err
 	}

@@ -54,6 +54,11 @@ type SourcePreparer interface {
 	// The component's sources are fetched once into a subdirectory of baseDir, then copied to a second
 	// subdirectory where overlays are applied in-place. The diff between the two subdirectories is returned.
 	DiffSources(ctx context.Context, component components.Component, baseDir string) (*dirdiff.DiffResult, error)
+
+	// Hints returns user-facing suggestions collected during the most recent
+	// [PrepareSources] call (e.g., "use --allow-dirty"). Callers should pass
+	// these to [azldev.Env.AddFixSuggestion] for display.
+	Hints() []string
 }
 
 // PreparerOption is a functional option for configuring a [SourcePreparer].
@@ -83,15 +88,11 @@ func WithGitRepo(
 	}
 }
 
-// WithDirtyDetection returns a [PreparerOption] that enables uncommitted-change
-// detection during synthetic history generation. When set, the current input
-// fingerprint is compared against the committed lock file; if they differ, a
-// "dirty" synthetic commit is appended to represent the uncommitted changes.
-// Without this option, only committed fingerprint changes produce synthetic commits.
-//
-// This should be enabled for commands that operate on the working tree state
-// (build, render, prepare-sources) and left disabled for commands that should
-// only reflect committed state.
+// WithDirtyDetection returns a [PreparerOption] that allows uncommitted lock
+// state to be included in synthetic history generation. When set, uncommitted
+// lock files and fingerprint mismatches produce dirty synthetic commits.
+// Without this option, uncommitted changes cause an error with a hint to use
+// '--allow-dirty'. Gated by the '--allow-dirty' ('-d') CLI flag.
 func WithDirtyDetection() PreparerOption {
 	return func(p *sourcePreparerImpl) {
 		p.dirtyDetection = true
@@ -160,6 +161,10 @@ type sourcePreparerImpl struct {
 	// synthetic history generation. Set via [WithDirtyDetection].
 	dirtyDetection bool
 
+	// hints collects user-facing suggestions generated during [PrepareSources].
+	// Callers can retrieve them via [Hints] after PrepareSources returns.
+	hints []string
+
 	// releaseVer is the per-component resolved distro release version, not the
 	// project default. Set via [WithGitRepo].
 	releaseVer string
@@ -211,10 +216,18 @@ func NewPreparer(
 	return impl, nil
 }
 
+// Hints returns user-facing suggestions collected during PrepareSources.
+func (p *sourcePreparerImpl) Hints() []string {
+	return p.hints
+}
+
 // PrepareSources implements the [SourcePreparer] interface.
 func (p *sourcePreparerImpl) PrepareSources(
 	ctx context.Context, component components.Component, outputDir string, applyOverlays bool,
 ) error {
+	// Reset hints from any prior call (preparer may be reused).
+	p.hints = p.hints[:0]
+
 	// Use the source manager to fetch source files (archives, patches, etc.)
 	// Skip this step when skipLookaside is set — source tarballs are not needed
 	// for rendering and are the most expensive download.
@@ -407,23 +420,23 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 	config := component.GetConfig()
 	componentName := component.GetName()
 
-	// Compute the current fingerprint for uncommitted-change detection.
-	// Only computed when dirty detection is enabled (e.g., build, render).
-	// An empty fingerprint skips dirty detection in buildSyntheticCommits.
-	var currentFingerprint string
-
-	if p.dirtyDetection {
-		var fpErr error
-
-		currentFingerprint, fpErr = computeCurrentFingerprint(p.fs, config, p.releaseVer)
-		if fpErr != nil {
+	// Always compute the current fingerprint — it's local I/O only (no
+	// network). When dirty detection is enabled (--allow-dirty), mismatches
+	// produce synthetic dirty entries. When disabled, mismatches generate
+	// hints suggesting --allow-dirty.
+	currentFingerprint, fpErr := computeCurrentFingerprint(p.fs, config, p.releaseVer)
+	if fpErr != nil {
+		if p.dirtyDetection {
 			return fmt.Errorf("dirty detection failed for component %#q:\n%w", componentName, fpErr)
 		}
+
+		slog.Debug("Cannot compute current fingerprint for dirty detection",
+			"component", componentName, "error", fpErr)
 	}
 
 	changes, importCommit, err := buildSyntheticCommits(
 		ctx, p.cmdFactory, config, componentName, p.lockReader.LockDir(),
-		currentFingerprint,
+		currentFingerprint, p.dirtyDetection, &p.hints,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to build synthetic commits:\n%w", err)

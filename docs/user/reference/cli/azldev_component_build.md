@@ -48,6 +48,7 @@ azldev component build [flags]
 
 ```
   -a, --all-components                   Include all components
+  -d, --allow-dirty                      include uncommitted lock file changes in synthetic history
   -p, --component stringArray            Component name pattern
   -g, --component-group stringArray      Component group name
   -k, --continue-on-error                Continue building when some components fail
