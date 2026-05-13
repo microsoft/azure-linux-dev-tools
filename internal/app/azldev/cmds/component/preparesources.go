@@ -80,6 +80,7 @@ Only one component may be selected at a time.`,
 	return cmd
 }
 
+//nolint:cyclop // slightly over due to flag/option setup
 func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) error {
 	var comps *components.ComponentSet
 
