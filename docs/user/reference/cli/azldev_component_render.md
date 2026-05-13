@@ -54,7 +54,7 @@ azldev component render [flags]
 
 ```
   -a, --all-components                Include all components
-  -d, --allow-dirty                   include uncommitted lock changes in synthetic history
+  -d, --allow-dirty                   include uncommitted changes in synthetic history
       --check-only                    render to a staging area and compare against the existing on-disk output without modifying the output directory. Exits 0 when nothing would change and 1 when any component would drift. With -a + --clean-stale, also fails on orphan rendered-spec directories. Intended for CI gates.
       --clean-stale                   prune rendered-spec directories that no longer correspond to a configured component (only with -a; requires -f with -o). Top-level non-component siblings are preserved.
   -p, --component stringArray         Component name pattern

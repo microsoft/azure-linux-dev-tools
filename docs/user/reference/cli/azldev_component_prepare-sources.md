@@ -33,7 +33,7 @@ azldev component prepare-sources [flags]
 
 ```
   -a, --all-components                Include all components
-  -d, --allow-dirty                   include uncommitted lock file changes in synthetic history
+  -d, --allow-dirty                   include uncommitted changes in synthetic history
       --allow-no-hashes               compute missing hashes by downloading source files from their origin
   -p, --component stringArray         Component name pattern
   -g, --component-group stringArray   Component group name
