@@ -129,7 +129,7 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 	var preparerOpts []sources.PreparerOption
 	if !options.WithoutGitRepo && !options.SkipOverlays {
 		preparerOpts = append(preparerOpts,
-			sources.WithGitRepo(env, env.LockReader(), distro.Version.ReleaseVer),
+			sources.WithGitRepo(env, env.LockReader(), distro.Version.ReleaseVer, distro.Version.DistGitBranch),
 			sources.WithDirtyDetection(),
 		)
 	}

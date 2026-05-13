@@ -527,7 +527,7 @@ func prepareComponentSources(
 	// WithSkipLookaside avoids expensive tarball downloads — only spec +
 	// sidecar files are needed for rendering.
 	preparerOpts := []sources.PreparerOption{
-		sources.WithGitRepo(env, env.LockReader(), distro.Version.ReleaseVer),
+		sources.WithGitRepo(env, env.LockReader(), distro.Version.ReleaseVer, distro.Version.DistGitBranch),
 		sources.WithDirtyDetection(),
 		sources.WithSkipLookaside(),
 	}

@@ -70,16 +70,20 @@ type PreparerOption func(*sourcePreparerImpl)
 // The releaseVer must be the per-component resolved distro release version
 // (e.g., "4.0"), not the project default — components may override the distro
 // via [projectconfig.SpecSource.UpstreamDistro].
+// The distGitBranch is the dist-git branch name (e.g., "f43") used to resolve
+// the branch tip for synthetic history generation.
 func WithGitRepo(
 	cmdFactory opctx.CmdFactory,
 	lockReader lockfile.LockReader,
 	releaseVer string,
+	distGitBranch string,
 ) PreparerOption {
 	return func(p *sourcePreparerImpl) {
 		p.withGitRepo = true
 		p.cmdFactory = cmdFactory
 		p.lockReader = lockReader
 		p.releaseVer = releaseVer
+		p.distGitBranch = distGitBranch
 	}
 }
 
@@ -163,6 +167,11 @@ type sourcePreparerImpl struct {
 	// releaseVer is the per-component resolved distro release version, not the
 	// project default. Set via [WithGitRepo].
 	releaseVer string
+
+	// distGitBranch is the dist-git branch name (e.g., "f43") used to
+	// resolve the branch tip for synthetic history generation.
+	// Set via [WithGitRepo].
+	distGitBranch string
 }
 
 // NewPreparer creates a new [SourcePreparer] instance. All positional arguments
@@ -470,7 +479,7 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 		return fmt.Errorf("failed to remove submodule entries:\n%w", err)
 	}
 
-	if err := CommitInterleavedHistory(sourcesRepo, changes, importCommit); err != nil {
+	if err := CommitInterleavedHistory(sourcesRepo, changes, importCommit, p.distGitBranch); err != nil {
 		return fmt.Errorf("failed to commit synthetic history:\n%w", err)
 	}
 

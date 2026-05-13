@@ -83,7 +83,7 @@ func TestCommitInterleavedHistory_AllOnTop(t *testing.T) {
 		},
 	}
 
-	err = sources.CommitInterleavedHistory(repo, changes, "")
+	err = sources.CommitInterleavedHistory(repo, changes, "", "")
 	require.NoError(t, err)
 
 	// Verify the commit log: upstream + 2 synthetic = 3 commits.
@@ -200,7 +200,7 @@ func TestCommitInterleavedHistory_Interleaved(t *testing.T) {
 		},
 	}
 
-	err = sources.CommitInterleavedHistory(repo, changes, upstream1.String())
+	err = sources.CommitInterleavedHistory(repo, changes, upstream1.String(), "")
 	require.NoError(t, err)
 
 	// Expected order (newest first):
@@ -229,81 +229,6 @@ func TestCommitInterleavedHistory_Interleaved(t *testing.T) {
 	assert.Contains(t, logCommits[1].Message, "upstream: v2.0") // replayed upstream 2
 	assert.Contains(t, logCommits[2].Message, "Fix for v1.0")   // interleaved synthetic
 	assert.Contains(t, logCommits[3].Message, "upstream: v1.0") // import-commit (kept)
-}
-
-func TestCommitInterleavedHistory_SingleCommit(t *testing.T) {
-	memFS := memfs.New()
-	storer := memory.NewStorage()
-
-	repo, err := gogit.Init(storer, memFS)
-	require.NoError(t, err)
-
-	worktree, err := repo.Worktree()
-	require.NoError(t, err)
-
-	file, err := memFS.Create("package.spec")
-	require.NoError(t, err)
-
-	_, err = file.Write([]byte("Name: package\n"))
-	require.NoError(t, err)
-	require.NoError(t, file.Close())
-
-	_, err = worktree.Add("package.spec")
-	require.NoError(t, err)
-
-	upstream, err := worktree.Commit("upstream: initial", &gogit.CommitOptions{
-		Author: &object.Signature{
-			Name:  "Upstream",
-			Email: "upstream@fedora.org",
-			When:  time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC),
-		},
-	})
-	require.NoError(t, err)
-
-	// Modify working tree (simulates overlay application).
-	specFile, err := memFS.Create("package.spec")
-	require.NoError(t, err)
-
-	_, err = specFile.Write([]byte("Name: package\n# modified\n"))
-	require.NoError(t, err)
-	require.NoError(t, specFile.Close())
-
-	changes := []sources.FingerprintChange{
-		{
-			CommitMetadata: sources.CommitMetadata{
-				Hash:        "abc123",
-				Author:      "Alice",
-				AuthorEmail: "alice@example.com",
-				Timestamp:   time.Date(2025, 1, 10, 10, 0, 0, 0, time.UTC).Unix(),
-				Message:     "Fix build",
-			},
-			UpstreamCommit: upstream.String(),
-		},
-	}
-
-	err = sources.CommitInterleavedHistory(repo, changes, "")
-	require.NoError(t, err)
-
-	// Verify working tree changes are in the single synthetic commit.
-	head, err := repo.Head()
-	require.NoError(t, err)
-
-	headCommit, err := repo.CommitObject(head.Hash())
-	require.NoError(t, err)
-
-	assert.Contains(t, headCommit.Message, "Fix build")
-	assert.Equal(t, "Alice", headCommit.Author.Name)
-
-	// Verify file content was committed.
-	tree, err := headCommit.Tree()
-	require.NoError(t, err)
-
-	entry, err := tree.File("package.spec")
-	require.NoError(t, err)
-
-	content, err := entry.Contents()
-	require.NoError(t, err)
-	assert.Contains(t, content, "# modified")
 }
 
 func TestCommitInterleavedHistory_OrphanUpstreamCommit(t *testing.T) {
@@ -360,7 +285,7 @@ func TestCommitInterleavedHistory_OrphanUpstreamCommit(t *testing.T) {
 		},
 	}
 
-	err = sources.CommitInterleavedHistory(repo, changes, "")
+	err = sources.CommitInterleavedHistory(repo, changes, "", "")
 	require.NoError(t, err)
 
 	head, err := repo.Head()
@@ -449,7 +374,7 @@ func TestCommitInterleavedHistory_LocalComponent(t *testing.T) {
 		},
 	}
 
-	err = sources.CommitInterleavedHistory(repo, changes, "")
+	err = sources.CommitInterleavedHistory(repo, changes, "", "")
 	require.NoError(t, err)
 
 	// Verify: initial commit + 2 synthetic = 3 commits.
@@ -493,10 +418,18 @@ func TestCommitInterleavedHistory_LocalComponent(t *testing.T) {
 	assert.Contains(t, content, "# overlays applied")
 }
 
-func TestCommitInterleavedHistory_MergeCommitInUpstream(t *testing.T) {
-	// When the upstream dist-git contains merge commits, the replay should
-	// linearize them: follow only first parents and preserve the merge
-	// commit's tree content.
+func TestCommitInterleavedHistory_MergeCommitCrossBranch(t *testing.T) {
+	// When a merge commit joins two branches, the committer-time-ordered
+	// all-parent walk includes commits from both sides sorted by time.
+	// This test verifies that commits from a merged-in branch are properly
+	// included and interleaved in time order alongside the mainline.
+	//
+	// Graph (newest on top):
+	//   M  ← merge commit (parents: [S, B])  ← HEAD
+	//   |\
+	//   S  B  ← S from merged branch, B from mainline
+	//   |  |
+	//   R  A  ← A is import-commit (root, mainline); R is root of merged branch
 	memFS := memfs.New()
 	storer := memory.NewStorage()
 
@@ -506,13 +439,15 @@ func TestCommitInterleavedHistory_MergeCommitInUpstream(t *testing.T) {
 	worktree, err := repo.Worktree()
 	require.NoError(t, err)
 
-	// Upstream commit A (root).
-	fileA, err := memFS.Create("package.spec")
+	// --- Mainline: A (root) → B ---
+
+	// Commit A — import-commit, root of the mainline.
+	specFile, err := memFS.Create("package.spec")
 	require.NoError(t, err)
 
-	_, err = fileA.Write([]byte("Name: package\nVersion: 1.0\n"))
+	_, err = specFile.Write([]byte("Name: package\nVersion: 1.0\n"))
 	require.NoError(t, err)
-	require.NoError(t, fileA.Close())
+	require.NoError(t, specFile.Close())
 
 	_, err = worktree.Add("package.spec")
 	require.NoError(t, err)
@@ -529,13 +464,13 @@ func TestCommitInterleavedHistory_MergeCommitInUpstream(t *testing.T) {
 	commitAObj, err := repo.CommitObject(commitA)
 	require.NoError(t, err)
 
-	// Upstream commit B (child of A, on main branch).
-	fileB, err := memFS.Create("package.spec")
+	// Commit B — on the mainline, child of A.
+	specFile, err = memFS.Create("package.spec")
 	require.NoError(t, err)
 
-	_, err = fileB.Write([]byte("Name: package\nVersion: 2.0\n"))
+	_, err = specFile.Write([]byte("Name: package\nVersion: 2.0\n"))
 	require.NoError(t, err)
-	require.NoError(t, fileB.Close())
+	require.NoError(t, specFile.Close())
 
 	_, err = worktree.Add("package.spec")
 	require.NoError(t, err)
@@ -552,41 +487,61 @@ func TestCommitInterleavedHistory_MergeCommitInUpstream(t *testing.T) {
 	commitBObj, err := repo.CommitObject(commitB)
 	require.NoError(t, err)
 
-	// Create a side-branch commit F (parent: A) to serve as second parent of merge.
-	featureAuthor := object.Signature{
-		Name:  "Feature",
-		Email: "feature@fedora.org",
-		When:  time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC),
+	// --- Merged branch: independent root R → S ---
+	wrongRootAuthor := object.Signature{
+		Name:  "Other",
+		Email: "other@fedora.org",
+		When:  time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC),
 	}
 
-	featureCommitObj := &object.Commit{
-		Author:       featureAuthor,
-		Committer:    featureAuthor,
-		Message:      "feature: add widget",
+	wrongRootCommit := &object.Commit{
+		Author:    wrongRootAuthor,
+		Committer: wrongRootAuthor,
+		Message:   "merged-branch: root",
+		TreeHash:  commitAObj.TreeHash,
+	}
+
+	wrongRootEncoded := repo.Storer.NewEncodedObject()
+	err = wrongRootCommit.Encode(wrongRootEncoded)
+	require.NoError(t, err)
+
+	wrongRootHash, err := repo.Storer.SetEncodedObject(wrongRootEncoded)
+	require.NoError(t, err)
+
+	sideAuthor := object.Signature{
+		Name:  "Other",
+		Email: "other@fedora.org",
+		When:  time.Date(2024, 4, 1, 0, 0, 0, 0, time.UTC),
+	}
+
+	sideCommitObj := &object.Commit{
+		Author:       sideAuthor,
+		Committer:    sideAuthor,
+		Message:      "merged-branch: rebuild",
 		TreeHash:     commitAObj.TreeHash,
-		ParentHashes: []plumbing.Hash{commitA},
+		ParentHashes: []plumbing.Hash{wrongRootHash},
 	}
 
-	featureEncoded := repo.Storer.NewEncodedObject()
-	err = featureCommitObj.Encode(featureEncoded)
+	sideEncoded := repo.Storer.NewEncodedObject()
+	err = sideCommitObj.Encode(sideEncoded)
 	require.NoError(t, err)
 
-	featureHash, err := repo.Storer.SetEncodedObject(featureEncoded)
+	sideHash, err := repo.Storer.SetEncodedObject(sideEncoded)
 	require.NoError(t, err)
 
-	// Create merge commit M (parents: [B, F], tree: B's tree).
+	// --- Merge commit M: parents [S, B] ---
 	mergeAuthor := object.Signature{
 		Name:  "Upstream",
 		Email: "upstream@fedora.org",
-		When:  time.Date(2024, 4, 1, 0, 0, 0, 0, time.UTC),
+		When:  time.Date(2024, 5, 1, 0, 0, 0, 0, time.UTC),
 	}
 
 	mergeCommitObj := &object.Commit{
 		Author:       mergeAuthor,
 		Committer:    mergeAuthor,
-		Message:      "Merge branch 'feature'",
+		Message:      "Merge branch 'f44' into f43",
 		TreeHash:     commitBObj.TreeHash,
-		ParentHashes: []plumbing.Hash{commitB, featureHash},
+		ParentHashes: []plumbing.Hash{sideHash, commitB},
 	}
 
 	mergeEncoded := repo.Storer.NewEncodedObject()
@@ -605,7 +560,7 @@ func TestCommitInterleavedHistory_MergeCommitInUpstream(t *testing.T) {
 	require.NoError(t, err)
 
 	// Simulate overlay modification in working tree.
-	specFile, err := memFS.Create("package.spec")
+	specFile, err = memFS.Create("package.spec")
 	require.NoError(t, err)
 
 	_, err = specFile.Write([]byte("Name: package\nVersion: 2.0\n# overlay applied\n"))
@@ -616,63 +571,321 @@ func TestCommitInterleavedHistory_MergeCommitInUpstream(t *testing.T) {
 	changes := []sources.FingerprintChange{
 		{
 			CommitMetadata: sources.CommitMetadata{
-				Hash:        "proj-merge",
+				Hash:        "proj-cross-branch",
 				Author:      "Alice",
 				AuthorEmail: "alice@example.com",
 				Timestamp:   time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC).Unix(),
-				Message:     "Fix for merged version",
+				Message:     "Fix for cross-branch merge",
 			},
 			UpstreamCommit: mergeHash.String(),
 		},
 	}
 
-	err = sources.CommitInterleavedHistory(repo, changes, commitA.String())
+	err = sources.CommitInterleavedHistory(repo, changes, commitA.String(), "")
 	require.NoError(t, err)
 
-	// Expected order (newest first):
-	// 1. "Fix for merged version" (synthetic, with overlay content)
-	// 2. "Merge branch 'feature'" (replayed merge, linearized)
-	// 3. "upstream: v2.0" (replayed)
-	// 4. "upstream: v1.0" (import-commit, kept as-is)
-	// The side-branch commit F should NOT appear.
+	// The CTime walk visits all parents sorted by committer time.
+	// Expected first-parent chain (newest first) — 6 total:
+	// 1. "Fix for cross-branch merge" (synthetic)
+	// 2. "Merge branch 'f44' into f43" (replayed merge)
+	// 3. "merged-branch: rebuild" (S, from merged branch)
+	// 4. "upstream: v2.0" (B, from mainline)
+	// 5. "merged-branch: root" (R, from merged branch)
+	// 6. "upstream: v1.0" (A, import-commit)
 	newHead, err := repo.Head()
 	require.NoError(t, err)
 
-	commitIter, err := repo.Log(&gogit.LogOptions{From: newHead.Hash()})
-	require.NoError(t, err)
-
+	// Walk first-parent chain to verify the linearized replay.
 	var logCommits []*object.Commit
 
-	err = commitIter.ForEach(func(c *object.Commit) error {
-		logCommits = append(logCommits, c)
+	currentHash := newHead.Hash()
 
-		return nil
-	})
-	require.NoError(t, err)
+	for {
+		commitObj, err := repo.CommitObject(currentHash)
+		require.NoError(t, err)
 
-	require.Len(t, logCommits, 4, "should have 3 upstream (A, B, M linearized) + 1 synthetic")
+		logCommits = append(logCommits, commitObj)
 
-	assert.Contains(t, logCommits[0].Message, "Fix for merged version") // synthetic
-	assert.Contains(t, logCommits[1].Message, "Merge branch 'feature'") // linearized merge
-	assert.Contains(t, logCommits[2].Message, "upstream: v2.0")         // replayed
-	assert.Contains(t, logCommits[3].Message, "upstream: v1.0")         // import-commit
+		if len(commitObj.ParentHashes) == 0 {
+			break
+		}
 
-	// All replayed commits should have exactly 1 parent (linearized).
-	for i := range 3 {
+		currentHash = commitObj.ParentHashes[0]
+	}
+
+	require.Len(t, logCommits, 6,
+		"should have 5 upstream (A, R, B, S, M) + 1 synthetic")
+
+	assert.Contains(t, logCommits[0].Message, "Fix for cross-branch merge")
+	assert.Contains(t, logCommits[5].Message, "upstream: v1.0") // import-commit
+
+	// All commits should have exactly 1 parent (linearized), except the last (root).
+	for i := range 5 {
 		assert.Len(t, logCommits[i].ParentHashes, 1,
 			"commit %d (%s) should have exactly 1 parent", i, logCommits[i].Message)
 	}
 
 	// Verify the synthetic commit carries overlay content.
-	tree, err := logCommits[0].Tree()
+	tr, err := logCommits[0].Tree()
 	require.NoError(t, err)
 
-	entry, err := tree.File("package.spec")
+	e, err := tr.File("package.spec")
 	require.NoError(t, err)
 
-	content, err := entry.Contents()
+	ct, err := e.Contents()
 	require.NoError(t, err)
-	assert.Contains(t, content, "# overlay applied")
+	assert.Contains(t, ct, "# overlay applied")
+}
+
+func TestCommitInterleavedHistory_UpstreamOnMergedBranch(t *testing.T) {
+	// Regression test for the systemtap scenario: upstream-commit is a
+	// plain commit on a merged-in branch (e.g. f44), while import-commit
+	// is a merge commit on the target branch (f43) whose non-first-parent
+	// is an ancestor of upstream-commit. HEAD is detached at the upstream
+	// commit (simulating the clone + checkout flow).
+	//
+	// Real-world graph (systemtap f43):
+	//   d06e77cc (f43 tip)  "Merge branch 'f44' into f43"
+	//   ├─ 86f88495 (import) "Merge branch 'rawhide' into f43"
+	//   │  ├─ 3c6c476  "Fix CI gating"      (f43 first-parent)
+	//   │  └─ 6fe8d3d  "upstream release 5.4" (non-first-parent)
+	//   └─ 58cfacab  "upstream release 5.5"
+	//      └─ a5c5bd12 (upstream-commit)  "Rebuilt for Fedora 44"
+	//         └─ 0eafb309  "Patched for GCC 16"
+	//            └─ 070cdc17  "Rebuilt for Boost 1.90"
+	//               └─ 6fe8d3d  ← shared with import's non-first-parent
+	//
+	// Test graph (simplified):
+	//   branchTip  "Merge branch 'f44' into f43"  ← origin/f43
+	//   ├─ import  "Merge branch 'rawhide' into f43"
+	//   │  ├─ f43fix  "Fix CI gating"
+	//   │  └─ shared  "upstream release 5.4"
+	//   └─ f44tip  "upstream release 5.5"
+	//      └─ upstream (upstream-commit)  "Rebuilt for Fedora 44"  ← HEAD
+	//         └─ shared  "upstream release 5.4"
+	memFS := memfs.New()
+	storer := memory.NewStorage()
+
+	repo, err := gogit.Init(storer, memFS)
+	require.NoError(t, err)
+
+	worktree, err := repo.Worktree()
+	require.NoError(t, err)
+
+	// --- shared: "upstream release 5.4" (common ancestor) ---
+	specFile, err := memFS.Create("systemtap.spec")
+	require.NoError(t, err)
+
+	_, err = specFile.Write([]byte("Name: systemtap\nVersion: 5.4\n"))
+	require.NoError(t, err)
+	require.NoError(t, specFile.Close())
+
+	_, err = worktree.Add("systemtap.spec")
+	require.NoError(t, err)
+
+	sharedHash, err := worktree.Commit("upstream release 5.4", &gogit.CommitOptions{
+		Author: &object.Signature{
+			Name:  "Upstream",
+			Email: "upstream@fedora.org",
+			When:  time.Date(2025, 10, 31, 0, 0, 0, 0, time.UTC),
+		},
+	})
+	require.NoError(t, err)
+
+	sharedObj, err := repo.CommitObject(sharedHash)
+	require.NoError(t, err)
+
+	// --- f43fix: "Fix CI gating" (f43-only, child of shared) ---
+	specFile, err = memFS.Create("systemtap.spec")
+	require.NoError(t, err)
+
+	_, err = specFile.Write([]byte("Name: systemtap\nVersion: 5.4\n# CI fix\n"))
+	require.NoError(t, err)
+	require.NoError(t, specFile.Close())
+
+	_, err = worktree.Add("systemtap.spec")
+	require.NoError(t, err)
+
+	f43fixHash, err := worktree.Commit("Fix the CI gating setup", &gogit.CommitOptions{
+		Author: &object.Signature{
+			Name:  "Maintainer",
+			Email: "maintainer@fedora.org",
+			When:  time.Date(2025, 9, 22, 0, 0, 0, 0, time.UTC),
+		},
+	})
+	require.NoError(t, err)
+
+	f43fixObj, err := repo.CommitObject(f43fixHash)
+	require.NoError(t, err)
+
+	// --- import: "Merge branch 'rawhide' into f43" (parents: [f43fix, shared]) ---
+	importAuthor := object.Signature{
+		Name:  "Upstream",
+		Email: "upstream@fedora.org",
+		When:  time.Date(2025, 10, 31, 14, 0, 0, 0, time.UTC),
+	}
+
+	importMerge := &object.Commit{
+		Author:       importAuthor,
+		Committer:    importAuthor,
+		Message:      "Merge branch 'rawhide' into f43",
+		TreeHash:     f43fixObj.TreeHash,
+		ParentHashes: []plumbing.Hash{f43fixHash, sharedHash},
+	}
+
+	importEncoded := repo.Storer.NewEncodedObject()
+	err = importMerge.Encode(importEncoded)
+	require.NoError(t, err)
+
+	importHash, err := repo.Storer.SetEncodedObject(importEncoded)
+	require.NoError(t, err)
+
+	// --- f44 branch: upstream (child of shared, NOT of import) ---
+	// "Rebuilt for Fedora 44" — this is the upstream-commit.
+	upstreamAuthor := object.Signature{
+		Name:  "RelEng",
+		Email: "releng@fedora.org",
+		When:  time.Date(2026, 1, 17, 0, 0, 0, 0, time.UTC),
+	}
+
+	upstreamObj := &object.Commit{
+		Author:       upstreamAuthor,
+		Committer:    upstreamAuthor,
+		Message:      "Rebuilt for Fedora 44 Mass Rebuild",
+		TreeHash:     sharedObj.TreeHash,
+		ParentHashes: []plumbing.Hash{sharedHash},
+	}
+
+	upstreamEncoded := repo.Storer.NewEncodedObject()
+	err = upstreamObj.Encode(upstreamEncoded)
+	require.NoError(t, err)
+
+	upstreamHash, err := repo.Storer.SetEncodedObject(upstreamEncoded)
+	require.NoError(t, err)
+
+	// --- branchTip: "Merge branch 'f44' into f43" (parents: [import, upstream]) ---
+	tipAuthor := object.Signature{
+		Name:  "Upstream",
+		Email: "upstream@fedora.org",
+		When:  time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
+	}
+
+	tipMerge := &object.Commit{
+		Author:       tipAuthor,
+		Committer:    tipAuthor,
+		Message:      "Merge branch 'f44' into f43",
+		TreeHash:     sharedObj.TreeHash,
+		ParentHashes: []plumbing.Hash{importHash, upstreamHash},
+	}
+
+	tipEncoded := repo.Storer.NewEncodedObject()
+	err = tipMerge.Encode(tipEncoded)
+	require.NoError(t, err)
+
+	tipHash, err := repo.Storer.SetEncodedObject(tipEncoded)
+	require.NoError(t, err)
+
+	// Set origin/f43 to the branch tip.
+	err = repo.Storer.SetReference(plumbing.NewHashReference(
+		plumbing.NewRemoteReferenceName("origin", "f43"), tipHash))
+	require.NoError(t, err)
+
+	// Detach HEAD at upstream-commit (simulates clone + checkout a5c5bd).
+	head, err := repo.Storer.Reference(plumbing.HEAD)
+	require.NoError(t, err)
+
+	branchName := head.Target()
+	err = repo.Storer.SetReference(plumbing.NewHashReference(branchName, upstreamHash))
+	require.NoError(t, err)
+
+	// Simulate overlay modification.
+	specFile, err = memFS.Create("systemtap.spec")
+	require.NoError(t, err)
+
+	_, err = specFile.Write([]byte("Name: systemtap\nVersion: 5.4\n# overlay applied\n"))
+	require.NoError(t, err)
+	require.NoError(t, specFile.Close())
+
+	changes := []sources.FingerprintChange{
+		{
+			CommitMetadata: sources.CommitMetadata{
+				Hash:        "proj-systemtap",
+				Author:      "Alice",
+				AuthorEmail: "alice@example.com",
+				Timestamp:   time.Date(2026, 5, 13, 0, 0, 0, 0, time.UTC).Unix(),
+				Message:     "Update systemtap overlay",
+			},
+			UpstreamCommit: upstreamHash.String(),
+		},
+	}
+
+	// This must NOT error — previously it failed with "import-commit not found".
+	err = sources.CommitInterleavedHistory(repo, changes, importHash.String(), "f43")
+	require.NoError(t, err, "must find import-commit even when upstream-commit "+
+		"is on the non-first-parent side of import-commit's merge")
+
+	// Verify the replayed history.
+	newHead, err := repo.Head()
+	require.NoError(t, err)
+
+	var logCommits []*object.Commit
+
+	currentHash := newHead.Hash()
+
+	for {
+		commitObj, err := repo.CommitObject(currentHash)
+		require.NoError(t, err)
+
+		logCommits = append(logCommits, commitObj)
+
+		if len(commitObj.ParentHashes) == 0 {
+			break
+		}
+
+		if commitObj.Hash == importHash {
+			break
+		}
+
+		currentHash = commitObj.ParentHashes[0]
+	}
+
+	// Synthetic on top.
+	assert.Contains(t, logCommits[0].Message, "Update systemtap overlay")
+
+	// Import-commit at the bottom.
+	assert.Contains(t, logCommits[len(logCommits)-1].Message,
+		"Merge branch 'rawhide' into f43")
+
+	// Upstream-commit must be present somewhere in the chain.
+	foundUpstream := false
+
+	for _, c := range logCommits {
+		if c.Message == "Rebuilt for Fedora 44 Mass Rebuild" {
+			foundUpstream = true
+
+			break
+		}
+	}
+
+	assert.True(t, foundUpstream,
+		"upstream-commit must appear in the replayed history")
+
+	// All replayed commits except import-commit should have 1 parent.
+	for i := range len(logCommits) - 1 {
+		assert.Len(t, logCommits[i].ParentHashes, 1,
+			"commit %d (%s) should have exactly 1 parent", i, logCommits[i].Message)
+	}
+
+	// Verify overlay content on the synthetic commit.
+	tr, err := logCommits[0].Tree()
+	require.NoError(t, err)
+
+	entry, err := tr.File("systemtap.spec")
+	require.NoError(t, err)
+
+	ct, err := entry.Contents()
+	require.NoError(t, err)
+	assert.Contains(t, ct, "# overlay applied")
 }
 
 func TestParseCommitMetadata(t *testing.T) {

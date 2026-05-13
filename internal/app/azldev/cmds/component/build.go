@@ -254,7 +254,7 @@ func BuildComponent(
 	var preparerOpts []sources.PreparerOption
 	if !options.WithoutGitRepo {
 		preparerOpts = append(preparerOpts,
-			sources.WithGitRepo(env, env.LockReader(), distro.Version.ReleaseVer),
+			sources.WithGitRepo(env, env.LockReader(), distro.Version.ReleaseVer, distro.Version.DistGitBranch),
 			sources.WithDirtyDetection(),
 		)
 	}

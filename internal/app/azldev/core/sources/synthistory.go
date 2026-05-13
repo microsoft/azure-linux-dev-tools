@@ -16,6 +16,7 @@ import (
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/plumbing/storer"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
@@ -121,10 +122,15 @@ func FindFingerprintChanges(
 //
 // When importCommit is non-empty, only upstream commits from importCommit
 // onward are considered for interleaving.
+//
+// The distGitBranch is the dist-git branch name (e.g., "f43") used to resolve
+// the branch tip for the commit walk. When empty, HEAD is used as the
+// starting point instead.
 func CommitInterleavedHistory(
 	repo *gogit.Repository,
 	changes []FingerprintChange,
 	importCommit string,
+	distGitBranch string,
 ) error {
 	// No changes means no synthetic commits to create, so skip the whole process.
 	if len(changes) == 0 {
@@ -138,7 +144,7 @@ func CommitInterleavedHistory(
 
 	// Collect upstream commits BEFORE staging, so the temporary commit
 	// created by stageAndCaptureOverlayTree is not included.
-	upstreamCommits, err := collectUpstreamCommits(repo, importCommit, upstreamCommit)
+	upstreamCommits, err := collectUpstreamCommits(repo, importCommit, upstreamCommit, distGitBranch)
 	if err != nil {
 		return err
 	}
@@ -649,61 +655,64 @@ func readLockFileAtHEAD(
 
 // collectUpstreamCommits returns commits in the repository in chronological
 // order (oldest first), bounded by importCommit (inclusive start) and
-// upstreamCommit (inclusive end). Only first-parent links are followed so that
-// merge commits are included but side-branch commits are excluded, producing a
-// linear mainline history suitable for replay.
+// upstreamCommit (inclusive end).
+//
+// The walk starts from the dist-git branch tip (origin/<distGitBranch>) and
+// uses committer-time ordering across all parents. This ensures that commits
+// from merged-in branches (e.g. f44 merged into f43) are visited in the
+// same order as 'git log', and both importCommit and upstreamCommit are
+// found even when they live on different sides of a merge.
+//
+// When distGitBranch is empty, HEAD is used as the starting point.
 func collectUpstreamCommits(
-	repo *gogit.Repository, importCommit, upstreamCommit string,
+	repo *gogit.Repository, importCommit, upstreamCommit, distGitBranch string,
 ) ([]*object.Commit, error) {
-	head, err := repo.Head()
+	startHash, err := resolveWalkStart(repo, distGitBranch)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get HEAD reference:\n%w", err)
+		return nil, err
 	}
 
-	// Walk newest-first following only first parents.  Collect commits
-	// between upstreamCommit (newest boundary) and importCommit (oldest).
+	startCommit, err := repo.CommitObject(startHash)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read start commit %#q:\n%w", startHash.String(), err)
+	}
+
+	// Use committer-time-ordered traversal (all parents). This matches
+	// 'git log' ordering and visits commits from merged-in branches.
+	iter := object.NewCommitIterCTime(startCommit, nil, nil)
+	defer iter.Close()
+
 	var (
 		commits       []*object.Commit
 		foundUpstream bool
 		foundImport   bool
 		collecting    = upstreamCommit == "" // if no upper bound, collect from start.
-		currentHash   = head.Hash()
 	)
 
-	for {
-		commit, err := repo.CommitObject(currentHash)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read commit %#q:\n%w", currentHash.String(), err)
-		}
-
+	err = iter.ForEach(func(commit *object.Commit) error {
 		hash := commit.Hash.String()
 
 		// Start collecting once we see the upstream-commit (newest boundary).
-		if !collecting && hash == upstreamCommit {
+		if hash == upstreamCommit {
 			collecting = true
+			foundUpstream = true
 		}
 
 		if collecting {
 			commits = append(commits, commit)
 		}
 
-		if hash == upstreamCommit {
-			foundUpstream = true
-		}
-
 		// Stop once we reach the import-commit (oldest boundary).
 		if importCommit != "" && hash == importCommit {
 			foundImport = true
 
-			break
+			return storer.ErrStop
 		}
 
-		// Follow only the first parent to stay on the mainline.
-		if len(commit.ParentHashes) == 0 {
-			break
-		}
-
-		currentHash = commit.ParentHashes[0]
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to walk commit history:\n%w", err)
 	}
 
 	if upstreamCommit != "" && !foundUpstream {
@@ -720,10 +729,46 @@ func collectUpstreamCommits(
 			importCommit)
 	}
 
-	// Walk was newest-first; reverse to chronological.
+	// CTime iterator returns newest-first; reverse to chronological.
 	slices.Reverse(commits)
 
+	slog.Info("Collected upstream commits",
+		"count", len(commits),
+		"importCommit", importCommit,
+		"upstreamCommit", upstreamCommit)
+
 	return commits, nil
+}
+
+// resolveWalkStart determines the starting commit for the upstream history
+// walk. When distGitBranch is non-empty, it resolves the remote tracking ref
+// (origin/<branch>); otherwise it falls back to HEAD.
+func resolveWalkStart(repo *gogit.Repository, distGitBranch string) (plumbing.Hash, error) {
+	if distGitBranch != "" {
+		refName := plumbing.NewRemoteReferenceName("origin", distGitBranch)
+
+		ref, err := repo.Reference(refName, true)
+		if err == nil {
+			slog.Debug("Resolved dist-git branch tip for history walk",
+				"branch", distGitBranch,
+				"ref", refName,
+				"hash", ref.Hash())
+
+			return ref.Hash(), nil
+		}
+
+		slog.Debug("Could not resolve remote branch ref; falling back to HEAD",
+			"branch", distGitBranch,
+			"ref", refName,
+			"reason", err)
+	}
+
+	head, err := repo.Head()
+	if err != nil {
+		return plumbing.ZeroHash, fmt.Errorf("failed to get HEAD reference:\n%w", err)
+	}
+
+	return head.Hash(), nil
 }
 
 // unixToTime converts a Unix timestamp to a [time.Time] in UTC.
