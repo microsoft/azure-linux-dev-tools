@@ -149,7 +149,7 @@ builds can consume.`,
 	cmd.Flags().StringToStringVar(&options.MockConfigOpts, "mock-config-opt", nil,
 		"Pass a configuration option through to mock (key=value, can be specified multiple times)")
 	cmd.Flags().BoolVarP(&options.AllowDirty, "allow-dirty", "d", false,
-		"include uncommitted lock file changes in synthetic history")
+		"include uncommitted changes in synthetic history")
 
 	// Mark flags as mutually exclusive.
 	cmd.MarkFlagsMutuallyExclusive("srpm-only", "local-repo-with-publish")

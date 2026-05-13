@@ -75,7 +75,7 @@ Only one component may be selected at a time.`,
 	cmd.Flags().BoolVar(&options.AllowNoHashes, "allow-no-hashes", false,
 		"compute missing hashes by downloading source files from their origin")
 	cmd.Flags().BoolVarP(&options.AllowDirty, "allow-dirty", "d", false,
-		"include uncommitted lock file changes in synthetic history")
+		"include uncommitted changes in synthetic history")
 
 	return cmd
 }

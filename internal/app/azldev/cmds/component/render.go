@@ -122,7 +122,7 @@ valid with -a.`,
 			"on orphan rendered-spec directories. Intended for CI gates.")
 
 	cmd.Flags().BoolVarP(&options.AllowDirty, "allow-dirty", "d", false,
-		"include uncommitted lock changes in synthetic history")
+		"include uncommitted changes in synthetic history")
 
 	// --check-only is a read-only diff against on-disk state; --fail-on-error
 	// is the loud-failure-per-run knob. Combining them is semantically
