@@ -18,7 +18,7 @@ import (
 )
 
 // initRepoWithLockFile creates an in-memory git repo with a committed lock file.
-// Returns the repo and its worktree root.
+// Returns the repo.
 func initRepoWithLockFile(t *testing.T, lockRelPath, lockContent string) *gogit.Repository {
 	t.Helper()
 

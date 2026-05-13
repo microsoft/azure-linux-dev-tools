@@ -218,7 +218,7 @@ func NewPreparer(
 
 // Hints returns user-facing suggestions collected during PrepareSources.
 func (p *sourcePreparerImpl) Hints() []string {
-	return p.hints
+	return slices.Clone(p.hints)
 }
 
 // PrepareSources implements the [SourcePreparer] interface.

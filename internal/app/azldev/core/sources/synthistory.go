@@ -455,8 +455,8 @@ func updateHead(repo *gogit.Repository, commitHash plumbing.Hash) error {
 //
 // When allowDirty is true, uncommitted lock state is used as a fallback when
 // no committed lock exists at HEAD, and fingerprint mismatches produce dirty
-// synthetic entries. When false, only committed state is considered and any
-// detected dirty state is appended to hints for the caller to surface.
+// synthetic entries. When false, dirty state causes a hard error with hints
+// suggesting '--allow-dirty' for the caller to surface.
 //
 // The lockDir is the absolute path to the lock file directory. It is converted
 // to a repo-relative path internally once the git repository root is known.
@@ -571,8 +571,10 @@ func handleDirtyState(
 		return dirty, nil
 	}
 
-	*hints = append(*hints,
-		"use '--allow-dirty' ('-d') to proceed with uncommitted changes")
+	if hints != nil {
+		*hints = append(*hints,
+			"use '--allow-dirty' ('-d') to proceed with uncommitted changes")
+	}
 
 	return nil, fmt.Errorf(
 		"component %#q has uncommitted changes (lock fingerprint differs from HEAD)",
@@ -707,8 +709,10 @@ func handleMissingHeadLock(
 
 	// Uncommitted lock exists but --allow-dirty not set — error.
 	if config.Locked != nil && config.Locked.InputFingerprint != "" {
-		*hints = append(*hints,
-			"use '--allow-dirty' ('-d') to proceed with uncommitted lock files")
+		if hints != nil {
+			*hints = append(*hints,
+				"use '--allow-dirty' ('-d') to proceed with uncommitted lock files")
+		}
 
 		return nil, "", fmt.Errorf(
 			"component %#q has an uncommitted lock file",
