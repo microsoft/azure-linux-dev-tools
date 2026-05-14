@@ -146,9 +146,15 @@ func (g *GitProviderImpl) GetCommitHashBeforeDate(
 		// Return current HEAD
 		cmd = exec.CommandContext(ctx, "git", "-C", repoDir, "rev-parse", "HEAD")
 	} else {
-		// Return latest commit at or before the specified time
+		// Return latest first-parent commit at or before the specified time.
+		// Using --first-parent ensures the resolved commit is on the target
+		// branch's mainline, not on a merged-in side branch. This prevents
+		// upstream-commit from landing on a different branch's lineage
+		// (e.g. f44 commits merged into f43), which would cause the
+		// synthetic history walk to fail when it can't reach import-commit.
 		cmd = exec.CommandContext(
-			ctx, "git", "-C", repoDir, "rev-list", "-1", "--before="+dateTime.Format(time.RFC3339), "HEAD",
+			ctx, "git", "-C", repoDir, "rev-list", "-1", "--first-parent",
+			"--before="+dateTime.Format(time.RFC3339), "HEAD",
 		)
 	}
 
