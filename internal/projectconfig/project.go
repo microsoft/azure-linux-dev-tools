@@ -4,7 +4,9 @@
 package projectconfig
 
 import (
+	"errors"
 	"fmt"
+	"sort"
 
 	"dario.cat/mergo"
 	"github.com/brunoga/deep"
@@ -69,6 +71,10 @@ func (cfg *ProjectConfig) Validate() error {
 		return fmt.Errorf("config error:\n%w", err)
 	}
 
+	if err := validateComponentGroupMembership(cfg.ComponentGroups, cfg.Components); err != nil {
+		return err
+	}
+
 	if err := validatePackageGroupMembership(cfg.PackageGroups); err != nil {
 		return err
 	}
@@ -78,6 +84,37 @@ func (cfg *ProjectConfig) Validate() error {
 	}
 
 	return nil
+}
+
+// validateComponentGroupMembership checks that every component name listed in a component
+// group's explicit [ComponentGroupConfig.Components] member refers to a component defined
+// in the project's top-level components map. All offending references are reported together.
+func validateComponentGroupMembership(
+	groups map[string]ComponentGroupConfig, components map[string]ComponentConfig,
+) error {
+	// Iterate in sorted order for deterministic error reporting.
+	groupNames := make([]string, 0, len(groups))
+	for name := range groups {
+		groupNames = append(groupNames, name)
+	}
+
+	sort.Strings(groupNames)
+
+	var errs []error
+
+	for _, groupName := range groupNames {
+		group := groups[groupName]
+		for _, member := range group.Components {
+			if _, ok := components[member]; !ok {
+				errs = append(errs, fmt.Errorf(
+					"%w: component group %#q references component %#q, which is not defined in [components]",
+					ErrUndefinedComponent, groupName, member,
+				))
+			}
+		}
+	}
+
+	return errors.Join(errs...)
 }
 
 // validatePackageGroupMembership checks that no binary package name appears in more than one

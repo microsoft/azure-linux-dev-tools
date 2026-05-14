@@ -934,3 +934,55 @@ func TestResolvePackagePublishChannel_FullScenario(t *testing.T) {
 
 	assert.Equal(t, "rpms-sdk-srpm", pythonResolved.Publish.SRPMChannel)
 }
+
+func TestValidateComponentGroupMembership(t *testing.T) {
+	t.Run("group member references undefined component", func(t *testing.T) {
+		cfg := projectconfig.NewProjectConfig()
+		cfg.ComponentGroups["my-group"] = projectconfig.ComponentGroupConfig{
+			Components: []string{"missing-component"},
+		}
+
+		err := cfg.Validate()
+		require.Error(t, err)
+		require.ErrorIs(t, err, projectconfig.ErrUndefinedComponent)
+		assert.Contains(t, err.Error(), "my-group")
+		assert.Contains(t, err.Error(), "missing-component")
+	})
+
+	t.Run("group member references defined component is valid", func(t *testing.T) {
+		cfg := projectconfig.NewProjectConfig()
+		cfg.Components["real-component"] = projectconfig.ComponentConfig{Name: "real-component"}
+		cfg.ComponentGroups["my-group"] = projectconfig.ComponentGroupConfig{
+			Components: []string{"real-component"},
+		}
+
+		assert.NoError(t, cfg.Validate())
+	})
+
+	t.Run("group with only spec patterns is valid", func(t *testing.T) {
+		cfg := projectconfig.NewProjectConfig()
+		cfg.ComponentGroups["my-group"] = projectconfig.ComponentGroupConfig{
+			SpecPathPatterns: []string{"SPECS/**/*.spec"},
+		}
+
+		assert.NoError(t, cfg.Validate())
+	})
+
+	t.Run("reports all undefined references together", func(t *testing.T) {
+		cfg := projectconfig.NewProjectConfig()
+		cfg.Components["real-component"] = projectconfig.ComponentConfig{Name: "real-component"}
+		cfg.ComponentGroups["group-a"] = projectconfig.ComponentGroupConfig{
+			Components: []string{"missing-1", "real-component", "missing-2"},
+		}
+		cfg.ComponentGroups["group-b"] = projectconfig.ComponentGroupConfig{
+			Components: []string{"missing-3"},
+		}
+
+		err := cfg.Validate()
+		require.Error(t, err)
+		require.ErrorIs(t, err, projectconfig.ErrUndefinedComponent)
+		assert.Contains(t, err.Error(), "missing-1")
+		assert.Contains(t, err.Error(), "missing-2")
+		assert.Contains(t, err.Error(), "missing-3")
+	})
+}

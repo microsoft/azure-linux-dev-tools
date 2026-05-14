@@ -4,6 +4,7 @@
 package projectconfig
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -14,6 +15,10 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 )
+
+// ErrUndefinedComponent is returned when a component group references a component name
+// that is not defined in the project's top-level components map.
+var ErrUndefinedComponent = errors.New("undefined component reference")
 
 const (
 	// HashTypeSHA256 represents the SHA-256 hash algorithm.
