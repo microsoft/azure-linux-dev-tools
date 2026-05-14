@@ -65,12 +65,13 @@ func TestListPackages_FromPackageGroup(t *testing.T) {
 
 	// Results are sorted by package name.
 	assert.Equal(t, "curl-devel", results[0].PackageName)
-	assert.Equal(t, "devel-packages", results[0].Group)
+	assert.Equal(t, []string{"devel-packages"}, results[0].PackageGroups)
+	assert.Empty(t, results[0].ComponentGroups)
 	assert.Empty(t, results[0].Component)
 	assert.Equal(t, "devel", results[0].Channel)
 
 	assert.Equal(t, "wget2-devel", results[1].PackageName)
-	assert.Equal(t, "devel-packages", results[1].Group)
+	assert.Equal(t, []string{"devel-packages"}, results[1].PackageGroups)
 	assert.Equal(t, "devel", results[1].Channel)
 }
 
@@ -90,7 +91,8 @@ func TestListPackages_FromComponentPackageOverride(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, "curl-minimal", results[0].PackageName)
-	assert.Empty(t, results[0].Group)
+	assert.Empty(t, results[0].PackageGroups)
+	assert.Empty(t, results[0].ComponentGroups)
 	assert.Equal(t, "curl", results[0].Component)
 	assert.Equal(t, "none", results[0].Channel)
 }
@@ -119,7 +121,7 @@ func TestListPackages_ComponentOverrideWinsOverGroup(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, "curl-devel", results[0].PackageName)
-	assert.Equal(t, "base-packages", results[0].Group)
+	assert.Equal(t, []string{"base-packages"}, results[0].PackageGroups)
 	assert.Equal(t, "curl", results[0].Component)
 	// Component override (none) wins over group (base).
 	assert.Equal(t, "none", results[0].Channel)
@@ -161,7 +163,7 @@ func TestListPackages_ByName_InExplicitConfig(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, "curl-devel", results[0].PackageName)
-	assert.Equal(t, "devel-packages", results[0].Group)
+	assert.Equal(t, []string{"devel-packages"}, results[0].PackageGroups)
 	assert.Empty(t, results[0].Component)
 	assert.Equal(t, "devel", results[0].Channel)
 }
@@ -180,9 +182,29 @@ func TestListPackages_ByName_NotInExplicitConfig(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, "unknown-pkg", results[0].PackageName)
-	assert.Empty(t, results[0].Group)
+	assert.Empty(t, results[0].PackageGroups)
+	assert.Empty(t, results[0].ComponentGroups)
 	assert.Empty(t, results[0].Component)
 	assert.Equal(t, "default-channel", results[0].Channel)
+}
+
+// TestListPackages_EmptyGroupsMarshalAsJSONArray verifies that a result with no group
+// memberships serializes 'packageGroups' and 'componentGroups' as empty JSON arrays
+// ('[]') rather than 'null', so consumers can iterate the fields without null-checking.
+func TestListPackages_EmptyGroupsMarshalAsJSONArray(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{PackageNames: []string{"unknown-pkg"}})
+
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.NotNil(t, results[0].PackageGroups, "PackageGroups must be a non-nil slice")
+	require.NotNil(t, results[0].ComponentGroups, "ComponentGroups must be a non-nil slice")
+
+	data, marshalErr := json.Marshal(results[0])
+	require.NoError(t, marshalErr)
+	assert.Contains(t, string(data), `"packageGroups":[]`)
+	assert.Contains(t, string(data), `"componentGroups":[]`)
 }
 
 func TestListPackages_ByName_MultipleNames(t *testing.T) {
@@ -258,14 +280,15 @@ func TestListPackages_SynthesizeDebugPackages(t *testing.T) {
 	// '-debuginfo' synthesized for each reported package on the parallel debug channel.
 	require.Contains(t, byName, "curl-devel-debuginfo")
 	assert.Equal(t, "devel-debuginfo", byName["curl-devel-debuginfo"].Channel)
-	assert.Equal(t, "devel-packages", byName["curl-devel-debuginfo"].Group)
+	assert.Equal(t, []string{"devel-packages"}, byName["curl-devel-debuginfo"].PackageGroups)
 
 	// '-debugsource' synthesized for each component, with its channel resolved through the
 	// component → project default chain and suffixed onto the parallel debug channel.
 	require.Contains(t, byName, "curl-debugsource")
 	assert.Equal(t, "default-channel-debuginfo", byName["curl-debugsource"].Channel)
 	assert.Equal(t, "curl", byName["curl-debugsource"].Component)
-	assert.Empty(t, byName["curl-debugsource"].Group)
+	assert.Empty(t, byName["curl-debugsource"].PackageGroups)
+	assert.Empty(t, byName["curl-debugsource"].ComponentGroups)
 
 	require.Contains(t, byName, "wget-debugsource")
 	assert.Equal(t, "default-channel-debuginfo", byName["wget-debugsource"].Channel)
@@ -561,4 +584,144 @@ func TestListPackages_RPMFile_Validation(t *testing.T) {
 			assert.Len(t, results, testCase.wantResults)
 		})
 	}
+}
+
+// TestListPackages_ComponentGroupsReportedSorted verifies that the
+// [PackageListResult.ComponentGroups] field reports every component-group the
+// resolved component belongs to, sorted alphabetically, even when the package
+// itself is not listed in any package-group.
+func TestListPackages_ComponentGroupsReportedSorted(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	testEnv.Config.ComponentGroups["base-published"] = projectconfig.ComponentGroupConfig{
+		Components: []string{"jq"},
+	}
+	testEnv.Config.ComponentGroups["alpha"] = projectconfig.ComponentGroupConfig{
+		Components: []string{"jq"},
+	}
+
+	// Loader normally builds GroupsByComponent; tests that mutate ComponentGroups
+	// directly must keep the reverse index aligned. Insert in non-sorted order to
+	// confirm the per-result list is sorted alphabetically.
+	testEnv.Config.GroupsByComponent["jq"] = []string{"base-published", "alpha"}
+
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{PackageNames: []string{"jq"}})
+
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, "jq", results[0].PackageName)
+	assert.Empty(t, results[0].PackageGroups,
+		"PackageGroups should be empty when the package is not in any package-group")
+	assert.Equal(t, []string{"alpha", "base-published"}, results[0].ComponentGroups,
+		"ComponentGroups should be the sorted list of component-group memberships")
+}
+
+// TestListPackages_PackageGroupAndComponentGroupCoexist verifies that
+// package-group and component-group memberships are reported independently in the
+// [PackageListResult] rather than one overriding the other.
+func TestListPackages_PackageGroupAndComponentGroupCoexist(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	testEnv.Config.PackageGroups = map[string]projectconfig.PackageGroupConfig{
+		"devel-packages": {Packages: []string{"jq"}},
+	}
+	testEnv.Config.ComponentGroups["base-published"] = projectconfig.ComponentGroupConfig{
+		Components: []string{"jq"},
+	}
+	testEnv.Config.GroupsByComponent["jq"] = []string{"base-published"}
+
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{PackageNames: []string{"jq"}})
+
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, []string{"devel-packages"}, results[0].PackageGroups,
+		"PackageGroups should report the package-group membership")
+	assert.Equal(t, []string{"base-published"}, results[0].ComponentGroups,
+		"ComponentGroups should report the component-group membership independently")
+}
+
+// TestListPackages_RPMFile_ComponentGroupsReported verifies that --rpm-file rows
+// (both SRPM and binary RPM) report their resolved component's component-group
+// memberships in [PackageListResult.ComponentGroups]. SRPM rows always have an
+// empty [PackageListResult.PackageGroups] list.
+func TestListPackages_RPMFile_ComponentGroupsReported(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	testEnv.Config.Components["curl"] = projectconfig.ComponentConfig{Name: "curl"}
+	testEnv.Config.ComponentGroups["base-published"] = projectconfig.ComponentGroupConfig{
+		Components: []string{"curl"},
+	}
+	testEnv.Config.GroupsByComponent["curl"] = []string{"base-published"}
+
+	const srpmMapPath = "/test-srpm-map.json"
+
+	entries := []map[string]string{
+		{"packageName": "curl", "sourcePackageName": "curl"},
+		{"packageName": "curl-devel", "sourcePackageName": "curl"},
+	}
+
+	data, jsonErr := json.Marshal(entries)
+	require.NoError(t, jsonErr)
+	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, srpmMapPath, data, fileperms.PublicFile))
+
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{RPMFile: srpmMapPath})
+	require.NoError(t, err)
+
+	byKey := make(map[string]pkgcmds.PackageListResult, len(results))
+	for _, r := range results {
+		byKey[r.PackageName+"#"+r.Type] = r
+	}
+
+	srpm := byKey["curl#"+pkgcmds.PackageTypeSRPM]
+	assert.Empty(t, srpm.PackageGroups,
+		"SRPM PackageGroups should be empty (SRPMs have no package-group membership)")
+	assert.Equal(t, []string{"base-published"}, srpm.ComponentGroups,
+		"SRPM ComponentGroups should report the component's component-group memberships")
+
+	rpm := byKey["curl-devel#"+pkgcmds.PackageTypeRPM]
+	assert.Empty(t, rpm.PackageGroups,
+		"binary RPM PackageGroups should be empty when no package-group contains it")
+	assert.Equal(t, []string{"base-published"}, rpm.ComponentGroups,
+		"binary RPM ComponentGroups should report the resolved component's component-group memberships")
+}
+
+// TestListPackages_SynthesizeDebugPackages_DebugsourcePackageGroupReportedAlongsideComponentGroup verifies
+// that a synthesized '-debugsource' entry reports an explicit package-group membership in
+// [PackageListResult.PackageGroups] alongside the component-group baseline in
+// [PackageListResult.ComponentGroups]. This mirrors the resolution used by
+// [resolvePackageListResult] for regular RPMs.
+func TestListPackages_SynthesizeDebugPackages_DebugsourcePackageGroupReportedAlongsideComponentGroup(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	testEnv.Config.Components["curl"] = projectconfig.ComponentConfig{Name: "curl"}
+
+	// Component-group provides the baseline attribution.
+	testEnv.Config.ComponentGroups["base-published"] = projectconfig.ComponentGroupConfig{
+		Components: []string{"curl"},
+	}
+	testEnv.Config.GroupsByComponent["curl"] = []string{"base-published"}
+
+	// Package-group explicitly lists 'curl-debugsource' — this should appear in the
+	// synthesized entry's PackageGroups list independently of the component-group baseline.
+	testEnv.Config.PackageGroups = map[string]projectconfig.PackageGroupConfig{
+		"debug-packages": {Packages: []string{"curl-debugsource"}},
+	}
+
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{
+		PackageNames:            []string{"curl"},
+		SynthesizeDebugPackages: true,
+	})
+
+	require.NoError(t, err)
+
+	byName := make(map[string]pkgcmds.PackageListResult, len(results))
+	for _, result := range results {
+		byName[result.PackageName] = result
+	}
+
+	require.Contains(t, byName, "curl-debugsource")
+	assert.Equal(t, []string{"debug-packages"}, byName["curl-debugsource"].PackageGroups,
+		"synthesized -debugsource PackageGroups should reflect the explicit package-group membership")
+	assert.Equal(t, []string{"base-published"}, byName["curl-debugsource"].ComponentGroups,
+		"synthesized -debugsource ComponentGroups should report the component's component-group memberships")
 }

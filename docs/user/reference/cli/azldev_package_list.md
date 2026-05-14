@@ -28,6 +28,11 @@ Resolution order (lowest to highest priority):
   4. Package-group default-package-config
   5. Component packages.<name> override
 
+Each result has two independent group lists. 'packageGroups' is every package-group whose
+'packages' list contains the package (always empty for SRPM rows). 'componentGroups' is
+every component-group the resolved component belongs to. Both lists are sorted alphabetically
+and are emitted as empty arrays (never null) when there are no memberships.
+
 ```
 azldev package list [package-name...] [flags]
 ```

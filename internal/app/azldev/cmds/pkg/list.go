@@ -72,7 +72,12 @@ Resolution order (lowest to highest priority):
   2. Component-group default-component-config publish settings
   3. Component publish settings
   4. Package-group default-package-config
-  5. Component packages.<name> override`,
+  5. Component packages.<name> override
+
+Each result has two independent group lists. 'packageGroups' is every package-group whose
+'packages' list contains the package (always empty for SRPM rows). 'componentGroups' is
+every component-group the resolved component belongs to. Both lists are sorted alphabetically
+and are emitted as empty arrays (never null) when there are no memberships.`,
 		Example: `  # List all explicitly-configured packages
   azldev package list -a
 
@@ -133,8 +138,16 @@ type PackageListResult struct {
 	// packages. Always [PackageTypeRPM] for '-a' and '-p' lookups; either value for '--rpm-file'.
 	Type string `json:"type" table:"Type"`
 
-	// Group is the package-group this package belongs to, or empty if it is not in any group.
-	Group string `json:"group" table:"Group"`
+	// PackageGroups lists every package-group whose 'packages' list contains this package,
+	// sorted alphabetically for deterministic output. Always serialized as an empty JSON
+	// array (never null) when there are no memberships. SRPMs have no package-group
+	// membership in the config model and therefore always have an empty list here.
+	PackageGroups []string `json:"packageGroups" table:"Package Groups"`
+
+	// ComponentGroups lists every component-group the package's resolved component belongs
+	// to, sorted alphabetically for deterministic output. Always serialized as an empty
+	// JSON array (never null) when there are no memberships.
+	ComponentGroups []string `json:"componentGroups" table:"Component Groups"`
 
 	// Component is the resolved component name for this package.
 	// When using '-a' or '-p', it is the component with an explicit [projectconfig.ComponentConfig.Packages]
@@ -192,10 +205,11 @@ func buildComponentPackageIndex(components map[string]projectconfig.ComponentCon
 func listPackagesFromRPMFile(
 	env *azldev.Env,
 	options *ListPackageOptions,
-	groupOf map[string]string,
+	pkgGroupOf map[string][]string,
+	compGroupsOf map[string][]string,
 	proj *projectconfig.ProjectConfig,
 ) ([]PackageListResult, error) {
-	results, err := resolveFromRPMFile(env.FS(), options.RPMFile, groupOf, proj)
+	results, err := resolveFromRPMFile(env.FS(), options.RPMFile, pkgGroupOf, compGroupsOf, proj)
 	if err != nil {
 		return nil, err
 	}
@@ -234,20 +248,21 @@ func listPackagesFromRPMFile(
 func ListPackages(env *azldev.Env, options *ListPackageOptions) ([]PackageListResult, error) {
 	proj := env.Config()
 
-	// Build an index: pkgName → groupName for packages in any package-group.
-	// Used by '-a', '--rpm-file', and '-p' modes for group attribution and channel resolution.
-	groupOf := make(map[string]string)
+	// Build an index: pkgName → sorted list of package-group names that contain it.
+	// Used by '-a', '--rpm-file', and '-p' modes for the [PackageListResult.PackageGroups]
+	// list on each result. Valid project configuration allows at most one package-group
+	// membership per package; the slice form is kept for deterministic output.
+	pkgGroupOf := buildPackageGroupIndex(proj)
 
-	for groupName, group := range proj.PackageGroups {
-		for _, pkg := range group.Packages {
-			groupOf[pkg] = groupName
-		}
-	}
+	// Precompute a deterministic, sorted list of component-group memberships per component
+	// so the per-result [PackageListResult.ComponentGroups] population is a cheap map
+	// lookup instead of an allocate-sort on every call. See [buildComponentGroupIndex].
+	compGroupsOf := buildComponentGroupIndex(proj)
 
 	results := make([]PackageListResult, 0)
 
 	if options.RPMFile != "" {
-		return listPackagesFromRPMFile(env, options, groupOf, proj)
+		return listPackagesFromRPMFile(env, options, pkgGroupOf, compGroupsOf, proj)
 	}
 
 	// Build an index: pkgName → componentName for packages with explicit component overrides.
@@ -261,7 +276,7 @@ func ListPackages(env *azldev.Env, options *ListPackageOptions) ([]PackageListRe
 	toResolve := make(map[string]struct{})
 
 	if options.All {
-		for pkg := range groupOf {
+		for pkg := range pkgGroupOf {
 			toResolve[pkg] = struct{}{}
 		}
 
@@ -281,7 +296,7 @@ func ListPackages(env *azldev.Env, options *ListPackageOptions) ([]PackageListRe
 	}
 
 	for pkgName := range toResolve {
-		result, err := resolvePackageListResult(pkgName, compOf, groupOf, proj)
+		result, err := resolvePackageListResult(pkgName, compOf, pkgGroupOf, compGroupsOf, proj)
 		if err != nil {
 			return nil, err
 		}
@@ -293,7 +308,7 @@ func ListPackages(env *azldev.Env, options *ListPackageOptions) ([]PackageListRe
 		slog.Warn("'--synthesize-debug-packages' is a transitional flag and may change or be removed " +
 			"once first-class debug-package configuration is supported.")
 
-		results, err = synthesizeDebugPackages(results, proj)
+		results, err = synthesizeDebugPackages(results, pkgGroupOf, compGroupsOf, proj)
 		if err != nil {
 			return nil, err
 		}
@@ -312,7 +327,8 @@ func ListPackages(env *azldev.Env, options *ListPackageOptions) ([]PackageListRe
 func resolvePackageListResult(
 	pkgName string,
 	compOf map[string]string,
-	groupOf map[string]string,
+	pkgGroupOf map[string][]string,
+	compGroupsOf map[string][]string,
 	proj *projectconfig.ProjectConfig,
 ) (PackageListResult, error) {
 	compName := resolveComponentName(pkgName, compOf, proj)
@@ -339,12 +355,59 @@ func resolvePackageListResult(
 	}
 
 	return PackageListResult{
-		PackageName: pkgName,
-		Type:        PackageTypeRPM,
-		Group:       groupOf[pkgName],
-		Component:   compName,
-		Channel:     channel,
+		PackageName:     pkgName,
+		Type:            PackageTypeRPM,
+		PackageGroups:   nonNilStrings(pkgGroupOf[pkgName]),
+		ComponentGroups: nonNilStrings(compGroupsOf[compName]),
+		Component:       compName,
+		Channel:         channel,
 	}, nil
+}
+
+// buildPackageGroupIndex builds a deterministic index from package name to the sorted list
+// of package-group names whose 'packages' list contains it. Valid project configs assign
+// a package to at most one package-group, but this helper returns a slice because
+// [PackageListResult.PackageGroups] is represented as a list. Packages with no
+// package-group membership are omitted (a missing key reads as a nil slice, which is the
+// desired empty-list behavior).
+func buildPackageGroupIndex(proj *projectconfig.ProjectConfig) map[string][]string {
+	pkgGroupOf := make(map[string][]string)
+
+	for groupName, group := range proj.PackageGroups {
+		for _, pkg := range group.Packages {
+			pkgGroupOf[pkg] = append(pkgGroupOf[pkg], groupName)
+		}
+	}
+
+	for pkg := range pkgGroupOf {
+		sort.Strings(pkgGroupOf[pkg])
+	}
+
+	return pkgGroupOf
+}
+
+// buildComponentGroupIndex precomputes a sorted list of component-group memberships per
+// component, derived from [projectconfig.ProjectConfig.GroupsByComponent]. The returned
+// map is keyed by component name and is intended to be built once per command invocation
+// so the per-result [PackageListResult.ComponentGroups] population is a cheap map
+// lookup instead of an allocate-sort on every call.
+//
+// Components with no component-group memberships are omitted (a missing key reads as a
+// nil slice, which matches the desired empty-list behavior).
+func buildComponentGroupIndex(proj *projectconfig.ProjectConfig) map[string][]string {
+	index := make(map[string][]string, len(proj.GroupsByComponent))
+
+	for compName, groups := range proj.GroupsByComponent {
+		if len(groups) == 0 {
+			continue
+		}
+
+		sorted := append([]string(nil), groups...)
+		sort.Strings(sorted)
+		index[compName] = sorted
+	}
+
+	return index
 }
 
 // resolveComponentName returns the component name for a binary package. It first
@@ -394,6 +457,7 @@ func resolveComponentConfig(compName string, proj *projectconfig.ProjectConfig) 
 // project default → component group → component.
 func resolveSourcePackageListResult(
 	srpmName string,
+	compGroupsOf map[string][]string,
 	proj *projectconfig.ProjectConfig,
 ) (PackageListResult, error) {
 	// The SRPM name is the component name by definition.
@@ -414,9 +478,13 @@ func resolveSourcePackageListResult(
 	return PackageListResult{
 		PackageName: srpmName,
 		Type:        PackageTypeSRPM,
-		Group:       "", // SRPMs have no package-group membership in the config model
-		Component:   compName,
-		Channel:     resolved.Publish.SRPMChannel,
+		// SRPMs have no package-group membership in the config model, so [PackageGroups]
+		// is always empty; only the component-group memberships of the SRPM's component
+		// are reported.
+		PackageGroups:   nonNilStrings(nil),
+		ComponentGroups: nonNilStrings(compGroupsOf[compName]),
+		Component:       compName,
+		Channel:         resolved.Publish.SRPMChannel,
 	}, nil
 }
 
@@ -428,7 +496,8 @@ func resolveSourcePackageListResult(
 func resolveFromRPMFile(
 	fs opctx.FS,
 	path string,
-	groupOf map[string]string,
+	pkgGroupOf map[string][]string,
+	compGroupsOf map[string][]string,
 	proj *projectconfig.ProjectConfig,
 ) ([]PackageListResult, error) {
 	srpmMap, rpmCompOf, err := loadRPMFile(fs, path)
@@ -439,7 +508,7 @@ func resolveFromRPMFile(
 	results := make([]PackageListResult, 0, len(srpmMap))
 
 	for srpmName, rpmNames := range srpmMap {
-		srpmResult, resolveErr := resolveSourcePackageListResult(srpmName, proj)
+		srpmResult, resolveErr := resolveSourcePackageListResult(srpmName, compGroupsOf, proj)
 		if resolveErr != nil {
 			return nil, resolveErr
 		}
@@ -447,7 +516,7 @@ func resolveFromRPMFile(
 		results = append(results, srpmResult)
 
 		for _, rpmName := range rpmNames {
-			rpmResult, resolveErr := resolvePackageListResult(rpmName, rpmCompOf, groupOf, proj)
+			rpmResult, resolveErr := resolvePackageListResult(rpmName, rpmCompOf, pkgGroupOf, compGroupsOf, proj)
 			if resolveErr != nil {
 				return nil, resolveErr
 			}
@@ -543,6 +612,12 @@ func loadRPMFile(fs opctx.FS, path string) (srpmMap map[string][]string, rpmComp
 // "" or "none") and '-debugsource' packages (one per component in the project, with the
 // publish channel resolved through the normal component → project default chain).
 //
+// Group attribution mirrors [resolvePackageListResult]: '-debuginfo' entries inherit the
+// originating package's [PackageListResult.PackageGroups] and
+// [PackageListResult.ComponentGroups]; '-debugsource' entries report any explicit
+// '<comp>-debugsource' package-group memberships alongside the component-group baseline
+// derived from the owning component.
+//
 // Note: '-debugsource' entries are emitted for every component in the project regardless of
 // which packages were requested via '-p'. Components own packages via [ComponentConfig.Packages],
 // but most listed packages come from package groups with no component association — so scoping
@@ -553,7 +628,10 @@ func loadRPMFile(fs opctx.FS, path string) (srpmMap map[string][]string, rpmComp
 // real configuration always wins. Source packages whose names already end in '-debuginfo' or
 // '-debugsource' do not get a doubled suffix synthesized.
 func synthesizeDebugPackages(
-	results []PackageListResult, proj *projectconfig.ProjectConfig,
+	results []PackageListResult,
+	pkgGroupOf map[string][]string,
+	compGroupsOf map[string][]string,
+	proj *projectconfig.ProjectConfig,
 ) ([]PackageListResult, error) {
 	existing := make(map[string]struct{}, len(results))
 	for _, result := range results {
@@ -576,11 +654,12 @@ func synthesizeDebugPackages(
 
 		existing[name] = struct{}{}
 		debugInfoEntries = append(debugInfoEntries, PackageListResult{
-			PackageName: name,
-			Type:        PackageTypeRPM,
-			Group:       result.Group,
-			Component:   result.Component,
-			Channel:     debugChannelName(result.Channel),
+			PackageName:     name,
+			Type:            PackageTypeRPM,
+			PackageGroups:   result.PackageGroups,
+			ComponentGroups: result.ComponentGroups,
+			Component:       result.Component,
+			Channel:         debugChannelName(result.Channel),
 		})
 	}
 
@@ -610,10 +689,12 @@ func synthesizeDebugPackages(
 		}
 
 		results = append(results, PackageListResult{
-			PackageName: name,
-			Type:        PackageTypeRPM,
-			Component:   compName,
-			Channel:     debugChannelName(pkgConfig.Publish.EffectiveRPMChannel()),
+			PackageName:     name,
+			Type:            PackageTypeRPM,
+			PackageGroups:   nonNilStrings(pkgGroupOf[name]),
+			ComponentGroups: nonNilStrings(compGroupsOf[compName]),
+			Component:       compName,
+			Channel:         debugChannelName(pkgConfig.Publish.EffectiveRPMChannel()),
 		})
 	}
 
@@ -636,4 +717,19 @@ func debugChannelName(channel string) string {
 // so the caller can avoid synthesizing doubled-suffix names like 'foo-debuginfo-debuginfo'.
 func isDebugPackageName(name string) bool {
 	return strings.HasSuffix(name, "-debuginfo") || strings.HasSuffix(name, "-debugsource")
+}
+
+// nonNilStrings returns s unchanged when it is non-nil, otherwise an empty (non-nil)
+// []string{}. Used at [PackageListResult] construction sites to guarantee that
+// [PackageListResult.PackageGroups] and [PackageListResult.ComponentGroups] always
+// serialize as a JSON empty array '[]' instead of 'null'.
+//
+// The returned slice aliases its input; treat it as read-only. Appending to a returned
+// slice may corrupt the caller's index map.
+func nonNilStrings(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+
+	return s
 }

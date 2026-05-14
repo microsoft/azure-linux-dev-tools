@@ -30,14 +30,14 @@ azldev package list -a
 Example output:
 
 ```
-╭──────────────────┬──────┬────────────────┬───────────┬─────────────────╮
-│ PACKAGE          │ TYPE │ GROUP          │ COMPONENT │ PUBLISH CHANNEL │
-├──────────────────┼──────┼────────────────┼───────────┼─────────────────┤
-│ curl-debugsource │ rpm  │ debug-packages │           │ rpm-debug       │
-│ libcurl          │ rpm  │ base-packages  │           │ rpm-base        │
-│ libcurl-devel    │ rpm  │ devel-packages │ curl      │ rpm-base        │
-│ wget2-wget       │ rpm  │                │ wget2     │ rpm-base        │
-╰──────────────────┴──────┴────────────────┴───────────┴─────────────────╯
+╭──────────────────┬──────┬───────────────────┬─────────────────────┬───────────┬─────────────────╮
+│ PACKAGE          │ TYPE │ PACKAGE GROUPS    │ COMPONENT GROUPS    │ COMPONENT │ PUBLISH CHANNEL │
+├──────────────────┼──────┼───────────────────┼─────────────────────┼───────────┼─────────────────┤
+│ curl-debugsource │ rpm  │ [debug-packages]  │ []                  │           │ rpm-debug       │
+│ libcurl          │ rpm  │ [base-packages]   │ [base-published]    │           │ rpm-base        │
+│ libcurl-devel    │ rpm  │ [devel-packages]  │ [base-published]    │ curl      │ rpm-base        │
+│ wget2-wget       │ rpm  │ []                │ [base-published]    │ wget2     │ rpm-base        │
+╰──────────────────┴──────┴───────────────────┴─────────────────────┴───────────┴─────────────────╯
 ```
 
 ### Column meanings
@@ -46,7 +46,8 @@ Example output:
 |--------|----------|
 | **Package** | Binary or source package name (RPM `Name` tag) |
 | **Type** | `rpm` for binary packages, `srpm` for source packages (set when using `--rpm-file`) |
-| **Group** | Package-group whose `packages` list contains this package, if any |
+| **Package Groups** | Sorted list of package-groups whose `packages` list contains this package. Always empty for SRPM rows. |
+| **Component Groups** | Sorted list of component-groups the resolved component belongs to. |
 | **Component** | Component that has an explicit `packages.<name>` override for this package, if any |
 | **Publish Channel** | Effective publish channel after all config layers are applied |
 
@@ -102,13 +103,18 @@ azldev package list -a -q -O json
   {
     "packageName": "libcurl",
     "type": "rpm",
-    "group": "base-packages",
+    "packageGroups": ["base-packages"],
+    "componentGroups": ["base-published"],
     "component": "",
     "publishChannel": "rpm-base"
   },
   ...
 ]
 ```
+
+Both `packageGroups` and `componentGroups` are always emitted as JSON arrays — packages
+with no membership receive an empty array `[]`, never `null` — so consumers can iterate
+the fields without first null-checking them.
 
 For an RPM source map file:
 
