@@ -108,6 +108,9 @@ func TestComputeIdentity_PerFieldTable(t *testing.T) {
 //   - Sensitivity: a fully populated component has a fingerprint different
 //     from the all-zero component (sanity check that population is reaching
 //     fingerprinted fields).
+//   - Format: the fingerprint is a 64-character hex string (SHA256).
+//   - Uniqueness: different seeds produce different fingerprints (a
+//     collision within the fuzz run would be highly suspicious).
 func FuzzComputeIdentity_Exhaustive(f *testing.F) {
 	f.Add(canonicalSeed)
 	f.Add(int64(1))
@@ -125,6 +128,15 @@ func FuzzComputeIdentity_Exhaustive(f *testing.F) {
 
 		assert.NotEqual(t, zeroFP, fp1,
 			"sensitivity: populated component must differ from zero component (seed=%d)", seed)
+
+		assert.Len(t, fp1, 71,
+			"format: fingerprint should be 'sha256:' + 64 hex chars (seed=%d)", seed)
+		assert.True(t, strings.HasPrefix(fp1, "sha256:"),
+			"format: fingerprint should have 'sha256:' prefix (seed=%d)", seed)
+
+		fp3 := computeFingerprintExhaustive(t, seed+1)
+		assert.NotEqual(t, fp1, fp3,
+			"uniqueness: different seeds should produce different fingerprints (seed=%d)", seed)
 	})
 }
 
