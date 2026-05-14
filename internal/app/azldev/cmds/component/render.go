@@ -36,6 +36,7 @@ type RenderOptions struct {
 	Force             bool
 	CleanStale        bool
 	CheckOnly         bool
+	AllowDirty        bool
 }
 
 func renderOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
@@ -43,7 +44,7 @@ func renderOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
 }
 
 // NewRenderCmd constructs a [cobra.Command] for the "component render" CLI subcommand.
-func NewRenderCmd() *cobra.Command {
+func NewRenderCmd() *cobra.Command { //nolint:funlen // flag registrations push count slightly over
 	var options RenderOptions
 
 	var cmd *cobra.Command
@@ -120,11 +121,19 @@ valid with -a.`,
 			"and 1 when any component would drift. With -a + --clean-stale, also fails "+
 			"on orphan rendered-spec directories. Intended for CI gates.")
 
+	cmd.Flags().BoolVarP(&options.AllowDirty, "allow-dirty", "d", false,
+		"include uncommitted changes in synthetic history")
+
 	// --check-only is a read-only diff against on-disk state; --fail-on-error
 	// is the loud-failure-per-run knob. Combining them is semantically
 	// muddled (CI would fail on stale failures even when on-disk markers
 	// already record them) and forcing a choice keeps the contract crisp.
 	cmd.MarkFlagsMutuallyExclusive("fail-on-error", "check-only")
+
+	// --check-only validates committed state for CI gates; --allow-dirty
+	// injects uncommitted state. Combining them would validate against
+	// working-tree state instead of committed state, defeating the purpose.
+	cmd.MarkFlagsMutuallyExclusive("check-only", "allow-dirty")
 
 	return cmd
 }
@@ -204,7 +213,7 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 	results := make([]*RenderResult, len(componentList))
 
 	// ── Phase 1: Parallel source preparation ──
-	prepared := parallelPrepare(env, componentList, stagingDir, options.OutputDir, results)
+	prepared := parallelPrepare(env, componentList, stagingDir, options.OutputDir, results, options.AllowDirty)
 
 	// ── Phase 2: Batch mock processing ──
 	mockResultMap := batchMockProcess(env, mockProcessor, stagingDir, prepared)
@@ -391,6 +400,7 @@ func parallelPrepare(
 	stagingDir string,
 	outputDir string,
 	results []*RenderResult,
+	allowDirty bool,
 ) []*preparedComponent {
 	progressEvent := env.StartEvent("Preparing component sources", "count", len(comps))
 	defer progressEvent.End()
@@ -408,7 +418,8 @@ func parallelPrepare(
 		func(_ context.Context, comp components.Component) prepResult {
 			// workerEnv (captured) is the effective context for this call chain;
 			// the parmap-supplied ctx is identical and unused here.
-			return prepareOneComponent(workerEnv, comp, stagingDir, outputDir) //nolint:contextcheck // env carries the ctx
+			//nolint:contextcheck // env carries the ctx
+			return prepareOneComponent(workerEnv, comp, stagingDir, outputDir, allowDirty)
 		},
 	)
 
@@ -454,6 +465,7 @@ func prepareOneComponent(
 	comp components.Component,
 	stagingDir string,
 	outputDir string,
+	allowDirty bool,
 ) prepResult {
 	componentName := comp.GetName()
 
@@ -468,7 +480,7 @@ func prepareOneComponent(
 		}}
 	}
 
-	prep, err := prepareComponentSources(env, comp, stagingDir)
+	prep, err := prepareComponentSources(env, comp, stagingDir, allowDirty)
 	if err != nil {
 		slog.Error("Failed to prepare component sources",
 			"component", componentName, "error", err)
@@ -493,6 +505,7 @@ func prepareComponentSources(
 	env *azldev.Env,
 	comp components.Component,
 	stagingDir string,
+	allowDirty bool,
 ) (*preparedComponent, error) {
 	componentName := comp.GetName()
 
@@ -525,8 +538,11 @@ func prepareComponentSources(
 	// sidecar files are needed for rendering.
 	preparerOpts := []sources.PreparerOption{
 		sources.WithGitRepo(env, env.LockReader(), distro.Version.ReleaseVer),
-		sources.WithDirtyDetection(),
 		sources.WithSkipLookaside(),
+	}
+
+	if allowDirty {
+		preparerOpts = append(preparerOpts, sources.WithDirtyDetection())
 	}
 
 	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, preparerOpts...)
@@ -534,7 +550,13 @@ func prepareComponentSources(
 		return nil, fmt.Errorf("creating source preparer for %#q:\n%w", componentName, err)
 	}
 
-	if prepErr := preparer.PrepareSources(env, comp, componentDir, true /*applyOverlays*/); prepErr != nil {
+	prepErr := preparer.PrepareSources(env, comp, componentDir, true /*applyOverlays*/)
+
+	for _, hint := range preparer.Hints() {
+		env.AddFixSuggestion(hint)
+	}
+
+	if prepErr != nil {
 		return nil, fmt.Errorf("preparing sources for %#q:\n%w", componentName, prepErr)
 	}
 
