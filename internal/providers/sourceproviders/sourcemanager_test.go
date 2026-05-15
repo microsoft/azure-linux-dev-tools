@@ -74,7 +74,7 @@ func TestSourceManager_FetchComponent_EmptyComponentName(t *testing.T) {
 	sourceManager, err := sourceproviders.NewSourceManager(env.Env, testDefaultDistro())
 	require.NoError(t, err)
 
-	err = sourceManager.FetchComponent(t.Context(), component, "/output")
+	_, err = sourceManager.FetchComponent(t.Context(), component, "/output")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "component name is empty")
 }
@@ -103,7 +103,7 @@ func TestSourceManager_FetchComponent_LocalComponent_SpecError(t *testing.T) {
 	sourceManager, err := sourceproviders.NewSourceManager(env.Env, testDefaultDistro())
 	require.NoError(t, err)
 
-	err = sourceManager.FetchComponent(t.Context(), component, "/output")
+	_, err = sourceManager.FetchComponent(t.Context(), component, "/output")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to fetch local component")
 }
@@ -184,7 +184,7 @@ func TestSourceManager_FetchComponent_LocalComponent_ProviderError(t *testing.T)
 	sourceManager, err := sourceproviders.NewSourceManager(env.Env, testDefaultDistro())
 	require.NoError(t, err)
 
-	err = sourceManager.FetchComponent(t.Context(), component, "/output")
+	_, err = sourceManager.FetchComponent(t.Context(), component, "/output")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to fetch local component")
 }
@@ -213,7 +213,7 @@ func TestSourceManager_FetchComponent_UpstreamComponent_AllProvidersFail(t *test
 	sourceManager, err := sourceproviders.NewSourceManager(env.Env, testDefaultDistro())
 	require.NoError(t, err)
 
-	err = sourceManager.FetchComponent(t.Context(), component, "/output")
+	_, err = sourceManager.FetchComponent(t.Context(), component, "/output")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to fetch upstream component")
 }
@@ -243,7 +243,7 @@ func TestSourceManager_FetchComponent_EmptyDestPath(t *testing.T) {
 	require.NoError(t, err)
 
 	// Empty destination path should be caught by the provider
-	err = sourceManager.FetchComponent(t.Context(), component, "")
+	_, err = sourceManager.FetchComponent(t.Context(), component, "")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "destination path cannot be empty")
 }
@@ -263,7 +263,7 @@ func TestSourceManager_FetchFiles_NoSourceFiles(t *testing.T) {
 	sourceManager, err := sourceproviders.NewSourceManager(env.Env, testDefaultDistro())
 	require.NoError(t, err)
 
-	err = sourceManager.FetchFiles(t.Context(), component, testDestDir)
+	_, err = sourceManager.FetchFiles(t.Context(), component, testDestDir)
 	require.NoError(t, err)
 }
 
@@ -291,7 +291,7 @@ func TestSourceManager_FetchFiles_ExistingFile(t *testing.T) {
 	sourceManager, err := sourceproviders.NewSourceManager(env.Env, testDefaultDistro())
 	require.NoError(t, err)
 
-	err = sourceManager.FetchFiles(t.Context(), component, testDestDir)
+	_, err = sourceManager.FetchFiles(t.Context(), component, testDestDir)
 	require.NoError(t, err)
 }
 
@@ -364,7 +364,7 @@ func TestSourceManager_FetchFiles_Errors(t *testing.T) {
 			sourceManager, err := sourceproviders.NewSourceManager(env.Env, distro)
 			require.NoError(t, err)
 
-			err = sourceManager.FetchFiles(t.Context(), component, testDestDir)
+			_, err = sourceManager.FetchFiles(t.Context(), component, testDestDir)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), testCase.expectedError)
 		})
@@ -522,7 +522,7 @@ func TestSourceManager_FetchComponent_LocalComponent_WithSkipLookaside(t *testin
 	require.NoError(t, err)
 
 	// With SkipLookaside, downloadLookasideSources is not called and the fetch succeeds.
-	err = sourceManager.FetchComponent(t.Context(), component, testDestDir, sourceproviders.WithSkipLookaside())
+	_, err = sourceManager.FetchComponent(t.Context(), component, testDestDir, sourceproviders.WithSkipLookaside())
 	require.NoError(t, err)
 
 	// Spec was copied to destination (FetchLocalComponent still ran).

@@ -132,7 +132,7 @@ func DownloadSources(env *azldev.Env, options *DownloadSourcesOptions) error {
 	for _, uri := range lookasideBaseURIs {
 		slog.Info("Trying lookaside base URI", "uri", uri)
 
-		uriErr := lookasideDownloader.ExtractSourcesFromRepo(
+		_, uriErr := lookasideDownloader.ExtractSourcesFromRepo(
 			env, options.Directory, packageName, uri, nil, extractOpts...,
 		)
 		if uriErr == nil {

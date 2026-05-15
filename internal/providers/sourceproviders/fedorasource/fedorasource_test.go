@@ -112,7 +112,7 @@ func TestExtractSourcesFromRepo(t *testing.T) {
 		return afero.WriteFile(ctx.FS(), destPath, []byte("test patch content"), testFilePerms)
 	})
 
-	err = extractor.ExtractSourcesFromRepo(context.Background(), testRepoDir, testPackageName, testLookasideURI, nil)
+	_, err = extractor.ExtractSourcesFromRepo(context.Background(), testRepoDir, testPackageName, testLookasideURI, nil)
 	require.NoError(t, err)
 }
 
@@ -125,13 +125,13 @@ func TestExtractSourcesFromRepoValidation(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("empty repo dir", func(t *testing.T) {
-		err := extractor.ExtractSourcesFromRepo(context.Background(), "", testPackageName, testLookasideURI, nil)
+		_, err := extractor.ExtractSourcesFromRepo(context.Background(), "", testPackageName, testLookasideURI, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "repository directory cannot be empty")
 	})
 
 	t.Run("empty lookaside URI", func(t *testing.T) {
-		err := extractor.ExtractSourcesFromRepo(context.Background(), testRepoDir, testPackageName, "", nil)
+		_, err := extractor.ExtractSourcesFromRepo(context.Background(), testRepoDir, testPackageName, "", nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "lookaside base URI cannot be empty")
 	})
@@ -140,7 +140,7 @@ func TestExtractSourcesFromRepoValidation(t *testing.T) {
 		require.NoError(t, ctx.FS().MkdirAll(testEmptyRepoDir, fileperms.PublicDir))
 
 		// Missing 'sources' file is valid - it means no external sources to download
-		err := extractor.ExtractSourcesFromRepo(
+		_, err := extractor.ExtractSourcesFromRepo(
 			context.Background(), testEmptyRepoDir, testPackageName, testLookasideURI, nil,
 		)
 		require.NoError(t, err)
@@ -162,7 +162,7 @@ func TestExtractSourcesFromRepoDownloadFailure(t *testing.T) {
 	mockDownloader.EXPECT().Download(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(downloadErr)
 
-	err = extractor.ExtractSourcesFromRepo(context.Background(), testRepoDir, testPackageName, testLookasideURI, nil)
+	_, err = extractor.ExtractSourcesFromRepo(context.Background(), testRepoDir, testPackageName, testLookasideURI, nil)
 	require.Error(t, err)
 	require.ErrorIs(t, err, downloadErr)
 	assert.Contains(t, err.Error(), "failed to download sources")
@@ -186,7 +186,7 @@ func TestExtractSourcesFromRepoHashMismatch(t *testing.T) {
 			return afero.WriteFile(ctx.FS(), destPath, []byte("wrong content"), testFilePerms)
 		})
 
-	err = extractor.ExtractSourcesFromRepo(context.Background(), testRepoDir, testPackageName, testLookasideURI, nil)
+	_, err = extractor.ExtractSourcesFromRepo(context.Background(), testRepoDir, testPackageName, testLookasideURI, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "hash mismatch")
 }

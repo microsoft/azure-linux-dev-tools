@@ -43,15 +43,16 @@ func (m *MockSourceManager) EXPECT() *MockSourceManagerMockRecorder {
 }
 
 // FetchComponent mocks base method.
-func (m *MockSourceManager) FetchComponent(ctx context.Context, component components.Component, destDirPath string, opts ...sourceproviders.FetchComponentOption) error {
+func (m *MockSourceManager) FetchComponent(ctx context.Context, component components.Component, destDirPath string, opts ...sourceproviders.FetchComponentOption) ([]sourceproviders.SourceProvenance, error) {
 	m.ctrl.T.Helper()
 	varargs := []any{ctx, component, destDirPath}
 	for _, a := range opts {
 		varargs = append(varargs, a)
 	}
 	ret := m.ctrl.Call(m, "FetchComponent", varargs...)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret0, _ := ret[0].([]sourceproviders.SourceProvenance)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // FetchComponent indicates an expected call of FetchComponent.
@@ -62,11 +63,12 @@ func (mr *MockSourceManagerMockRecorder) FetchComponent(ctx, component, destDirP
 }
 
 // FetchFiles mocks base method.
-func (m *MockSourceManager) FetchFiles(ctx context.Context, component components.Component, destDirPath string) error {
+func (m *MockSourceManager) FetchFiles(ctx context.Context, component components.Component, destDirPath string) ([]sourceproviders.SourceProvenance, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "FetchFiles", ctx, component, destDirPath)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret0, _ := ret[0].([]sourceproviders.SourceProvenance)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // FetchFiles indicates an expected call of FetchFiles.

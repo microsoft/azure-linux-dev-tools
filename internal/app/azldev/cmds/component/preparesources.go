@@ -53,7 +53,12 @@ Only one component may be selected at a time.`,
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
 			options.ComponentFilter.ComponentNamePatterns = append(args, options.ComponentFilter.ComponentNamePatterns...)
 
-			return nil, PrepareComponentSources(env, &options)
+			report, err := PrepareComponentSources(env, &options)
+			if err != nil {
+				return nil, err
+			}
+
+			return report.Sources, nil
 		}),
 		ValidArgsFunction: components.GenerateComponentNameCompletions,
 		Annotations: map[string]string{
@@ -77,24 +82,24 @@ Only one component may be selected at a time.`,
 	return cmd
 }
 
-func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) error {
+func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) (*sources.ProvenanceReport, error) {
 	var comps *components.ComponentSet
 
 	resolver := components.NewResolver(env)
 
 	comps, err := resolver.FindComponents(&options.ComponentFilter)
 	if err != nil {
-		return fmt.Errorf("failed to resolve components:\n%w", err)
+		return nil, fmt.Errorf("failed to resolve components:\n%w", err)
 	}
 
 	if comps.Len() == 0 {
-		return errors.New("no components were selected; " +
+		return nil, errors.New("no components were selected; " +
 			"please use command-line options to indicate which components you would like to build",
 		)
 	}
 
 	if comps.Len() != 1 {
-		return fmt.Errorf("expected exactly one component, got %d", comps.Len())
+		return nil, fmt.Errorf("expected exactly one component, got %d", comps.Len())
 	}
 
 	component := comps.Components()[0]
@@ -107,18 +112,18 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 	// Resolve the effective distro for this component before creating the source manager.
 	distro, err := sourceproviders.ResolveDistro(env, component)
 	if err != nil {
-		return fmt.Errorf("failed to resolve distro for component %#q:\n%w", component.GetName(), err)
+		return nil, fmt.Errorf("failed to resolve distro for component %#q:\n%w", component.GetName(), err)
 	}
 
 	// Create source manager to handle all source fetching, both local and upstream.
 	sourceManager, err = sourceproviders.NewSourceManager(env, distro)
 	if err != nil {
-		return fmt.Errorf("failed to create source manager:\n%w", err)
+		return nil, fmt.Errorf("failed to create source manager:\n%w", err)
 	}
 
 	// Pre-flight check: detect non-empty output directory before any work.
 	if err := CheckOutputDir(env, options); err != nil {
-		return err
+		return nil, err
 	}
 
 	if options.SkipOverlays && !options.WithoutGitRepo {
@@ -140,15 +145,15 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 
 	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, preparerOpts...)
 	if err != nil {
-		return fmt.Errorf("failed to create source preparer:\n%w", err)
+		return nil, fmt.Errorf("failed to create source preparer:\n%w", err)
 	}
 
-	err = preparer.PrepareSources(env, component, options.OutputDir, !options.SkipOverlays)
+	report, err := preparer.PrepareSources(env, component, options.OutputDir, !options.SkipOverlays)
 	if err != nil {
-		return fmt.Errorf("failed to prepare sources for component %q:\n%w", component.GetName(), err)
+		return nil, fmt.Errorf("failed to prepare sources for component %q:\n%w", component.GetName(), err)
 	}
 
-	return nil
+	return report, nil
 }
 
 // CheckOutputDir verifies the output directory state before source preparation.
