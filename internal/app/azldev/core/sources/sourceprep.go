@@ -48,7 +48,13 @@ type SourcePreparer interface {
 	// within the output directory will be build-time dependencies on external packages (RPMs), including those
 	// relied on to be present implicitly within the build root, or expressed via BuildRequires or DynamicBuildRequires
 	// in the component's spec file and any defaults from the macros used to interpret the spec file.
-	PrepareSources(ctx context.Context, component components.Component, outputDir string, applyOverlays bool) error
+	//
+	// Returns a [ProvenanceReport] listing each file that was downloaded and where it came from.
+	// The report only includes files that were actually downloaded; pre-existing files are omitted.
+	PrepareSources(
+		ctx context.Context, component components.Component,
+		outputDir string, applyOverlays bool,
+	) (*ProvenanceReport, error)
 
 	// DiffSources computes a unified diff showing the changes that overlays apply to a component's sources.
 	// The component's sources are fetched once into a subdirectory of baseDir, then copied to a second
@@ -214,16 +220,20 @@ func NewPreparer(
 // PrepareSources implements the [SourcePreparer] interface.
 func (p *sourcePreparerImpl) PrepareSources(
 	ctx context.Context, component components.Component, outputDir string, applyOverlays bool,
-) error {
+) (*ProvenanceReport, error) {
+	var allProvenance []sourceproviders.SourceProvenance
+
 	// Use the source manager to fetch source files (archives, patches, etc.)
 	// Skip this step when skipLookaside is set — source tarballs are not needed
 	// for rendering and are the most expensive download.
 	if !p.skipLookaside {
-		err := p.sourceManager.FetchFiles(ctx, component, outputDir)
+		fileProv, err := p.sourceManager.FetchFiles(ctx, component, outputDir)
 		if err != nil {
-			return fmt.Errorf("failed to fetch source files for component %#q:\n%w",
+			return nil, fmt.Errorf("failed to fetch source files for component %#q:\n%w",
 				component.GetName(), err)
 		}
+
+		allProvenance = append(allProvenance, fileProv...)
 	}
 
 	// Preserve the upstream .git directory only when dist-git creation is
@@ -239,20 +249,22 @@ func (p *sourcePreparerImpl) PrepareSources(
 	}
 
 	// Use the source manager to fetch the component (spec file and sidecar files).
-	err := p.sourceManager.FetchComponent(ctx, component, outputDir, fetchOpts...)
+	compProv, err := p.sourceManager.FetchComponent(ctx, component, outputDir, fetchOpts...)
 	if err != nil {
-		return fmt.Errorf("failed to fetch sources for component %#q:\n%w",
+		return nil, fmt.Errorf("failed to fetch sources for component %#q:\n%w",
 			component.GetName(), err)
 	}
+
+	allProvenance = append(allProvenance, compProv...)
 
 	if applyOverlays {
 		err := p.applyOverlaysToSources(ctx, component, outputDir)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		if err := p.updateSourcesFile(component, outputDir); err != nil {
-			return fmt.Errorf("failed to update 'sources' file for component %#q:\n%w",
+			return nil, fmt.Errorf("failed to update 'sources' file for component %#q:\n%w",
 				component.GetName(), err)
 		}
 	} else {
@@ -264,12 +276,15 @@ func (p *sourcePreparerImpl) PrepareSources(
 	// Record the changes as synthetic git history when dist-git creation is enabled.
 	if p.withGitRepo {
 		if err := p.trySyntheticHistory(ctx, component, outputDir); err != nil {
-			return fmt.Errorf("failed to generate synthetic history for component %#q:\n%w",
+			return nil, fmt.Errorf("failed to generate synthetic history for component %#q:\n%w",
 				component.GetName(), err)
 		}
 	}
 
-	return nil
+	return &ProvenanceReport{
+		ComponentName: component.GetName(),
+		Sources:       allProvenance,
+	}, nil
 }
 
 // applyOverlaysToSources writes the macros file and then applies all overlays.
@@ -584,7 +599,7 @@ func (p *sourcePreparerImpl) DiffSources(
 	defer fileutils.RemoveAllAndUpdateErrorIfNil(p.fs, originalDir, &err)
 
 	// Prepare sources without applying overlays, to get the original tree.
-	if err := p.PrepareSources(ctx, component, originalDir, false /* applyOverlays */); err != nil {
+	if _, err := p.PrepareSources(ctx, component, originalDir, false /* applyOverlays */); err != nil {
 		return nil, err
 	}
 

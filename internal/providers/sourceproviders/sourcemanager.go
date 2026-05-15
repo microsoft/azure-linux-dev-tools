@@ -106,24 +106,28 @@ type ComponentSourceProvider interface {
 
 	// GetComponent retrieves the `.spec` for the specified component along with any sidecar
 	// files stored along with it, placing the fetched files in the provided directory.
+	// Returns provenance entries for any files downloaded from a lookaside cache.
 	GetComponent(
 		ctx context.Context, component components.Component, destDirPath string,
 		opts ...FetchComponentOption,
-	) error
+	) ([]SourceProvenance, error)
 }
 
 // SourceManager is an abstract interface for a facility that can fetch arbitrary component sources.
 type SourceManager interface {
 	// FetchFiles fetches the given source files, placing the files in the provided directory.
-	FetchFiles(ctx context.Context, component components.Component, destDirPath string) error
+	// Returns provenance entries describing where each downloaded file came from.
+	// Files that already exist on disk are skipped and produce no provenance entry.
+	FetchFiles(ctx context.Context, component components.Component, destDirPath string) ([]SourceProvenance, error)
 
 	// FetchComponent fetches an entire upstream component, including its `.spec` file and any sidecar files.
 	// Optional [FetchComponentOption] values may be passed to control provider behavior (e.g., preserving
-	// the upstream .git directory).
+	// the upstream .git directory). Returns provenance entries for any files downloaded from a
+	// lookaside cache during the fetch.
 	FetchComponent(
 		ctx context.Context, component components.Component, destDirPath string,
 		opts ...FetchComponentOption,
-	) error
+	) ([]SourceProvenance, error)
 
 	// ResolveSourceIdentity returns a deterministic identity string for the component's source.
 	// For local components, this is a content hash of the spec directory.
@@ -264,50 +268,58 @@ func (m *sourceManager) FetchFiles(
 	ctx context.Context,
 	component components.Component,
 	destDirPath string,
-) error {
+) ([]SourceProvenance, error) {
 	sourceFiles := component.GetConfig().SourceFiles
 	if len(sourceFiles) == 0 {
 		slog.Debug("No source files to fetch for component", "component", component.GetName())
 
-		return nil
+		return nil, nil
 	}
 
 	httpDownloader, err := downloader.NewHTTPDownloader(m.dryRunnable, m.eventListener, m.fs)
 	if err != nil {
-		return fmt.Errorf("failed to create HTTP downloader:\n%w", err)
+		return nil, fmt.Errorf("failed to create HTTP downloader:\n%w", err)
 	}
+
+	var provenance []SourceProvenance
 
 	for i := range sourceFiles {
 		fileRef := &sourceFiles[i]
 
-		err := m.fetchSourceFile(ctx, httpDownloader, component, fileRef, destDirPath)
+		prov, err := m.fetchSourceFile(ctx, httpDownloader, component, fileRef, destDirPath)
 		if err != nil {
-			return fmt.Errorf("failed to fetch source file %#q:\n%w", fileRef.Filename, err)
+			return nil, fmt.Errorf("failed to fetch source file %#q:\n%w", fileRef.Filename, err)
+		}
+
+		if prov != nil {
+			provenance = append(provenance, *prov)
 		}
 	}
 
-	return nil
+	return provenance, nil
 }
 
 // fetchSourceFile downloads a source file, trying the lookaside cache first and falling
 // back to the configured origin. When disable-origins is set, fallback is disabled.
+// Returns a [SourceProvenance] entry describing where the file was downloaded from,
+// or nil if the file already existed on disk and was skipped.
 func (m *sourceManager) fetchSourceFile(
 	ctx context.Context,
 	httpDownloader downloader.Downloader,
 	component components.Component,
 	fileRef *projectconfig.SourceFileReference,
 	destDirPath string,
-) error {
+) (*SourceProvenance, error) {
 	// Validate filename to prevent path traversal vulnerabilities
 	if err := fileutils.ValidateFilename(fileRef.Filename); err != nil {
-		return fmt.Errorf("invalid source file reference:\n%w", err)
+		return nil, fmt.Errorf("invalid source file reference:\n%w", err)
 	}
 
 	destPath := filepath.Join(destDirPath, fileRef.Filename)
 
 	sourceExists, err := fileutils.Exists(m.fs, destPath)
 	if err != nil {
-		return fmt.Errorf("failed to check existence of destination file %#q:\n%w", destPath, err)
+		return nil, fmt.Errorf("failed to check existence of destination file %#q:\n%w", destPath, err)
 	}
 
 	if sourceExists {
@@ -315,14 +327,20 @@ func (m *sourceManager) fetchSourceFile(
 			"filename", fileRef.Filename,
 			"path", destPath)
 
-		return nil
+		return nil, nil //nolint:nilnil // nil provenance is intentional — file was not downloaded.
 	}
 
 	// Phase 1: Try lookaside cache if hash info is available
 	if fileRef.Hash != "" && fileRef.HashType != "" {
-		lookasideErr := m.tryLookasideDownload(ctx, httpDownloader, component, fileRef, destPath)
+		sourceURL, lookasideErr := m.tryLookasideDownload(ctx, httpDownloader, component, fileRef, destPath)
 		if lookasideErr == nil {
-			return nil
+			return &SourceProvenance{
+				Filename:   fileRef.Filename,
+				OriginType: SourceOriginLookaside,
+				URL:        sourceURL,
+				HashType:   fileRef.HashType,
+				Hash:       fileRef.Hash,
+			}, nil
 		}
 
 		slog.Debug("Lookaside cache download failed",
@@ -332,29 +350,42 @@ func (m *sourceManager) fetchSourceFile(
 
 	// Phase 2: Fall back to configured origin (not allowed when disable-origins is set)
 	if m.disableOrigins {
-		return fmt.Errorf("source file %#q not found in lookaside cache and disable-origins is enabled in the distro config",
+		return nil, fmt.Errorf(
+			"source file %#q not found in lookaside cache"+
+				" and disable-origins is enabled in the distro config",
 			fileRef.Filename)
 	}
 
 	if fileRef.Origin.Type == "" {
-		return fmt.Errorf("source file %#q not found in lookaside cache and no origin configured",
+		return nil, fmt.Errorf("source file %#q not found in lookaside cache and no origin configured",
 			fileRef.Filename)
 	}
 
-	return m.downloadFromOrigin(ctx, httpDownloader, fileRef, destPath)
+	originURL, err := m.downloadFromOrigin(ctx, httpDownloader, fileRef, destPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return &SourceProvenance{
+		Filename:   fileRef.Filename,
+		OriginType: SourceOriginURL,
+		URL:        originURL,
+		HashType:   fileRef.HashType,
+		Hash:       fileRef.Hash,
+	}, nil
 }
 
 // tryLookasideDownload attempts to download a source file from the lookaside cache.
-// Returns nil on success, or an error if the download fails.
+// Returns the resolved download URL on success, or an error if the download fails.
 func (m *sourceManager) tryLookasideDownload(
 	ctx context.Context,
 	httpDownloader downloader.Downloader,
 	component components.Component,
 	fileRef *projectconfig.SourceFileReference,
 	destPath string,
-) error {
+) (string, error) {
 	if m.lookasideBaseURI == "" {
-		return errors.New("no lookaside cache configured")
+		return "", errors.New("no lookaside cache configured")
 	}
 
 	packageName := resolvePackageName(component)
@@ -362,7 +393,7 @@ func (m *sourceManager) tryLookasideDownload(
 	sourceURL, err := fedorasource.BuildLookasideURL(m.lookasideBaseURI, packageName, fileRef.Filename,
 		string(fileRef.HashType), fileRef.Hash)
 	if err != nil {
-		return fmt.Errorf("failed to build lookaside URL for %#q:\n%w", fileRef.Filename, err)
+		return "", fmt.Errorf("failed to build lookaside URL for %#q:\n%w", fileRef.Filename, err)
 	}
 
 	slog.Info("Downloading source file from lookaside cache...",
@@ -371,23 +402,24 @@ func (m *sourceManager) tryLookasideDownload(
 
 	err = m.downloadAndValidate(ctx, httpDownloader, sourceURL, destPath, fileRef)
 	if err != nil {
-		return fmt.Errorf("lookaside cache download failed for %#q:\n%w", fileRef.Filename, err)
+		return "", fmt.Errorf("lookaside cache download failed for %#q:\n%w", fileRef.Filename, err)
 	}
 
-	return nil
+	return sourceURL, nil
 }
 
 // downloadFromOrigin downloads a source file using its configured origin.
+// Returns the origin URL used for the download on success.
 func (m *sourceManager) downloadFromOrigin(
 	ctx context.Context,
 	httpDownloader downloader.Downloader,
 	fileRef *projectconfig.SourceFileReference,
 	destPath string,
-) error {
+) (string, error) {
 	switch fileRef.Origin.Type {
 	case projectconfig.OriginTypeURI:
 		if fileRef.Origin.Uri == "" {
-			return fmt.Errorf("no URI configured for source file %#q with origin type %#q",
+			return "", fmt.Errorf("no URI configured for source file %#q with origin type %#q",
 				fileRef.Filename, fileRef.Origin.Type)
 		}
 
@@ -398,13 +430,13 @@ func (m *sourceManager) downloadFromOrigin(
 
 		err := m.downloadAndValidate(ctx, httpDownloader, fileRef.Origin.Uri, destPath, fileRef)
 		if err != nil {
-			return fmt.Errorf("failed to retrieve source file %#q:\n%w", fileRef.Filename, err)
+			return "", fmt.Errorf("failed to retrieve source file %#q:\n%w", fileRef.Filename, err)
 		}
 
-		return nil
+		return fileRef.Origin.Uri, nil
 
 	default:
-		return fmt.Errorf("unsupported origin type %#q for source file %#q",
+		return "", fmt.Errorf("unsupported origin type %#q for source file %#q",
 			fileRef.Origin.Type, fileRef.Filename)
 	}
 }
@@ -457,9 +489,9 @@ func resolvePackageName(component components.Component) string {
 
 func (m *sourceManager) FetchComponent(
 	ctx context.Context, component components.Component, destDirPath string, opts ...FetchComponentOption,
-) error {
+) ([]SourceProvenance, error) {
 	if component.GetName() == "" {
-		return errors.New("component name is empty")
+		return nil, errors.New("component name is empty")
 	}
 
 	sourceType := component.GetConfig().Spec.SourceType
@@ -468,13 +500,18 @@ func (m *sourceManager) FetchComponent(
 
 	switch sourceType {
 	case projectconfig.SpecSourceTypeLocal, projectconfig.SpecSourceTypeUnspecified:
-		return m.fetchLocalComponent(ctx, component, destDirPath, resolved)
+		prov, err := m.fetchLocalComponent(ctx, component, destDirPath, resolved)
+		if err != nil {
+			return nil, err
+		}
+
+		return prov, nil
 
 	case projectconfig.SpecSourceTypeUpstream:
 		return m.fetchUpstreamComponent(ctx, component, destDirPath, opts...)
 	}
 
-	return fmt.Errorf("spec for component %#q not found in any configured provider",
+	return nil, fmt.Errorf("spec for component %#q not found in any configured provider",
 		component.GetName())
 }
 
@@ -529,56 +566,58 @@ func (m *sourceManager) resolveUpstreamSourceIdentity(
 
 func (m *sourceManager) fetchLocalComponent(
 	ctx context.Context, component components.Component, destDirPath string, opts FetchComponentOptions,
-) error {
+) ([]SourceProvenance, error) {
 	err := FetchLocalComponent(m.dryRunnable, m.eventListener, m.fs, component, destDirPath, false)
 	if err != nil {
-		return fmt.Errorf("failed to fetch local component %#q:\n%w",
+		return nil, fmt.Errorf("failed to fetch local component %#q:\n%w",
 			component.GetName(), err)
 	}
 
 	// Download source files from lookaside cache if available.
 	// Skip this step when SkipLookaside is set (e.g., during rendering).
 	if !opts.SkipLookaside {
-		err = m.downloadLookasideSources(ctx, component, destDirPath)
+		prov, err := m.downloadLookasideSources(ctx, component, destDirPath)
 		if err != nil {
-			return fmt.Errorf("failed to download lookaside sources for component %#q:\n%w",
+			return nil, fmt.Errorf("failed to download lookaside sources for component %#q:\n%w",
 				component.GetName(), err)
 		}
+
+		return prov, nil
 	}
 
-	return nil
+	return nil, nil
 }
 
 // downloadLookasideSources downloads source tarballs from a lookaside cache for the given component.
 // It resolves the appropriate lookaside URI from the distro configuration and uses the component's
 // upstream name (if set) as the package name for the lookaside lookup.
-// Returns nil if no lookaside downloader or URI is available.
+// Returns provenance entries for downloaded files, or nil if no lookaside downloader or URI is available.
 func (m *sourceManager) downloadLookasideSources(
 	ctx context.Context, component components.Component, destDirPath string,
-) error {
+) ([]SourceProvenance, error) {
 	if m.lookasideDownloader == nil {
-		return nil
+		return nil, nil
 	}
 
 	if m.lookasideBaseURI == "" {
-		return nil
+		return nil, nil
 	}
 
 	packageName := resolvePackageName(component)
 
-	err := m.lookasideDownloader.ExtractSourcesFromRepo(ctx, destDirPath, packageName, m.lookasideBaseURI, nil)
+	downloads, err := m.lookasideDownloader.ExtractSourcesFromRepo(ctx, destDirPath, packageName, m.lookasideBaseURI, nil)
 	if err != nil {
-		return fmt.Errorf("failed to extract sources from lookaside cache:\n%w", err)
+		return nil, fmt.Errorf("failed to extract sources from lookaside cache:\n%w", err)
 	}
 
-	return nil
+	return ConvertDownloadsToProvenance(downloads), nil
 }
 
 func (m *sourceManager) fetchUpstreamComponent(
 	ctx context.Context, component components.Component, destDirPath string, opts ...FetchComponentOption,
-) error {
+) ([]SourceProvenance, error) {
 	if len(m.upstreamComponentProviders) == 0 {
-		return fmt.Errorf("no upstream component origins configured for component %#q",
+		return nil, fmt.Errorf("no upstream component origins configured for component %#q",
 			component.GetName())
 	}
 
@@ -586,20 +625,20 @@ func (m *sourceManager) fetchUpstreamComponent(
 
 	// Try each upstream component provider, until one succeeds
 	for _, provider := range m.upstreamComponentProviders {
-		err := provider.GetComponent(ctx, component, destDirPath, opts...)
+		prov, err := provider.GetComponent(ctx, component, destDirPath, opts...)
 		if err == nil {
 			slog.Debug("Successfully fetched upstream component",
 				"component", component.GetName(),
 				"provider", fmt.Sprintf("%T", provider))
 
-			return nil
+			return prov, nil
 		}
 
 		lastError = err
 	}
 
 	// If we tried providers but none succeeded
-	return fmt.Errorf("failed to fetch upstream component %#q:\n%w",
+	return nil, fmt.Errorf("failed to fetch upstream component %#q:\n%w",
 		component.GetName(), lastError)
 }
 

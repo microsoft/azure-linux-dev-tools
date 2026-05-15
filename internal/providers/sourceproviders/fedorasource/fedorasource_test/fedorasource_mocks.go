@@ -46,15 +46,16 @@ func (m *MockFedoraSourceDownloader) EXPECT() *MockFedoraSourceDownloaderMockRec
 }
 
 // ExtractSourcesFromRepo mocks base method.
-func (m *MockFedoraSourceDownloader) ExtractSourcesFromRepo(ctx context.Context, repoDir, packageName, lookasideBaseURI string, skipFilenames []string, opts ...fedorasource.ExtractOption) error {
+func (m *MockFedoraSourceDownloader) ExtractSourcesFromRepo(ctx context.Context, repoDir, packageName, lookasideBaseURI string, skipFilenames []string, opts ...fedorasource.ExtractOption) ([]fedorasource.SourceDownload, error) {
 	m.ctrl.T.Helper()
 	varargs := []any{ctx, repoDir, packageName, lookasideBaseURI, skipFilenames}
 	for _, a := range opts {
 		varargs = append(varargs, a)
 	}
 	ret := m.ctrl.Call(m, "ExtractSourcesFromRepo", varargs...)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret0, _ := ret[0].([]fedorasource.SourceDownload)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // ExtractSourcesFromRepo indicates an expected call of ExtractSourcesFromRepo.
