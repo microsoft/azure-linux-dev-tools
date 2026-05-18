@@ -95,6 +95,7 @@ func copySourceDirectory(dryRunnable opctx.DryRunnable, fs opctx.FS, sourceDirPa
 		CopyFileOptions: fileutils.CopyFileOptions{
 			PreserveFileMode: true,
 		},
+		FileFilter: fileutils.SkipExistingFiles,
 	}
 
 	err := fileutils.CopyDirRecursive(dryRunnable, fs, sourceDirPath, destDirPath, copyOptions)
