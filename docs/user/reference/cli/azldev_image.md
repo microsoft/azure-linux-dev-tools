@@ -36,7 +36,7 @@ can be customized using Azure Linux Image Customizer.
 
 ### SEE ALSO
 
-* [azldev](azldev.md)	 - 🐧 Azure Linux Dev Tool
+* [azldev](azldev.md)	 - 🐧 Azure Linux Dev Tool 0.0.0-devel
 * [azldev image boot](azldev_image_boot.md)	 - Boot an Azure Linux image in a QEMU VM
 * [azldev image build](azldev_image_build.md)	 - Build an image using kiwi-ng
 * [azldev image customize](azldev_image_customize.md)	 - Customizes a pre-built Azure Linux image

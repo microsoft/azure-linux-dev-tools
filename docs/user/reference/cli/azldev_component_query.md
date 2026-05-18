@@ -2,16 +2,21 @@
 
 ## azldev component query
 
-Query info for components in this project
+Query info from locally rendered component specs
 
 ### Synopsis
 
-Query detailed information for components by fetching and parsing their spec files.
+Query detailed information for components from their locally rendered specs.
 
-Unlike 'list', which only shows configuration metadata, 'query' resolves
-upstream sources and parses the RPM spec to report version, release,
-subpackages, dependencies, and other spec-level details. This makes it
-slower than 'list' but more informative.
+This command reads the post-overlay specs from the project's rendered-specs-dir
+(produced by 'azldev component render') and runs rpmspec against them in a
+single shared mock chroot, batching all specs into one chroot invocation with
+parallel per-spec processing. For each component, it reports the source NEVR
+and the list of binary subpackages the spec would produce when built.
+
+The rendered-specs-dir must exist on disk; if it doesn't, run
+'azldev component render' first. Components that previously failed to render
+(those with a RENDER_FAILED marker file) are skipped with a warning.
 
 ```
 azldev component query [flags]

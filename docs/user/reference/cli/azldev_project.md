@@ -35,7 +35,7 @@ as an Azure Linux project with a basic configuration.
 
 ### SEE ALSO
 
-* [azldev](azldev.md)	 - 🐧 Azure Linux Dev Tool
+* [azldev](azldev.md)	 - 🐧 Azure Linux Dev Tool 0.0.0-devel
 * [azldev project init](azldev_project_init.md)	 - Initialize the current working directory with a basic Azure Linux project config
 * [azldev project new](azldev_project_new.md)	 - Create a new Azure Linux project with basic config
 

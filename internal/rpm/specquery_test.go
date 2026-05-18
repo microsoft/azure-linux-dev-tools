@@ -382,3 +382,79 @@ func requireNewVersion(t *testing.T, versionStr string) rpm.Version {
 
 	return *version
 }
+
+func TestParseSubpackagesOutput(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		output string
+		want   []string
+	}{
+		{
+			name:   "empty output",
+			output: "",
+			want:   nil,
+		},
+		{
+			name:   "single subpackage",
+			output: "subpkg=curl\n",
+			want:   []string{"curl"},
+		},
+		{
+			name:   "multiple subpackages with whitespace",
+			output: "subpkg=curl\nsubpkg=libcurl\n\nsubpkg=curl-devel\n",
+			want:   []string{"curl", "libcurl", "curl-devel"},
+		},
+		{
+			name:   "ignores warnings and errors",
+			output: "warning: some macro thing\nerror: another\nsubpkg=foo\n",
+			want:   []string{"foo"},
+		},
+		{
+			name:   "ignores unknown lines",
+			output: "garbage line\nsubpkg=foo\nother=bar\n",
+			want:   []string{"foo"},
+		},
+		{
+			name:   "skips empty values",
+			output: "subpkg=\nsubpkg=valid\n",
+			want:   []string{"valid"},
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := rpm.ParseSubpackagesOutput(testCase.output)
+			assert.Equal(t, testCase.want, got)
+		})
+	}
+}
+
+func TestParseSrpmQueryOutput_Success(t *testing.T) {
+	t.Parallel()
+
+	output := "name=curl\nepoch=(none)\nversion=8.5.0\nrelease=1.azl3\n" +
+		"source=https://example.com/curl-8.5.0.tar.xz\npatch=fix.patch\n"
+
+	info, err := rpm.ParseSrpmQueryOutput("/specs/c/curl/curl.spec", output)
+	require.NoError(t, err)
+	assert.Equal(t, "curl", info.Name)
+	assert.Equal(t, "8.5.0", info.Version.Version())
+	assert.Equal(t, "1.azl3", info.Version.Release())
+	assert.Equal(t, []string{"https://example.com/curl-8.5.0.tar.xz", "fix.patch"}, info.RequiredFiles)
+	assert.Empty(t, info.Subpackages, "Subpackages is populated by the caller, not the parser")
+}
+
+func TestParseSrpmQueryOutput_MissingField(t *testing.T) {
+	t.Parallel()
+
+	// Missing release line.
+	output := "name=curl\nepoch=0\nversion=8.5.0\n"
+
+	_, err := rpm.ParseSrpmQueryOutput("/specs/c/curl/curl.spec", output)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing required fields")
+}
