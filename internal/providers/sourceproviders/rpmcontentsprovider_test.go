@@ -103,7 +103,7 @@ func TestGetComponent(t *testing.T) {
 			Return(packageURL, nil).
 			Times(1)
 
-		err = provider.GetComponent(t.Context(), mockComponent, testDestinationDir)
+		_, err = provider.GetComponent(t.Context(), mockComponent, testDestinationDir)
 		require.NoError(t, err)
 
 		entries, err := afero.ReadDir(localFS, testDestinationDir)
@@ -119,13 +119,13 @@ func TestGetComponent(t *testing.T) {
 		emptyNameComponent := components_testutils.NewMockComponent(ctrl)
 		emptyNameComponent.EXPECT().GetName().AnyTimes().Return("")
 
-		err = provider.GetComponent(t.Context(), emptyNameComponent, testDestinationDir)
+		_, err = provider.GetComponent(t.Context(), emptyNameComponent, testDestinationDir)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "component name cannot be empty")
 	})
 
 	t.Run("empty destination path fails", func(t *testing.T) {
-		err = provider.GetComponent(t.Context(), mockComponent, "")
+		_, err = provider.GetComponent(t.Context(), mockComponent, "")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "destination path cannot be empty")
 	})
@@ -157,7 +157,7 @@ func TestGetComponentFailureSimulation(t *testing.T) {
 		provider, err := sourceproviders.NewRPMContentsProviderImpl(mockExtractor, mockRPMProvider)
 		require.NoError(t, err)
 
-		err = provider.GetComponent(t.Context(), mockComponent, testDestinationDir)
+		_, err = provider.GetComponent(t.Context(), mockComponent, testDestinationDir)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, rpmProviderError)
 	})
@@ -182,7 +182,7 @@ func TestGetComponentFailureSimulation(t *testing.T) {
 		provider, err := sourceproviders.NewRPMContentsProviderImpl(mockExtractor, mockRPMProvider)
 		require.NoError(t, err)
 
-		err = provider.GetComponent(t.Context(), mockComponent, testDestinationDir)
+		_, err = provider.GetComponent(t.Context(), mockComponent, testDestinationDir)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, extractorError)
 	})

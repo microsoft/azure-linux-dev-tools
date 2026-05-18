@@ -293,8 +293,8 @@ type noOpDownloader struct{}
 
 func (d *noOpDownloader) ExtractSourcesFromRepo(
 	_ context.Context, _, _, _ string, _ []string, _ ...fedorasource.ExtractOption,
-) error {
-	return nil
+) ([]fedorasource.SourceDownload, error) {
+	return nil, nil
 }
 
 // --- ResolveIdentity always resolves from upstream ---

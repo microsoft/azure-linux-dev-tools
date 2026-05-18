@@ -85,12 +85,12 @@ func NewFedoraSourcesProviderImpl(
 
 func (g *FedoraSourcesProviderImpl) GetComponent(
 	ctx context.Context, component components.Component, destDirPath string, opts ...FetchComponentOption,
-) (err error) {
+) (_ []SourceProvenance, err error) {
 	resolved := resolveFetchComponentOptions(opts)
 
 	componentName := component.GetName()
 	if componentName == "" {
-		return errors.New("component name cannot be empty")
+		return nil, errors.New("component name cannot be empty")
 	}
 
 	upstreamNameToUse := componentName
@@ -102,12 +102,12 @@ func (g *FedoraSourcesProviderImpl) GetComponent(
 	}
 
 	if destDirPath == "" {
-		return errors.New("destination path cannot be empty")
+		return nil, errors.New("destination path cannot be empty")
 	}
 
 	gitRepoURL, err := fedorasource.BuildDistGitURL(g.distroGitBaseURI, upstreamNameToUse)
 	if err != nil {
-		return fmt.Errorf("failed to build dist-git URL for %#q:\n%w", upstreamNameToUse, err)
+		return nil, fmt.Errorf("failed to build dist-git URL for %#q:\n%w", upstreamNameToUse, err)
 	}
 
 	// Get the calculated effective commit.
@@ -123,7 +123,7 @@ func (g *FedoraSourcesProviderImpl) GetComponent(
 	// Clone to a temp directory first, then copy files to destination.
 	tempDir, err := fileutils.MkdirTempInTempDir(g.fs, "azldev-clone-")
 	if err != nil {
-		return fmt.Errorf("failed to create temp directory for clone:\n%w", err)
+		return nil, fmt.Errorf("failed to create temp directory for clone:\n%w", err)
 	}
 
 	defer fileutils.RemoveAllAndUpdateErrorIfNil(g.fs, tempDir, &err)
@@ -137,7 +137,7 @@ func (g *FedoraSourcesProviderImpl) GetComponent(
 		return g.gitProvider.Clone(ctx, gitRepoURL, tempDir, git.WithGitBranch(g.distroGitBranch))
 	})
 	if err != nil {
-		return fmt.Errorf("failed to clone git repository %#q:\n%w", gitRepoURL, err)
+		return nil, fmt.Errorf("failed to clone git repository %#q:\n%w", gitRepoURL, err)
 	}
 
 	// Collect filenames from source-files config so the lookaside extractor can skip them.
@@ -156,23 +156,24 @@ func (g *FedoraSourcesProviderImpl) GetComponent(
 
 // processClonedRepo handles the post-clone steps: checking out the target commit,
 // extracting lookaside sources, renaming spec files, and copying to the destination.
+// Returns provenance entries for files downloaded from the lookaside cache.
 func (g *FedoraSourcesProviderImpl) processClonedRepo(
 	ctx context.Context,
 	upstreamCommit string,
 	tempDir, upstreamName, componentName, destDirPath string,
 	skipFilenames []string,
 	opts FetchComponentOptions,
-) error {
+) ([]SourceProvenance, error) {
 	// Checkout the appropriate commit based on component/distro config
 	if err := g.checkoutTargetCommit(ctx, upstreamCommit, tempDir); err != nil {
-		return fmt.Errorf("failed to checkout target commit:\n%w", err)
+		return nil, fmt.Errorf("failed to checkout target commit:\n%w", err)
 	}
 
 	// Delete the .git directory so it's not copied to destination, unless the caller
 	// requested that it be preserved (e.g., for synthetic history generation).
 	if !opts.PreserveGitDir {
 		if err := g.fs.RemoveAll(filepath.Join(tempDir, ".git")); err != nil {
-			return fmt.Errorf("failed to remove .git directory from cloned repository at %#q:\n%w",
+			return nil, fmt.Errorf("failed to remove .git directory from cloned repository at %#q:\n%w",
 				tempDir, err)
 		}
 	}
@@ -180,18 +181,22 @@ func (g *FedoraSourcesProviderImpl) processClonedRepo(
 	// Extract sources from repo (downloads lookaside files into the temp dir).
 	// Files in skipFilenames are not downloaded — they were already fetched by FetchFiles.
 	// Skip this step entirely when SkipLookaside is set (e.g., during rendering).
+	var provenance []SourceProvenance
+
 	if !opts.SkipLookaside {
-		err := g.downloader.ExtractSourcesFromRepo(
+		downloads, err := g.downloader.ExtractSourcesFromRepo(
 			ctx, tempDir, upstreamName, g.lookasideBaseURI, skipFilenames,
 		)
 		if err != nil {
-			return fmt.Errorf("failed to extract sources from git repository:\n%w", err)
+			return nil, fmt.Errorf("failed to extract sources from git repository:\n%w", err)
 		}
+
+		provenance = ConvertDownloadsToProvenance(downloads)
 	}
 
 	// If the upstream name differs from the component name, rename the spec in temp dir.
 	if err := g.renameSpecIfNeeded(tempDir, upstreamName, componentName); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Copy files from temp dir to destination, skipping files that already exist.
@@ -204,10 +209,10 @@ func (g *FedoraSourcesProviderImpl) processClonedRepo(
 	}
 
 	if err := fileutils.CopyDirRecursive(g.dryRunnable, g.fs, tempDir, destDirPath, copyOptions); err != nil {
-		return fmt.Errorf("failed to copy files to destination:\n%w", err)
+		return nil, fmt.Errorf("failed to copy files to destination:\n%w", err)
 	}
 
-	return nil
+	return provenance, nil
 }
 
 // renameSpecIfNeeded renames the spec file in the given directory if the upstream name

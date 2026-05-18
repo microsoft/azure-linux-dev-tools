@@ -534,7 +534,7 @@ func prepareComponentSources(
 		return nil, fmt.Errorf("creating source preparer for %#q:\n%w", componentName, err)
 	}
 
-	if prepErr := preparer.PrepareSources(env, comp, componentDir, true /*applyOverlays*/); prepErr != nil {
+	if _, prepErr := preparer.PrepareSources(env, comp, componentDir, true /*applyOverlays*/); prepErr != nil {
 		return nil, fmt.Errorf("preparing sources for %#q:\n%w", componentName, prepErr)
 	}
 

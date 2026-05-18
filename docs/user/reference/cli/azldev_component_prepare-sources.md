@@ -13,6 +13,10 @@ The result is a directory containing the spec file and all sources, ready
 for inspection or manual building. This is useful for verifying that
 overlays apply cleanly before running a full build.
 
+The command output reports downloaded source provenance entries with
+filename, origin type, URL, hash type, and hash. Only files actually
+downloaded during this run are included.
+
 Only one component may be selected at a time.
 
 ```

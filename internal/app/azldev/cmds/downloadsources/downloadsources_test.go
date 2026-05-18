@@ -71,7 +71,7 @@ func TestDownloadSources_StandaloneMode(t *testing.T) {
 	mockDownloader := fedorasource_test.NewMockFedoraSourceDownloader(ctrl)
 	mockDownloader.EXPECT().
 		ExtractSourcesFromRepo(gomock.Any(), testPkgDir, "curl", testLookasideURI, gomock.Any()).
-		Return(nil)
+		Return(nil, nil)
 
 	options := &downloadsources.DownloadSourcesOptions{
 		Directory:           testPkgDir,
@@ -94,7 +94,7 @@ func TestDownloadSources_StandaloneMode_NoSourcesFile(t *testing.T) {
 	mockDownloader := fedorasource_test.NewMockFedoraSourceDownloader(ctrl)
 	mockDownloader.EXPECT().
 		ExtractSourcesFromRepo(gomock.Any(), testPkgDir, "curl", testLookasideURI, gomock.Any()).
-		Return(nil)
+		Return(nil, nil)
 
 	options := &downloadsources.DownloadSourcesOptions{
 		Directory:           testPkgDir,
@@ -129,7 +129,7 @@ func TestDownloadSources_ComponentMode(t *testing.T) {
 		ExtractSourcesFromRepo(
 			gomock.Any(), testPkgDir, "curl", expectedURI, gomock.Any(),
 		).
-		Return(nil)
+		Return(nil, nil)
 
 	options := &downloadsources.DownloadSourcesOptions{
 		Directory:           testPkgDir,
