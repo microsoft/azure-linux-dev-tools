@@ -15,10 +15,11 @@ const NoArch = "noarch"
 
 // TestSpec represents an RPM spec being composed for testing purposes.
 type TestSpec struct {
-	name      string
-	version   string
-	release   string
-	buildArch string
+	name        string
+	version     string
+	release     string
+	buildArch   string
+	subpackages []string
 }
 
 // NewSpec creates a new [TestSpec] with the specified options.
@@ -81,6 +82,15 @@ func WithBuildArch(arch string) TestSpecOption {
 	}
 }
 
+// WithSubpackage appends an additional binary subpackage (named
+// "<spec name>-<suffix>") to the spec. The subpackage shares the main
+// package's installed file so that rpmbuild would also be happy with it.
+func WithSubpackage(suffix string) TestSpecOption {
+	return func(s *TestSpec) {
+		s.subpackages = append(s.subpackages, suffix)
+	}
+}
+
 // Render generates the spec file content as a string.
 func (s *TestSpec) Render() string {
 	lines := []string{
@@ -100,6 +110,20 @@ func (s *TestSpec) Render() string {
 		"%description",
 		"Test component for, you know, testing.",
 		"",
+	}...)
+
+	for _, sub := range s.subpackages {
+		lines = append(lines, []string{
+			"%package " + sub,
+			"Summary: A test subpackage",
+			"",
+			"%description " + sub,
+			"Subpackage " + sub + " for testing.",
+			"",
+		}...)
+	}
+
+	lines = append(lines, []string{
 		"%build",
 		"echo hello >file.txt",
 		"",
@@ -111,6 +135,14 @@ func (s *TestSpec) Render() string {
 		"%{_datadir}/test-component",
 		"",
 	}...)
+
+	for _, sub := range s.subpackages {
+		lines = append(lines, []string{
+			"%files " + sub,
+			"%{_datadir}/test-component",
+			"",
+		}...)
+	}
 
 	return strings.Join(lines, "\n")
 }

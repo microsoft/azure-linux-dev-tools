@@ -27,7 +27,13 @@ const mockProcessorCleanupTimeout = 5 * time.Minute
 // different per-component upstream distro, which must not select the build
 // chroot. Returns nil when the project mock config is unavailable.
 func createMockProcessor(env *azldev.Env) *sources.MockProcessor {
-	return newMockProcessor(env, "")
+	return newMockProcessor(env, "", mockPackagesForRender())
+}
+
+// createQueryMockProcessor creates a [sources.MockProcessor] with the packages
+// needed for querying specs.
+func createQueryMockProcessor(env *azldev.Env) *sources.MockProcessor {
+	return newMockProcessor(env, "", mockPackagesForQuery())
 }
 
 // createBuildMockProcessor creates a [sources.MockProcessor] for the build
@@ -42,14 +48,16 @@ func createBuildMockProcessor(env *azldev.Env) *sources.MockProcessor {
 		isolatedBaseDir = filepath.Join(workDir, buildProvenanceMockSubdir)
 	}
 
-	return newMockProcessor(env, isolatedBaseDir)
+	return newMockProcessor(env, isolatedBaseDir, mockPackagesForRender())
 }
 
 // newMockProcessor resolves the project/build distro mock config and builds a
 // [sources.MockProcessor]. When isolatedBaseDir is non-empty, the processor's
 // mock root lives under it instead of mock's shared default location. Returns
 // nil when the project mock config is unavailable.
-func newMockProcessor(env *azldev.Env, isolatedBaseDir string) *sources.MockProcessor {
+func newMockProcessor(
+	env *azldev.Env, isolatedBaseDir string, requiredPackages []string,
+) *sources.MockProcessor {
 	_, distroVerDef, err := env.Distro()
 	if err != nil {
 		slog.Info("Mock processor unavailable; could not resolve project distro", "error", err)
@@ -67,7 +75,8 @@ func newMockProcessor(env *azldev.Env, isolatedBaseDir string) *sources.MockProc
 		"mockConfig", distroVerDef.MockConfigPath, "isolatedBaseDir", isolatedBaseDir)
 
 	return sources.NewMockProcessor(env, distroVerDef.MockConfigPath,
-		sources.WithIsolatedMockBaseDir(isolatedBaseDir))
+		sources.WithIsolatedMockBaseDir(isolatedBaseDir),
+		sources.WithRequiredPackages(requiredPackages...))
 }
 
 // destroyMockProcessor scrubs the mock chroot at a command boundary. It detaches
