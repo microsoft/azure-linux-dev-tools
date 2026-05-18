@@ -35,7 +35,7 @@ JSON schema used for validating TOML config files.
 
 ### SEE ALSO
 
-* [azldev](azldev.md)	 - 🐧 Azure Linux Dev Tool
+* [azldev](azldev.md)	 - 🐧 Azure Linux Dev Tool 0.0.0-devel
 * [azldev config dump](azldev_config_dump.md)	 - Dump the current configuration
 * [azldev config generate-schema](azldev_config_generate-schema.md)	 - Generates JSON schema for validating .toml config files
 

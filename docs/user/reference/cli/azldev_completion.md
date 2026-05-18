@@ -34,7 +34,7 @@ See each sub-command's help for details on how to use the generated script.
 
 ### SEE ALSO
 
-* [azldev](azldev.md)	 - 🐧 Azure Linux Dev Tool
+* [azldev](azldev.md)	 - 🐧 Azure Linux Dev Tool 0.0.0-devel
 * [azldev completion bash](azldev_completion_bash.md)	 - Generate the autocompletion script for bash
 * [azldev completion fish](azldev_completion_fish.md)	 - Generate the autocompletion script for fish
 * [azldev completion powershell](azldev_completion_powershell.md)	 - Generate the autocompletion script for powershell

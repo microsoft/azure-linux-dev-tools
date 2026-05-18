@@ -36,6 +36,6 @@ publish channel assignments derived from package groups and component overrides.
 
 ### SEE ALSO
 
-* [azldev](azldev.md)	 - 🐧 Azure Linux Dev Tool
+* [azldev](azldev.md)	 - 🐧 Azure Linux Dev Tool 0.0.0-devel
 * [azldev package list](azldev_package_list.md)	 - List resolved configuration for packages (RPMs and SRPMs)
 

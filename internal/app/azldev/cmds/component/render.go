@@ -173,7 +173,7 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 	}
 
 	// Create mock processor for rpmautospec/spectool.
-	mockProcessor := createMockProcessor(env)
+	mockProcessor := createMockProcessor(env, mockPackagesForRender())
 	if mockProcessor == nil {
 		return nil, errors.New(
 			"mock config required for rendering; ensure the project has a valid distro with mock config")
@@ -1124,28 +1124,6 @@ func writeFailureMarkers(
 
 		writeRenderErrorMarker(fileSystem, result.OutputDir)
 	}
-}
-
-// createMockProcessor creates a [sources.MockProcessor] using the project's
-// mock config. Returns nil if the mock config is not available (e.g., no project
-// config loaded, or no mock config path configured).
-func createMockProcessor(env *azldev.Env) *sources.MockProcessor {
-	_, distroVerDef, err := env.Distro()
-	if err != nil {
-		slog.Info("Mock processor unavailable; could not resolve distro", "error", err)
-
-		return nil
-	}
-
-	if distroVerDef.MockConfigPath == "" {
-		slog.Info("Mock processor unavailable; no mock config path configured")
-
-		return nil
-	}
-
-	slog.Info("Mock processor available", "mockConfig", distroVerDef.MockConfigPath)
-
-	return sources.NewMockProcessor(env, distroVerDef.MockConfigPath)
 }
 
 // validateCleanStaleOptions enforces the constraints around --clean-stale.

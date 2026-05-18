@@ -13,7 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// We test running `azldev query component` to make sure that spec parsing works as expected.
+// We test running `azldev component query` to make sure that batch rpmspec
+// processing against the rendered specs tree works as expected.
 func TestQueryingAComponent(t *testing.T) {
 	t.Parallel()
 
@@ -22,23 +23,28 @@ func TestQueryingAComponent(t *testing.T) {
 		t.Skip("skipping long test")
 	}
 
-	// Create a simple spec with a known name and version.
+	// Create a simple spec with a known name and version. Add a subpackage
+	// so we can also verify that 'query' reports the binary subpackages.
 	spec := projecttest.NewSpec(
 		projecttest.WithName("test-component"),
 		projecttest.WithVersion("3.1.4.159"),
+		projecttest.WithSubpackage("extra"),
 	)
 
-	// Create a simple project with the spec, using test default configs for distro and mock configurations.
+	// Create a simple project with the spec, using test default configs for
+	// distro and mock configurations.
 	project := projecttest.NewDynamicTestProject(
 		projecttest.AddSpec(spec),
 		projecttest.UseTestDefaultConfigs(),
 	)
 
-	// Run the component query command with test default configs copied into the container.
+	// 'component query' now reads from the rendered specs tree, so render
+	// first as a pre-command and then query.
 	results := projecttest.NewProjectTest(
 		project,
 		[]string{"component", "query", spec.GetName()},
 		projecttest.WithTestDefaultConfigs(),
+		projecttest.WithPreCommand("component", "render", "-a"),
 	).RunInContainer(t)
 
 	// Get the parsed JSON output.
@@ -61,4 +67,22 @@ func TestQueryingAComponent(t *testing.T) {
 	require.True(t, ok, "Version field is not a map")
 	require.Contains(t, versionMap, "Version")
 	assert.Equal(t, spec.GetVersion(), versionMap["Version"])
+
+	// Check that subpackages were extracted.
+	require.Contains(t, componentOutput, "Subpackages")
+	subpackages, ok := componentOutput["Subpackages"].([]interface{})
+	require.True(t, ok, "Subpackages should be a list")
+
+	subpkgNames := make([]string, 0, len(subpackages))
+	for _, sp := range subpackages {
+		name, ok := sp.(string)
+		require.True(t, ok, "Subpackage entry should be a string")
+
+		subpkgNames = append(subpkgNames, name)
+	}
+
+	assert.Contains(t, subpkgNames, spec.GetName(),
+		"Subpackages should include the main package")
+	assert.Contains(t, subpkgNames, spec.GetName()+"-extra",
+		"Subpackages should include the explicitly-added subpackage")
 }
