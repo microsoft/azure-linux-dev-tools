@@ -207,6 +207,106 @@
      "openWorldHint": true,
      "readOnlyHint": false
     },
+    "description": "Report per-component change activity and customization detail",
+    "inputSchema": {
+     "properties": {
+      "accept-all": {
+       "default": false,
+       "description": "accept all prompts",
+       "type": "boolean"
+      },
+      "all-components": {
+       "default": false,
+       "description": "Include all components",
+       "type": "boolean"
+      },
+      "color": {
+       "description": "output colorization mode {always, auto, never}",
+       "type": "string"
+      },
+      "component": {
+       "description": "Component name pattern",
+       "type": "string"
+      },
+      "component-group": {
+       "description": "Component group name",
+       "type": "string"
+      },
+      "config-file": {
+       "description": "additional TOML config file(s) to merge (may be repeated)",
+       "type": "string"
+      },
+      "dry-run": {
+       "default": false,
+       "description": "dry run only (do not take action)",
+       "type": "boolean"
+      },
+      "include-bare": {
+       "default": false,
+       "description": "Include components with zero customizations in the output. By default they are hidden -- their config inherits everything from defaults, and computing their git metrics is the dominant cost on large projects.",
+       "type": "boolean"
+      },
+      "network-retries": {
+       "default": 3,
+       "description": "maximum number of attempts for network operations (minimum 1)",
+       "type": "number"
+      },
+      "no-default-config": {
+       "default": false,
+       "description": "disable default configuration",
+       "type": "boolean"
+      },
+      "output-format": {
+       "description": "output format {csv, json, markdown, table}",
+       "type": "string"
+      },
+      "permissive-config": {
+       "default": false,
+       "description": "do not fail on unknown fields in TOML config files",
+       "type": "boolean"
+      },
+      "project": {
+       "default": "",
+       "description": "path to Azure Linux project",
+       "type": "string"
+      },
+      "quiet": {
+       "default": false,
+       "description": "only enable minimal output",
+       "type": "boolean"
+      },
+      "shared": {
+       "default": "show",
+       "description": "How to report rows for components that share a TOML file with others: show (keep row, count is coarse), zero (keep row, force count to 0), omit (drop row).",
+       "type": "string"
+      },
+      "since": {
+       "default": "",
+       "description": "Only count commits newer than this (Go duration syntax, e.g. 720h). Empty = all history.",
+       "type": "string"
+      },
+      "spec-path": {
+       "description": "Spec path",
+       "type": "string"
+      },
+      "verbose": {
+       "default": false,
+       "description": "enable verbose output",
+       "type": "boolean"
+      }
+     },
+     "required": [],
+     "type": "object"
+    },
+    "name": "component-history"
+   },
+   {
+    "annotations": {
+     "destructiveHint": true,
+     "idempotentHint": false,
+     "openWorldHint": true,
+     "readOnlyHint": false
+    },
     "description": "List components in this project",
     "inputSchema": {
      "properties": {

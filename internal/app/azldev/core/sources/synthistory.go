@@ -24,11 +24,11 @@ import (
 
 // CommitMetadata holds full metadata for a commit in the project repository.
 type CommitMetadata struct {
-	Hash        string
-	Author      string
-	AuthorEmail string
-	Timestamp   int64
-	Message     string
+	Hash        string `json:"hash"`
+	Author      string `json:"author"`
+	AuthorEmail string `json:"authorEmail"`
+	Timestamp   int64  `json:"timestamp"`
+	Message     string `json:"message"`
 }
 
 // FingerprintChange records a project commit that changed a component's lock file
@@ -39,7 +39,7 @@ type FingerprintChange struct {
 
 	// UpstreamCommit is the upstream dist-git commit hash recorded in the lock
 	// file at the time the fingerprint changed.
-	UpstreamCommit string
+	UpstreamCommit string `json:"upstreamCommit,omitempty"`
 }
 
 // interleavedEntry represents a single commit in the rebuilt dist-git history.
