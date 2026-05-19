@@ -330,16 +330,14 @@ func (m *sourceManager) fetchSourceFile(
 		return nil, nil //nolint:nilnil // nil provenance is intentional — file was not downloaded.
 	}
 
-	// In dry-run mode the downloader no-ops without fetching files, so no provenance
-	// should be reported since nothing was actually downloaded.
-	if m.dryRunnable.DryRun() {
-		return nil, nil //nolint:nilnil // nil provenance — dry-run does not download.
-	}
-
 	// Phase 1: Try lookaside cache if hash info is available
 	if fileRef.Hash != "" && fileRef.HashType != "" {
 		sourceURL, lookasideErr := m.tryLookasideDownload(ctx, httpDownloader, component, fileRef, destPath)
 		if lookasideErr == nil {
+			if m.dryRunnable.DryRun() {
+				return nil, nil //nolint:nilnil // dry-run — lookaside URL validated but no download.
+			}
+
 			return &SourceProvenance{
 				Filename:   fileRef.Filename,
 				OriginType: SourceOriginLookaside,
@@ -372,6 +370,10 @@ func (m *sourceManager) fetchSourceFile(
 		return nil, err
 	}
 
+	if m.dryRunnable.DryRun() {
+		return nil, nil //nolint:nilnil // dry-run — origin validated but no download.
+	}
+
 	return &SourceProvenance{
 		Filename:   fileRef.Filename,
 		OriginType: SourceOriginURL,
@@ -400,6 +402,14 @@ func (m *sourceManager) tryLookasideDownload(
 		string(fileRef.HashType), fileRef.Hash)
 	if err != nil {
 		return "", fmt.Errorf("failed to build lookaside URL for %#q:\n%w", fileRef.Filename, err)
+	}
+
+	if m.dryRunnable.DryRun() {
+		slog.Info("Dry run: would download source file from lookaside cache",
+			"filename", fileRef.Filename,
+			"url", sourceURL)
+
+		return sourceURL, nil
 	}
 
 	slog.Info("Downloading source file from lookaside cache...",

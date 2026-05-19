@@ -221,7 +221,7 @@ func NewPreparer(
 func (p *sourcePreparerImpl) PrepareSources(
 	ctx context.Context, component components.Component, outputDir string, applyOverlays bool,
 ) (*ProvenanceReport, error) {
-	var allProvenance []sourceproviders.SourceProvenance
+	allProvenance := []sourceproviders.SourceProvenance{}
 
 	// Use the source manager to fetch source files (archives, patches, etc.)
 	// Skip this step when skipLookaside is set — source tarballs are not needed

@@ -5,6 +5,8 @@ package sourceproviders_test
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -295,6 +297,95 @@ func TestSourceManager_FetchFiles_ExistingFile(t *testing.T) {
 	provenance, err := sourceManager.FetchFiles(t.Context(), component, testDestDir)
 	require.NoError(t, err)
 	assert.Empty(t, provenance, "existing files should be skipped from provenance")
+}
+
+func TestSourceManager_FetchFiles_LookasideProvenance(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+
+	expectedPath := "/lookaside/test-component/source.tar.gz/sha256/" + testSourceSHA256 + "/source.tar.gz"
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != expectedPath {
+			http.NotFound(writer, request)
+
+			return
+		}
+
+		_, _ = writer.Write([]byte("hello world"))
+	}))
+	defer server.Close()
+
+	distro := testDefaultDistro()
+	distro.Definition.LookasideBaseURI = server.URL + "/lookaside/$pkg/$filename/$hashtype/$hash/$filename"
+
+	componentConfig := &projectconfig.ComponentConfig{
+		SourceFiles: []projectconfig.SourceFileReference{{
+			Filename: testSourceTarball,
+			Hash:     testSourceSHA256,
+			HashType: fileutils.HashTypeSHA256,
+		}},
+	}
+
+	component.EXPECT().GetName().AnyTimes().Return("test-component")
+	component.EXPECT().GetConfig().AnyTimes().Return(componentConfig)
+
+	sourceManager, err := sourceproviders.NewSourceManager(env.Env, distro)
+	require.NoError(t, err)
+
+	provenance, err := sourceManager.FetchFiles(t.Context(), component, testDestDir)
+	require.NoError(t, err)
+	require.Len(t, provenance, 1)
+
+	assert.Equal(t, testSourceTarball, provenance[0].Filename)
+	assert.Equal(t, sourceproviders.SourceOriginLookaside, provenance[0].OriginType)
+	assert.Equal(t, server.URL+expectedPath, provenance[0].URL)
+	assert.Equal(t, fileutils.HashTypeSHA256, provenance[0].HashType)
+	assert.Equal(t, testSourceSHA256, provenance[0].Hash)
+}
+
+func TestSourceManager_FetchFiles_OriginFallbackProvenance(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write([]byte("hello world"))
+	}))
+	defer server.Close()
+
+	distro := testDefaultDistro()
+	distro.Definition.LookasideBaseURI = ""
+
+	originURL := server.URL + "/origin/source.tar.gz"
+	componentConfig := &projectconfig.ComponentConfig{
+		SourceFiles: []projectconfig.SourceFileReference{{
+			Filename: testSourceTarball,
+			Hash:     testSourceSHA256,
+			HashType: fileutils.HashTypeSHA256,
+			Origin: projectconfig.Origin{
+				Type: projectconfig.OriginTypeURI,
+				Uri:  originURL,
+			},
+		}},
+	}
+
+	component.EXPECT().GetName().AnyTimes().Return("test-component")
+	component.EXPECT().GetConfig().AnyTimes().Return(componentConfig)
+
+	sourceManager, err := sourceproviders.NewSourceManager(env.Env, distro)
+	require.NoError(t, err)
+
+	provenance, err := sourceManager.FetchFiles(t.Context(), component, testDestDir)
+	require.NoError(t, err)
+	require.Len(t, provenance, 1)
+
+	assert.Equal(t, testSourceTarball, provenance[0].Filename)
+	assert.Equal(t, sourceproviders.SourceOriginURL, provenance[0].OriginType)
+	assert.Equal(t, originURL, provenance[0].URL)
+	assert.Equal(t, fileutils.HashTypeSHA256, provenance[0].HashType)
+	assert.Equal(t, testSourceSHA256, provenance[0].Hash)
 }
 
 func TestSourceManager_FetchFiles_Errors(t *testing.T) {

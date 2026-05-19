@@ -94,7 +94,7 @@ func TestExtractSourcesFromRepo(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, ctx.FS().MkdirAll(testRepoDir, testDirPerms))
-	setupSourcesFile(t, ctx.FS(), testSourcesContent)
+	setupSourcesFile(t, ctx.FS(), testRepoDir, testSourcesContent)
 
 	// Mock downloader should create files with content matching the expected hashes
 	mockDownloader.EXPECT().Download(
@@ -179,7 +179,7 @@ func TestExtractSourcesFromRepoDownloadFailure(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, ctx.FS().MkdirAll(testRepoDir, testDirPerms))
-	setupSourcesFile(t, ctx.FS(), testSingleSourceContent)
+	setupSourcesFile(t, ctx.FS(), testRepoDir, testSingleSourceContent)
 
 	downloadErr := assert.AnError
 	mockDownloader.EXPECT().Download(gomock.Any(), gomock.Any(), gomock.Any()).
@@ -200,7 +200,7 @@ func TestExtractSourcesFromRepoHashMismatch(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, ctx.FS().MkdirAll(testRepoDir, testDirPerms))
-	setupSourcesFile(t, ctx.FS(), testSingleSourceContent)
+	setupSourcesFile(t, ctx.FS(), testRepoDir, testSingleSourceContent)
 
 	// Mock downloader creates a file with WRONG content (hash mismatch)
 	mockDownloader.EXPECT().Download(gomock.Any(), gomock.Any(), gomock.Any()).
@@ -215,10 +215,10 @@ func TestExtractSourcesFromRepoHashMismatch(t *testing.T) {
 }
 
 // setupSourcesFile creates a 'sources' file in the specified directory with the given content.
-func setupSourcesFile(t *testing.T, fs afero.Fs, content string) {
+func setupSourcesFile(t *testing.T, fs afero.Fs, repoDir, content string) {
 	t.Helper()
 
-	sourcesPath := filepath.Join(testRepoDir, testSourcesFile)
+	sourcesPath := filepath.Join(repoDir, testSourcesFile)
 	require.NoError(t, afero.WriteFile(fs, sourcesPath, []byte(content), testFilePerms))
 }
 
