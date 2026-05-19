@@ -41,9 +41,19 @@ func mockPackagesForQuery() []string {
 	// the Azure Linux spec corpus:
 	//   * fonts-rpm-macros        — %fontfiles, %fontfamily_subpkg, etc.
 	//   * pyproject-rpm-macros    — %pyproject_extras_subpkg
-	//   * java-srpm-macros, javapackages-tools — %mvn_package, %mvn_install,
-	//                                            auto -javadoc subpackages,
-	//                                            jp_minimal bcond default
+	//   * java-srpm-macros, javapackages-tools, javapackages-common —
+	//                                            %mvn_package, %mvn_install,
+	//                                            %javadoc_package (auto
+	//                                            -javadoc subpackages, from
+	//                                            macros.fjava in
+	//                                            javapackages-common),
+	//                                            jp_minimal bcond default.
+	//                                            javapackages-common is
+	//                                            normally pulled in via
+	//                                            javapackages-tools, but we
+	//                                            install it explicitly so
+	//                                            %javadoc_package never
+	//                                            silently disappears.
 	//   * ghc-rpm-macros          — %ghc_lib_subpackage and ghc_prof/haddock
 	//                                bcond defaults. Requires the
 	//                                ghc_version_override define set by
@@ -65,6 +75,7 @@ func mockPackagesForQuery() []string {
 		"pyproject-rpm-macros",
 		"java-srpm-macros",
 		"javapackages-tools",
+		"javapackages-common",
 		"ghc-rpm-macros",
 	}
 }
