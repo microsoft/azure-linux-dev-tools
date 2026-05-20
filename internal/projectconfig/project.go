@@ -25,6 +25,9 @@ type ProjectConfig struct {
 	Images map[string]ImageConfig `toml:"images,omitempty" json:"images,omitempty" jsonschema:"title=Images,description=Mapping of image names to configurations"`
 	// Definitions of distros.
 	Distros map[string]DistroDefinition `toml:"distros,omitempty" json:"distros,omitempty" jsonschema:"title=Distros,description=Mapping of distro names to their definitions"`
+	// Reusable resource definitions (e.g., RPM repositories) referenced from
+	// elsewhere in the configuration.
+	Resources ResourcesConfig `toml:"resources,omitempty" json:"resources,omitempty" jsonschema:"title=Resources,description=Reusable named resource definitions"`
 	// Configuration for tools used by azldev.
 	Tools ToolsConfig `toml:"tools,omitempty" json:"tools,omitempty" jsonschema:"title=Tools configuration,description=Configuration for tools used by azldev"`
 
@@ -58,6 +61,7 @@ func NewProjectConfig() ProjectConfig {
 		Components:        make(map[string]ComponentConfig),
 		Images:            make(map[string]ImageConfig),
 		Distros:           make(map[string]DistroDefinition),
+		Resources:         ResourcesConfig{RpmRepos: make(map[string]RpmRepoResource)},
 		GroupsByComponent: make(map[string][]string),
 		PackageGroups:     make(map[string]PackageGroupConfig),
 		TestSuites:        make(map[string]TestSuiteConfig),
@@ -81,6 +85,130 @@ func (cfg *ProjectConfig) Validate() error {
 
 	if err := validateImageTestReferences(cfg.Images, cfg.TestSuites); err != nil {
 		return err
+	}
+
+	if err := validateRpmRepos(cfg.Resources.RpmRepos); err != nil {
+		return err
+	}
+
+	if err := validateRpmRepoSetTemplates(cfg.Resources.RpmRepoSetTemplates); err != nil {
+		return err
+	}
+
+	if err := validateRpmRepoSets(cfg.Resources.RpmRepoSets); err != nil {
+		return err
+	}
+
+	// Expand sets into the effective flat map and surface any structural / collision
+	// errors. We rebuild the effective map once here for use by the input validator.
+	effectiveRepos, err := cfg.Resources.EffectiveRpmRepos()
+	if err != nil {
+		return err
+	}
+
+	if err := validateDistroVersionInputs(cfg.Distros, &cfg.Resources, effectiveRepos); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateRpmRepos checks each RPM repo definition for structural validity,
+// including the map key.
+func validateRpmRepos(repos map[string]RpmRepoResource) error {
+	for name, repo := range repos {
+		if err := validateRpmRepoName(name); err != nil {
+			return fmt.Errorf("rpm-repo:\n%w", err)
+		}
+
+		if err := validateRpmRepo(name, &repo); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateRpmRepoSetTemplates checks each repo-set template definition for
+// structural validity, including the map key.
+func validateRpmRepoSetTemplates(templates map[string]RpmRepoSetTemplate) error {
+	for name, tmpl := range templates {
+		if err := validateRpmRepoName(name); err != nil {
+			return fmt.Errorf("rpm-repo-set-template:\n%w", err)
+		}
+
+		if err := validateRpmRepoSetTemplate(name, &tmpl); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateRpmRepoSets checks the structural validity of each set's map key. The
+// per-set body (template reference, base-uri, etc.) is validated lazily during
+// expansion in [ResourcesConfig.EffectiveRpmRepos].
+func validateRpmRepoSets(sets map[string]RpmRepoSet) error {
+	for name := range sets {
+		if err := validateRpmRepoName(name); err != nil {
+			return fmt.Errorf("rpm-repo-set:\n%w", err)
+		}
+	}
+
+	return nil
+}
+
+// validateDistroVersionInputs verifies that every repo or repo-set name referenced
+// from a distro version's [DistroVersionDefinition.Inputs] resolves, that no
+// effective repo is produced more than once, and that the effective rpm-build
+// list does not include repos with a local `gpg-key` (which mock cannot resolve
+// inside the chroot).
+func validateDistroVersionInputs(
+	distros map[string]DistroDefinition,
+	resources *ResourcesConfig,
+	effectiveRepos map[string]RpmRepoResource,
+) error {
+	for distroName, distro := range distros {
+		for versionName, version := range distro.Versions {
+			rpmBuild, err := version.EffectiveRpmBuildRepos(resources)
+			if err != nil {
+				return fmt.Errorf("distro %q version %q:\n%w", distroName, versionName, err)
+			}
+
+			for _, name := range rpmBuild {
+				repo, ok := effectiveRepos[name]
+				if !ok {
+					return fmt.Errorf(
+						"distro %q version %q inputs.rpm-build references undefined rpm-repo %q",
+						distroName, versionName, name,
+					)
+				}
+
+				if repo.IsLocalGPGKey() {
+					return fmt.Errorf(
+						"distro %q version %q inputs.rpm-build references rpm-repo %q which has a local "+
+							"`gpg-key` (%q); local keys are not yet supported for mock builds (mock would "+
+							"evaluate the path inside the chroot) — use an http(s) URI, or only reference "+
+							"this repo from inputs.image-build",
+						distroName, versionName, name, repo.GPGKey,
+					)
+				}
+			}
+
+			imageBuild, err := version.EffectiveImageBuildRepos(resources)
+			if err != nil {
+				return fmt.Errorf("distro %q version %q:\n%w", distroName, versionName, err)
+			}
+
+			for _, name := range imageBuild {
+				if _, ok := effectiveRepos[name]; !ok {
+					return fmt.Errorf(
+						"distro %q version %q inputs.image-build references undefined rpm-repo %q",
+						distroName, versionName, name,
+					)
+				}
+			}
+		}
 	}
 
 	return nil

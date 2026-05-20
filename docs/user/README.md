@@ -10,6 +10,7 @@
 ## Explanation
 
 - [Configuration System](./explanation/config-system.md) — how config files are loaded, merged, and how inheritance works
+- [RPM Repos & Repo Sets](./explanation/repos.md) — modeling RPM repositories and reusable layout templates
 
 ## Reference
 
@@ -18,6 +19,7 @@
 - [Config File Structure](./reference/config/config-file.md) — root config file layout and includes
 - [Project](./reference/config/project.md) — project metadata and directory configuration
 - [Distros](./reference/config/distros.md) — distro definitions, versions, and repositories
+- [Resources](./reference/config/resources.md) — RPM repos, repo-set templates, and repo sets
 - [Components](./reference/config/components.md) — component definitions, spec sources, build options, and source files
 - [Overlays](./reference/config/overlays.md) — spec and file overlays for modifying upstream sources
 - [Component Groups](./reference/config/component-groups.md) — grouping components with shared defaults
