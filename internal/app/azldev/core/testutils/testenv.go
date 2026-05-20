@@ -172,9 +172,18 @@ func constructProjectConfig(testMockConfigPath string) *projectconfig.ProjectCon
 		MockConfigPath: testMockConfigPath,
 		DistGitBranch:  "main",
 		ReleaseVer:     "3.0",
+		Inputs: projectconfig.DistroVersionInputs{
+			RpmBuild: []string{"test-repo"},
+		},
 	}
 
 	config.Distros["test-distro"] = distro
+
+	config.Resources.RpmRepos["test-repo"] = projectconfig.RpmRepoResource{
+		Description:     "Test repository for the in-memory test environment",
+		BaseURI:         "https://example.com/test-repo/$basearch",
+		DisableGPGCheck: true,
+	}
 
 	return &config
 }

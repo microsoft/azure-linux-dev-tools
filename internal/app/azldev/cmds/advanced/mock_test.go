@@ -117,8 +117,16 @@ func TestBuildRPMS(t *testing.T) {
 			Versions: map[string]projectconfig.DistroVersionDefinition{
 				"1.0": {
 					MockConfigPath: testMockConfigPath,
+					Inputs: projectconfig.DistroVersionInputs{
+						RpmBuild: []string{"test-repo"},
+					},
 				},
 			},
+		}
+
+		testEnv.Config.Resources.RpmRepos["test-repo"] = projectconfig.RpmRepoResource{
+			BaseURI:         "https://example.com/test-repo/$basearch",
+			DisableGPGCheck: true,
 		}
 
 		// Pretend that "mock" exists.

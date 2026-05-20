@@ -35,6 +35,10 @@ type ConfigFile struct {
 	// Definitions of distros.
 	Distros map[string]DistroDefinition `toml:"distros,omitempty" jsonschema:"title=Distros,description=Definitions of distros to build for or consume from"`
 
+	// Reusable resource definitions (e.g., RPM repositories) referenced from
+	// elsewhere in the configuration.
+	Resources *ResourcesConfig `toml:"resources,omitempty" jsonschema:"title=Resources,description=Reusable named resource definitions"`
+
 	// Definitions of component groups.
 	ComponentGroups map[string]ComponentGroupConfig `toml:"component-groups,omitempty" validate:"dive" jsonschema:"title=Component groups,description=Definitions of component groups for this project"`
 

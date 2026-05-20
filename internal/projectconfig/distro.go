@@ -85,6 +85,30 @@ type DistroVersionDefinition struct {
 	MockConfigPath        string `toml:"mock-config,omitempty"         json:"mockConfig,omitempty"        validate:"omitempty,filepath" jsonschema:"title=Mock config file,description=Path to the mock config file for this version"`
 	MockConfigPathX86_64  string `toml:"mock-config-x86_64,omitempty"  json:"mockConfigX8664,omitempty"   validate:"omitempty,filepath" jsonschema:"title=Mock config file,description=Path to the x86_64 mock config file for this version"`
 	MockConfigPathAarch64 string `toml:"mock-config-aarch64,omitempty" json:"mockConfigAarch64,omitempty" validate:"omitempty,filepath" jsonschema:"title=Mock config file,description=Path to the aarch64 mock config file for this version"`
+
+	// Inputs maps build use-cases ("rpm-build", "image-build") to ordered lists of
+	// [RpmRepoResource] names that should be made available to that use-case. Names
+	// must resolve to entries under [ResourcesConfig.RpmRepos]; load-time validation
+	// enforces this. List order is preserved when projecting into mock/kiwi config but
+	// is **not** treated as a priority hint — neither dnf nor kiwi guarantees ordering
+	// semantics across remote repos. Define explicit priorities/costs at the consumer
+	// level if/when needed.
+	Inputs DistroVersionInputs `toml:"inputs,omitempty" json:"inputs,omitempty" jsonschema:"title=Inputs,description=Per-use-case input repositories"`
+}
+
+// DistroVersionInputs maps build use-cases to ordered lists of resource references.
+// Each list is a sequence of names that must resolve to top-level
+// [ResourcesConfig.RpmRepos] entries.
+type DistroVersionInputs struct {
+	// RpmBuild is the ordered list of RPM repos made available when building RPMs
+	// (the mock/comp build path). Order is preserved on emission but not interpreted
+	// as priority by dnf.
+	RpmBuild []string `toml:"rpm-build,omitempty" json:"rpmBuild,omitempty" jsonschema:"title=RPM-build inputs,description=Repos made available to mock when building RPMs"`
+
+	// ImageBuild is the ordered list of RPM repos made available when building images
+	// (the kiwi/image build path). Order is preserved on emission but not interpreted
+	// as priority by kiwi.
+	ImageBuild []string `toml:"image-build,omitempty" json:"imageBuild,omitempty" jsonschema:"title=Image-build inputs,description=Repos made available to kiwi when building images"`
 }
 
 // MergeUpdatesFrom mutates the distro definition, updating it with overrides present in other.

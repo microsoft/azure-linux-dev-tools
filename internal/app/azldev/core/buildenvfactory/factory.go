@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/mockconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/buildenv"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 )
@@ -59,8 +60,16 @@ func NewMockRootFactoryForEnv(env *azldev.Env) (*buildenv.MockRootFactory, error
 		return nil, fmt.Errorf("failed to access configured mock config file '%s':\n%w", mockConfigPath, statErr)
 	}
 
+	// Stage a per-build configdir that injects the TOML-derived RPM repos via a
+	// generated site-defaults.cfg. This replaces hardcoded `[base]`/`[sdk]`/etc.
+	// blocks in the chroot template with a Jinja loop driven by `azl_repos`.
+	preparedConfigPath, err := mockconfig.PrepareForRPMBuild(env)
+	if err != nil {
+		return nil, fmt.Errorf("failed to prepare mock config:\n%w", err)
+	}
+
 	// Get set up with mock.
-	factory, err := buildenv.NewMockRootFactory(env, mockConfigPath)
+	factory, err := buildenv.NewMockRootFactory(env, preparedConfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create mock root factory:\n%w", err)
 	}
