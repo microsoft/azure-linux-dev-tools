@@ -7,10 +7,14 @@ package scenario_tests
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/scenario/internal/cmdtest"
 	"github.com/microsoft/azure-linux-dev-tools/scenario/internal/projecttest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -541,101 +545,16 @@ func TestRenderBrokenSpecWithGoodSpec(t *testing.T) {
 	require.FileExists(t, markerPath, "RENDER_FAILED marker should exist for broken component")
 }
 
-// TestRenderUpstreamComponentWithSyntheticHistory verifies that rendering an
-// upstream component produces correct rpmautospec output. This exercises the
-// full synthetic dist-git pipeline end-to-end:
-//
-//  1. Fetch upstream sources (dist-git clone with .git preserved)
-//  2. Apply overlays
-//  3. Build synthetic commits from lock file fingerprint changes
-//  4. rpmautospec expands %autorelease using the synthetic git history
-//
-// The test pre-bakes a lock file pinned to a known lolcat commit rather than
-// running 'component update' at test time. This mirrors the typical workflow
-// (lock files are committed to the repo) and avoids floating HEAD instability.
-// The lock file must be committed to git so buildSyntheticCommits finds it
-// at HEAD; WithGitRepo() handles this in the initial commit.
-func TestRenderUpstreamComponentWithSyntheticHistory(t *testing.T) {
-	// We pick lolcat: a small, self-contained upstream Fedora component
-	// that uses %autorelease — the same one used by TestBuildingUpstreamComponent.
-	const testComponentName = "lolcat"
-
-	// Pinned to f42 branch as of 2026-05-18. This commit is immutable in
-	// Fedora dist-git (append-only history) so the test is deterministic.
-	const pinnedUpstreamCommit = "6663f784f036a5d0f9cf97be14a49e42e373cd7e"
-
-	// Pre-baked lock file. The upstream-commit pins the fetch to a specific
-	// dist-git revision. import-commit is set to the same value since this
-	// is the initial import with no prior history. input-fingerprint will
-	// not match the runtime-computed value (since we aren't running update
-	// to generate it), which triggers dirty detection — adding an extra
-	// synthetic commit. This is acceptable: the test still validates the
-	// full pipeline, just via the dirty path rather than the clean path.
-	const lockFileContent = `version = 1
-import-commit = "` + pinnedUpstreamCommit + `"
-upstream-commit = "` + pinnedUpstreamCommit + `"
-input-fingerprint = "pinned-for-test"
-`
-
-	t.Parallel()
-
-	if testing.Short() {
-		t.Skip("skipping long test")
-	}
-
-	project := projecttest.NewDynamicTestProject(
-		projecttest.AddComponent(&projectconfig.ComponentConfig{Name: testComponentName}),
-		projecttest.UseTestDefaultConfigs(),
-		// Pre-bake the lock file so it's included in the initial git commit.
-		projecttest.AddFile("locks/lolcat.lock", lockFileContent),
-		projecttest.WithGitRepo(),
-	)
-
-	results := projecttest.NewProjectTest(
-		project,
-		[]string{"component", "render", testComponentName, "-o", "project/SPECS"},
-		projecttest.WithTestDefaultConfigs(),
-	).RunInContainer(t)
-
-	// Verify JSON output reports success.
-	output := results.GetJSONResult()
-	require.Len(t, output, 1, "Expected one component in the output")
-	assert.Equal(t, testComponentName, output[0]["component"])
-	assert.Equal(t, "ok", output[0]["status"],
-		"Upstream component should render successfully with synthetic history")
-
-	// Verify rendered spec file exists.
-	renderedSpecPath := results.GetProjectOutputPath("SPECS", "l", testComponentName, testComponentName+".spec")
-	require.FileExists(t, renderedSpecPath)
-
-	content, err := os.ReadFile(renderedSpecPath)
-	require.NoError(t, err)
-
-	contentStr := string(content)
-
-	// The azldev overlay header should be present — this proves the overlay
-	// pipeline ran (macros file was injected via the build config).
-	assert.Contains(t, contentStr, "lolcat.azl.macros",
-		"Rendered spec should reference the azldev macros file from overlay processing")
-
-	// The changelog should contain upstream Fedora entries, confirming
-	// the dist-git clone fetched real history at the pinned commit.
-	assert.Contains(t, contentStr, "Fedora Release Engineering",
-		"Rendered changelog should contain upstream Fedora entries")
-
-	// The Release tag should be present. The pinned commit uses a static
-	// release (not %autorelease), so it appears as-is with %{?dist}.
-	assert.Regexp(t, `Release:\s+\d+`, contentStr,
-		"Rendered spec should contain a Release tag")
-}
-
 // TestRenderLocalSpecWithSyntheticHistory verifies that rendering a local
 // component with a committed lock file produces synthetic commits that
-// rpmautospec can use to expand %autorelease.
+// rpmautospec can use to expand %autorelease, and that dirty detection
+// correctly identifies uncommitted fingerprint changes.
 //
 // Existing render tests never commit lock files, so buildSyntheticCommits
 // finds no lock at HEAD and returns early. This test pre-bakes a lock file
-// to exercise the full pipeline for local components.
+// with a stale fingerprint and includes an overlay that changes the runtime
+// fingerprint — exercising both the synthetic history pipeline and dirty
+// detection in one pass.
 func TestRenderLocalSpecWithSyntheticHistory(t *testing.T) {
 	t.Parallel()
 
@@ -650,16 +569,23 @@ func TestRenderLocalSpecWithSyntheticHistory(t *testing.T) {
 		projecttest.WithBuildArch(projecttest.NoArch),
 	)
 
-	// Pre-baked lock file for a local component (no upstream-commit).
-	// The fingerprint won't match the runtime-computed value, which
-	// triggers dirty detection and adds a synthetic commit.
+	// Pre-baked lock file with a stale fingerprint. The overlay in the
+	// component config changes the runtime fingerprint, so dirty detection
+	// will fire and add a synthetic commit.
 	const lockFileContent = `version = 1
 input-fingerprint = "pre-baked-for-test"
 `
 
 	project := projecttest.NewDynamicTestProject(
 		projecttest.AddSpec(spec),
-		projecttest.AddComponent(localComponentConfig("synth-local")),
+		projecttest.AddComponent(localComponentConfig("synth-local",
+			projectconfig.ComponentOverlay{
+				Type:        projectconfig.ComponentOverlayAddSpecTag,
+				Description: "Add overlay to trigger dirty detection",
+				Tag:         "BuildRequires",
+				Value:       "dirty-dep",
+			},
+		)),
 		projecttest.UseTestDefaultConfigs(),
 		projecttest.AddFile("locks/synth-local.lock", lockFileContent),
 		projecttest.WithGitRepo(),
@@ -691,83 +617,274 @@ input-fingerprint = "pre-baked-for-test"
 	// pre-baked lock file's stale fingerprint).
 	assert.Contains(t, contentStr, "## START: Set by rpmautospec",
 		"rpmautospec should have expanded %%autorelease for local component with lock file")
+
+	// The overlay should be applied to the rendered spec, confirming that
+	// dirty detection fired (the overlay changes the runtime fingerprint).
+	assert.Contains(t, contentStr, "BuildRequires: dirty-dep",
+		"Overlay should be applied to rendered spec")
 }
 
-// TestRenderLocalSpecWithDirtyDetection verifies that rendering a local
-// component detects uncommitted fingerprint changes and includes them as
-// a synthetic commit in the git history for rpmautospec.
+// TestRenderUpstreamFromLocalDistGit verifies that the synthetic dist-git
+// pipeline produces correct Release and changelog values by cloning from a
+// controlled local file:// bare repo with a known commit history.
 //
-// The test pre-bakes a lock file with a stale fingerprint and includes an
-// overlay in the component config. At render time, the runtime-computed
-// fingerprint (which includes the overlay) won't match the committed lock
-// file's fingerprint, triggering dirty detection.
-func TestRenderLocalSpecWithDirtyDetection(t *testing.T) {
+// Setup:
+//
+//	Upstream dist-git (3 commits): C1(v1.0.0) → C2(v1.1.0) → C3(add patch)
+//	Project lock file (2 fingerprint changes): fp1, fp2
+//	Dirty detection: runtime fingerprint ≠ fp2 → 1 extra synthetic commit
+//
+//	All synthetic commits reference C3 (HEAD), so interleaving places them
+//	after the upstream history: C1 → C2 → C3 → S1 → S2 → S3(dirty)
+//	rpmautospec resets release on Version change (C2), giving Release = 5.
+//
+// The bare repo is created inside the container script because
+// AddDirRecursive loses git internal structure needed for file:// clones.
+func TestRenderUpstreamFromLocalDistGit(t *testing.T) {
 	t.Parallel()
 
 	if testing.Short() {
 		t.Skip("skipping long test")
 	}
 
-	spec := projecttest.NewSpec(
-		projecttest.WithName("dirty-detect"),
-		projecttest.WithVersion("1.0.0"),
-		projecttest.WithRelease("%autorelease"),
-		projecttest.WithBuildArch(projecttest.NoArch),
-	)
+	// Spec content using %autorelease and %autochangelog so rpmautospec
+	// will derive Release and changelog from the git history.
+	specContent := `Name:    test-pkg
+Version: 1.0.0
+Release: %autorelease
+Summary: Test package for local dist-git
+License: MIT
+BuildArch: noarch
 
-	// Pre-baked lock file with a stale fingerprint. The overlay in the
-	// component config changes the runtime fingerprint, so dirty detection
-	// will fire and add an extra synthetic commit.
-	const lockFileContent = `version = 1
-input-fingerprint = "stale-fingerprint-before-overlay"
+%description
+Test package.
+
+%build
+echo hello >file.txt
+
+%install
+mkdir -p %{buildroot}/%{_datadir}/test-pkg
+cp file.txt %{buildroot}/%{_datadir}/test-pkg/file.txt
+
+%files
+%{_datadir}/test-pkg
+
+%changelog
+%autochangelog
+`
+
+	// Custom distro config pointing at a local bare repo.
+	// Using file:// URI — this is why we relaxed validateAbsoluteURL.
+	distroConfig := `[distros.local-test]
+description = "Local test dist-git"
+default-version = "1.0"
+dist-git-base-uri = "file:///workdir/upstream-repo/$pkg.git"
+lookaside-base-uri = "file:///dev/null/$pkg/$filename/$hashtype/$hash/$filename"
+
+[distros.local-test.versions.'1.0']
+description = "Local test v1.0"
+release-ver = "1.0"
+dist-git-branch = "main"
 `
 
 	project := projecttest.NewDynamicTestProject(
-		projecttest.AddSpec(spec),
-		projecttest.AddComponent(localComponentConfig("dirty-detect",
-			projectconfig.ComponentOverlay{
-				Type:        projectconfig.ComponentOverlayAddSpecTag,
-				Description: "Add dirty overlay",
-				Tag:         "BuildRequires",
-				Value:       "dirty-dep",
+		projecttest.AddComponent(&projectconfig.ComponentConfig{
+			Name: "test-pkg",
+			Spec: projectconfig.SpecSource{
+				UpstreamDistro: projectconfig.DistroReference{
+					Name:    "local-test",
+					Version: "1.0",
+				},
 			},
-		)),
+		}),
 		projecttest.UseTestDefaultConfigs(),
-		projecttest.AddFile("locks/dirty-detect.lock", lockFileContent),
+		projecttest.AddFile("local-distro.toml", distroConfig),
+		// The spec content is used by the script to build the upstream repo.
+		projecttest.AddFile("upstream-spec.txt", specContent),
 		projecttest.WithGitRepo(),
 	)
 
-	results := projecttest.NewProjectTest(
-		project,
-		[]string{"component", "render", "dirty-detect", "-o", "project/SPECS"},
-		projecttest.WithTestDefaultConfigs(),
-	).RunInContainer(t)
+	projectStagingDir := t.TempDir()
+	project.Serialize(t, projectStagingDir)
 
-	// Verify JSON output reports success.
-	output := results.GetJSONResult()
-	require.Len(t, output, 1, "Expected one component in the output")
-	assert.Equal(t, "ok", output[0]["status"],
-		"Local component with dirty detection should render ok")
+	// Patch the azldev.toml to include the local distro config.
+	azldevToml, err := os.ReadFile(filepath.Join(projectStagingDir, "azldev.toml"))
+	require.NoError(t, err)
 
-	// Verify the rendered spec exists.
-	renderedSpecPath := results.GetProjectOutputPath("SPECS", "d", "dirty-detect", "dirty-detect.spec")
+	patched := strings.Replace(string(azldevToml),
+		"includes = [",
+		"includes = [\"local-distro.toml\", ",
+		1,
+	)
+	require.NoError(t, os.WriteFile(filepath.Join(projectStagingDir, "azldev.toml"), []byte(patched), 0o644))
+
+	// Re-commit the patched azldev.toml so the git repo is clean.
+	patchCmd := exec.CommandContext(t.Context(), "git", "add", "azldev.toml")
+	patchCmd.Dir = projectStagingDir
+	patchOut, err := patchCmd.CombinedOutput()
+	require.NoError(t, err, "git add failed: %s", string(patchOut))
+
+	commitCmd := exec.CommandContext(t.Context(), "git", "-c", "commit.gpgsign=false", "commit", "--amend", "--no-edit")
+	commitCmd.Dir = projectStagingDir
+	commitOut, err := commitCmd.CombinedOutput()
+	require.NoError(t, err, "git commit --amend failed: %s", string(commitOut))
+
+	// The script:
+	// 1. Creates the upstream bare repo with 3 controlled commits
+	// 2. Commits the lock file twice with different fingerprints to simulate
+	//    a realistic workflow (import → overlay change)
+	// 3. Renders and captures output
+	//
+	// This produces 2 fingerprint changes + 1 dirty detection = 3 synthetic
+	// commits, interleaved on top of 3 upstream commits = 6 total → Release 6.
+	testScript := `
+set -ex
+
+rm -rf project/build
+ln -s /var/lib/mock project/build
+
+# --- Create the upstream dist-git repo with controlled commits ---
+WORK=$(mktemp -d)
+cd "$WORK"
+git init -b main
+git config user.email "test@test.com"
+git config user.name "Test User"
+
+# Commit 1: initial import
+cp /workdir/project/upstream-spec.txt test-pkg.spec
+git add .
+git -c commit.gpgsign=false commit --date="2024-01-15T12:00:00Z" -m "Initial import of test-pkg"
+FIRST_COMMIT=$(git rev-parse HEAD)
+
+# Commit 2: bump version
+sed -i 's/Version: 1.0.0/Version: 1.1.0/' test-pkg.spec
+git add .
+git -c commit.gpgsign=false commit --date="2024-06-01T12:00:00Z" -m "Bump to 1.1.0"
+
+# Commit 3: add patch
+printf -- '--- a/x\n+++ b/x\n' > fix.patch
+git add .
+git -c commit.gpgsign=false commit --date="2025-01-10T12:00:00Z" -m "Add fix.patch for build issue"
+HEAD_COMMIT=$(git rev-parse HEAD)
+
+# Clone to bare repo at the path the distro config expects
+mkdir -p /workdir/upstream-repo
+git clone --bare "$WORK" /workdir/upstream-repo/test-pkg.git
+cd /workdir
+
+# --- Create lock file with multiple fingerprint changes ---
+# This simulates a realistic project history where the component is
+# imported, then overlays are added/modified over time.
+mkdir -p project/locks
+cd project
+
+# Lock commit 1: initial import (fingerprint fp1)
+cat > locks/test-pkg.lock <<EOF
+version = 1
+import-commit = "$FIRST_COMMIT"
+upstream-commit = "$HEAD_COMMIT"
+input-fingerprint = "fp1-initial-import"
+EOF
+git add locks/test-pkg.lock
+git -c commit.gpgsign=false commit -m "Import test-pkg with initial lock"
+
+# Lock commit 2: simulated overlay addition (fingerprint fp2)
+cat > locks/test-pkg.lock <<EOF
+version = 1
+import-commit = "$FIRST_COMMIT"
+upstream-commit = "$HEAD_COMMIT"
+input-fingerprint = "fp2-added-buildrequires"
+EOF
+git add locks/test-pkg.lock
+git -c commit.gpgsign=false commit -m "Update lock: add BuildRequires overlay"
+
+cd /workdir
+
+# --- Render ---
+azldev -C project -v component render test-pkg -o project/SPECS --output-format json >result.json
+`
+
+	scenarioTest := cmdtest.NewScenarioTest().
+		WithScript(strings.NewReader(testScript)).
+		AddDirRecursive(t, "project", projectStagingDir).
+		AddDirRecursive(t, projecttest.TestDefaultConfigsSubdir, projecttest.TestDefaultConfigsDir())
+
+	testResults, err := scenarioTest.
+		InContainer().
+		WithPrivilege().
+		WithNetwork().
+		Run(t)
+
+	require.NoError(t, err)
+
+	t.Logf("Standard output:\n%s", testResults.Stdout)
+	t.Logf("Standard error:\n%s", testResults.Stderr)
+
+	testResults.AssertZeroExitCode(t)
+
+	outputBytes, err := os.ReadFile(filepath.Join(testResults.Workdir, "result.json"))
+	require.NoError(t, err)
+	t.Logf("Render output:\n%s", string(outputBytes))
+
+	// Verify rendered spec exists.
+	renderedSpecPath := filepath.Join(testResults.Workdir, "project", "SPECS", "t", "test-pkg", "test-pkg.spec")
 	require.FileExists(t, renderedSpecPath)
 
 	content, err := os.ReadFile(renderedSpecPath)
 	require.NoError(t, err)
 
 	contentStr := string(content)
+	t.Logf("Rendered spec:\n%s", contentStr)
 
-	// rpmautospec should have processed the spec.
+	// rpmautospec should have processed %autorelease.
 	assert.Contains(t, contentStr, "## START: Set by rpmautospec",
-		"rpmautospec should have expanded %%autorelease with dirty detection")
+		"rpmautospec should have expanded %%autorelease")
 
-	// The overlay should be applied to the rendered spec.
-	assert.Contains(t, contentStr, "BuildRequires: dirty-dep",
-		"Dirty overlay should be applied to rendered spec")
+	// The Version should reflect the spec at the pinned upstream commit.
+	// Commit 2 bumped Version from 1.0.0 to 1.1.0; commit 3 (HEAD) didn't
+	// change it back. This confirms the correct commit was checked out.
+	assert.Contains(t, contentStr, "Version: 1.1.0",
+		"Rendered spec should have Version from the pinned upstream commit")
 
-	// rpmautospec should have processed %autorelease using the synthetic
-	// git history (which includes the dirty-detected commit).
-	assert.Contains(t, contentStr, "## START: Set by rpmautospec",
-		"rpmautospec should have expanded %%autorelease with dirty detection")
+	// Verify the release number from the rpmautospec %define block.
+	// rpmautospec writes a Lua block containing: release_number = N;
+	// where N is the computed release based on commit count since the
+	// last Version change.
+	//
+	// Expected release calculation:
+	// All synthetic commits reference the same upstream-commit (C3/HEAD),
+	// so interleaving places them all in the "top" group after C3:
+	//   C1 → C2 → C3 → S1(fp1) → S2(fp2) → S3(dirty)
+	// rpmautospec resets release on Version change (C2 bumps 1.0.0 → 1.1.0):
+	//   C2 = release 1 (reset), C3 = 2, S1 = 3, S2 = 4, S3 = 5
+	releasePattern := regexp.MustCompile(`release_number = (\d+);`)
+	releaseMatch := releasePattern.FindStringSubmatch(contentStr)
+	require.NotEmpty(t, releaseMatch,
+		"Should find release_number in rpmautospec Lua block")
+	assert.Equal(t, "5", releaseMatch[1],
+		"Release should be 5 (commits since last Version change: C2=1, C3=2, S1=3, S2=4, S3=5)")
+
+	// %autochangelog should be expanded to real entries from the controlled history.
+	assert.NotContains(t, contentStr, "%autochangelog",
+		"%%autochangelog should be expanded to real entries")
+
+	// The changelog should contain our controlled commit messages in
+	// newest-first order. Synthetic commits (S1, S2, S3) appear before
+	// upstream commits (C3, C2, C1) because interleaving places them on top.
+	assert.Contains(t, contentStr, "Add fix.patch for build issue",
+		"Changelog should contain the third commit message")
+	assert.Contains(t, contentStr, "Bump to 1.1.0",
+		"Changelog should contain the second commit message")
+	assert.Contains(t, contentStr, "Initial import of test-pkg",
+		"Changelog should contain the first commit message")
+
+	// Verify ordering: synthetic commits should appear above upstream commits.
+	// In newest-first changelog, "Import test-pkg with initial lock" (S1)
+	// must precede "Add fix.patch for build issue" (C3).
+	s1Pos := strings.Index(contentStr, "Import test-pkg with initial lock")
+	c3Pos := strings.Index(contentStr, "Add fix.patch for build issue")
+	require.Greater(t, s1Pos, 0, "S1 commit message should be in changelog")
+	require.Greater(t, c3Pos, 0, "C3 commit message should be in changelog")
+	assert.Less(t, s1Pos, c3Pos,
+		"Synthetic commit (S1) should appear before upstream commit (C3) in changelog")
 }
