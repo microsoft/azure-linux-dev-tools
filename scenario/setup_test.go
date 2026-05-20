@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//go:build scenario
+//go:build scenario || e2e
 
 package scenario_tests
 

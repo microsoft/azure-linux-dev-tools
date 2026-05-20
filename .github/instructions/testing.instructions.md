@@ -15,6 +15,7 @@ if it uses memfs and mocks.
 |------|-------------|-----------|---------|
 | Unit | `mage unit` | (none) | Fast, isolated, in-memory |
 | Scenario | `mage scenario` | `//go:build scenario` | End-to-end CLI with snapshot validation |
+| E2E | `mage e2e` | `//go:build e2e` | Heavy end-to-end tests against real upstream repos (network + large clones); not run by `mage scenario` / `mage all` |
 
 ### Sub-Tiers Within `mage unit`
 
@@ -36,6 +37,16 @@ Live in `scenario/` with `//go:build scenario` tag. Two execution modes:
 - `InContainer()` — slow, full Docker isolation. For integration tests needing fs state.
 
 Use `mage scenarioUpdate` to update snapshots (review diffs — don't blindly accept).
+
+### E2E Tests
+
+Live in `scenario/` with `//go:build e2e` tag (the shared `setup_test.go` is
+widened to `//go:build scenario || e2e` so [TestMain] applies to both tiers).
+Run via `mage e2e` — they are intentionally excluded from `mage scenario`,
+`mage scenarioUpdate`, and `mage all` because they clone large upstream
+repositories (e.g. `microsoft/azurelinux`) and can be expensive. They reuse
+the same scenario container framework (`cmdtest`/`containertest`) but skip the
+in-memory project synthesis layer.
 
 ## Test Environment
 
