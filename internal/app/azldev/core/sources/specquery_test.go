@@ -119,6 +119,27 @@ func TestParseSpecQueryBatchJSON_InvalidJSON(t *testing.T) {
 	assert.Contains(t, err.Error(), "parsing spec query batch results JSON")
 }
 
+func TestParseSpecQueryBatchJSON_ExcludedFromArch(t *testing.T) {
+	t.Parallel()
+
+	raw := []byte(`[{
+		"name": "shim",
+		"srpmOut": "",
+		"binOut": "",
+		"error": null,
+		"excludedFromArch": true
+	}]`)
+
+	inputs := []SpecQueryInput{{Name: "shim", SpecRelPath: "s/shim/shim.spec"}}
+
+	results, err := parseSpecQueryBatchJSON(raw, inputs)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.NoError(t, results[0].Error)
+	assert.True(t, results[0].ExcludedFromArch)
+	assert.Nil(t, results[0].Info)
+}
+
 func TestValidateSpecQueryInputs(t *testing.T) {
 	t.Parallel()
 

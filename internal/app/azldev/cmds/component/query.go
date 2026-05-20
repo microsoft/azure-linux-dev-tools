@@ -13,8 +13,10 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/specs"
+	"github.com/microsoft/azure-linux-dev-tools/internal/rpm"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/qemu"
 	"github.com/spf13/cobra"
 )
 
@@ -22,6 +24,12 @@ import (
 type QueryComponentsOptions struct {
 	// Standard filter for selecting components.
 	ComponentFilter components.ComponentFilter
+
+	// Target architecture passed to rpmspec via --target. Defaults to
+	// x86_64. Drives ExclusiveArch/ExcludeArch evaluation; specs that
+	// exclude the target are emitted with only SpecInfo.Name populated
+	// (no Version/Subpackages) rather than as errors.
+	Arch qemu.Arch
 }
 
 func queryOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
@@ -30,7 +38,9 @@ func queryOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
 
 // Constructs a [cobra.Command] for "component query" CLI subcommand.
 func NewComponentQueryCommand() *cobra.Command {
-	options := &QueryComponentsOptions{}
+	options := &QueryComponentsOptions{
+		Arch: qemu.Arch(qemu.ArchX86_64),
+	}
 
 	cmd := &cobra.Command{
 		Use:   "query",
@@ -61,11 +71,28 @@ The rendered-specs-dir must exist on disk; if it doesn't, run
 
 	components.AddComponentFilterOptionsToCommand(cmd, &options.ComponentFilter)
 
+	cmd.Flags().Var(&options.Arch, "arch",
+		"Target architecture passed to rpmspec via --target (x86_64, aarch64). "+
+			"Defaults to x86_64. Specs that ExclusiveArch/ExcludeArch-exclude the "+
+			"target are emitted with only the component name populated rather than "+
+			"as errors.")
+	_ = cmd.RegisterFlagCompletionFunc("arch",
+		func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+			return qemu.SupportedArchitectures(), cobra.ShellCompDirectiveNoFileComp
+		})
+
 	return cmd
 }
 
 // componentDetails encapsulates detailed information about a component.
+//
+// Arch records the target arch the query ran against. Components that the
+// spec excludes for the requested arch (ExclusiveArch/ExcludeArch) are
+// emitted with only the embedded SpecInfo.Name populated (Version and
+// Subpackages stay at their zero values); the per-arch summary is reported
+// via the excludedCount log line.
 type componentDetails struct {
+	Arch string
 	specs.ComponentSpecDetails
 }
 
@@ -143,8 +170,11 @@ func QueryComponents(
 		}
 	}()
 
+	archStr := options.Arch.String()
+
 	queryResults, err := mockProcessor.BatchQuerySpecs(
-		env, env, renderedSpecsDir, scratchDir, inputs, env.FS(), env.CPUBoundConcurrency(),
+		env, env, renderedSpecsDir, scratchDir, archStr,
+		inputs, env.FS(), env.CPUBoundConcurrency(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("batch-querying rendered specs:\n%w", err)
@@ -152,7 +182,10 @@ func QueryComponents(
 
 	allDetails := make([]*componentDetails, 0, len(queryResults))
 
-	var failed int
+	var (
+		failed   int
+		excluded int
+	)
 
 	for _, queryResult := range queryResults {
 		if queryResult.Error != nil {
@@ -164,15 +197,42 @@ func QueryComponents(
 			continue
 		}
 
+		if queryResult.ExcludedFromArch {
+			// Per-component logging here would flood stderr on cross-arch
+			// queries (e.g. --arch aarch64 against an x86_64-heavy distro
+			// excludes thousands of specs); a single summary log is emitted
+			// below the loop instead.
+			excluded++
+
+			allDetails = append(allDetails, &componentDetails{
+				Arch: archStr,
+				ComponentSpecDetails: specs.ComponentSpecDetails{
+					SpecInfo: rpm.SpecInfo{Name: queryResult.Name},
+				},
+			})
+
+			continue
+		}
+
 		allDetails = append(allDetails, &componentDetails{
+			Arch: archStr,
 			ComponentSpecDetails: specs.ComponentSpecDetails{
 				SpecInfo: *queryResult.Info,
 			},
 		})
 	}
 
+	if excluded > 0 {
+		slog.Info("Some components excluded from arch by spec",
+			"arch", archStr, "excludedCount", excluded)
+	}
+
 	if failed > 0 {
-		return allDetails, fmt.Errorf("%d component(s) failed to query (see warnings)", failed)
+		// Intentionally return nil error: returning an error would suppress
+		// the results table (runFuncInternal skips reportResults on error),
+		// hiding the successfully-queried components. Per-component failures
+		// are already surfaced via the slog.Warn above.
+		slog.Error("Some components failed to query", "failedCount", failed)
 	}
 
 	return allDetails, nil

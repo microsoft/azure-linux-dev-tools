@@ -36,7 +36,7 @@ output but fully supported.
 
 ### SEE ALSO
 
-* [azldev](azldev.md)	 - 🐧 Azure Linux Dev Tool 0.0.0-devel
+* [azldev](azldev.md)	 - 🐧 Azure Linux Dev Tool
 * [azldev advanced download-sources](azldev_advanced_download-sources.md)	 - Download source files listed in a Fedora-format sources file
 * [azldev advanced mcp](azldev_advanced_mcp.md)	 - Run in MCP server mode
 * [azldev advanced mock](azldev_advanced_mock.md)	 - Run RPM mock tool

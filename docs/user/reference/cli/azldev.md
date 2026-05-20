@@ -2,7 +2,7 @@
 
 ## azldev
 
-🐧 Azure Linux Dev Tool 0.0.0-devel
+🐧 Azure Linux Dev Tool
 
 ### Synopsis
 

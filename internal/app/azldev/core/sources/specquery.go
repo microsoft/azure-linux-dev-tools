@@ -34,11 +34,20 @@ type SpecQueryInput struct {
 }
 
 // SpecQueryResult holds the batch-query result for one spec.
-// Info is populated when Error is nil, and includes Subpackages.
+//
+// Exactly one of Info, ExcludedFromArch, or Error indicates the outcome:
+//   - Info is populated (and Error is nil, ExcludedFromArch is false) when the
+//     spec was successfully queried for the requested arch.
+//   - ExcludedFromArch is true when rpmspec refused to evaluate the spec for
+//     the requested arch (ExclusiveArch/ExcludeArch policy). This is not an
+//     error; the component simply isn't built for that arch.
+//   - Error is non-nil for any other failure (rpmspec parse error, missing
+//     spec, timeout, etc).
 type SpecQueryResult struct {
-	Name  string
-	Info  *rpm.SpecInfo
-	Error error
+	Name             string
+	Info             *rpm.SpecInfo
+	ExcludedFromArch bool
+	Error            error
 }
 
 // validateSpecQueryInputs rejects empty names, path-traversal in spec
@@ -108,10 +117,11 @@ type specQueryInputJSON struct {
 // specQueryResultJSON mirrors the per-component JSON shape written by
 // query_process.py.
 type specQueryResultJSON struct {
-	Name    string  `json:"name"`
-	SrpmOut string  `json:"srpmOut"`
-	BinOut  string  `json:"binOut"`
-	Error   *string `json:"error"`
+	Name             string  `json:"name"`
+	SrpmOut          string  `json:"srpmOut"`
+	BinOut           string  `json:"binOut"`
+	Error            *string `json:"error"`
+	ExcludedFromArch bool    `json:"excludedFromArch,omitempty"`
 }
 
 // BatchQuerySpecs runs `rpmspec` against multiple rendered spec files inside
@@ -125,9 +135,14 @@ type specQueryResultJSON struct {
 // used to ferry the script + inputs.json + results.json in and out of the
 // chroot; it must be writable by the user the chroot runs as (mock's
 // chrootuid defaults to os.getuid()).
+//
+// arch sets the rpmspec build target (e.g. "x86_64", "aarch64") via
+// --target=<arch>. When empty, rpmspec uses its built-in default (the host
+// arch). Specs that ExclusiveArch/ExcludeArch-exclude the target arch are
+// surfaced via [SpecQueryResult.ExcludedFromArch] rather than as errors.
 func (p *MockProcessor) BatchQuerySpecs(
 	ctx context.Context, events opctx.EventListener,
-	specsDir, scratchDir string,
+	specsDir, scratchDir, arch string,
 	inputs []SpecQueryInput,
 	fs opctx.FS, maxWorkers int,
 ) ([]SpecQueryResult, error) {
@@ -177,7 +192,7 @@ func (p *MockProcessor) BatchQuerySpecs(
 		ScriptBytes:     queryProcessScript,
 		InputsJSON:      inputsBytes,
 		ResultsName:     "results.json",
-		ScriptArgs:      []string{chrootScratchPath, chrootSpecsPath, workers},
+		ScriptArgs:      []string{chrootScratchPath, chrootSpecsPath, workers, arch},
 		ProgressLabel:   "Querying specs in mock chroot",
 		ProgressTotal:   int64(len(inputs)),
 		FS:              fs,
@@ -218,6 +233,12 @@ func parseSpecQueryBatchJSON(raw []byte, inputs []SpecQueryInput) ([]SpecQueryRe
 
 		if compResult.Error != nil {
 			results[idx].Error = fmt.Errorf("%s", *compResult.Error)
+
+			continue
+		}
+
+		if compResult.ExcludedFromArch {
+			results[idx].ExcludedFromArch = true
 
 			continue
 		}
