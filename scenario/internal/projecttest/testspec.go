@@ -128,18 +128,25 @@ func (s *TestSpec) Render() string {
 		"echo hello >file.txt",
 		"",
 		"%install",
-		"mkdir -p %{buildroot}/%{_datadir}/test-component",
-		"cp file.txt %{buildroot}/%{_datadir}/test-component/file.txt",
+		"mkdir -p %{buildroot}/%{_datadir}/" + s.name,
+		"cp file.txt %{buildroot}/%{_datadir}/" + s.name + "/file.txt",
+	}...)
+	for _, sub := range s.subpackages {
+		lines = append(lines, "echo "+sub+" >%{buildroot}/%{_datadir}/"+s.name+"/"+sub+".txt")
+	}
+
+	lines = append(lines, []string{
 		"",
 		"%files",
-		"%{_datadir}/test-component",
+		"%dir %{_datadir}/" + s.name,
+		"%{_datadir}/" + s.name + "/file.txt",
 		"",
 	}...)
 
 	for _, sub := range s.subpackages {
 		lines = append(lines, []string{
 			"%files " + sub,
-			"%{_datadir}/test-component",
+			"%{_datadir}/" + s.name + "/" + sub + ".txt",
 			"",
 		}...)
 	}

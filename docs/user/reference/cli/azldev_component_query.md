@@ -36,6 +36,7 @@ azldev component query [flags]
 
 ```
   -a, --all-components                Include all components
+      --arch arch                     Target architecture passed to rpmspec via --target (x86_64, aarch64). Defaults to x86_64. Specs that ExclusiveArch/ExcludeArch-exclude the target are emitted with only the component name populated rather than as errors. (default x86_64)
   -p, --component stringArray         Component name pattern
   -g, --component-group stringArray   Component group name
   -h, --help                          help for query
