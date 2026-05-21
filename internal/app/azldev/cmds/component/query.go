@@ -84,14 +84,14 @@ The rendered-specs-dir must exist on disk; if it doesn't, run
 	return cmd
 }
 
-// componentDetails encapsulates detailed information about a component.
+// ComponentDetails encapsulates detailed information about a component.
 //
 // Arch records the target arch the query ran against. Components that the
 // spec excludes for the requested arch (ExclusiveArch/ExcludeArch) are
 // emitted with only the embedded SpecInfo.Name populated (Version and
 // Subpackages stay at their zero values); the per-arch summary is reported
 // via the excludedCount log line.
-type componentDetails struct {
+type ComponentDetails struct {
 	Arch string
 	specs.ComponentSpecDetails
 }
@@ -107,7 +107,7 @@ type componentDetails struct {
 //nolint:cyclop,funlen // Linear pipeline; further splitting hurts readability.
 func QueryComponents(
 	env *azldev.Env, options *QueryComponentsOptions,
-) ([]*componentDetails, error) {
+) ([]*ComponentDetails, error) {
 	renderedSpecsDir := env.Config().Project.RenderedSpecsDir
 	if renderedSpecsDir == "" {
 		return nil, errors.New(
@@ -180,7 +180,7 @@ func QueryComponents(
 		return nil, fmt.Errorf("batch-querying rendered specs:\n%w", err)
 	}
 
-	allDetails := make([]*componentDetails, 0, len(queryResults))
+	allDetails := make([]*ComponentDetails, 0, len(queryResults))
 
 	var (
 		failed   int
@@ -204,7 +204,7 @@ func QueryComponents(
 			// below the loop instead.
 			excluded++
 
-			allDetails = append(allDetails, &componentDetails{
+			allDetails = append(allDetails, &ComponentDetails{
 				Arch: archStr,
 				ComponentSpecDetails: specs.ComponentSpecDetails{
 					SpecInfo: rpm.SpecInfo{Name: queryResult.Name},
@@ -214,7 +214,7 @@ func QueryComponents(
 			continue
 		}
 
-		allDetails = append(allDetails, &componentDetails{
+		allDetails = append(allDetails, &ComponentDetails{
 			Arch: archStr,
 			ComponentSpecDetails: specs.ComponentSpecDetails{
 				SpecInfo: *queryResult.Info,
