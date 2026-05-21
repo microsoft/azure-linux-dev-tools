@@ -124,10 +124,37 @@ func runFuncInternal(innerFunc CmdWithExtraArgsFuncType, requireConfig bool) cob
 				command.SilenceUsage = false
 			}
 
+			// Inner funcs may return partial results alongside an error
+			// (e.g. some items succeeded, some failed). Render what we have
+			// before propagating so callers see the partial output and the
+			// process still exits non-zero.
+			if results != nil && !isNilValue(results) {
+				if reportErr := reportResults(env, results); reportErr != nil {
+					return errors.Join(err, reportErr)
+				}
+			}
+
 			return err
 		}
 
 		return reportResults(env, results)
+	}
+}
+
+// isNilValue returns true if the interface holds a typed nil (e.g. a nil
+// slice, map, or pointer). reportResults' reflectable path panics on typed
+// nils, so we guard partial-result rendering against them.
+func isNilValue(v interface{}) bool {
+	if v == nil {
+		return true
+	}
+
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() { //nolint:exhaustive // only nilable kinds matter; others fall through to false
+	case reflect.Chan, reflect.Func, reflect.Map, reflect.Ptr, reflect.Slice, reflect.Interface:
+		return rv.IsNil()
+	default:
+		return false
 	}
 }
 

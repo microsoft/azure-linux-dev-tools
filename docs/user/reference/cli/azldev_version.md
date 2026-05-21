@@ -40,5 +40,5 @@ azldev version -O json
 
 ### SEE ALSO
 
-* [azldev](azldev.md)	 - 🐧 Azure Linux Dev Tool 0.0.0-devel
+* [azldev](azldev.md)	 - 🐧 Azure Linux Dev Tool
 

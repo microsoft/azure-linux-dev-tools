@@ -37,7 +37,7 @@ components defined in the project configuration.
 
 ### SEE ALSO
 
-* [azldev](azldev.md)	 - 🐧 Azure Linux Dev Tool 0.0.0-devel
+* [azldev](azldev.md)	 - 🐧 Azure Linux Dev Tool
 * [azldev component add](azldev_component_add.md)	 - Add component(s) to this project
 * [azldev component build](azldev_component_build.md)	 - Build packages for components
 * [azldev component changed](azldev_component_changed.md)	 - Detect which components changed between two git refs
