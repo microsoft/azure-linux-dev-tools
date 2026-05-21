@@ -2,7 +2,7 @@
 
 ## How to file issues and get help
 
-This project uses [GitHub issues][gh-issue] to [track bugs][gh-bug] and [feature requests][gh-feature]. For guidance, see [how to report issues](https://aka.ms/azurelinux-reportissues).
+This project uses [GitHub issues][gh-issue] to [track bugs][gh-bug] and [feature requests][gh-feature]. Please search existing issues to avoid duplicates before filing a new one. For guidance, see [how to report issues](https://aka.ms/azurelinux-reportissues).
 
 For questions about using this project, please consult our [User Guide](./docs/user). If you want to contribute to this project, please review our [Contribution Guidelines](./CONTRIBUTING.md) and our [Developer Guide](./docs/developer).
 
