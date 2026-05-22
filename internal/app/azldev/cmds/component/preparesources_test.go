@@ -34,6 +34,11 @@ func TestNewPrepareSourcesCmd(t *testing.T) {
 	assert.Equal(t, "false", withoutGitFlag.DefValue, "dist-git flow should be enabled by default")
 	assert.Contains(t, withoutGitFlag.Usage, "dist-git")
 
+	skipSourcesFlag := cmd.Flags().Lookup("skip-sources")
+	require.NotNil(t, skipSourcesFlag, "--skip-sources flag should be registered")
+	assert.Equal(t, "false", skipSourcesFlag.DefValue)
+	assert.Contains(t, skipSourcesFlag.Usage, "skip downloading")
+
 	// Legacy --with-git flag must NOT exist.
 	withGitFlag := cmd.Flags().Lookup("with-git")
 	assert.Nil(t, withGitFlag, "--with-git flag must not be registered")
