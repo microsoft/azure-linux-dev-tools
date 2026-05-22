@@ -237,14 +237,11 @@ func (r *RpmRepoResource) IsAvailableForArch(arch string) bool {
 }
 
 // validateRpmRepo checks the structural validity of an [RpmRepoResource] in isolation.
-// Cross-resource and cross-section validation (e.g., that names referenced from
+// The map key (repo name) is validated by the caller via [validateRpmRepoName];
+// cross-resource and cross-section validation (e.g., that names referenced from
 // [DistroVersionDefinition.Inputs] resolve, or that bare gpg-key paths are not used
 // for rpm-build inputs) is performed elsewhere.
 func validateRpmRepo(name string, repo *RpmRepoResource) error {
-	if err := validateRpmRepoName(name); err != nil {
-		return err
-	}
-
 	if !repo.EffectiveType().IsValid() {
 		return fmt.Errorf("rpm-repo %#q has unsupported type %#q", name, repo.Type)
 	}
