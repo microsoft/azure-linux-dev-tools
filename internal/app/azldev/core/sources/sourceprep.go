@@ -273,11 +273,11 @@ func (p *sourcePreparerImpl) PrepareSources(
 			"component", component.GetName())
 	}
 
-	if applyOverlays {
-		if err := p.enrichProvenanceWithResolvedHashes(allProvenance, outputDir); err != nil {
-			return nil, fmt.Errorf("failed to resolve provenance hashes for component %#q:\n%w",
-				component.GetName(), err)
-		}
+	// Back-fill missing hash fields in provenance entries from the 'sources' file.
+	// Entries that already carry hashes (the common case) are skipped.
+	if err := p.enrichProvenanceWithResolvedHashes(allProvenance, outputDir); err != nil {
+		return nil, fmt.Errorf("failed to resolve provenance hashes for component %#q:\n%w",
+			component.GetName(), err)
 	}
 
 	// Record the changes as synthetic git history when dist-git creation is enabled.
@@ -294,8 +294,10 @@ func (p *sourcePreparerImpl) PrepareSources(
 	}, nil
 }
 
-// enrichProvenanceWithResolvedHashes fills missing hash fields in provenance entries
-// using values from the finalized 'sources' file.
+// enrichProvenanceWithResolvedHashes updates hash fields in provenance entries
+// to match the finalized 'sources' file. This ensures the provenance report
+// reflects the actual state of files after overlays have been applied and
+// [updateSourcesFile] has computed the current hashes.
 func (p *sourcePreparerImpl) enrichProvenanceWithResolvedHashes(
 	provenance []sourceproviders.SourceProvenance,
 	outputDir string,
@@ -328,22 +330,13 @@ func (p *sourcePreparerImpl) enrichProvenanceWithResolvedHashes(
 	}
 
 	for provenanceIndex := range provenance {
-		if provenance[provenanceIndex].Hash != "" && provenance[provenanceIndex].HashType != "" {
-			continue
-		}
-
 		entry, found := hashByFilename[provenance[provenanceIndex].Filename]
 		if !found {
 			continue
 		}
 
-		if provenance[provenanceIndex].HashType == "" {
-			provenance[provenanceIndex].HashType = entry.HashType
-		}
-
-		if provenance[provenanceIndex].Hash == "" {
-			provenance[provenanceIndex].Hash = entry.Hash
-		}
+		provenance[provenanceIndex].HashType = entry.HashType
+		provenance[provenanceIndex].Hash = entry.Hash
 	}
 
 	return nil

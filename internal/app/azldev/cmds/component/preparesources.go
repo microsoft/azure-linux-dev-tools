@@ -49,6 +49,18 @@ The command output reports downloaded source provenance entries with
 filename, origin type, URL, hash type, and hash. Only files actually
 downloaded during this run are included.
 
+Example JSON output (azldev component prep-sources -p curl -o /tmp/curl --force -O json):
+
+  [
+    {
+      "filename": "curl-8.12.1.tar.xz",
+      "originType": "lookaside-url",
+      "url": "https://src.fedoraproject.org/repo/pkgs/rpms/curl/sha512/.../curl-8.12.1.tar.xz",
+      "hashType": "sha512",
+      "hash": "a1b2c3..."
+    }
+  ]
+
 Only one component may be selected at a time.`,
 		Example: `  # Prepare sources for a component
   azldev component prep-sources -p curl -o ./build/work/scratch/curl --force

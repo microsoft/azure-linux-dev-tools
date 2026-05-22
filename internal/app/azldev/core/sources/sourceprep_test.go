@@ -223,7 +223,7 @@ func TestPrepareSources_ProvenanceReportFillsResolvedHashes(t *testing.T) {
 	assert.Equal(t, testFileSHA512, report.Sources[0].Hash)
 }
 
-func TestPrepareSources_SkipOverlays_DoesNotEnrichHashes(t *testing.T) {
+func TestPrepareSources_SkipOverlays_EnrichesFromUpstreamSources(t *testing.T) {
 	const (
 		testSpecPath   = testOutputDir + "/test-component.spec"
 		testSourcePath = testOutputDir + "/sources"
@@ -264,14 +264,14 @@ func TestPrepareSources_SkipOverlays_DoesNotEnrichHashes(t *testing.T) {
 	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx, sources.WithAllowNoHashes())
 	require.NoError(t, err)
 
-	// applyOverlays = false — hash enrichment must NOT run to avoid corrupting provenance.
+	// applyOverlays = false — enrichment still runs and back-fills from the upstream 'sources' file.
 	report, err := preparer.PrepareSources(ctx, component, testOutputDir, false)
 	require.NoError(t, err)
 	require.NotNil(t, report)
 	require.Len(t, report.Sources, 1)
 
-	assert.Empty(t, report.Sources[0].HashType, "hash should not be enriched without overlays")
-	assert.Empty(t, report.Sources[0].Hash, "hash should not be enriched without overlays")
+	assert.Equal(t, fileutils.HashTypeSHA512, report.Sources[0].HashType, "hash type should be enriched from sources file")
+	assert.Equal(t, "abc123def456", report.Sources[0].Hash, "hash should be enriched from sources file")
 }
 
 func TestPrepareSources_SourceManagerError(t *testing.T) {

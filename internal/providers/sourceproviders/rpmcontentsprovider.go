@@ -60,7 +60,7 @@ func (r *RPMContentsProviderImpl) GetComponent(
 	}
 
 	// Get the RPM
-	rpmReader, err := r.rpmProvider.GetRPM(ctx, component.GetName(), nil)
+	rpmReader, rpmURL, err := r.rpmProvider.GetRPM(ctx, component.GetName(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get the RPM file for component %#q: %w",
 			component.GetName(), err)
@@ -74,7 +74,16 @@ func (r *RPMContentsProviderImpl) GetComponent(
 			component.GetName(), err)
 	}
 
-	return nil, nil
+	var provenance []SourceProvenance
+	if rpmURL != "" {
+		provenance = []SourceProvenance{{
+			Filename:   component.GetName() + ".src.rpm",
+			OriginType: SourceOriginURL,
+			URL:        rpmURL,
+		}}
+	}
+
+	return provenance, nil
 }
 
 // ResolveIdentity implements [SourceIdentityProvider] by downloading the source RPM
@@ -88,7 +97,7 @@ func (r *RPMContentsProviderImpl) ResolveIdentity(
 		return "", errors.New("component name cannot be empty")
 	}
 
-	rpmReader, err := r.rpmProvider.GetRPM(ctx, component.GetName(), nil)
+	rpmReader, _, err := r.rpmProvider.GetRPM(ctx, component.GetName(), nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to get RPM for identity of component %#q:\n%w",
 			component.GetName(), err)

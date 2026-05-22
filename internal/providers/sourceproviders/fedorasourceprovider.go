@@ -85,7 +85,7 @@ func NewFedoraSourcesProviderImpl(
 
 func (g *FedoraSourcesProviderImpl) GetComponent(
 	ctx context.Context, component components.Component, destDirPath string, opts ...FetchComponentOption,
-) (_ []SourceProvenance, err error) {
+) (provenance []SourceProvenance, err error) {
 	resolved := resolveFetchComponentOptions(opts)
 
 	componentName := component.GetName()

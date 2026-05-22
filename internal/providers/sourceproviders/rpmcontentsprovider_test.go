@@ -151,7 +151,7 @@ func TestGetComponentFailureSimulation(t *testing.T) {
 		mockRPMProvider := rpmprovider_test.NewMockRPMProvider(ctrl)
 		mockRPMProvider.EXPECT().
 			GetRPM(gomock.Any(), packageName, nil).
-			Return(nil, rpmProviderError).
+			Return(nil, "", rpmProviderError).
 			Times(1)
 
 		provider, err := sourceproviders.NewRPMContentsProviderImpl(mockExtractor, mockRPMProvider)
@@ -168,7 +168,7 @@ func TestGetComponentFailureSimulation(t *testing.T) {
 		mockRPMProvider := rpmprovider_test.NewMockRPMProvider(ctrl)
 		mockRPMProvider.EXPECT().
 			GetRPM(gomock.Any(), packageName, nil).
-			Return(dummyReadCloser, nil).
+			Return(dummyReadCloser, "", nil).
 			Times(1)
 
 		// Set up failing extractor call

@@ -47,12 +47,13 @@ func (m *MockRPMProvider) EXPECT() *MockRPMProviderMockRecorder {
 }
 
 // GetRPM mocks base method.
-func (m *MockRPMProvider) GetRPM(ctx context.Context, name string, version *rpm.Version) (io.ReadCloser, error) {
+func (m *MockRPMProvider) GetRPM(ctx context.Context, name string, version *rpm.Version) (io.ReadCloser, string, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetRPM", ctx, name, version)
 	ret0, _ := ret[0].(io.ReadCloser)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].(string)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // GetRPM indicates an expected call of GetRPM.

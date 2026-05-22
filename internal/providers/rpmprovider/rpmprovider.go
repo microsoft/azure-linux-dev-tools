@@ -17,9 +17,9 @@ import (
 )
 
 type RPMProvider interface {
-	// GetRPM retrieves an RPM file for the given package and version, and returns it in form of a closeable stream.
-	// The caller is responsible for closing the returned [io.ReadCloser].
-	GetRPM(ctx context.Context, name string, version *rpm.Version) (io.ReadCloser, error)
+	// GetRPM retrieves an RPM file for the given package and version, and returns it in form of a closeable stream
+	// along with the URL the RPM was downloaded from. The caller is responsible for closing the returned [io.ReadCloser].
+	GetRPM(ctx context.Context, name string, version *rpm.Version) (io.ReadCloser, string, error)
 }
 
 // RPMProviderImpl implements [RPMProvider].
@@ -56,10 +56,13 @@ func NewRPMProviderImpl(
 	}, nil
 }
 
-// GetRPM retrieves an RPM file for the given package and returns it in form of a closeable stream.
-func (p *RPMProviderImpl) GetRPM(ctx context.Context, name string, version *rpm.Version) (io.ReadCloser, error) {
+// GetRPM retrieves an RPM file for the given package and returns it in form of a closeable stream
+// along with the URL the RPM was downloaded from.
+func (p *RPMProviderImpl) GetRPM(
+	ctx context.Context, name string, version *rpm.Version,
+) (io.ReadCloser, string, error) {
 	if name == "" {
-		return nil, errors.New("package name cannot be empty")
+		return nil, "", errors.New("package name cannot be empty")
 	}
 
 	eventArgs := []any{"name", name}
@@ -74,7 +77,7 @@ func (p *RPMProviderImpl) GetRPM(ctx context.Context, name string, version *rpm.
 	// Get the RPM URL
 	rpmURL, err := p.querier.GetRPMLocation(ctx, name, version)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get RPM location for package %#q, version %#q:\n%w", name, version, err)
+		return nil, "", fmt.Errorf("failed to get RPM location for package %#q, version %#q:\n%w", name, version, err)
 	}
 
 	evt = p.eventListener.StartEvent("Downloading RPM", "name", name, "url", rpmURL)
@@ -83,8 +86,8 @@ func (p *RPMProviderImpl) GetRPM(ctx context.Context, name string, version *rpm.
 
 	fileStream, err := p.downloader.FetchStream(ctx, rpmURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch RPM file for package %#q, version %#q:\n%w", name, version, err)
+		return nil, "", fmt.Errorf("failed to fetch RPM file for package %#q, version %#q:\n%w", name, version, err)
 	}
 
-	return fileStream, nil
+	return fileStream, rpmURL, nil
 }
