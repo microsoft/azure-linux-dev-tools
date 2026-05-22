@@ -153,10 +153,7 @@ func mergeResources(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
 	}
 
 	resolved := loadedCfg.Resources.WithAbsolutePaths(loadedCfg.dir)
-
-	if err := resolvedCfg.Resources.MergeUpdatesFrom(resolved); err != nil {
-		return fmt.Errorf("failed to merge resources from %#q:\n%w", loadedCfg.SourcePath(), err)
-	}
+	resolvedCfg.Resources.MergeUpdatesFrom(resolved)
 
 	return nil
 }

@@ -100,9 +100,9 @@ func (ResourcesConfig) JSONSchemaExtend(schema *jsonschema.Schema) {
 // be the Go zero value in the new entry. This avoids subtle bugs where, e.g., a
 // later config file intentionally setting `disable-gpg-check = false` (the zero
 // value) would otherwise fail to override an earlier `true`.
-func (r *ResourcesConfig) MergeUpdatesFrom(other *ResourcesConfig) error {
+func (r *ResourcesConfig) MergeUpdatesFrom(other *ResourcesConfig) {
 	if other == nil {
-		return nil
+		return
 	}
 
 	if len(other.RpmRepos) > 0 && r.RpmRepos == nil {
@@ -128,8 +128,6 @@ func (r *ResourcesConfig) MergeUpdatesFrom(other *ResourcesConfig) error {
 	for name, set := range other.RpmRepoSets {
 		r.RpmRepoSets[name] = set
 	}
-
-	return nil
 }
 
 // RpmRepoResource describes a single reusable RPM repository. Per-distro-version
@@ -889,6 +887,14 @@ func joinSetBaseURI(setName, baseURI, subpath string) (string, error) {
 		}
 	}
 
+	if strings.ContainsAny(subpath, "?#") {
+		return "", fmt.Errorf(
+			"rpm-repo-set %#q template `subpath` %#q must not contain a query string or fragment "+
+				"(no `?` or `#`)",
+			setName, subpath,
+		)
+	}
+
 	parsed, err := url.Parse(baseURI)
 	if err != nil {
 		return "", fmt.Errorf("rpm-repo-set %#q `base-uri` is not a valid URI:\n%w", setName, err)
@@ -952,7 +958,7 @@ func validateRpmRepoSetTemplate(name string, tmpl *RpmRepoSetTemplate) error {
 		sub := &tmpl.Subrepos[i]
 
 		if err := validateRpmRepoName(sub.Name); err != nil {
-			return fmt.Errorf("rpm-repo-set-template %#q sub-repo %d:\n%w", name, i, err)
+			return fmt.Errorf("rpm-repo-set-template %#q sub-repo %d:\n%w", name, i+1, err)
 		}
 
 		if seen[sub.Name] {

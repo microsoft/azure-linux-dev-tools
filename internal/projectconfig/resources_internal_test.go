@@ -158,7 +158,7 @@ func TestMergeUpdatesFrom_WholesaleReplace(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, earlier.MergeUpdatesFrom(later))
+	earlier.MergeUpdatesFrom(later)
 
 	got := earlier.RpmRepos["r"]
 	assert.Equal(t, "https://new/", got.BaseURI)
@@ -173,7 +173,7 @@ func TestMergeUpdatesFrom_NilOther(t *testing.T) {
 	t.Parallel()
 
 	cfg := &ResourcesConfig{}
-	require.NoError(t, cfg.MergeUpdatesFrom(nil))
+	cfg.MergeUpdatesFrom(nil)
 	assert.Empty(t, cfg.RpmRepos)
 }
 
@@ -416,6 +416,8 @@ func TestJoinSetBaseURI(t *testing.T) {
 		{base: "https://x/", sub: "", err: "empty"},
 		{base: "https://x?token=1", sub: "a", err: "query string or fragment"},
 		{base: "https://x#frag", sub: "a", err: "query string or fragment"},
+		{base: "https://x/", sub: "a?token=1", err: "query string or fragment"},
+		{base: "https://x/", sub: "a#frag", err: "query string or fragment"},
 	}
 
 	for _, testCase := range cases {
