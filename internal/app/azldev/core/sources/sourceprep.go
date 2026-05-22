@@ -273,8 +273,8 @@ func (p *sourcePreparerImpl) PrepareSources(
 			"component", component.GetName())
 	}
 
-	// Back-fill missing hash fields in provenance entries from the 'sources' file.
-	// Entries that already carry hashes (the common case) are skipped.
+	// Sync provenance hashes with the finalized 'sources' file so the report
+	// reflects the current on-disk state (including any overlay modifications).
 	if err := p.enrichProvenanceWithResolvedHashes(allProvenance, outputDir); err != nil {
 		return nil, fmt.Errorf("failed to resolve provenance hashes for component %#q:\n%w",
 			component.GetName(), err)

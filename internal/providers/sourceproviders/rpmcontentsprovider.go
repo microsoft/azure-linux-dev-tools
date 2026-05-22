@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
+	"path"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/rpmprovider"
@@ -75,15 +77,33 @@ func (r *RPMContentsProviderImpl) GetComponent(
 	}
 
 	var provenance []SourceProvenance
+
 	if rpmURL != "" {
+		filename := filenameFromURL(rpmURL, component.GetName()+".src.rpm")
 		provenance = []SourceProvenance{{
-			Filename:   component.GetName() + ".src.rpm",
+			Filename:   filename,
 			OriginType: SourceOriginURL,
 			URL:        rpmURL,
 		}}
 	}
 
 	return provenance, nil
+}
+
+// filenameFromURL extracts the base filename from a URL path.
+// Falls back to fallback if the URL cannot be parsed or the path is empty.
+func filenameFromURL(rawURL, fallback string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fallback
+	}
+
+	base := path.Base(parsed.Path)
+	if base == "" || base == "." || base == "/" {
+		return fallback
+	}
+
+	return base
 }
 
 // ResolveIdentity implements [SourceIdentityProvider] by downloading the source RPM
