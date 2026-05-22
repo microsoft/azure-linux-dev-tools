@@ -430,6 +430,9 @@ func TestLoadAndResolveProjectConfig_DuplicateComponentsAcrossFiles(t *testing.T
 
 func TestLoadAndResolveProjectConfig_ComponentGroupWithMembers(t *testing.T) {
 	const configContents = `
+[components.foo]
+[components.bar]
+
 [component-groups.core]
 components = ["foo", "bar"]
 description = "Core components"
@@ -467,6 +470,10 @@ func TestLoadAndResolveProjectConfig_GroupsByComponent_MultipleGroups(t *testing
 		{testConfigPath, `
 includes = ["extra.toml"]
 
+[components.shared]
+[components.only-alpha]
+[components.only-beta]
+
 [component-groups.alpha]
 components = ["shared", "only-alpha"]
 `},
@@ -497,6 +504,8 @@ components = ["shared", "only-beta"]
 
 func TestLoadAndResolveProjectConfig_ComponentGroupWithDefaultConfig(t *testing.T) {
 	const configContents = `
+[components.foo]
+
 [component-groups.core]
 components = ["foo"]
 

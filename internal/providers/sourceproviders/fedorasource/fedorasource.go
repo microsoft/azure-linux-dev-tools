@@ -470,16 +470,23 @@ const (
 )
 
 // validateAbsoluteURL parses uri and verifies it is an absolute URL with a
-// non-empty scheme and host. The label parameter is used in error messages to
-// identify the URL's purpose (e.g. "lookaside", "dist-git").
+// non-empty scheme. For schemes that require a host (everything except
+// "file"), a non-empty host is also required. The label parameter is used
+// in error messages to identify the URL's purpose (e.g. "lookaside",
+// "dist-git").
 func validateAbsoluteURL(uri, label string) error {
-	u, err := url.Parse(uri)
+	parsed, err := url.Parse(uri)
 	if err != nil {
 		return fmt.Errorf("resulting %s URL is not valid:\n%w", label, err)
 	}
 
-	if u.Scheme == "" || u.Host == "" {
-		return fmt.Errorf("resulting %s URL %#q is missing scheme or host", label, uri)
+	if parsed.Scheme == "" {
+		return fmt.Errorf("resulting %s URL %#q is missing scheme", label, uri)
+	}
+
+	// file:// URIs have no host per RFC 8089; all other schemes require one.
+	if parsed.Scheme != "file" && parsed.Host == "" {
+		return fmt.Errorf("resulting %s URL %#q is missing host", label, uri)
 	}
 
 	return nil

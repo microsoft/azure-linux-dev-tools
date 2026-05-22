@@ -18,6 +18,7 @@ All config files share the same schema — there is no distinction between a "ro
 | `tools` | object | Configuration for external tools used by azldev | [Tools](tools.md) |
 | `default-package-config` | object | Project-wide default applied to all binary packages | [Package Groups — Resolution Order](package-groups.md#resolution-order) |
 | `package-groups` | map of objects | Named groups of binary packages with shared config | [Package Groups](package-groups.md) |
+| `resources` | object | Reusable named resource definitions (RPM repos, repo-set templates, repo sets) | [Resources](resources.md) |
 
 ## Includes
 

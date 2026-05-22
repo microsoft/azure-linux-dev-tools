@@ -297,6 +297,11 @@ package = "devel"
 description = "Remove devel sub-package files section"
 ```
 
+> **Conditionals (`%if`/`%endif`):** The same conditional handling described below for
+> `spec-remove-subpackage` applies here as well — boundary conditionals are preserved,
+> and an error is returned if a conditional block is interleaved with section content
+> in a way that cannot be cleanly separated.
+
 ### Removing an Entire Sub-package
 
 The `spec-remove-subpackage` overlay removes **every** section associated with a given
@@ -331,12 +336,16 @@ the overlay always removes every section associated with the sub-package.
 > written as `%files -n my-other-pkg`. Specs that mix both forms for the same sub-package
 > (uncommon but legal) require a separate overlay per form.
 
-> **Limitation:** Like `spec-remove-section`, this overlay operates on whole-section line
-> ranges and does **not** understand `%if`/`%endif` conditionals. If a sub-package is wrapped
-> in a conditional block (e.g. `%if 0%{?with_devel} … %endif`), the `%endif` will typically
-> be consumed as part of the trailing sub-package section while the `%if` remains, producing
-> an invalid spec. For specs that conditionalize sub-packages, use a `spec-search-replace`
-> overlay (or remove the conditional first via additional overlays) instead.
+> **Conditionals (`%if`/`%endif`):** The overlay only removes section content — it does
+> not remove `%if`/`%endif` lines that sit at section boundaries. Conditional directives
+> that are entirely within a section (e.g. `%ifarch` … `%endif` guarding a `Requires`
+> tag) are removed along with the section. Conditional directives that straddle a
+> section boundary are left in place so the spec remains valid. For example, if a
+> sub-package is wrapped in `%if 0%{?with_devel}` … `%endif`, removing the sub-package
+> leaves an empty `%if` … `%endif` block behind (which is harmless). If a conditional
+> block is interleaved with section content in a way that cannot be cleanly separated,
+> an error is returned; use a `spec-search-replace` overlay to adjust the conditionals
+> before removing the sub-package.
 
 ## Validation
 

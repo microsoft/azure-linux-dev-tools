@@ -21,6 +21,11 @@ var ErrNoSuchTag = errors.New("no such tag")
 // ErrSectionNotFound is returned when a requested section does not exist in the spec.
 var ErrSectionNotFound = errors.New("section not found")
 
+// ErrConditionalSpansSections is returned when a conditional block (%if/%endif) spans
+// across section boundaries, making it impossible to safely remove the section without
+// breaking the conditional nesting structure.
+var ErrConditionalSpansSections = errors.New("conditional block spans across section boundaries")
+
 // ErrPatternNotFound is returned when a search pattern does not match any content in the spec.
 var ErrPatternNotFound = errors.New("pattern not found")
 
@@ -195,8 +200,10 @@ func tagFamily(tag string) string {
 	return lower[:end]
 }
 
-// conditionalDepthChange returns +1 for lines that open a conditional block (%if, %ifarch, etc.),
+// conditionalDepthChange returns +1 for lines that open a conditional block,
 // -1 for %endif, and 0 for everything else. Comments are ignored.
+//
+// The recognized conditional openers are: %if, %ifarch, %ifnarch, %ifos, %ifnos.
 func conditionalDepthChange(rawLine string) int {
 	trimmed := strings.TrimSpace(rawLine)
 	if strings.HasPrefix(trimmed, "#") {
@@ -209,15 +216,41 @@ func conditionalDepthChange(rawLine string) int {
 	}
 
 	lower := strings.ToLower(token[0])
-	if lower == "%endif" {
+
+	switch lower {
+	case "%endif":
 		return -1
-	}
-
-	if strings.HasPrefix(lower, "%if") {
+	case "%if", "%ifarch", "%ifnarch", "%ifos", "%ifnos":
 		return 1
+	default:
+		return 0
+	}
+}
+
+// isConditionalBranchDirective returns true for lines that are branch directives
+// within a conditional block. These do not change nesting depth but mark branch
+// boundaries within an enclosing %if/%endif pair. Comments are ignored.
+//
+// The recognized branch directives are: %else, %elif, %elifarch, %elifnarch, %elifos, %elifnos.
+func isConditionalBranchDirective(rawLine string) bool {
+	trimmed := strings.TrimSpace(rawLine)
+	if strings.HasPrefix(trimmed, "#") {
+		return false
 	}
 
-	return 0
+	tokens := strings.Fields(trimmed)
+	if len(tokens) == 0 {
+		return false
+	}
+
+	lower := strings.ToLower(tokens[0])
+
+	switch lower {
+	case "%else", "%elif", "%elifarch", "%elifnarch", "%elifos", "%elifnos":
+		return true
+	default:
+		return false
+	}
 }
 
 // InsertTag inserts a tag into the spec, placing it after the last existing tag from the
@@ -792,11 +825,12 @@ func (s *Spec) RemoveSection(sectionName, packageName string) error {
 // whichever form the spec uses. Specs that mix both forms for the same sub-package
 // (uncommon but legal) require a call per form.
 //
-// Limitation: this method operates on whole-section line ranges and does not understand
-// `%if`/`%endif` conditionals. Sub-packages wrapped in a conditional block will leave
-// an unbalanced `%if` (the `%endif` is typically consumed as part of the trailing
-// sub-package section). Callers that need to handle conditionalized sub-packages must
-// adjust the conditionals themselves.
+// Conditional handling: section ranges are automatically trimmed to maintain balanced
+// `%if`/`%endif` nesting. Sections wrapped in a conditional block will have trailing
+// `%endif` lines excluded from the removal, leaving an empty (but valid) conditional
+// wrapper. Trailing `%if` lines that belong to the next section are similarly excluded.
+// If a conditional block is interleaved with section content in a way that cannot be
+// resolved by trimming, an [ErrConditionalSpansSections] error is returned.
 func (s *Spec) RemoveSubpackage(packageName string) error {
 	slog.Debug("Removing sub-package from spec", "package", packageName)
 
@@ -831,6 +865,13 @@ type sectionLineRange struct {
 // collectSectionRanges walks the spec and returns one [sectionLineRange] for every
 // section whose `(sectName, packageName)` pair satisfies the predicate, in the order
 // they appear in the spec.
+//
+// Each returned range is adjusted to maintain conditional balance: if a range would
+// include trailing `%if` or `%endif` lines that create a nesting imbalance, those
+// lines are trimmed from the range so that removing the range does not break the
+// spec's conditional structure. If a conditional block is interleaved with section
+// content in a way that cannot be resolved by trimming, an [ErrConditionalSpansSections]
+// error is returned.
 func (s *Spec) collectSectionRanges(
 	matches func(sectName, packageName string) bool,
 ) ([]sectionLineRange, error) {
@@ -866,7 +907,203 @@ func (s *Spec) collectSectionRanges(
 		ranges = append(ranges, sectionLineRange{start: curStart, end: len(s.rawLines)})
 	}
 
+	// Skip conditional balancing when no matching ranges were found, so callers
+	// get the expected empty-result / not-found behavior rather than a conditional
+	// parse error from an unrelated part of the spec.
+	if len(ranges) == 0 {
+		return ranges, err
+	}
+
+	// Balance each range to avoid breaking conditional nesting.
+	pairs, pairErr := collectConditionalPairs(s.rawLines)
+	if pairErr != nil {
+		return nil, fmt.Errorf("failed to parse conditional structure:\n%w", pairErr)
+	}
+
+	for idx := range ranges {
+		balanced, balanceErr := balanceRange(ranges[idx], s.rawLines, pairs)
+		if balanceErr != nil {
+			return nil, balanceErr
+		}
+
+		ranges[idx] = balanced
+	}
+
 	return ranges, err
+}
+
+// conditionalPair represents a matched `%if`/`%endif` pair by their line numbers.
+type conditionalPair struct {
+	ifLine    int
+	endifLine int
+}
+
+// collectConditionalPairs walks the raw lines and returns all matched `%if`/`%endif`
+// pairs using a stack. Nested pairs are properly matched. Returns an error if there
+// are unmatched `%if` or `%endif` directives.
+func collectConditionalPairs(rawLines []string) ([]conditionalPair, error) {
+	var (
+		pairs []conditionalPair
+		stack []int
+	)
+
+	for lineNum, line := range rawLines {
+		switch conditionalDepthChange(line) {
+		case 1:
+			stack = append(stack, lineNum)
+		case -1:
+			if len(stack) == 0 {
+				return nil, fmt.Errorf("unmatched %%endif at line %d", lineNum+1)
+			}
+
+			ifLine := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+
+			pairs = append(pairs, conditionalPair{ifLine: ifLine, endifLine: lineNum})
+		}
+	}
+
+	if len(stack) > 0 {
+		return nil, fmt.Errorf("unmatched %%if at line %d", stack[0]+1)
+	}
+
+	return pairs, nil
+}
+
+// balanceRange adjusts a section line range so that removing it does not leave
+// unbalanced `%if`/`%endif` directives in the spec. It uses pre-computed conditional
+// pairs to identify straddling conditionals — pairs where one half is inside the
+// range and the other half is outside.
+//
+// Straddling conditional lines inside the range are excluded (the range is trimmed
+// so they remain in the spec). This handles:
+//   - Trailing `%endif` from a wrapping conditional: excluded, leaving an empty
+//     `%if`/`%endif` wrapper.
+//   - Trailing `%if` belonging to the next section: excluded, keeping the next
+//     section's conditional intact.
+//   - Balanced pairs fully inside the range: removed along with the section content.
+//
+// If a straddling conditional is interleaved with real section content (not just
+// other conditional directives and blank lines), an [ErrConditionalSpansSections]
+// error is returned.
+func balanceRange(sectionRange sectionLineRange, rawLines []string, pairs []conditionalPair) (sectionLineRange, error) {
+	// Find the earliest straddling line inside the range and validate that no
+	// straddling %if has real content after it. A pair straddles if exactly one
+	// of its lines falls within [sectionRange.start, sectionRange.end).
+	trimmed := sectionRange.end
+
+	for _, pair := range pairs {
+		ifInside := pair.ifLine >= sectionRange.start && pair.ifLine < sectionRange.end
+		endifInside := pair.endifLine >= sectionRange.start && pair.endifLine < sectionRange.end
+
+		if ifInside == endifInside {
+			// Both inside (fully contained) or both outside (irrelevant).
+			continue
+		}
+
+		// Straddling: the line that's inside our range should be excluded.
+		var insideLine int
+		if ifInside {
+			insideLine = pair.ifLine
+		} else {
+			insideLine = pair.endifLine
+		}
+
+		if insideLine < trimmed {
+			trimmed = insideLine
+		}
+
+		// If the straddling line is an %if (opener inside, closer outside),
+		// check for real content between the %if and the range end. Such content
+		// would belong to this section but span into the next via the conditional.
+		if ifInside {
+			if err := validateNoContentAfter(pair.ifLine, sectionRange.end, rawLines); err != nil {
+				return sectionRange, fmt.Errorf(
+					"section at lines %d-%d has a conditional block that spans into the next section; "+
+						"use a spec-search-replace overlay to adjust conditionals before removing:\n%w",
+					sectionRange.start+1, sectionRange.end, ErrConditionalSpansSections,
+				)
+			}
+		}
+	}
+
+	// Check for %else/%elif branch directives that would be broken by the removal.
+	if err := validateNoBranchDirectivesInExternalConditional(sectionRange, rawLines, pairs); err != nil {
+		return sectionRange, err
+	}
+
+	if trimmed == sectionRange.end {
+		// No straddling pairs — range is already balanced.
+		return sectionRange, nil
+	}
+
+	// Validate: the trimmed zone [trimmed, sectionRange.end) will remain in the spec.
+	// If it contains real section content (not just conditional directives and blanks),
+	// we'd be leaving behind part of the section the caller asked to remove.
+	if err := validateNoContentAfter(trimmed-1, sectionRange.end, rawLines); err != nil {
+		return sectionRange, fmt.Errorf(
+			"section at lines %d-%d has a conditional block that spans into the next section; "+
+				"use a spec-search-replace overlay to adjust conditionals before removing:\n%w",
+			sectionRange.start+1, sectionRange.end, ErrConditionalSpansSections,
+		)
+	}
+
+	return sectionLineRange{start: sectionRange.start, end: trimmed}, nil
+}
+
+// validateNoContentAfter checks that there is no real section content (non-blank,
+// non-conditional lines) between startLine and endLine. Returns an error if any
+// such content is found.
+func validateNoContentAfter(startLine, endLine int, rawLines []string) error {
+	for lineNum := startLine + 1; lineNum < endLine; lineNum++ {
+		if !isBlankOrComment(rawLines[lineNum]) && conditionalDepthChange(rawLines[lineNum]) == 0 {
+			return fmt.Errorf("real content found at line %d", lineNum+1)
+		}
+	}
+
+	return nil
+}
+
+// validateNoBranchDirectivesInExternalConditional checks that the section range
+// does not contain any `%else`/`%elif` branch directives whose enclosing
+// `%if`/`%endif` pair extends beyond the range. Removing such a branch directive
+// while keeping the enclosing conditional would change which branch is active.
+func validateNoBranchDirectivesInExternalConditional(
+	sectionRange sectionLineRange,
+	rawLines []string,
+	pairs []conditionalPair,
+) error {
+	for lineNum := sectionRange.start; lineNum < sectionRange.end; lineNum++ {
+		if !isConditionalBranchDirective(rawLines[lineNum]) {
+			continue
+		}
+
+		for _, pair := range pairs {
+			if pair.ifLine <= lineNum && pair.endifLine >= lineNum {
+				pairFullyInside := pair.ifLine >= sectionRange.start && pair.endifLine < sectionRange.end
+
+				if !pairFullyInside {
+					return fmt.Errorf(
+						"section at lines %d-%d contains a %%else/%%elif branch directive inside a "+
+							"conditional block that extends beyond the section boundary; "+
+							"use a spec-search-replace overlay to adjust conditionals before removing:\n%w",
+						sectionRange.start+1, sectionRange.end, ErrConditionalSpansSections,
+					)
+				}
+
+				break
+			}
+		}
+	}
+
+	return nil
+}
+
+// isBlankOrComment returns true if the line is empty, whitespace-only, or a comment.
+func isBlankOrComment(line string) bool {
+	trimmed := strings.TrimSpace(line)
+
+	return trimmed == "" || strings.HasPrefix(trimmed, "#")
 }
 
 // removeRanges deletes the given line ranges from the spec. Ranges must be
