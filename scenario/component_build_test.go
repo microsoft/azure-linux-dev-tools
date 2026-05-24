@@ -128,9 +128,11 @@ func TestBuildingUpstreamComponent(t *testing.T) {
 
 	// Run the build with test default configs copied into the container.
 	// component update populates lock files first (required by lock validation).
+	// Lock files must be committed before build so synthetic history can read them.
 	results := buildtest.NewBuildTest(project, testComponentName,
 		projecttest.WithTestDefaultConfigs(),
 		projecttest.WithPreCommand("component", "update", "-a"),
+		projecttest.WithPreScript("(cd project && git add -A && git commit -m 'update locks')"),
 	).Run(t)
 
 	// Make sure we got 1 SRPM.

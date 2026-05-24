@@ -50,6 +50,7 @@ type ProjectTest struct {
 	project               TestProject
 	commandArgs           []string
 	preCommands           [][]string
+	preScripts            []string
 	useTestDefaultConfigs bool
 }
 
@@ -70,6 +71,14 @@ func WithTestDefaultConfigs() ProjectTestOption {
 func WithPreCommand(args ...string) ProjectTestOption {
 	return func(p *ProjectTest) {
 		p.preCommands = append(p.preCommands, args)
+	}
+}
+
+// WithPreScript adds an arbitrary shell script line to run before the main test
+// command. Unlike [WithPreCommand], the line is not prefixed with anything.
+func WithPreScript(script string) ProjectTestOption {
+	return func(p *ProjectTest) {
+		p.preScripts = append(p.preScripts, script)
 	}
 }
 
@@ -107,6 +116,10 @@ func (p *ProjectTest) RunInContainer(t *testing.T) *ProjectTestResults {
 
 	for _, pre := range p.preCommands {
 		preCommandLines += "\nazldev -C project -v " + shellquote.Join(pre...)
+	}
+
+	for _, script := range p.preScripts {
+		preCommandLines += "\n" + script
 	}
 
 	testScript := fmt.Sprintf(`
