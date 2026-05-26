@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm"
@@ -189,5 +190,44 @@ func TestExtractFailureSimulation(t *testing.T) {
 
 		err := extractor.Extract(testRPMStream, "")
 		assert.Error(t, err)
+	})
+}
+
+func TestExtractCorruptedData(t *testing.T) {
+	t.Run("truncated header fails gracefully", func(t *testing.T) {
+		localFS := afero.NewMemMapFs()
+
+		extractor, err := rpm.NewRPMExtractorImpl(localFS)
+		require.NoError(t, err)
+
+		// A few bytes that look like an RPM magic number but are truncated.
+		corruptData := strings.NewReader("\xed\xab\xee\xdb\x03\x00")
+
+		err = extractor.Extract(io.NopCloser(corruptData), testDestinationDir)
+		require.Error(t, err)
+	})
+
+	t.Run("random bytes fail gracefully", func(t *testing.T) {
+		localFS := afero.NewMemMapFs()
+
+		extractor, err := rpm.NewRPMExtractorImpl(localFS)
+		require.NoError(t, err)
+
+		randomData := strings.NewReader("this is definitely not an RPM file with random garbage content")
+
+		err = extractor.Extract(io.NopCloser(randomData), testDestinationDir)
+		require.Error(t, err)
+	})
+
+	t.Run("empty stream fails gracefully", func(t *testing.T) {
+		localFS := afero.NewMemMapFs()
+
+		extractor, err := rpm.NewRPMExtractorImpl(localFS)
+		require.NoError(t, err)
+
+		emptyData := strings.NewReader("")
+
+		err = extractor.Extract(io.NopCloser(emptyData), testDestinationDir)
+		require.Error(t, err)
 	})
 }

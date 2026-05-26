@@ -1123,3 +1123,80 @@ install = "invalid"
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrInvalidInstallMode)
 }
+
+func TestLoadAndResolveProjectConfig_CircularInclude(t *testing.T) {
+	t.Run("direct self-include", func(t *testing.T) {
+		ctx := testctx.NewCtx()
+		require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath,
+			[]byte(`includes = ["azldev.toml"]`), fileperms.PrivateFile))
+
+		_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+		require.ErrorIs(t, err, ErrCircularInclude)
+	})
+
+	t.Run("A includes B, B includes A", func(t *testing.T) {
+		ctx := testctx.NewCtx()
+
+		const includePath = "/project/child.toml"
+
+		require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath,
+			[]byte(`includes = ["child.toml"]`), fileperms.PrivateFile))
+		require.NoError(t, fileutils.WriteFile(ctx.FS(), includePath,
+			[]byte(`includes = ["azldev.toml"]`), fileperms.PrivateFile))
+
+		_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+		require.ErrorIs(t, err, ErrCircularInclude)
+	})
+
+	t.Run("A includes B includes C includes A", func(t *testing.T) {
+		ctx := testctx.NewCtx()
+
+		const (
+			bPath = "/project/b.toml"
+			cPath = "/project/c.toml"
+		)
+
+		require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath,
+			[]byte(`includes = ["b.toml"]`), fileperms.PrivateFile))
+		require.NoError(t, fileutils.WriteFile(ctx.FS(), bPath,
+			[]byte(`includes = ["c.toml"]`), fileperms.PrivateFile))
+		require.NoError(t, fileutils.WriteFile(ctx.FS(), cPath,
+			[]byte(`includes = ["azldev.toml"]`), fileperms.PrivateFile))
+
+		_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+		require.ErrorIs(t, err, ErrCircularInclude)
+	})
+}
+
+func TestLoadAndResolveProjectConfig_BuildFailureValidation(t *testing.T) {
+	t.Run("failure expected without reason is rejected", func(t *testing.T) {
+		const configContents = `
+[components.test-pkg]
+[components.test-pkg.build.failure]
+expected = true
+`
+
+		ctx := testctx.NewCtx()
+		require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+		_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "expected-reason")
+	})
+
+	t.Run("failure expected with reason is accepted", func(t *testing.T) {
+		const configContents = `
+[components.test-pkg]
+[components.test-pkg.build.failure]
+expected = true
+expected-reason = "Known upstream issue #456"
+`
+
+		ctx := testctx.NewCtx()
+		require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+		config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+		require.NoError(t, err)
+		assert.True(t, config.Components["test-pkg"].Build.Failure.Expected)
+	})
+}

@@ -835,3 +835,40 @@ func TestComputeResolutionHash_BaseURIChangeAffectsHash(t *testing.T) {
 	assert.NotEqual(t, hashBefore, hashAfter,
 		"dist-git base URI change must change resolution hash")
 }
+
+func TestComputeIdentity_MissingOverlaySourceFile_Error(t *testing.T) {
+	ctx := newTestFS(t, map[string]string{
+		"/specs/test.spec": "Name: testpkg\nVersion: 1.0",
+		// Deliberately NOT creating the patch file.
+	})
+	releaseVer := testReleaseVer
+
+	comp := baseComponent()
+	comp.Overlays = []projectconfig.ComponentOverlay{
+		{Type: "patch-add", Source: "/patches/nonexistent.patch"},
+	}
+
+	_, err := fingerprint.ComputeIdentity(ctx.FS(), comp, releaseVer, fingerprint.IdentityOptions{
+		SourceIdentity: "test-source-identity",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "overlay")
+}
+
+func TestComputeIdentity_MissingFileAddSource_Error(t *testing.T) {
+	ctx := newTestFS(t, map[string]string{
+		"/specs/test.spec": "Name: testpkg\nVersion: 1.0",
+	})
+	releaseVer := testReleaseVer
+
+	comp := baseComponent()
+	comp.Overlays = []projectconfig.ComponentOverlay{
+		{Type: "file-add", Source: "/files/nonexistent.txt", Filename: "extra.txt"},
+	}
+
+	_, err := fingerprint.ComputeIdentity(ctx.FS(), comp, releaseVer, fingerprint.IdentityOptions{
+		SourceIdentity: "test-source-identity",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "overlay")
+}

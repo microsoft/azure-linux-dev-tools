@@ -984,3 +984,30 @@ func TestFindComponents_PinDiffersFromLock(t *testing.T) {
 	assert.Equal(t, "lock-commit-bbb", comp2.GetConfig().Locked.UpstreamCommit,
 		"suppression doesn't change the populated data, only the warning emission")
 }
+
+func TestComponentFilter_HasNoCriteria(t *testing.T) {
+	t.Run("empty filter has no criteria", func(t *testing.T) {
+		filter := components.ComponentFilter{}
+		assert.True(t, filter.HasNoCriteria())
+	})
+
+	t.Run("all-components set means criteria exist", func(t *testing.T) {
+		filter := components.ComponentFilter{IncludeAllComponents: true}
+		assert.False(t, filter.HasNoCriteria())
+	})
+
+	t.Run("group names set means criteria exist", func(t *testing.T) {
+		filter := components.ComponentFilter{ComponentGroupNames: []string{"core"}}
+		assert.False(t, filter.HasNoCriteria())
+	})
+
+	t.Run("name patterns set means criteria exist", func(t *testing.T) {
+		filter := components.ComponentFilter{ComponentNamePatterns: []string{"curl"}}
+		assert.False(t, filter.HasNoCriteria())
+	})
+
+	t.Run("spec paths set means criteria exist", func(t *testing.T) {
+		filter := components.ComponentFilter{SpecPaths: []string{"/specs/test.spec"}}
+		assert.False(t, filter.HasNoCriteria())
+	})
+}

@@ -27,6 +27,8 @@ var (
 	ErrDuplicateImages = errors.New("duplicate image")
 	// ErrDuplicatePackageGroups is returned when duplicate conflicting package group definitions are found.
 	ErrDuplicatePackageGroups = errors.New("duplicate package group")
+	// ErrCircularInclude is returned when a config file include chain forms a cycle.
+	ErrCircularInclude = errors.New("circular include detected")
 )
 
 // Loads and resolves the project configuration files located at the given path. Referenced include files
@@ -67,7 +69,7 @@ func loadAndMergeConfigWithIncludes(
 	permissiveConfigParsing bool,
 ) error {
 	// Load the project config file and all transitive includes.
-	loadedCfgs, err := loadProjectConfigWithIncludes(fs, filePath, permissiveConfigParsing)
+	loadedCfgs, err := loadProjectConfigWithIncludes(fs, filePath, permissiveConfigParsing, nil)
 	if err != nil {
 		return err
 	}
@@ -311,7 +313,26 @@ func mergeTestSuites(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
 
 func loadProjectConfigWithIncludes(
 	fs opctx.FS, filePath string, permissiveConfigParsing bool,
+	seen map[string]bool,
 ) ([]*ConfigFile, error) {
+	absFilePath, err := filepath.Abs(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve absolute path for '%s':\n%w", filePath, err)
+	}
+
+	if seen == nil {
+		seen = make(map[string]bool)
+	}
+
+	if seen[absFilePath] {
+		return nil, fmt.Errorf(
+			"%w: '%s' is included by a file that it transitively includes",
+			ErrCircularInclude, absFilePath,
+		)
+	}
+
+	seen[absFilePath] = true
+
 	// Load the immediate config file.
 	cfg, err := loadProjectConfigFile(fs, filePath, permissiveConfigParsing)
 	if err != nil {
@@ -346,7 +367,7 @@ func loadProjectConfigWithIncludes(
 			absIncludePath := makeAbsolute(cfg.dir, includePath)
 
 			includeCfgs, err := loadProjectConfigWithIncludes(
-				fs, absIncludePath, permissiveConfigParsing,
+				fs, absIncludePath, permissiveConfigParsing, seen,
 			)
 			if err != nil {
 				return nil, err
