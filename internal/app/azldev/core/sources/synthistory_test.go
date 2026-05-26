@@ -246,10 +246,11 @@ func TestCommitInterleavedHistory_MultipleCyclesAutoreleaseLifecycle(t *testing.
 	require.NoError(t, err)
 
 	// Upstream commit 1 (initial import).
-	f, err := memFS.Create("package.spec")
+	specFile, err := memFS.Create("package.spec")
 	require.NoError(t, err)
-	_, _ = f.Write([]byte("Name: package\nVersion: 1.0\nRelease: %autorelease\n"))
-	require.NoError(t, f.Close())
+
+	_, _ = specFile.Write([]byte("Name: package\nVersion: 1.0\nRelease: %autorelease\n"))
+	require.NoError(t, specFile.Close())
 
 	_, err = worktree.Add("package.spec")
 	require.NoError(t, err)
@@ -263,10 +264,11 @@ func TestCommitInterleavedHistory_MultipleCyclesAutoreleaseLifecycle(t *testing.
 	require.NoError(t, err)
 
 	// Upstream commit 2 (version bump).
-	f, err = memFS.Create("package.spec")
+	specFile, err = memFS.Create("package.spec")
 	require.NoError(t, err)
-	_, _ = f.Write([]byte("Name: package\nVersion: 2.0\nRelease: %autorelease\n"))
-	require.NoError(t, f.Close())
+
+	_, _ = specFile.Write([]byte("Name: package\nVersion: 2.0\nRelease: %autorelease\n"))
+	require.NoError(t, specFile.Close())
 
 	_, err = worktree.Add("package.spec")
 	require.NoError(t, err)
@@ -280,10 +282,11 @@ func TestCommitInterleavedHistory_MultipleCyclesAutoreleaseLifecycle(t *testing.
 	require.NoError(t, err)
 
 	// Working tree state after all overlays (latest content).
-	f, err = memFS.Create("package.spec")
+	specFile, err = memFS.Create("package.spec")
 	require.NoError(t, err)
-	_, _ = f.Write([]byte("Name: package\nVersion: 2.0\nRelease: %autorelease\n# v2 overlay\n"))
-	require.NoError(t, f.Close())
+
+	_, _ = specFile.Write([]byte("Name: package\nVersion: 2.0\nRelease: %autorelease\n# v2 overlay\n"))
+	require.NoError(t, specFile.Close())
 
 	changes := []sources.FingerprintChange{
 		{
@@ -334,11 +337,11 @@ func TestCommitInterleavedHistory_MultipleCyclesAutoreleaseLifecycle(t *testing.
 
 	require.Len(t, logCommits, 5, "2 upstream + 3 synthetic")
 
-	assert.Contains(t, logCommits[0].Message, "Add config overlay for v2.0")     // us₃ (top)
-	assert.Contains(t, logCommits[1].Message, "upstream: v2.0")                  // replayed upstream₂
-	assert.Contains(t, logCommits[2].Message, "Bump release for mass rebuild")   // us₂ (interleaved)
-	assert.Contains(t, logCommits[3].Message, "Apply CVE patch for v1.0")        // us₁ (interleaved)
-	assert.Contains(t, logCommits[4].Message, "upstream: v1.0")                  // import-commit
+	assert.Contains(t, logCommits[0].Message, "Add config overlay for v2.0")   // us₃ (top)
+	assert.Contains(t, logCommits[1].Message, "upstream: v2.0")                // replayed upstream₂
+	assert.Contains(t, logCommits[2].Message, "Bump release for mass rebuild") // us₂ (interleaved)
+	assert.Contains(t, logCommits[3].Message, "Apply CVE patch for v1.0")      // us₁ (interleaved)
+	assert.Contains(t, logCommits[4].Message, "upstream: v1.0")                // import-commit
 
 	assert.Equal(t, "Carol", logCommits[0].Author.Name)
 	assert.Equal(t, "Bob", logCommits[2].Author.Name)

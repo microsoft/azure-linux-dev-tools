@@ -631,12 +631,14 @@ input-fingerprint = "pre-baked-for-test"
 // Setup:
 //
 //	Upstream dist-git (3 commits): C1(v1.0.0) → C2(v1.1.0) → C3(add patch)
-//	Project lock file (2 fingerprint changes): fp1, fp2
+//	Project lock file (3 fingerprint changes): fp0 (on C1), fp1 (on C3), fp2 (on C3)
 //	Dirty detection: runtime fingerprint ≠ fp2 → 1 extra synthetic commit
 //
-//	All synthetic commits reference C3 (HEAD), so interleaving places them
-//	after the upstream history: C1 → C2 → C3 → S1 → S2 → S3(dirty)
+//	S0 references C1 (pre-version-bump), so interleaving places it between
+//	C1 and C2. The remaining synthetic commits reference C3 (HEAD) and are
+//	placed after C3: C1 → S0 → C2 → C3 → S1 → S2 → S3(dirty)
 //	rpmautospec resets release on Version change (C2), giving Release = 5.
+//	Crucially, S0 sits before the reset and does NOT inflate v1.1's release.
 //
 // The bare repo is created inside the container script because
 // AddDirRecursive loses git internal structure needed for file:// clones.
@@ -731,12 +733,14 @@ dist-git-branch = "main"
 
 	// The script:
 	// 1. Creates the upstream bare repo with 3 controlled commits
-	// 2. Commits the lock file twice with different fingerprints to simulate
-	//    a realistic workflow (import → overlay change)
+	// 2. Commits the lock file three times with different fingerprints to
+	//    simulate a realistic lifecycle: import on v1.0 → overlay on v1.0 →
+	//    update to v1.1 → overlay on v1.1
 	// 3. Renders and captures output
 	//
-	// This produces 2 fingerprint changes + 1 dirty detection = 3 synthetic
-	// commits, interleaved on top of 3 upstream commits = 6 total → Release 6.
+	// This produces 3 fingerprint changes + 1 dirty detection = 4 synthetic
+	// commits. S0 references C1 (v1.0 era) and is interleaved before C2.
+	// S1, S2, S3 reference C3 and go on top. Total = 7 commits, Release = 5.
 	testScript := `
 set -ex
 
@@ -773,20 +777,34 @@ git clone --bare "$WORK" /workdir/upstream-repo/test-pkg.git
 cd /workdir
 
 # --- Create lock file with multiple fingerprint changes ---
-# This simulates a realistic project history where the component is
-# imported, then overlays are added/modified over time.
+# This simulates a realistic lifecycle:
+#   1. Import while still on v1.0 (upstream-commit = C1)
+#   2. Update to latest (upstream-commit = C3)
+#   3. Add overlay on v1.1
 mkdir -p project/locks
 cd project
 
-# Lock commit 1: initial import (fingerprint fp1)
+# Lock commit 0: initial import while upstream was at C1 (v1.0 era).
+# This creates synthetic commit S0 which interleaving must place BEFORE
+# the version bump at C2, proving it doesn't inflate v1.1's release.
+cat > locks/test-pkg.lock <<EOF
+version = 1
+import-commit = "$FIRST_COMMIT"
+upstream-commit = "$FIRST_COMMIT"
+input-fingerprint = "fp0-imported-on-v1"
+EOF
+git add locks/test-pkg.lock
+git -c commit.gpgsign=false commit -m "Import test-pkg at v1.0"
+
+# Lock commit 1: updated to latest upstream (fingerprint fp1)
 cat > locks/test-pkg.lock <<EOF
 version = 1
 import-commit = "$FIRST_COMMIT"
 upstream-commit = "$HEAD_COMMIT"
-input-fingerprint = "fp1-initial-import"
+input-fingerprint = "fp1-updated-to-latest"
 EOF
 git add locks/test-pkg.lock
-git -c commit.gpgsign=false commit -m "Import test-pkg with initial lock"
+git -c commit.gpgsign=false commit -m "Update test-pkg to v1.1"
 
 # Lock commit 2: simulated overlay addition (fingerprint fp2)
 cat > locks/test-pkg.lock <<EOF
@@ -852,17 +870,20 @@ azldev -C project -v component render test-pkg -o project/SPECS --output-format 
 	// last Version change.
 	//
 	// Expected release calculation:
-	// All synthetic commits reference the same upstream-commit (C3/HEAD),
-	// so interleaving places them all in the "top" group after C3:
-	//   C1 → C2 → C3 → S1(fp1) → S2(fp2) → S3(dirty)
+	// S0 references C1 (v1.0 era), so interleaving places it between C1 and C2.
+	// S1, S2 reference C3 (HEAD), so they go on top after C3.
+	// S3 is dirty detection (also references C3).
+	//   C1 → S0(fp0) → C2 → C3 → S1(fp1) → S2(fp2) → S3(dirty)
 	// rpmautospec resets release on Version change (C2 bumps 1.0.0 → 1.1.0):
 	//   C2 = release 1 (reset), C3 = 2, S1 = 3, S2 = 4, S3 = 5
+	// S0 sits before the reset — it does NOT count toward v1.1's release.
 	releasePattern := regexp.MustCompile(`release_number = (\d+);`)
 	releaseMatch := releasePattern.FindStringSubmatch(contentStr)
 	require.NotEmpty(t, releaseMatch,
 		"Should find release_number in rpmautospec Lua block")
 	assert.Equal(t, "5", releaseMatch[1],
-		"Release should be 5 (commits since last Version change: C2=1, C3=2, S1=3, S2=4, S3=5)")
+		"Release should be 5: S0 is before the version bump and must not inflate v1.1's release "+
+			"(commits after reset: C2=1, C3=2, S1=3, S2=4, S3=5)")
 
 	// %autochangelog should be expanded to real entries from the controlled history.
 	assert.NotContains(t, contentStr, "%autochangelog",
@@ -878,13 +899,25 @@ azldev -C project -v component render test-pkg -o project/SPECS --output-format 
 	assert.Contains(t, contentStr, "Initial import of test-pkg",
 		"Changelog should contain the first commit message")
 
-	// Verify ordering: synthetic commits should appear above upstream commits.
-	// In newest-first changelog, "Import test-pkg with initial lock" (S1)
-	// must precede "Add fix.patch for build issue" (C3).
-	s1Pos := strings.Index(contentStr, "Import test-pkg with initial lock")
+	// Verify ordering: post-bump synthetic commits should appear above upstream commits.
+	// In newest-first changelog, "Update test-pkg to v1.1" (S1) must precede
+	// "Add fix.patch for build issue" (C3).
+	s1Pos := strings.Index(contentStr, "Update test-pkg to v1.1")
 	c3Pos := strings.Index(contentStr, "Add fix.patch for build issue")
 	require.Greater(t, s1Pos, 0, "S1 commit message should be in changelog")
 	require.Greater(t, c3Pos, 0, "C3 commit message should be in changelog")
 	assert.Less(t, s1Pos, c3Pos,
-		"Synthetic commit (S1) should appear before upstream commit (C3) in changelog")
+		"Post-bump synthetic commit (S1) should appear before upstream commit (C3) in changelog")
+
+	// Verify S0 (v1.0-era synthetic) appears AFTER C2 in the changelog
+	// (i.e. deeper in the history, since changelog is newest-first).
+	// This confirms the v1.0-era commit was correctly interleaved before
+	// the version bump and doesn't leak into the v1.1 section.
+	s0Pos := strings.Index(contentStr, "Import test-pkg at v1.0")
+	c2Pos := strings.Index(contentStr, "Bump to 1.1.0")
+	require.Greater(t, s0Pos, 0, "S0 commit message should be in changelog")
+	require.Greater(t, c2Pos, 0, "C2 commit message should be in changelog")
+	assert.Greater(t, s0Pos, c2Pos,
+		"v1.0-era synthetic commit (S0) should appear after version bump (C2) in changelog, "+
+			"confirming it was interleaved before C2 and doesn't inflate v1.1's release")
 }
