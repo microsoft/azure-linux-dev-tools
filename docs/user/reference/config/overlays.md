@@ -347,6 +347,42 @@ the overlay always removes every section associated with the sub-package.
 > an error is returned; use a `spec-search-replace` overlay to adjust the conditionals
 > before removing the sub-package.
 
+## Known Limitations
+
+### Section-scoped operations and straddling conditionals
+
+Spec overlays that target a specific section and package (e.g., `spec-remove-tag` with `package = "headless"`) rely on the structural tree parser to identify which lines belong to that section. In rare cases, a section header may live inside a `%if` wrapper while its content continues past the `%endif`:
+
+```spec
+%if 0%{!?scl:1}
+%package headless
+Requires: binutils
+%endif
+# ← content below is still part of %package headless in RPM's view,
+#   but the tree parser cannot associate it with the headless section
+#   because the section header is structurally inside the wrapper.
+Recommends: default-yama-scope
+```
+
+In this pattern, section-scoped overlays (`spec-remove-tag`, `spec-add-tag`, `spec-update-tag`, `spec-insert-tag`) cannot find or modify tags that fall outside the `%endif`. Use `spec-search-replace` with a precise anchored regex instead:
+
+```toml
+# Instead of:
+#   type = "spec-remove-tag"
+#   package = "headless"
+#   tag = "Recommends"
+#   value = "default-yama-scope"
+
+# Use:
+type = "spec-search-replace"
+regex = "^Recommends: default-yama-scope$"
+replacement = "# Recommends: default-yama-scope (disabled)"
+```
+
+### Macro-generated sections
+
+Specs that use macros like `%ghc_lib_subpackage`, `%pyproject_extras_subpkg`, or `%fontpkg` generate sections at build time that are invisible to the static parser. Section-scoped overlays cannot target these generated sections. Use `spec-search-replace` for modifications that need to reach macro-generated content.
+
 ## Validation
 
 Overlay configurations are validated when the config file is loaded. Validation checks:
