@@ -39,10 +39,11 @@ type ComponentOverlay struct {
 	// For overlays that reference lines of text, the lines of text to use.
 	Lines []string `toml:"lines,omitempty" json:"lines,omitempty" jsonschema:"title=Lines,description=The lines of text to use"`
 	// For overlays that require a source file as input, indicates a path to that file; relative paths are relative to
-	// the config file that defines the overlay.
+	// the config file that defines the overlay. For `file-add` overlays, this defaults to the value of `file` when
+	// omitted.
 	// Excluded from fingerprint because it contains an absolute path that varies by checkout
 	// location. Overlay content is hashed separately by [fingerprint.ComputeIdentity].
-	Source string `toml:"source,omitempty" json:"source,omitempty" jsonschema:"title=Source,description=For overlays that require a source file as input, indicates a path to that file; relative paths are relative to the config file that defines the overlay" fingerprint:"-"`
+	Source string `toml:"source,omitempty" json:"source,omitempty" jsonschema:"title=Source,description=For overlays that require a source file as input, indicates a path to that file; relative paths are relative to the config file that defines the overlay. For file-add overlays, defaults to the value of file when omitted." fingerprint:"-"`
 }
 
 // EffectiveSourceName returns the checkout-independent identity of the overlay's
@@ -94,6 +95,13 @@ func (c *ComponentOverlay) WithAbsolutePaths(referenceDir string) (result *Compo
 	// is invalid. Since we're always using the same type, we never expect to see a runtime error
 	// here.
 	result = deep.MustCopy(c)
+
+	// For `file-add` overlays, `source` defaults to the value of `file` when omitted, so that
+	// users don't have to repeat the same value when the destination filename matches the
+	// source filename (the common case). Apply the default before absolutizing.
+	if result.Type == ComponentOverlayAddFile && result.Source == "" {
+		result.Source = result.Filename
+	}
 
 	// Fix up paths.
 	result.Source = makeAbsolute(referenceDir, result.Source)
@@ -283,9 +291,8 @@ func (c *ComponentOverlay) Validate() error {
 			return err
 		}
 
-		if c.Source == "" {
-			return missingField("source")
-		}
+		// `source` is optional and defaults to the value of `file` when omitted
+		// (see ComponentOverlay.WithAbsolutePaths).
 	case ComponentOverlayRemoveFile:
 		if err := requireRelativePath("file", c.Filename); err != nil {
 			return err
