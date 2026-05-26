@@ -450,43 +450,24 @@ func (s *Spec) PrependLinesToSection(sectionName, packageName string, lines []st
 }
 
 // AppendLinesToSection appends the given lines at the end of the specified section, placing
-// them just after the current last line of the section. An error is returned if the identified
-// section cannot be found in the spec.
+// them just after the current last line of the section's content. When a conditional block
+// (%if/%endif) straddles the section boundary, the appended lines are placed before the
+// conditional — they do not land inside it.
+//
+// An error is returned if the identified section cannot be found in the spec.
 func (s *Spec) AppendLinesToSection(sectionName, packageName string, lines []string) (err error) {
 	slog.Debug("Appending lines to spec", "section", sectionName, "package", packageName, "lines", lines)
 
-	var updated bool
-
-	err = s.Visit(func(ctx *Context) error {
-		// Make sure this is a section start.
-		if ctx.Target.TargetType != SectionEndTarget {
-			return nil
+	return s.mutateTree(func(tree *specTree) error {
+		sect := tree.Section(sectionName, packageName)
+		if sect == nil {
+			return fmt.Errorf("section %#q (package=%#q) not found:\n%w", sectionName, packageName, ErrSectionNotFound)
 		}
 
-		// Make sure section name matches.
-		if ctx.CurrentSection.SectName != sectionName {
-			return nil
-		}
-
-		// Make sure package name matches.
-		if ctx.CurrentSection.Package != packageName {
-			return nil
-		}
-
-		// Insert the line.
-		ctx.InsertLinesBefore(lines)
-
-		// Note that we've made an update.
-		updated = true
+		sect.AppendLines(lines)
 
 		return nil
 	})
-
-	if !updated {
-		return fmt.Errorf("section %#q (package=%#q) not found:\n%w", sectionName, packageName, ErrSectionNotFound)
-	}
-
-	return err
 }
 
 // SearchAndReplace performs a regex-based search-and-replace against all lines in the specified
@@ -796,20 +777,14 @@ func (s *Spec) RemoveSection(sectionName, packageName string) error {
 		return errors.New("cannot remove the global/preamble section")
 	}
 
-	ranges, err := s.collectSectionRanges(func(sn, pn string) bool {
-		return sn == sectionName && pn == packageName
+	return s.mutateTree(func(tree *specTree) error {
+		matches := tree.Sections(sectionName, packageName)
+		if len(matches) == 0 {
+			return fmt.Errorf("section %#q (package=%#q) not found:\n%w", sectionName, packageName, ErrSectionNotFound)
+		}
+
+		return tree.RemoveSections(matches)
 	})
-	if err != nil {
-		return fmt.Errorf("failed to scan spec for section %#q (package=%#q):\n%w", sectionName, packageName, err)
-	}
-
-	if len(ranges) == 0 {
-		return fmt.Errorf("section %#q (package=%#q) not found:\n%w", sectionName, packageName, ErrSectionNotFound)
-	}
-
-	s.removeRanges(ranges)
-
-	return nil
 }
 
 // RemoveSubpackage removes every section in the spec that is associated with the given
@@ -841,20 +816,14 @@ func (s *Spec) RemoveSubpackage(packageName string) error {
 		return errors.New("cannot remove sub-package with empty name")
 	}
 
-	ranges, err := s.collectSectionRanges(func(_, pn string) bool {
-		return pn == packageName
+	return s.mutateTree(func(tree *specTree) error {
+		matches := tree.SectionsByPackage(packageName)
+		if len(matches) == 0 {
+			return fmt.Errorf("sub-package %#q not found:\n%w", packageName, ErrSectionNotFound)
+		}
+
+		return tree.RemoveSections(matches)
 	})
-	if err != nil {
-		return fmt.Errorf("failed to scan spec for sub-package %#q:\n%w", packageName, err)
-	}
-
-	if len(ranges) == 0 {
-		return fmt.Errorf("sub-package %#q not found:\n%w", packageName, ErrSectionNotFound)
-	}
-
-	s.removeRanges(ranges)
-
-	return nil
 }
 
 // sectionLineRange identifies a half-open `[start, end)` range of raw line numbers
@@ -950,7 +919,23 @@ func collectConditionalPairs(rawLines []string) ([]conditionalPair, error) {
 		stack []int
 	)
 
+	inMacroCont := false
+
 	for lineNum, line := range rawLines {
+		if inMacroCont {
+			inMacroCont = strings.HasSuffix(line, "\\")
+
+			continue
+		}
+
+		// Only skip continuations that start from a %define/%global line —
+		// those are macro body text where %if/%endif are not structural.
+		if _, isMacro := isMacroDefLine(line); isMacro && strings.HasSuffix(line, "\\") {
+			inMacroCont = true
+
+			continue
+		}
+
 		switch conditionalDepthChange(line) {
 		case 1:
 			stack = append(stack, lineNum)
