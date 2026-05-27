@@ -64,7 +64,7 @@ func (r *RPMContentsProviderImpl) GetComponent(
 	// Get the RPM
 	rpmReader, rpmURL, err := r.rpmProvider.GetRPM(ctx, component.GetName(), nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get the RPM file for component %#q: %w",
+		return nil, fmt.Errorf("failed to get the RPM file for component %#q:\n%w",
 			component.GetName(), err)
 	}
 	defer defers.HandleDeferError(rpmReader.Close, &err)
@@ -72,7 +72,7 @@ func (r *RPMContentsProviderImpl) GetComponent(
 	// Extract the RPM contents
 	err = r.extractor.Extract(rpmReader, destDirPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to extract the RPM file of component %#q: %w",
+		return nil, fmt.Errorf("failed to extract the RPM file of component %#q:\n%w",
 			component.GetName(), err)
 	}
 

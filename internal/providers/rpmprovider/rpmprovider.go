@@ -77,7 +77,7 @@ func (p *RPMProviderImpl) GetRPM(
 	// Get the RPM URL
 	rpmURL, err := p.querier.GetRPMLocation(ctx, name, version)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to get RPM location for package %#q, version %#q:\n%w", name, version, err)
+		return nil, "", fmt.Errorf("failed to get RPM location for package %#q, version %v:\n%w", name, version, err)
 	}
 
 	evt = p.eventListener.StartEvent("Downloading RPM", "name", name, "url", rpmURL)
@@ -86,7 +86,7 @@ func (p *RPMProviderImpl) GetRPM(
 
 	fileStream, err := p.downloader.FetchStream(ctx, rpmURL)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to fetch RPM file for package %#q, version %#q:\n%w", name, version, err)
+		return nil, "", fmt.Errorf("failed to fetch RPM file for package %#q, version %v:\n%w", name, version, err)
 	}
 
 	return fileStream, rpmURL, nil
