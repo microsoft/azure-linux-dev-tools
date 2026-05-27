@@ -33,7 +33,7 @@ require (
 	github.com/knqyf263/go-rpm-version v0.0.0-20240918084003-2afd7dc6a38f
 	github.com/lmittmann/tint v1.1.3
 	github.com/magefile/mage v1.17.2
-	github.com/mark3labs/mcp-go v0.53.0
+	github.com/mark3labs/mcp-go v0.54.0
 	github.com/mattn/go-isatty v0.0.22
 	github.com/mitchellh/hashstructure/v2 v2.0.2
 	github.com/moby/moby/api v1.54.2
