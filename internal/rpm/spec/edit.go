@@ -599,10 +599,8 @@ func ParsePatchTagNumber(tag string) (int, bool) {
 func (s *Spec) HasSection(sectionName string) (bool, error) {
 	var found bool
 
-	err := s.Visit(func(ctx *Context) error {
-		if ctx.Target.TargetType == SectionStartTarget && ctx.CurrentSection.SectName == sectionName {
-			found = true
-		}
+	err := s.inspectTree(func(tree *specTree) error {
+		found = tree.HasSection(sectionName)
 
 		return nil
 	})
@@ -928,8 +926,6 @@ func collectConditionalPairs(rawLines []string) ([]conditionalPair, error) {
 			continue
 		}
 
-		// Only skip continuations that start from a %define/%global line —
-		// those are macro body text where %if/%endif are not structural.
 		if _, isMacro := isMacroDefLine(line); isMacro && strings.HasSuffix(line, "\\") {
 			inMacroCont = true
 

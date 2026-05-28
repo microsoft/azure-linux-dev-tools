@@ -7,7 +7,8 @@ import "fmt"
 
 // specTree is an opaque handle wrapping the parsed structural tree of a spec.
 // Operations on the tree are exposed via methods so callers in edit.go do not
-// depend on the internal [block] representation. Obtain one via [Spec.mutateTree].
+// depend on the internal [block] representation. Obtain one via [Spec.mutateTree]
+// or [Spec.inspectTree].
 type specTree struct {
 	root *block
 }
@@ -39,6 +40,18 @@ func (s *Spec) mutateTree(mutate func(*specTree) error) error {
 	return nil
 }
 
+// inspectTree parses the spec into a tree and passes it to inspect for read-only
+// inspection. The tree is discarded after inspect returns; [Spec.rawLines] is
+// never modified.
+func (s *Spec) inspectTree(inspect func(*specTree) error) error {
+	root, err := parseTree(s.rawLines)
+	if err != nil {
+		return fmt.Errorf("parsing spec tree:\n%w", err)
+	}
+
+	return inspect(&specTree{root: root})
+}
+
 // --- specTree query API ---
 
 // Section returns a handle to the first section matching name and pkg, or nil
@@ -50,6 +63,29 @@ func (t *specTree) Section(name, pkg string) *sectionHandle {
 	}
 
 	return &sectionHandle{block: b, tree: t}
+}
+
+// HasSection reports whether the tree contains any section with the given name
+// (regardless of package qualifier), including sections inside conditional
+// wrappers.
+func (t *specTree) HasSection(name string) bool {
+	return hasSectionWithName(t.root, name)
+}
+
+func hasSectionWithName(blk *block, name string) bool {
+	found := false
+
+	walk(blk, func(b *block) bool {
+		if b.Kind == sectionBlock && b.Name == name {
+			found = true
+
+			return false
+		}
+
+		return true
+	})
+
+	return found
 }
 
 // Sections returns handles for every section matching name and pkg, including
