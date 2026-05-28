@@ -55,23 +55,34 @@ func (s *Spec) UpdateExistingTag(packageName string, tag string, value string) (
 
 	var updated bool
 
-	err = s.VisitTagsPackage(packageName, func(tagLine *TagLine, ctx *Context) error {
-		if strings.ToLower(tagLine.Tag) != tagToCompareAgainst {
+	err = s.mutateTree(func(tree *specTree) error {
+		return tree.VisitAllLines(func(secName, secPkg string, lh *lineHandle) error {
+			if updated || secPkg != packageName || !isTagBearingSection(secName) {
+				return nil
+			}
+
+			parsedTag, _, isTag := parseTagLine(lh.Text)
+			if !isTag || strings.ToLower(parsedTag) != tagToCompareAgainst {
+				return nil
+			}
+
+			lh.Replace(fmt.Sprintf("%s: %s", tag, value))
+
+			updated = true
+
 			return nil
-		}
-
-		ctx.ReplaceLine(fmt.Sprintf("%s: %s", tag, value))
-
-		updated = true
-
-		return nil
+		})
 	})
+
+	if err != nil {
+		return err
+	}
 
 	if !updated {
 		return fmt.Errorf("tag %#q not found in spec:\n%w", tag, ErrNoSuchTag)
 	}
 
-	return err
+	return nil
 }
 
 // RemoveTag removes all instances of the given tag from the spec, under the specified
@@ -146,16 +157,23 @@ func (s *Spec) VisitTagsPackage(packageName string, visitor func(tagLine *TagLin
 func (s *Spec) RemoveTagsMatching(packageName string, matcher func(tag, value string) bool) (int, error) {
 	removed := 0
 
-	err := s.VisitTagsPackage(packageName, func(tagLine *TagLine, ctx *Context) error {
-		if !matcher(tagLine.Tag, tagLine.Value) {
+	err := s.mutateTree(func(tree *specTree) error {
+		return tree.VisitAllLines(func(secName, secPkg string, lh *lineHandle) error {
+			if secPkg != packageName || !isTagBearingSection(secName) {
+				return nil
+			}
+
+			parsedTag, parsedValue, isTag := parseTagLine(lh.Text)
+			if !isTag || !matcher(parsedTag, parsedValue) {
+				return nil
+			}
+
+			lh.Remove()
+
+			removed++
+
 			return nil
-		}
-
-		ctx.RemoveLine()
-
-		removed++
-
-		return nil
+		})
 	})
 
 	return removed, err
@@ -271,135 +289,21 @@ func isConditionalBranchDirective(rawLine string) bool {
 func (s *Spec) InsertTag(packageName string, tag string, value string) error {
 	slog.Debug("Inserting tag to spec", "package", packageName, "tag", tag, "value", value)
 
-	family := tagFamily(tag)
-	newLine := fmt.Sprintf("%s: %s", tag, value)
-
 	sectionName := ""
 	if packageName != "" {
 		sectionName = "%package"
 	}
 
-	result, err := s.findInsertTagPosition(sectionName, packageName, family)
-	if err != nil {
-		return err
-	}
-
-	// Determine insertion point: prefer same-family, then any tag, then fall back to AddTag.
-	insertAfterLine := result.lastFamilyTagLineNum
-	if insertAfterLine < 0 {
-		insertAfterLine = result.lastAnyTagLineNum
-	}
-
-	if insertAfterLine < 0 {
-		// No tags at all — fall back to AddTag behavior.
-		return s.AddTag(packageName, tag, value)
-	}
-
-	// If the insertion point is inside a conditional block, move it forward past the
-	// closing %endif so the new tag doesn't become conditional.
-	insertAfterLine = s.skipPastConditional(insertAfterLine, result.sectionEndLineNum)
-
-	// Insert after the found line (0-indexed, so insertAfterLine+1).
-	s.InsertLinesAt([]string{newLine}, insertAfterLine+1)
-
-	return nil
-}
-
-// insertTagScanResult holds the results of scanning a spec for a tag insertion point.
-type insertTagScanResult struct {
-	lastFamilyTagLineNum int
-	lastAnyTagLineNum    int
-	sectionEndLineNum    int
-}
-
-// findInsertTagPosition scans the spec to find the best insertion point for a tag of the
-// given family within the specified section/package. Returns the scan results or an error
-// if the target section is not found.
-func (s *Spec) findInsertTagPosition(
-	sectionName, packageName, family string,
-) (insertTagScanResult, error) {
-	result := insertTagScanResult{
-		lastFamilyTagLineNum: -1,
-		lastAnyTagLineNum:    -1,
-		sectionEndLineNum:    len(s.rawLines),
-	}
-
-	sectionFound := false
-
-	err := s.Visit(func(ctx *Context) error {
-		if ctx.Target.TargetType == SectionStartTarget {
-			if ctx.CurrentSection.SectName == sectionName && ctx.CurrentSection.Package == packageName {
-				sectionFound = true
-			}
+	return s.mutateTree(func(tree *specTree) error {
+		sect := tree.Section(sectionName, packageName)
+		if sect == nil {
+			return fmt.Errorf("section %#q (package=%#q) not found:\n%w", sectionName, packageName, ErrSectionNotFound)
 		}
 
-		if ctx.Target.TargetType == SectionEndTarget {
-			if ctx.CurrentSection.SectName == sectionName && ctx.CurrentSection.Package == packageName {
-				result.sectionEndLineNum = ctx.CurrentLineNum
-			}
-		}
-
-		if ctx.Target.TargetType != SectionLineTarget {
-			return nil
-		}
-
-		if ctx.CurrentSection.SectName != sectionName || ctx.CurrentSection.Package != packageName {
-			return nil
-		}
-
-		if ctx.Target.Line.Parsed.GetType() != Tag {
-			return nil
-		}
-
-		tagLine, ok := ctx.Target.Line.Parsed.(*TagLine)
-		if !ok {
-			return nil
-		}
-
-		result.lastAnyTagLineNum = ctx.CurrentLineNum
-
-		if tagFamily(tagLine.Tag) == family {
-			result.lastFamilyTagLineNum = ctx.CurrentLineNum
-		}
+		sect.InsertTag(tag, value, tagFamily(tag))
 
 		return nil
 	})
-	if err != nil {
-		return result, fmt.Errorf("failed to scan spec for tag insertion point:\n%w", err)
-	}
-
-	if !sectionFound {
-		return result, fmt.Errorf("section %#q (package=%#q) not found:\n%w", sectionName, packageName, ErrSectionNotFound)
-	}
-
-	return result, nil
-}
-
-// skipPastConditional checks whether lineNum falls inside a conditional block by computing
-// the conditional nesting depth from the start of the file up to that line. If depth > 0,
-// it scans forward to find the %endif that brings depth back to 0 and returns that line
-// number. Otherwise it returns lineNum unchanged.
-func (s *Spec) skipPastConditional(lineNum int, sectionEnd int) int {
-	// Compute conditional depth at the insertion point by scanning from the start.
-	depth := 0
-	for i := 0; i <= lineNum && i < len(s.rawLines); i++ {
-		depth += conditionalDepthChange(s.rawLines[i])
-	}
-
-	if depth <= 0 {
-		return lineNum
-	}
-
-	// Scan forward to find the %endif that closes the conditional.
-	for i := lineNum + 1; i < sectionEnd && i < len(s.rawLines); i++ {
-		depth += conditionalDepthChange(s.rawLines[i])
-		if depth <= 0 {
-			return i
-		}
-	}
-
-	// Could not find a closing %endif within the section; return the original position.
-	return lineNum
 }
 
 // PrependLinesToSection prepends the given lines to the start of the specified section, placing
@@ -672,23 +576,34 @@ func (s *Spec) RemovePatchEntry(pattern string) error {
 func (s *Spec) removePatchTagsMatching(pattern string) (int, error) {
 	removed := 0
 
-	err := s.VisitTags(func(tagLine *TagLine, ctx *Context) error {
-		if _, ok := ParsePatchTagNumber(tagLine.Tag); !ok {
+	err := s.mutateTree(func(tree *specTree) error {
+		return tree.VisitAllLines(func(secName, _ string, lh *lineHandle) error {
+			if !isTagBearingSection(secName) {
+				return nil
+			}
+
+			parsedTag, parsedValue, isTag := parseTagLine(lh.Text)
+			if !isTag {
+				return nil
+			}
+
+			if _, ok := ParsePatchTagNumber(parsedTag); !ok {
+				return nil
+			}
+
+			matched, matchErr := doublestar.Match(pattern, parsedValue)
+			if matchErr != nil {
+				return fmt.Errorf("failed to match glob pattern %#q against %#q:\n%w", pattern, parsedValue, matchErr)
+			}
+
+			if matched {
+				lh.Remove()
+
+				removed++
+			}
+
 			return nil
-		}
-
-		matched, matchErr := doublestar.Match(pattern, tagLine.Value)
-		if matchErr != nil {
-			return fmt.Errorf("failed to match glob pattern %#q against %#q:\n%w", pattern, tagLine.Value, matchErr)
-		}
-
-		if matched {
-			ctx.RemoveLine()
-
-			removed++
-		}
-
-		return nil
+		})
 	})
 
 	return removed, err
@@ -739,17 +654,28 @@ func (s *Spec) GetHighestPatchTagNumber() (int, error) {
 	highest := -1
 	unnumberedCount := 0
 
-	err := s.VisitTags(func(tagLine *TagLine, _ *Context) error {
-		num, isPatchTag := ParsePatchTagNumber(tagLine.Tag)
-		if isPatchTag && num > highest {
-			highest = num
-		} else if strings.EqualFold(tagLine.Tag, "patch") {
-			// Bare "Patch:" with no numeric suffix — RPM auto-numbers these
-			// sequentially starting from 0.
-			unnumberedCount++
-		}
+	err := s.inspectTree(func(tree *specTree) error {
+		return tree.VisitAllLines(func(secName, _ string, lh *lineHandle) error {
+			if !isTagBearingSection(secName) {
+				return nil
+			}
 
-		return nil
+			parsedTag, _, isTag := parseTagLine(lh.Text)
+			if !isTag {
+				return nil
+			}
+
+			num, isPatchTag := ParsePatchTagNumber(parsedTag)
+			if isPatchTag && num > highest {
+				highest = num
+			} else if strings.EqualFold(parsedTag, "patch") {
+				// Bare "Patch:" with no numeric suffix — RPM auto-numbers these
+				// sequentially starting from 0.
+				unnumberedCount++
+			}
+
+			return nil
+		})
 	})
 
 	// Unnumbered patches occupy slots 0..unnumberedCount-1.
