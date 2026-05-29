@@ -8,9 +8,9 @@ Report per-component change activity and customization detail
 
 Report three independent change-activity signals per component:
 
-  - toml-commits:    commits to the component's source TOML file
-  - customizations:  count of explicit customization items in the config
-  - fp-changes:      commits where the lock file's input-fingerprint changed
+  - toml-commits:         commits to the component's source TOML file
+  - customizations:       count of explicit customization items in the config
+  - fingerprint-changes:  commits where the lock file's input-fingerprint changed
 
 Use this to find which packages get the most attention (for documentation,
 review prioritization, or refactoring planning).

@@ -65,9 +65,9 @@ func NewHistoryCmd() *cobra.Command {
 		Short:   "Report per-component change activity and customization detail",
 		Long: `Report three independent change-activity signals per component:
 
-  - toml-commits:    commits to the component's source TOML file
-  - customizations:  count of explicit customization items in the config
-  - fp-changes:      commits where the lock file's input-fingerprint changed
+  - toml-commits:         commits to the component's source TOML file
+  - customizations:       count of explicit customization items in the config
+  - fingerprint-changes:  commits where the lock file's input-fingerprint changed
 
 Use this to find which packages get the most attention (for documentation,
 review prioritization, or refactoring planning).
@@ -122,6 +122,16 @@ hand-picking entries to document.`,
 	cmd.Flags().StringVar(&options.SharedTomlMode, "shared", sharedTomlModeShow,
 		"How to report rows for components that share a TOML file with others: "+
 			"show (keep row, count is coarse), zero (keep row, force count to 0), omit (drop row).")
+	// Shell completion advertises the valid choices. Note: the MCP tool
+	// schema does not yet derive an `enum` constraint from cobra flag
+	// completion functions (see internal/app/azldev/core/mcp/mcpserver.go),
+	// so MCP agents see this as an unconstrained string until that gap is
+	// closed. Runtime validation happens in [validateSharedTomlMode].
+	_ = cmd.RegisterFlagCompletionFunc("shared",
+		func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+			return []string{sharedTomlModeShow, sharedTomlModeZero, sharedTomlModeOmit},
+				cobra.ShellCompDirectiveNoFileComp
+		})
 	cmd.Flags().BoolVar(&options.IncludeBare, "include-bare", false,
 		"Include components with zero customizations in the output. "+
 			"By default they are hidden -- their config inherits everything from defaults, "+
@@ -181,14 +191,14 @@ type HistoryResult struct {
 	// invocations.
 	CustomizationItems []CustomizationItem `json:"customizationItems,omitempty" table:"-"`
 
-	// FpChanges is the number of commits where the lock file's
+	// FingerprintChanges is the number of commits where the lock file's
 	// input-fingerprint actually changed.
-	FpChanges int `json:"fpChanges"`
+	FingerprintChanges int `json:"fingerprintChanges"`
 
-	// FpChangeDetails is the per-commit metadata for each fingerprint
-	// change counted in [FpChanges] (oldest first). Hidden from the
-	// human-readable table -- use JSON output to consume them (e.g., to
-	// hand-author changelog entries).
+	// FingerprintChangeDetails is the per-commit metadata for each
+	// fingerprint change counted in [FingerprintChanges] (oldest first).
+	// Hidden from the human-readable table -- use JSON output to consume
+	// them (e.g., to hand-author changelog entries).
 	//
 	// Each entry is populated from [sources.FingerprintChange] via an
 	// explicit field-by-field copy in [populateLockMetrics]. The
@@ -198,7 +208,7 @@ type HistoryResult struct {
 	//   - removing a field from [sources.FingerprintChange] /
 	//     [sources.CommitMetadata] surfaces as a compile error at the
 	//     copy site rather than silently dropping changelog metadata.
-	FpChangeDetails []FpChange `json:"fpChangeDetails,omitempty" table:"-"`
+	FingerprintChangeDetails []FingerprintChange `json:"fingerprintChangeDetails,omitempty" table:"-"`
 
 	// HasLock is true when a lock file currently exists for this component.
 	HasLock bool `json:"hasLock,omitempty" table:"-"`
@@ -211,11 +221,11 @@ type HistoryResult struct {
 	ManualBump int `json:"manualBump,omitempty" table:"-"`
 }
 
-// FpChange is the wire-level representation of one lock-file fingerprint
-// change for the [HistoryResult.FpChangeDetails] field. It mirrors the
-// fields of [sources.FingerprintChange] (and its embedded
-// [sources.CommitMetadata]) that consumers of `azldev component history`
-// JSON output care about.
+// FingerprintChange is the wire-level representation of one lock-file
+// fingerprint change for the [HistoryResult.FingerprintChangeDetails]
+// field. It mirrors the fields of [sources.FingerprintChange] (and its
+// embedded [sources.CommitMetadata]) that consumers of `azldev component
+// history` JSON output care about.
 //
 // The fields are copied explicitly in [populateLockMetrics] rather than
 // embedding [sources.FingerprintChange] directly so that:
@@ -223,7 +233,7 @@ type HistoryResult struct {
 //   - dropping a field from the synthetic-history source type produces a
 //     compile error at the copy site instead of silently emptying the
 //     downstream changelog data.
-type FpChange struct {
+type FingerprintChange struct {
 	Hash           string `json:"hash"`
 	Author         string `json:"author"`
 	AuthorEmail    string `json:"authorEmail"`
@@ -568,7 +578,7 @@ func collectUniqueTomlRelPathsFromStubs(repoRoot string, stubs []historyStub) []
 
 // buildHistoryResult assembles a single [HistoryResult] for a stub. The
 // stub already carries the precomputed customization items; this function
-// fills in the git-driven metrics (toml-commits via cache, fp-changes via
+// fills in the git-driven metrics (toml-commits via cache, fingerprint-changes via
 // per-call repo).
 func buildHistoryResult(
 	env *azldev.Env,
@@ -638,7 +648,8 @@ func populateTomlMetrics(
 	result.LatestCommit = metrics.latest
 }
 
-// populateLockMetrics fills in FpChanges, HasLock, HasImport, ManualBump.
+// populateLockMetrics fills in FingerprintChanges, FingerprintChangeDetails,
+// HasLock, HasImport, ManualBump.
 // All failure paths are deliberately swallowed: missing/unreadable lock
 // state is "no data", not a hard error.
 func populateLockMetrics(
@@ -673,7 +684,7 @@ func populateLockMetrics(
 		return
 	}
 
-	fpChanges, err := func() ([]sources.FingerprintChange, error) {
+	fingerprintChanges, err := func() ([]sources.FingerprintChange, error) {
 		// Open a fresh repo for this call -- go-git's *Repository is not
 		// safe for concurrent use. Opening is cheap (just reads .git/config).
 		repo, openErr := git.OpenProjectRepo(env.ProjectDir())
@@ -689,24 +700,24 @@ func populateLockMetrics(
 		return
 	}
 
-	filtered := filterChangesSince(fpChanges, since)
-	result.FpChanges = len(filtered)
-	result.FpChangeDetails = toFpChanges(filtered)
+	filtered := filterChangesSince(fingerprintChanges, since)
+	result.FingerprintChanges = len(filtered)
+	result.FingerprintChangeDetails = toFingerprintChanges(filtered)
 }
 
-// toFpChanges copies each [sources.FingerprintChange] into the local
-// [FpChange] wire type by naming every field explicitly. Removing a
-// field from [sources.FingerprintChange] or [sources.CommitMetadata]
-// trips a compile error here, alerting us to a quietly-shrunk changelog
-// payload.
-func toFpChanges(changes []sources.FingerprintChange) []FpChange {
+// toFingerprintChanges copies each [sources.FingerprintChange] into the
+// local [FingerprintChange] wire type by naming every field explicitly.
+// Removing a field from [sources.FingerprintChange] or
+// [sources.CommitMetadata] trips a compile error here, alerting us to a
+// quietly-shrunk changelog payload.
+func toFingerprintChanges(changes []sources.FingerprintChange) []FingerprintChange {
 	if len(changes) == 0 {
 		return nil
 	}
 
-	out := make([]FpChange, len(changes))
+	out := make([]FingerprintChange, len(changes))
 	for i, change := range changes {
-		out[i] = FpChange{
+		out[i] = FingerprintChange{
 			Hash:           change.Hash,
 			Author:         change.Author,
 			AuthorEmail:    change.AuthorEmail,
@@ -946,18 +957,20 @@ func appendSourceFileItems(
 }
 
 // sortHistoryResults orders results "most-customized first": highest
-// customization count first, then fp-changes, then alphabetical by name.
+// customization count first, then fingerprint-changes, then alphabetical by name.
+// sortHistoryResults orders results "most-customized first": highest
+// customization count first, then fingerprint-changes, then alphabetical by name.
 // Customizations is the most direct signal of human attention paid to a
-// component (and it's deterministic / fast); fp-changes and the name tie-
-// break it for stable output.
+// component (and it's deterministic / fast); fingerprint-changes and the name
+// tie-break it for stable output.
 func sortHistoryResults(results []HistoryResult) {
 	sort.SliceStable(results, func(left, right int) bool {
 		if results[left].Customizations != results[right].Customizations {
 			return results[left].Customizations > results[right].Customizations
 		}
 
-		if results[left].FpChanges != results[right].FpChanges {
-			return results[left].FpChanges > results[right].FpChanges
+		if results[left].FingerprintChanges != results[right].FingerprintChanges {
+			return results[left].FingerprintChanges > results[right].FingerprintChanges
 		}
 
 		return results[left].Name < results[right].Name
@@ -1008,7 +1021,7 @@ func renderCardView(writer io.Writer, result HistoryResult) {
 
 	fmt.Fprintf(writer, "  TOML commits:   %d%s%s\n", result.TomlCommits, sharedNote, latestNote)
 	fmt.Fprintf(writer, "  Customizations: %d\n", result.Customizations)
-	fmt.Fprintf(writer, "  Fp changes:     %d\n", result.FpChanges)
+	fmt.Fprintf(writer, "  FP changes:     %d\n", result.FingerprintChanges)
 
 	if result.HasLock {
 		fmt.Fprintf(writer,

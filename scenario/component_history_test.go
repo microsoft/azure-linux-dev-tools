@@ -125,13 +125,14 @@ func TestComponentHistory_Smoke(t *testing.T) {
 	assert.NotEmpty(t, curl.TomlPath, "curl's source TOML path should be populated")
 	assert.GreaterOrEqual(t, curl.TomlCommits, 1, "curl's TOML should have at least one commit")
 
-	// fp-change details: should include both lock commits with full author /
-	// message metadata sourced from the synthetic-distgit FingerprintChange type.
-	require.Equal(t, 2, curl.FpChanges, "expected two fingerprint changes")
-	require.Len(t, curl.FpChangeDetails, curl.FpChanges,
-		"FpChangeDetails length must match FpChanges count")
+	// Fingerprint-change details: should include both lock commits with full
+	// author / message metadata sourced from the synthetic-distgit
+	// FingerprintChange type via the local DTO copy.
+	require.Equal(t, 2, curl.FingerprintChanges, "expected two fingerprint changes")
+	require.Len(t, curl.FingerprintChangeDetails, curl.FingerprintChanges,
+		"FingerprintChangeDetails length must match FingerprintChanges count")
 
-	for i, change := range curl.FpChangeDetails {
+	for i, change := range curl.FingerprintChangeDetails {
 		assert.NotEmpty(t, change.Hash, "change[%d].Hash should be populated", i)
 		assert.NotEmpty(t, change.Author, "change[%d].Author should be populated", i)
 		assert.NotEmpty(t, change.Message, "change[%d].Message should be populated", i)
