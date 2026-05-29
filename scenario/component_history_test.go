@@ -120,10 +120,18 @@ func TestComponentHistory_Smoke(t *testing.T) {
 	require.NotContains(t, rm, "bash", "bare component should be filtered out by default")
 
 	curl := rm["curl"]
-	assert.GreaterOrEqual(t, curl.Customizations, 1, "curl should have at least one customization")
-	assert.NotEmpty(t, curl.CustomizationItems, "curl should have customization items in JSON output")
+	// curl's config sets exactly two fingerprintable fields: Build.With and the
+	// explicit Spec.SourceType=local. Pin the exact count and Kinds so a
+	// regression in either collector (or an accidental extra emission) is caught
+	// rather than masked by a loose >= comparison.
+	assert.Equal(t, 2, curl.Customizations, "curl should have exactly two customizations")
+	assert.ElementsMatch(t, []string{"build.with", "spec.source-type"}, customizationKinds(curl),
+		"curl's customization Kinds should be exactly build.with and spec.source-type")
 	assert.NotEmpty(t, curl.TomlPath, "curl's source TOML path should be populated")
-	assert.GreaterOrEqual(t, curl.TomlCommits, 1, "curl's TOML should have at least one commit")
+	// Both components are defined in the single azldev.toml, so it is shared and
+	// the one initial commit that created it is the only one touching it.
+	assert.True(t, curl.SharedToml, "curl shares azldev.toml with bash")
+	assert.Equal(t, 1, curl.TomlCommits, "only the initial commit touched the shared azldev.toml")
 
 	// Fingerprint-change details: should include both lock commits with full
 	// author / message metadata sourced from the synthetic-distgit
@@ -161,4 +169,47 @@ func TestComponentHistory_Smoke(t *testing.T) {
 	require.Contains(t, rm, "bash",
 		"explicit positional name should override --include-bare and return the row")
 	assert.Equal(t, 0, rm["bash"].Customizations)
+
+	// Explicit single-component query for curl: even though curl shares its TOML,
+	// being the only surviving row means FingerprintChangeDetails is retained
+	// (the multi-result suppression only kicks in with >1 row).
+	results = runHistory(t, azldevBin, projectDir, "curl")
+	rm = historyMap(results)
+	require.Contains(t, rm, "curl")
+	require.Len(t, results, 1, "explicit single-component query returns exactly one row")
+	assert.Len(t, rm["curl"].FingerprintChangeDetails, 2,
+		"single surviving row retains its FingerprintChangeDetails")
+
+	// --shared=omit without an explicit selection drops shared-TOML rows. Both
+	// curl and bash live in the shared azldev.toml, so the omit run is empty.
+	results = runHistory(t, azldevBin, projectDir, "-a", "--include-bare", "--shared=omit")
+	rm = historyMap(results)
+	assert.NotContains(t, rm, "curl", "--shared=omit drops shared-TOML rows without explicit selection")
+	assert.NotContains(t, rm, "bash", "--shared=omit drops shared-TOML rows without explicit selection")
+
+	// An explicit positional selection overrides --shared=omit: the user asked
+	// for curl by name, so they get it back even though its TOML is shared.
+	results = runHistory(t, azldevBin, projectDir, "curl", "--shared=omit")
+	rm = historyMap(results)
+	require.Contains(t, rm, "curl",
+		"explicit selection overrides --shared=omit")
+}
+
+// customizationKinds returns the set of CustomizationItem Kinds in a result,
+// deduplicated, for order-independent assertions.
+func customizationKinds(r componentcmds.HistoryResult) []string {
+	seen := make(map[string]bool, len(r.CustomizationItems))
+	kinds := make([]string, 0, len(r.CustomizationItems))
+
+	for _, item := range r.CustomizationItems {
+		if seen[item.Kind] {
+			continue
+		}
+
+		seen[item.Kind] = true
+
+		kinds = append(kinds, item.Kind)
+	}
+
+	return kinds
 }

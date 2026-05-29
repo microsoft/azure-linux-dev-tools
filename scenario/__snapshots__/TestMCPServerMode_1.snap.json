@@ -282,7 +282,7 @@
       },
       "since": {
        "default": "",
-       "description": "Only count commits newer than this (Go duration syntax, e.g. 720h). Empty = all history.",
+       "description": "Only count commits newer than this (Go duration syntax, e.g. 720h). Empty = all history. Note: toml-commits filter on commit date; fingerprint-changes filter on author date.",
        "type": "string"
       },
       "spec-path": {

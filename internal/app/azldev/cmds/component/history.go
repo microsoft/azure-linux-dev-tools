@@ -125,7 +125,8 @@ hand-picking entries to document.`,
 	components.AddComponentFilterOptionsToCommand(cmd, &options.ComponentFilter)
 
 	cmd.Flags().StringVar(&options.Since, "since", "",
-		"Only count commits newer than this (Go duration syntax, e.g. 720h). Empty = all history.")
+		"Only count commits newer than this (Go duration syntax, e.g. 720h). Empty = all history. "+
+			"Note: toml-commits filter on commit date; fingerprint-changes filter on author date.")
 	cmd.Flags().StringVar(&options.SharedTomlMode, "shared", sharedTomlModeShow,
 		"How to report rows for components that share a TOML file with others: "+
 			"show (keep row, count is coarse), omit (drop row).")
@@ -165,6 +166,10 @@ type CustomizationItem struct {
 }
 
 // HistoryResult is the per-component output row.
+//
+// This is the stable wire contract that downstream tooling pins against:
+// adding a field is non-breaking; renaming or removing one is a breaking
+// change. Keep JSON tags stable.
 type HistoryResult struct {
 	// Name of the component. We intentionally do *not* tag this with
 	// 'sortkey' -- the reflectable table writer would otherwise re-sort
@@ -218,6 +223,9 @@ type HistoryResult struct {
 	//   - removing a field from [sources.FingerprintChange] /
 	//     [sources.CommitMetadata] surfaces as a compile error at the
 	//     copy site rather than silently dropping changelog metadata.
+	// The compile-error guard is one-directional (it catches REMOVED
+	// upstream fields); a NEWLY ADDED upstream field is caught instead by
+	// TestFingerprintChangeDTOMirrorsSource.
 	FingerprintChangeDetails []FingerprintChange `json:"fingerprintChangeDetails,omitempty" table:"-"`
 
 	// HasLock is true when a lock file currently exists for this component.
@@ -227,8 +235,10 @@ type HistoryResult struct {
 	// import-commit (i.e., the component was forked from upstream).
 	HasImport bool `json:"hasImport,omitempty" table:"-"`
 
-	// ManualBump is the lock file's manual-bump counter.
-	ManualBump int `json:"manualBump,omitempty" table:"-"`
+	// ManualBump is the lock file's manual-bump counter. Always emitted
+	// (no omitempty) so a real bump of 0 isn't indistinguishable from an
+	// absent field; pair it with HasLock to tell "no lock" from "bump 0".
+	ManualBump int `json:"manualBump" table:"-"`
 
 	// Warnings collects per-component diagnostics for failure paths that
 	// were swallowed to keep the overall report rendering. Empty when no
@@ -304,20 +314,13 @@ func ComponentHistory(env *azldev.Env, options *HistoryOptions) ([]HistoryResult
 	// with zero customizations before any expensive work runs -- unless
 	// the user explicitly named components, in which case they get what
 	// they asked for regardless.
-	effectiveIncludeBare := options.IncludeBare || hasExplicitComponentSelection(&options.ComponentFilter)
+	explicit := hasExplicitComponentSelection(&options.ComponentFilter)
+	effectiveIncludeBare := options.IncludeBare || explicit
 
 	stubs := buildHistoryStubs(env, comps.Components(), effectiveIncludeBare)
 	if len(stubs) == 0 {
 		return nil, nil
 	}
-
-	// FingerprintChangeDetails is potentially the largest field in the
-	// payload (one entry per fingerprint change per component, each with
-	// commit metadata) and JSON consumers on -a runs at azurelinux scale
-	// would otherwise get multi-MB responses. The details are intended for
-	// drilling into a single component to author a changelog, so only
-	// emit them when exactly one component is being reported on.
-	includeDetails := len(stubs) == 1
 
 	tomlSharing := countTomlSharing(env.Config().Components)
 
@@ -351,7 +354,7 @@ func ComponentHistory(env *azldev.Env, options *HistoryOptions) ([]HistoryResult
 			// ctx is identical (parmap derives it from workerEnv) and
 			// unused here. Mirrors how render.go does this.
 			return buildHistoryResult( //nolint:contextcheck // env carries the ctx
-				workerEnv, stub, ctx, tomlSharing, tomlCache, since, options.SharedTomlMode, includeDetails,
+				workerEnv, stub, ctx, tomlSharing, tomlCache, since, options.SharedTomlMode,
 			)
 		},
 	)
@@ -364,12 +367,29 @@ func ComponentHistory(env *azldev.Env, options *HistoryOptions) ([]HistoryResult
 		}
 
 		// --shared=omit drops the row entirely for components whose source
-		// TOML is shared with at least one other component.
-		if options.SharedTomlMode == sharedTomlModeOmit && parmapRes.Value.SharedToml {
+		// TOML is shared with at least one other component -- unless the user
+		// explicitly named it, in which case they get the row regardless
+		// (mirroring the --include-bare override above; sharing is a
+		// presentation default, not the user's intent).
+		if options.SharedTomlMode == sharedTomlModeOmit && parmapRes.Value.SharedToml && !explicit {
 			continue
 		}
 
 		results = append(results, parmapRes.Value)
+	}
+
+	// FingerprintChangeDetails is potentially the largest field in the
+	// payload (one entry per fingerprint change per component, each with
+	// commit metadata); JSON consumers on -a runs at azurelinux scale would
+	// otherwise get multi-MB responses. The details exist for drilling into
+	// a single component to author a changelog, so keep them only when
+	// exactly one component survives filtering. This is decided AFTER the
+	// --shared=omit drop above so a single surviving row always carries its
+	// details (the same len()==1 predicate the card view keys off).
+	if len(results) != 1 {
+		for i := range results {
+			results[i].FingerprintChangeDetails = nil
+		}
 	}
 
 	sortHistoryResults(results)
@@ -628,7 +648,6 @@ func buildHistoryResult(
 	tomlCache map[string]tomlMetrics,
 	since time.Time,
 	sharedMode string,
-	includeDetails bool,
 ) HistoryResult {
 	result := HistoryResult{
 		Name:               stub.component.GetName(),
@@ -637,7 +656,7 @@ func buildHistoryResult(
 	}
 
 	populateTomlMetrics(stub.component, ctx, tomlSharing, tomlCache, sharedMode, &result)
-	populateLockMetrics(env, stub.component, ctx, since, includeDetails, &result)
+	populateLockMetrics(env, stub.component, ctx, since, &result)
 
 	return result
 }
@@ -695,18 +714,19 @@ func populateTomlMetrics(
 
 // populateLockMetrics fills in FingerprintChanges, FingerprintChangeDetails,
 // HasLock, HasImport, ManualBump.
-// All failure paths are deliberately swallowed: missing/unreadable lock
-// state is "no data", not a hard error.
+// A missing lock file is "no data", not an error; a genuine read failure
+// (corrupt/unparseable lock) is surfaced via result.Warnings so a
+// tomlCommits/fingerprintChanges of 0 can't be silently confused with a
+// real failure.
 //
-// When includeDetails is false the per-commit FingerprintChange slice is
-// dropped before being copied into the result. The count is still
-// populated. See [ComponentHistory] for the rationale.
+// FingerprintChangeDetails is always populated here; the caller strips it
+// when more than one component is reported. See [ComponentHistory] for the
+// rationale.
 func populateLockMetrics(
 	env *azldev.Env,
 	comp components.Component,
 	ctx *historyContext,
 	since time.Time,
-	includeDetails bool,
 	result *HistoryResult,
 ) {
 	name := comp.GetName()
@@ -714,10 +734,24 @@ func populateLockMetrics(
 	lockReader := env.LockReader()
 	if lockReader != nil {
 		lock, lockErr := lockReader.Get(name)
-		if lockErr == nil && lock != nil {
+
+		switch {
+		case lockErr == nil && lock != nil:
 			result.HasLock = true
 			result.HasImport = lock.ImportCommit != ""
 			result.ManualBump = lock.ManualBump
+		case lockErr != nil:
+			// Distinguish a missing lock ("no data", expected) from a real
+			// read failure (corrupt/unparseable lock). Mirror the store's
+			// own not-found detection (Exists) since the wrapped fs error
+			// isn't reliably errors.Is(os.ErrNotExist)-comparable. Only a
+			// genuine failure earns a warning, so a fingerprintChanges of 0
+			// can't be silently confused with a load error.
+			exists, existsErr := lockReader.Exists(name)
+			if existsErr != nil || exists {
+				result.Warnings = append(result.Warnings,
+					fmt.Sprintf("reading lock file for %q: %v", name, lockErr))
+			}
 		}
 	}
 
@@ -763,10 +797,7 @@ func populateLockMetrics(
 
 	filtered := filterChangesSince(fingerprintChanges, since)
 	result.FingerprintChanges = len(filtered)
-
-	if includeDetails {
-		result.FingerprintChangeDetails = toFingerprintChanges(filtered)
-	}
+	result.FingerprintChangeDetails = toFingerprintChanges(filtered)
 }
 
 // toFingerprintChanges copies each [sources.FingerprintChange] into the
@@ -808,7 +839,9 @@ func filterChangesSince(changes []sources.FingerprintChange, since time.Time) []
 	filtered := make([]sources.FingerprintChange, 0, len(changes))
 
 	for _, change := range changes {
-		if change.Timestamp >= cutoff {
+		// Strict '>' mirrors 'git log --since', which excludes the boundary
+		// second, so the two metrics agree on the cutoff edge.
+		if change.Timestamp > cutoff {
 			filtered = append(filtered, change)
 		}
 	}
@@ -963,7 +996,9 @@ func appendSpecItems(
 		})
 	}
 
-	if spec.UpstreamDistro.Name != "" {
+	// Both Name and Version are real build inputs (only Snapshot carries
+	// fingerprint:"-"), so a version-only pin is a genuine customization.
+	if spec.UpstreamDistro.Name != "" || spec.UpstreamDistro.Version != "" {
 		items = append(items, CustomizationItem{
 			Kind:  "spec.upstream-distro",
 			Value: spec.UpstreamDistro.String(),
@@ -1022,8 +1057,6 @@ func appendSourceFileItems(
 
 // sortHistoryResults orders results "most-customized first": highest
 // customization count first, then fingerprint-changes, then alphabetical by name.
-// sortHistoryResults orders results "most-customized first": highest
-// customization count first, then fingerprint-changes, then alphabetical by name.
 // Customizations is the most direct signal of human attention paid to a
 // component (and it's deterministic / fast); fingerprint-changes and the name
 // tie-break it for stable output.
@@ -1080,7 +1113,9 @@ func renderCardView(writer io.Writer, result HistoryResult) {
 
 	latestNote := ""
 	if !result.LatestCommit.IsZero() {
-		latestNote = ", latest " + result.LatestCommit.Format(time.DateOnly)
+		// Render in UTC so the same commit shows the same date regardless of
+		// the host's local timezone.
+		latestNote = ", latest " + result.LatestCommit.UTC().Format(time.DateOnly)
 	}
 
 	fmt.Fprintf(writer, "  TOML commits:   %d%s%s\n", result.TomlCommits, sharedNote, latestNote)

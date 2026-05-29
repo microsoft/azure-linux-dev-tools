@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/stretchr/testify/assert"
 )
@@ -122,4 +123,117 @@ func TestCustomizationCollectorsCoverEveryFingerprintableField(t *testing.T) {
 			"expectedCovered entry %q does not correspond to a fingerprint-relevant "+
 				"field. Was the field removed, renamed, or tagged `fingerprint:\"-\"`?", key)
 	}
+}
+
+// TestCollectCustomizationsEmitsEveryKind complements the reflection-based
+// coverage test above: that test proves every fingerprintable field is
+// *categorized*, this one proves the collectors are actually *wired* by
+// invoking collectCustomizations on a config with every customizable field
+// populated and asserting each expected Kind appears. Deleting a collector
+// call or emptying a collector body turns this red (the reflection test
+// alone would stay green).
+func TestCollectCustomizationsEmitsEveryKind(t *testing.T) {
+	t.Parallel()
+
+	config := projectconfig.ComponentConfig{
+		Overlays: []projectconfig.ComponentOverlay{
+			{Type: projectconfig.ComponentOverlayAddSpecTag, Tag: "Release", Value: "1"},
+		},
+		Build: projectconfig.ComponentBuildConfig{
+			With:      []string{"feature"},
+			Without:   []string{"docs"},
+			Defines:   map[string]string{"macro": "value"},
+			Undefines: []string{"othermacro"},
+			Check:     projectconfig.CheckConfig{Skip: true, SkipReason: "flaky"},
+		},
+		Spec: projectconfig.SpecSource{
+			SourceType:     projectconfig.SpecSourceTypeUpstream,
+			UpstreamName:   "different-name",
+			UpstreamCommit: "abc1234",
+			UpstreamDistro: projectconfig.DistroReference{Name: "fedora", Version: "43"},
+		},
+		Release: projectconfig.ReleaseConfig{
+			Calculation: projectconfig.ReleaseCalculationAutorelease,
+		},
+		Render: projectconfig.ComponentRenderConfig{SkipFileFilter: true},
+		Packages: map[string]projectconfig.PackageConfig{
+			"libfoo": {},
+		},
+		SourceFiles: []projectconfig.SourceFileReference{
+			{Filename: "extra.tar.gz"},
+		},
+	}
+
+	wantKinds := []string{
+		"spec-add-tag",
+		"build.with",
+		"build.without",
+		"build.defines",
+		"build.undefines",
+		"build.check.skip",
+		"spec.source-type",
+		"spec.upstream-commit",
+		"spec.upstream-name",
+		"spec.upstream-distro",
+		"release.calculation",
+		"render.skip-file-filter",
+		"packages",
+		"source-files",
+	}
+
+	items := collectCustomizations("comp", &config)
+
+	gotKinds := make(map[string]bool, len(items))
+	for _, item := range items {
+		gotKinds[item.Kind] = true
+	}
+
+	for _, kind := range wantKinds {
+		assert.Truef(t, gotKinds[kind],
+			"collectCustomizations did not emit an item of Kind %q; "+
+				"a collector for it may be unwired or its trigger condition wrong", kind)
+	}
+}
+
+// TestFingerprintChangeDTOMirrorsSource guards the direction the explicit
+// field-by-field copy in [toFingerprintChanges] cannot: a NEW field added to
+// [sources.FingerprintChange] / [sources.CommitMetadata] would compile fine
+// but silently never reach JSON consumers. This asserts the local DTO carries
+// a field for every exported source field (matched by name).
+func TestFingerprintChangeDTOMirrorsSource(t *testing.T) {
+	t.Parallel()
+
+	dtoFields := exportedFieldNames(reflect.TypeFor[FingerprintChange]())
+
+	for name := range exportedFieldNames(reflect.TypeFor[sources.FingerprintChange]()) {
+		assert.Containsf(t, dtoFields, name,
+			"sources.FingerprintChange field %q has no counterpart in the local "+
+				"FingerprintChange DTO; add it (and to toFingerprintChanges) so it "+
+				"reaches JSON consumers, or it is silently dropped.", name)
+	}
+}
+
+// exportedFieldNames returns the set of exported field names of a struct type,
+// flattening anonymously-embedded structs (e.g. CommitMetadata) into the
+// parent's namespace.
+func exportedFieldNames(t reflect.Type) map[string]bool {
+	names := make(map[string]bool)
+
+	for i := range t.NumField() {
+		field := t.Field(i)
+
+		if field.Anonymous && field.Type.Kind() == reflect.Struct {
+			for name := range exportedFieldNames(field.Type) {
+				names[name] = true
+			}
+
+			continue
+		}
+
+		if field.IsExported() {
+			names[field.Name] = true
+		}
+	}
+
+	return names
 }
