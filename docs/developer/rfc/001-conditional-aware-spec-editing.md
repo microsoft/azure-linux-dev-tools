@@ -547,6 +547,89 @@ Visit can be reimplemented as a tree walk emitting the same targets, or kept as-
 | **Long-term payoff** | Moderate — still doing line surgery | High — structural operations become trivial |
 | **Ceiling** | Hits limits when operations need to restructure conditionals | No structural ceiling |
 
+## Macro hoisting algorithm (issue #203)
+
+When `spec-remove-section` / `spec-remove-subpackage` deletes a block, any `%define`/`%global` inside it is deleted too. If a *surviving* section still references that macro, the build breaks with a dangling `%{...}`. The tree parser (PR #215) added a first cut at hoisting: for each macro found inside a removed section, if its name is referenced outside the removed subtrees, splice the `%define` line in just before the first removed top-level block.
+
+That first cut is correct only for the simplest case (a single, self-contained macro). PR review surfaced a family of edge cases the algorithm must handle before it can be trusted. This section specifies the target algorithm.
+
+### Worked example: the transitive-dependency bug
+
+```spec
+%package tests
+%define testroot %{_libdir}/foo
+%define testsdir %{testroot}/tests
+
+%files tests
+%{testsdir}/*
+
+%install
+mkdir -p %{buildroot}%{testsdir}
+```
+
+Removing `%package tests` (and its `%files`/`%description`) must keep `%install` working. The current logic hoists `testsdir` (referenced by `%install`) but **not** `testroot` — `testroot`'s only reference lives in `%define testsdir`, which is itself inside the removed subtree, so the "referenced outside" check skips it. Result: a hoisted `%define testsdir %{testroot}/tests` with `testroot` undefined. The exact silent breakage #203 set out to fix, displaced one link down the chain.
+
+### Edge cases the algorithm must handle
+
+| # | Edge case | Failure if ignored | Handling |
+|---|-----------|--------------------|----------|
+| 1 | **Transitive dependency** — hoisted macro references another removed macro | Dangling `%{inner}` reference | Compute transitive closure: when hoisting `X`, also hoist any removed macro `X`'s body references, repeating to a fixed point |
+| 2 | **Dependency cycle / self-reference** — `%define a %{b}` / `%define b %{a}`, or `%define a %{a}_x` | Infinite loop in closure walk | Track a `visited` set keyed by macro name; never enqueue a name twice |
+| 3 | **Declaration order after closure** — dependency hoisted after its dependent, critical for `%global` (eager expansion) | `%global` expands against an undefined macro at definition time | Emit the closure set in original declaration order (the order `collectMacrosInSections` yields), not discovery order |
+| 4 | **Hoist target too early in file** — a survivor *above* the removed block references the macro | `%define` lands after its first use; undefined at parse time | Hoist to the **end of the preamble** (after the last preamble tag, before the first real section), not "just before the first removed block" |
+| 5 | **Duplicate / shadowing definitions** — same name in two removed subpackages, or name already defined in the preamble | Duplicate `%define` at root, or a subpackage value clobbers the preamble value for all survivors | Dedup hoisted names; do **not** hoist a name that already has a surviving definition (the survivor reference resolves to the existing one) |
+| 6 | **`%undefine` in removed scope** — `%define foo` paired with a later `%undefine foo` inside the same removed block | Hoisting makes `foo` globally defined when it was meant to be scoped/torn down | Treat `%define`+`%undefine` as a unit: do not hoist a macro that is `%undefine`d within the removed set |
+| 7 | **Bare-form reference over-match** — `macroReferencePattern`'s bare `%name\b` arm matches `%test` inside `%test-suite` | Unnecessary (usually harmless) hoist; combined with #5 could clobber | Tighten the bare arm, or accept over-hoisting as safe except where it collides with an existing definition (#5 guard covers the dangerous case) |
+
+`%undefine` (#6) is currently invisible to the parser — `isMacroDefLine` recognizes only `%define`/`%global`, so `%undefine` parses as plain text. Handling #6 requires detecting `%undefine` lines within the removed set.
+
+### Target algorithm
+
+```
+hoistReferencedMacros(root, removedSections):
+    removedSet   ← identity set of all removed section blocks
+    removedMacros ← collectMacrosInSections(removedSections)   # declaration order
+    undefined    ← names %undefine'd within removedSet          # edge case 6
+    survivingDefs ← macro names with a definition outside removedSet  # edge case 5
+
+    # Seed: macros directly referenced by surviving content.
+    toHoist ← ordered set
+    visited ← {}
+    queue   ← [ m in removedMacros if isReferencedOutside(root, m.Name, removedSet) ]
+
+    # Fixed-point closure over intra-removed dependencies (edge cases 1, 2).
+    while queue not empty:
+        m ← queue.pop()
+        if m.Name in visited: continue
+        visited.add(m.Name)
+
+        if m.Name in undefined:        continue   # edge case 6
+        if m.Name in survivingDefs:    continue   # edge case 5 (already defined)
+        toHoist.add(m)
+
+        for ref in macroNamesReferencedBy(m.Body):
+            if ref is the name of some macro in removedMacros and ref not in visited:
+                queue.push(that macro)
+
+    if toHoist empty: return
+
+    dedup toHoist by name, keep first declaration                 # edge case 5
+    order toHoist by original declaration order                   # edge case 3
+    insert toHoist at end-of-preamble                             # edge case 4
+```
+
+Key properties:
+
+- **Closure, not single-pass** — fixes the transitive bug; the `visited` set makes it terminate on cycles.
+- **Declaration-order emission** — safe for both lazy `%define` and eager `%global`.
+- **Preamble-end target** — correct regardless of where the surviving reference sits in the file.
+- **Conservative on conflicts** — never overwrites a definition a survivor already sees; never resurrects a macro the author explicitly `%undefine`d in-scope.
+
+### Out of scope (documented limitations)
+
+- **Macros defined via macro expansion** (`%{expand:%define ...}`, `%{lua:...}`) are invisible to the static scan — same fundamental limitation as macro-generated sections.
+- **Conditional definitions** — a macro defined only inside one branch of a `%if` within the removed set is hoisted unconditionally if referenced; we do not reconstruct the guarding condition. Acceptable because the alternative (no hoist) is strictly worse, but worth noting.
+
 ## Open questions
 
 1. Which approach (enriched metadata vs structural tree) is the right level of ambition given the current and projected demand for spec editing features?
@@ -557,3 +640,5 @@ Visit can be reimplemented as a tree walk emitting the same targets, or kept as-
 6. How should operations handle sections inside `%else` branches? Should `FindSection` return all matches (both branches), or require the caller to specify which branch?
 7. Should macro-generated sections (from `%fontpkg`, `%ghc_lib_subpackage`, etc.) be documented as an explicit limitation in the overlay user guide, with guidance to use `spec-search-replace` for those cases?
 8. Should the `inContinuation` fix (problem 6) ship as a standalone PR before the structural model work, since it's independent and low-risk?
+9. Should macro hoisting (#203) be on-by-default or opt-in? "No magic" argues for an explicit `hoist-macros = [...]` list; ergonomics argue for on-by-default (the leak is usually discovered only via a build failure). Proposed compromise: on-by-default with a log line per hoist, plus an optional override list.
+10. Should section/branch selection expose a mode enum (`First` / `All` / `SpecificN` / `RequireUnique`) for read and write operations, and should selection be by document order or by branch condition? (Condition-based selection requires macro evaluation we don't have.)

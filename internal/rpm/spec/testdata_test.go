@@ -5,6 +5,7 @@ package spec_test
 
 import (
 	"bytes"
+	"log/slog"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
@@ -562,4 +563,153 @@ func TestTestdataRemoveSubpackageDoesNotHoistUnreferencedMacro(t *testing.T) {
 	// Output must re-parse cleanly.
 	_, err := spec.OpenSpec(bytes.NewReader([]byte(out)))
 	require.NoError(t, err, "spec must re-parse after subpackage removal")
+}
+
+// TestTestdataRemoveSubpackageHoistsTransitiveMacro covers the transitive
+// macro-hoisting case. The `tests` subpackage defines a chain
+// `%define testroot ...` / `%define testsdir %{testroot}/...`, and only the
+// outer `%{testsdir}` is referenced from the surviving `%install`.
+//
+// Required behavior: BOTH macros must be hoisted (not just `testsdir`), in
+// declaration order, before `%install`. Hoisting only `testsdir` would leave a
+// dangling `%{testroot}` reference in the hoisted definition.
+func TestTestdataRemoveSubpackageHoistsTransitiveMacro(t *testing.T) {
+	specObj := openFixture(t, "subpackage-define-transitive.spec")
+
+	require.NoError(t, specObj.RemoveSubpackage("tests"))
+
+	out := serializeSpec(t, specObj)
+	outLines := strings.Split(out, "\n")
+
+	rootLine := "%define testroot %{_libdir}/%{name}"
+	dirLine := "%define testsdir %{testroot}/tests-src"
+
+	assert.True(t, hasLine(outLines, rootLine),
+		"inner macro testroot must be hoisted transitively, not dropped")
+	assert.True(t, hasLine(outLines, dirLine),
+		"outer macro testsdir must be hoisted")
+
+	// Declaration order must be preserved: testroot before testsdir.
+	rootIdx := lineIndex(outLines, rootLine)
+	dirIdx := lineIndex(outLines, dirLine)
+	installIdx := lineIndex(outLines, "%install")
+
+	require.GreaterOrEqual(t, rootIdx, 0)
+	require.GreaterOrEqual(t, dirIdx, 0)
+	require.GreaterOrEqual(t, installIdx, 0)
+
+	assert.Less(t, rootIdx, dirIdx,
+		"testroot must precede testsdir so the dependency resolves")
+	assert.Less(t, dirIdx, installIdx,
+		"hoisted macros must precede %%install")
+
+	// Subpackage sections must be gone.
+	assert.False(t, hasLineWithPrefix(outLines, "%package tests"),
+		"subpackage header must be removed")
+
+	// Output must re-parse cleanly.
+	_, err := spec.OpenSpec(bytes.NewReader([]byte(out)))
+	require.NoError(t, err, "spec must re-parse after subpackage removal")
+}
+
+// TestTestdataRemoveSubpackageDoesNotHoistShadowedMacro verifies the
+// surviving-definition guard. The `tools` subpackage redefines
+// `%global toolsdir` with an override value, but a definition with the same
+// name already exists in the preamble and survives removal. The subpackage copy
+// must NOT be hoisted, otherwise it would clobber the preamble value for all
+// survivors.
+func TestTestdataRemoveSubpackageDoesNotHoistShadowedMacro(t *testing.T) {
+	specObj := openFixture(t, "subpackage-define-shadowed.spec")
+
+	require.NoError(t, specObj.RemoveSubpackage("tools"))
+
+	out := serializeSpec(t, specObj)
+	outLines := strings.Split(out, "\n")
+
+	// The preamble definition survives; the subpackage override is dropped.
+	assert.True(t, hasLine(outLines, "%global toolsdir %{_libdir}/%{name}"),
+		"preamble definition must survive")
+	assert.False(t, hasLine(outLines, "%global toolsdir %{_libdir}/%{name}/tools-override"),
+		"shadowing subpackage override must not be hoisted")
+
+	// There must be exactly one surviving toolsdir definition.
+	count := 0
+
+	for _, line := range outLines {
+		if strings.HasPrefix(strings.TrimSpace(line), "%global toolsdir") {
+			count++
+		}
+	}
+
+	assert.Equal(t, 1, count, "exactly one toolsdir definition should remain")
+
+	// Output must re-parse cleanly.
+	_, err := spec.OpenSpec(bytes.NewReader([]byte(out)))
+	require.NoError(t, err, "spec must re-parse after subpackage removal")
+}
+
+// TestRemoveSubpackageTerminatesOnCyclicMacros guards against infinite
+// recursion in the hoisting closure when removed macros reference each other
+// cyclically. A cyclic definition is degenerate RPM, but the
+// closure must still terminate.
+func TestRemoveSubpackageTerminatesOnCyclicMacros(t *testing.T) {
+	input := `Name:    cyclic-macros
+Version: 1.0
+Release: 1
+Summary: Cyclic %%define chain inside a subpackage
+License: MIT
+
+%description
+Main package.
+
+%package tests
+Summary: Tests
+
+%define alpha %{beta}
+%define beta %{alpha}
+
+%files tests
+%{alpha}
+
+%install
+mkdir -p %{buildroot}%{alpha}
+
+%files
+/usr/bin/cyclic-macros
+
+%changelog
+* Thu Jan 01 1970 Builder <builder@example.com> - 1.0-1
+- Initial fixture.
+`
+
+	specObj, err := spec.OpenSpec(bytes.NewReader([]byte(input)))
+	require.NoError(t, err)
+
+	// Must return (not hang) and produce re-parseable output.
+	require.NoError(t, specObj.RemoveSubpackage("tests"))
+
+	out := serializeSpec(t, specObj)
+
+	_, err = spec.OpenSpec(bytes.NewReader([]byte(out)))
+	require.NoError(t, err, "spec must re-parse after subpackage removal")
+}
+
+// TestRemoveSubpackageLogsHoistedMacro verifies that hoisting a referenced
+// macro is surfaced at the default (Info) log level rather than relocating the
+// definition silently.
+func TestRemoveSubpackageLogsHoistedMacro(t *testing.T) {
+	var logBuf bytes.Buffer
+
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	specObj := openFixture(t, "subpackage-define-referenced.spec")
+	require.NoError(t, specObj.RemoveSubpackage("tests"))
+
+	logOutput := logBuf.String()
+	assert.Contains(t, logOutput, "Hoisted referenced macro to preamble",
+		"hoisting must be logged at Info level")
+	assert.Contains(t, logOutput, "testsdir",
+		"log must identify the hoisted macro by name")
 }
