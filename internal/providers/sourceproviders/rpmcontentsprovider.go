@@ -17,6 +17,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/rpmprovider"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/defers"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 )
 
 // RPMContentsProviderImpl implements [ComponentSourceProvider]. It relies on
@@ -69,8 +70,13 @@ func (r *RPMContentsProviderImpl) GetComponent(
 	}
 	defer defers.HandleDeferError(rpmReader.Close, &err)
 
+	// Hash the SRPM while extracting so provenance includes a checksum
+	// without requiring a second download.
+	hasher := sha256.New()
+	teeReader := io.TeeReader(rpmReader, hasher)
+
 	// Extract the RPM contents
-	err = r.extractor.Extract(rpmReader, destDirPath)
+	err = r.extractor.Extract(teeReader, destDirPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract the RPM file of component %#q:\n%w",
 			component.GetName(), err)
@@ -84,6 +90,8 @@ func (r *RPMContentsProviderImpl) GetComponent(
 			Filename:   filename,
 			OriginType: SourceOriginURL,
 			URL:        rpmURL,
+			HashType:   fileutils.HashTypeSHA256,
+			Hash:       hex.EncodeToString(hasher.Sum(nil)),
 		}}
 	}
 

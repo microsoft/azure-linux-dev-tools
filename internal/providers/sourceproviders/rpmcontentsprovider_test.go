@@ -175,7 +175,7 @@ func TestGetComponentFailureSimulation(t *testing.T) {
 		extractorError := errors.New("extractor failed")
 		mockExtractor := rpm_test.NewMockRPMExtractor(ctrl)
 		mockExtractor.EXPECT().
-			Extract(dummyReadCloser, testDestinationDir).
+			Extract(gomock.Any(), testDestinationDir).
 			Return(extractorError).
 			Times(1)
 

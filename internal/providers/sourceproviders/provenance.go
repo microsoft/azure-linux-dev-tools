@@ -43,6 +43,10 @@ type SourceProvenance struct {
 // (returned by lookaside extraction) into [SourceProvenance] entries with the
 // [SourceOriginLookaside] origin type.
 func ConvertDownloadsToProvenance(downloads []fedorasource.SourceDownload) []SourceProvenance {
+	if len(downloads) == 0 {
+		return nil
+	}
+
 	prov := make([]SourceProvenance, len(downloads))
 	for i, download := range downloads {
 		prov[i] = SourceProvenance{

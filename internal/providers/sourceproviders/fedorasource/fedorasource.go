@@ -254,6 +254,12 @@ func (g *FedoraSourceDownloaderImpl) downloadAndVerifySources(
 	repoDir string,
 	skipSet map[string]bool,
 ) ([]SourceDownload, error) {
+	// In dry-run mode the downloader no-ops, so no files would actually be
+	// fetched. Short-circuit to avoid wasted allocations and iteration.
+	if g.dryRunnable.DryRun() {
+		return nil, nil
+	}
+
 	downloads := make([]SourceDownload, 0, len(sourceFiles))
 
 	sourcesTotal := len(sourceFiles)
@@ -313,11 +319,6 @@ func (g *FedoraSourceDownloaderImpl) downloadAndVerifySources(
 			HashType: sourceFile.hashType,
 			Hash:     sourceFile.expectedHash,
 		})
-	}
-
-	// In dry-run mode the downloader no-ops, so no files were actually fetched.
-	if g.dryRunnable.DryRun() {
-		return nil, nil
 	}
 
 	return downloads, nil

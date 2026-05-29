@@ -516,12 +516,7 @@ func (m *sourceManager) FetchComponent(
 
 	switch sourceType {
 	case projectconfig.SpecSourceTypeLocal, projectconfig.SpecSourceTypeUnspecified:
-		prov, err := m.fetchLocalComponent(ctx, component, destDirPath, resolved)
-		if err != nil {
-			return nil, err
-		}
-
-		return prov, nil
+		return m.fetchLocalComponent(ctx, component, destDirPath, resolved)
 
 	case projectconfig.SpecSourceTypeUpstream:
 		return m.fetchUpstreamComponent(ctx, component, destDirPath, opts...)
