@@ -73,16 +73,10 @@ func TestComponentHistory_Smoke(t *testing.T) {
 				projecttest.WithRelease("1%{?dist}"),
 				projecttest.WithBuildArch(projecttest.NoArch),
 			),
-			projecttest.NewSpec(
-				projecttest.WithName("bash"),
-				projecttest.WithVersion("5.2.0"),
-				projecttest.WithRelease("1%{?dist}"),
-				projecttest.WithBuildArch(projecttest.NoArch),
-			),
 		},
 		[]*projectconfig.ComponentConfig{
 			{
-				// curl has a customization (build.with), so it should appear by default.
+				// curl has explicit customizations so it should appear by default.
 				Name: "curl",
 				Spec: projectconfig.SpecSource{
 					SourceType: projectconfig.SpecSourceTypeLocal,
@@ -93,12 +87,10 @@ func TestComponentHistory_Smoke(t *testing.T) {
 				},
 			},
 			{
-				// bash is bare (no customizations) — filtered out unless --include-bare.
+				// bash is truly bare: no Spec, no Build, no anything. The
+				// collectors emit zero items so it gets filtered out unless
+				// --include-bare is passed.
 				Name: "bash",
-				Spec: projectconfig.SpecSource{
-					SourceType: projectconfig.SpecSourceTypeLocal,
-					Path:       filepath.Join("specs", "bash", "bash.spec"),
-				},
 			},
 		},
 		nil,

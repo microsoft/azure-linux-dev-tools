@@ -167,8 +167,10 @@ type HistoryResult struct {
 	TomlPath string `json:"tomlPath,omitempty"`
 
 	// LatestCommit is the timestamp of the most recent commit to the TOML
-	// file. Zero if no commits found.
-	LatestCommit time.Time `json:"latestCommit,omitempty" table:"-"`
+	// file. Zero if no commits found. Uses 'omitzero' (Go 1.24+) rather than
+	// 'omitempty' because the latter is a no-op for struct types and would
+	// serialize as "0001-01-01T00:00:00Z" for components with no history.
+	LatestCommit time.Time `json:"latestCommit,omitzero" table:"-"`
 
 	// Customizations is the count of customization items (len of the
 	// Customization slice).
@@ -184,12 +186,19 @@ type HistoryResult struct {
 	FpChanges int `json:"fpChanges"`
 
 	// FpChangeDetails is the per-commit metadata for each fingerprint
-	// change counted in [FpChanges] (oldest first). Entries are
-	// [sources.FingerprintChange] so they stay in sync with the synthetic
-	// dist-git history flow, which uses the same struct to author its
-	// commits. Hidden from the human-readable table -- use JSON output to
-	// consume them (e.g., to hand-author changelog entries).
-	FpChangeDetails []sources.FingerprintChange `json:"fpChangeDetails,omitempty" table:"-"`
+	// change counted in [FpChanges] (oldest first). Hidden from the
+	// human-readable table -- use JSON output to consume them (e.g., to
+	// hand-author changelog entries).
+	//
+	// Each entry is populated from [sources.FingerprintChange] via an
+	// explicit field-by-field copy in [populateLockMetrics]. The
+	// gathering algorithm is shared with the synthetic dist-git history
+	// flow; the wire-level type is local so that:
+	//   - the JSON contract for this command lives in this file, and
+	//   - removing a field from [sources.FingerprintChange] /
+	//     [sources.CommitMetadata] surfaces as a compile error at the
+	//     copy site rather than silently dropping changelog metadata.
+	FpChangeDetails []FpChange `json:"fpChangeDetails,omitempty" table:"-"`
 
 	// HasLock is true when a lock file currently exists for this component.
 	HasLock bool `json:"hasLock,omitempty" table:"-"`
@@ -200,6 +209,27 @@ type HistoryResult struct {
 
 	// ManualBump is the lock file's manual-bump counter.
 	ManualBump int `json:"manualBump,omitempty" table:"-"`
+}
+
+// FpChange is the wire-level representation of one lock-file fingerprint
+// change for the [HistoryResult.FpChangeDetails] field. It mirrors the
+// fields of [sources.FingerprintChange] (and its embedded
+// [sources.CommitMetadata]) that consumers of `azldev component history`
+// JSON output care about.
+//
+// The fields are copied explicitly in [populateLockMetrics] rather than
+// embedding [sources.FingerprintChange] directly so that:
+//   - the JSON contract for this command is owned by this package, and
+//   - dropping a field from the synthetic-history source type produces a
+//     compile error at the copy site instead of silently emptying the
+//     downstream changelog data.
+type FpChange struct {
+	Hash           string `json:"hash"`
+	Author         string `json:"author"`
+	AuthorEmail    string `json:"authorEmail"`
+	Timestamp      int64  `json:"timestamp"`
+	Message        string `json:"message"`
+	UpstreamCommit string `json:"upstreamCommit,omitempty"`
 }
 
 // ComponentHistory computes the per-component history data for the components
@@ -267,7 +297,9 @@ func ComponentHistory(env *azldev.Env, options *HistoryOptions) ([]HistoryResult
 
 	parmapResults := parmap.Map(
 		workerEnv,
-		env.FastConcurrency(),
+		// Each worker shells out to git; that's I/O-bound work, matching the
+		// concurrency model used by render/update on similar workloads.
+		env.IOBoundConcurrency(),
 		stubs,
 		func(done, _ int) { progressEvent.SetProgress(int64(done), total) },
 		func(_ context.Context, stub historyStub) buildOutcome {
@@ -659,7 +691,32 @@ func populateLockMetrics(
 
 	filtered := filterChangesSince(fpChanges, since)
 	result.FpChanges = len(filtered)
-	result.FpChangeDetails = filtered
+	result.FpChangeDetails = toFpChanges(filtered)
+}
+
+// toFpChanges copies each [sources.FingerprintChange] into the local
+// [FpChange] wire type by naming every field explicitly. Removing a
+// field from [sources.FingerprintChange] or [sources.CommitMetadata]
+// trips a compile error here, alerting us to a quietly-shrunk changelog
+// payload.
+func toFpChanges(changes []sources.FingerprintChange) []FpChange {
+	if len(changes) == 0 {
+		return nil
+	}
+
+	out := make([]FpChange, len(changes))
+	for i, change := range changes {
+		out[i] = FpChange{
+			Hash:           change.Hash,
+			Author:         change.Author,
+			AuthorEmail:    change.AuthorEmail,
+			Timestamp:      change.Timestamp,
+			Message:        change.Message,
+			UpstreamCommit: change.UpstreamCommit,
+		}
+	}
+
+	return out
 }
 
 // filterChangesSince returns the subset of changes with a timestamp >= since.
@@ -699,8 +756,23 @@ func collectCustomizations(name string, config *projectconfig.ComponentConfig) [
 	items = appendBuildItems(items, config.Build)
 	items = appendSpecItems(items, name, config.Spec)
 	items = appendReleaseItems(items, config.Release)
+	items = appendRenderItems(items, config.Render)
 	items = appendPackageItems(items, config.Packages)
 	items = appendSourceFileItems(items, config.SourceFiles)
+
+	return items
+}
+
+// appendRenderItems flags non-default render-config customizations.
+func appendRenderItems(
+	items []CustomizationItem, render projectconfig.ComponentRenderConfig,
+) []CustomizationItem {
+	if render.SkipFileFilter {
+		items = append(items, CustomizationItem{
+			Kind:  "render.skip-file-filter",
+			Value: strconv.FormatBool(true),
+		})
+	}
 
 	return items
 }
@@ -792,6 +864,16 @@ func appendBuildItems(
 func appendSpecItems(
 	items []CustomizationItem, name string, spec projectconfig.SpecSource,
 ) []CustomizationItem {
+	// Only surface SourceType when explicitly set in the raw per-component
+	// config -- components that inherit from group defaults leave it empty,
+	// so this avoids inflating the customization count for every component.
+	if spec.SourceType != "" {
+		items = append(items, CustomizationItem{
+			Kind:  "spec.source-type",
+			Value: string(spec.SourceType),
+		})
+	}
+
 	if spec.UpstreamCommit != "" {
 		items = append(items, CustomizationItem{
 			Kind:  "spec.upstream-commit",
