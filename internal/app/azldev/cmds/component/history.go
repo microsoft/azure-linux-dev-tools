@@ -100,11 +100,17 @@ hand-picking entries to document.`,
 				return nil, err
 			}
 
-			// When exactly one component is selected in a human-readable
-			// format, render a card view ourselves and tell the standard
-			// reporter to skip its 1-row table (returning a bool is treated
-			// as a no-op by reportResults). JSON/CSV callers still get the
-			// full slice unchanged.
+			// Card view side-channel: when exactly one component is being
+			// reported in a human-readable format, render a vertical card
+			// ourselves and short-circuit the standard table renderer.
+			// reportResults treats a `true` return as a no-op (see
+			// reportResultsViaReflectable in azldev/command.go) which is
+			// how we suppress the would-be 1-row table.
+			//
+			// CAVEAT: the trigger is implicit (single result + human
+			// format) so a broad -a query that happens to narrow to one
+			// component silently switches output shape. JSON / CSV
+			// consumers always get the raw slice unchanged.
 			if shouldRenderCardView(env, results) {
 				renderCardView(env.ReportFile(), results[0])
 
@@ -170,8 +176,11 @@ type HistoryResult struct {
 	// component shares its TOML with another component.
 	TomlCommits int `json:"tomlCommits"`
 
-	// SharedToml is true when at least one other selected component has the
-	// same source-config-file path; the TomlCommits count is then coarse.
+	// SharedToml is true when at least one other component anywhere in the
+	// project (not just within the current selection) uses the same source
+	// TOML file. The TomlCommits count is then coarse because git history
+	// is on a per-file basis -- the count includes commits that touched the
+	// shared file for any reason, not just for this component.
 	SharedToml bool `json:"sharedToml,omitempty"`
 
 	// TomlPath is the repo-relative path of the component's source TOML file.
@@ -220,6 +229,12 @@ type HistoryResult struct {
 
 	// ManualBump is the lock file's manual-bump counter.
 	ManualBump int `json:"manualBump,omitempty" table:"-"`
+
+	// Warnings collects per-component diagnostics for failure paths that
+	// were swallowed to keep the overall report rendering. Empty when no
+	// problems were encountered. Surfaces in the single-component card
+	// view and in JSON; hidden from the human-readable table.
+	Warnings []string `json:"warnings,omitempty" table:"-"`
 }
 
 // FingerprintChange is the wire-level representation of one lock-file
@@ -331,15 +346,13 @@ func ComponentHistory(env *azldev.Env, options *HistoryOptions) ([]HistoryResult
 		env.IOBoundConcurrency(),
 		stubs,
 		func(done, _ int) { progressEvent.SetProgress(int64(done), total) },
-		func(_ context.Context, stub historyStub) buildOutcome {
+		func(_ context.Context, stub historyStub) HistoryResult {
 			// workerEnv carries the cancellable ctx; the parmap-supplied
 			// ctx is identical (parmap derives it from workerEnv) and
 			// unused here. Mirrors how render.go does this.
-			res := buildHistoryResult( //nolint:contextcheck // env carries the ctx
+			return buildHistoryResult( //nolint:contextcheck // env carries the ctx
 				workerEnv, stub, ctx, tomlSharing, tomlCache, since, options.SharedTomlMode, includeDetails,
 			)
-
-			return buildOutcome{result: res}
 		},
 	)
 
@@ -352,11 +365,11 @@ func ComponentHistory(env *azldev.Env, options *HistoryOptions) ([]HistoryResult
 
 		// --shared=omit drops the row entirely for components whose source
 		// TOML is shared with at least one other component.
-		if options.SharedTomlMode == sharedTomlModeOmit && parmapRes.Value.result.SharedToml {
+		if options.SharedTomlMode == sharedTomlModeOmit && parmapRes.Value.SharedToml {
 			continue
 		}
 
-		results = append(results, parmapRes.Value.result)
+		results = append(results, parmapRes.Value)
 	}
 
 	sortHistoryResults(results)
@@ -414,11 +427,6 @@ func buildHistoryStubs(
 // filter's perf rationale still applies there.
 func hasExplicitComponentSelection(filter *components.ComponentFilter) bool {
 	return len(filter.ComponentNamePatterns) > 0 || len(filter.SpecPaths) > 0
-}
-
-// buildOutcome is the per-item return value from the parmap.Map worker.
-type buildOutcome struct {
-	result HistoryResult
 }
 
 // validateSharedTomlMode rejects unrecognized --shared values.
@@ -655,8 +663,12 @@ func populateTomlMetrics(
 
 	tomlRelPath, err := repoRelPath(ctx.repoRoot, tomlAbsPath)
 	if err != nil {
-		// A TOML file outside the repo isn't a hard error -- just leave
-		// path/commit counts empty.
+		// A TOML file outside the repo isn't a hard error -- record a
+		// warning and leave path/commit counts empty.
+		result.Warnings = append(result.Warnings,
+			fmt.Sprintf("source TOML %q is outside the git repository; toml-commits skipped: %v",
+				tomlAbsPath, err))
+
 		return
 	}
 
@@ -668,7 +680,12 @@ func populateTomlMetrics(
 
 	metrics, ok := tomlCache[tomlRelPath]
 	if !ok {
-		// Precompute didn't run for this path (e.g., out-of-repo TOML).
+		// Precompute didn't run for this path (e.g., out-of-repo TOML
+		// or a precompute failure that was tolerated). Surface so the
+		// user can tell zero-counts apart from missing-data.
+		result.Warnings = append(result.Warnings,
+			fmt.Sprintf("no TOML commit metrics cached for %q; toml-commits left at zero", tomlRelPath))
+
 		return
 	}
 
@@ -708,12 +725,19 @@ func populateLockMetrics(
 	if err != nil {
 		// Invalid component name for path resolution: skip lock metrics
 		// rather than failing the whole report.
+		result.Warnings = append(result.Warnings,
+			fmt.Sprintf("resolving lock path: %v", err))
+
 		return
 	}
 
 	lockRelPath, err := repoRelPath(ctx.repoRoot, lockAbsPath)
 	if err != nil {
 		// Lock dir lives outside the repo: nothing to count.
+		result.Warnings = append(result.Warnings,
+			fmt.Sprintf("lock file %q is outside the git repository; fingerprint-changes skipped: %v",
+				lockAbsPath, err))
+
 		return
 	}
 
@@ -728,8 +752,12 @@ func populateLockMetrics(
 		return sources.FindFingerprintChanges(env.Context(), env, repo, ctx.repoRoot, lockRelPath)
 	}()
 	if err != nil {
-		// Lock file with no committed history (e.g., never committed) is
-		// expected for fresh components -- leave count at zero.
+		// A lock file with no committed history is NOT an error here --
+		// FindFingerprintChanges returns (nil, nil) in that case. This
+		// branch only fires on real failures (git open, blob read, etc.).
+		result.Warnings = append(result.Warnings,
+			fmt.Sprintf("computing fingerprint changes for %q: %v", lockRelPath, err))
+
 		return
 	}
 
@@ -1065,6 +1093,15 @@ func renderCardView(writer io.Writer, result HistoryResult) {
 			result.ManualBump, result.HasImport)
 	} else {
 		fmt.Fprintln(writer, "  Lock state:     no lock")
+	}
+
+	if len(result.Warnings) > 0 {
+		fmt.Fprintln(writer)
+		fmt.Fprintln(writer, "Warnings:")
+
+		for _, warning := range result.Warnings {
+			fmt.Fprintf(writer, "  - %s\n", warning)
+		}
 	}
 
 	if len(result.CustomizationItems) == 0 {
