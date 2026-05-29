@@ -33,18 +33,19 @@ func sortHistoryResults(results []HistoryResult) {
 
 // shouldRenderCardView decides whether to print the per-component "card"
 // view instead of falling through to the default table renderer. We only
-// switch to the card for exactly one result and only in formats meant for
-// human eyes (table, markdown); JSON / CSV consumers always get the
-// machine-readable slice.
+// switch to the card for exactly one result and only for the plain table
+// format; markdown falls through to the reflectable renderer so a
+// `-O markdown` consumer gets real markdown structure, and JSON / CSV
+// consumers always get the machine-readable slice.
 func shouldRenderCardView(env *azldev.Env, results []HistoryResult) bool {
 	if len(results) != 1 {
 		return false
 	}
 
 	switch env.DefaultReportFormat() {
-	case azldev.ReportFormatTable, azldev.ReportFormatMarkdown:
+	case azldev.ReportFormatTable:
 		return true
-	case azldev.ReportFormatCSV, azldev.ReportFormatJSON:
+	case azldev.ReportFormatCSV, azldev.ReportFormatJSON, azldev.ReportFormatMarkdown:
 		return false
 	default:
 		return false
@@ -78,6 +79,13 @@ func renderCardView(writer io.Writer, result HistoryResult) {
 	fmt.Fprintf(writer, "  TOML commits:   %d%s%s\n", result.TomlCommits, sharedNote, latestNote)
 	fmt.Fprintf(writer, "  Customizations: %d\n", result.Customizations)
 	fmt.Fprintf(writer, "  FP changes:     %d\n", result.FingerprintChanges)
+
+	// The per-commit FingerprintChangeDetails are populated for a single
+	// surviving component but omitted from the card to keep it scannable;
+	// point the user at -O json so the changelog records aren't a dead end.
+	if result.FingerprintChanges > 0 {
+		fmt.Fprintln(writer, "                  (run with -O json for per-commit details)")
+	}
 
 	if result.HasLock {
 		fmt.Fprintf(writer,

@@ -58,5 +58,8 @@ func CountCommitsTouchingFile(
 		return 0, time.Time{}, fmt.Errorf("parsing commit timestamp %#q:\n%w", lines[0], err)
 	}
 
-	return len(lines), time.Unix(unixSeconds, 0), nil
+	// Normalize to UTC so the timestamp serializes identically regardless of
+	// the host's local timezone (time.Unix defaults to Location: Local, which
+	// would otherwise make JSON output non-reproducible across machines).
+	return len(lines), time.Unix(unixSeconds, 0).UTC(), nil
 }

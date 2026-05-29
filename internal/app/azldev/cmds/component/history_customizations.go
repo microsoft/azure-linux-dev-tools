@@ -206,12 +206,22 @@ func appendPackageItems(
 	return items
 }
 
-// appendSourceFileItems emits one item per declared source-file reference.
+// appendSourceFileItems emits one item per declared source-file reference,
+// plus a distinct item for the high-signal ReplaceUpstream toggle (which
+// actively masks a same-named upstream source and would otherwise be hidden
+// behind the plain filename entry).
 func appendSourceFileItems(
 	items []CustomizationItem, sourceFiles []projectconfig.SourceFileReference,
 ) []CustomizationItem {
 	for _, sourceFile := range sourceFiles {
 		items = append(items, CustomizationItem{Kind: "source-files", Value: sourceFile.Filename})
+
+		if sourceFile.ReplaceUpstream {
+			items = append(items, CustomizationItem{
+				Kind:  "source-files.replace-upstream",
+				Value: sourceFile.Filename,
+			})
+		}
 	}
 
 	return items

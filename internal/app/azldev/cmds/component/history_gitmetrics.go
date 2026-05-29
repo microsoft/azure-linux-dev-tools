@@ -73,10 +73,13 @@ func countTomlSharing(allComponents map[string]projectconfig.ComponentConfig) ma
 }
 
 // tomlMetrics is one entry in the precomputed cache populated by
-// [precomputeTomlMetrics]. Keyed by repo-relative TOML path.
+// [precomputeTomlMetrics]. Keyed by repo-relative TOML path. A non-nil err
+// records a real `git log` failure so [populateTomlMetrics] can surface a
+// warning, keeping it distinguishable from a genuine zero-commit history.
 type tomlMetrics struct {
 	count  int
 	latest time.Time
+	err    error
 }
 
 // precomputeTomlMetricsForStubs runs `git log` once per *unique* source-
@@ -116,9 +119,11 @@ func precomputeTomlMetricsForStubs(
 				workerEnv, workerEnv, ctx.repoRoot, relPath, since,
 			)
 			if err != nil {
-				// Treat as "no history" rather than failing the whole
-				// command -- a missing or untracked TOML is non-fatal.
-				return tomlMetrics{}
+				// Cache the failure rather than failing the whole command --
+				// populateTomlMetrics surfaces it as a warning so a real error
+				// (corrupt repo, permission denied) stays distinguishable from a
+				// genuine zero-commit history.
+				return tomlMetrics{err: err}
 			}
 
 			return tomlMetrics{count: count, latest: latest}
@@ -185,6 +190,7 @@ func buildHistoryResult(
 	tomlCache map[string]tomlMetrics,
 	since time.Time,
 	sharedMode string,
+	explicit bool,
 ) HistoryResult {
 	result := HistoryResult{
 		Name:               stub.component.GetName(),
@@ -192,7 +198,7 @@ func buildHistoryResult(
 		Customizations:     len(stub.customizationItems),
 	}
 
-	populateTomlMetrics(stub.component, ctx, tomlSharing, tomlCache, sharedMode, &result)
+	populateTomlMetrics(stub.component, ctx, tomlSharing, tomlCache, sharedMode, explicit, &result)
 	populateLockMetrics(env, stub.component, ctx, since, &result)
 
 	return result
@@ -206,6 +212,7 @@ func populateTomlMetrics(
 	tomlSharing map[string]int,
 	tomlCache map[string]tomlMetrics,
 	sharedMode string,
+	explicit bool,
 	result *HistoryResult,
 ) {
 	config := comp.GetConfig()
@@ -230,7 +237,11 @@ func populateTomlMetrics(
 
 	result.TomlPath = tomlRelPath
 
-	if result.SharedToml && sharedMode == sharedTomlModeOmit {
+	// --shared=omit suppresses the (coarse) count for shared TOMLs, but an
+	// explicitly-named component is the user asking for that component
+	// specifically -- give them the real count, mirroring the row-keep
+	// override in [ComponentHistory].
+	if result.SharedToml && sharedMode == sharedTomlModeOmit && !explicit {
 		return
 	}
 
@@ -241,6 +252,17 @@ func populateTomlMetrics(
 		// user can tell zero-counts apart from missing-data.
 		result.Warnings = append(result.Warnings,
 			fmt.Sprintf("no TOML commit metrics cached for %q; toml-commits left at zero", tomlRelPath))
+
+		return
+	}
+
+	if metrics.err != nil {
+		// A real `git log` failure was cached during precompute. Surface it
+		// rather than silently reporting zero commits (mirrors the lock-path
+		// warning behavior).
+		result.Warnings = append(result.Warnings,
+			fmt.Sprintf("counting TOML commits for %q failed; toml-commits left at zero: %v",
+				tomlRelPath, metrics.err))
 
 		return
 	}
@@ -285,7 +307,12 @@ func populateLockMetrics(
 			// genuine failure earns a warning, so a fingerprintChanges of 0
 			// can't be silently confused with a load error.
 			exists, existsErr := lockReader.Exists(name)
-			if existsErr != nil || exists {
+			switch {
+			case existsErr != nil:
+				result.Warnings = append(result.Warnings,
+					fmt.Sprintf("reading lock file for %q: %v (existence check also failed: %v)",
+						name, lockErr, existsErr))
+			case exists:
 				result.Warnings = append(result.Warnings,
 					fmt.Sprintf("reading lock file for %q: %v", name, lockErr))
 			}
@@ -362,9 +389,11 @@ func toFingerprintChanges(changes []sources.FingerprintChange) []FingerprintChan
 	return out
 }
 
-// filterChangesSince returns the subset of changes with a timestamp >= since.
-// When since is zero, the input slice is returned unchanged. The returned
-// slice retains the input ordering (oldest first, per
+// filterChangesSince returns the subset of changes with a timestamp strictly
+// greater than since (matching 'git log --since', which excludes the boundary
+// second, so the toml-commit and fingerprint-change metrics agree on the
+// cutoff edge). When since is zero, the input slice is returned unchanged. The
+// returned slice retains the input ordering (oldest first, per
 // [sources.FindFingerprintChanges]).
 func filterChangesSince(changes []sources.FingerprintChange, since time.Time) []sources.FingerprintChange {
 	if since.IsZero() {

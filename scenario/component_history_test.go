@@ -188,11 +188,14 @@ func TestComponentHistory_Smoke(t *testing.T) {
 	assert.NotContains(t, rm, "bash", "--shared=omit drops shared-TOML rows without explicit selection")
 
 	// An explicit positional selection overrides --shared=omit: the user asked
-	// for curl by name, so they get it back even though its TOML is shared.
+	// for curl by name, so they get it back even though its TOML is shared --
+	// and with the real toml-commit count, not a suppressed zero (N3).
 	results = runHistory(t, azldevBin, projectDir, "curl", "--shared=omit")
 	rm = historyMap(results)
 	require.Contains(t, rm, "curl",
 		"explicit selection overrides --shared=omit")
+	assert.Equal(t, 1, rm["curl"].TomlCommits,
+		"explicit --shared=omit survivor keeps its real count, not a suppressed zero")
 }
 
 // customizationKinds returns the set of CustomizationItem Kinds in a result,

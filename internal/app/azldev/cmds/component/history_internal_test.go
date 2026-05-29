@@ -5,6 +5,7 @@ package component
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
@@ -31,9 +32,8 @@ import (
 //
 // Structs whose fingerprintable fields are surfaced *wholesale* by a
 // single collector ([projectconfig.ComponentOverlay],
-// [projectconfig.SourceFileReference], [projectconfig.PackageConfig],
-// [projectconfig.DistroReference]) are intentionally NOT walked here --
-// only their parent ComponentConfig field appears in expectedCovered.
+// [projectconfig.PackageConfig]) are intentionally NOT walked here -- only
+// their parent ComponentConfig field appears in expectedCovered.
 // Field-level drift inside those opaque units is still caught by the
 // fingerprint exhaustiveness test in projectconfig, at which point a
 // human reviewer decides whether richer per-field surfacing belongs in
@@ -51,8 +51,10 @@ func TestCustomizationCollectorsCoverEveryFingerprintableField(t *testing.T) {
 		reflect.TypeFor[projectconfig.ComponentBuildConfig](),
 		reflect.TypeFor[projectconfig.CheckConfig](),
 		reflect.TypeFor[projectconfig.SpecSource](),
+		reflect.TypeFor[projectconfig.DistroReference](),
 		reflect.TypeFor[projectconfig.ReleaseConfig](),
 		reflect.TypeFor[projectconfig.ComponentRenderConfig](),
+		reflect.TypeFor[projectconfig.SourceFileReference](),
 	}
 
 	// Maps "StructName.FieldName" -> short note describing how the field
@@ -85,11 +87,24 @@ func TestCustomizationCollectorsCoverEveryFingerprintableField(t *testing.T) {
 		"SpecSource.UpstreamName":   "spec.upstream-name (only when distinct from component name)",
 		"SpecSource.UpstreamCommit": "spec.upstream-commit",
 
+		// DistroReference -- both fields fold into the single spec.upstream-distro
+		// item emitted by appendSpecItems (DistroReference.String()).
+		"DistroReference.Name":    "spec.upstream-distro",
+		"DistroReference.Version": "spec.upstream-distro",
+
 		// ReleaseConfig.
 		"ReleaseConfig.Calculation": "release.calculation (only when non-auto)",
 
 		// ComponentRenderConfig.
 		"ComponentRenderConfig.SkipFileFilter": "render.skip-file-filter",
+
+		// SourceFileReference -- Filename and the ReplaceUpstream toggle each get
+		// their own Kind; Hash/HashType travel with the filename entry (the file's
+		// presence is the customization signal, not its checksum).
+		"SourceFileReference.Filename":        "source-files",
+		"SourceFileReference.Hash":            "source-files (file entry represents the file; hash travels with it)",
+		"SourceFileReference.HashType":        "source-files (ditto Hash)",
+		"SourceFileReference.ReplaceUpstream": "source-files.replace-upstream",
 	}
 
 	actualFields := make(map[string]bool)
@@ -160,7 +175,7 @@ func TestCollectCustomizationsEmitsEveryKind(t *testing.T) {
 			"libfoo": {},
 		},
 		SourceFiles: []projectconfig.SourceFileReference{
-			{Filename: "extra.tar.gz"},
+			{Filename: "extra.tar.gz", ReplaceUpstream: true, ReplaceReason: "vendored fix"},
 		},
 	}
 
@@ -179,6 +194,7 @@ func TestCollectCustomizationsEmitsEveryKind(t *testing.T) {
 		"render.skip-file-filter",
 		"packages",
 		"source-files",
+		"source-files.replace-upstream",
 	}
 
 	items := collectCustomizations("comp", &config)
@@ -199,41 +215,81 @@ func TestCollectCustomizationsEmitsEveryKind(t *testing.T) {
 // field-by-field copy in [toFingerprintChanges] cannot: a NEW field added to
 // [sources.FingerprintChange] / [sources.CommitMetadata] would compile fine
 // but silently never reach JSON consumers. This asserts the local DTO carries
-// a field for every exported source field (matched by name).
+// a field of the same type for every exported source field (matched by name),
+// so a field addition OR a type change (e.g. int64->int32) trips the test.
 func TestFingerprintChangeDTOMirrorsSource(t *testing.T) {
 	t.Parallel()
 
-	dtoFields := exportedFieldNames(reflect.TypeFor[FingerprintChange]())
+	dtoFields := exportedFieldTypes(reflect.TypeFor[FingerprintChange]())
 
-	for name := range exportedFieldNames(reflect.TypeFor[sources.FingerprintChange]()) {
-		assert.Containsf(t, dtoFields, name,
+	for name, srcType := range exportedFieldTypes(reflect.TypeFor[sources.FingerprintChange]()) {
+		dtoType, ok := dtoFields[name]
+		if !assert.Truef(t, ok,
 			"sources.FingerprintChange field %q has no counterpart in the local "+
 				"FingerprintChange DTO; add it (and to toFingerprintChanges) so it "+
-				"reaches JSON consumers, or it is silently dropped.", name)
+				"reaches JSON consumers, or it is silently dropped.", name) {
+			continue
+		}
+
+		assert.Equalf(t, srcType, dtoType,
+			"FingerprintChange DTO field %q has type %s but sources.FingerprintChange "+
+				"has %s; the explicit copy in toFingerprintChanges would silently "+
+				"narrow or mistype the value.", name, dtoType, srcType)
 	}
 }
 
-// exportedFieldNames returns the set of exported field names of a struct type,
-// flattening anonymously-embedded structs (e.g. CommitMetadata) into the
-// parent's namespace.
-func exportedFieldNames(t reflect.Type) map[string]bool {
-	names := make(map[string]bool)
+// TestRenderCardViewFingerprintHint pins the N6 fix: the single-component
+// card omits the per-commit FingerprintChangeDetails (to stay scannable) but
+// must point the user at -O json whenever fingerprint changes exist, so the
+// details aren't a silent dead end.
+func TestRenderCardViewFingerprintHint(t *testing.T) {
+	t.Parallel()
+
+	var withChanges strings.Builder
+
+	renderCardView(&withChanges, HistoryResult{
+		Name:               "curl",
+		TomlPath:           "azldev.toml",
+		TomlCommits:        3,
+		Customizations:     2,
+		FingerprintChanges: 2,
+	})
+
+	out := withChanges.String()
+	assert.Contains(t, out, "Component: curl")
+	assert.Contains(t, out, "FP changes:     2")
+	assert.Contains(t, out, "-O json",
+		"card should point at -O json when fingerprint changes exist")
+
+	var noChanges strings.Builder
+
+	renderCardView(&noChanges, HistoryResult{Name: "bash"})
+
+	assert.NotContains(t, noChanges.String(), "-O json",
+		"no fingerprint changes means no -O json hint")
+}
+
+// exportedFieldTypes returns the exported fields of a struct type keyed by
+// name -> type, flattening anonymously-embedded structs (e.g. CommitMetadata)
+// into the parent's namespace.
+func exportedFieldTypes(t reflect.Type) map[string]reflect.Type {
+	types := make(map[string]reflect.Type)
 
 	for i := range t.NumField() {
 		field := t.Field(i)
 
 		if field.Anonymous && field.Type.Kind() == reflect.Struct {
-			for name := range exportedFieldNames(field.Type) {
-				names[name] = true
+			for name, typ := range exportedFieldTypes(field.Type) {
+				types[name] = typ
 			}
 
 			continue
 		}
 
 		if field.IsExported() {
-			names[field.Name] = true
+			types[field.Name] = field.Type
 		}
 	}
 
-	return names
+	return types
 }

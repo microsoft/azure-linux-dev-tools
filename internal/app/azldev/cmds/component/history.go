@@ -346,7 +346,7 @@ func ComponentHistory(env *azldev.Env, options *HistoryOptions) ([]HistoryResult
 			// ctx is identical (parmap derives it from workerEnv) and
 			// unused here. Mirrors how render.go does this.
 			return buildHistoryResult( //nolint:contextcheck // env carries the ctx
-				workerEnv, stub, ctx, tomlSharing, tomlCache, since, options.SharedTomlMode,
+				workerEnv, stub, ctx, tomlSharing, tomlCache, since, options.SharedTomlMode, explicit,
 			)
 		},
 	)
