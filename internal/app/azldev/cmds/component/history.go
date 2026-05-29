@@ -28,11 +28,14 @@ type HistoryOptions struct {
 	// Since limits how far back to count commits. Accepts Go duration syntax
 	// like "720h" (= 30d). Empty means "all history".
 	Since string
-	// SharedTomlMode controls how toml-commit counts are reported for components
-	// that share their source TOML file with at least one other component:
+	// SharedTomlMode controls how toml-commit counts are reported for
+	// components that share their source TOML file with at least one other
+	// component:
 	//   "show" (default): include the row, report the count, set SharedToml=true
-	//   "zero":           include the row but force toml-commits to 0
 	//   "omit":           drop the row entirely
+	//
+	// JSON consumers always see the raw TomlCommits + SharedToml fields and
+	// can apply their own presentation (e.g., zero out shared rows) via jq.
 	SharedTomlMode string
 	// IncludeBare, when true, keeps components with zero customizations in
 	// the output. By default they are filtered out -- they have no
@@ -44,7 +47,6 @@ type HistoryOptions struct {
 
 const (
 	sharedTomlModeShow = "show"
-	sharedTomlModeZero = "zero"
 	sharedTomlModeOmit = "omit"
 )
 
@@ -74,8 +76,7 @@ review prioritization, or refactoring planning).
 
 When a component shares its source TOML with other components (e.g., a bare
 entry in a shared components.toml), the toml-commit count is coarse and the
-component is marked 'toml-shared'. Use --shared=zero or --shared=omit to
-suppress those counts.
+component is marked 'toml-shared'. Use --shared=omit to drop those rows.
 
 When exactly one component is selected the customization items are printed
 inline below the row, showing kind, value and description — useful for
@@ -121,7 +122,7 @@ hand-picking entries to document.`,
 		"Only count commits newer than this (Go duration syntax, e.g. 720h). Empty = all history.")
 	cmd.Flags().StringVar(&options.SharedTomlMode, "shared", sharedTomlModeShow,
 		"How to report rows for components that share a TOML file with others: "+
-			"show (keep row, count is coarse), zero (keep row, force count to 0), omit (drop row).")
+			"show (keep row, count is coarse), omit (drop row).")
 	// Shell completion advertises the valid choices. Note: the MCP tool
 	// schema does not yet derive an `enum` constraint from cobra flag
 	// completion functions (see internal/app/azldev/core/mcp/mcpserver.go),
@@ -129,7 +130,7 @@ hand-picking entries to document.`,
 	// closed. Runtime validation happens in [validateSharedTomlMode].
 	_ = cmd.RegisterFlagCompletionFunc("shared",
 		func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
-			return []string{sharedTomlModeShow, sharedTomlModeZero, sharedTomlModeOmit},
+			return []string{sharedTomlModeShow, sharedTomlModeOmit},
 				cobra.ShellCompDirectiveNoFileComp
 		})
 	cmd.Flags().BoolVar(&options.IncludeBare, "include-bare", false,
@@ -251,6 +252,12 @@ type FingerprintChange struct {
 // performance lever on large projects -- the vast majority of components
 // in real distros inherit everything from defaults and have no
 // per-component history worth reporting.
+//
+// When the user explicitly names component(s) (via positional args, --component,
+// or --spec-path) the bare filter is force-disabled regardless of IncludeBare,
+// so `azldev component history nano` always returns a row for nano even when
+// nano has zero customizations. The perf rationale for the default does not
+// apply to scope-limiting explicit selections.
 func ComponentHistory(env *azldev.Env, options *HistoryOptions) ([]HistoryResult, error) {
 	if err := validateSharedTomlMode(options.SharedTomlMode); err != nil {
 		return nil, err
@@ -279,11 +286,23 @@ func ComponentHistory(env *azldev.Env, options *HistoryOptions) ([]HistoryResult
 
 	// Phase 0: compute customizations for every selected component
 	// (sync, fast, no git). When --include-bare is off, drop components
-	// with zero customizations before any expensive work runs.
-	stubs := buildHistoryStubs(env, comps.Components(), options.IncludeBare)
+	// with zero customizations before any expensive work runs -- unless
+	// the user explicitly named components, in which case they get what
+	// they asked for regardless.
+	effectiveIncludeBare := options.IncludeBare || hasExplicitComponentSelection(&options.ComponentFilter)
+
+	stubs := buildHistoryStubs(env, comps.Components(), effectiveIncludeBare)
 	if len(stubs) == 0 {
 		return nil, nil
 	}
+
+	// FingerprintChangeDetails is potentially the largest field in the
+	// payload (one entry per fingerprint change per component, each with
+	// commit metadata) and JSON consumers on -a runs at azurelinux scale
+	// would otherwise get multi-MB responses. The details are intended for
+	// drilling into a single component to author a changelog, so only
+	// emit them when exactly one component is being reported on.
+	includeDetails := len(stubs) == 1
 
 	tomlSharing := countTomlSharing(env.Config().Components)
 
@@ -317,7 +336,7 @@ func ComponentHistory(env *azldev.Env, options *HistoryOptions) ([]HistoryResult
 			// ctx is identical (parmap derives it from workerEnv) and
 			// unused here. Mirrors how render.go does this.
 			res := buildHistoryResult( //nolint:contextcheck // env carries the ctx
-				workerEnv, stub, ctx, tomlSharing, tomlCache, since, options.SharedTomlMode,
+				workerEnv, stub, ctx, tomlSharing, tomlCache, since, options.SharedTomlMode, includeDetails,
 			)
 
 			return buildOutcome{result: res}
@@ -384,6 +403,19 @@ func buildHistoryStubs(
 	return stubs
 }
 
+// hasExplicitComponentSelection reports whether the user pinpointed
+// individual components (vs asking for everything, a group, or relying on
+// no-criteria defaults). Used by [ComponentHistory] to override
+// --include-bare in the explicit case so that
+// `azldev component history nano` always returns a row for nano.
+//
+// Group selection (--component-group) is intentionally NOT treated as
+// explicit -- groups can contain hundreds of components and the bare
+// filter's perf rationale still applies there.
+func hasExplicitComponentSelection(filter *components.ComponentFilter) bool {
+	return len(filter.ComponentNamePatterns) > 0 || len(filter.SpecPaths) > 0
+}
+
 // buildOutcome is the per-item return value from the parmap.Map worker.
 type buildOutcome struct {
 	result HistoryResult
@@ -392,12 +424,12 @@ type buildOutcome struct {
 // validateSharedTomlMode rejects unrecognized --shared values.
 func validateSharedTomlMode(mode string) error {
 	switch mode {
-	case sharedTomlModeShow, sharedTomlModeZero, sharedTomlModeOmit:
+	case sharedTomlModeShow, sharedTomlModeOmit:
 		return nil
 	default:
 		return fmt.Errorf(
-			"invalid --shared value %#q (want one of: %s, %s, %s)",
-			mode, sharedTomlModeShow, sharedTomlModeZero, sharedTomlModeOmit)
+			"invalid --shared value %#q (want one of: %s, %s)",
+			mode, sharedTomlModeShow, sharedTomlModeOmit)
 	}
 }
 
@@ -588,6 +620,7 @@ func buildHistoryResult(
 	tomlCache map[string]tomlMetrics,
 	since time.Time,
 	sharedMode string,
+	includeDetails bool,
 ) HistoryResult {
 	result := HistoryResult{
 		Name:               stub.component.GetName(),
@@ -596,7 +629,7 @@ func buildHistoryResult(
 	}
 
 	populateTomlMetrics(stub.component, ctx, tomlSharing, tomlCache, sharedMode, &result)
-	populateLockMetrics(env, stub.component, ctx, since, &result)
+	populateLockMetrics(env, stub.component, ctx, since, includeDetails, &result)
 
 	return result
 }
@@ -639,12 +672,7 @@ func populateTomlMetrics(
 		return
 	}
 
-	if result.SharedToml && sharedMode == sharedTomlModeZero {
-		result.TomlCommits = 0
-	} else {
-		result.TomlCommits = metrics.count
-	}
-
+	result.TomlCommits = metrics.count
 	result.LatestCommit = metrics.latest
 }
 
@@ -652,11 +680,16 @@ func populateTomlMetrics(
 // HasLock, HasImport, ManualBump.
 // All failure paths are deliberately swallowed: missing/unreadable lock
 // state is "no data", not a hard error.
+//
+// When includeDetails is false the per-commit FingerprintChange slice is
+// dropped before being copied into the result. The count is still
+// populated. See [ComponentHistory] for the rationale.
 func populateLockMetrics(
 	env *azldev.Env,
 	comp components.Component,
 	ctx *historyContext,
 	since time.Time,
+	includeDetails bool,
 	result *HistoryResult,
 ) {
 	name := comp.GetName()
@@ -702,7 +735,10 @@ func populateLockMetrics(
 
 	filtered := filterChangesSince(fingerprintChanges, since)
 	result.FingerprintChanges = len(filtered)
-	result.FingerprintChangeDetails = toFingerprintChanges(filtered)
+
+	if includeDetails {
+		result.FingerprintChangeDetails = toFingerprintChanges(filtered)
+	}
 }
 
 // toFingerprintChanges copies each [sources.FingerprintChange] into the

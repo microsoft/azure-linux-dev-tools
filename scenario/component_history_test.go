@@ -139,11 +139,26 @@ func TestComponentHistory_Smoke(t *testing.T) {
 		assert.Positive(t, change.Timestamp, "change[%d].Timestamp should be populated", i)
 	}
 
-	// With --include-bare both components show up.
+	// With --include-bare both components show up. With more than one result,
+	// FingerprintChangeDetails is suppressed in JSON output to keep responses
+	// bounded on -a runs (count is still populated).
 	results = runHistory(t, azldevBin, projectDir, "-a", "--include-bare")
 	rm = historyMap(results)
 
 	require.Contains(t, rm, "curl", "customized component should still be reported with --include-bare")
 	require.Contains(t, rm, "bash", "bare component should be reported with --include-bare")
 	assert.Equal(t, 0, rm["bash"].Customizations, "bash has no customizations")
+	assert.Equal(t, 2, rm["curl"].FingerprintChanges,
+		"FingerprintChanges count should still be populated on multi-result runs")
+	assert.Nil(t, rm["curl"].FingerprintChangeDetails,
+		"FingerprintChangeDetails should be suppressed when more than one component is reported")
+
+	// Explicit single-component query for a bare component: --include-bare
+	// is force-disabled so the user gets the row they asked for.
+	results = runHistory(t, azldevBin, projectDir, "bash")
+	rm = historyMap(results)
+
+	require.Contains(t, rm, "bash",
+		"explicit positional name should override --include-bare and return the row")
+	assert.Equal(t, 0, rm["bash"].Customizations)
 }

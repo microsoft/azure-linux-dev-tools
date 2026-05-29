@@ -17,8 +17,7 @@ review prioritization, or refactoring planning).
 
 When a component shares its source TOML with other components (e.g., a bare
 entry in a shared components.toml), the toml-commit count is coarse and the
-component is marked 'toml-shared'. Use --shared=zero or --shared=omit to
-suppress those counts.
+component is marked 'toml-shared'. Use --shared=omit to drop those rows.
 
 When exactly one component is selected the customization items are printed
 inline below the row, showing kind, value and description — useful for
@@ -52,7 +51,7 @@ azldev component history [flags]
   -g, --component-group stringArray   Component group name
   -h, --help                          help for history
       --include-bare                  Include components with zero customizations in the output. By default they are hidden -- their config inherits everything from defaults, and computing their git metrics is the dominant cost on large projects.
-      --shared string                 How to report rows for components that share a TOML file with others: show (keep row, count is coarse), zero (keep row, force count to 0), omit (drop row). (default "show")
+      --shared string                 How to report rows for components that share a TOML file with others: show (keep row, count is coarse), omit (drop row). (default "show")
       --since string                  Only count commits newer than this (Go duration syntax, e.g. 720h). Empty = all history.
   -s, --spec-path stringArray         Spec path
 ```
