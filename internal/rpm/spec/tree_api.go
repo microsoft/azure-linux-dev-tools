@@ -3,7 +3,10 @@
 
 package spec
 
-import "fmt"
+import (
+	"fmt"
+	"regexp"
+)
 
 // specTree is an opaque handle wrapping the parsed structural tree of a spec.
 // Operations on the tree are exposed via methods so callers in edit.go do not
@@ -114,6 +117,11 @@ func (t *specTree) handles(blocks []*block) []*sectionHandle {
 // RemoveSections removes the given sections from the tree. Removal is validated
 // as a set: if any one removal would orphan content or break a conditional's
 // semantics, the entire operation fails and the tree is left unmodified.
+//
+// Macro definitions (`%define` / `%global`) that live inside the removed
+// sections but are referenced by surviving content are automatically hoisted
+// to the root level just before the first removed section. See
+// [hoistReferencedMacros] for the full behavior.
 func (t *specTree) RemoveSections(handles []*sectionHandle) error {
 	blocks := make([]*block, len(handles))
 	for i, h := range handles {
@@ -123,6 +131,8 @@ func (t *specTree) RemoveSections(handles []*sectionHandle) error {
 	if err := validateSectionRemoval(t.root, blocks); err != nil {
 		return err
 	}
+
+	hoistReferencedMacros(t.root, blocks)
 
 	for _, b := range blocks {
 		removeBlockFromParent(t.root, b)
@@ -219,48 +229,50 @@ func (h *sectionHandle) VisitLines(visit func(lh *lineHandle) error) error {
 	return visitErr
 }
 
-// collectAndVisitLines walks b, calls visit on every text-line, and records
+// collectAndVisitLines walks blk, calls visit on every text-line, and records
 // each handle for later mutation flushing.
+//
+//nolint:cyclop // Switch over blockKind with a small recursive call per kind; splitting hurts readability.
 func collectAndVisitLines(
-	b *block,
+	blk *block,
 	secName, secPkg string,
 	visit func(string, string, *lineHandle) error,
 	handles *[]*lineHandle,
 ) error {
-	switch b.Kind {
+	switch blk.Kind {
 	case rootBlock:
-		for _, child := range b.Children {
+		for _, child := range blk.Children {
 			if err := collectAndVisitLines(child, secName, secPkg, visit, handles); err != nil {
 				return err
 			}
 		}
 
 	case sectionBlock:
-		for _, child := range b.Children {
-			if err := collectAndVisitLines(child, b.Name, b.Package, visit, handles); err != nil {
+		for _, child := range blk.Children {
+			if err := collectAndVisitLines(child, blk.Name, blk.Package, visit, handles); err != nil {
 				return err
 			}
 		}
 
 	case conditionalBlock:
-		for _, child := range b.Children {
+		for _, child := range blk.Children {
 			if err := collectAndVisitLines(child, secName, secPkg, visit, handles); err != nil {
 				return err
 			}
 		}
 
-		for _, child := range b.Else {
+		for _, child := range blk.Else {
 			if err := collectAndVisitLines(child, secName, secPkg, visit, handles); err != nil {
 				return err
 			}
 		}
 
 	case textBlock:
-		for i, line := range b.Lines {
-			lh := &lineHandle{Text: line, block: b, idx: i}
-			*handles = append(*handles, lh)
+		for i, line := range blk.Lines {
+			handle := &lineHandle{Text: line, block: blk, idx: i}
+			*handles = append(*handles, handle)
 
-			if err := visit(secName, secPkg, lh); err != nil {
+			if err := visit(secName, secPkg, handle); err != nil {
 				return err
 			}
 		}
@@ -277,13 +289,13 @@ func collectAndVisitLines(
 // invalidate the indices of yet-to-be-applied operations.
 func flushLineMutations(handles []*lineHandle) {
 	for i := len(handles) - 1; i >= 0; i-- {
-		h := handles[i]
+		handle := handles[i]
 
 		switch {
-		case h.removed:
-			h.block.Lines = append(h.block.Lines[:h.idx], h.block.Lines[h.idx+1:]...)
-		case h.replaced:
-			h.block.Lines[h.idx] = h.newText
+		case handle.removed:
+			handle.block.Lines = append(handle.block.Lines[:handle.idx], handle.block.Lines[handle.idx+1:]...)
+		case handle.replaced:
+			handle.block.Lines[handle.idx] = handle.newText
 		}
 	}
 }
@@ -372,13 +384,13 @@ func (h *sectionHandle) findTagInsertAnchor(family string) *tagInsertAnchor {
 	for _, child := range h.block.Children {
 		switch child.Kind {
 		case textBlock:
-			for i, line := range child.Lines {
+			for tagLineIdx, line := range child.Lines {
 				tag, _, isTag := parseTagLine(line)
 				if !isTag {
 					continue
 				}
 
-				anchor := &tagInsertAnchor{inTextBlock: child, lineIdx: i}
+				anchor := &tagInsertAnchor{inTextBlock: child, lineIdx: tagLineIdx}
 				lastAny = anchor
 
 				if tagFamily(tag) == family {
@@ -427,10 +439,10 @@ func scanConditionalForTags(cond *block, family string) (hasAny, hasFamily bool)
 	return hasAny, hasFamily
 }
 
-func scanForTags(b *block, family string) (hasAny, hasFamily bool) {
-	switch b.Kind {
+func scanForTags(blk *block, family string) (hasAny, hasFamily bool) {
+	switch blk.Kind {
 	case textBlock:
-		for _, line := range b.Lines {
+		for _, line := range blk.Lines {
 			tag, _, isTag := parseTagLine(line)
 			if !isTag {
 				continue
@@ -444,7 +456,7 @@ func scanForTags(b *block, family string) (hasAny, hasFamily bool) {
 		}
 
 	case conditionalBlock:
-		return scanConditionalForTags(b, family)
+		return scanConditionalForTags(blk, family)
 
 	case rootBlock, sectionBlock, macroDefBlock:
 		// Not searched for tags here.
@@ -452,6 +464,9 @@ func scanForTags(b *block, family string) (hasAny, hasFamily bool) {
 
 	return hasAny, hasFamily
 }
+
+// tagRegex matches RPM tag lines in the form "Name: value".
+var tagRegex = regexp.MustCompile(`^\s*([^\s:]+):\s*(.*?)\s*$`)
 
 // parseTagLine attempts to parse line as an RPM tag line ("Name: value").
 // Returns the tag name and value, or ok=false if line is not a tag.
@@ -466,12 +481,18 @@ func parseTagLine(line string) (tag, value string, ok bool) {
 	return matches[1], matches[2], true
 }
 
+// packageSectionName is the canonical section name for sub-package definitions
+// (the `%package <name>` directive). The preamble (empty section name) and these
+// sections are the only places where tag-style lines (`Foo: bar`) carry semantic
+// meaning; script-style sections such as `%build` may contain lines that match
+// the tag regex but are not actually tags.
+const packageSectionName = "%package"
+
 // isTagBearingSection reports whether a section keyword can legally hold RPM
 // tag declarations (e.g. "Name:", "Source0:"). Only the preamble (empty name)
 // and "%package" sections qualify. Script-style sections like "%build" may
 // contain shell that happens to match the "word: word" pattern; we must avoid
 // treating those as tags.
 func isTagBearingSection(secName string) bool {
-	return secName == "" || secName == "%package"
+	return secName == "" || secName == packageSectionName
 }
-

@@ -54,12 +54,8 @@ func TestOpenSpec_EmptyInput(t *testing.T) {
 	require.NoError(t, err)
 
 	// Empty spec is parseable but has no tags.
-	err = sf.VisitTags(func(_ *spec.TagLine, _ *spec.Context) error {
-		t.Fatal("no tags should be visited in an empty spec")
-
-		return nil
-	})
-	require.NoError(t, err)
+	_, err = sf.GetTag("", "Name")
+	require.ErrorIs(t, err, spec.ErrNoSuchTag)
 }
 
 func TestOpenSpec_BinaryContent(t *testing.T) {
