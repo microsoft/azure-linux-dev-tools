@@ -277,7 +277,7 @@
       },
       "shared": {
        "default": "show",
-       "description": "How to report rows for components that share a TOML file with others: show (keep row, count is coarse), zero (keep row, force count to 0), omit (drop row).",
+       "description": "How to report rows for components that share a TOML file with others: show (keep row, count is coarse), omit (drop row).",
        "type": "string"
       },
       "since": {
