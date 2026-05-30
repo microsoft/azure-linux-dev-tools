@@ -1046,8 +1046,9 @@ func generateFileHeaderOverlay() []projectconfig.ComponentOverlay {
 }
 
 // synthesizeCheckSkipOverlays generates overlays to disable the %check section if configured.
-// When check.skip is true, it prepends an 'exit 0' to the %check section with a comment
-// explaining why the section was disabled.
+// When check.skip is true, it prepends an 'exit 0' to every %check section in the spec with
+// a comment explaining why the section was disabled. Uses [ComponentOverlayPrependAllSpecLines]
+// to handle specs that contain multiple %check sections gated by different conditionals.
 func synthesizeCheckSkipOverlays(checkConfig projectconfig.CheckConfig) []projectconfig.ComponentOverlay {
 	if !checkConfig.Skip {
 		return nil
@@ -1055,7 +1056,7 @@ func synthesizeCheckSkipOverlays(checkConfig projectconfig.CheckConfig) []projec
 
 	return []projectconfig.ComponentOverlay{
 		{
-			Type:        projectconfig.ComponentOverlayPrependSpecLines,
+			Type:        projectconfig.ComponentOverlayPrependAllSpecLines,
 			SectionName: "%check",
 			Lines: []string{
 				"# Check section disabled: " + checkConfig.SkipReason,

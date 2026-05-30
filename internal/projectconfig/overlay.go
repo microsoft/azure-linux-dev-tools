@@ -111,6 +111,7 @@ func (c *ComponentOverlay) ModifiesSpec() bool {
 		c.Type == ComponentOverlayUpdateSpecTag ||
 		c.Type == ComponentOverlayRemoveSpecTag ||
 		c.Type == ComponentOverlayPrependSpecLines ||
+		c.Type == ComponentOverlayPrependAllSpecLines ||
 		c.Type == ComponentOverlayAppendSpecLines ||
 		c.Type == ComponentOverlaySearchAndReplaceInSpec ||
 		c.Type == ComponentOverlayRemoveSection ||
@@ -152,6 +153,11 @@ const (
 	// ComponentOverlayPrependSpecLines is an overlay that prepends lines to a section in a spec; fails if the section
 	// doesn't exist.
 	ComponentOverlayPrependSpecLines ComponentOverlayType = "spec-prepend-lines"
+	// ComponentOverlayPrependAllSpecLines is an overlay that prepends lines to every section
+	// matching the given name and package in a spec. This is useful when a spec contains multiple
+	// sections with the same name (e.g., two %check sections gated by different conditionals)
+	// and all of them need the same modification. Fails if no matching section exists.
+	ComponentOverlayPrependAllSpecLines ComponentOverlayType = "spec-prepend-all-lines"
 	// ComponentOverlayAppendSpecLines is an overlay that appends lines to a section in a spec; fails if the section
 	// doesn't exist.
 	ComponentOverlayAppendSpecLines ComponentOverlayType = "spec-append-lines"
@@ -246,7 +252,7 @@ func (c *ComponentOverlay) Validate() error {
 		if c.Tag == "" {
 			return missingField("tag")
 		}
-	case ComponentOverlayPrependSpecLines, ComponentOverlayAppendSpecLines:
+	case ComponentOverlayPrependSpecLines, ComponentOverlayPrependAllSpecLines, ComponentOverlayAppendSpecLines:
 		if len(c.Lines) == 0 {
 			return missingField("lines")
 		}

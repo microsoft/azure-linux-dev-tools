@@ -150,6 +150,11 @@ func ApplySpecOverlay(overlay projectconfig.ComponentOverlay, openedSpec *spec.S
 		if err != nil {
 			return fmt.Errorf("failed to prepend lines to spec:\n%w", err)
 		}
+	case projectconfig.ComponentOverlayPrependAllSpecLines:
+		err := openedSpec.PrependLinesToAllSections(overlay.SectionName, overlay.PackageName, overlay.Lines)
+		if err != nil {
+			return fmt.Errorf("failed to prepend lines to all matching sections in spec:\n%w", err)
+		}
 	case projectconfig.ComponentOverlayAppendSpecLines:
 		err := openedSpec.AppendLinesToSection(overlay.SectionName, overlay.PackageName, overlay.Lines)
 		if err != nil {

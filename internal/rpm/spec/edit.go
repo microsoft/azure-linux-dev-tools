@@ -304,9 +304,10 @@ func (s *Spec) InsertTag(packageName string, tag string, value string) error {
 	})
 }
 
-// PrependLinesToSection prepends the given lines to the start of the specified section, placing
-// them just after the section header (or at the top of the file in the global section). An error
-// is returned if the identified section cannot be found in the spec.
+// PrependLinesToSection prepends the given lines to the start of the first section matching
+// the specified name and package, placing them just after the section header (or at the top
+// of the file in the global section). An error is returned if the identified section cannot
+// be found in the spec.
 func (s *Spec) PrependLinesToSection(sectionName, packageName string, lines []string) (err error) {
 	slog.Debug("Prepending lines to spec", "section", sectionName, "package", packageName, "lines", lines)
 
@@ -317,6 +318,28 @@ func (s *Spec) PrependLinesToSection(sectionName, packageName string, lines []st
 		}
 
 		sect.PrependLines(lines)
+
+		return nil
+	})
+}
+
+// PrependLinesToAllSections prepends the given lines to the start of every section matching
+// the specified name and package, placing them just after each section header. This is useful
+// when a spec contains multiple sections with the same name (e.g., two %check sections gated
+// by different conditionals) and all of them need the same modification.
+// An error is returned if no matching section exists.
+func (s *Spec) PrependLinesToAllSections(sectionName, packageName string, lines []string) (err error) {
+	slog.Debug("Prepending lines to all matching sections", "section", sectionName, "package", packageName, "lines", lines)
+
+	return s.mutateTree(func(tree *specTree) error {
+		sections := tree.Sections(sectionName, packageName)
+		if len(sections) == 0 {
+			return fmt.Errorf("section %#q (package=%#q) not found:\n%w", sectionName, packageName, ErrSectionNotFound)
+		}
+
+		for _, sect := range sections {
+			sect.PrependLines(lines)
+		}
 
 		return nil
 	})

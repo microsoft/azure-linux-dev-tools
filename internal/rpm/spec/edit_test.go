@@ -1158,6 +1158,99 @@ Name: test
 		err = specFile.PrependLinesToSection("%description", "", []string{"New line"})
 		require.Error(t, err)
 	})
+
+	t.Run("prepends to first matching section only", func(t *testing.T) {
+		input := `
+Name: test
+
+%if %{with tests}
+%check
+%pytest
+%endif
+
+%check
+%pyproject_check_import
+`
+
+		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
+
+		err = specFile.PrependLinesToSection("%check", "", []string{"# disabled", "exit 0"})
+		require.NoError(t, err)
+
+		actual := new(bytes.Buffer)
+
+		err = specFile.Serialize(actual)
+		require.NoError(t, err)
+
+		assert.Equal(t, `
+Name: test
+
+%if %{with tests}
+%check
+# disabled
+exit 0
+%pytest
+%endif
+
+%check
+%pyproject_check_import
+`, actual.String())
+	})
+}
+
+func TestPrependLinesToAllSections(t *testing.T) {
+	t.Run("prepends to all matching sections", func(t *testing.T) {
+		input := `
+Name: test
+
+%if %{with tests}
+%check
+%pytest
+%endif
+
+%check
+%pyproject_check_import
+`
+
+		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
+
+		err = specFile.PrependLinesToAllSections("%check", "", []string{"# disabled", "exit 0"})
+		require.NoError(t, err)
+
+		actual := new(bytes.Buffer)
+
+		err = specFile.Serialize(actual)
+		require.NoError(t, err)
+
+		assert.Equal(t, `
+Name: test
+
+%if %{with tests}
+%check
+# disabled
+exit 0
+%pytest
+%endif
+
+%check
+# disabled
+exit 0
+%pyproject_check_import
+`, actual.String())
+	})
+
+	t.Run("no such section", func(t *testing.T) {
+		input := `
+Name: test-no-check
+`
+		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
+
+		err = specFile.PrependLinesToAllSections("%check", "", []string{"exit 0"})
+		require.Error(t, err)
+	})
 }
 
 func TestAppendLinesToSection(t *testing.T) {
@@ -1412,6 +1505,43 @@ A test package.
 
 %build
 make
+`, actual.String())
+	})
+
+	t.Run("appends inside wrapper when section is in conditional", func(t *testing.T) {
+		// %files modules-extra-matched is inside %ifnarch. The tree correctly
+		// scopes the section within the conditional, so appended lines land
+		// inside the wrapper (before %endif).
+		input := `
+Name: test
+
+%ifnarch noarch
+%files modules-extra-matched
+%endif
+
+%changelog
+`
+		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
+
+		err = specFile.AppendLinesToSection("%files", "modules-extra-matched", []string{"", "# ANCHOR"})
+		require.NoError(t, err)
+
+		actual := new(bytes.Buffer)
+
+		err = specFile.Serialize(actual)
+		require.NoError(t, err)
+
+		assert.Equal(t, `
+Name: test
+
+%ifnarch noarch
+%files modules-extra-matched
+
+# ANCHOR
+%endif
+
+%changelog
 `, actual.String())
 	})
 }
