@@ -4,15 +4,11 @@
 package component_test
 
 import (
-	"os/exec"
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/component"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
-	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
-	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/mock"
-	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -38,45 +34,56 @@ func TestComponentQueryCmd_NoMatch(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestQueryComponents_OneComponent(t *testing.T) {
-	const (
-		testComponentName = "test-component"
-		testSpecPath      = "/path/to/spec"
-	)
-
+func TestQueryComponents_MissingRenderedSpecsDir(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
-	testEnv.Config.Components[testComponentName] = projectconfig.ComponentConfig{
-		Name: testComponentName,
-		Spec: projectconfig.SpecSource{
-			SourceType: projectconfig.SpecSourceTypeLocal,
-			Path:       testSpecPath,
-		},
-	}
 
-	// Pretend mock is present.
-	testEnv.CmdFactory.RegisterCommandInSearchPath(mock.MockBinary)
-
-	// Mock the rpmspec command to return valid output
-	// NOTE: This takes a dependency on knowing how rpmspec gets invoked.
-	testEnv.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
-		// Return mock rpmspec output in the expected format: name|epoch|version|release
-		return "name=test-component\nepoch=0\nversion=1.0.0\nrelease=1.azl3\n", nil
-	}
-
+	// Test env constructProjectConfig leaves RenderedSpecsDir empty.
 	options := component.QueryComponentsOptions{
 		ComponentFilter: components.ComponentFilter{
-			ComponentNamePatterns: []string{testComponentName},
+			ComponentNamePatterns: []string{"any"},
 		},
 	}
 
-	// Simulate the spec file existing.
-	err := fileutils.WriteFile(testEnv.FS(), testSpecPath, []byte("test spec content"), fileperms.PublicFile)
-	require.NoError(t, err)
+	_, err := component.QueryComponents(testEnv.Env, &options)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "rendered-specs-dir is not configured")
+}
 
-	results, err := component.QueryComponents(testEnv.Env, &options)
-	require.NoError(t, err)
-	require.Len(t, results, 1)
+func TestQueryComponents_RenderedSpecsDirDoesNotExist(t *testing.T) {
+	const renderedSpecsDir = "/project/specs"
 
-	result := results[0]
-	assert.Equal(t, testComponentName, result.Name)
+	testEnv := testutils.NewTestEnv(t)
+	testEnv.Config.Project.RenderedSpecsDir = renderedSpecsDir
+
+	// Do NOT create the directory on the test filesystem.
+	options := component.QueryComponentsOptions{
+		ComponentFilter: components.ComponentFilter{
+			ComponentNamePatterns: []string{"any"},
+		},
+	}
+
+	_, err := component.QueryComponents(testEnv.Env, &options)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not exist")
+}
+
+// Smoke test: when filter matches no components, the resolver surfaces an
+// error before any rendered-spec validation runs.
+func TestQueryComponents_NoComponentsSelected(t *testing.T) {
+	const renderedSpecsDir = "/project/specs"
+
+	testEnv := testutils.NewTestEnv(t)
+	testEnv.Config.Project.RenderedSpecsDir = renderedSpecsDir
+
+	require.NoError(t, fileutils.MkdirAll(testEnv.FS(), renderedSpecsDir))
+
+	// No components configured at all.
+	options := component.QueryComponentsOptions{
+		ComponentFilter: components.ComponentFilter{
+			ComponentNamePatterns: []string{"nonexistent"},
+		},
+	}
+
+	_, err := component.QueryComponents(testEnv.Env, &options)
+	require.Error(t, err)
 }
