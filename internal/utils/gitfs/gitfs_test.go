@@ -269,3 +269,101 @@ func TestSubmoduleEntry(t *testing.T) {
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"azldev.toml", "sub"}, names)
 }
+
+// TestSymlinkEntry verifies that symlink entries are not silently read as file
+// content (git stores the link target as the blob body). Open must report a
+// clear, stable symlink error rather than handing the target-path string to the
+// caller, and Stat must classify the entry as a symlink.
+func TestSymlinkEntry(t *testing.T) {
+	repo, hash := commitTreeWithSymlink(t)
+
+	fs, err := gitfs.NewFromCommit(repo, hash)
+	require.NoError(t, err)
+
+	_, err = fs.Open("link")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, gitfs.ErrSymlink)
+	assert.NotContains(t, err.Error(), "azldev.toml", "must not leak the link target as content")
+
+	info, err := fs.Stat("link")
+	require.NoError(t, err)
+	assert.False(t, info.Mode().IsRegular(), "symlink must not look like a regular file")
+	assert.NotZero(t, info.Mode()&os.ModeSymlink, "symlink mode bit must be set")
+}
+
+// commitTreeWithSymlink builds a repo whose root tree contains a symlink entry
+// (blob body = target path) next to the regular file it points at.
+func commitTreeWithSymlink(t *testing.T) (*gogit.Repository, plumbing.Hash) {
+	t.Helper()
+
+	repo, err := gogit.Init(memory.NewStorage(), memfs.New())
+	require.NoError(t, err)
+
+	targetBlob := storeBlob(t, repo, "name = \"foo\"\n")
+	linkBlob := storeBlob(t, repo, "azldev.toml") // symlink body is the target path
+
+	entries := []object.TreeEntry{
+		{Name: "azldev.toml", Mode: filemode.Regular, Hash: targetBlob},
+		{Name: "link", Mode: filemode.Symlink, Hash: linkBlob},
+	}
+
+	tree := &object.Tree{Entries: entries}
+
+	treeObj := repo.Storer.NewEncodedObject()
+	require.NoError(t, tree.Encode(treeObj))
+
+	treeHash, err := repo.Storer.SetEncodedObject(treeObj)
+	require.NoError(t, err)
+
+	commit := &object.Commit{
+		Author:    object.Signature{Name: "t", Email: "t@t.com", When: time.Now()},
+		Committer: object.Signature{Name: "t", Email: "t@t.com", When: time.Now()},
+		Message:   "with symlink",
+		TreeHash:  treeHash,
+	}
+
+	commitObj := repo.Storer.NewEncodedObject()
+	require.NoError(t, commit.Encode(commitObj))
+
+	commitHash, err := repo.Storer.SetEncodedObject(commitObj)
+	require.NoError(t, err)
+
+	return repo, commitHash
+}
+
+// TestDirSeekResetsOffset verifies that seeking a directory handle back to the
+// start lets a subsequent Readdir return the full listing again, rather than an
+// empty result because the internal offset was never reset.
+func TestDirSeekResetsOffset(t *testing.T) {
+	repo, hash := newTestRepo(t)
+
+	fs, err := gitfs.NewFromCommit(repo, hash)
+	require.NoError(t, err)
+
+	dir, err := fs.Open("/comps")
+	require.NoError(t, err)
+
+	first, err := dir.Readdir(-1)
+	require.NoError(t, err)
+	require.NotEmpty(t, first)
+
+	_, err = dir.Seek(0, io.SeekStart)
+	require.NoError(t, err)
+
+	again, err := dir.Readdir(-1)
+	require.NoError(t, err)
+	assert.Len(t, again, len(first), "rewound directory must list all entries again")
+}
+
+// TestReadOnlyErrorIsExported verifies callers can identify read-only failures
+// via errors.Is against the exported sentinel.
+func TestReadOnlyErrorIsExported(t *testing.T) {
+	repo, hash := newTestRepo(t)
+
+	fs, err := gitfs.NewFromCommit(repo, hash)
+	require.NoError(t, err)
+
+	_, err = fs.Create("/x")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, gitfs.ErrReadOnly)
+}

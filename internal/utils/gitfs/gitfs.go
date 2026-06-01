@@ -39,13 +39,21 @@ import (
 	"github.com/spf13/afero"
 )
 
-// errReadOnly is returned by all mutating operations.
-var errReadOnly = errors.New("gitfs: read-only filesystem")
+// ErrReadOnly is returned by all mutating operations: the filesystem is
+// strictly read-only.
+var ErrReadOnly = errors.New("gitfs: read-only filesystem")
 
 // ErrSubmodule is returned when a caller tries to read a submodule (gitlink)
 // entry. A gitlink records a commit hash in another repository, not file
 // content in this tree, so there is nothing to read through the filesystem.
 var ErrSubmodule = errors.New("gitfs: submodule entries are not supported")
+
+// ErrSymlink is returned when a caller tries to read a symlink entry. git
+// stores the link target as the blob body; reading it would hand the caller
+// the target path string instead of the file it points at. In-tree symlink
+// resolution is intentionally unsupported, so Open reports this rather than
+// silently returning the target bytes.
+var ErrSymlink = errors.New("gitfs: symlink entries are not supported")
 
 // Fs is a read-only [afero.Fs] backed by a git tree.
 type Fs struct {
@@ -114,6 +122,10 @@ func (f *Fs) Open(name string) (afero.File, error) {
 		return nil, &os.PathError{Op: "open", Path: name, Err: ErrSubmodule}
 	}
 
+	if entry.Mode == filemode.Symlink {
+		return nil, &os.PathError{Op: "open", Path: name, Err: ErrSymlink}
+	}
+
 	content, err := f.blobContents(entry.Hash)
 	if err != nil {
 		return nil, &os.PathError{Op: "open", Path: name, Err: err}
@@ -126,7 +138,7 @@ func (f *Fs) Open(name string) (afero.File, error) {
 // is rejected.
 func (f *Fs) OpenFile(name string, flag int, _ os.FileMode) (afero.File, error) {
 	if flag&(os.O_WRONLY|os.O_RDWR|os.O_CREATE|os.O_APPEND|os.O_TRUNC) != 0 {
-		return nil, &os.PathError{Op: "open", Path: name, Err: errReadOnly}
+		return nil, &os.PathError{Op: "open", Path: name, Err: ErrReadOnly}
 	}
 
 	return f.Open(name)
@@ -180,10 +192,12 @@ func (f *Fs) entryInfo(name string, entry *object.TreeEntry) (os.FileInfo, error
 		return &fileInfo{name: name, isDir: true, mode: os.ModeDir | fileperms.ReadOnlyExec}, nil
 	}
 
-	// Submodule (gitlink) entries reference a commit in another repository, not
-	// a blob in this tree. Classify them as non-regular without a blob lookup
-	// so directory listings work and Open's submodule error stays authoritative.
-	if entry.Mode == filemode.Submodule {
+	// Submodule (gitlink) and symlink entries do not present readable file
+	// content in this tree (a gitlink points at a commit elsewhere; a symlink's
+	// blob is just the target path). Classify them as non-regular without a
+	// blob-size lookup so directory listings work and Open's error stays
+	// authoritative.
+	if entry.Mode == filemode.Submodule || entry.Mode == filemode.Symlink {
 		return &fileInfo{name: name, mode: entryFileMode(entry.Mode)}, nil
 	}
 
@@ -216,39 +230,39 @@ func entryFileMode(mode filemode.FileMode) os.FileMode {
 //
 
 func (f *Fs) Create(name string) (afero.File, error) {
-	return nil, &os.PathError{Op: "create", Path: name, Err: errReadOnly}
+	return nil, &os.PathError{Op: "create", Path: name, Err: ErrReadOnly}
 }
 
 func (f *Fs) Mkdir(name string, _ os.FileMode) error {
-	return &os.PathError{Op: "mkdir", Path: name, Err: errReadOnly}
+	return &os.PathError{Op: "mkdir", Path: name, Err: ErrReadOnly}
 }
 
 func (f *Fs) MkdirAll(path string, _ os.FileMode) error {
-	return &os.PathError{Op: "mkdir", Path: path, Err: errReadOnly}
+	return &os.PathError{Op: "mkdir", Path: path, Err: ErrReadOnly}
 }
 
 func (f *Fs) Remove(name string) error {
-	return &os.PathError{Op: "remove", Path: name, Err: errReadOnly}
+	return &os.PathError{Op: "remove", Path: name, Err: ErrReadOnly}
 }
 
 func (f *Fs) RemoveAll(path string) error {
-	return &os.PathError{Op: "removeall", Path: path, Err: errReadOnly}
+	return &os.PathError{Op: "removeall", Path: path, Err: ErrReadOnly}
 }
 
 func (f *Fs) Rename(oldname, _ string) error {
-	return &os.PathError{Op: "rename", Path: oldname, Err: errReadOnly}
+	return &os.PathError{Op: "rename", Path: oldname, Err: ErrReadOnly}
 }
 
 func (f *Fs) Chmod(name string, _ os.FileMode) error {
-	return &os.PathError{Op: "chmod", Path: name, Err: errReadOnly}
+	return &os.PathError{Op: "chmod", Path: name, Err: ErrReadOnly}
 }
 
 func (f *Fs) Chown(name string, _, _ int) error {
-	return &os.PathError{Op: "chown", Path: name, Err: errReadOnly}
+	return &os.PathError{Op: "chown", Path: name, Err: ErrReadOnly}
 }
 
 func (f *Fs) Chtimes(name string, _, _ time.Time) error {
-	return &os.PathError{Op: "chtimes", Path: name, Err: errReadOnly}
+	return &os.PathError{Op: "chtimes", Path: name, Err: ErrReadOnly}
 }
 
 //
@@ -325,19 +339,19 @@ func (f *regularFile) Readdirnames(int) ([]string, error) {
 }
 
 func (f *regularFile) Write([]byte) (int, error) {
-	return 0, &os.PathError{Op: "write", Path: f.name, Err: errReadOnly}
+	return 0, &os.PathError{Op: "write", Path: f.name, Err: ErrReadOnly}
 }
 
 func (f *regularFile) WriteAt([]byte, int64) (int, error) {
-	return 0, &os.PathError{Op: "write", Path: f.name, Err: errReadOnly}
+	return 0, &os.PathError{Op: "write", Path: f.name, Err: ErrReadOnly}
 }
 
 func (f *regularFile) WriteString(string) (int, error) {
-	return 0, &os.PathError{Op: "write", Path: f.name, Err: errReadOnly}
+	return 0, &os.PathError{Op: "write", Path: f.name, Err: ErrReadOnly}
 }
 
 func (f *regularFile) Truncate(int64) error {
-	return &os.PathError{Op: "truncate", Path: f.name, Err: errReadOnly}
+	return &os.PathError{Op: "truncate", Path: f.name, Err: ErrReadOnly}
 }
 
 //
@@ -361,9 +375,21 @@ func newDirFile(fs *Fs, name, relPath string, tree *object.Tree) *dirFile {
 func (d *dirFile) Close() error                      { return nil }
 func (d *dirFile) Read([]byte) (int, error)          { return 0, io.EOF }
 func (d *dirFile) ReadAt([]byte, int64) (int, error) { return 0, io.EOF }
-func (d *dirFile) Seek(int64, int) (int64, error)    { return 0, nil }
 func (d *dirFile) Name() string                      { return d.name }
 func (d *dirFile) Sync() error                       { return nil }
+
+// Seek only supports rewinding the directory stream to the start
+// (Seek(0, io.SeekStart)), which resets the Readdir paging offset. Any other
+// seek is rejected rather than silently ignored.
+func (d *dirFile) Seek(offset int64, whence int) (int64, error) {
+	if offset == 0 && whence == io.SeekStart {
+		d.offset = 0
+
+		return 0, nil
+	}
+
+	return 0, &os.PathError{Op: "seek", Path: d.name, Err: errors.New("gitfs: unsupported directory seek")}
+}
 
 func (d *dirFile) Stat() (os.FileInfo, error) {
 	base := "."
@@ -428,17 +454,17 @@ func (d *dirFile) Readdirnames(n int) ([]string, error) {
 }
 
 func (d *dirFile) Write([]byte) (int, error) {
-	return 0, &os.PathError{Op: "write", Path: d.name, Err: errReadOnly}
+	return 0, &os.PathError{Op: "write", Path: d.name, Err: ErrReadOnly}
 }
 
 func (d *dirFile) WriteAt([]byte, int64) (int, error) {
-	return 0, &os.PathError{Op: "write", Path: d.name, Err: errReadOnly}
+	return 0, &os.PathError{Op: "write", Path: d.name, Err: ErrReadOnly}
 }
 
 func (d *dirFile) WriteString(string) (int, error) {
-	return 0, &os.PathError{Op: "write", Path: d.name, Err: errReadOnly}
+	return 0, &os.PathError{Op: "write", Path: d.name, Err: ErrReadOnly}
 }
 
 func (d *dirFile) Truncate(int64) error {
-	return &os.PathError{Op: "truncate", Path: d.name, Err: errReadOnly}
+	return &os.PathError{Op: "truncate", Path: d.name, Err: ErrReadOnly}
 }
