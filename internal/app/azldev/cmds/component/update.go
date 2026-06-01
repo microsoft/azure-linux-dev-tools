@@ -150,8 +150,7 @@ type UpdateResult struct {
 
 // UpdateComponents resolves source identities for all selected components and
 // writes the results to per-component lock files under locks/.
-// Lock validation is always skipped regardless of the caller's SkipLockValidation
-// value — update is the lock writer.
+// Lock validation is always skipped — update is the lock writer.
 func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]UpdateResult, error) {
 	if options.Bump && options.CheckOnly {
 		return nil, fmt.Errorf("%w: --bump and --check-only are mutually exclusive", azldev.ErrInvalidUsage)
@@ -161,9 +160,10 @@ func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]Updat
 	// Suppress staleness warnings — we're about to refresh the locks ourselves,
 	// so warning the user to "run component update" would be self-referential noise.
 	resolver.SuppressLockWarnings = true
-	// Skip lock validation — update is the lock file writer, so missing or
-	// stale locks are expected and will be fixed by this command.
-	options.ComponentFilter.SkipLockValidation = true
+	// Skip lock validation but keep population — update is the lock file writer,
+	// so missing or stale locks are expected and will be fixed by this command.
+	// We still need to populate locks to compute freshness.
+	options.ComponentFilter.LockMode = components.LockModeSkipValidationPopulate
 	// Enable freshness checking so the resolver computes FreshnessStatus for
 	// each component. This lets resolveSourceIdentitiesParallel skip
 	// re-resolution for components whose resolution inputs haven't changed.

@@ -38,6 +38,7 @@ azldev component list [flags]
   -p, --component stringArray         Component name pattern
   -g, --component-group stringArray   Component group name
   -h, --help                          help for list
+      --skip-lock-population          skip lock file population (default: true; set to false to read lock data) (default true)
   -s, --spec-path stringArray         Spec path
 ```
 
