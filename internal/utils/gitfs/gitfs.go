@@ -56,6 +56,12 @@ var ErrSubmodule = errors.New("gitfs: submodule entries are not supported")
 var ErrSymlink = errors.New("gitfs: symlink entries are not supported")
 
 // Fs is a read-only [afero.Fs] backed by a git tree.
+//
+// Fs is NOT safe for concurrent use. Reads go through [object.Tree.FindEntry],
+// which lazily populates the tree's internal lookup maps on first access, so
+// two goroutines sharing one *Fs (or its underlying *object.Tree) can race.
+// This matters because callers replay commits in parallel: give each goroutine
+// its own *Fs via a separate [NewFromCommit] rather than sharing one instance.
 type Fs struct {
 	repo *gogit.Repository
 	tree *object.Tree
@@ -187,6 +193,12 @@ func (f *Fs) blobContents(hash plumbing.Hash) ([]byte, error) {
 
 // entryInfo builds a FileInfo for a tree entry, fetching the blob size for
 // regular files.
+//
+// For regular files this loads the blob object to report an accurate Size().
+// On a large tree a name-only directory scan (Readdirnames / doublestar) thus
+// inflates every blob just for its size. We accept that cost: the expected
+// workflow scans modest config trees, and the simplicity of always returning a
+// correct size outweighs lazy-size bookkeeping for the current consumers.
 func (f *Fs) entryInfo(name string, entry *object.TreeEntry) (os.FileInfo, error) {
 	if entry.Mode == filemode.Dir {
 		return &fileInfo{name: name, isDir: true, mode: os.ModeDir | fileperms.ReadOnlyExec}, nil

@@ -93,6 +93,13 @@ func LoadProjectConfigAtCommit(
 // the historic tree), and distro defaults are not used for version-setting
 // overlays. This keeps historic resolution self-contained and deterministic.
 //
+// Each call performs a full LoadProjectConfigAtCommit (fresh overlay, re-staged
+// defaults, re-parsed config) to extract a single component, so resolving many
+// components at one commit reloads the project repeatedly. This favors a simple,
+// self-contained API over performance; the currently expected workflows resolve
+// few components per commit. If a caller needs many-per-commit resolution, load
+// the config once and resolve against the returned *ProjectConfig instead.
+//
 // Returns (nil, nil) when the component is absent at that commit.
 func ResolveComponentOverlaysAtCommit(
 	repo *gogit.Repository,
