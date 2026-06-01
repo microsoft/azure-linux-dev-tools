@@ -49,6 +49,16 @@ type InputRepo struct {
 	// set by the caller. Used together with [InputRepo.PrefixIndex] to mint
 	// human-readable repo ids that disambiguate multi-prefix runs.
 	PrefixCount int
+	// RepoID, when non-empty, is used verbatim as the dnf repo id instead of
+	// being synthesized from SubrepoName/Arch/PrefixIndex. Callers that build
+	// the input list from a resolved project config set this to the canonical
+	// resource id (e.g. "azl4-beta-base", "fedora-43-everything") so dnf logs
+	// match the config the user authored.
+	RepoID string
+	// GPGKey, when non-empty, is forwarded to dnf as --setopt=<id>.gpgkey=...
+	// alongside gpgcheck=1. Only meaningful when the caller resolved this
+	// repo from project config; the prefix-driven path leaves it empty.
+	GPGKey string
 }
 
 // ResolveTemplate looks up name in the supplied templates map (typically
@@ -141,4 +151,12 @@ func NormalizePrefix(prefix string) (string, error) {
 	}
 
 	return strings.TrimRight(prefix, "/"), nil
+}
+
+// SubstituteBasearch replaces every `$basearch` occurrence in raw with arch.
+// Used by the version-mode resolver to bake the host arch into a URL whose
+// shape carries `$basearch` literally (dnf would substitute on its own, but
+// our probe layer needs a concrete URL).
+func SubstituteBasearch(raw, arch string) string {
+	return strings.ReplaceAll(raw, basearchPlaceholder, arch)
 }

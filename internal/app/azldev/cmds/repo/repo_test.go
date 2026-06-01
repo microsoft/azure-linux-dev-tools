@@ -28,12 +28,15 @@ func TestNewQueryCmd_FlagsRegistered(t *testing.T) {
 	t.Parallel()
 
 	cmd := repo.NewQueryCmd()
-	for _, name := range []string{"repo-prefix", "template", "arch", "no-debuginfo", "no-srpms"} {
+	for _, name := range []string{
+		"repo-prefix", "template", "arch", "no-debuginfo", "no-srpms",
+		"version", "use-case",
+	} {
 		assert.NotNil(t, cmd.Flags().Lookup(name), "expected flag --%s", name)
 	}
 }
 
-func TestNewQueryCmd_RepoPrefixRequired(t *testing.T) {
+func TestNewQueryCmd_OneOfRepoPrefixOrVersionRequired(t *testing.T) {
 	t.Parallel()
 
 	cmd := repo.NewQueryCmd()
@@ -44,6 +47,7 @@ func TestNewQueryCmd_RepoPrefixRequired(t *testing.T) {
 	err := cmd.Execute()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "repo-prefix")
+	assert.Contains(t, err.Error(), "version")
 }
 
 func TestBuildDNFArgv_SinglePrefix(t *testing.T) {

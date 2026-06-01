@@ -37,5 +37,5 @@ under one or more URL prefixes.
 ### SEE ALSO
 
 * [azldev](azldev.md)	 - 🐧 Azure Linux Dev Tool
-* [azldev repo query](azldev_repo_query.md)	 - Run dnf against auto-discovered Azure Linux RPM repos
+* [azldev repo query](azldev_repo_query.md)	 - Run dnf against auto-discovered RPM repos
 

@@ -37,6 +37,8 @@ type QueryOptions struct {
 	Arches       []string
 	NoDebuginfo  bool
 	NoSRPMs      bool
+	Version      string
+	UseCase      string
 }
 
 func queryOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
@@ -49,33 +51,46 @@ func NewQueryCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "query [flags] -- <dnf args...>",
-		Short: "Run dnf against auto-discovered Azure Linux RPM repos",
-		Long: `Thin wrapper around dnf that auto-discovers Azure Linux RPM repos under one
-or more URL prefixes and then execs into dnf with the resolved repos wired up
-via --repofrompath / --enablerepo.
+		Short: "Run dnf against auto-discovered RPM repos",
+		Long: `Thin wrapper around dnf that auto-discovers RPM repos and execs into
+dnf with the resolved repos wired up via --repofrompath / --enablerepo.
 
-Each --repo-prefix is expanded against an rpm-repo-set-template
-(--template, default "` + repolayout.DefaultTemplateName + `") into one sub-repo per template row, fanned
-out per --arch where the row's subpath contains $basearch. Unreachable
-sub-repos (404 on repodata/repomd.xml) are silently dropped; any other probe
-failure aborts the run.
+Two selection modes, mutually exclusive:
+
+  --repo-prefix URL [--repo-prefix URL]...
+      URL mode. Each URL is expanded against an rpm-repo-set-template
+      (--template, default "` + repolayout.DefaultTemplateName + `") into one sub-repo per template
+      row, fanned out per --arch where the row's subpath contains $basearch.
+
+  --version VER [--use-case rpm-build|image-build]
+      Project-config mode. Resolves the inputs list of the default distro's
+      VER version (use-case defaults to "` + projectconfig.UseCaseRPMBuild + `"). Gpg-keys
+      and per-repo arch allowlists come from [resources.rpm-repo-sets.*] /
+      [resources.rpm-repos.*]. --arch defaults to x86_64+aarch64 (each
+      repo is still filtered by its declared arches). --no-debuginfo /
+      --no-srpms drop sub-repos by their declared kind. --template is not
+      used.
+
+Unreachable sub-repos (404 on repodata/repomd.xml, or ENOENT for file://)
+are silently dropped; any other probe failure aborts the run.
 
 All positional arguments are passed verbatim to dnf. Use ` + "`--`" + ` to separate
 azldev flags from dnf flags.
 
 Examples:
-  # repoquery the standard layout under one prefix
+  # URL-mode query against a published tree
   azldev repo query --repo-prefix=https://packages.microsoft.com/azurelinux/4.0/beta -- repoquery --available bash
 
-  # search across two prefixes, skipping debug and source repos
-  azldev repo query --repo-prefix=URL1 --repo-prefix=URL2 --no-debuginfo --no-srpms -- search 'kernel*'
+  # whatever the current project's default distro 4.0-stage2 build consumes
+  azldev repo query --version 4.0-stage2 -- list --available kernel
 
-  # query a local file:// repo
-  azldev repo query --repo-prefix=file:///srv/azl/dist -- list --available`,
-		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
-			return nil, RunQuery(env, &options, args)
-		}),
+  # image-build inputs instead of rpm-build
+  azldev repo query --version 4.0-stage2 --use-case image-build -- repolist`,
 	}
+
+	cmd.RunE = azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
+		return nil, RunQuery(env, &options, args)
+	})
 
 	cmd.Flags().SetInterspersed(false)
 
@@ -89,10 +104,16 @@ Examples:
 		"drop sub-repos whose kind is debug")
 	cmd.Flags().BoolVar(&options.NoSRPMs, "no-srpms", false,
 		"drop sub-repos whose kind is source")
+	cmd.Flags().StringVar(&options.Version, "version", "",
+		"resolve repos from the default distro's [distros.<d>.versions.<VERSION>.inputs] list "+
+			"(mutually exclusive with --repo-prefix and --template)")
+	cmd.Flags().StringVar(&options.UseCase, "use-case", projectconfig.UseCaseRPMBuild,
+		"which inputs list to consult in --version mode: "+
+			projectconfig.UseCaseRPMBuild+" or "+projectconfig.UseCaseImageBuild)
 
-	if err := cmd.MarkFlagRequired("repo-prefix"); err != nil {
-		panic(fmt.Errorf("failed to mark --repo-prefix required: %w", err))
-	}
+	cmd.MarkFlagsMutuallyExclusive("repo-prefix", "version")
+	cmd.MarkFlagsMutuallyExclusive("template", "version")
+	cmd.MarkFlagsOneRequired("repo-prefix", "version")
 
 	return cmd
 }
@@ -106,30 +127,13 @@ func RunQuery(env *azldev.Env, options *QueryOptions, dnfArgs []string) error {
 		return fmt.Errorf("required tool %#q is not in PATH; install dnf to provide it", DnfBinary)
 	}
 
-	templateName := options.Template
-	if templateName == "" {
-		templateName = repolayout.DefaultTemplateName
-	}
-
-	arches := options.Arches
-	if len(arches) == 0 {
-		arches = repolayout.DefaultArches
-	}
-
-	tmpl, err := repolayout.ResolveTemplate(
-		env.Config().Resources.RpmRepoSetTemplates, templateName)
-	if err != nil {
-		return fmt.Errorf("failed to resolve template:\n%w", err)
-	}
-
-	repos, err := buildInputRepos(options, templateName, tmpl, arches)
+	repos, prefixes, err := buildCandidates(env, options)
 	if err != nil {
 		return err
 	}
 
-	repos = filterByKind(repos, options)
 	if len(repos) == 0 {
-		return errors.New("no sub-repos remain after applying --no-debuginfo/--no-srpms filters")
+		return errors.New("no sub-repos remain after applying filters")
 	}
 
 	workerEnv, cancel := env.WithCancel()
@@ -137,7 +141,7 @@ func RunQuery(env *azldev.Env, options *QueryOptions, dnfArgs []string) error {
 
 	results := probeAll(workerEnv, env.IOBoundConcurrency(), repos)
 
-	kept, failures := summarizeResults(repos, results, options.RepoPrefixes)
+	kept, failures := summarizeResults(repos, results, prefixes)
 
 	if len(failures) > 0 {
 		return fmt.Errorf(
@@ -147,7 +151,7 @@ func RunQuery(env *azldev.Env, options *QueryOptions, dnfArgs []string) error {
 	}
 
 	if len(kept) == 0 {
-		return errors.New("no reachable sub-repos under any --repo-prefix")
+		return errors.New("no reachable sub-repos")
 	}
 
 	argv := buildDNFArgv(kept, dnfArgs)
@@ -163,6 +167,222 @@ func RunQuery(env *azldev.Env, options *QueryOptions, dnfArgs []string) error {
 	}
 
 	return nil
+}
+
+// buildCandidates picks the input-list builder based on which mode the user
+// selected and returns (repos, prefixesForLogging). prefixesForLogging is
+// non-empty only in --repo-prefix mode so summarizeResults can group output
+// by prefix.
+func buildCandidates(env *azldev.Env, options *QueryOptions) ([]repolayout.InputRepo, []string, error) {
+	if options.Version != "" {
+		repos, err := reposFromVersion(env, options)
+
+		return repos, nil, err
+	}
+
+	templateName := options.Template
+	if templateName == "" {
+		templateName = repolayout.DefaultTemplateName
+	}
+
+	tmpl, err := repolayout.ResolveTemplate(
+		env.Config().Resources.RpmRepoSetTemplates, templateName)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to resolve template:\n%w", err)
+	}
+
+	repos, err := buildInputRepos(options, templateName, tmpl, options.Arches)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return filterByKind(repos, options), options.RepoPrefixes, nil
+}
+
+// reposFromVersion resolves a distro version's inputs into the flat
+// [repolayout.InputRepo] list the rest of the pipeline expects.
+func reposFromVersion(env *azldev.Env, options *QueryOptions) ([]repolayout.InputRepo, error) {
+	useCase := options.UseCase
+	if useCase != projectconfig.UseCaseRPMBuild && useCase != projectconfig.UseCaseImageBuild {
+		return nil, fmt.Errorf("--use-case %#q is invalid (want %q or %q)",
+			useCase, projectconfig.UseCaseRPMBuild, projectconfig.UseCaseImageBuild)
+	}
+
+	cfg := env.Config()
+	version := options.Version
+
+	distroName := cfg.Project.DefaultDistro.Name
+	if distroName == "" {
+		return nil, errors.New("--version requires `project.default-distro.name` to be set in project config")
+	}
+
+	names, err := resolveVersionRepoNames(cfg, distroName, version, useCase)
+	if err != nil {
+		return nil, err
+	}
+
+	effective, err := cfg.Resources.EffectiveRpmRepos()
+	if err != nil {
+		return nil, fmt.Errorf("resolving rpm-repos:\n%w", err)
+	}
+
+	kinds := rpmRepoKindMap(&cfg.Resources)
+
+	return materializeVersionRepos(names, effective, kinds, options.Arches, options, distroName, version)
+}
+
+// rpmRepoKindMap reproduces the name -> SubrepoKind mapping that
+// [projectconfig.ResourcesConfig.EffectiveRpmRepos] discards. Explicit
+// rpm-repos are treated as Binary; set-expanded entries take their kind
+// from the template's SubrepoSpec.
+func rpmRepoKindMap(resources *projectconfig.ResourcesConfig) map[string]projectconfig.SubrepoKind {
+	kinds := make(map[string]projectconfig.SubrepoKind)
+	if resources == nil {
+		return kinds
+	}
+
+	for name := range resources.RpmRepos {
+		kinds[name] = projectconfig.SubrepoKindBinary
+	}
+
+	for _, set := range resources.RpmRepoSets {
+		tmpl, ok := resources.RpmRepoSetTemplates[set.Template]
+		if !ok {
+			continue
+		}
+
+		allow := map[string]struct{}{}
+		for _, subName := range set.Subrepos {
+			allow[subName] = struct{}{}
+		}
+
+		for _, sub := range tmpl.Subrepos {
+			if len(allow) > 0 {
+				if _, ok := allow[sub.Name]; !ok {
+					continue
+				}
+			}
+
+			kinds[set.NamePrefix+sub.Name] = sub.Kind.Default()
+		}
+	}
+
+	return kinds
+}
+
+// resolveVersionRepoNames returns the ordered list of rpm-repo names declared
+// for (distroName, version, useCase) after set expansion.
+func resolveVersionRepoNames(
+	cfg *projectconfig.ProjectConfig,
+	distroName, version, useCase string,
+) ([]string, error) {
+	distro, found := cfg.Distros[distroName]
+	if !found {
+		return nil, fmt.Errorf("default distro %#q is not defined under [distros]", distroName)
+	}
+
+	versionDef, found := distro.Versions[version]
+	if !found {
+		return nil, fmt.Errorf("distro %#q has no version %#q", distroName, version)
+	}
+
+	var (
+		names []string
+		err   error
+	)
+
+	switch useCase {
+	case projectconfig.UseCaseRPMBuild:
+		names, err = versionDef.EffectiveRpmBuildRepos(&cfg.Resources)
+	case projectconfig.UseCaseImageBuild:
+		names, err = versionDef.EffectiveImageBuildRepos(&cfg.Resources)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("resolving %s inputs for %s/%s:\n%w", useCase, distroName, version, err)
+	}
+
+	if len(names) == 0 {
+		return nil, fmt.Errorf("%s/%s declares no %s inputs", distroName, version, useCase)
+	}
+
+	return names, nil
+}
+
+// materializeVersionRepos turns rpm-repo names into the flat InputRepo list,
+// expanding over arches and applying --no-debuginfo / --no-srpms via kinds.
+// Per-repo arch allowlists ([RpmRepoResource.Arches]) drop arches a repo
+// doesn't publish; metalink-only repos are rejected.
+func materializeVersionRepos(
+	names []string,
+	effective map[string]projectconfig.RpmRepoResource,
+	kinds map[string]projectconfig.SubrepoKind,
+	arches []string,
+	options *QueryOptions,
+	distroName, version string,
+) ([]repolayout.InputRepo, error) {
+	out := make([]repolayout.InputRepo, 0, len(names)*len(arches))
+
+	for _, name := range names {
+		repo, found := effective[name]
+		if !found {
+			return nil, fmt.Errorf("rpm-repo %#q referenced by %s/%s inputs is not defined",
+				name, distroName, version)
+		}
+
+		if repo.BaseURI == "" {
+			return nil, fmt.Errorf(
+				"rpm-repo %#q has no base-uri (metalink-only repos are not supported by `repo query`)",
+				name)
+		}
+
+		kind := kinds[name].Default()
+		if options.NoDebuginfo && kind == projectconfig.SubrepoKindDebug {
+			continue
+		}
+
+		if options.NoSRPMs && kind == projectconfig.SubrepoKindSource {
+			continue
+		}
+
+		gpgKey := ""
+		if !repo.DisableGPGCheck {
+			gpgKey = repo.GPGKey
+		}
+
+		for _, arch := range arches {
+			if !repo.IsAvailableForArch(arch) {
+				continue
+			}
+
+			out = append(out, repolayout.InputRepo{
+				RepoID: versionRepoID(name, arches, arch),
+				URL:    repolayout.SubstituteBasearch(repo.BaseURI, arch),
+				Arch:   arch,
+				GPGKey: gpgKey,
+			})
+		}
+	}
+
+	// DedupInputRepos collapses entries with identical URLs. That happens
+	// naturally for source/SRPM subrepos whose subpath has no `$basearch` —
+	// the per-arch fan-out above produces N identical URLs, and we want only
+	// one row in the final dnf invocation.
+	return repolayout.DedupInputRepos(out), nil
+}
+
+// versionRepoID keeps the canonical resource id when only one arch was
+// requested (matches the name the user typed in TOML) and appends the arch
+// otherwise so per-arch dnf repo ids stay unique. The decision is based on
+// the *requested* arch list, not how many survive per-repo filtering — that
+// keeps the id stable when the user re-runs with the same flags even if
+// some repos drop one arch.
+func versionRepoID(name string, arches []string, arch string) string {
+	if len(arches) > 1 {
+		return name + "-" + arch
+	}
+
+	return name
 }
 
 // buildInputRepos normalizes each --repo-prefix, expands it against tmpl, and
@@ -268,6 +488,16 @@ func summarizeResults(
 ) (kept []repolayout.InputRepo, failures []string) {
 	kept = make([]repolayout.InputRepo, 0, len(repos))
 
+	if len(prefixes) == 0 {
+		slog.Info("Resolving repos from project config", "count", len(repos))
+
+		for idx := range repos {
+			kept, failures = recordResult(repos[idx], results[idx], kept, failures)
+		}
+
+		return kept, failures
+	}
+
 	// Group indices by prefix (1-based PrefixIndex) so we can log and
 	// tally per prefix in declaration order.
 	byPrefix := make(map[int][]int, len(prefixes))
@@ -282,21 +512,15 @@ func summarizeResults(
 		failedHere := 0
 
 		for _, idx := range byPrefix[pIdx+1] {
-			repo := repos[idx]
-			result := results[idx]
-			repoID := slotRepoID(repo)
+			before := len(kept)
+			failedBefore := len(failures)
+			kept, failures = recordResult(repos[idx], results[idx], kept, failures)
 
-			switch result.Status {
-			case probeOK:
-				slog.Info("  kept sub-repo", "id", repoID, "url", repo.URL)
-				kept = append(kept, repo)
+			if len(kept) > before {
 				keptHere++
-			case probeMissing:
-				slog.Info("  skipped (no repodata)", "id", repoID, "url", repo.URL)
-			case probeFail:
-				slog.Warn("  probe failed", "id", repoID, "url", repo.URL, "err", result.Err)
-				failures = append(failures,
-					fmt.Sprintf("%s <- %s: %v", repoID, repo.URL, result.Err))
+			}
+
+			if len(failures) > failedBefore {
 				failedHere++
 			}
 		}
@@ -304,6 +528,31 @@ func summarizeResults(
 		if keptHere == 0 && failedHere == 0 {
 			slog.Warn("No sub-repos discovered under prefix", "prefix", prefix)
 		}
+	}
+
+	return kept, failures
+}
+
+// recordResult logs one slot's outcome and appends to kept or failures as
+// appropriate.
+func recordResult(
+	repo repolayout.InputRepo,
+	result probeResult,
+	kept []repolayout.InputRepo,
+	failures []string,
+) ([]repolayout.InputRepo, []string) {
+	repoID := slotRepoID(repo)
+
+	switch result.Status {
+	case probeOK:
+		slog.Info("  kept sub-repo", "id", repoID, "url", repo.URL)
+		kept = append(kept, repo)
+	case probeMissing:
+		slog.Info("  skipped (no repodata)", "id", repoID, "url", repo.URL)
+	case probeFail:
+		slog.Warn("  probe failed", "id", repoID, "url", repo.URL, "err", result.Err)
+		failures = append(failures,
+			fmt.Sprintf("%s <- %s: %v", repoID, repo.URL, result.Err))
 	}
 
 	return kept, failures
@@ -388,15 +637,22 @@ func probeFile(probeURL string) (probeStatus, error) {
 // --enablerepo pair per discovered slot, and finally appends the user's
 // passthrough.
 func buildDNFArgv(repos []repolayout.InputRepo, userArgs []string) []string {
-	argv := make([]string, 0, 3+len(repos)*4+len(userArgs))
+	argv := make([]string, 0, 3+len(repos)*6+len(userArgs))
 	argv = append(argv, DnfBinary, "--disablerepo=*", "--refresh")
 
-	for _, r := range repos {
-		id := slotRepoID(r)
+	for _, dnfRepo := range repos {
+		repoID := slotRepoID(dnfRepo)
 		argv = append(argv,
-			"--repofrompath", id+","+r.URL,
-			"--enablerepo", id,
+			"--repofrompath", repoID+","+dnfRepo.URL,
+			"--enablerepo", repoID,
 		)
+
+		if dnfRepo.GPGKey != "" {
+			argv = append(argv,
+				"--setopt="+repoID+".gpgkey="+dnfRepo.GPGKey,
+				"--setopt="+repoID+".gpgcheck=1",
+			)
+		}
 	}
 
 	argv = append(argv, userArgs...)
@@ -410,6 +666,10 @@ func buildDNFArgv(repos []repolayout.InputRepo, userArgs []string) []string {
 // appended when multiple --repo-prefix values were supplied so ids stay
 // unique across prefixes.
 func slotRepoID(repo repolayout.InputRepo) string {
+	if repo.RepoID != "" {
+		return repo.RepoID
+	}
+
 	repoID := "azl-" + repo.SubrepoName
 	if repo.Arch != "" {
 		repoID = repoID + "-" + repo.Arch

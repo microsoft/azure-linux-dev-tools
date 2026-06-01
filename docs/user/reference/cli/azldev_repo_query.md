@@ -2,32 +2,44 @@
 
 ## azldev repo query
 
-Run dnf against auto-discovered Azure Linux RPM repos
+Run dnf against auto-discovered RPM repos
 
 ### Synopsis
 
-Thin wrapper around dnf that auto-discovers Azure Linux RPM repos under one
-or more URL prefixes and then execs into dnf with the resolved repos wired up
-via --repofrompath / --enablerepo.
+Thin wrapper around dnf that auto-discovers RPM repos and execs into
+dnf with the resolved repos wired up via --repofrompath / --enablerepo.
 
-Each --repo-prefix is expanded against an rpm-repo-set-template
-(--template, default "azl-standard") into one sub-repo per template row, fanned
-out per --arch where the row's subpath contains $basearch. Unreachable
-sub-repos (404 on repodata/repomd.xml) are silently dropped; any other probe
-failure aborts the run.
+Two selection modes, mutually exclusive:
+
+  --repo-prefix URL [--repo-prefix URL]...
+      URL mode. Each URL is expanded against an rpm-repo-set-template
+      (--template, default "azl-standard") into one sub-repo per template
+      row, fanned out per --arch where the row's subpath contains $basearch.
+
+  --version VER [--use-case rpm-build|image-build]
+      Project-config mode. Resolves the inputs list of the default distro's
+      VER version (use-case defaults to "rpm-build"). Gpg-keys
+      and per-repo arch allowlists come from [resources.rpm-repo-sets.*] /
+      [resources.rpm-repos.*]. --arch defaults to x86_64+aarch64 (each
+      repo is still filtered by its declared arches). --no-debuginfo /
+      --no-srpms drop sub-repos by their declared kind. --template is not
+      used.
+
+Unreachable sub-repos (404 on repodata/repomd.xml, or ENOENT for file://)
+are silently dropped; any other probe failure aborts the run.
 
 All positional arguments are passed verbatim to dnf. Use `--` to separate
 azldev flags from dnf flags.
 
 Examples:
-  # repoquery the standard layout under one prefix
-  azldev repo query --repo-prefix=https://packages.microsoft.com/azurelinux/3.0/prod -- repoquery --available bash
+  # URL-mode query against a published tree
+  azldev repo query --repo-prefix=https://packages.microsoft.com/azurelinux/4.0/beta -- repoquery --available bash
 
-  # search across two prefixes, skipping debug and source repos
-  azldev repo query --repo-prefix=URL1 --repo-prefix=URL2 --no-debuginfo --no-srpms -- search 'kernel*'
+  # whatever the current project's default distro 4.0-stage2 build consumes
+  azldev repo query --version 4.0-stage2 -- list --available kernel
 
-  # query a local file:// repo
-  azldev repo query --repo-prefix=file:///srv/azl/dist -- list --available
+  # image-build inputs instead of rpm-build
+  azldev repo query --version 4.0-stage2 --use-case image-build -- repolist
 
 ```
 azldev repo query [flags] -- <dnf args...>
@@ -42,6 +54,8 @@ azldev repo query [flags] -- <dnf args...>
       --no-srpms                  drop sub-repos whose kind is source
       --repo-prefix stringArray   layout prefix (http://, https://, or file:// URL); may be repeated
       --template string           name of the rpm-repo-set-template to expand each --repo-prefix against (default "azl-standard")
+      --use-case string           which inputs list to consult in --version mode: rpm-build or image-build (default "rpm-build")
+      --version string            resolve repos from the default distro's [distros.<d>.versions.<VERSION>.inputs] list (mutually exclusive with --repo-prefix and --template)
 ```
 
 ### Options inherited from parent commands
