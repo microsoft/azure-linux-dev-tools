@@ -42,6 +42,11 @@ import (
 // errReadOnly is returned by all mutating operations.
 var errReadOnly = errors.New("gitfs: read-only filesystem")
 
+// ErrSubmodule is returned when a caller tries to read a submodule (gitlink)
+// entry. A gitlink records a commit hash in another repository, not file
+// content in this tree, so there is nothing to read through the filesystem.
+var ErrSubmodule = errors.New("gitfs: submodule entries are not supported")
+
 // Fs is a read-only [afero.Fs] backed by a git tree.
 type Fs struct {
 	repo *gogit.Repository
@@ -103,6 +108,10 @@ func (f *Fs) Open(name string) (afero.File, error) {
 		}
 
 		return newDirFile(f, name, rel, subtree), nil
+	}
+
+	if entry.Mode == filemode.Submodule {
+		return nil, &os.PathError{Op: "open", Path: name, Err: ErrSubmodule}
 	}
 
 	content, err := f.blobContents(entry.Hash)
@@ -171,13 +180,19 @@ func (f *Fs) entryInfo(name string, entry *object.TreeEntry) (os.FileInfo, error
 		return &fileInfo{name: name, isDir: true, mode: os.ModeDir | fileperms.ReadOnlyExec}, nil
 	}
 
-	var size int64
-
-	if blob, err := f.repo.BlobObject(entry.Hash); err == nil {
-		size = blob.Size
+	// Submodule (gitlink) entries reference a commit in another repository, not
+	// a blob in this tree. Classify them as non-regular without a blob lookup
+	// so directory listings work and Open's submodule error stays authoritative.
+	if entry.Mode == filemode.Submodule {
+		return &fileInfo{name: name, mode: entryFileMode(entry.Mode)}, nil
 	}
 
-	return &fileInfo{name: name, size: size, mode: entryFileMode(entry.Mode)}, nil
+	blob, err := f.repo.BlobObject(entry.Hash)
+	if err != nil {
+		return nil, fmt.Errorf("gitfs: stat %#q: read blob %s:\n%w", name, entry.Hash, err)
+	}
+
+	return &fileInfo{name: name, size: blob.Size, mode: entryFileMode(entry.Mode)}, nil
 }
 
 // entryFileMode maps a git filemode to an os.FileMode for non-directory entries.
@@ -187,7 +202,9 @@ func entryFileMode(mode filemode.FileMode) os.FileMode {
 		return fileperms.ReadOnlyExec
 	case filemode.Symlink:
 		return os.ModeSymlink | fileperms.ReadOnlyExec
-	case filemode.Empty, filemode.Dir, filemode.Regular, filemode.Deprecated, filemode.Submodule:
+	case filemode.Submodule:
+		return os.ModeIrregular | fileperms.ReadOnlyFile
+	case filemode.Empty, filemode.Dir, filemode.Regular, filemode.Deprecated:
 		return fileperms.ReadOnlyFile
 	default:
 		return fileperms.ReadOnlyFile

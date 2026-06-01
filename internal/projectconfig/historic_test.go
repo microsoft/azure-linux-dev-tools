@@ -75,6 +75,38 @@ replacement = "2.0.0"
 	assert.Equal(t, "2.0.0", comp.Overlays[0].Replacement)
 }
 
+// TestLoadProjectConfigAtCommit_ReferenceDirIsTreeRelative verifies that a
+// referenceDir naming a project subdirectory is interpreted relative to the git
+// tree root, not the host process working directory. Both relative ("sub") and
+// absolute ("/sub") forms must resolve to the same in-tree location. Without
+// tree-relative normalization, a relative referenceDir resolves against the
+// host CWD and the config file is never found in the git tree.
+func TestLoadProjectConfigAtCommit_ReferenceDirIsTreeRelative(t *testing.T) {
+	bfs := memfs.New()
+
+	repo, err := gogit.Init(memory.NewStorage(), bfs)
+	require.NoError(t, err)
+
+	file, err := bfs.Create("sub/azldev.toml")
+	require.NoError(t, err)
+
+	_, err = file.Write([]byte("[components.foo]\n"))
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+
+	hash := commitWorktree(t, repo, "add config under sub/")
+
+	for _, referenceDir := range []string{"sub", "/sub", "./sub"} {
+		t.Run(referenceDir, func(t *testing.T) {
+			projectDir, config, err := projectconfig.LoadProjectConfigAtCommit(repo, hash, referenceDir, false)
+			require.NoError(t, err)
+			require.NotNil(t, config)
+			assert.Equal(t, "/sub", projectDir)
+			assert.Contains(t, config.Components, "foo")
+		})
+	}
+}
+
 // TestResolveComponentOverlaysAtCommit verifies that overlays inherited from a
 // component group default are merged with the component's own overlays when
 // resolving historically.

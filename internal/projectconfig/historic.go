@@ -5,6 +5,7 @@ package projectconfig
 
 import (
 	"fmt"
+	"path"
 
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -39,8 +40,11 @@ func (historicOSEnv) LookupGroupID(string) (int, error) { return 0, nil }
 //
 // It reads files through a read-only [gitfs.Fs] backed by the commit's tree,
 // layered under an in-memory writable overlay so the loader can stage its
-// embedded default configs. Only in-tree configuration participates: host
-// working directory and user-level config are intentionally excluded.
+// embedded default configs. The resolved configuration therefore combines the
+// commit's in-tree config with azldev's built-in embedded defaults; the latter
+// are part of every load and are not drawn from the git tree. Host working
+// directory and user-level config are intentionally excluded, so the only
+// per-invocation input is the embedded defaults baked into the binary.
 //
 // referenceDir is interpreted relative to the tree root (e.g. the project
 // subdirectory containing azldev.toml). Both absolute ("/sub") and relative
@@ -60,6 +64,12 @@ func LoadProjectConfigAtCommit(
 	// default configs (and any other scratch writes) without touching the
 	// read-only git tree underneath.
 	fs := afero.NewCopyOnWriteFs(base, afero.NewMemMapFs())
+
+	// Interpret referenceDir relative to the git tree root, never the host
+	// process working directory. path.Join against "/" makes relative forms
+	// ("sub", "./sub") and absolute forms ("/sub") resolve identically; an
+	// empty referenceDir collapses to the tree root "/".
+	referenceDir = path.Join("/", referenceDir)
 
 	return LoadProjectConfig(
 		historicDryRunnable{},
