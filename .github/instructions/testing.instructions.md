@@ -15,6 +15,7 @@ if it uses memfs and mocks.
 |------|-------------|-----------|---------|
 | Unit | `mage unit` | (none) | Fast, isolated, in-memory |
 | Scenario | `mage scenario` | `//go:build scenario` | End-to-end CLI with snapshot validation |
+| E2E | `mage e2e` | `//go:build e2e` | Heavy end-to-end tests against real upstream repos (network + large clones); not run by `mage scenario` / `mage all` |
 
 ### Sub-Tiers Within `mage unit`
 
@@ -36,6 +37,16 @@ Live in `scenario/` with `//go:build scenario` tag. Two execution modes:
 - `InContainer()` — slow, full Docker isolation. For integration tests needing fs state.
 
 Use `mage scenarioUpdate` to update snapshots (review diffs — don't blindly accept).
+
+### E2E Tests
+
+Live in `scenario/` with `//go:build e2e` tag (the shared `setup_test.go` is
+widened to `//go:build scenario || e2e` so [TestMain] applies to both tiers).
+Run via `mage e2e` — they are intentionally excluded from `mage scenario`,
+`mage scenarioUpdate`, and `mage all` because they clone large upstream
+repositories (e.g. `microsoft/azurelinux`) and can be expensive. They reuse
+the same scenario container framework (`cmdtest`/`containertest`) but skip the
+in-memory project synthesis layer.
 
 ## Test Environment
 
@@ -145,6 +156,20 @@ return appropriate responses.
 - Use `require` for preconditions that must hold; `assert` for test assertions
 - Use `t.Run(name, func(t *testing.T) { ... })` for subtests
 - Use `t.Helper()` in test helper functions
+- When the input under test is naturally a sequence of lines (a config file, a `sources` file, multi-line CLI output, etc.) and the test asserts something on each line, declare the input as `[]string` and join it into the on-disk form at call time:
+  ```go
+  content := []string{
+      "# header comment",
+      "",
+      "key = value",
+  }
+  result, err := Parse(strings.Join(content, "\n") + "\n")
+  // ...
+  for i, expectedLine := range content {
+      assert.Equal(t, expectedLine, result.Lines[i].Raw, "result.Lines[%d].Raw mismatch", i)
+  }
+  ```
+  This keeps the input visually aligned with per-line expectations and avoids copy/pasting the same literals into both the input and the assertions. Reserve a single concatenated string literal for cases where the bytes-on-disk form (escapes, trailing whitespace, missing final newline) is itself the thing under test.
 
 ## Component Command Testing
 

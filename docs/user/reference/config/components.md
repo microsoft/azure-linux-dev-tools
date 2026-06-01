@@ -309,6 +309,8 @@ The `[[components.<name>.source-files]]` array defines additional source files t
 | Hash | `hash` | string | Conditional | Expected hash of the downloaded file for integrity verification. Required for the `prep-sources` command unless `--allow-no-hashes` is used, in which case the hash is computed automatically from the downloaded file. |
 | Hash type | `hash-type` | string | Conditional | Hash algorithm used (examples: `"SHA256"`, `"SHA512"`). Required when `hash` is specified. When omitted alongside `hash` for the `prep-sources` command and `--allow-no-hashes` is used, defaults to `"SHA512"`. |
 | Origin | `origin` | [Origin](#origin) | **Yes** | Where to download the file from |
+| Replace upstream | `replace-upstream` | bool | No | When `true`, intentionally replaces an entry with the same `filename` in the upstream dist-git `sources` file. The matching upstream entry **must exist**, otherwise source preparation fails (this guards against stale configs and filename typos). When `false` (default) a filename collision with an upstream entry is also an error. Requires `replace-reason`. |
+| Replace reason | `replace-reason` | string | Conditional | Human-readable explanation for the replacement. **Required** when `replace-upstream = true`; **must be empty** otherwise. Captured in the `prep-sources` warning log so the override is auditable. |
 
 ### Origin
 
@@ -334,6 +336,41 @@ hash = "57aa116d1c91a9ec36ab8b46c9164ae19af192b..."
 hash-type = "SHA512"
 origin = { type = "download", uri = "https://example.com/repo/pkgs/shim/shimaa64.efi/sha512/.../shimaa64.efi" }
 ```
+
+### Replacing an upstream `sources` entry
+
+By default, declaring a `source-files` entry whose `filename` matches one already
+listed in the upstream dist-git `sources` file is an **error** — this protects
+against accidental shadowing of the upstream tarball.
+
+To intentionally substitute a different artifact for an upstream entry (e.g. to
+ship a locally-patched tarball), set `replace-upstream = true` together with a
+non-empty `replace-reason`:
+
+```toml
+[[components.example.source-files]]
+filename = "example-1.0.tar.gz"          # same filename as the upstream 'sources' entry
+hash = "deadbeef..."
+hash-type = "SHA512"
+origin = { type = "download", uri = "https://internal.example.com/example-1.0-patched.tar.gz" }
+replace-upstream = true
+replace-reason = "patched to fix CVE-2026-0001 before upstream"
+```
+
+When `prep-sources` runs:
+
+- The matching upstream entry is removed from the generated `sources` file and
+  the user-defined entry takes its place.
+- A `WARN`-level event is logged citing the `replace-reason`, both upstream and
+  new hashes, so the override is auditable.
+- If **no upstream entry** exists with that `filename`, `prep-sources` fails —
+  this is almost always a stale config or filename typo. Drop
+  `replace-upstream` (and `replace-reason`) if you intended a brand-new
+  artifact instead.
+
+`replace-upstream` and `replace-reason` are per-entry switches, not a
+per-component setting; multiple entries within the same `source-files` array
+can opt in independently.
 
 ## Complete Examples
 

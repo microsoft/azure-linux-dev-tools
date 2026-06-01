@@ -33,6 +33,7 @@ description: "Instructions for working on the azldev Go codebase. IMPORTANT: Alw
 - For error messages with context, add a newline after the context message, before the error format specifier. Examples:
   - `fmt.Errorf("This is an error context with wrapped error:\n%w")`
   - `fmt.Errorf("This is a regular error with context string:\n%v")`
+- When an operation can fail in a way that has a meaningful cause (parse failure, validation failure, lookup miss with explanation, etc.), return `(T, error)` rather than `(T, bool)`. The boolean form throws away the *why*, forcing callers to reconstruct context they don't have. Reserve `(T, bool)` for the "comma-ok" idiom where the failure is genuinely binary and self-explanatory (map lookups, type assertions, channel receives). The inner error should describe the failure concisely; the immediate caller wraps it with positional context (line number, field name, file path) using the `"context:\n%w"` pattern.
 - Follow established Go language practices and conventions:
   - Follow Go naming conventions (e.g., CamelCase for exported names)
   - Write concise, readable code with appropriate comments
@@ -41,10 +42,11 @@ description: "Instructions for working on the azldev Go codebase. IMPORTANT: Alw
   - `return fmt.Errorf("failed to open %#q:\n%w", filename, err)`
   - `return fmt.Errorf("failed to run command 'go %s':\n%w", strings.Join(args, " "), err)`
 - Comments referring to types should encapsulate the type name in square brackets. Example: `// [packagename.MyType] is a custom type`
-- Config field names and CLI flags in comments and error messages:
+- Config field names, CLI flags, and well-known literal token names (filenames, special-purpose file types, etc.) in comments and error messages:
   - In code comments, use square brackets for field names: `[module.StructName.FieldName]`
   - In code comments, use single quotes for flag names: `'--flag-name'`
   - In log messages and error strings, use single quotes: `'field-name'`, `'--flag-name'`
+  - When referring to a well-known literal token by name (e.g., a fixed filename like `sources`, `spec`, `lockfile`, or a special directory name) in logs, errors, or doc comments, surround it in quotes — pick whichever is cleaner: single quotes around the bare token (`'sources' file`) when the surrounding text is unquoted prose, or `%#q` when interpolating a runtime value (`%#q file`). Do not write the token unquoted in user-facing strings.
 - Use structured logging with slog
 - Ensure code passes golangci-lint checks
 - Use `github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms` instead of re-defining file permission constants

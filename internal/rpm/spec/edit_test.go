@@ -1690,6 +1690,7 @@ Main.
 	}
 }
 
+//nolint:maintidx // Test table complexity scales with the number of conditional handling scenarios.
 func TestRemoveSubpackage(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -1840,6 +1841,271 @@ Main description.
 %files
 /usr/bin/test
 
+`,
+		},
+		{
+			name: "handles balanced conditional inside section",
+			input: `Name: test
+
+%description
+Main.
+
+%package devel
+Summary: Devel
+%ifarch x86_64
+Requires: special-x86-lib
+%endif
+
+%description devel
+Devel description.
+
+%files
+/usr/bin/test
+`,
+			packageName: "devel",
+			expectedOutput: `Name: test
+
+%description
+Main.
+
+%files
+/usr/bin/test
+`,
+		},
+		{
+			name: "trims trailing conditional opener belonging to next section",
+			input: `Name: test
+
+%description
+Main.
+
+%files foo
+/usr/share/foo
+
+%if 0
+%files bar
+/usr/share/bar
+%endif
+
+%files
+/usr/bin/test
+`,
+			packageName: "foo",
+			expectedOutput: `Name: test
+
+%description
+Main.
+
+%if 0
+%files bar
+/usr/share/bar
+%endif
+
+%files
+/usr/bin/test
+`,
+		},
+		{
+			name: "trims trailing endif from section wrapped in conditional",
+			input: `Name: test
+
+%description
+Main.
+
+%if 0%{?with_devel}
+%package devel
+Summary: Devel
+
+%description devel
+Devel description.
+
+%files devel
+/usr/include/test.h
+%endif
+
+%files
+/usr/bin/test
+`,
+			packageName: "devel",
+			expectedOutput: `Name: test
+
+%description
+Main.
+
+%if 0%{?with_devel}
+%endif
+
+%files
+/usr/bin/test
+`,
+		},
+		{
+			name: "errors on conditional spanning across sections",
+			input: `Name: test
+
+%files foo
+/usr/share/foo1
+%if 0%{?with_extra}
+/usr/share/foo-extra
+
+%files bar
+/usr/share/bar
+%endif
+
+%files
+/usr/bin/test
+`,
+			packageName:   "foo",
+			errorExpected: true,
+			errorContains: "conditional block spans",
+		},
+		{
+			name: "errors on else branch inside straddling conditional",
+			input: `Name: test
+
+%description
+Main.
+
+%if cond
+%files foo
+/usr/share/foo
+%else
+%files bar
+/usr/share/bar
+%endif
+
+%files
+/usr/bin/test
+`,
+			packageName:   "foo",
+			errorExpected: true,
+			errorContains: "branch directive",
+		},
+		{
+			name: "errors when trimmed zone contains section content in a balanced conditional",
+			input: `Name: test
+
+%description
+Main.
+
+%if 0%{?with_devel}
+%files devel
+/usr/include/test.h
+%endif
+%if 0%{?with_extra}
+/usr/include/extra.h
+%endif
+
+%files
+/usr/bin/test
+`,
+			packageName:   "devel",
+			errorExpected: true,
+			errorContains: "conditional block spans",
+		},
+		{
+			name: "trims consecutive endifs from nested wrapping conditionals",
+			input: `Name: test
+
+%description
+Main.
+
+%if A
+%if B
+%files devel
+/usr/include/test.h
+%endif
+%endif
+
+%files
+/usr/bin/test
+`,
+			packageName: "devel",
+			expectedOutput: `Name: test
+
+%description
+Main.
+
+%if A
+%if B
+%endif
+%endif
+
+%files
+/usr/bin/test
+`,
+		},
+		{
+			name: "trims consecutive if openers belonging to next sections",
+			input: `Name: test
+
+%description
+Main.
+
+%files foo
+/usr/share/foo
+
+%if 0
+%if 0
+%files bar
+/usr/share/bar
+%endif
+%endif
+
+%files
+/usr/bin/test
+`,
+			packageName: "foo",
+			expectedOutput: `Name: test
+
+%description
+Main.
+
+%if 0
+%if 0
+%files bar
+/usr/share/bar
+%endif
+%endif
+
+%files
+/usr/bin/test
+`,
+		},
+		{
+			name: "trims mixed endif then if at tail",
+			input: `Name: test
+
+%description
+Main.
+
+%if A
+%files devel
+/usr/include/test.h
+%endif
+%if 0
+%files bar
+/usr/share/bar
+%endif
+
+%files
+/usr/bin/test
+`,
+			packageName: "devel",
+			expectedOutput: `Name: test
+
+%description
+Main.
+
+%if A
+%endif
+%if 0
+%files bar
+/usr/share/bar
+%endif
+
+%files
+/usr/bin/test
 `,
 		},
 	}

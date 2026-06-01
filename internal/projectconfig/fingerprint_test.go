@@ -84,6 +84,11 @@ func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
 		// trigger a rebuild.
 		"SourceFileReference.Origin": true,
 
+		// SourceFileReference.ReplaceReason — human documentation for why an upstream entry is
+		// being replaced. ReplaceUpstream itself remains in the fingerprint because flipping it
+		// changes the resulting 'sources' file content.
+		"SourceFileReference.ReplaceReason": true,
+
 		// SpecSource.Path — absolute path that varies by checkout location.
 		// Spec content identity is captured separately via SourceIdentity.
 		"SpecSource.Path": true,

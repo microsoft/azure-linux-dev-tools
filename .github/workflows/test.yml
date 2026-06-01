@@ -62,3 +62,38 @@ jobs:
       - name: Run tests
         run: |
           mage -v scenario
+
+  e2e-tests:
+    name: "End-to-end tests"
+    # E2E tests are tagged separately from scenario tests (build tag 'e2e' vs.
+    # 'scenario') so they do not run as part of 'mage scenario' / 'mage all'.
+    # They clone large upstream repositories and exercise full mock pipelines,
+    # so they live in their own job and are gated on network access.
+    strategy:
+      matrix:
+        host: [ubuntu-latest]
+    runs-on: ${{ matrix.host }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Get go tools
+        uses: ./.github/getgotools
+
+      - name: Disable unix_chkpwd policy
+        run: |
+          # We disable the unix-chkpwd AppArmor profile to avoid errors running
+          # containerized tests. We also need to purge a few packages to avoid
+          # profile conflicts.
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get purge firefox passt
+          sudo systemctl reload apparmor.service
+          sudo apt-get install apparmor-utils
+          sudo aa-disable /usr/sbin/unix_chkpwd
+
+      - name: Run tests
+        run: |
+          mage -v e2e

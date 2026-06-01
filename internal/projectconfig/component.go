@@ -4,6 +4,7 @@
 package projectconfig
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -14,6 +15,10 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 )
+
+// ErrUndefinedComponent is returned when a component group references a component name
+// that is not defined in the project's top-level components map.
+var ErrUndefinedComponent = errors.New("undefined component reference")
 
 const (
 	// HashTypeSHA256 represents the SHA-256 hash algorithm.
@@ -65,6 +70,18 @@ type SourceFileReference struct {
 
 	// Origin for this source file. When omitted, the file is resolved via the lookaside cache.
 	Origin Origin `toml:"origin,omitempty" json:"origin,omitempty" fingerprint:"-"`
+
+	// ReplaceUpstream, when true, intentionally replaces an upstream entry with the same
+	// [SourceFileReference.Filename] in the dist-git 'sources' file. The matching upstream
+	// entry must exist or source preparation fails. When false (the default), a filename
+	// collision with an existing 'sources' entry is treated as an error.
+	// [SourceFileReference.ReplaceReason] is required when this is true.
+	ReplaceUpstream bool `toml:"replace-upstream,omitempty" json:"replaceUpstream,omitempty" jsonschema:"title=Replace upstream,description=When true\\, intentionally replaces a same-named entry in the upstream 'sources' file. Requires 'replace-reason'."`
+
+	// ReplaceReason is a human-readable explanation for why an upstream 'sources' entry is
+	// being replaced. Required when [SourceFileReference.ReplaceUpstream] is true; must be
+	// empty otherwise. Excluded from the fingerprint because it is documentation only.
+	ReplaceReason string `toml:"replace-reason,omitempty" json:"replaceReason,omitempty" jsonschema:"title=Replace reason,description=Required when 'replace-upstream' is true. Human-readable explanation for the replacement." fingerprint:"-"`
 }
 
 // ComponentPublishConfig holds publish channel settings for a component's packages.

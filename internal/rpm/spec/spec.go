@@ -548,25 +548,24 @@ func GetPackageNameFromSectionHeader(tokens []string) string {
 		token := tokens[index]
 
 		switch {
-		case strings.HasPrefix(token, "-"):
-			switch token {
-			case "-n":
-				index++
-				if index < len(tokens) {
-					fullName = tokens[index]
-					index++
-				}
-			case "-f":
-				index += 2
-			case "-p":
-				index += 2
-			case "-l":
-				index += 2
-			case "-q":
-				index++
-			default:
+		case token == "--":
+			// Trigger terminator: in %trigger* sections, `--` separates the
+			// owning sub-package from the trigger condition. Everything after
+			// `--` is the trigger condition, not the package name.
+			index = len(tokens)
+		case token == "-n":
+			// Absolute package name form: the next token is the full package name.
+			index++
+			if index < len(tokens) {
+				fullName = tokens[index]
 				index++
 			}
+		case token == "-f", token == "-p", token == "-l", token == "-P":
+			// Flags that consume the next token as their argument.
+			index += 2
+		case strings.HasPrefix(token, "-"):
+			// Other flags (e.g. -q, -e, or unknown): skip the flag itself.
+			index++
 		case nameSuffix == "":
 			nameSuffix = token
 			index++

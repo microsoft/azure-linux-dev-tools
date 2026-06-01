@@ -43,10 +43,82 @@ func ScenarioUpdate() error {
 	return nil
 }
 
+// E2E runs the end-to-end tests. These are tagged with the `e2e` build tag
+// (separate from `scenario`) so that they do not run as part of `mage scenario`,
+// `mage scenarioUpdate`, or `mage all` — they are intentionally heavier
+// (network access, large clones, full mock pipelines) and meant to be run
+// from CI on a dedicated job.
+func E2E() error {
+	startTime := time.Now()
+
+	mageutil.MagePrintln(mageutil.MsgStart, "Starting end-to-end tests...")
+
+	err := runScenarioGoTest(scenarioGoTestOptions{
+		label: "end-to-end",
+		// Use the dedicated 'e2e' tag so that scenario tests are excluded.
+		buildTag: "e2e",
+		// E2E tests are individually long-running (clone hundreds of MB,
+		// invoke mock thousands of times). A full render against the
+		// upstream repo runs ~45m on default GitHub runners; give it
+		// roughly double for headroom.
+		timeout: "90m",
+		// Limit to './scenario' (not './scenario/...') so the framework's own
+		// internal-package tests — already covered by 'mage scenario' — are
+		// not duplicated here.
+		packagePattern: "./scenario",
+	})
+	if err != nil {
+		return err
+	}
+
+	mageutil.MagePrintf(mageutil.MsgSuccess, "End-to-end tests complete: %v.\n", time.Since(startTime))
+
+	return nil
+}
+
 func mageScenarioCommon(doSnapshotUpdate bool) error {
+	options := scenarioGoTestOptions{
+		label:            "scenario",
+		buildTag:         "scenario",
+		timeout:          "60m",
+		packagePattern:   "./scenario/...",
+		doSnapshotUpdate: doSnapshotUpdate,
+	}
+
+	if doSnapshotUpdate {
+		mageutil.MagePrintln(mageutil.MsgInfo, "Will update snapshots.")
+	}
+
+	return runScenarioGoTest(options)
+}
+
+// scenarioGoTestOptions parameterizes the shared 'go test' invocation used by
+// both [Scenario] / [ScenarioUpdate] and [E2E]. They run identical
+// build/test pipelines but differ in build tag, timeout, package pattern, and
+// snapshot-update behavior.
+type scenarioGoTestOptions struct {
+	// label is a short human-readable name for the tier ("scenario" or
+	// "end-to-end") used in progress and error messages so that CI logs
+	// clearly identify which suite is running/failed.
+	label string
+	// buildTag is the Go build tag passed via '-tags='. Files in the scenario
+	// package have either '//go:build scenario' or '//go:build e2e' (with
+	// 'setup_test.go' widened to 'scenario || e2e' so [TestMain] is shared).
+	buildTag string
+	// timeout is the value passed via '-timeout=' to 'go test'.
+	timeout string
+	// packagePattern is the package selector passed to 'go test', e.g.
+	// './scenario' or './scenario/...'.
+	packagePattern string
+	// doSnapshotUpdate, when true, sets the env var that puts the snapshot
+	// helper into update mode. Only meaningful for the scenario tier.
+	doSnapshotUpdate bool
+}
+
+func runScenarioGoTest(options scenarioGoTestOptions) error {
 	mg.SerialDeps(magebuild.Build)
 
-	mageutil.MagePrintln(mageutil.MsgStart, "Running scenario tests...")
+	mageutil.MagePrintf(mageutil.MsgStart, "Running %s tests...\n", options.label)
 
 	//nolint:lll // Can't really break up the long URI.
 	// Add workaround for go-snaps disablement of color based on $_.
@@ -60,25 +132,27 @@ func mageScenarioCommon(doSnapshotUpdate bool) error {
 		buildtestenv.TestingAzldevBinPathEnvVar: path.Join(mageutil.BinDir(), "azldev"),
 	}
 
-	// If we are updating the snapshots, set the environment variable to only run the snapshot tests, and configure
-	// the snapshotter into update mode.
-	if doSnapshotUpdate {
-		mageutil.MagePrintln(mageutil.MsgInfo, "Will update snapshots.")
-
+	if options.doSnapshotUpdate {
 		env[buildtestenv.TestingUpdateSnapshotsEnvVar] = buildtestenv.TestingUpdateSnapshotsEnvValue
 	}
 
 	// '-count=1' causes the cache to be ignored for scenario tests so they always re-run (it would only rebuild if
 	// we changed the test code itself, not the application code).
-	output, err := sh.OutputWith(env, mg.GoCmd(), "test", "-tags=scenario", "-timeout=60m", "-count=1", "./scenario/...")
+	output, err := sh.OutputWith(env, mg.GoCmd(), "test",
+		"-tags="+options.buildTag,
+		"-timeout="+options.timeout,
+		"-count=1",
+		options.packagePattern,
+	)
 	if err != nil {
-		mageutil.MagePrintln(mageutil.MsgError, "Scenario test failed; details follow.")
+		titledLabel := strings.ToUpper(options.label[:1]) + options.label[1:]
+		mageutil.MagePrintf(mageutil.MsgError, "%s test failed; details follow.\n", titledLabel)
 
 		for _, line := range strings.Split(output, "\n") {
 			mageutil.MagePrintln(mageutil.MsgInfo, line)
 		}
 
-		return mageutil.PrintAndReturnError("Scenario test failed (see diagnostic output above).", ErrScenario, err)
+		return mageutil.PrintAndReturnError(titledLabel+" test failed (see diagnostic output above).", ErrScenario, err)
 	}
 
 	return nil

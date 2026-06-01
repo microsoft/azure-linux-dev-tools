@@ -388,6 +388,79 @@ func TestComputeIdentity_SourceFileOriginExcluded(t *testing.T) {
 	assert.Equal(t, fp1, fp2, "changing source file origin URL must NOT change fingerprint")
 }
 
+func TestComputeIdentity_SourceFileReplaceUpstreamChange(t *testing.T) {
+	ctx := newTestFS(t, map[string]string{
+		"/specs/test.spec": "Name: testpkg\nVersion: 1.0",
+	})
+
+	comp1 := baseComponent()
+	comp1.SourceFiles = []projectconfig.SourceFileReference{
+		{
+			Filename: "source.tar.gz",
+			Hash:     "aaa111",
+			HashType: fileutils.HashTypeSHA256,
+			Origin:   projectconfig.Origin{Type: "download", Uri: "https://example.com/source.tar.gz"},
+			// ReplaceUpstream defaults to false.
+		},
+	}
+
+	comp2 := baseComponent()
+	comp2.SourceFiles = []projectconfig.SourceFileReference{
+		{
+			Filename:        "source.tar.gz",
+			Hash:            "aaa111",
+			HashType:        fileutils.HashTypeSHA256,
+			Origin:          projectconfig.Origin{Type: "download", Uri: "https://example.com/source.tar.gz"},
+			ReplaceUpstream: true,
+			ReplaceReason:   "patched",
+		},
+	}
+	releaseVer := testReleaseVer
+
+	fp1 := computeFingerprint(t, ctx, comp1, releaseVer, 0)
+	fp2 := computeFingerprint(t, ctx, comp2, releaseVer, 0)
+
+	assert.NotEqual(t, fp1, fp2,
+		"toggling 'replace-upstream' must change the fingerprint; it changes the resulting 'sources' file")
+}
+
+func TestComputeIdentity_SourceFileReplaceReasonExcluded(t *testing.T) {
+	ctx := newTestFS(t, map[string]string{
+		"/specs/test.spec": "Name: testpkg\nVersion: 1.0",
+	})
+
+	comp1 := baseComponent()
+	comp1.SourceFiles = []projectconfig.SourceFileReference{
+		{
+			Filename:        "source.tar.gz",
+			Hash:            "aaa111",
+			HashType:        fileutils.HashTypeSHA256,
+			Origin:          projectconfig.Origin{Type: "download", Uri: "https://example.com/source.tar.gz"},
+			ReplaceUpstream: true,
+			ReplaceReason:   "first reason",
+		},
+	}
+
+	comp2 := baseComponent()
+	comp2.SourceFiles = []projectconfig.SourceFileReference{
+		{
+			Filename:        "source.tar.gz",
+			Hash:            "aaa111",
+			HashType:        fileutils.HashTypeSHA256,
+			Origin:          projectconfig.Origin{Type: "download", Uri: "https://example.com/source.tar.gz"},
+			ReplaceUpstream: true,
+			ReplaceReason:   "second reason — equivalent semantics",
+		},
+	}
+	releaseVer := testReleaseVer
+
+	fp1 := computeFingerprint(t, ctx, comp1, releaseVer, 0)
+	fp2 := computeFingerprint(t, ctx, comp2, releaseVer, 0)
+
+	assert.Equal(t, fp1, fp2,
+		"changing only 'replace-reason' must NOT change fingerprint; it is documentation only")
+}
+
 func TestComputeIdentity_SourceFileNoHash_Error(t *testing.T) {
 	ctx := newTestFS(t, map[string]string{
 		"/specs/test.spec": "Name: testpkg\nVersion: 1.0",
@@ -761,4 +834,41 @@ func TestComputeResolutionHash_BaseURIChangeAffectsHash(t *testing.T) {
 
 	assert.NotEqual(t, hashBefore, hashAfter,
 		"dist-git base URI change must change resolution hash")
+}
+
+func TestComputeIdentity_MissingOverlaySourceFile_Error(t *testing.T) {
+	ctx := newTestFS(t, map[string]string{
+		"/specs/test.spec": "Name: testpkg\nVersion: 1.0",
+		// Deliberately NOT creating the patch file.
+	})
+	releaseVer := testReleaseVer
+
+	comp := baseComponent()
+	comp.Overlays = []projectconfig.ComponentOverlay{
+		{Type: "patch-add", Source: "/patches/nonexistent.patch"},
+	}
+
+	_, err := fingerprint.ComputeIdentity(ctx.FS(), comp, releaseVer, fingerprint.IdentityOptions{
+		SourceIdentity: "test-source-identity",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "overlay")
+}
+
+func TestComputeIdentity_MissingFileAddSource_Error(t *testing.T) {
+	ctx := newTestFS(t, map[string]string{
+		"/specs/test.spec": "Name: testpkg\nVersion: 1.0",
+	})
+	releaseVer := testReleaseVer
+
+	comp := baseComponent()
+	comp.Overlays = []projectconfig.ComponentOverlay{
+		{Type: "file-add", Source: "/files/nonexistent.txt", Filename: "extra.txt"},
+	}
+
+	_, err := fingerprint.ComputeIdentity(ctx.FS(), comp, releaseVer, fingerprint.IdentityOptions{
+		SourceIdentity: "test-source-identity",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "overlay")
 }

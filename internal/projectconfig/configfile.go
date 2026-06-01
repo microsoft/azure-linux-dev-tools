@@ -6,6 +6,7 @@ package projectconfig
 import (
 	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
@@ -33,6 +34,10 @@ type ConfigFile struct {
 
 	// Definitions of distros.
 	Distros map[string]DistroDefinition `toml:"distros,omitempty" jsonschema:"title=Distros,description=Definitions of distros to build for or consume from"`
+
+	// Reusable resource definitions (e.g., RPM repositories) referenced from
+	// elsewhere in the configuration.
+	Resources *ResourcesConfig `toml:"resources,omitempty" jsonschema:"title=Resources,description=Reusable named resource definitions"`
 
 	// Definitions of component groups.
 	ComponentGroups map[string]ComponentGroupConfig `toml:"component-groups,omitempty" validate:"dive" jsonschema:"title=Component groups,description=Definitions of component groups for this project"`
@@ -150,6 +155,7 @@ func (f ConfigFile) Validate() error {
 //   - Hash type must be a supported algorithm when specified.
 //   - Hash value without a hash type is not allowed.
 //   - Origin must be present and valid for each source file.
+//   - 'replace-upstream' and 'replace-reason' must be set together.
 func validateSourceFiles(sourceFiles []SourceFileReference, componentName string) error {
 	seen := make(map[string]bool, len(sourceFiles))
 
@@ -179,9 +185,39 @@ func validateSourceFiles(sourceFiles []SourceFileReference, componentName string
 				ref.Filename, componentName)
 		}
 
+		if err := validateReplaceUpstream(ref, componentName); err != nil {
+			return err
+		}
+
 		if err := validateOrigin(ref.Origin, ref.Filename, componentName); err != nil {
 			return err
 		}
+	}
+
+	return nil
+}
+
+// validateReplaceUpstream enforces the pairing rules for the 'replace-upstream' and
+// 'replace-reason' fields on a [SourceFileReference]:
+//   - 'replace-upstream = true' requires a non-empty 'replace-reason' (whitespace-only
+//     values do not count).
+//   - 'replace-reason' may only be set when 'replace-upstream = true'. A non-empty
+//     'replace-reason' (even if it would trim to empty) is rejected when
+//     'replace-upstream' is false, to surface the configuration mistake rather than
+//     silently ignoring the value.
+func validateReplaceUpstream(ref SourceFileReference, componentName string) error {
+	if ref.ReplaceUpstream && strings.TrimSpace(ref.ReplaceReason) == "" {
+		return fmt.Errorf(
+			"source file %#q in component %#q has 'replace-upstream = true' but no 'replace-reason'; "+
+				"a non-empty 'replace-reason' is required to document the override",
+			ref.Filename, componentName)
+	}
+
+	if !ref.ReplaceUpstream && ref.ReplaceReason != "" {
+		return fmt.Errorf(
+			"source file %#q in component %#q has 'replace-reason' set but 'replace-upstream' is not true; "+
+				"'replace-reason' is only valid when 'replace-upstream = true'",
+			ref.Filename, componentName)
 	}
 
 	return nil

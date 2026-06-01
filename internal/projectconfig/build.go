@@ -58,6 +58,19 @@ type ComponentBuildFailureConfig struct {
 	ExpectedReason string `toml:"expected-reason,omitempty" json:"expectedReason,omitempty" jsonschema:"title=Expected failure reason,description=Required justification for why this component is expected to fail building."`
 }
 
+// Validate checks that required fields are set when Expected is true.
+func (c *ComponentBuildFailureConfig) Validate() error {
+	if !c.Expected {
+		return nil
+	}
+
+	if c.ExpectedReason == "" {
+		return errors.New("failure.expected-reason is required when failure.expected is true")
+	}
+
+	return nil
+}
+
 // ComponentBuildHints encapsulates non-essential hints for how or when to build a component.
 // These are not required for correctness of builds, but may be used by tools to provide guidance
 // or optimizations.
@@ -69,6 +82,10 @@ type ComponentBuildHints struct {
 // Validate checks that the build configuration is valid.
 func (c *ComponentBuildConfig) Validate() error {
 	if err := c.Check.Validate(); err != nil {
+		return fmt.Errorf("invalid build configuration:\n%w", err)
+	}
+
+	if err := c.Failure.Validate(); err != nil {
 		return fmt.Errorf("invalid build configuration:\n%w", err)
 	}
 
