@@ -6,6 +6,7 @@ package projectconfig
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 
 	"dario.cat/mergo"
@@ -68,23 +69,43 @@ func NewProjectConfig() ProjectConfig {
 	}
 }
 
-// Validates the configuration, returning an error if any semantic errors are found.
-func (cfg *ProjectConfig) Validate() error {
+// Validate performs semantic validation of the configuration, returning an error if any
+// semantic errors are found. When permissive is true, cross-reference consistency checks
+// (component-group membership, package-group membership, and image/test-suite references)
+// are downgraded to informational logs rather than hard errors.
+//
+// Permissive validation exists for best-effort loads such as historical overlay replay,
+// where a partial or point-in-time config may legitimately reference entities that are
+// defined in a different revision. Structural validation (required fields, value formats)
+// is always enforced.
+func (cfg *ProjectConfig) Validate(permissive bool) error {
 	err := validator.New().Struct(cfg)
 	if err != nil {
 		return fmt.Errorf("config error:\n%w", err)
 	}
 
 	if err := validateComponentGroupMembership(cfg.ComponentGroups, cfg.Components); err != nil {
-		return err
+		if !permissive {
+			return err
+		}
+
+		slog.Info("Ignoring component group membership error (permissive parsing)", "err", err)
 	}
 
 	if err := validatePackageGroupMembership(cfg.PackageGroups); err != nil {
-		return err
+		if !permissive {
+			return err
+		}
+
+		slog.Info("Ignoring package group membership error (permissive parsing)", "err", err)
 	}
 
 	if err := validateImageTestReferences(cfg.Images, cfg.TestSuites); err != nil {
-		return err
+		if !permissive {
+			return err
+		}
+
+		slog.Info("Ignoring image test suite reference error (permissive parsing)", "err", err)
 	}
 
 	if err := validateRpmRepos(cfg.Resources.RpmRepos); err != nil {

@@ -155,6 +155,27 @@ func TestPackageGroupConfig_Validate(t *testing.T) {
 	})
 }
 
+func TestValidatePackageGroupMembership(t *testing.T) {
+	t.Run("same package in two groups is rejected", func(t *testing.T) {
+		cfg := projectconfig.NewProjectConfig()
+		cfg.PackageGroups["group-a"] = projectconfig.PackageGroupConfig{Packages: []string{"curl"}}
+		cfg.PackageGroups["group-b"] = projectconfig.PackageGroupConfig{Packages: []string{"curl"}}
+
+		err := cfg.Validate(false)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "curl")
+		assert.Contains(t, err.Error(), "may only belong to one group")
+	})
+
+	t.Run("permissive parsing ignores package in two groups", func(t *testing.T) {
+		cfg := projectconfig.NewProjectConfig()
+		cfg.PackageGroups["group-a"] = projectconfig.PackageGroupConfig{Packages: []string{"curl"}}
+		cfg.PackageGroups["group-b"] = projectconfig.PackageGroupConfig{Packages: []string{"curl"}}
+
+		assert.NoError(t, cfg.Validate(true))
+	})
+}
+
 func TestPackageConfig_MergeUpdatesFrom(t *testing.T) {
 	t.Run("non-zero other overrides zero base", func(t *testing.T) {
 		base := projectconfig.PackageConfig{}

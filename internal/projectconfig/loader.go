@@ -56,7 +56,7 @@ func loadAndResolveProjectConfig(
 	}
 
 	// Validate the resulting configuration.
-	err := resolvedCfg.Validate()
+	err := resolvedCfg.Validate(permissiveConfigParsing)
 	if err != nil {
 		return nil, err
 	}
