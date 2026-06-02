@@ -15,11 +15,13 @@ const NoArch = "noarch"
 
 // TestSpec represents an RPM spec being composed for testing purposes.
 type TestSpec struct {
-	name        string
-	version     string
-	release     string
-	buildArch   string
-	subpackages []string
+	name          string
+	version       string
+	release       string
+	buildArch     string
+	exclusiveArch []string
+	excludeArch   []string
+	subpackages   []string
 }
 
 // NewSpec creates a new [TestSpec] with the specified options.
@@ -82,9 +84,26 @@ func WithBuildArch(arch string) TestSpecOption {
 	}
 }
 
+// WithExclusiveArch sets the ExclusiveArch tag on the spec, limiting the
+// architectures for which the spec is considered buildable. Pass one or
+// more arch tokens (e.g. "x86_64", "aarch64").
+func WithExclusiveArch(arches ...string) TestSpecOption {
+	return func(s *TestSpec) {
+		s.exclusiveArch = append(s.exclusiveArch, arches...)
+	}
+}
+
+// WithExcludeArch sets the ExcludeArch tag on the spec, marking the listed
+// architectures as unsupported for the spec.
+func WithExcludeArch(arches ...string) TestSpecOption {
+	return func(s *TestSpec) {
+		s.excludeArch = append(s.excludeArch, arches...)
+	}
+}
+
 // WithSubpackage appends an additional binary subpackage (named
-// "<spec name>-<suffix>") to the spec. The subpackage shares the main
-// package's installed file so that rpmbuild would also be happy with it.
+// "<spec name>-<suffix>") to the spec. The subpackage owns its own
+// installed file under the same directory as the main package.
 func WithSubpackage(suffix string) TestSpecOption {
 	return func(s *TestSpec) {
 		s.subpackages = append(s.subpackages, suffix)
@@ -103,6 +122,14 @@ func (s *TestSpec) Render() string {
 
 	if s.buildArch != "" {
 		lines = append(lines, "BuildArch: "+s.buildArch)
+	}
+
+	if len(s.exclusiveArch) > 0 {
+		lines = append(lines, "ExclusiveArch: "+strings.Join(s.exclusiveArch, " "))
+	}
+
+	if len(s.excludeArch) > 0 {
+		lines = append(lines, "ExcludeArch: "+strings.Join(s.excludeArch, " "))
 	}
 
 	lines = append(lines, []string{

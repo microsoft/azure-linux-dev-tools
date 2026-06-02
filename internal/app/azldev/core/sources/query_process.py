@@ -13,7 +13,7 @@ results.json file in the scratch dir) so the Go-side plumbing can be shared.
 
 Usage::
 
-    python3 query_process.py <scratch_dir> <specs_dir> <max_workers>
+    python3 query_process.py <scratch_dir> <specs_dir> <max_workers> <arch>
 
 The scratch directory must contain an ``inputs.json`` file::
 
@@ -47,14 +47,19 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
-def _rpmspec_args(spec_path, query_format, srpm, with_, without, defines, arch):
+def _rpmspec_args(spec_path, query_format, srpm, with_, without, defines, arch,
+                  source_dir=None):
     """Compose an rpmspec command line.
 
-    Always overrides _sourcedir and _specdir to the spec's own directory so
-    that sidecar files (e.g. `Source1: foo.azl.macros`) loaded with
-    `%{SOURCEN}` or `%{load:...}` resolve against the rendered spec tree
-    rather than mock's default /builddir/build/SOURCES. Also sets
-    `with_check 0` to match the legacy per-component rpmspec path.
+    Always overrides _sourcedir and _specdir to `source_dir` (or, when
+    omitted, the spec's own directory) so that sidecar files (e.g.
+    `Source1: foo.azl.macros`) loaded with `%{SOURCEN}` or `%{load:...}`
+    resolve against the rendered spec tree rather than mock's default
+    /builddir/build/SOURCES. `source_dir` is passed explicitly when the
+    spec has been rewritten into a scratch copy (see _maybe_rewrite_spec):
+    rpmspec must parse the rewritten file but still look up sidecars next
+    to the original spec. Also sets `with_check 0` to match the legacy
+    per-component rpmspec path.
 
     `_ghc_version_cache` short-circuits `%ghc_version` in ghc-rpm-macros,
     which would otherwise run `ghc --numeric-version`. We don't install the
@@ -79,7 +84,7 @@ def _rpmspec_args(spec_path, query_format, srpm, with_, without, defines, arch):
     User-provided defines win on the rpmspec side (rpmspec honors the last
     -D for a given macro), so we list ours first.
     """
-    spec_dir = os.path.dirname(spec_path)
+    spec_dir = source_dir if source_dir is not None else os.path.dirname(spec_path)
     args = ["rpmspec", "-q"]
     if srpm:
         args.append("--srpm")
@@ -133,7 +138,20 @@ def _maybe_rewrite_spec(spec_path, scratch_dir, comp_name):
     with open(spec_path, encoding="utf-8", errors="replace") as src:
         content = src.read()
 
+    # Fail loudly if a rewrite's find string is gone: upstream spec changes
+    # or an overlay may have removed/altered the targeted line, in which
+    # case our workaround is silently a no-op and the spec falls through
+    # to the underlying rpmspec parse error this rewrite was meant to
+    # prevent. Surfacing a clear "rewrite no longer matches" message here
+    # is far easier to diagnose than chasing that downstream error.
     for find, replace in rewrites:
+        if find not in content:
+            raise RuntimeError(
+                f"spec rewrite for {os.path.basename(spec_path)!r} no longer "
+                f"matches: substring {find!r} not found in spec. The upstream "
+                f"spec or an overlay likely changed; update _SPEC_REWRITES in "
+                f"query_process.py."
+            )
         content = content.replace(find, replace)
 
     out_path = os.path.join(scratch_dir, f"{comp_name}.patched.spec")
@@ -239,6 +257,10 @@ def _split_arch_probe(srpm_out):
 # rpm canonicalizes a handful of arch aliases before comparing against
 # ExclusiveArch/ExcludeArch. Mirror just the pairs that matter for arches
 # azldev supports today.
+#
+# TODO: if any Go-side feature gains arch awareness, move this table to
+# Go (e.g. under internal/utils/qemu) and pass it down via inputs.json so
+# there's a single source of truth instead of parallel Python/Go tables.
 _ARCH_ALIASES = {
     "amd64": "x86_64",
     "arm64": "aarch64",
@@ -300,8 +322,10 @@ def process_component(specs_dir, scratch_dir, comp, arch):
 
     # Apply per-spec rewrites (e.g. ghc.spec) to a scratch copy if needed.
     # _sourcedir/_specdir stay pinned to the original spec's directory via
-    # _rpmspec_args, so sidecar files still resolve correctly.
+    # the explicit source_dir argument below, so sidecar files still
+    # resolve correctly even when rpmspec parses the rewritten copy.
     effective_spec = _maybe_rewrite_spec(spec_path, scratch_dir, name)
+    source_dir = os.path.dirname(spec_path)
 
     # Source-level query (--srpm). The caller's srpmQueryFormat is wrapped
     # with an arch-policy probe block (see _wrap_srpm_format_with_arch_probe);
@@ -315,6 +339,7 @@ def process_component(specs_dir, scratch_dir, comp, arch):
         without,
         defines,
         arch,
+        source_dir=source_dir,
     )
     try:
         srpm_out, srpm_err, srpm_rc = _run_rpmspec(srpm_args)
@@ -359,9 +384,12 @@ def process_component(specs_dir, scratch_dir, comp, arch):
         without,
         defines,
         arch,
+        source_dir=source_dir,
     )
     # Insert --builtrpms right after `-q` so it associates with the query.
-    bin_args.insert(2, "--builtrpms")
+    # Look up `-q` rather than hard-coding the index so this stays correct if
+    # _rpmspec_args ever reorders its preamble.
+    bin_args.insert(bin_args.index("-q") + 1, "--builtrpms")
     try:
         bin_out, bin_err, bin_rc = _run_rpmspec(bin_args)
     except _RpmspecTimeout as exc:

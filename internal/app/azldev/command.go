@@ -40,9 +40,21 @@ type (
 	cobraRunFuncType = func(command *cobra.Command, args []string) error
 
 	// Type of a function for use with [RunFunc] and siblings.
+	//
+	// The returned (result, error) pair is **not** mutually exclusive: an inner
+	// func may return a non-nil result *alongside* a non-nil error to surface
+	// partial output (e.g. per-item results for a batch where some items
+	// failed). When both are non-nil, the [RunFunc] wrapper reports the result
+	// to the user before propagating the error, so the process still exits
+	// non-zero but the user can still see what succeeded. Inner funcs that
+	// have nothing meaningful to report on the error path should return a nil
+	// result.
 	CmdFuncType = func(env *Env) (interface{}, error)
 
 	// Type of a function for use with [RunFuncWithExtraArgs] and siblings.
+	//
+	// See [CmdFuncType] for the partial-results-on-error contract; it applies
+	// identically here.
 	CmdWithExtraArgsFuncType = func(env *Env, extraArgs []string) (interface{}, error)
 )
 
@@ -50,6 +62,10 @@ type (
 // positional arguments, retrieves the [Env], invokes the provided inner function with the
 // right context objects, and then provides standard result reporting for the opaque result value
 // returned by the inner function. Fails early if no project/configuration was loaded.
+//
+// If the inner function returns a non-nil result alongside a non-nil error, the result is
+// reported to the user before the error is propagated, so callers see the partial output and
+// the command still exits non-zero. See [CmdFuncType] for details.
 func RunFunc(innerFunc CmdFuncType) cobraRunFuncType {
 	return runFuncInternal(func(env *Env, extraArgs []string) (interface{}, error) {
 		if len(extraArgs) > 0 {
@@ -65,6 +81,8 @@ func RunFunc(innerFunc CmdFuncType) cobraRunFuncType {
 // right context objects, and then provides standard result reporting for the opaque result value
 // returned by the inner function. Does *not* require valid project/configuration to have been
 // loaded.
+//
+// Reports partial results on error in the same way as [RunFunc]; see [CmdFuncType] for details.
 func RunFuncWithoutRequiredConfig(innerFunc CmdFuncType) cobraRunFuncType {
 	return runFuncInternal(func(env *Env, extraArgs []string) (interface{}, error) {
 		if len(extraArgs) > 0 {
@@ -80,6 +98,9 @@ func RunFuncWithoutRequiredConfig(innerFunc CmdFuncType) cobraRunFuncType {
 // objects and positional arguments, and then provides standard result reporting for
 // the opaque result value returned by the inner function. Fails early if no
 // project/configuration was loaded.
+//
+// Reports partial results on error in the same way as [RunFunc]; see
+// [CmdWithExtraArgsFuncType] for details.
 func RunFuncWithExtraArgs(innerFunc CmdWithExtraArgsFuncType) cobraRunFuncType {
 	return runFuncInternal(innerFunc, true)
 }
@@ -89,6 +110,9 @@ func RunFuncWithExtraArgs(innerFunc CmdWithExtraArgsFuncType) cobraRunFuncType {
 // objects and positional arguments, and then provides standard result reporting for
 // the opaque result value returned by the inner function. Does *not* require valid
 // project/configuration to have been loaded.
+//
+// Reports partial results on error in the same way as [RunFunc]; see
+// [CmdWithExtraArgsFuncType] for details.
 func RunFuncWithoutRequiredConfigWithExtraArgs(innerFunc CmdWithExtraArgsFuncType) cobraRunFuncType {
 	return runFuncInternal(innerFunc, false)
 }

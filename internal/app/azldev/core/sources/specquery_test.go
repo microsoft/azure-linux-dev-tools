@@ -166,7 +166,7 @@ func TestValidateSpecQueryInputs(t *testing.T) {
 		{
 			name:    "empty rel path",
 			inputs:  []SpecQueryInput{{Name: "curl", SpecRelPath: ""}},
-			wantErr: true, errMsg: "spec relative path cannot be empty",
+			wantErr: true, errMsg: "path cannot be empty",
 		},
 		{
 			name:    "absolute rel path",
@@ -181,7 +181,7 @@ func TestValidateSpecQueryInputs(t *testing.T) {
 		{
 			name:    "canonical traversal in rel path",
 			inputs:  []SpecQueryInput{{Name: "curl", SpecRelPath: "../etc/passwd"}},
-			wantErr: true, errMsg: "must not contain path traversal",
+			wantErr: true, errMsg: "not a valid file name",
 		},
 		{
 			name:    "non-canonical rel path",
