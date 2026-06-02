@@ -7,12 +7,9 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"strconv"
-	"strings"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm"
@@ -60,7 +57,7 @@ func validateSpecQueryInputs(inputs []SpecQueryInput) error {
 			return fmt.Errorf("invalid component name %#q:\n%w", input.Name, err)
 		}
 
-		if err := validateSpecRelPath(input.SpecRelPath); err != nil {
+		if err := fileutils.ValidateRelPath(input.SpecRelPath); err != nil {
 			return fmt.Errorf("invalid spec path %#q for component %#q:\n%w",
 				input.SpecRelPath, input.Name, err)
 		}
@@ -70,33 +67,6 @@ func validateSpecQueryInputs(inputs []SpecQueryInput) error {
 		}
 
 		seen[input.Name] = true
-	}
-
-	return nil
-}
-
-// validateSpecRelPath rejects spec relative paths that could escape the
-// specs-dir bind mount or contain control characters.
-func validateSpecRelPath(relPath string) error {
-	if relPath == "" {
-		return errors.New("spec relative path cannot be empty")
-	}
-
-	if filepath.IsAbs(relPath) {
-		return fmt.Errorf("spec path %#q must be relative", relPath)
-	}
-
-	cleaned := filepath.Clean(relPath)
-	if cleaned != relPath {
-		return fmt.Errorf("spec path %#q must be in canonical form", relPath)
-	}
-
-	if strings.Contains(cleaned, "..") {
-		return fmt.Errorf("spec path %#q must not contain path traversal", relPath)
-	}
-
-	if strings.ContainsRune(relPath, 0) {
-		return fmt.Errorf("spec path %#q must not contain null bytes", relPath)
 	}
 
 	return nil
