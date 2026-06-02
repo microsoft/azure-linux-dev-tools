@@ -6,7 +6,6 @@ package projectconfig
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"sort"
 
 	"dario.cat/mergo"
@@ -78,34 +77,22 @@ func NewProjectConfig() ProjectConfig {
 // where a partial or point-in-time config may legitimately reference entities that are
 // defined in a different revision. Structural validation (required fields, value formats)
 // is always enforced.
-func (cfg *ProjectConfig) Validate(permissive bool) error {
+func (cfg *ProjectConfig) Validate() error {
 	err := validator.New().Struct(cfg)
 	if err != nil {
 		return fmt.Errorf("config error:\n%w", err)
 	}
 
 	if err := validateComponentGroupMembership(cfg.ComponentGroups, cfg.Components); err != nil {
-		if !permissive {
-			return err
-		}
-
-		slog.Info("Ignoring component group membership error (permissive parsing)", "err", err)
+		return err
 	}
 
 	if err := validatePackageGroupMembership(cfg.PackageGroups); err != nil {
-		if !permissive {
-			return err
-		}
-
-		slog.Info("Ignoring package group membership error (permissive parsing)", "err", err)
+		return err
 	}
 
 	if err := validateImageTestReferences(cfg.Images, cfg.TestSuites); err != nil {
-		if !permissive {
-			return err
-		}
-
-		slog.Info("Ignoring image test suite reference error (permissive parsing)", "err", err)
+		return err
 	}
 
 	if err := validateRpmRepos(cfg.Resources.RpmRepos); err != nil {

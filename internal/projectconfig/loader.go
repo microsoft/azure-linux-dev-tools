@@ -56,9 +56,13 @@ func loadAndResolveProjectConfig(
 	}
 
 	// Validate the resulting configuration.
-	err := resolvedCfg.Validate(permissiveConfigParsing)
+	err := resolvedCfg.Validate()
 	if err != nil {
-		return nil, err
+		if permissiveConfigParsing {
+			slog.Warn("Project config validation failed, but permissive parsing is enabled so continuing with potentially incomplete config", "error", err)
+		} else {
+			return nil, err
+		}
 	}
 
 	return resolvedCfg, nil

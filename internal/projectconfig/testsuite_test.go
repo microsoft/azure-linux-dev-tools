@@ -312,7 +312,7 @@ func TestValidateTestSuiteReferences(t *testing.T) {
 			GroupsByComponent: make(map[string][]string),
 			PackageGroups:     make(map[string]projectconfig.PackageGroupConfig),
 		}
-		assert.NoError(t, cfg.Validate(false))
+		assert.NoError(t, cfg.Validate())
 	})
 
 	t.Run("undefined test reference", func(t *testing.T) {
@@ -330,7 +330,7 @@ func TestValidateTestSuiteReferences(t *testing.T) {
 			GroupsByComponent: make(map[string][]string),
 			PackageGroups:     make(map[string]projectconfig.PackageGroupConfig),
 		}
-		err := cfg.Validate(false)
+		err := cfg.Validate()
 		require.Error(t, err)
 		require.ErrorIs(t, err, projectconfig.ErrUndefinedTestSuite)
 		assert.Contains(t, err.Error(), "nonexistent")
@@ -348,24 +348,6 @@ func TestValidateTestSuiteReferences(t *testing.T) {
 			GroupsByComponent: make(map[string][]string),
 			PackageGroups:     make(map[string]projectconfig.PackageGroupConfig),
 		}
-		assert.NoError(t, cfg.Validate(false))
-	})
-
-	t.Run("permissive parsing ignores undefined test reference", func(t *testing.T) {
-		cfg := projectconfig.ProjectConfig{
-			Images: map[string]projectconfig.ImageConfig{
-				"myimage": {
-					Name:  "myimage",
-					Tests: projectconfig.ImageTestsConfig{TestSuites: []projectconfig.TestSuiteRef{{Name: "nonexistent"}}},
-				},
-			},
-			TestSuites:        make(map[string]projectconfig.TestSuiteConfig),
-			Components:        make(map[string]projectconfig.ComponentConfig),
-			ComponentGroups:   make(map[string]projectconfig.ComponentGroupConfig),
-			Distros:           make(map[string]projectconfig.DistroDefinition),
-			GroupsByComponent: make(map[string][]string),
-			PackageGroups:     make(map[string]projectconfig.PackageGroupConfig),
-		}
-		assert.NoError(t, cfg.Validate(true))
+		assert.NoError(t, cfg.Validate())
 	})
 }

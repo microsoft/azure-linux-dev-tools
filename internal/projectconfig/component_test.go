@@ -942,7 +942,7 @@ func TestValidateComponentGroupMembership(t *testing.T) {
 			Components: []string{"missing-component"},
 		}
 
-		err := cfg.Validate(false)
+		err := cfg.Validate()
 		require.Error(t, err)
 		require.ErrorIs(t, err, projectconfig.ErrUndefinedComponent)
 		assert.Contains(t, err.Error(), "my-group")
@@ -956,7 +956,7 @@ func TestValidateComponentGroupMembership(t *testing.T) {
 			Components: []string{"real-component"},
 		}
 
-		assert.NoError(t, cfg.Validate(false))
+		assert.NoError(t, cfg.Validate())
 	})
 
 	t.Run("group with only spec patterns is valid", func(t *testing.T) {
@@ -965,7 +965,7 @@ func TestValidateComponentGroupMembership(t *testing.T) {
 			SpecPathPatterns: []string{"SPECS/**/*.spec"},
 		}
 
-		assert.NoError(t, cfg.Validate(false))
+		assert.NoError(t, cfg.Validate())
 	})
 
 	t.Run("reports all undefined references together", func(t *testing.T) {
@@ -978,20 +978,11 @@ func TestValidateComponentGroupMembership(t *testing.T) {
 			Components: []string{"missing-3"},
 		}
 
-		err := cfg.Validate(false)
+		err := cfg.Validate()
 		require.Error(t, err)
 		require.ErrorIs(t, err, projectconfig.ErrUndefinedComponent)
 		assert.Contains(t, err.Error(), "missing-1")
 		assert.Contains(t, err.Error(), "missing-2")
 		assert.Contains(t, err.Error(), "missing-3")
-	})
-
-	t.Run("permissive parsing ignores undefined component reference", func(t *testing.T) {
-		cfg := projectconfig.NewProjectConfig()
-		cfg.ComponentGroups["my-group"] = projectconfig.ComponentGroupConfig{
-			Components: []string{"missing-component"},
-		}
-
-		assert.NoError(t, cfg.Validate(true))
 	})
 }
