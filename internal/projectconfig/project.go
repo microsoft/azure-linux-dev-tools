@@ -68,15 +68,7 @@ func NewProjectConfig() ProjectConfig {
 	}
 }
 
-// Validate performs semantic validation of the configuration, returning an error if any
-// semantic errors are found. When permissive is true, cross-reference consistency checks
-// (component-group membership, package-group membership, and image/test-suite references)
-// are downgraded to informational logs rather than hard errors.
-//
-// Permissive validation exists for best-effort loads such as historical overlay replay,
-// where a partial or point-in-time config may legitimately reference entities that are
-// defined in a different revision. Structural validation (required fields, value formats)
-// is always enforced.
+// Validates the configuration, returning an error if any semantic errors are found.
 func (cfg *ProjectConfig) Validate() error {
 	err := validator.New().Struct(cfg)
 	if err != nil {
