@@ -63,7 +63,7 @@ func LoadProjectConfigAtCommit(
 	// Layer a writable in-memory overlay so the loader can stage its embedded
 	// default configs (and any other scratch writes) without touching the
 	// read-only git tree underneath.
-	fs := afero.NewCopyOnWriteFs(base, afero.NewMemMapFs())
+	overlayFS := afero.NewCopyOnWriteFs(base, afero.NewMemMapFs())
 
 	// Interpret referenceDir relative to the git tree root, never the host
 	// process working directory. path.Join against "/" makes relative forms
@@ -73,7 +73,7 @@ func LoadProjectConfigAtCommit(
 
 	return LoadProjectConfig(
 		historicDryRunnable{},
-		fs,
+		overlayFS,
 		historicOSEnv{},
 		referenceDir,
 		false, // disableDefaultConfig: defaults are part of resolved overlays.

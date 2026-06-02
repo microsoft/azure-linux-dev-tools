@@ -246,23 +246,23 @@ func newRepoWithSubmodule(t *testing.T) (*gogit.Repository, plumbing.Hash) {
 func TestSubmoduleEntry(t *testing.T) {
 	repo, hash := newRepoWithSubmodule(t)
 
-	fs, err := gitfs.NewFromCommit(repo, hash)
+	gitFS, err := gitfs.NewFromCommit(repo, hash)
 	require.NoError(t, err)
 
 	// Open must fail with the stable submodule sentinel, not a blob-read error.
-	_, err = fs.Open("sub")
+	_, err = gitFS.Open("sub")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, gitfs.ErrSubmodule)
+	require.ErrorIs(t, err, gitfs.ErrSubmodule)
 	assert.NotContains(t, err.Error(), "read blob")
 
 	// Stat must succeed and classify the gitlink as non-regular (no silent
 	// zero-size blob fallback).
-	info, err := fs.Stat("sub")
+	info, err := gitFS.Stat("sub")
 	require.NoError(t, err)
 	assert.False(t, info.Mode().IsRegular(), "submodule entry must not look like a regular file")
 
 	// Readdir must still list the submodule alongside the regular file.
-	root, err := fs.Open("/")
+	root, err := gitFS.Open("/")
 	require.NoError(t, err)
 
 	names, err := root.Readdirnames(-1)
@@ -277,15 +277,15 @@ func TestSubmoduleEntry(t *testing.T) {
 func TestSymlinkEntry(t *testing.T) {
 	repo, hash := commitTreeWithSymlink(t)
 
-	fs, err := gitfs.NewFromCommit(repo, hash)
+	gitFS, err := gitfs.NewFromCommit(repo, hash)
 	require.NoError(t, err)
 
-	_, err = fs.Open("link")
+	_, err = gitFS.Open("link")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, gitfs.ErrSymlink)
+	require.ErrorIs(t, err, gitfs.ErrSymlink)
 	assert.NotContains(t, err.Error(), "azldev.toml", "must not leak the link target as content")
 
-	info, err := fs.Stat("link")
+	info, err := gitFS.Stat("link")
 	require.NoError(t, err)
 	assert.False(t, info.Mode().IsRegular(), "symlink must not look like a regular file")
 	assert.NotZero(t, info.Mode()&os.ModeSymlink, "symlink mode bit must be set")
