@@ -17,10 +17,13 @@ import (
 // ComponentOverlay represents an overlay that may be applied to a component's spec and/or its sources.
 type ComponentOverlay struct {
 	// The type of overlay to apply.
-	Type ComponentOverlayType `toml:"type" json:"type" validate:"required" jsonschema:"enum=spec-add-tag,enum=spec-insert-tag,enum=spec-set-tag,enum=spec-update-tag,enum=spec-remove-tag,enum=spec-prepend-lines,enum=spec-append-lines,enum=spec-search-replace,enum=spec-remove-section,enum=spec-remove-subpackage,enum=patch-add,enum=patch-remove,enum=file-prepend-lines,enum=file-search-replace,enum=file-add,enum=file-remove,enum=file-rename,title=Overlay type,description=The type of overlay to apply"`
+	Type ComponentOverlayType `toml:"type" json:"type" validate:"required" jsonschema:"enum=spec-add-tag,enum=spec-insert-tag,enum=spec-set-tag,enum=spec-update-tag,enum=spec-remove-tag,enum=spec-prepend-lines,enum=spec-append-lines,enum=spec-search-replace,enum=spec-remove-section,enum=spec-remove-subpackage,enum=patch-add,enum=patch-remove,enum=file-prepend-lines,enum=file-search-replace,enum=file-add,enum=file-remove,enum=file-rename,enum=tarball-file-remove,enum=tarball-search-replace,enum=tarball-patch,title=Overlay type,description=The type of overlay to apply"`
 	// Human readable description of overlay; primarily present to document the need for the change.
 	Description string `toml:"description,omitempty" json:"description,omitempty" jsonschema:"title=Description,description=Human readable description of overlay" fingerprint:"-"`
 
+	// For overlays that target files inside a source tarball, identifies the tarball to modify.
+	// Must be a filename (not a path) matching a source archive in the component's sources directory.
+	Tarball string `toml:"tarball,omitempty" json:"tarball,omitempty" jsonschema:"title=Tarball,description=The source tarball to modify (e.g. pkg-1.0.tar.gz)"`
 	// For overlays that apply to non-spec files, indicates the filename. For overlays that can
 	// apply to multiple files, supports glob patterns (including globstar).
 	Filename string `toml:"file,omitempty" json:"file,omitempty" jsonschema:"title=Filename,description=The name of the non-spec file to which this overlay applies, or a glob pattern matching multiple files"`
@@ -131,6 +134,14 @@ func (c *ComponentOverlay) ModifiesSpec() bool {
 		c.Type == ComponentOverlayRemovePatch
 }
 
+// ModifiesTarball returns true if the overlay modifies files inside a source tarball.
+// These overlays require a mock chroot for extraction and repacking.
+func (c *ComponentOverlay) ModifiesTarball() bool {
+	return c.Type == ComponentOverlayTarballFileRemove ||
+		c.Type == ComponentOverlayTarballSearchReplace ||
+		c.Type == ComponentOverlayTarballPatch
+}
+
 // ModifiesNonSpecFiles returns true if the overlay modifies non-spec files. This includes
 // hybrid overlays that modify both spec and source files (e.g., patch overlays), since
 // those also require non-spec modifications.
@@ -194,6 +205,15 @@ const (
 	ComponentOverlayRemoveFile ComponentOverlayType = "file-remove"
 	// ComponentOverlayRenameFile is an overlay that renames a non-spec file.
 	ComponentOverlayRenameFile ComponentOverlayType = "file-rename"
+	// ComponentOverlayTarballFileRemove is an overlay that removes file(s) from inside a source tarball.
+	// The tarball is extracted, matching files are deleted, and the tarball is repacked.
+	ComponentOverlayTarballFileRemove ComponentOverlayType = "tarball-file-remove"
+	// ComponentOverlayTarballSearchReplace is an overlay that performs regex search-and-replace
+	// on file(s) inside a source tarball.
+	ComponentOverlayTarballSearchReplace ComponentOverlayType = "tarball-search-replace"
+	// ComponentOverlayTarballPatch is an overlay that applies a unified diff patch to the
+	// extracted contents of a source tarball.
+	ComponentOverlayTarballPatch ComponentOverlayType = "tarball-patch"
 )
 
 // Validate checks that required fields are set based on the overlay type. This catches
@@ -240,6 +260,10 @@ func (c *ComponentOverlay) validateRequiredFields(desc string) error {
 		return c.validateRemoveSubpackageOverlay(desc)
 	case ComponentOverlayAddPatch, ComponentOverlayRemovePatch:
 		return c.validatePatchOverlay(desc)
+	case ComponentOverlayTarballFileRemove, ComponentOverlayTarballSearchReplace:
+		return c.validateTarballFileOverlay(desc)
+	case ComponentOverlayTarballPatch:
+		return c.validateTarballPatchOverlay(desc)
 	default:
 		return fmt.Errorf("unknown overlay type %#q: %#q", c.Type, desc)
 	}
@@ -360,6 +384,42 @@ func (c *ComponentOverlay) validatePatchOverlay(desc string) error {
 	}
 
 	return validateGlobPattern(c.Filename, desc)
+}
+
+func (c *ComponentOverlay) validateTarballFileOverlay(desc string) error {
+	if err := c.requireFileBasename("tarball", c.Tarball, desc); err != nil {
+		return err
+	}
+
+	if err := c.requireRelativePath(c.Filename, desc); err != nil {
+		return err
+	}
+
+	if err := validateGlobPattern(c.Filename, desc); err != nil {
+		return err
+	}
+
+	if c.Type == ComponentOverlayTarballSearchReplace {
+		if c.Regex == "" {
+			return fmt.Errorf("overlay type %#q requires %#q field: %s", c.Type, "regex", desc)
+		}
+
+		return validateRegex(c.Regex, desc)
+	}
+
+	return nil
+}
+
+func (c *ComponentOverlay) validateTarballPatchOverlay(desc string) error {
+	if err := c.requireFileBasename("tarball", c.Tarball, desc); err != nil {
+		return err
+	}
+
+	if c.Source == "" {
+		return fmt.Errorf("overlay type %#q requires %#q field: %s", c.Type, "source", desc)
+	}
+
+	return nil
 }
 
 // requireSectionIfPackageSet checks that, for overlays that may target either a single
