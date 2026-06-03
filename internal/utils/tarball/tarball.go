@@ -1,18 +1,26 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-// Package tarball provides deterministic tar archive extraction and repacking.
+// Package tarball provides on-disk tar extraction and deterministic archive
+// creation.
 //
-// Repacking is designed for reproducible builds: file ordering is lexicographic,
-// timestamps are pinned to Unix epoch, and owner/group metadata is zeroed out.
-// This matches the `tar --sort=name --mtime=@0 --owner=0 --group=0` convention
-// used by source modification scripts.
+// [Extract] materializes entries into a destination directory via [os.Root],
+// which confines every file, directory, and symlink operation to that
+// directory — any entry name or symlink target that would escape destDir is
+// rejected by the runtime.
+//
+// Archive creation is designed for reproducible builds: file ordering is
+// lexicographic, timestamps are pinned to Unix epoch, and owner/group metadata
+// is zeroed out. This matches the
+// `tar --sort=name --mtime=@0 --owner=0 --group=0` convention used by source
+// modification scripts.
 package tarball
 
 import (
 	"archive/tar"
-	"compress/bzip2"
 	"compress/gzip"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -22,7 +30,7 @@ import (
 	"time"
 
 	"github.com/klauspost/compress/zstd"
-	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
+	"github.com/mholt/archives"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/defers"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/ulikunitz/xz"
@@ -36,13 +44,17 @@ const (
 	CompressionNone Compression = iota
 	// CompressionGzip indicates gzip compression (.tar.gz or .tgz).
 	CompressionGzip
-	// CompressionBzip2 indicates bzip2 compression (.tar.bz2).
-	CompressionBzip2
 	// CompressionXZ indicates xz compression (.tar.xz).
 	CompressionXZ
 	// CompressionZstd indicates zstandard compression (.tar.zst).
 	CompressionZstd
 )
+
+// maxEntryBytes caps the decompressed size of any single regular-file entry
+// extracted by [Extract]. This prevents a decompression-bomb archive from
+// filling the destination filesystem. 10 GiB is well above any reasonable
+// source tarball entry but small enough to refuse pathological inputs.
+const maxEntryBytes int64 = 10 << 30
 
 // DetectCompression determines the compression type from the archive filename.
 func DetectCompression(filename string) (Compression, error) {
@@ -51,8 +63,6 @@ func DetectCompression(filename string) (Compression, error) {
 	switch {
 	case strings.HasSuffix(lower, ".tar.gz") || strings.HasSuffix(lower, ".tgz"):
 		return CompressionGzip, nil
-	case strings.HasSuffix(lower, ".tar.bz2"):
-		return CompressionBzip2, nil
 	case strings.HasSuffix(lower, ".tar.xz"):
 		return CompressionXZ, nil
 	case strings.HasSuffix(lower, ".tar.zst"):
@@ -64,71 +74,80 @@ func DetectCompression(filename string) (Compression, error) {
 	}
 }
 
-// Extract reads a tar archive from the filesystem, decompresses it, and extracts
-// all entries to destDir. Supported entry types are regular files, directories,
-// and symlinks. Path traversal entries are rejected.
-func Extract(fs opctx.FS, archivePath, destDir string, comp Compression) (err error) {
-	file, err := fs.Open(archivePath)
+// Extract reads a tar archive, decompresses it, and extracts all entries into
+// destDir. Supported entry types are regular files, directories, and symlinks;
+// other entry types are skipped. Extraction is confined to destDir via [os.Root]:
+// any entry name or symlink target that would escape destDir is rejected by
+// the runtime.
+func Extract(archivePath, destDir string, comp Compression) (err error) {
+	if err := os.MkdirAll(destDir, fileperms.PublicDir); err != nil {
+		return fmt.Errorf("creating destination %#q:\n%w", destDir, err)
+	}
+
+	root, err := os.OpenRoot(destDir)
+	if err != nil {
+		return fmt.Errorf("opening destination root %#q:\n%w", destDir, err)
+	}
+	defer defers.HandleDeferError(root.Close, &err)
+
+	file, err := os.Open(archivePath)
 	if err != nil {
 		return fmt.Errorf("opening archive %#q:\n%w", archivePath, err)
 	}
 	defer defers.HandleDeferError(file.Close, &err)
 
-	decompressed, err := newDecompressor(file, comp)
+	format, err := extractionFormat(comp)
 	if err != nil {
 		return err
 	}
 
-	if closer, ok := decompressed.(io.Closer); ok {
-		if closer != io.Closer(file) {
-			defer defers.HandleDeferError(closer.Close, &err)
-		}
-	}
-
-	tarReader := tar.NewReader(decompressed)
-
-	for {
-		header, readErr := tarReader.Next()
-		if readErr == io.EOF {
-			break
-		}
-
-		if readErr != nil {
-			return fmt.Errorf("reading tar header:\n%w", readErr)
-		}
-
-		if err := extractEntry(destDir, header, tarReader); err != nil {
-			return err
-		}
+	extractErr := format.Extract(context.Background(), file, func(_ context.Context, entry archives.FileInfo) error {
+		return extractEntry(root, entry)
+	})
+	if extractErr != nil {
+		return fmt.Errorf("extracting %#q:\n%w", archivePath, extractErr)
 	}
 
 	return nil
 }
 
-// RepackDeterministic creates a new tar archive from the contents of sourceDir
-// and writes it to archivePath, replacing any existing file.
+func extractionFormat(comp Compression) (archives.Extractor, error) {
+	switch comp {
+	case CompressionNone:
+		return archives.Tar{}, nil
+	case CompressionGzip:
+		return archives.CompressedArchive{Compression: archives.Gz{}, Extraction: archives.Tar{}}, nil
+	case CompressionXZ:
+		return archives.CompressedArchive{Compression: archives.Xz{}, Extraction: archives.Tar{}}, nil
+	case CompressionZstd:
+		return archives.CompressedArchive{Compression: archives.Zstd{}, Extraction: archives.Tar{}}, nil
+	default:
+		return nil, fmt.Errorf("unsupported compression type %d", comp)
+	}
+}
+
+// CreateDeterministicArchive creates a new tar archive from the contents of sourceDir
+// and writes it to archivePath on the OS filesystem, replacing any existing file.
 //
 // The output is deterministic:
 //   - File ordering is lexicographic (via [filepath.WalkDir]).
 //   - Timestamps are pinned to Unix epoch (1970-01-01 00:00:00 UTC).
 //   - Owner/group IDs and names are zeroed out.
 //   - Gzip output uses best compression with no OS or filename metadata.
-func RepackDeterministic(fs opctx.FS, archivePath, sourceDir string, comp Compression) (err error) {
-	file, err := fs.OpenFile(archivePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fileperms.PublicFile)
+func CreateDeterministicArchive(archivePath, sourceDir string, comp Compression) (err error) {
+	file, err := os.Create(archivePath)
 	if err != nil {
 		return fmt.Errorf("opening archive for writing %#q:\n%w", archivePath, err)
 	}
 	defer defers.HandleDeferError(file.Close, &err)
 
-	compressedWriter, err := newCompressor(file, comp)
+	compressedWriter, compressedCloser, err := newCompressor(file, comp)
 	if err != nil {
 		return err
 	}
 
-	if closer, ok := compressedWriter.(io.Closer); ok {
-		if closer != io.Closer(file) {
-			defer defers.HandleDeferError(closer.Close, &err)
-		}
+	if compressedCloser != nil {
+		defer defers.HandleDeferError(compressedCloser.Close, &err)
 	}
 
 	tarWriter := tar.NewWriter(compressedWriter)
@@ -159,73 +178,78 @@ func RepackDeterministic(fs opctx.FS, archivePath, sourceDir string, comp Compre
 	return nil
 }
 
-// ResolveExtractRoot determines the root directory of extracted tarball content.
-func ResolveExtractRoot(workDir string) (string, error) {
-	entries, err := os.ReadDir(workDir)
-	if err != nil {
-		return "", fmt.Errorf("reading extracted directory:\n%w", err)
-	}
-
-	if len(entries) == 1 && entries[0].IsDir() {
-		return filepath.Join(workDir, entries[0].Name()), nil
-	}
-
-	return workDir, nil
-}
-
 func deterministicEpoch() time.Time {
 	return time.Unix(0, 0).UTC()
 }
 
-func extractEntry(destDir string, header *tar.Header, tarReader *tar.Reader) error {
-	cleanName := filepath.Clean(header.Name)
-	targetPath := filepath.Join(destDir, cleanName)
-	cleanTarget := filepath.Clean(targetPath)
-	cleanDest := filepath.Clean(destDir)
+func extractEntry(root *os.Root, entry archives.FileInfo) error {
+	name := entry.NameInArchive
+	mode := entry.Mode()
 
-	if !strings.HasPrefix(cleanTarget, cleanDest+string(os.PathSeparator)) && cleanTarget != cleanDest {
-		return fmt.Errorf("tar entry %#q escapes destination directory", header.Name)
-	}
-
-	switch header.Typeflag {
-	case tar.TypeDir:
-		if err := os.MkdirAll(targetPath, fileperms.PublicDir); err != nil {
-			return fmt.Errorf("creating directory %#q:\n%w", targetPath, err)
-		}
-	case tar.TypeReg:
-		if err := os.MkdirAll(filepath.Dir(targetPath), fileperms.PublicDir); err != nil {
-			return fmt.Errorf("creating parent for %#q:\n%w", targetPath, err)
+	switch {
+	case entry.IsDir():
+		if err := root.MkdirAll(name, fileperms.PublicDir); err != nil {
+			return fmt.Errorf("creating directory %#q:\n%w", name, err)
 		}
 
-		if err := extractRegularFile(targetPath, header, tarReader); err != nil {
-			return err
-		}
-	case tar.TypeSymlink:
-		if err := os.MkdirAll(filepath.Dir(targetPath), fileperms.PublicDir); err != nil {
-			return fmt.Errorf("creating parent for symlink %#q:\n%w", targetPath, err)
+		return nil
+	case mode&os.ModeSymlink != 0:
+		// os.Root validates that the link's own path stays inside the root, but
+		// it stores the target verbatim. Reject non-local targets so that tools
+		// which later walk the extracted tree without os.Root cannot be led
+		// outside destDir.
+		if !filepath.IsLocal(entry.LinkTarget) {
+			return fmt.Errorf("tar symlink %#q has non-local target %#q", name, entry.LinkTarget)
 		}
 
-		if err := os.Symlink(header.Linkname, targetPath); err != nil {
-			return fmt.Errorf("creating symlink %#q:\n%w", targetPath, err)
+		if err := root.MkdirAll(filepath.Dir(name), fileperms.PublicDir); err != nil {
+			return fmt.Errorf("creating parent for symlink %#q:\n%w", name, err)
 		}
+
+		if err := root.Symlink(entry.LinkTarget, name); err != nil {
+			return fmt.Errorf("creating symlink %#q -> %#q:\n%w", name, entry.LinkTarget, err)
+		}
+
+		return nil
+	case mode.IsRegular():
+		if err := root.MkdirAll(filepath.Dir(name), fileperms.PublicDir); err != nil {
+			return fmt.Errorf("creating parent for %#q:\n%w", name, err)
+		}
+
+		return extractRegularFile(root, entry)
 	default:
-		slog.Debug("Skipping unsupported tar entry type", "name", header.Name, "type", header.Typeflag)
-	}
+		slog.Debug("Skipping unsupported tar entry type", "name", name, "mode", mode)
 
-	return nil
+		return nil
+	}
 }
 
-func extractRegularFile(targetPath string, header *tar.Header, tarReader *tar.Reader) (err error) {
-	mode := os.FileMode(header.Mode) & os.ModePerm //nolint:gosec // Truncation to permission bits is intentional.
+func extractRegularFile(root *os.Root, entry archives.FileInfo) (err error) {
+	name := entry.NameInArchive
+	mode := entry.Mode() & os.ModePerm
 
-	outFile, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	src, err := entry.Open()
 	if err != nil {
-		return fmt.Errorf("creating file %#q:\n%w", targetPath, err)
+		return fmt.Errorf("opening archive entry %#q:\n%w", name, err)
+	}
+	defer defers.HandleDeferError(src.Close, &err)
+
+	outFile, err := root.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	if err != nil {
+		return fmt.Errorf("creating file %#q:\n%w", name, err)
 	}
 	defer defers.HandleDeferError(outFile.Close, &err)
 
-	if _, err := io.Copy(outFile, tarReader); err != nil {
-		return fmt.Errorf("writing file %#q:\n%w", targetPath, err)
+	// Cap copy at maxEntryBytes+1 so we can detect (and reject) entries that
+	// exceed the limit instead of writing them. The declared archive size is
+	// attacker-controlled, so we enforce on the read side.
+	written, err := io.CopyN(outFile, src, maxEntryBytes+1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("writing file %#q:\n%w", name, err)
+	}
+
+	if written > maxEntryBytes {
+		return fmt.Errorf("tar entry %#q exceeds max size of %d bytes", name, maxEntryBytes)
 	}
 
 	return nil
@@ -233,36 +257,23 @@ func extractRegularFile(targetPath string, header *tar.Header, tarReader *tar.Re
 
 func writeEntryDeterministic(
 	tarWriter *tar.Writer, path, rel string, entry os.DirEntry, epoch time.Time,
-) error {
+) (err error) {
 	info, err := entry.Info()
 	if err != nil {
 		return fmt.Errorf("stat %#q:\n%w", path, err)
 	}
 
+	var linkTarget string
 	if info.Mode()&os.ModeSymlink != 0 {
-		linkTarget, linkErr := os.Readlink(path)
-		if linkErr != nil {
-			return fmt.Errorf("reading symlink %#q:\n%w", path, linkErr)
+		linkTarget, err = os.Readlink(path)
+		if err != nil {
+			return fmt.Errorf("reading symlink %#q:\n%w", path, err)
 		}
-
-		header := &tar.Header{
-			Typeflag: tar.TypeSymlink,
-			Name:     rel,
-			Linkname: linkTarget,
-			ModTime:  epoch,
-			Format:   tar.FormatGNU,
-		}
-
-		if err := tarWriter.WriteHeader(header); err != nil {
-			return fmt.Errorf("writing symlink header for %#q:\n%w", path, err)
-		}
-
-		return nil
 	}
 
-	header, headerErr := tar.FileInfoHeader(info, "")
-	if headerErr != nil {
-		return fmt.Errorf("creating tar header for %#q:\n%w", path, headerErr)
+	header, err := tar.FileInfoHeader(info, linkTarget)
+	if err != nil {
+		return fmt.Errorf("creating tar header for %#q:\n%w", path, err)
 	}
 
 	header.Name = rel
@@ -287,7 +298,7 @@ func writeEntryDeterministic(
 	if openErr != nil {
 		return fmt.Errorf("opening %#q for repack:\n%w", path, openErr)
 	}
-	defer sourceFile.Close()
+	defer defers.HandleDeferError(sourceFile.Close, &err)
 
 	if _, copyErr := io.Copy(tarWriter, sourceFile); copyErr != nil {
 		return fmt.Errorf("writing %#q to archive:\n%w", path, copyErr)
@@ -296,77 +307,38 @@ func writeEntryDeterministic(
 	return nil
 }
 
-func newDecompressor(reader io.Reader, comp Compression) (io.Reader, error) {
+// newCompressor wraps writer in the chosen compression. For [CompressionNone]
+// the returned closer is nil (no wrapper to flush or close); otherwise it is
+// the compressor itself, which must be closed before the underlying writer to
+// flush trailing bytes.
+func newCompressor(writer io.Writer, comp Compression) (io.Writer, io.Closer, error) {
 	switch comp {
 	case CompressionNone:
-		return reader, nil
-	case CompressionGzip:
-		gzReader, err := gzip.NewReader(reader)
-		if err != nil {
-			return nil, fmt.Errorf("creating gzip reader:\n%w", err)
-		}
-
-		return gzReader, nil
-	case CompressionBzip2:
-		return bzip2.NewReader(reader), nil
-	case CompressionXZ:
-		xzReader, err := xz.NewReader(reader)
-		if err != nil {
-			return nil, fmt.Errorf("creating xz reader:\n%w", err)
-		}
-
-		return xzReader, nil
-	case CompressionZstd:
-		zstdReader, err := zstd.NewReader(reader)
-		if err != nil {
-			return nil, fmt.Errorf("creating zstd reader:\n%w", err)
-		}
-
-		return zstdReader.IOReadCloser(), nil
-	default:
-		return nil, fmt.Errorf("unsupported compression type %d", comp)
-	}
-}
-
-func newCompressor(writer io.Writer, comp Compression) (io.Writer, error) {
-	switch comp {
-	case CompressionNone:
-		return writer, nil
+		return writer, nil, nil
 	case CompressionGzip:
 		gzWriter, gzErr := gzip.NewWriterLevel(writer, gzip.BestCompression)
 		if gzErr != nil {
-			return nil, fmt.Errorf("creating gzip writer:\n%w", gzErr)
+			return nil, nil, fmt.Errorf("creating gzip writer:\n%w", gzErr)
 		}
 
 		gzWriter.OS = 0xff
 
-		return gzWriter, nil
-	case CompressionBzip2:
-		slog.Warn("bzip2 compression not supported for repacking; output will be gzip-compressed")
-
-		gzWriter, gzErr := gzip.NewWriterLevel(writer, gzip.BestCompression)
-		if gzErr != nil {
-			return nil, fmt.Errorf("creating gzip writer for bzip2 fallback:\n%w", gzErr)
-		}
-
-		gzWriter.OS = 0xff
-
-		return gzWriter, nil
+		return gzWriter, gzWriter, nil
 	case CompressionXZ:
 		xzWriter, err := xz.NewWriter(writer)
 		if err != nil {
-			return nil, fmt.Errorf("creating xz writer:\n%w", err)
+			return nil, nil, fmt.Errorf("creating xz writer:\n%w", err)
 		}
 
-		return xzWriter, nil
+		return xzWriter, xzWriter, nil
 	case CompressionZstd:
 		zstdWriter, err := zstd.NewWriter(writer)
 		if err != nil {
-			return nil, fmt.Errorf("creating zstd writer:\n%w", err)
+			return nil, nil, fmt.Errorf("creating zstd writer:\n%w", err)
 		}
 
-		return zstdWriter, nil
+		return zstdWriter, zstdWriter, nil
 	default:
-		return nil, fmt.Errorf("unsupported compression type %d for writing", comp)
+		return nil, nil, fmt.Errorf("unsupported compression type %d for writing", comp)
 	}
 }
