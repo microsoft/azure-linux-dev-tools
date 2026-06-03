@@ -246,8 +246,7 @@ func (p *sourcePreparerImpl) PrepareSources(
 	}
 
 	if applyOverlays {
-		err := p.applyOverlaysToSources(ctx, component, outputDir)
-		if err != nil {
+		if err := p.applyOverlaysToSources(ctx, component, outputDir); err != nil {
 			return err
 		}
 
@@ -276,9 +275,6 @@ func (p *sourcePreparerImpl) PrepareSources(
 func (p *sourcePreparerImpl) applyOverlaysToSources(
 	ctx context.Context, component components.Component, outputDir string,
 ) error {
-	// Emit computed macros to a macros file in the output directory.
-	// If the build configuration produces no macros, no file is written and
-	// macrosFileName will be empty.
 	var macrosFileName string
 
 	macrosFilePath, err := p.writeMacrosFile(component, outputDir)
@@ -291,32 +287,27 @@ func (p *sourcePreparerImpl) applyOverlaysToSources(
 		macrosFileName = filepath.Base(macrosFilePath)
 	}
 
-	// Apply all overlays to prepared sources.
 	if err := p.applyOverlays(ctx, component, outputDir, macrosFileName); err != nil {
-		return fmt.Errorf("failed to apply overlays for component %#q:\n%w", component.GetName(), err)
+		return fmt.Errorf("failed to apply overlays for component %#q:\n%w",
+			component.GetName(), err)
 	}
 
 	return nil
 }
 
 // applyOverlays applies all overlays (user-defined and system-generated) to the
-// component sources. Overlay application is decoupled from git history generation:
-// overlays modify the working tree; synthetic history is recorded separately by
-// [trySyntheticHistory].
+// component sources.
 func (p *sourcePreparerImpl) applyOverlays(
-	_ context.Context, component components.Component, sourcesDirPath, macrosFileName string,
+	ctx context.Context, component components.Component, sourcesDirPath, macrosFileName string,
 ) error {
 	event := p.eventListener.StartEvent("Applying overlays", "component", component.GetName())
 	defer event.End()
 
-	// Resolve the spec path once for all overlay operations in this call.
 	absSpecPath, err := p.resolveSpecPath(component, sourcesDirPath)
 	if err != nil {
 		return err
 	}
 
-	// Collect all overlays in application order. This ensures every change is
-	// captured in the synthetic history, including build configuration changes.
 	allOverlays, err := p.collectOverlays(component, macrosFileName)
 	if err != nil {
 		return fmt.Errorf("failed to collect overlays for component %#q:\n%w", component.GetName(), err)
@@ -326,9 +317,49 @@ func (p *sourcePreparerImpl) applyOverlays(
 		return nil
 	}
 
-	// Apply all overlays to the working tree.
+	// Tarball overlays are applied first (they modify archived source files
+	// in-place), followed by spec and loose-file overlays. Each function
+	// self-filters to the overlay types it handles.
+	if err := p.applyTarballOverlayGroup(ctx, component, sourcesDirPath, allOverlays); err != nil {
+		return err
+	}
+
 	if err := p.applyOverlayList(allOverlays, sourcesDirPath, absSpecPath); err != nil {
 		return fmt.Errorf("failed to apply overlays for component %#q:\n%w", component.GetName(), err)
+	}
+
+	return nil
+}
+
+// applyTarballOverlayGroup applies tarball overlays. Skipped when source
+// downloads were not performed.
+func (p *sourcePreparerImpl) applyTarballOverlayGroup(
+	ctx context.Context, component components.Component,
+	sourcesDirPath string, tarballOverlays []projectconfig.ComponentOverlay,
+) error {
+	if len(tarballOverlays) == 0 {
+		return nil
+	}
+
+	if p.skipLookaside {
+		slog.Warn("Skipping tarball overlays because source downloads were skipped (--skip-sources)",
+			"component", component.GetName(),
+			"count", len(tarballOverlays))
+
+		return nil
+	}
+
+	cmdFactory, ok := p.dryRunnable.(opctx.CmdFactory)
+	if !ok {
+		return errors.New(
+			"tarball overlays require a CmdFactory; the provided DryRunnable does not implement it")
+	}
+
+	if err := applyTarballOverlays(
+		ctx, cmdFactory, p.fs, p.eventListener, sourcesDirPath, tarballOverlays,
+	); err != nil {
+		return fmt.Errorf("failed to apply tarball overlays for component %#q:\n%w",
+			component.GetName(), err)
 	}
 
 	return nil
@@ -634,9 +665,17 @@ func (p *sourcePreparerImpl) DiffSources(
 // enforced by [projectconfig.ConfigFile.Validate]). Setting `ReplaceUpstream` = true without
 // a matching upstream entry is also an error: the user expressed intent to replace something
 // that isn't there, which almost certainly indicates a stale config or filename typo.
-func (p *sourcePreparerImpl) updateSourcesFile(component components.Component, outputDir string) error {
-	sourceFiles := component.GetConfig().SourceFiles
-	if len(sourceFiles) == 0 {
+func (p *sourcePreparerImpl) updateSourcesFile(
+	component components.Component, outputDir string,
+) error {
+	config := component.GetConfig()
+	sourceFiles := config.SourceFiles
+
+	// Derive tarball names from the component's overlays — no need to thread
+	// them through the overlay application chain.
+	modifiedTarballs := tarballNamesFromOverlays(config.Overlays)
+
+	if len(sourceFiles) == 0 && len(modifiedTarballs) == 0 {
 		return nil
 	}
 
@@ -647,7 +686,19 @@ func (p *sourcePreparerImpl) updateSourcesFile(component components.Component, o
 		return err
 	}
 
-	mergedLines, err := p.buildSourceEntries(sourceFiles, existingContent, component.GetName(), outputDir)
+	// Parse once, then rehash modified tarballs and merge source-files entries
+	// on the parsed representation — single parse, single write.
+	existingLines, err := fedorasource.ReadSourcesFile(existingContent)
+	if err != nil {
+		return fmt.Errorf("failed to parse 'sources' file %#q:\n%w", sourcesFilePath, err)
+	}
+
+	// Rehash tarballs that were modified by tarball overlays in-place.
+	if err := p.rehashModifiedEntries(existingLines, outputDir, modifiedTarballs); err != nil {
+		return err
+	}
+
+	mergedLines, err := p.buildSourceEntries(sourceFiles, existingLines, component.GetName(), outputDir)
 	if err != nil {
 		return err
 	}
@@ -661,6 +712,47 @@ func (p *sourcePreparerImpl) updateSourcesFile(component components.Component, o
 		fileperms.PublicFile,
 	); err != nil {
 		return fmt.Errorf("failed to write 'sources' file %#q:\n%w", sourcesFilePath, err)
+	}
+
+	return nil
+}
+
+// rehashModifiedEntries updates the Raw and Entry fields of parsed 'sources' lines
+// for tarballs that were modified by tarball overlays. The hash is recomputed using
+// the same hash type as the original entry.
+func (p *sourcePreparerImpl) rehashModifiedEntries(
+	lines []fedorasource.SourcesFileLine, outputDir string, modifiedTarballs []string,
+) error {
+	if len(modifiedTarballs) == 0 {
+		return nil
+	}
+
+	modified := make(map[string]bool, len(modifiedTarballs))
+	for _, name := range modifiedTarballs {
+		modified[name] = true
+	}
+
+	for idx, line := range lines {
+		if line.Entry == nil || !modified[line.Entry.Filename] {
+			continue
+		}
+
+		tarballPath := filepath.Join(outputDir, line.Entry.Filename)
+
+		newHash, err := fileutils.ComputeFileHash(p.fs, line.Entry.HashType, tarballPath)
+		if err != nil {
+			return fmt.Errorf("rehashing modified tarball %#q:\n%w", line.Entry.Filename, err)
+		}
+
+		slog.Debug("Rehashed modified tarball in 'sources' file",
+			"tarball", line.Entry.Filename,
+			"hashType", line.Entry.HashType,
+			"oldHash", line.Entry.Hash,
+			"newHash", newHash,
+		)
+
+		lines[idx].Raw = fedorasource.FormatSourcesEntry(line.Entry.Filename, line.Entry.HashType, newHash)
+		lines[idx].Entry.Hash = newHash
 	}
 
 	return nil
@@ -685,32 +777,24 @@ func (p *sourcePreparerImpl) readSourcesFileIfExists(sourcesFilePath string) (st
 	return string(data), nil
 }
 
-// buildSourceEntries validates [projectconfig.SourceFileReference] entries and returns
-// the merged set of lines ready to be written to the 'sources' file. Before returning,
-// it logs an INFO-level event indicating that the 'sources' file will be updated,
-// including the counts of newly added and replaced entries.
+// buildSourceEntries merges user-declared [projectconfig.SourceFileReference] entries
+// into the parsed 'sources' lines. Returns the final set of raw lines ready to be
+// written to the 'sources' file.
 //
 // Output ordering and preservation:
-//   - Each line of [existingContent] is emitted verbatim, except for entry lines whose
+//   - Each existing line is emitted verbatim, except for entry lines whose
 //     filename matches a replacement, which are swapped for the new formatted entry.
-//     Comments and blank lines from the original file are kept in their original positions.
-//   - Brand-new entries (no upstream filename collision) are appended after the upstream
-//     content in the order they appear in [sourceFiles].
+//     Comments and blank lines are kept in their original positions.
+//   - Brand-new entries (no upstream filename collision) are appended after the
+//     existing content in the order they appear in [sourceFiles].
 //
 // Collision rules and hash resolution are documented on [sourcePreparerImpl.processSourceRef].
 func (p *sourcePreparerImpl) buildSourceEntries(
 	sourceFiles []projectconfig.SourceFileReference,
-	existingContent string,
+	existingLines []fedorasource.SourcesFileLine,
 	componentName string,
 	outputDir string,
 ) (mergedLines []string, err error) {
-	existingLines, err := fedorasource.ReadSourcesFile(existingContent)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"failed to parse existing 'sources' file at %#q:\n%w",
-			filepath.Join(outputDir, fedorasource.SourcesFileName), err)
-	}
-
 	// Index upstream entries by filename for O(1) collision lookup. The parser
 	// (fedorasource.ReadSourcesFile) errors on duplicate filenames, so the
 	// entries are guaranteed unique by the time we get here.

@@ -47,21 +47,34 @@ successfully makes a replacement to at least one matching file.
 | `file-remove` | Removes a file | `file` | Glob pattern for files to remove |
 | `file-rename` | Renames a file within the same directory | `file`, `replacement` | Name of file to rename |
 
+### Tarball Overlays
+
+These overlays modify files **inside** source tarballs. The tarball is extracted into a temporary directory, modifications are applied, and the tarball is repacked with the same compression format. Extraction and repacking are handled natively; patch application requires the `patch` command on the host.
+
+> **Note:** Tarball overlays are applied before spec and file overlays, so subsequent overlays see the modified tarball. The `tarball-patch` overlay type requires the `patch` command to be installed on the host.
+
+| Type | Description | Required Fields |
+|------|-------------|-----------------|
+| `tarball-file-remove` | Removes file(s) matching a glob pattern from inside a tarball | `tarball`, `file` |
+| `tarball-search-replace` | Regex-based search and replace on file(s) inside a tarball | `tarball`, `file`, `regex` |
+| `tarball-patch` | Applies a unified diff patch to the extracted tarball contents | `tarball`, `source` |
+
 ## Field Reference
 
 | Field | TOML Key | Description | Used By |
 |-------|----------|-------------|---------|
 | Type | `type` | **Required.** The overlay type to apply | All overlays |
 | Description | `description` | Human-readable explanation documenting the need for the change; helps identify overlays in error messages | All (optional) |
+| Tarball | `tarball` | The source tarball filename to modify (must be a basename, not a path) | `tarball-file-remove`, `tarball-search-replace`, `tarball-patch` |
 | Tag | `tag` | The spec tag name (e.g., `BuildRequires`, `Requires`, `Version`) | `spec-add-tag`, `spec-insert-tag`, `spec-set-tag`, `spec-update-tag`, `spec-remove-tag` |
-| Value | `value` | The tag value to set, or value to match for removal | `spec-add-tag`, `spec-insert-tag`, `spec-set-tag`, `spec-update-tag`, `spec-remove-tag` (optional for matching) |
+| Value | `value` | The tag value to set, or value to match for removal. For `tarball-patch`, sets the patch strip level (default: `1`, equivalent to `patch -p1`). | `spec-add-tag`, `spec-insert-tag`, `spec-set-tag`, `spec-update-tag`, `spec-remove-tag` (optional for matching), `tarball-patch` (optional) |
 | Section | `section` | The spec section to target (e.g., `%build`, `%install`, `%files`, `%description`) | `spec-prepend-lines`, `spec-append-lines`, `spec-search-replace` (optional), `spec-remove-section` |
 | Package | `package` | The sub-package name for multi-package specs; omit to target the main package | All spec overlays (optional, except `spec-remove-subpackage` which **requires** it) |
-| Regex | `regex` | Regular expression pattern to match | `spec-search-replace`, `file-search-replace` |
-| Replacement | `replacement` | Literal replacement text; capture group references like `$1` are **not** expanded. Omit or leave empty to delete matched text. | `spec-search-replace`, `file-search-replace`, `file-rename` |
+| Regex | `regex` | Regular expression pattern to match | `spec-search-replace`, `file-search-replace`, `tarball-search-replace` |
+| Replacement | `replacement` | Literal replacement text; capture group references like `$1` are **not** expanded. Omit or leave empty to delete matched text. | `spec-search-replace`, `file-search-replace`, `file-rename`, `tarball-search-replace` |
 | Lines | `lines` | Array of text lines to insert | `spec-prepend-lines`, `spec-append-lines`, `file-prepend-lines` |
-| File | `file` | The name of the non-spec file to modify or add | `file-prepend-lines`, `file-search-replace`, `file-add`, `file-remove`, `file-rename`, `patch-add` (optional), `patch-remove` |
-| Source | `source` | Path to source file for `file-add` and `patch-add`; relative paths are relative to the config file that defines the overlay (the overlay file if loaded via [`overlay-files`](#per-file-overlay-format), otherwise the component config) | `file-add`, `patch-add` |
+| File | `file` | The name of the non-spec file to modify or add | `file-prepend-lines`, `file-search-replace`, `file-add`, `file-remove`, `file-rename`, `patch-add` (optional), `patch-remove`, `tarball-file-remove`, `tarball-search-replace` |
+| Source | `source` | Path to source file for `file-add` and `patch-add`; relative paths are relative to the config file that defines the overlay (the overlay file if loaded via [`overlay-files`](#per-file-overlay-format), otherwise the component config) | `file-add`, `patch-add`, `tarball-patch` |
 | Metadata | `metadata` | Documentation table describing intent and provenance — see [Overlay Metadata](#overlay-metadata). Not allowed inside an overlay file loaded via `overlay-files` (the file-level `[metadata]` block applies to every overlay in the file). | All (optional) |
 
 > **Note:** For `file-rename`, the `replacement` field is a **filename only** (not a path). The file is renamed within its current directory.
@@ -416,6 +429,55 @@ description = "Remove CVE patches that are now upstream"
 > **Limitation:** `patch-add` auto-assigns PatchN numbers by scanning existing numeric
 > `PatchN` tags. Macro-based tag numbering (e.g., `Patch%{n}`) is not expanded and may
 > conflict with auto-assigned numbers.
+
+### Removing a File from a Tarball
+
+The `tarball-file-remove` overlay deletes files matching a glob pattern from inside a source
+tarball. The tarball is extracted, matching files are removed, and the tarball is repacked.
+
+```toml
+[[components.mypackage.overlays]]
+type = "tarball-file-remove"
+tarball = "mypackage-1.0.tar.gz"
+file = "vendor/**"
+description = "Remove bundled vendor directory"
+```
+
+### Search and Replace Inside a Tarball
+
+```toml
+[[components.mypackage.overlays]]
+type = "tarball-search-replace"
+tarball = "mypackage-1.0.tar.xz"
+file = "configure.ac"
+regex = "AC_CHECK_LIB\\(old_lib"
+replacement = "AC_CHECK_LIB(new_lib"
+description = "Update library reference in configure script"
+```
+
+### Applying a Patch to Tarball Contents
+
+The `tarball-patch` overlay applies a unified diff patch to the extracted tarball contents.
+By default, it uses `patch -p1`. Use the `value` field to change the strip level.
+
+```toml
+[[components.mypackage.overlays]]
+type = "tarball-patch"
+tarball = "mypackage-1.0.tar.gz"
+source = "patches/fix-build.patch"
+description = "Fix build issue in upstream source"
+```
+
+With a custom strip level:
+
+```toml
+[[components.mypackage.overlays]]
+type = "tarball-patch"
+tarball = "mypackage-1.0.tar.gz"
+source = "patches/fix-build.patch"
+value = "0"
+description = "Apply patch with -p0 strip level"
+```
 
 ### Removing a Section
 

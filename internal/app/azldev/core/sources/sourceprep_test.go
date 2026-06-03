@@ -854,7 +854,7 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 			existingSourcesContent: "SHA512 (dup.tar.gz) = aaaa1111\nSHA512 (dup.tar.gz) = bbbb2222\n",
 			expectError:            true,
 			errorContains: []string{
-				"failed to parse existing 'sources' file",
+				"failed to parse 'sources' file",
 				"duplicate filename",
 				"dup.tar.gz",
 			},
