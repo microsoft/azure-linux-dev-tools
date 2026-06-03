@@ -94,27 +94,35 @@ type specQueryResultJSON struct {
 	ExcludedFromArch bool    `json:"excludedFromArch,omitempty"`
 }
 
-// BatchQuerySpecs runs `rpmspec` against multiple rendered spec files inside
-// the shared mock chroot, parallelizing the per-spec invocations via an
-// embedded Python helper. Returns one [SpecQueryResult] per input, in input
-// order.
+// BatchQuerySpecsOptions parameterizes a [MockProcessor.BatchQuerySpecs]
+// invocation.
 //
-// specsDir is the host directory containing the rendered specs tree (i.e.
+// SpecsDir is the host directory containing the rendered specs tree (i.e.
 // the project's rendered-specs-dir). Each input's SpecRelPath is resolved
-// relative to specsDir. scratchDir is a small host-side scratch directory
+// relative to SpecsDir. ScratchDir is a small host-side scratch directory
 // used to ferry the script + inputs.json + results.json in and out of the
 // chroot; it must be writable by the user the chroot runs as (mock's
 // chrootuid defaults to os.getuid()).
 //
-// arch sets the rpmspec build target (e.g. "x86_64", "aarch64") via
+// Arch sets the rpmspec build target (e.g. "x86_64", "aarch64") via
 // --target=<arch>. When empty, rpmspec uses its built-in default (the host
 // arch). Specs that ExclusiveArch/ExcludeArch-exclude the target arch are
 // surfaced via [SpecQueryResult.ExcludedFromArch] rather than as errors.
+type BatchQuerySpecsOptions struct {
+	SpecsDir   string
+	ScratchDir string
+	Arch       string
+	FS         opctx.FS
+	MaxWorkers int
+}
+
+// BatchQuerySpecs runs `rpmspec` against multiple rendered spec files inside
+// the shared mock chroot, parallelizing the per-spec invocations via an
+// embedded Python helper. Returns one [SpecQueryResult] per input, in input
+// order.
 func (p *MockProcessor) BatchQuerySpecs(
 	ctx context.Context, events opctx.EventListener,
-	specsDir, scratchDir, arch string,
-	inputs []SpecQueryInput,
-	fs opctx.FS, maxWorkers int,
+	inputs []SpecQueryInput, opts BatchQuerySpecsOptions,
 ) ([]SpecQueryResult, error) {
 	if len(inputs) == 0 {
 		return nil, nil
@@ -149,23 +157,23 @@ func (p *MockProcessor) BatchQuerySpecs(
 		chrootSpecsPath   = "/tmp/specs"
 	)
 
-	workers := strconv.Itoa(max(1, maxWorkers))
+	workers := strconv.Itoa(max(1, opts.MaxWorkers))
 
 	rawResults, err := p.runBatchScript(ctx, events, runBatchScriptOptions{
 		Mounts: []batchBindMount{
-			{Host: scratchDir, InChroot: chrootScratchPath},
-			{Host: specsDir, InChroot: chrootSpecsPath},
+			{Host: opts.ScratchDir, InChroot: chrootScratchPath},
+			{Host: opts.SpecsDir, InChroot: chrootSpecsPath},
 		},
-		ScratchHost:     scratchDir,
+		ScratchHost:     opts.ScratchDir,
 		ScratchInChroot: chrootScratchPath,
 		ScriptName:      "query_process.py",
 		ScriptBytes:     queryProcessScript,
 		InputsJSON:      inputsBytes,
 		ResultsName:     "results.json",
-		ScriptArgs:      []string{chrootScratchPath, chrootSpecsPath, workers, arch},
+		ScriptArgs:      []string{chrootScratchPath, chrootSpecsPath, workers, opts.Arch},
 		ProgressLabel:   "Querying specs in mock chroot",
 		ProgressTotal:   int64(len(inputs)),
-		FS:              fs,
+		FS:              opts.FS,
 	})
 	if err != nil {
 		return nil, err

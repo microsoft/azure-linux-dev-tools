@@ -33,7 +33,7 @@ a local file or a container tag from MCR.`,
   azldev image customize --image-tag mcr.microsoft.com/azurelinux/base:4.0 \
     --image-config config.yaml --output-path out/`,
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
-			return true, customizeImage(env, options)
+			return nil, customizeImage(env, options)
 		}),
 	}
 

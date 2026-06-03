@@ -136,13 +136,16 @@ func QueryComponents(
 			"please use command-line options to indicate which components to query")
 	}
 
-	inputs, skipped, err := buildSpecQueryInputs(env, comps.Components(), renderedSpecsDir)
+	inputs, _, err := buildSpecQueryInputs(env, comps.Components(), renderedSpecsDir)
 	if err != nil {
 		return nil, err
 	}
 
 	if len(inputs) == 0 {
-		return nil, fmt.Errorf("no components have a rendered spec on disk; skipped %d", skipped)
+		return nil, fmt.Errorf(
+			"none of the %d resolved components have a rendered spec on disk; "+
+				"run 'azldev component render' first",
+			comps.Len())
 	}
 
 	mockProcessor := createMockProcessor(env, mockPackagesForQuery())
@@ -170,10 +173,13 @@ func QueryComponents(
 
 	archStr := options.Arch.String()
 
-	queryResults, err := mockProcessor.BatchQuerySpecs(
-		env, env, renderedSpecsDir, scratchDir, archStr,
-		inputs, env.FS(), env.CPUBoundConcurrency(),
-	)
+	queryResults, err := mockProcessor.BatchQuerySpecs(env, env, inputs, sources.BatchQuerySpecsOptions{
+		SpecsDir:   renderedSpecsDir,
+		ScratchDir: scratchDir,
+		Arch:       archStr,
+		FS:         env.FS(),
+		MaxWorkers: env.CPUBoundConcurrency(),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("batch-querying rendered specs:\n%w", err)
 	}
