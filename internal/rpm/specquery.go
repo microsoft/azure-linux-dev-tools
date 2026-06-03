@@ -174,8 +174,12 @@ func ParseSubpackagesOutput(output string) []string {
 			continue
 		}
 
-		if after, ok := strings.CutPrefix(trimmed, "subpkg="); ok && after != "" {
-			result = append(result, after)
+		if after, ok := strings.CutPrefix(trimmed, "subpkg="); ok {
+			if after != "" {
+				result = append(result, after)
+			}
+		} else {
+			slog.Debug("Ignoring unexpected line from rpmspec", "line", trimmed)
 		}
 	}
 
