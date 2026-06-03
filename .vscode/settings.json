@@ -2,7 +2,26 @@
     "go.buildTags": "scenario",
     "go.lintTool": "golangci-lint-v2",
     "go.testTimeout": "5m",
-    "go.testFlags": ["-v"],
+    "go.testFlags": [
+        "-v"
+    ],
+    // Lint rules for python
+    "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.fixAll.ruff": "explicit",
+            "source.organizeImports.ruff": "explicit",
+            "source.fixAll": "explicit",
+            "source.fixAll.pylance": "explicit"
+        }
+    },
+    "python.analysis.diagnosticsSource": "Pylance",
+    "python.missingPackage.severity": "Error",
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true,
+    "ruff.configuration": "${workspaceFolder}/ruff.toml",
+    "ruff.lint.enable": true,
     "cSpell.words": [
         "acarl",
         "acobaugh",
@@ -132,4 +151,3 @@
         "wrapcheck"
     ]
 }
-

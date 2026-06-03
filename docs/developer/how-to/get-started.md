@@ -12,6 +12,16 @@
   go install github.com/magefile/mage@latest
   ```
 
+- **ruff** and **pyright** *(only if you touch Python code)* - Python linter/formatter
+  and type checker, used by `mage check python` / `mage fix python`. pyright requires
+  Node.js. The dev container installs all of these for you.
+
+  ```bash
+  # On Azure Linux
+  tdnf install -y python3-pip nodejs
+  pip3 install ruff pyright
+  ```
+
 ## Initial Setup
 
 1. Fork the repository (strongly recommended for all contributors)
