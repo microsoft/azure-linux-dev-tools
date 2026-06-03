@@ -376,16 +376,16 @@ func newCompressor(writer io.Writer, comp Compression) (io.Writer, io.Closer, er
 
 		// Pin every gzip header field that the writer would otherwise populate
 		// from the environment or input file, so two runs over identical inputs
-		// produce byte-identical output.
-		// gzipOSUnknown is the gzip header OS code for "unknown", per RFC 1952
-		// section 2.3.1. Using it makes output independent of the host OS.
+		// produce byte-identical output. ModTime matches the tar header epoch
+		// for consistency; OS is "unknown" (RFC 1952 §2.3.1) so output is
+		// independent of the host OS.
 		const gzipOSUnknown byte = 0xff
 
 		gzWriter.Header = gzip.Header{
 			Name:    "",
 			Comment: "",
 			Extra:   nil,
-			ModTime: time.Time{},
+			ModTime: deterministicEpoch(),
 			OS:      gzipOSUnknown,
 		}
 

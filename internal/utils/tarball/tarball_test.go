@@ -188,6 +188,63 @@ func TestUnsupportedCompression(t *testing.T) {
 	assert.Contains(t, err.Error(), "unsupported compression type")
 }
 
+func TestCreateDeterministicArchive_PreservesSymlinks(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "src")
+	externalDir := filepath.Join(tmpDir, "external")
+
+	require.NoError(t, os.MkdirAll(sourceDir, 0o755))
+	require.NoError(t, os.MkdirAll(externalDir, 0o755))
+
+	// A regular file inside the source tree, plus an external file whose
+	// contents must NOT end up embedded in the archive.
+	require.NoError(t, os.WriteFile(filepath.Join(sourceDir, "real.txt"), []byte("inside"), 0o600))
+
+	const externalContent = "must-not-be-archived"
+
+	externalPath := filepath.Join(externalDir, "secret.txt")
+	require.NoError(t, os.WriteFile(externalPath, []byte(externalContent), 0o600))
+
+	// Symlink staying inside the source tree (relative target).
+	require.NoError(t, os.Symlink("real.txt", filepath.Join(sourceDir, "internal-link")))
+	// Symlink pointing outside the source tree (absolute target).
+	require.NoError(t, os.Symlink(externalPath, filepath.Join(sourceDir, "external-link")))
+
+	archivePath := filepath.Join(tmpDir, "archive.tar")
+	require.NoError(t, tarball.CreateDeterministicArchive(archivePath, sourceDir, tarball.CompressionNone))
+
+	archiveBytes, err := os.ReadFile(archivePath)
+	require.NoError(t, err)
+	assert.NotContains(t, string(archiveBytes), externalContent,
+		"archive must not embed contents of symlink target outside sourceDir")
+
+	headersByName := map[string]*tar.Header{}
+
+	reader := tar.NewReader(bytes.NewReader(archiveBytes))
+
+	for {
+		header, readErr := reader.Next()
+		if readErr != nil {
+			break
+		}
+
+		headersByName[header.Name] = header
+	}
+
+	internalHeader, found := headersByName["internal-link"]
+	require.True(t, found, "internal symlink entry missing from archive")
+	assert.Equal(t, byte(tar.TypeSymlink), internalHeader.Typeflag)
+	assert.Equal(t, "real.txt", internalHeader.Linkname)
+	assert.Zero(t, internalHeader.Size, "symlink entries must not carry payload bytes")
+
+	externalHeader, found := headersByName["external-link"]
+	require.True(t, found, "external symlink entry missing from archive")
+	assert.Equal(t, byte(tar.TypeSymlink), externalHeader.Typeflag)
+	assert.Equal(t, externalPath, externalHeader.Linkname,
+		"external symlink target must be recorded verbatim, not dereferenced")
+	assert.Zero(t, externalHeader.Size)
+}
+
 func TestExtract_SymlinkSafety(t *testing.T) {
 	tests := []struct {
 		name    string
