@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path"
 	"strings"
 
@@ -24,16 +25,20 @@ const (
 	TargetLint     = "lint"
 	TargetStatic   = "static"
 	TargetLicenses = "licenses"
+	TargetPython   = "python"
 )
 
 var (
-	ErrCheck    = errors.New("check failed")
-	ErrFix      = errors.New("fix failed")
-	ErrLint     = errors.New("lint failed")
-	ErrToolPath = errors.New("path not set for tool")
+	ErrCheck         = errors.New("check failed")
+	ErrFix           = errors.New("fix failed")
+	ErrLint          = errors.New("lint failed")
+	ErrToolPath      = errors.New("path not set for tool")
+	ErrRuffNotFound  = errors.New("ruff not found on PATH")
+	ErrPyrightNotFnd = errors.New("pyright not found on PATH")
+	ErrTypeCheck     = errors.New("type check failed")
 )
 
-// Check one of: [all, mod, lint, static, licenses].
+// Check one of: [all, mod, lint, static, licenses, python].
 // BASH-COMPLETION: This is scanned by the bash completion script, keep it in sync with the script.
 func Check(target string) error {
 	mg.SerialDeps(magesrc.Generate)
@@ -42,7 +47,7 @@ func Check(target string) error {
 
 	switch target {
 	case TargetAll:
-		mg.SerialDeps(modCheck, lintCheck, static, licenseCheck)
+		mg.SerialDeps(modCheck, lintCheck, static, licenseCheck, pythonCheck)
 	case TargetMod:
 		mg.SerialDeps(modCheck)
 	case TargetLint:
@@ -51,9 +56,11 @@ func Check(target string) error {
 		mg.SerialDeps(static)
 	case TargetLicenses:
 		mg.SerialDeps(licenseCheck)
+	case TargetPython:
+		mg.SerialDeps(pythonCheck)
 	default:
 		return fmt.Errorf("%w: unknown check target '%s'. Available targets: %v",
-			ErrCheck, target, []string{TargetAll, TargetMod, TargetLint, TargetStatic, TargetLicenses})
+			ErrCheck, target, []string{TargetAll, TargetMod, TargetLint, TargetStatic, TargetLicenses, TargetPython})
 	}
 
 	mageutil.MagePrintln(mageutil.MsgSuccess, "Done checking.")
@@ -61,7 +68,7 @@ func Check(target string) error {
 	return nil
 }
 
-// Fix one of: [all, mod, lint].
+// Fix one of: [all, mod, lint, python].
 // BASH-COMPLETION: This is scanned by the bash completion script, keep it in sync with the script.
 func Fix(target string) error {
 	mg.SerialDeps(magesrc.Generate)
@@ -70,14 +77,16 @@ func Fix(target string) error {
 
 	switch target {
 	case TargetAll:
-		mg.SerialDeps(modFix, lintFix)
+		mg.SerialDeps(modFix, lintFix, pythonFix)
 	case TargetMod:
 		mg.SerialDeps(modFix)
 	case TargetLint:
 		mg.SerialDeps(lintFix)
+	case TargetPython:
+		mg.SerialDeps(pythonFix)
 	default:
 		return fmt.Errorf("%w: unknown fix target '%s'. Available targets: %v",
-			ErrFix, target, []string{TargetAll, TargetMod, TargetLint})
+			ErrFix, target, []string{TargetAll, TargetMod, TargetLint, TargetPython})
 	}
 
 	mageutil.MagePrintln(mageutil.MsgSuccess, "Done fixing.")
@@ -235,6 +244,114 @@ func editorconfigCheck() error {
 	}
 
 	mageutil.MagePrintln(mageutil.MsgSuccess, "Done checking editorconfig.")
+
+	return nil
+}
+
+// findRuff locates the ruff executable on the PATH. ruff is a Python tool and is not managed via the Go
+// tools modules, so developers must install it themselves (the VS Code ruff extension bundles a copy that
+// is not exposed on the PATH).
+func findRuff() (string, error) {
+	ruffPath, err := exec.LookPath("ruff")
+	if err != nil {
+		return "", fmt.Errorf("%w: install it with 'pip install ruff' or see "+
+			"https://docs.astral.sh/ruff/installation/: %w", ErrRuffNotFound, err)
+	}
+
+	return ruffPath, nil
+}
+
+// findPyright locates the pyright executable on the PATH. Like ruff, pyright is a Python tool that is not
+// managed via the Go tools modules, so developers must install it themselves.
+func findPyright() (string, error) {
+	pyrightPath, err := exec.LookPath("pyright")
+	if err != nil {
+		return "", fmt.Errorf("%w: install it with 'pip install pyright' or see "+
+			"https://microsoft.github.io/pyright/#/installation: %w", ErrPyrightNotFnd, err)
+	}
+
+	return pyrightPath, nil
+}
+
+func pythonCheck() error {
+	mg.SerialDeps(ruffCheck, pyrightCheck)
+
+	return nil
+}
+
+func ruffCheck() error {
+	mageutil.MagePrintln(mageutil.MsgStart, "Linting Python with ruff...")
+
+	ruffPath, err := findRuff()
+	if err != nil {
+		return mageutil.PrintAndReturnError("Failed to find ruff.", ErrCheck, err)
+	}
+
+	// Lint check. -q suppresses the "All checks passed!" banner on success; violations are still
+	// printed on failure.
+	if err := sh.RunV(ruffPath, "check", "-q", "."); err != nil {
+		return mageutil.PrintAndReturnError(
+			"Python lint issues found. Please run 'mage fix python' to auto-fix.", ErrCheck, ErrLint)
+	}
+
+	// Format check. -q suppresses the "N files already formatted" banner on success.
+	if err := sh.RunV(ruffPath, "format", "--check", "-q", "."); err != nil {
+		return mageutil.PrintAndReturnError(
+			"Python files are not formatted. Please run 'mage fix python' to format them.", ErrCheck, ErrLint)
+	}
+
+	mageutil.MagePrintln(mageutil.MsgSuccess, "Done linting Python.")
+
+	return nil
+}
+
+func pyrightCheck() error {
+	mageutil.MagePrintln(mageutil.MsgStart, "Type-checking Python with pyright...")
+
+	pyrightPath, err := findPyright()
+	if err != nil {
+		return mageutil.PrintAndReturnError("Failed to find pyright.", ErrCheck, err)
+	}
+
+	// pyright always prints a summary line even on success, so capture its output and only surface
+	// it when there's a problem (mirrors golangciLintCheck above to keep checks quiet on success).
+	output, err := sh.Output(pyrightPath)
+	if err != nil {
+		if output != "" {
+			for _, line := range strings.Split(output, "\n") {
+				mageutil.MagePrintln(mageutil.MsgInfo, line)
+			}
+		}
+
+		return mageutil.PrintAndReturnError(
+			"Python type errors found; please review the errors displayed above.", ErrCheck, ErrTypeCheck)
+	}
+
+	mageutil.MagePrintln(mageutil.MsgSuccess, "Done type-checking Python.")
+
+	return nil
+}
+
+func pythonFix() error {
+	mageutil.MagePrintln(mageutil.MsgStart, "Fixing Python formatting...")
+
+	ruffPath, err := findRuff()
+	if err != nil {
+		return mageutil.PrintAndReturnError("Failed to find ruff.", ErrFix, err)
+	}
+
+	// Auto-fix lint issues.
+	if err := sh.RunV(ruffPath, "check", "--fix", "."); err != nil {
+		return mageutil.PrintAndReturnError(
+			"Failed to auto-fix all Python lint issues; please review any errors displayed above.", ErrFix, err)
+	}
+
+	// Format.
+	if err := sh.RunV(ruffPath, "format", "."); err != nil {
+		return mageutil.PrintAndReturnError("Failed to format Python files.", ErrFix, err)
+	}
+
+	mageutil.MagePrintln(mageutil.MsgSuccess, "Done fixing Python.")
 
 	return nil
 }
