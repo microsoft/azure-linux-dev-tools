@@ -149,6 +149,22 @@ func TestBuildDNFArgv_ForwardsGPGSetopts(t *testing.T) {
 	assert.NotContains(t, joined, "plain.gpgcheck")
 }
 
+func TestBuildDNFArgv_SkipIfUnavailablePerRepo(t *testing.T) {
+	t.Parallel()
+
+	argv := buildDNFArgv(
+		[]repolayout.InputRepo{
+			{RepoID: "first", URL: "https://example.com/a"},
+			{RepoID: "second", URL: "https://example.com/b", GPGKey: "https://example.com/k"},
+		},
+		[]string{"repolist"},
+	)
+
+	joined := " " + joinArgs(argv) + " "
+	assert.Contains(t, joined, " --setopt=first.skip_if_unavailable=1 ")
+	assert.Contains(t, joined, " --setopt=second.skip_if_unavailable=1 ")
+}
+
 func TestNewQueryCmd_TemplateVersionMutuallyExclusive(t *testing.T) {
 	t.Parallel()
 

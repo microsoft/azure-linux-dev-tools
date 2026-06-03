@@ -11,14 +11,12 @@ package repolayout
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/samber/lo"
 )
-
-// DefaultTemplateName is the name of the built-in standard Azure Linux layout
-// template defined in `defaultconfigs/content/defaults.toml`.
-const DefaultTemplateName = "azl-standard"
 
 // basearchPlaceholder is the substring expanded per arch in subrepo subpaths.
 const basearchPlaceholder = "$basearch"
@@ -42,18 +40,9 @@ type InputRepo struct {
 	Arch string
 	// URL is the fully-resolved repo base URL.
 	URL string
-	// PrefixIndex is the 1-based position of the originating --repo-prefix among
-	// all prefixes; 0 if not set by the caller.
-	PrefixIndex int
-	// PrefixCount is the total number of --repo-prefix values supplied; 0 if not
-	// set by the caller. Used together with [InputRepo.PrefixIndex] to mint
-	// human-readable repo ids that disambiguate multi-prefix runs.
-	PrefixCount int
-	// RepoID, when non-empty, is used verbatim as the dnf repo id instead of
-	// being synthesized from SubrepoName/Arch/PrefixIndex. Callers that build
-	// the input list from a resolved project config set this to the canonical
-	// resource id (e.g. "azl4-beta-base", "fedora-43-everything") so dnf logs
-	// match the config the user authored.
+	// RepoID is the dnf repo id used to wire this slot up via --repofrompath /
+	// --enablerepo. Callers are expected to set it before passing the row to
+	// the dnf pipeline.
 	RepoID string
 	// GPGKey, when non-empty, is forwarded to dnf as --setopt=<id>.gpgkey=...
 	// alongside gpgcheck=1. Only meaningful when the caller resolved this
@@ -88,7 +77,6 @@ func ExpandTemplate(
 	tmpl projectconfig.RpmRepoSetTemplate,
 	arches []string,
 ) []InputRepo {
-	base := strings.TrimRight(prefix, "/")
 	out := make([]InputRepo, 0, len(tmpl.Subrepos)*len(arches))
 
 	for _, sub := range tmpl.Subrepos {
@@ -96,23 +84,25 @@ func ExpandTemplate(
 
 		if strings.Contains(sub.Subpath, basearchPlaceholder) {
 			for _, arch := range arches {
+				joined, _ := url.JoinPath(prefix, strings.ReplaceAll(sub.Subpath, basearchPlaceholder, arch))
 				out = append(out, InputRepo{
 					TemplateName: templateName,
 					SubrepoName:  sub.Name,
 					Kind:         kind,
 					Arch:         arch,
-					URL:          base + "/" + strings.ReplaceAll(sub.Subpath, basearchPlaceholder, arch),
+					URL:          joined,
 				})
 			}
 
 			continue
 		}
 
+		joined, _ := url.JoinPath(prefix, sub.Subpath)
 		out = append(out, InputRepo{
 			TemplateName: templateName,
 			SubrepoName:  sub.Name,
 			Kind:         kind,
-			URL:          base + "/" + sub.Subpath,
+			URL:          joined,
 		})
 	}
 
@@ -121,36 +111,29 @@ func ExpandTemplate(
 
 // DedupInputRepos drops duplicate entries by URL while preserving order.
 func DedupInputRepos(repos []InputRepo) []InputRepo {
-	seen := make(map[string]struct{}, len(repos))
-	out := make([]InputRepo, 0, len(repos))
-
-	for _, repo := range repos {
-		if _, ok := seen[repo.URL]; ok {
-			continue
-		}
-
-		seen[repo.URL] = struct{}{}
-
-		out = append(out, repo)
-	}
-
-	return out
+	return lo.UniqBy(repos, func(r InputRepo) string { return r.URL })
 }
 
-// NormalizePrefix validates p as an http://, https://, or file:// URL and
-// returns it with any trailing slash stripped. Bare paths are rejected.
+// NormalizePrefix validates prefix as an http://, https://, or file:// URL.
+// Bare paths are rejected. The returned string is the parsed URL re-serialized,
+// so callers downstream can safely pass it to [url.JoinPath].
 func NormalizePrefix(prefix string) (string, error) {
 	if prefix == "" {
 		return "", errors.New("empty prefix")
 	}
 
-	if !strings.HasPrefix(prefix, "http://") &&
-		!strings.HasPrefix(prefix, "https://") &&
-		!strings.HasPrefix(prefix, "file://") {
+	parsed, err := url.Parse(prefix)
+	if err != nil {
+		return "", fmt.Errorf("prefix %#q is not a valid URL: %w", prefix, err)
+	}
+
+	switch parsed.Scheme {
+	case "http", "https", "file":
+	default:
 		return "", fmt.Errorf("prefix %#q must be an http://, https://, or file:// URL", prefix)
 	}
 
-	return strings.TrimRight(prefix, "/"), nil
+	return parsed.String(), nil
 }
 
 // SubstituteBasearch replaces every `$basearch` occurrence in raw with arch.

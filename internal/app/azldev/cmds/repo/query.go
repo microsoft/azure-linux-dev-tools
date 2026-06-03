@@ -4,31 +4,22 @@
 package repo
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"strings"
-	"syscall"
-	"time"
 
+	"github.com/microsoft/azure-linux-dev-tools/defaultconfigs"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/repo/repolayout"
-	"github.com/microsoft/azure-linux-dev-tools/internal/utils/parmap"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/prereqs"
 	"github.com/spf13/cobra"
 )
 
 // DnfBinary is the underlying system binary the wrapper invokes.
 const DnfBinary = "dnf"
-
-// probeTimeout caps each per-slot HEAD/stat probe.
-const probeTimeout = 30 * time.Second
 
 // QueryOptions are the CLI flags for `azldev repo query`.
 type QueryOptions struct {
@@ -59,7 +50,7 @@ Two selection modes, mutually exclusive:
 
   --repo-prefix URL [--repo-prefix URL]...
       URL mode. Each URL is expanded against an rpm-repo-set-template
-      (--template, default "` + repolayout.DefaultTemplateName + `") into one sub-repo per template
+      (--template, default "` + defaultconfigs.DefaultRpmRepoSetTemplateName + `") into one sub-repo per template
       row, fanned out per --arch where the row's subpath contains $basearch.
 
   --version VER [--use-case rpm-build|image-build]
@@ -71,8 +62,9 @@ Two selection modes, mutually exclusive:
       --no-srpms drop sub-repos by their declared kind. --template is not
       used.
 
-Unreachable sub-repos (404 on repodata/repomd.xml, or ENOENT for file://)
-are silently dropped; any other probe failure aborts the run.
+Unreachable sub-repos are tolerated via dnf's per-repo
+skip_if_unavailable=1 setopt; dnf itself logs and skips ones that fail to
+load.
 
 All positional arguments are passed verbatim to dnf. Use ` + "`--`" + ` to separate
 azldev flags from dnf flags.
@@ -96,7 +88,7 @@ Examples:
 
 	cmd.Flags().StringArrayVar(&options.RepoPrefixes, "repo-prefix", nil,
 		"layout prefix (http://, https://, or file:// URL); may be repeated")
-	cmd.Flags().StringVar(&options.Template, "template", repolayout.DefaultTemplateName,
+	cmd.Flags().StringVar(&options.Template, "template", defaultconfigs.DefaultRpmRepoSetTemplateName,
 		"name of the rpm-repo-set-template to expand each --repo-prefix against")
 	cmd.Flags().StringSliceVar(&options.Arches, "arch", repolayout.DefaultArches,
 		"comma-separated arches to expand $basearch over")
@@ -119,70 +111,122 @@ Examples:
 }
 
 // RunQuery is the entry point for `azldev repo query`. It resolves the
-// template, probes the per-slot repodata URLs, then execs `dnf` with the
-// surviving slots wired up via --repofrompath / --enablerepo. It does not
-// return on success — control is transferred to dnf via [syscall.Exec].
+// candidate sub-repos and runs `dnf` with them wired up via
+// --repofrompath / --enablerepo plus skip_if_unavailable=1 — letting dnf
+// itself log and tolerate sub-repos that turn out to be missing.
 func RunQuery(env *azldev.Env, options *QueryOptions, dnfArgs []string) error {
-	if !env.CommandInSearchPath(DnfBinary) {
-		return fmt.Errorf("required tool %#q is not in PATH; install dnf to provide it", DnfBinary)
+	if err := prereqs.RequireExecutable(env, DnfBinary, &prereqs.PackagePrereq{
+		AzureLinuxPackages: []string{DnfBinary},
+		FedoraPackages:     []string{DnfBinary},
+	}); err != nil {
+		return fmt.Errorf("%s is required to query RPM repos:\n%w", DnfBinary, err)
 	}
 
-	repos, prefixes, err := buildCandidates(env, options)
+	groups, prefixes, err := buildCandidates(env, options)
 	if err != nil {
 		return err
 	}
+
+	groups = filterGroupsByKind(groups, options)
+	repos := logAndFlatten(groups, prefixes)
 
 	if len(repos) == 0 {
 		return errors.New("no sub-repos remain after applying filters")
 	}
 
-	workerEnv, cancel := env.WithCancel()
-	defer cancel()
+	return runDNF(env, buildDNFArgv(repos, dnfArgs))
+}
 
-	results := probeAll(workerEnv, env.IOBoundConcurrency(), repos)
-
-	kept, failures := summarizeResults(repos, results, prefixes)
-
-	if len(failures) > 0 {
-		return fmt.Errorf(
-			"transport failures while probing the following sub-repos — "+
-				"refusing to proceed with a partial repo set:\n  %s",
-			strings.Join(failures, "\n  "))
+// logAndFlatten emits a per-group discovery log and returns the concatenated
+// candidate list. Each row's URL is logged so a user reading the build output
+// can see exactly what was handed to dnf, while dnf itself decides which
+// repos actually load.
+func logAndFlatten(groups [][]repolayout.InputRepo, prefixes []string) []repolayout.InputRepo {
+	total := 0
+	for _, g := range groups {
+		total += len(g)
 	}
 
-	if len(kept) == 0 {
-		return errors.New("no reachable sub-repos")
+	out := make([]repolayout.InputRepo, 0, total)
+
+	logRepos := func(group []repolayout.InputRepo) {
+		for _, repo := range group {
+			slog.Info("  wiring sub-repo", "id", repo.RepoID, "url", repo.URL)
+		}
 	}
 
-	argv := buildDNFArgv(kept, dnfArgs)
+	if len(prefixes) == 0 {
+		slog.Info("Resolving repos from project config", "count", total)
 
-	dnfPath, err := exec.LookPath(DnfBinary)
+		for _, group := range groups {
+			logRepos(group)
+			out = append(out, group...)
+		}
+
+		return out
+	}
+
+	for pIdx, prefix := range prefixes {
+		slog.Info("Discovering repos under prefix", "prefix", prefix)
+
+		if len(groups[pIdx]) == 0 {
+			slog.Warn("No sub-repos under prefix", "prefix", prefix)
+		}
+
+		logRepos(groups[pIdx])
+		out = append(out, groups[pIdx]...)
+	}
+
+	return out
+}
+
+// runDNF runs the assembled dnf invocation via the env's command factory
+// (backed by [externalcmd]) so the call is observable / dry-run-aware.
+func runDNF(env *azldev.Env, argv []string) error {
+	rawCmd := exec.CommandContext(env, argv[0], argv[1:]...)
+	rawCmd.Stdin = os.Stdin
+	rawCmd.Stdout = os.Stdout
+	rawCmd.Stderr = os.Stderr
+
+	cmd, err := env.Command(rawCmd)
 	if err != nil {
-		return fmt.Errorf("failed to locate %s in PATH: %w", DnfBinary, err)
+		return fmt.Errorf("failed to create %s command:\n%w", DnfBinary, err)
 	}
 
-	// Hand control to dnf — does not return on success.
-	if err := syscall.Exec(dnfPath, argv, os.Environ()); err != nil {
-		return fmt.Errorf("failed to exec %s: %w", dnfPath, err)
+	if err := cmd.Run(env); err != nil {
+		// Match the original syscall.Exec semantics by propagating dnf's exit
+		// code verbatim (e.g., 100 for `check-update` with updates available)
+		// instead of letting cobra collapse it to 1.
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			os.Exit(exitErr.ExitCode())
+		}
+
+		return fmt.Errorf("%s run failed:\n%w", DnfBinary, err)
 	}
 
 	return nil
 }
 
 // buildCandidates picks the input-list builder based on which mode the user
-// selected and returns (repos, prefixesForLogging). prefixesForLogging is
-// non-empty only in --repo-prefix mode so summarizeResults can group output
-// by prefix.
-func buildCandidates(env *azldev.Env, options *QueryOptions) ([]repolayout.InputRepo, []string, error) {
+// selected and returns (groups, prefixesForLogging). groups is one
+// [repolayout.InputRepo] slice per --repo-prefix (preserving user order) in
+// prefix mode, or a single slice in --version mode. prefixesForLogging is
+// non-empty only in --repo-prefix mode so logAndFlatten can label its
+// per-group output.
+func buildCandidates(env *azldev.Env, options *QueryOptions) ([][]repolayout.InputRepo, []string, error) {
 	if options.Version != "" {
 		repos, err := reposFromVersion(env, options)
+		if err != nil {
+			return nil, nil, err
+		}
 
-		return repos, nil, err
+		return [][]repolayout.InputRepo{repos}, nil, nil
 	}
 
 	templateName := options.Template
 	if templateName == "" {
-		templateName = repolayout.DefaultTemplateName
+		templateName = defaultconfigs.DefaultRpmRepoSetTemplateName
 	}
 
 	tmpl, err := repolayout.ResolveTemplate(
@@ -191,12 +235,12 @@ func buildCandidates(env *azldev.Env, options *QueryOptions) ([]repolayout.Input
 		return nil, nil, fmt.Errorf("failed to resolve template:\n%w", err)
 	}
 
-	repos, err := buildInputRepos(options, templateName, tmpl, options.Arches)
+	groups, err := buildInputRepos(options, templateName, tmpl, options.Arches)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return filterByKind(repos, options), options.RepoPrefixes, nil
+	return groups, options.RepoPrefixes, nil
 }
 
 // reposFromVersion resolves a distro version's inputs into the flat
@@ -386,17 +430,18 @@ func versionRepoID(name string, arches []string, arch string) string {
 }
 
 // buildInputRepos normalizes each --repo-prefix, expands it against tmpl, and
-// stamps a 1-based prefix index/total on every produced row so the repo-id
-// minter can disambiguate multi-prefix runs.
+// returns one [repolayout.InputRepo] slice per prefix (in user order). The
+// dnf repo id is stamped here so downstream stages don't need to know the
+// prefix index: the per-prefix suffix is added only when multiple prefixes
+// are in play so ids stay unique across them.
 func buildInputRepos(
 	options *QueryOptions,
 	templateName string,
 	tmpl projectconfig.RpmRepoSetTemplate,
 	arches []string,
-) ([]repolayout.InputRepo, error) {
-	var all []repolayout.InputRepo
-
+) ([][]repolayout.InputRepo, error) {
 	total := len(options.RepoPrefixes)
+	groups := make([][]repolayout.InputRepo, 0, total)
 
 	for idx, prefix := range options.RepoPrefixes {
 		normalized, err := repolayout.NormalizePrefix(prefix)
@@ -406,245 +451,86 @@ func buildInputRepos(
 
 		expanded := repolayout.ExpandTemplate(normalized, templateName, tmpl, arches)
 		for i := range expanded {
-			expanded[i].PrefixIndex = idx + 1
-			expanded[i].PrefixCount = total
+			expanded[i].RepoID = prefixModeRepoID(expanded[i], idx+1, total)
 		}
 
-		all = append(all, expanded...)
+		groups = append(groups, repolayout.DedupInputRepos(expanded))
 	}
 
-	return repolayout.DedupInputRepos(all), nil
+	return groups, nil
 }
 
-// filterByKind drops debug/source rows per --no-debuginfo / --no-srpms.
-func filterByKind(repos []repolayout.InputRepo, options *QueryOptions) []repolayout.InputRepo {
-	if !options.NoDebuginfo && !options.NoSRPMs {
-		return repos
+// prefixModeRepoID mints the dnf repo id for a prefix-mode slot. The base
+// form is `azl-<subrepo>`; the arch is appended when the row was fanned out
+// per arch (so per-arch slots don't collide); and the 1-based prefix index
+// is appended only when multiple --repo-prefix values were supplied so ids
+// stay unique across prefixes.
+func prefixModeRepoID(repo repolayout.InputRepo, prefixIdx, totalPrefixes int) string {
+	repoID := "azl-" + repo.SubrepoName
+	if repo.Arch != "" {
+		repoID = repoID + "-" + repo.Arch
 	}
 
-	out := make([]repolayout.InputRepo, 0, len(repos))
+	if totalPrefixes > 1 {
+		repoID = fmt.Sprintf("%s-%d", repoID, prefixIdx)
+	}
 
-	for _, repo := range repos {
-		switch repo.Kind {
-		case projectconfig.SubrepoKindDebug:
-			if options.NoDebuginfo {
-				continue
+	return repoID
+}
+
+// filterGroupsByKind drops debug/source rows per --no-debuginfo / --no-srpms,
+// preserving the per-prefix grouping (and the empty-group warning that
+// logAndFlatten emits).
+func filterGroupsByKind(
+	groups [][]repolayout.InputRepo, options *QueryOptions,
+) [][]repolayout.InputRepo {
+	if !options.NoDebuginfo && !options.NoSRPMs {
+		return groups
+	}
+
+	out := make([][]repolayout.InputRepo, len(groups))
+
+	for gIdx, group := range groups {
+		kept := make([]repolayout.InputRepo, 0, len(group))
+
+		for _, repo := range group {
+			switch repo.Kind {
+			case projectconfig.SubrepoKindDebug:
+				if options.NoDebuginfo {
+					continue
+				}
+			case projectconfig.SubrepoKindSource:
+				if options.NoSRPMs {
+					continue
+				}
+			case projectconfig.SubrepoKindBinary:
+				// keep
 			}
-		case projectconfig.SubrepoKindSource:
-			if options.NoSRPMs {
-				continue
-			}
-		case projectconfig.SubrepoKindBinary:
-			// keep
+
+			kept = append(kept, repo)
 		}
 
-		out = append(out, repo)
+		out[gIdx] = kept
 	}
 
 	return out
 }
 
-// probeAll runs every probe in parallel via [parmap.Map] and returns one
-// result per repo (parallel to the input slice). It never returns an error
-// directly; fatal probe failures are surfaced via [probeResult.Err] and
-// aggregated by [summarizeResults] so the user sees every failure at once.
-// Concurrency is bounded by limit (typically [azldev.Env.IOBoundConcurrency]).
-func probeAll(ctx context.Context, limit int, repos []repolayout.InputRepo) []probeResult {
-	mapped := parmap.Map(
-		ctx,
-		limit,
-		repos,
-		nil,
-		func(wctx context.Context, repo repolayout.InputRepo) probeResult {
-			status, perr := probeOne(wctx, repo)
-
-			return probeResult{Status: status, Err: perr}
-		},
-	)
-
-	results := make([]probeResult, len(repos))
-
-	for idx, item := range mapped {
-		if item.Cancelled {
-			results[idx] = probeResult{Status: probeFail, Err: ctx.Err()}
-
-			continue
-		}
-
-		results[idx] = item.Value
-	}
-
-	return results
-}
-
-// summarizeResults walks per-prefix in the order the user supplied them,
-// logs each slot's outcome, warns on prefixes that yielded zero kept slots
-// (without aborting), and returns (kept, failures). When failures is
-// non-empty the caller aborts before exec'ing dnf.
-func summarizeResults(
-	repos []repolayout.InputRepo,
-	results []probeResult,
-	prefixes []string,
-) (kept []repolayout.InputRepo, failures []string) {
-	kept = make([]repolayout.InputRepo, 0, len(repos))
-
-	if len(prefixes) == 0 {
-		slog.Info("Resolving repos from project config", "count", len(repos))
-
-		for idx := range repos {
-			kept, failures = recordResult(repos[idx], results[idx], kept, failures)
-		}
-
-		return kept, failures
-	}
-
-	// Group indices by prefix (1-based PrefixIndex) so we can log and
-	// tally per prefix in declaration order.
-	byPrefix := make(map[int][]int, len(prefixes))
-	for idx, repo := range repos {
-		byPrefix[repo.PrefixIndex] = append(byPrefix[repo.PrefixIndex], idx)
-	}
-
-	for pIdx, prefix := range prefixes {
-		slog.Info("Discovering repos under prefix", "prefix", prefix)
-
-		keptHere := 0
-		failedHere := 0
-
-		for _, idx := range byPrefix[pIdx+1] {
-			before := len(kept)
-			failedBefore := len(failures)
-			kept, failures = recordResult(repos[idx], results[idx], kept, failures)
-
-			if len(kept) > before {
-				keptHere++
-			}
-
-			if len(failures) > failedBefore {
-				failedHere++
-			}
-		}
-
-		if keptHere == 0 && failedHere == 0 {
-			slog.Warn("No sub-repos discovered under prefix", "prefix", prefix)
-		}
-	}
-
-	return kept, failures
-}
-
-// recordResult logs one slot's outcome and appends to kept or failures as
-// appropriate.
-func recordResult(
-	repo repolayout.InputRepo,
-	result probeResult,
-	kept []repolayout.InputRepo,
-	failures []string,
-) ([]repolayout.InputRepo, []string) {
-	repoID := slotRepoID(repo)
-
-	switch result.Status {
-	case probeOK:
-		slog.Info("  kept sub-repo", "id", repoID, "url", repo.URL)
-		kept = append(kept, repo)
-	case probeMissing:
-		slog.Info("  skipped (no repodata)", "id", repoID, "url", repo.URL)
-	case probeFail:
-		slog.Warn("  probe failed", "id", repoID, "url", repo.URL, "err", result.Err)
-		failures = append(failures,
-			fmt.Sprintf("%s <- %s: %v", repoID, repo.URL, result.Err))
-	}
-
-	return kept, failures
-}
-
-// probeResult is one probe outcome stored by [probeAll]. Err is non-nil
-// only when Status == probeFail.
-type probeResult struct {
-	Status probeStatus
-	Err    error
-}
-
-type probeStatus int
-
-const (
-	probeOK probeStatus = iota
-	probeMissing
-	probeFail
-)
-
-// probeOne checks one repo's `repodata/repomd.xml`. For http(s) it issues a
-// HEAD; for file:// it stats the path.
-func probeOne(ctx context.Context, r repolayout.InputRepo) (probeStatus, error) {
-	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
-	defer cancel()
-
-	probeURL := strings.TrimRight(r.URL, "/") + "/repodata/repomd.xml"
-
-	if strings.HasPrefix(probeURL, "file://") {
-		return probeFile(probeURL)
-	}
-
-	req, err := http.NewRequestWithContext(probeCtx, http.MethodHead, probeURL, nil)
-	if err != nil {
-		return probeFail, fmt.Errorf("build HEAD %#q: %w", probeURL, err)
-	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return probeFail, fmt.Errorf("HEAD %#q: %w", probeURL, err)
-	}
-	defer resp.Body.Close()
-
-	switch resp.StatusCode {
-	case http.StatusOK:
-		return probeOK, nil
-	case http.StatusNotFound:
-		return probeMissing, nil
-	default:
-		return probeFail, fmt.Errorf("HEAD %#q returned unexpected status %s", probeURL, resp.Status)
-	}
-}
-
-// probeFile maps an os.Stat outcome to a probeStatus.
-func probeFile(probeURL string) (probeStatus, error) {
-	u, err := url.Parse(probeURL)
-	if err != nil {
-		return probeFail, fmt.Errorf("parse %#q: %w", probeURL, err)
-	}
-
-	path := filepath.FromSlash(u.Path)
-
-	info, err := os.Stat(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return probeMissing, nil
-		}
-
-		return probeFail, fmt.Errorf("stat %#q: %w", path, err)
-	}
-
-	if info.IsDir() {
-		return probeFail, fmt.Errorf("expected file at %#q, got directory", path)
-	}
-
-	return probeOK, nil
-}
-
-// buildDNFArgv builds the argv passed to dnf via [syscall.Exec]. The first
-// element is the program name ("dnf"); the rest disables any host-configured
-// repos, forces a metadata refresh, wires up one --repofrompath /
-// --enablerepo pair per discovered slot, and finally appends the user's
-// passthrough.
+// buildDNFArgv builds the argv passed to dnf. The first element is the
+// program name ("dnf"); the rest disables any host-configured repos, forces
+// a metadata refresh, wires up one --repofrompath / --enablerepo pair per
+// candidate slot (with skip_if_unavailable=1 so dnf tolerates ones that
+// don't actually exist), and finally appends the user's passthrough.
 func buildDNFArgv(repos []repolayout.InputRepo, userArgs []string) []string {
-	argv := make([]string, 0, 3+len(repos)*6+len(userArgs))
+	argv := make([]string, 0, 3+len(repos)*7+len(userArgs))
 	argv = append(argv, DnfBinary, "--disablerepo=*", "--refresh")
 
 	for _, dnfRepo := range repos {
-		repoID := slotRepoID(dnfRepo)
+		repoID := dnfRepo.RepoID
 		argv = append(argv,
 			"--repofrompath", repoID+","+dnfRepo.URL,
 			"--enablerepo", repoID,
+			"--setopt="+repoID+".skip_if_unavailable=1",
 		)
 
 		if dnfRepo.GPGKey != "" {
@@ -658,26 +544,4 @@ func buildDNFArgv(repos []repolayout.InputRepo, userArgs []string) []string {
 	argv = append(argv, userArgs...)
 
 	return argv
-}
-
-// slotRepoID mints a dnf repo id for the slot. The base form is
-// `azl-<subrepo>`; the arch is appended when the row was fanned out per
-// arch (so per-arch slots don't collide); and the 1-based prefix index is
-// appended when multiple --repo-prefix values were supplied so ids stay
-// unique across prefixes.
-func slotRepoID(repo repolayout.InputRepo) string {
-	if repo.RepoID != "" {
-		return repo.RepoID
-	}
-
-	repoID := "azl-" + repo.SubrepoName
-	if repo.Arch != "" {
-		repoID = repoID + "-" + repo.Arch
-	}
-
-	if repo.PrefixCount > 1 && repo.PrefixIndex > 0 {
-		repoID = fmt.Sprintf("%s-%d", repoID, repo.PrefixIndex)
-	}
-
-	return repoID
 }

@@ -25,8 +25,9 @@ Two selection modes, mutually exclusive:
       --no-srpms drop sub-repos by their declared kind. --template is not
       used.
 
-Unreachable sub-repos (404 on repodata/repomd.xml, or ENOENT for file://)
-are silently dropped; any other probe failure aborts the run.
+Unreachable sub-repos are tolerated via dnf's per-repo
+skip_if_unavailable=1 setopt; dnf itself logs and skips ones that fail to
+load.
 
 All positional arguments are passed verbatim to dnf. Use `--` to separate
 azldev flags from dnf flags.

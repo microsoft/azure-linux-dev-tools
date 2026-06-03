@@ -6,6 +6,7 @@ package repolayout_test
 import (
 	"testing"
 
+	"github.com/microsoft/azure-linux-dev-tools/defaultconfigs"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/repo/repolayout"
 	"github.com/stretchr/testify/assert"
@@ -14,7 +15,7 @@ import (
 
 func sampleTemplates() map[string]projectconfig.RpmRepoSetTemplate {
 	return map[string]projectconfig.RpmRepoSetTemplate{
-		repolayout.DefaultTemplateName: {
+		defaultconfigs.DefaultRpmRepoSetTemplateName: {
 			Subrepos: []projectconfig.SubrepoSpec{
 				{Name: "base", Subpath: "base/$basearch", Kind: projectconfig.SubrepoKindBinary},
 				{Name: "base-debug", Subpath: "base/debuginfo/$basearch", Kind: projectconfig.SubrepoKindDebug},
@@ -30,7 +31,7 @@ func sampleTemplates() map[string]projectconfig.RpmRepoSetTemplate {
 func TestResolveTemplate_Found(t *testing.T) {
 	t.Parallel()
 
-	tmpl, err := repolayout.ResolveTemplate(sampleTemplates(), repolayout.DefaultTemplateName)
+	tmpl, err := repolayout.ResolveTemplate(sampleTemplates(), defaultconfigs.DefaultRpmRepoSetTemplateName)
 	require.NoError(t, err)
 	assert.Len(t, tmpl.Subrepos, 6)
 }
@@ -53,12 +54,12 @@ func TestResolveTemplate_EmptyName(t *testing.T) {
 func TestExpandTemplate(t *testing.T) {
 	t.Parallel()
 
-	tmpl, err := repolayout.ResolveTemplate(sampleTemplates(), repolayout.DefaultTemplateName)
+	tmpl, err := repolayout.ResolveTemplate(sampleTemplates(), defaultconfigs.DefaultRpmRepoSetTemplateName)
 	require.NoError(t, err)
 
 	repos := repolayout.ExpandTemplate(
 		"https://example.com/prefix/",
-		repolayout.DefaultTemplateName,
+		defaultconfigs.DefaultRpmRepoSetTemplateName,
 		tmpl,
 		[]string{"x86_64", "aarch64"},
 	)
@@ -68,7 +69,7 @@ func TestExpandTemplate(t *testing.T) {
 
 	for _, repo := range repos {
 		assert.NotContains(t, repo.URL, "$basearch", "$basearch must be expanded")
-		assert.Equal(t, repolayout.DefaultTemplateName, repo.TemplateName)
+		assert.Equal(t, defaultconfigs.DefaultRpmRepoSetTemplateName, repo.TemplateName)
 	}
 
 	// Spot-check the base/binary x86_64 row.
@@ -121,11 +122,11 @@ func TestNormalizePrefix(t *testing.T) {
 
 	got, err := repolayout.NormalizePrefix("https://example.com/foo/")
 	require.NoError(t, err)
-	assert.Equal(t, "https://example.com/foo", got)
+	assert.Equal(t, "https://example.com/foo/", got)
 
 	got, err = repolayout.NormalizePrefix("file:///tmp/repo/")
 	require.NoError(t, err)
-	assert.Equal(t, "file:///tmp/repo", got)
+	assert.Equal(t, "file:///tmp/repo/", got)
 
 	_, err = repolayout.NormalizePrefix("./testdata/repo")
 	require.Error(t, err)
