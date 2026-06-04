@@ -356,7 +356,7 @@ func (p *sourcePreparerImpl) applyTarballOverlayGroup(
 	}
 
 	if err := applyTarballOverlays(
-		ctx, cmdFactory, p.fs, p.eventListener, sourcesDirPath, tarballOverlays,
+		ctx, cmdFactory, p.dryRunnable, p.fs, p.eventListener, sourcesDirPath, tarballOverlays,
 	); err != nil {
 		return fmt.Errorf("failed to apply tarball overlays for component %#q:\n%w",
 			component.GetName(), err)
@@ -1169,10 +1169,17 @@ func (p *sourcePreparerImpl) resolveSpecPath(
 }
 
 // applyOverlayList applies a list of overlays to the component sources sequentially.
+// Archive-scoped overlays (see [projectconfig.ComponentOverlay.ModifiesTarball]) are
+// skipped here; they are handled separately by [applyTarballOverlays], which batches
+// extraction and repacking per archive.
 func (p *sourcePreparerImpl) applyOverlayList(
 	overlays []projectconfig.ComponentOverlay, sourcesDirPath, absSpecPath string,
 ) error {
 	for _, overlay := range overlays {
+		if overlay.ModifiesTarball() {
+			continue
+		}
+
 		if err := ApplyOverlayToSources(
 			p.dryRunnable, p.fs, overlay, sourcesDirPath, absSpecPath,
 		); err != nil {
