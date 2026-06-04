@@ -28,7 +28,9 @@ func TestDetectCompression(t *testing.T) {
 		{"pkg-1.0.tgz", archive.CompressionGzip, false},
 		{"pkg-1.0.tar.bz2", archive.CompressionNone, true},
 		{"pkg-1.0.tar.xz", archive.CompressionXZ, false},
+		{"pkg-1.0.txz", archive.CompressionXZ, false},
 		{"pkg-1.0.tar.zst", archive.CompressionZstd, false},
+		{"pkg-1.0.tzst", archive.CompressionZstd, false},
 		{"pkg-1.0.tar", archive.CompressionNone, false},
 		{"pkg-1.0.zip", archive.CompressionNone, true},
 		{"PKG-1.0.TAR.GZ", archive.CompressionGzip, false},
@@ -170,6 +172,17 @@ func TestRoundTrip_AllCompressions(t *testing.T) {
 			got, err := os.ReadFile(filepath.Join(extractDir, "sub", "b.txt"))
 			require.NoError(t, err)
 			assert.Equal(t, "beta", string(got))
+
+			// Create a second archive over identical input and verify
+			// byte-for-byte determinism across all compression modes.
+			archivePath2 := filepath.Join(tmpDir, "archive2"+testCase.ext)
+			require.NoError(t, archive.CreateDeterministicArchive(archivePath2, sourceDir, testCase.comp))
+
+			data1, err := os.ReadFile(archivePath)
+			require.NoError(t, err)
+			data2, err := os.ReadFile(archivePath2)
+			require.NoError(t, err)
+			assert.Equal(t, data1, data2, "deterministic archive should produce identical output")
 		})
 	}
 }
@@ -217,10 +230,13 @@ func TestCreateDeterministicArchive_PreservesSymlinks(t *testing.T) {
 
 	archiveBytes, err := os.ReadFile(archivePath)
 	require.NoError(t, err)
-	assert.NotContains(t, string(archiveBytes), externalContent,
-		"archive must not embed contents of symlink target outside sourceDir")
 
-	headersByName := map[string]*tar.Header{}
+	type entryInfo struct {
+		header  *tar.Header
+		content string
+	}
+
+	entriesByName := map[string]entryInfo{}
 
 	reader := tar.NewReader(bytes.NewReader(archiveBytes))
 
@@ -232,21 +248,37 @@ func TestCreateDeterministicArchive_PreservesSymlinks(t *testing.T) {
 
 		require.NoError(t, readErr)
 
-		headersByName[header.Name] = header
+		var content string
+
+		if header.Typeflag == tar.TypeReg {
+			body, bodyErr := io.ReadAll(reader)
+			require.NoError(t, bodyErr)
+
+			content = string(body)
+		}
+
+		entriesByName[header.Name] = entryInfo{header: header, content: content}
 	}
 
-	internalHeader, found := headersByName["internal-link"]
-	require.True(t, found, "internal symlink entry missing from archive")
-	assert.Equal(t, byte(tar.TypeSymlink), internalHeader.Typeflag)
-	assert.Equal(t, "real.txt", internalHeader.Linkname)
-	assert.Zero(t, internalHeader.Size, "symlink entries must not carry payload bytes")
+	for name, entry := range entriesByName {
+		if entry.header.Typeflag == tar.TypeReg {
+			assert.NotContains(t, entry.content, externalContent,
+				"regular file entry %#q must not contain external content", name)
+		}
+	}
 
-	externalHeader, found := headersByName["external-link"]
+	internalEntry, found := entriesByName["internal-link"]
+	require.True(t, found, "internal symlink entry missing from archive")
+	assert.Equal(t, byte(tar.TypeSymlink), internalEntry.header.Typeflag)
+	assert.Equal(t, "real.txt", internalEntry.header.Linkname)
+	assert.Zero(t, internalEntry.header.Size, "symlink entries must not carry payload bytes")
+
+	externalEntry, found := entriesByName["external-link"]
 	require.True(t, found, "external symlink entry missing from archive")
-	assert.Equal(t, byte(tar.TypeSymlink), externalHeader.Typeflag)
-	assert.Equal(t, externalPath, externalHeader.Linkname,
+	assert.Equal(t, byte(tar.TypeSymlink), externalEntry.header.Typeflag)
+	assert.Equal(t, externalPath, externalEntry.header.Linkname,
 		"external symlink target must be recorded verbatim, not dereferenced")
-	assert.Zero(t, externalHeader.Size)
+	assert.Zero(t, externalEntry.header.Size)
 }
 
 func TestExtract_SymlinkSafety(t *testing.T) {
@@ -282,6 +314,17 @@ func TestExtract_SymlinkSafety(t *testing.T) {
 				{name: "pkg/", typeflag: tar.TypeDir},
 				{name: "pkg/real.txt", typeflag: tar.TypeReg, content: "hello"},
 				{name: "pkg/link.txt", typeflag: tar.TypeSymlink, linkname: "real.txt"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "relative dotdot symlink staying inside root allowed",
+			entries: []testTarEntry{
+				{name: "src/", typeflag: tar.TypeDir},
+				{name: "src/espeak-ng/", typeflag: tar.TypeDir},
+				{name: "src/espeak-ng/speak_lib.h", typeflag: tar.TypeReg, content: "header"},
+				{name: "src/espeak/", typeflag: tar.TypeDir},
+				{name: "src/espeak/speak_lib.h", typeflag: tar.TypeSymlink, linkname: "../espeak-ng/speak_lib.h"},
 			},
 			wantErr: false,
 		},

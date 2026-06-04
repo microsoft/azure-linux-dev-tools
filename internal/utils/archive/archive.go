@@ -44,9 +44,9 @@ const (
 	CompressionNone Compression = iota
 	// CompressionGzip indicates gzip compression (.tar.gz or .tgz).
 	CompressionGzip
-	// CompressionXZ indicates xz compression (.tar.xz).
+	// CompressionXZ indicates xz compression (.tar.xz or .txz).
 	CompressionXZ
-	// CompressionZstd indicates zstandard compression (.tar.zst).
+	// CompressionZstd indicates zstandard compression (.tar.zst or .tzst).
 	CompressionZstd
 )
 
@@ -68,9 +68,9 @@ func DetectCompression(filename string) (Compression, error) {
 	switch {
 	case strings.HasSuffix(lower, ".tar.gz") || strings.HasSuffix(lower, ".tgz"):
 		return CompressionGzip, nil
-	case strings.HasSuffix(lower, ".tar.xz"):
+	case strings.HasSuffix(lower, ".tar.xz") || strings.HasSuffix(lower, ".txz"):
 		return CompressionXZ, nil
-	case strings.HasSuffix(lower, ".tar.zst"):
+	case strings.HasSuffix(lower, ".tar.zst") || strings.HasSuffix(lower, ".tzst"):
 		return CompressionZstd, nil
 	case strings.HasSuffix(lower, ".tar"):
 		return CompressionNone, nil
@@ -182,6 +182,11 @@ func (r readerCloser) Close() error {
 //   - Timestamps are pinned to Unix epoch (1970-01-01 00:00:00 UTC).
 //   - Owner/group IDs and names are zeroed out.
 //   - Gzip output uses best compression with no OS or filename metadata.
+//
+// Symlink targets are recorded verbatim, including absolute or
+// directory-escaping targets. [Extract] rejects non-local symlink targets
+// (via [filepath.IsLocal]), so an archive produced here is not guaranteed to
+// be extractable by [Extract] when the source tree contains such symlinks.
 func CreateDeterministicArchive(archivePath, sourceDir string, comp Compression) (err error) {
 	file, err := os.Create(archivePath)
 	if err != nil {
@@ -247,12 +252,16 @@ func extractEntry(root *os.Root, header *tar.Header, tarReader io.Reader) error 
 
 	switch header.Typeflag {
 	case tar.TypeSymlink:
-		// os.Root validates that the link's own path stays inside the root, but
-		// it stores the target verbatim. Reject non-local targets so that tools
-		// which later walk the extracted tree without os.Root cannot be led
-		// outside destDir.
-		if !filepath.IsLocal(header.Linkname) {
-			return fmt.Errorf("tar symlink %#q has non-local target %#q", name, header.Linkname)
+		// Reject symlink targets that escape destDir. Absolute targets are
+		// rejected outright; relative targets containing ".." are resolved from
+		// the symlink's parent and allowed if the result stays within the root.
+		if filepath.IsAbs(header.Linkname) {
+			return fmt.Errorf("tar symlink %#q has absolute target %#q", name, header.Linkname)
+		}
+
+		resolved := filepath.Clean(filepath.Join(filepath.Dir(name), header.Linkname)) //nolint:gosec
+		if !filepath.IsLocal(resolved) {
+			return fmt.Errorf("tar symlink %#q resolves to non-local path %#q (target %#q)", name, resolved, header.Linkname)
 		}
 
 		if err := root.Symlink(header.Linkname, name); err != nil {
@@ -357,7 +366,11 @@ func writeEntryDeterministic(
 	}
 	defer defers.HandleDeferError(sourceFile.Close, &err)
 
-	if _, copyErr := io.Copy(tarWriter, sourceFile); copyErr != nil {
+	// Copy exactly header.Size bytes so the archive entry matches the header.
+	// Using io.Copy would write whatever the file contains at read time, which
+	// may exceed header.Size if the file grew between stat and open, causing
+	// tar.Writer to error mid-stream with a partially written entry.
+	if _, copyErr := io.CopyN(tarWriter, sourceFile, header.Size); copyErr != nil {
 		return fmt.Errorf("writing %#q to archive:\n%w", path, copyErr)
 	}
 
