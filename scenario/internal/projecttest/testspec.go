@@ -84,17 +84,17 @@ func WithBuildArch(arch string) TestSpecOption {
 	}
 }
 
-// WithExclusiveArch sets the ExclusiveArch tag on the spec, limiting the
-// architectures for which the spec is considered buildable. Pass one or
-// more arch tokens (e.g. "x86_64", "aarch64").
+// WithExclusiveArch appends to the ExclusiveArch tag on the spec, limiting
+// the architectures for which the spec is considered buildable. Pass one or
+// more arch tokens (e.g. "x86_64", "aarch64"). Repeated calls accumulate.
 func WithExclusiveArch(arches ...string) TestSpecOption {
 	return func(s *TestSpec) {
 		s.exclusiveArch = append(s.exclusiveArch, arches...)
 	}
 }
 
-// WithExcludeArch sets the ExcludeArch tag on the spec, marking the listed
-// architectures as unsupported for the spec.
+// WithExcludeArch appends to the ExcludeArch tag on the spec, marking the
+// listed architectures as unsupported. Repeated calls accumulate.
 func WithExcludeArch(arches ...string) TestSpecOption {
 	return func(s *TestSpec) {
 		s.excludeArch = append(s.excludeArch, arches...)

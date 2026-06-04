@@ -318,10 +318,11 @@ def process_component(  # noqa: PLR0911 - early-return error paths each carry di
     """Run rpmspec --srpm + rpmspec (no --srpm) for one component.
 
     Trust boundary: comp["name"] and comp["specRelPath"] are validated by
-    BatchQuerySpecs in mockprocessor.go before this script is invoked.
-    arch is a target arch (e.g. "x86_64"); when non-empty it is passed to
-    rpmspec via --target. Specs that ExclusiveArch/ExcludeArch-exclude the
-    target are returned with excludedFromArch=True (not an error).
+    sources.BatchQuerySpecs via validateSpecQueryInputs (Go) before this
+    script is invoked. arch is a target arch (e.g. "x86_64"); when non-empty
+    it is passed to rpmspec via --target. Specs that ExclusiveArch/
+    ExcludeArch-exclude the target are returned with excludedFromArch=True
+    (not an error).
     """
     name = comp["name"]
     spec_path = str(Path(specs_dir) / comp["specRelPath"])

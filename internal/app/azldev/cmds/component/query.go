@@ -299,7 +299,7 @@ func buildSpecQueryInputs(
 
 		inputs = append(inputs, sources.SpecQueryInput{
 			Name:        name,
-			SpecRelPath: relSpecPath,
+			SpecRelPath: filepath.ToSlash(relSpecPath),
 			With:        cfg.Build.With,
 			Without:     cfg.Build.Without,
 			Defines:     cfg.Build.Defines,
