@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-package tarball_test
+package archive_test
 
 import (
 	"archive/tar"
@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/microsoft/azure-linux-dev-tools/internal/utils/tarball"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/archive"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -21,22 +21,22 @@ import (
 func TestDetectCompression(t *testing.T) {
 	tests := []struct {
 		filename string
-		expected tarball.Compression
+		expected archive.Compression
 		wantErr  bool
 	}{
-		{"pkg-1.0.tar.gz", tarball.CompressionGzip, false},
-		{"pkg-1.0.tgz", tarball.CompressionGzip, false},
-		{"pkg-1.0.tar.bz2", tarball.CompressionNone, true},
-		{"pkg-1.0.tar.xz", tarball.CompressionXZ, false},
-		{"pkg-1.0.tar.zst", tarball.CompressionZstd, false},
-		{"pkg-1.0.tar", tarball.CompressionNone, false},
-		{"pkg-1.0.zip", tarball.CompressionNone, true},
-		{"PKG-1.0.TAR.GZ", tarball.CompressionGzip, false},
+		{"pkg-1.0.tar.gz", archive.CompressionGzip, false},
+		{"pkg-1.0.tgz", archive.CompressionGzip, false},
+		{"pkg-1.0.tar.bz2", archive.CompressionNone, true},
+		{"pkg-1.0.tar.xz", archive.CompressionXZ, false},
+		{"pkg-1.0.tar.zst", archive.CompressionZstd, false},
+		{"pkg-1.0.tar", archive.CompressionNone, false},
+		{"pkg-1.0.zip", archive.CompressionNone, true},
+		{"PKG-1.0.TAR.GZ", archive.CompressionGzip, false},
 	}
 
 	for _, testCase := range tests {
 		t.Run(testCase.filename, func(t *testing.T) {
-			comp, err := tarball.DetectCompression(testCase.filename)
+			comp, err := archive.DetectCompression(testCase.filename)
 
 			if testCase.wantErr {
 				require.Error(t, err)
@@ -65,7 +65,7 @@ func TestExtractAndRepack(t *testing.T) {
 		{name: "pkg-1.0/config.cfg", typeflag: tar.TypeReg, content: "key=value"},
 	})
 
-	err := tarball.Extract(archivePath, extractDir, tarball.CompressionGzip)
+	err := archive.Extract(archivePath, extractDir, archive.CompressionGzip)
 	require.NoError(t, err)
 
 	content, readErr := os.ReadFile(filepath.Join(extractDir, "pkg-1.0", "hello.txt"))
@@ -74,10 +74,10 @@ func TestExtractAndRepack(t *testing.T) {
 
 	repackPath := filepath.Join(tmpDir, "repacked.tar.gz")
 
-	err = tarball.CreateDeterministicArchive(repackPath, extractDir, tarball.CompressionGzip)
+	err = archive.CreateDeterministicArchive(repackPath, extractDir, archive.CompressionGzip)
 	require.NoError(t, err)
 
-	err = tarball.Extract(repackPath, repackDir, tarball.CompressionGzip)
+	err = archive.Extract(repackPath, repackDir, archive.CompressionGzip)
 	require.NoError(t, err)
 
 	content, readErr = os.ReadFile(filepath.Join(repackDir, "pkg-1.0", "hello.txt"))
@@ -87,7 +87,7 @@ func TestExtractAndRepack(t *testing.T) {
 	// Repack twice and verify byte-for-byte identical output.
 	repackPath2 := filepath.Join(tmpDir, "repacked2.tar.gz")
 
-	err = tarball.CreateDeterministicArchive(repackPath2, extractDir, tarball.CompressionGzip)
+	err = archive.CreateDeterministicArchive(repackPath2, extractDir, archive.CompressionGzip)
 	require.NoError(t, err)
 
 	data1, err := os.ReadFile(repackPath)
@@ -145,12 +145,12 @@ func TestRoundTrip_AllCompressions(t *testing.T) {
 	tests := []struct {
 		name string
 		ext  string
-		comp tarball.Compression
+		comp archive.Compression
 	}{
-		{"none", ".tar", tarball.CompressionNone},
-		{"gzip", ".tar.gz", tarball.CompressionGzip},
-		{"xz", ".tar.xz", tarball.CompressionXZ},
-		{"zstd", ".tar.zst", tarball.CompressionZstd},
+		{"none", ".tar", archive.CompressionNone},
+		{"gzip", ".tar.gz", archive.CompressionGzip},
+		{"xz", ".tar.xz", archive.CompressionXZ},
+		{"zstd", ".tar.zst", archive.CompressionZstd},
 	}
 
 	for _, testCase := range tests {
@@ -164,8 +164,8 @@ func TestRoundTrip_AllCompressions(t *testing.T) {
 
 			archivePath := filepath.Join(tmpDir, "archive"+testCase.ext)
 
-			require.NoError(t, tarball.CreateDeterministicArchive(archivePath, sourceDir, testCase.comp))
-			require.NoError(t, tarball.Extract(archivePath, extractDir, testCase.comp))
+			require.NoError(t, archive.CreateDeterministicArchive(archivePath, sourceDir, testCase.comp))
+			require.NoError(t, archive.Extract(archivePath, extractDir, testCase.comp))
 
 			got, err := os.ReadFile(filepath.Join(extractDir, "sub", "b.txt"))
 			require.NoError(t, err)
@@ -179,13 +179,13 @@ func TestUnsupportedCompression(t *testing.T) {
 	archivePath := filepath.Join(tmpDir, "archive.bin")
 	require.NoError(t, os.WriteFile(archivePath, []byte("dummy"), 0o600))
 
-	bogus := tarball.Compression(99)
+	bogus := archive.Compression(99)
 
-	err := tarball.Extract(archivePath, tmpDir, bogus)
+	err := archive.Extract(archivePath, tmpDir, bogus)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported compression type")
 
-	err = tarball.CreateDeterministicArchive(filepath.Join(tmpDir, "out.bin"), tmpDir, bogus)
+	err = archive.CreateDeterministicArchive(filepath.Join(tmpDir, "out.bin"), tmpDir, bogus)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported compression type")
 }
@@ -213,7 +213,7 @@ func TestCreateDeterministicArchive_PreservesSymlinks(t *testing.T) {
 	require.NoError(t, os.Symlink(externalPath, filepath.Join(sourceDir, "external-link")))
 
 	archivePath := filepath.Join(tmpDir, "archive.tar")
-	require.NoError(t, tarball.CreateDeterministicArchive(archivePath, sourceDir, tarball.CompressionNone))
+	require.NoError(t, archive.CreateDeterministicArchive(archivePath, sourceDir, archive.CompressionNone))
 
 	archiveBytes, err := os.ReadFile(archivePath)
 	require.NoError(t, err)
@@ -296,7 +296,7 @@ func TestExtract_SymlinkSafety(t *testing.T) {
 
 			createTestTarGz(t, archivePath, testCase.entries)
 
-			err := tarball.Extract(archivePath, extractDir, tarball.CompressionGzip)
+			err := archive.Extract(archivePath, extractDir, archive.CompressionGzip)
 
 			if testCase.wantErr {
 				require.Error(t, err)

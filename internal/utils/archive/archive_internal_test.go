@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-package tarball
+package archive
 
 import (
 	"archive/tar"

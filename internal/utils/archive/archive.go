@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-// Package tarball provides on-disk tar extraction and deterministic archive
+// Package archive provides on-disk tar extraction and deterministic archive
 // creation.
 //
 // [Extract] materializes entries into a destination directory via [os.Root],
@@ -16,7 +16,7 @@
 // is zeroed out. This matches the
 // `tar --sort=name --mtime=@0 --owner=0 --group=0` convention used by source
 // modification scripts.
-package tarball
+package archive
 
 import (
 	"archive/tar"
@@ -36,7 +36,7 @@ import (
 	"github.com/ulikunitz/xz"
 )
 
-// Compression identifies the compression format of a tarball.
+// Compression identifies the compression format of an archive.
 type Compression int
 
 const (
@@ -53,7 +53,7 @@ const (
 // maxEntryBytes caps the decompressed size of any single regular-file entry
 // extracted by [Extract]. This prevents a decompression-bomb archive from
 // filling the destination filesystem. 10 GiB is well above any reasonable
-// source tarball entry but small enough to refuse pathological inputs.
+// source archive entry but small enough to refuse pathological inputs.
 //
 // Declared as var rather than const so internal tests can override it
 // without having to construct a >10 GiB fixture.
