@@ -6,8 +6,10 @@
 //
 // [Extract] materializes entries into a destination directory via [os.Root],
 // which confines every file, directory, and symlink operation to that
-// directory — any entry name or symlink target that would escape destDir is
-// rejected by the runtime.
+// directory — any entry path that would escape destDir is rejected by the
+// runtime. Symlink *targets* (the contents of a symlink, not its own path)
+// are not policed by [os.Root]; this package additionally rejects any symlink
+// whose target is non-local via [filepath.IsLocal].
 //
 // Archive creation is designed for reproducible builds: file ordering is
 // lexicographic, timestamps are pinned to Unix epoch, and owner/group metadata
@@ -79,9 +81,10 @@ func DetectCompression(filename string) (Compression, error) {
 
 // Extract reads a tar archive, decompresses it, and extracts all entries into
 // destDir. Supported entry types are regular files, directories, and symlinks;
-// other entry types are skipped. Extraction is confined to destDir via [os.Root]:
-// any entry name or symlink target that would escape destDir is rejected by
-// the runtime.
+// other entry types are skipped. Entry paths are confined to destDir via
+// [os.Root]: any path that would escape destDir is rejected by the runtime.
+// Symlink targets are validated separately by this package — see the package
+// doc for details.
 func Extract(archivePath, destDir string, comp Compression) (err error) {
 	if err := os.MkdirAll(destDir, fileperms.PublicDir); err != nil {
 		return fmt.Errorf("creating destination %#q:\n%w", destDir, err)
@@ -293,16 +296,11 @@ func extractRegularFile(root *os.Root, header *tar.Header, src io.Reader) (err e
 		}
 	}()
 
-	// Cap copy at maxEntryBytes+1 so we can still detect (and reject) entries
-	// whose declared size lied. The +1 byte is bounded and is cleaned up by
-	// the deferred Remove above.
-	written, copyErr := io.CopyN(outFile, src, maxEntryBytes+1)
-	if copyErr != nil && !errors.Is(copyErr, io.EOF) {
+	// Copy exactly header.Size bytes. CopyN returns a non-nil error (including
+	// io.EOF on a truncated archive) whenever it cannot satisfy the full count,
+	// so any error here means the entry is short or unreadable.
+	if _, copyErr := io.CopyN(outFile, src, header.Size); copyErr != nil {
 		return fmt.Errorf("writing file %#q:\n%w", name, copyErr)
-	}
-
-	if written > maxEntryBytes {
-		return fmt.Errorf("tar entry %#q exceeds max size of %d bytes", name, maxEntryBytes)
 	}
 
 	return nil
@@ -330,6 +328,12 @@ func writeEntryDeterministic(
 	}
 
 	header.Name = filepath.ToSlash(rel)
+	if info.IsDir() {
+		// tar convention: directory entry names end with '/'. tar.FileInfoHeader
+		// applies this, but our rel-based override above drops it.
+		header.Name += "/"
+	}
+
 	header.Format = tar.FormatGNU
 	header.ModTime = epoch
 	header.AccessTime = time.Time{}

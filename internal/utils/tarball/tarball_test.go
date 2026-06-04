@@ -7,6 +7,8 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -224,9 +226,11 @@ func TestCreateDeterministicArchive_PreservesSymlinks(t *testing.T) {
 
 	for {
 		header, readErr := reader.Next()
-		if readErr != nil {
+		if errors.Is(readErr, io.EOF) {
 			break
 		}
+
+		require.NoError(t, readErr)
 
 		headersByName[header.Name] = header
 	}
