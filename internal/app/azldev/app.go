@@ -267,7 +267,7 @@ func (a *App) Execute(args []string) int {
 	//
 	stdioLogger := a.initStdioLogging()
 
-	if err := setEventListener(stdioLogger, a.quiet, envOptions); err != nil {
+	if err := setEventListener(stdioLogger, a.quiet, a.verbose, envOptions); err != nil {
 		slog.Error("Error setting event listener.", "err", err)
 
 		return 1
@@ -384,7 +384,7 @@ func (a *App) reInitLoggingWithLogFile(envOptions *EnvOptions) error {
 		return fmt.Errorf("error re-initializing file logging:\n%w", err)
 	}
 
-	err = setEventListener(logger, a.quiet, envOptions)
+	err = setEventListener(logger, a.quiet, a.verbose, envOptions)
 	if err != nil {
 		return fmt.Errorf("error re-setting event listener:\n%w", err)
 	}
@@ -448,8 +448,8 @@ func (a *App) handlePostInitCallbacks(env *Env) error {
 	return nil
 }
 
-func setEventListener(stdioLogger *slog.Logger, quiet bool, envOptions *EnvOptions) error {
-	eventListener, err := NewEventListener(stdioLogger, quiet)
+func setEventListener(stdioLogger *slog.Logger, quiet, verbose bool, envOptions *EnvOptions) error {
+	eventListener, err := NewEventListener(stdioLogger, quiet, verbose)
 	if err != nil {
 		return fmt.Errorf("error initializing event listener:\n%w", err)
 	}
