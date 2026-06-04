@@ -6,7 +6,6 @@ package magecheckfix
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path"
 	"strings"
@@ -246,12 +245,9 @@ func licenseCheck() error {
 	mageutil.MagePrintln(mageutil.MsgStart, "Checking licenses...")
 
 	outFilePath := path.Join(mageutil.OutDir(), "licenses.csv")
-
 	errorText := "Failed to check licenses."
-	successText := "License check complete, results written to " + outFilePath
 
-	err := sh.Run(mg.GoCmd(), "mod", "download")
-	if err != nil {
+	if err := sh.Run(mg.GoCmd(), "mod", "download"); err != nil {
 		return mageutil.PrintAndReturnError(errorText, ErrCheck, err)
 	}
 
@@ -259,9 +255,6 @@ func licenseCheck() error {
 	if err != nil {
 		return mageutil.PrintAndReturnError(errorText, ErrCheck, err)
 	}
-
-	// per https://github.com/google/go-licenses?tab=readme-ov-file#check
-	disallowedLicenseTypes := []string{"unknown", "forbidden", "restricted"}
 
 	commonOptions := []string{
 		// Ignore golang.org/x dependencies to avoid spurious errors about .s files that can't be checked
@@ -274,9 +267,6 @@ func licenseCheck() error {
 		"./...",
 	}
 
-	checkArgs := append([]string{"check", "--disallowed_types=" + strings.Join(disallowedLicenseTypes, ",")},
-		commonOptions...)
-
 	// go-licenses complains about various standard library .go files unless we explicitly
 	// set the right GOROOT. We invoke "go env" to find the correct GOROOT and then run
 	// go-licenses in an environment with it set.
@@ -285,19 +275,50 @@ func licenseCheck() error {
 		return mageutil.PrintAndReturnError(errorText, ErrCheck, err)
 	}
 
+	if err := runLicenseCheck(cmdAbsPath, goRoot, commonOptions); err != nil {
+		return err
+	}
+
+	if err := runLicenseReport(cmdAbsPath, goRoot, commonOptions, outFilePath); err != nil {
+		return err
+	}
+
+	mageutil.MagePrintln(mageutil.MsgSuccess, "License check complete, results written to "+outFilePath)
+
+	return nil
+}
+
+// runLicenseCheck runs "go-licenses check" for disallowed license types, suppressing the benign
+// non-Go-code warnings on success and only surfacing real errors on failure.
+func runLicenseCheck(cmdAbsPath, goRoot string, commonOptions []string) error {
+	// per https://github.com/google/go-licenses?tab=readme-ov-file#check
+	disallowedLicenseTypes := []string{"unknown", "forbidden", "restricted"}
+
+	checkArgs := append([]string{"check", "--disallowed_types=" + strings.Join(disallowedLicenseTypes, ",")},
+		commonOptions...)
+
+	// go-licenses spews a glog warning for every dependency that contains non-Go (assembly) code.
+	// These are benign and constant, so capture the combined output, strip those warnings, and only
+	// surface what's left (real errors) when the check fails.
 	env := map[string]string{"GOROOT": goRoot}
 
-	err = sh.RunWithV(env, cmdAbsPath, checkArgs...)
-	if err != nil {
-		return mageutil.PrintAndReturnError(errorText, ErrCheck, err)
+	var out strings.Builder
+
+	if _, err := sh.Exec(env, &out, &out, cmdAbsPath, checkArgs...); err != nil {
+		mageutil.PrintLicenseOutput(out.String())
+
+		return mageutil.PrintAndReturnError("Failed to check licenses.", ErrCheck, err)
 	}
+
+	return nil
+}
+
+// runLicenseReport runs "go-licenses report" and writes the resulting CSV to outFilePath. The same
+// non-Go-code warnings are emitted to stderr; they are captured and only surfaced on failure.
+func runLicenseReport(cmdAbsPath, goRoot string, commonOptions []string, outFilePath string) error {
+	errorText := "Failed to check licenses."
 
 	reportArgs := append([]string{"report"}, commonOptions...)
-
-	report, err := sh.OutputWith(env, cmdAbsPath, reportArgs...)
-	if err != nil {
-		return mageutil.PrintAndReturnError(errorText, ErrCheck, err)
-	}
 
 	outFile, err := os.Create(outFilePath)
 	if err != nil {
@@ -305,12 +326,17 @@ func licenseCheck() error {
 	}
 	defer outFile.Close()
 
-	_, err = io.WriteString(outFile, report)
-	if err != nil {
+	// Stream stdout (the CSV) straight to the file and capture stderr separately so the benign
+	// non-Go-code warnings never reach the terminal; only surface them on failure.
+	env := map[string]string{"GOROOT": goRoot}
+
+	var stderr strings.Builder
+
+	if _, err := sh.Exec(env, outFile, &stderr, cmdAbsPath, reportArgs...); err != nil {
+		mageutil.PrintLicenseOutput(stderr.String())
+
 		return mageutil.PrintAndReturnError(errorText, ErrCheck, err)
 	}
-
-	mageutil.MagePrintln(mageutil.MsgSuccess, successText)
 
 	return nil
 }
