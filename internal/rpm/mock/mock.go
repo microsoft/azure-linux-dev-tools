@@ -601,7 +601,11 @@ func (r *Runner) InstallPackages(ctx context.Context, packages []string) error {
 		return fmt.Errorf("failed to create external command for mock:\n%w", err)
 	}
 
-	extcmd = extcmd.SetLongRunning("Waiting for mock (installing packages)...")
+	// In verbose mode, mock streams its output directly to the console, so we skip the
+	// indeterminate progress spinner (which would otherwise fight with the live output).
+	if !r.verbose {
+		extcmd = extcmd.SetLongRunning("Waiting for mock (installing packages)...")
+	}
 
 	err = extcmd.Run(ctx)
 	if err != nil {
@@ -637,7 +641,11 @@ func (r *Runner) ScrubRoot(ctx context.Context) error {
 		return fmt.Errorf("failed to create external command for mock:\n%w", err)
 	}
 
-	extcmd = extcmd.SetLongRunning("Waiting for mock (cleaning build root)...")
+	// In verbose mode, mock streams its output directly to the console, so we skip the
+	// indeterminate progress spinner (which would otherwise fight with the live output).
+	if !r.verbose {
+		extcmd = extcmd.SetLongRunning("Waiting for mock (cleaning build root)...")
+	}
 
 	err = extcmd.Run(ctx)
 	if err != nil {
