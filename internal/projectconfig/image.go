@@ -30,7 +30,7 @@ type ImageConfig struct {
 
 	// Tests holds the test configuration for this image, including which test suites
 	// apply to it.
-	Tests ImageTestsConfig `toml:"tests,omitempty" json:"tests,omitempty" jsonschema:"title=Tests,description=Test configuration for this image"`
+	Tests *ImageTestsConfig `toml:"tests,omitempty" json:"tests,omitempty" jsonschema:"title=Tests,description=Test configuration for this image"`
 
 	// Publish holds the publish settings for this image.
 	Publish ImagePublishConfig `toml:"publish,omitempty" json:"publish,omitempty" jsonschema:"title=Publish settings,description=Publishing settings for this image"`
@@ -115,6 +115,11 @@ type ImageTestsConfig struct {
 	// reference identifies a test suite defined in the top-level [test-suites] section
 	// and may carry per-test metadata in the future (e.g., required vs optional).
 	TestSuites []TestSuiteRef `toml:"test-suites,omitempty" json:"testSuites,omitempty" jsonschema:"title=Test Suites,description=List of test suite references that apply to this image"`
+
+	// Tests is the new-shape list of test or test-group references that apply to this
+	// image. References must resolve to entries in the project-level [tests] or
+	// [test-groups] maps; resolution is the responsibility of the test layer.
+	Tests []TestRef `toml:"tests,omitempty" json:"tests,omitempty" jsonschema:"title=Tests,description=List of test or test-group references that apply to this image"`
 }
 
 // TestSuiteRef is a reference to a named test suite. Using a structured type (rather than
@@ -126,6 +131,10 @@ type TestSuiteRef struct {
 
 // TestNames returns the test suite names referenced by this image.
 func (i *ImageConfig) TestNames() []string {
+	if i.Tests == nil {
+		return nil
+	}
+
 	names := make([]string, len(i.Tests.TestSuites))
 	for idx, ref := range i.Tests.TestSuites {
 		names[idx] = ref.Name

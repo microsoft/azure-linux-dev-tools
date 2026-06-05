@@ -17,6 +17,38 @@ func TestProjectConfigFileValidation_EmptyFile(t *testing.T) {
 	assert.NoError(t, file.Validate())
 }
 
+func TestProjectConfigFileValidation_TestDefinitionMismatchedSubtable(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Tests: map[string]projectconfig.TestDefinition{
+			"smoke": {
+				Type:   "pytest",
+				Pytest: map[string]any{"working-dir": "tests"},
+				Lisa:   map[string]any{"suite": "vm"},
+			},
+		},
+	}
+
+	err := file.Validate()
+	require.Error(t, err)
+	require.ErrorIs(t, err, projectconfig.ErrMismatchedTestSubtable)
+	assert.Contains(t, err.Error(), "invalid test")
+	assert.Contains(t, err.Error(), "smoke")
+	assert.Contains(t, err.Error(), "lisa")
+}
+
+func TestProjectConfigFileValidation_TestDefinitionMatchingSubtable(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Tests: map[string]projectconfig.TestDefinition{
+			"smoke": {
+				Type:   "pytest",
+				Pytest: map[string]any{"working-dir": "tests"},
+			},
+		},
+	}
+
+	assert.NoError(t, file.Validate())
+}
+
 func TestProjectConfigFileValidation_DefaultProjectInfo(t *testing.T) {
 	file := projectconfig.ConfigFile{
 		Project: &projectconfig.ProjectInfo{},
