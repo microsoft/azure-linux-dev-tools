@@ -25,9 +25,14 @@ type ComponentOverlay struct {
 	// apply to multiple files, supports glob patterns (including globstar).
 	Filename string `toml:"file,omitempty" json:"file,omitempty" jsonschema:"title=Filename,description=The name of the non-spec file to which this overlay applies, or a glob pattern matching multiple files"`
 	// For overlays that apply to specs, indicates the name of the section to which it applies.
-	SectionName string `toml:"section,omitempty" json:"section,omitempty" jsonschema:"title=Section name,description=The name of the section to which this overlay applies"`
+	// Optional for spec-prepend-lines, spec-append-lines, and spec-search-replace: when omitted,
+	// the overlay targets the entire spec file (prepend at top, append at end, search-replace
+	// across all sections).
+	SectionName string `toml:"section,omitempty" json:"section,omitempty" jsonschema:"title=Section name,description=The name of the section to which this overlay applies. Optional for spec-prepend-lines/spec-append-lines/spec-search-replace; when omitted these overlays target the entire spec file."`
 	// For overlays that apply to specs, indicates the name of the sub-package to which it applies.
-	PackageName string `toml:"package,omitempty" json:"package,omitempty" jsonschema:"title=Package name,description=The name of the sub-package to which this overlay applies"`
+	// A sub-package is always a sub-qualifier of a section, so this field cannot be combined
+	// with an omitted SectionName on overlays that support whole-file targeting.
+	PackageName string `toml:"package,omitempty" json:"package,omitempty" jsonschema:"title=Package name,description=The name of the sub-package to which this overlay applies. Cannot be combined with an omitted section on overlays that support whole-file targeting."`
 	// For overlays that apply to spec tags, indicates the name of the tag.
 	Tag string `toml:"tag,omitempty" json:"tag,omitempty" jsonschema:"title=Tag,description=For overlays that apply to spec tags, indicates the name of the tag"`
 	// For overlays that apply to values in specs, an exact string value to match.
@@ -202,6 +207,21 @@ func (c *ComponentOverlay) Validate() error {
 		return fmt.Errorf("overlay type %#q does not accept %#q field: %s", c.Type, fieldName, desc)
 	}
 
+	// requireSectionIfPackageSet checks that, for overlays that may target either a single
+	// section or the entire spec file (indicated by omitting `section`), a `package` is only
+	// specified when a `section` is also specified. A package is always a sub-qualifier of
+	// a section, so specifying one without the other is meaningless.
+	requireSectionIfPackageSet := func() error {
+		if c.SectionName == "" && c.PackageName != "" {
+			return fmt.Errorf(
+				"overlay type %#q requires %#q field when %#q is set: %s",
+				c.Type, "section", "package", desc,
+			)
+		}
+
+		return nil
+	}
+
 	requireRelativePath := func(fieldName, value string) error {
 		if value == "" {
 			return missingField(fieldName)
@@ -250,12 +270,20 @@ func (c *ComponentOverlay) Validate() error {
 		if len(c.Lines) == 0 {
 			return missingField("lines")
 		}
+
+		if err := requireSectionIfPackageSet(); err != nil {
+			return err
+		}
 	case ComponentOverlaySearchAndReplaceInSpec:
 		if c.Regex == "" {
 			return missingField("regex")
 		}
 
 		if err := validateRegex(c.Regex, desc); err != nil {
+			return err
+		}
+
+		if err := requireSectionIfPackageSet(); err != nil {
 			return err
 		}
 	case ComponentOverlayPrependLinesToFile:

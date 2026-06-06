@@ -239,12 +239,12 @@
         "section": {
           "type": "string",
           "title": "Section name",
-          "description": "The name of the section to which this overlay applies"
+          "description": "The name of the section to which this overlay applies. Optional for spec-prepend-lines/spec-append-lines/spec-search-replace; when omitted these overlays target the entire spec file."
         },
         "package": {
           "type": "string",
           "title": "Package name",
-          "description": "The name of the sub-package to which this overlay applies"
+          "description": "The name of the sub-package to which this overlay applies. Cannot be combined with an omitted section on overlays that support whole-file targeting."
         },
         "tag": {
           "type": "string",

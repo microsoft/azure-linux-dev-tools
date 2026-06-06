@@ -147,6 +147,63 @@ func TestComponentOverlay_Validate(t *testing.T) {
 			},
 			errorExpected: false,
 		},
+		// whole-file targeting (empty section) for prepend/append/search-replace
+		{
+			name: "spec-prepend-lines whole-file (no section) valid",
+			overlay: projectconfig.ComponentOverlay{
+				Type:  projectconfig.ComponentOverlayPrependSpecLines,
+				Lines: []string{"# Top of file"},
+			},
+			errorExpected: false,
+		},
+		{
+			name: "spec-prepend-lines whole-file with package rejected",
+			overlay: projectconfig.ComponentOverlay{
+				Type:        projectconfig.ComponentOverlayPrependSpecLines,
+				PackageName: "foo",
+				Lines:       []string{"# Top of file"},
+			},
+			errorExpected: true,
+			errorContains: "package",
+		},
+		{
+			name: "spec-append-lines whole-file (no section) valid",
+			overlay: projectconfig.ComponentOverlay{
+				Type:  projectconfig.ComponentOverlayAppendSpecLines,
+				Lines: []string{"# End of file"},
+			},
+			errorExpected: false,
+		},
+		{
+			name: "spec-append-lines whole-file with package rejected",
+			overlay: projectconfig.ComponentOverlay{
+				Type:        projectconfig.ComponentOverlayAppendSpecLines,
+				PackageName: "foo",
+				Lines:       []string{"# End of file"},
+			},
+			errorExpected: true,
+			errorContains: "package",
+		},
+		{
+			name: "spec-search-replace whole-file (no section) valid",
+			overlay: projectconfig.ComponentOverlay{
+				Type:        projectconfig.ComponentOverlaySearchAndReplaceInSpec,
+				Regex:       "pattern",
+				Replacement: "replacement",
+			},
+			errorExpected: false,
+		},
+		{
+			name: "spec-search-replace whole-file with package rejected",
+			overlay: projectconfig.ComponentOverlay{
+				Type:        projectconfig.ComponentOverlaySearchAndReplaceInSpec,
+				PackageName: "foo",
+				Regex:       "pattern",
+				Replacement: "replacement",
+			},
+			errorExpected: true,
+			errorContains: "package",
+		},
 		// spec-search-replace tests
 		{
 			name: "spec-search-replace valid",
