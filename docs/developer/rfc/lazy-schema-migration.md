@@ -88,7 +88,7 @@ This RFC therefore has two parts: **(1)** a one-time **reset** at the dev→prod
 - **G1 (primary, non-functional): no spurious lock-file diffs *after the reset*.** Once prod locks exist, landing a config-schema or hashing change must not rewrite `*.lock` files for components whose effective inputs are unchanged. The reset itself is the *one* sanctioned exception, absorbed by the already-scheduled rebuild.
 - **G2: only real changes drift.** Post-reset, a lock changes iff that component's build-effective inputs changed.
 - **G3: piecemeal, lazy migration post-reset.** Genuine algorithm evolution after the reset rolls out per-component, riding independent changes, never as a big-bang.
-- **G4: additive fields are drift-neutral by construction — *truly*, not just for new locks.** On the projection substrate (below) an unset additive field is invisible to *every* lock including old ones, because old algorithms pin an explicit field list and never reflect over the live struct.
+- **G4: additive fields are drift-neutral by construction — *truly*, not just for new locks.** On the projection substrate (below) an unset additive field is invisible to *every* lock including old ones, because old versions emit only the fields their tags include — a field added later is not in any shipped version's tag set, so it cannot move an existing hash.
 - **G5: correctness backstop preserved.** Never silently under-rebuild: a genuine input change must always drift its lock. Replay may accept encoding/over-capture changes; it must never mask a behavior-changing one.
 - **G6 (new, hard): back-compatible reads for synthetic history.** The new binary must still **read** pre-reset locks across git history (synthetic changelog/release walks them), even though it **writes** only the new format. Reading never recomputes a historical hash — it compares stored strings only.
 
@@ -129,7 +129,7 @@ The struct's type name *is* part of the hash (`hashstructure` mixes in `reflect.
 - Whether `Includable` is consulted depends on whether the type implements it *now* — not on what was true when v1 locks were written.
 - A `value` vs `pointer` receiver subtlety even decides whether the root struct's `HashInclude` is seen at all (the top-level value is not addressable).
 
-A function meant to be "the v1 algorithm, forever" therefore changes meaning every time the struct or its method set changes. That is the disqualifier for the incremental plan (Problem 6) and the motivation for the projection substrate below, whose v1 function pins an explicit field list and is immune to all three.
+A function meant to be "the v1 algorithm, forever" therefore changes meaning every time the struct or its method set changes. That is the disqualifier for the incremental plan (Problem 6) and the motivation for the projection substrate below, whose v1 projection emits only its version-tagged fields and reads neither the method set nor the type name — immune to all three.
 
 ## Change taxonomy
 
@@ -137,17 +137,19 @@ Not every config change should be treated the same way. The right mechanism depe
 
 | Class | Example | Should unaffected locks drift? | Mechanism |
 | ----- | ------- | ------------------------------ | --------- |
-| **Additive field** | new `foo` field, unset on most components | No — only setters drift | **Free, no bump.** Add `foo` to the current `projectVN` as omit-if-zero; a component that leaves it unset emits identical bytes, so no shipped hash moves. Setters drift (correct). |
-| **Additive with non-zero default** | new field defaulted to `"auto"` via defaults merge | No | **Bump + replay.** The default resolves non-zero on *every* component, so it is emitted everywhere and would move every hash — omit-if-zero can't save it. Ship `projectV(N+1)` that emits it; old locks **replay at their version** (which didn't emit it), match their stored digest → recognized unchanged → lazy re-stamp, no rebuild. |
-| **Rename / move** | `foo` → `bar`, same semantics | No | **Schema migration + bump + replay.** Migrate old TOML → canonical struct (the rename lands in the struct), then ship `projectV(N+1)` that emits the renamed field. Old locks replay at their version and are recognized unchanged → lazy re-stamp, no rebuild. |
+| **Additive field** | new `foo` field, unset on most components | No — only setters drift | **Free, no bump.** Tag the new field `vN..*` (current version, omit-if-zero); a component that leaves it unset emits identical bytes, so no shipped hash moves — adding an omit-if-zero field to the live version is the one output-preserving no-bump edit. Setters drift (correct). |
+| **Additive with non-zero default** | new field defaulted to `"auto"` via defaults merge | No | **Bump + replay.** The default resolves non-zero on *every* component, so it is emitted everywhere and would move every hash — omit-if-zero can't save it. Bump and tag the field `v(N+1)..*`; old locks **replay at their version** (whose set excludes it), match their stored digest → recognized unchanged → lazy re-stamp, no rebuild. |
+| **Default change on an *existing* field** | bump `jobs` default `4`→`8` | Yes — every component's effective input moved | **Not lazy-maskable.** Replay recomputes the *current* config (now resolving to `8`) under the old algorithm → `jobs=8` ≠ stored `jobs=4` → honest fleet-wide drift; replay cannot suppress it because the resolved value genuinely changed for everyone. Escape hatch: `config migrate` writes the *old* resolved value explicitly (`jobs=4`) into each config **before** moving the default — existing components then pin the old value (no drift) and only new components pick up `8`. Without that pre-pass it is a legitimate (if large) fleet rebuild, not a bug. |
+| **Rename / move** | `foo` → `bar`, same semantics | No | **Schema migration + bump + replay.** Migrate old TOML → canonical struct (the rename lands in the struct), then tag the renamed field `v(N+1)..*`. Old locks replay at their version and are recognized unchanged → lazy re-stamp, no rebuild. |
 | **Semantic change** | meaning of `foo` changes; output differs | Yes — that's correct | **None.** The build output genuinely differs, so the lock *should* drift. Replay at the old version would (correctly) mismatch → `Stale` → rebuild. Nothing to suppress. |
 | **Hashing bugfix** | overlay ordering bug in the combiner | No | **Bump + replay.** Ship the fixed combiner as the version-`N+1` half of `computeFP(N+1)`; old locks replay at the old (buggy) version. If their inputs are unchanged the buggy digest still matches → recognized unchanged → lazy re-stamp to the fixed version, no rebuild. |
-| **Newly measured input** | start folding in a new overlay source or identity element | No | **Bump + replay.** A non-config input is added in the combiner half of `computeFP(N+1)` (a config field would go in `projectV(N+1)`). Old locks replay at their version, which didn't fold it in, match their stored digest → recognized unchanged → lazy re-stamp, no rebuild. **Caveat:** until a lock migrates, replay is *blind* to the new input, so a change to it reads as fresh (false-fresh) — if it is build-critical, force a `component migrate` pass instead of riding lazy adoption (see [churn-avoidance](#churn-avoidance-policies-g1)). |
-| **Field removal** | drop deprecated `foo` | No, if nobody set it | **Deprecate-then-delete (+ bump for setters).** Bump to a `projectV(N+1)` that stops emitting `foo` but **keep the field on the struct** so the old `projectVN` can still read it for replay. Only after the floor passes that version (ideally after a `component migrate`) physically delete the field. Setters drift on the bump; non-setters replay clean. |
+| **Newly measured input** | start folding in a new overlay source or identity element | No | **Bump + replay.** A non-config input is added in the combiner half of `computeFP(N+1)` (a config field would be tagged `v(N+1)..*` instead). Old locks replay at their version, which didn't fold it in, match their stored digest → recognized unchanged → lazy re-stamp, no rebuild. **Caveat:** until a lock migrates, replay is *blind* to the new input, so a change to it reads as fresh (false-fresh) — if it is build-critical, force a `component migrate` pass instead of riding lazy adoption (see [churn-avoidance](#churn-avoidance-policies-g1)). |
+| **Field removal** | drop deprecated `foo` | No, if nobody set it | **Deprecate-then-delete (+ bump for setters).** Close the field's range at the prior version (`vK..*` → `vK..vN`, so v(N+1) stops measuring it) but **keep the field on the struct** so older versions can still read it for replay. Only after the floor passes vN (ideally after a `component migrate`) physically delete the field. Setters drift on the bump; non-setters replay clean. |
+| **Resurrected field** | re-measure a previously-dropped `foo` | Depends — only if its value moved | **Tag edit (+ bump).** Append a new range to the field's set (`v1..v3,v8..*`) so v8+ measures it again while v1–v7 stay byte-identical (golden-vector-enforced). If the field was already physically deleted, bring it back as a fresh additive field tagged `v8..*`. The earlier life and the revival never collide because each version's output is pinned independently. |
 
-The recurring requirement across the "No" rows is the same: **distinguish a change in user intent from a change in encoding, and only drift on the former.** Note the first row: on the projection substrate, a new field is added to `projectVN` as *omit-if-zero*, so a component that does not set it emits identical bytes and stays hash-neutral — *for every lock, old or new*, because old configs never set the brand-new field. Adding it does not move any existing hash (no shipped lock set it), so it needs no version bump. Part 2 then carries only the genuinely hard cases (rows 2, 5, and post-reset renames/removals). The shared move in every "Bump + replay" row is the same primitive — **increment the content version, keep the old `projectVN` as a frozen replay function, and let unchanged locks re-stamp lazily** — detailed in [Part 2](#part-2--post-reset-lazy-migration).
+The recurring requirement across the "No" rows is the same: **distinguish a change in user intent from a change in encoding, and only drift on the former.** Note the first row: on the projection substrate, a new field is added to `projectVN` as *omit-if-zero*, so a component that does not set it emits identical bytes and stays hash-neutral — *for every lock, old or new*, because old configs never set the brand-new field. Adding it does not move any existing hash (no shipped lock set it), so it needs no version bump. Part 2 then carries only the genuinely hard cases (rows 2, 5, and post-reset renames/removals). The shared move in every "Bump + replay" row is the same primitive — **increment the content version, keep the old `projectVN` as a frozen replay projection, and let unchanged locks re-stamp lazily** — detailed in [Part 2](#part-2--post-reset-lazy-migration).
 
-> **`projectVN`** is shorthand used throughout this RFC for the hand-written *projection function* introduced by this design (defined in [Substrate options](#substrate-options) and [The projection substrate](#the-projection-substrate)). The `N` is the lock content version: `projectV1` is the function that names and serializes exactly the fields content-version 1 measures, `projectV2` the next algorithm, and so on. Each `projectVN` is frozen once shipped — that is the whole point.
+> **`projectVN`** is shorthand used throughout this RFC for the canonical *projection at content-version N* introduced by this design (defined in [Substrate options](#substrate-options) and [The projection substrate](#the-projection-substrate)). It is **not** N hand-written functions: it is a single generic walker, `project(cfg, N)`, whose per-field membership is declared in version-set tags on the struct fields (see [Version-tagged field selection](#version-tagged-field-selection)). `projectV1` means `project(cfg, 1)` — the fields whose tag set includes v1; `projectV2` the next version, and so on. Each version's projection is frozen once shipped (its tags never move; golden vectors enforce it) — that is the whole point.
 
 ## Research
 
@@ -156,7 +158,7 @@ The recurring requirement across the "No" rows is the same: **distinguish a chan
 Two substrates can produce a content fingerprint of the resolved config. The difference that matters here is **whether an old algorithm function can be frozen.**
 
 - **`hashstructure` + `Includable` (rejected as the substrate).** Keeps existing hashes byte-identical and gives per-field omission via `HashInclude`. But, as established above (Problem 6), a function built on `hashstructure.Hash` reflects over the live struct and method set, so it cannot be a frozen historical algorithm. It also requires a value-receiver `HashInclude` on *every* nested fingerprinted struct and a subtle `v.(reflect.Value)` type-assert to work at all — brittle plumbing in service of a substrate that still can't host sound replay.
-- **Canonical projection + stdlib hash (chosen).** Split the two jobs `hashstructure` fuses — *field selection* and *hashing* — into explicit steps. A `projectVN` function names the exact fields version N measures, emits them in a canonical, sorted, self-delimiting byte form, and an stdlib `sha256` hashes those bytes. Because `projectV1` references an **explicit, pinned field list**, it does not see fields added later, does not depend on the type's method set, and does not depend on receiver subtleties. It is a genuinely frozen pure function — the property replay requires. The cost is owning a small projection encoder plus **golden hash vectors** per version (a checked-in `(config, version) → hash` table) so "frozen" is CI-enforced, not merely intended.
+- **Canonical projection + stdlib hash (chosen).** Split the two jobs `hashstructure` fuses — *field selection* and *hashing* — into explicit steps. Field selection is **declared per field** as a version-set in the `fingerprint` tag (`fingerprint:"v1..*"`); a single generic walker, `project(cfg, N)`, emits the fields whose set includes version N in a canonical, sorted, self-delimiting byte form, and an stdlib `sha256` hashes those bytes. Because a shipped version's tag membership is **fixed and golden-vector-pinned**, `project(cfg, 1)` does not see fields added later, does not depend on the type's method set, and does not depend on receiver subtleties. It is a genuinely frozen pure function of `(cfg, version)` — the property replay requires. The cost is owning a small projection encoder, the version-set tags, and **golden hash vectors** per version (a checked-in `(config, version) → hash` table) so "frozen" is CI-enforced, not merely intended.
 
 The projection substrate is what makes G4 true for old locks and what makes Part 2's replay sound. It is adopted at the reset (below), not incrementally.
 
@@ -168,6 +170,8 @@ The projection substrate is what makes G4 true for old locks and what makes Part
 - **Go modules** avoid the problem entirely by hashing *content* (`h1:` dirhashes) rather than a struct shape, so adding metadata fields never perturbs existing sums.
 
 The common pattern: an **integer version stamped into the persisted artifact**, plus the ability to **read and replay older versions**, plus **lazy forward-migration on write**. We keep `ComponentLock.Version` (the lock *format* slot) fixed at `1` and carry the *content* version **inside the `InputFingerprint` token** (`v<N>:sha256:…`) rather than in a separate struct field — one atomic value, no version/digest desync, no new TOML field for an old binary to mishandle. The Go-modules lesson is the deepest one: hashing *content* rather than struct shape is what makes additive metadata free — the canonical-projection substrate is our version of that lesson.
+
+**Where we go *beyond* the precedent (stated honestly).** All four tools above keep exactly **one** active algorithm: Cargo/npm/Terraform rewrite the *whole* artifact to the current version on next touch (eager-on-write), and Go modules sidestep replay entirely by never re-migrating semantics. **None of them keeps N historical hashing algorithms alive simultaneously across an indefinitely-unmigrated fleet** — which is exactly Part 2's behavior. The citations support "version stamp + lazy forward-migrate on write"; they do *not* cover "frozen algorithms coexisting forever." That coexistence is justified here on its own terms (it is what avoids a fleet rebuild on every algorithm change), and its one real cost — append-only registry growth — is bounded by the [floor-advance cadence](#registry-floor-and-forced-migration), not by precedent.
 
 ### Where the hashing logic should live
 
@@ -196,36 +200,92 @@ The original "lazy" instinct was right for Part 2 and wrong for Part 1: there is
 Replace `hashstructure.Hash(component, …)` with an explicit two-step pipeline:
 
 ```text
-ComponentConfig ──projectV1(cfg)──► canonical bytes ──sha256──► configHash
-                   (explicit field list,                 (stdlib)
-                    sorted keys, emit-if-nonzero)
+ComponentConfig ──project(cfg,1)──► canonical bytes ──sha256──► configHash
+                  (version-tagged fields,              (stdlib)
+                   sorted keys, emit-if-nonzero)
 ```
 
-`projectV1` is hand-written and names exactly the fields v1 measures. It emits a canonical, sorted, self-delimiting byte stream (length-prefixed keys + values) so distinct field sets cannot collide, and it omits a field when its **resolved value is zero** (the omitempty behavior, now a property of the encoder, not a struct tag). A field whose zero value is build-meaningful is simply listed as *always-emit* in `projectV1`.
+`projectV1` is the projection at version 1 — `project(cfg, 1)`. Field membership is declared **on each struct field** as a version-set in the `fingerprint` tag (`fingerprint:"v1..*"`); a single generic walker emits, in stable key order, every field whose set includes the target version, length-prefixing key+value so distinct field sets cannot collide. It omits a field when its **resolved value is zero** (omit-if-zero, an encoder property now, not a struct-tag toggle); a range prefixed with `!` (e.g. `!v1..*`) always-emits, for fields whose zero is build-meaningful. There is no per-version function — only the generic walker parametrized by version. (Grammar and recovery semantics: [Version-tagged field selection](#version-tagged-field-selection) below.)
 
 Three things this buys that `hashstructure` could not:
 
-- **Frozen by construction.** `projectV1` references a pinned field list, so adding `Foo` to the struct later is invisible to it — `projectV1`'s output for an old config is unchanged. This is what makes Part 2's replay sound (Problem 6) and G4 true for *old* locks, not just new ones.
-- **No method-set / receiver magic.** No `Includable`, no per-nested-struct method, no `v.(reflect.Value)` type-assert footgun. Field selection is ordinary code.
-- **Golden-vector enforced.** A checked-in table of `(config, version) → hash` vectors is asserted in CI, so any accidental change to a historical `projectVN` fails the build. "Frozen" stops being a promise and becomes a test.
+- **Frozen by construction.** A version's field set is fixed by tags that never change for a shipped version (golden vectors enforce it), so adding `Foo` to the struct later is invisible to `project(cfg, 1)` — its output for an old config is unchanged. This is what makes Part 2's replay sound (Problem 6) and G4 true for *old* locks, not just new ones.
+- **No method-set / receiver magic.** No `Includable`, no per-nested-struct method, no `v.(reflect.Value)` type-assert footgun. Selection is a declarative tag the walker reads.
+- **Golden-vector enforced.** A checked-in table of `(config, version) → hash` vectors is asserted in CI, so any accidental change to a historical projection — a tag edit that moves a shipped version's membership — fails the build. "Frozen" stops being a promise and becomes a test.
 
 The cost is owning the projection encoder and the golden vectors. That cost is paid once, at the reset, against a rebuild we are already doing.
+
+### Version-tagged field selection
+
+Field membership in each version's projection is declared **on the struct field**, as a version-set in the existing `fingerprint` tag — not in a hand-written per-version function. One generic walker, `project(cfg, N)`, emits every field whose set includes `N`. This is the chosen mechanism; hand-written `projectVN` functions are the [Option B alternative](#alternatives-considered).
+
+**Grammar** (deliberately small):
+
+```ebnf
+tag     = "-" | member, { ",", member } ;
+member  = [ "!" ], range ;            (* leading "!" ⇒ always-emit for this range *)
+range   = version, [ "..", ( version | "*" ) ] ;
+version = "v", digit, { digit } ;
+```
+
+| Tag | Meaning |
+| --- | --- |
+| *(absent)* | **build failure** — every fingerprinted field must carry an explicit decision |
+| `-` | never measured (unchanged from today) |
+| `v1..*` | measured from v1 onward, omit-if-zero — the common "active field" case |
+| `v1..v4` | measured v1–v4, then dropped |
+| `v3..*` | introduced at v3 |
+| `v1..v4,v6..*` | measured v1–v4, **dropped at v5, brought back at v6** |
+| `!v1..*` | measured v1 onward, **always-emit** (zero value still hashes) |
+| `v1..v4,!v5..*` | omit-if-zero v1–v4, then **always-emit from v5** (the temporal toggle) |
+
+`*` resolves to "this version and every later one," so an *active* field never needs a tag edit across a version bump — only a field that is *dropped* at the bump gets its range closed (`v1..*` → `v1..vN`).
+
+**Recovery is the property that justifies the range syntax.** The hard requirement: if we drop a field, then versions later realize we need it again, we must be able to bring it back *without* disturbing any frozen historical hash. The rule that guarantees it: **you only ever *add* a range for the *new* version; you never edit a shipped version's membership.** Walk it:
+
+- `Foo` tagged `v1..*`. At the v2 bump we drop it → edit to `v1..v1`. v1 still emits `Foo`; v2+ does not.
+- At v5 we need it back → edit to `v1..v1,v5..*`. **v1's membership is unchanged (still in the set), v2–v4 unchanged (still out), only v5+ is added.**
+
+Every frozen output is byte-preserved, and the **golden vectors prove it**: the edit `v1..v1` → `v1..v1,v5..*` must leave the v1–v4 vectors identical or CI fails. The grammar lets you *express* the non-contiguous set; the golden vectors *forbid* rewriting history while doing so. Two recovery flavors, both covered: (a) field still on the struct (lingering for replay) → reopen its range; (b) field already physically deleted (floor passed it) → bring-back is just a fresh additive field tagged `vN..*`. Same outcome, no special case.
+
+**Always-emit is per-range, for the same reason.** Whether a field's *zero value emits* can change over time just as its membership can — so `!` flags an individual range, not the whole field. `v1..v4,!v5..*` means omit-if-zero through v4, then always-emit from v5. Toggling it is an *output-changing* edit (a zero-valued field starts or stops emitting), so it lands as a new range at a new version exactly like a drop/re-add — same output-preservation rule, same golden-vector enforcement. The walker just asks "which range holds N, and is it `!`?" This is why the earlier whole-field `always` flag was wrong: it could not be toggled temporally without abandoning the generic walker.
+
+**What tags version, and what they don't.** Tags version *membership* — which fields a version measures. They do **not** version *encoding* — how a field's bytes are formed, or how the combiner folds non-field inputs. So the generic walker absorbs additive / removal / bring-back changes as pure tag edits (zero code), while a genuine encoding or combiner change still ships as versioned code in `computeFP(N+1)` (the walker output + the combiner step frozen at N). The taxonomy's non-additive rows are exactly that small set.
+
+**Enforcement**, three layers:
+
+1. **No tag → build failure** restores the safe default the projection otherwise gives up (G-1): a forgotten field fails loudly instead of silently dropping out of the hash. The tag *is* the per-field completeness ledger — no separate audit, no field→key bridge.
+2. **Well-formedness:** ranges parse, are sorted and non-overlapping, and name no version above `currentLockContentVersion` (open `*` excepted); a `!` prefix is per-range and orthogonal to those checks. A malformed or future-referencing set fails the build.
+3. **Golden vectors** pin `(config, version) → hash`, so any edit that changes a *shipped* version's output for an existing config fails CI. The precise rule is **output-preservation**, not literal membership-freezing: adding an *omit-if-zero* field to the current version (`vN..*`) is the one no-bump edit, because no existing config set it so no existing vector moves; every *output-changing* edit instead defines a **new** version (closing or opening a range at the bump), leaving all earlier versions byte-identical. You can introduce membership for the new version freely, but you can never silently rewrite a shipped hash.
+
+This retires the `expectedExclusions` map in `fingerprint_test.go` outright: "no tag → fail" makes every decision explicit and local, and golden vectors catch accidental include→exclude edits — the map's two jobs, both subsumed.
 
 ### Baseline v1 — omit-if-zero, no include-always legacy
 
 Because the reset rebuilds everything, there is **no pre-existing population to stay byte-compatible with.** That removes the single biggest constraint of the incremental plan: we do **not** need an `include-always` compatibility mode to preserve today's hashes. `projectV1` is the omit-if-zero projection from day one. There is no `computeFP1 = legacy include-always` entry to carry forever — the registry's floor *starts* at the clean projection.
 
 ```go
-// projectV1 emits the canonical byte form of the fields v1 measures.
-// Field selection is explicit code, not reflection — this is what freezes it.
-// emit() length-prefixes key+value so distinct field sets cannot collide;
-// it skips a field when the resolved value is zero (the omit-if-zero default).
-func projectV1(c *ComponentConfig) []byte {
+// Membership is declared per field as a version-set tag; one generic walker
+// emits the fields whose set includes the target version, in stable key order.
+// What freezes a version is that its tags never change once shipped (golden
+// vectors enforce it) — not that the walker is bespoke.
+type ComponentConfig struct {
+    Upstream   string   `fingerprint:"v1..*"`   // measured v1+, omit-if-zero
+    Patches    []string `fingerprint:"v1..*"`   // omit-if-zero (nil and [] both → absent)
+    StripDebug bool     `fingerprint:"!v1..*"`  // always-emit: zero (false) is build-meaningful
+    Internal   string   `fingerprint:"-"`       // never measured
+    // … every fingerprinted field carries an explicit tag; absent ⇒ build failure …
+}
+
+func project(c *ComponentConfig, version int) []byte {
     var b canonicalBuf
-    b.emit("upstream", c.Upstream)           // omit-if-zero
-    b.emit("patches", c.Patches)             // omit-if-zero (nil and [] both → absent)
-    b.emitAlways("strip_debug", c.StripDebug) // always: zero (false) is build-meaningful
-    // … one line per measured field, in a fixed order …
+    for _, f := range fingerprintFields(c) {     // reflection, cached, sorted by key
+        r := f.set.rangeContaining(version)
+        if r == nil {
+            continue                             // field not measured at this version
+        }
+        b.emit(f.key, f.value, r.always)         // r.always (the range's '!') ⇒ emit even when zero
+    }
     return b.Bytes()
 }
 ```
@@ -235,14 +295,14 @@ func projectV1(c *ComponentConfig) []byte {
 - Two configs that both resolve a field to zero build identically → hashing them the same is **correct**, not a collision.
 - "Unset" never reaches the hasher — it has already been resolved to its default. If the default is non-zero, the field is non-zero and is emitted anyway. If the default *is* zero, then unset and explicit-zero resolve identically → same build → same hash → correct.
 
-So the classic false-negative requires absence ≠ zero-default *at the point of hashing*, and post-merge resolution closes that gap. The load-bearing invariant is **G5's guarantee restated structurally: the fingerprint must see exactly the build-effective resolved config.** That invariant must already hold, or fingerprinting is broken independently of this change. `emitAlways` is the escape hatch for the rare field whose zero value is build-meaningful.
+So the classic false-negative requires absence ≠ zero-default *at the point of hashing*, and post-merge resolution closes that gap. The load-bearing invariant is **G5's guarantee restated structurally: the fingerprint must see exactly the build-effective resolved config.** That invariant must already hold, or fingerprinting is broken independently of this change. A `!`-prefixed range is the escape hatch for the rare field whose zero value is build-meaningful.
 
 **Result:** additive fields are drift-neutral **by construction** (G4) — a newly added field, listed omit-if-zero in `projectVN`, emits nothing for any component that does not set it, so it is invisible to every lock that leaves it unset, old or new. Adding it moves no existing hash (no shipped lock could have set a field that did not yet exist), so it needs no version bump. Only setters drift (G2).
 
 #### Edge cases under omit-if-zero
 
-- **Meaningful zero with a non-zero default** (e.g. `int Jobs` defaulting to `4`, where `0` means serial). Post-merge: unset → `4` (emitted), explicit `0` → omitted. These build differently *and* hash differently, so there is no collision — they are consistent. Use `emitAlways` only if a zero value must be distinguishable from a future change of default.
-- **nil vs empty slice.** A missing TOML key → nil → omitted; `key = []` → non-nil empty → emitted. For any slice/map field where an explicit-empty value is reachable and build-meaningful, use `emitAlways` so nil and empty both hash.
+- **Meaningful zero with a non-zero default** (e.g. `int Jobs` defaulting to `4`, where `0` means serial). Post-merge: unset → `4` (emitted), explicit `0` → omitted. These build differently *and* hash differently, so there is no collision — they are consistent. Use a `!` range only if a zero value must be distinguishable from a future change of default.
+- **nil vs empty slice.** A missing TOML key → nil → omitted; `key = []` → non-nil empty → emitted. For any slice/map field where an explicit-empty value is reachable and build-meaningful, use a `!` range so nil and empty both hash.
 
 ### The reset load-out — what to spend the free rebuild on
 
@@ -255,7 +315,7 @@ The reset rebuild is a budget. Spend it on the irreversible / cutover-only chang
 5. **Unify on `sha256` everywhere**, retiring the `uint64`→decimal-string wart from the `hashstructure` era. One hash format, one encoding.
 6. **Do every pending rename / default-normalization now.** Renaming a field, moving content between structs, or changing a baked-in default is a one-way door under Part 2 (it needs a version bump + replay); at the reset it is free because everything rebuilds anyway. This is where the schema-axis "hardest cases" get absorbed cheaply.
 
-**Anti-goal:** do *not* burn reset budget on additive fields — Part 2 handles those for free, forever. The single success criterion for the load-out is that **no second coordinated cutover is ever needed**: after the reset, every future change must be expressible as either a free additive field or a lazy Part 2 version bump.
+**Anti-goal:** do *not* burn reset budget on additive fields — Part 2 handles those for free, forever. The success criterion for the load-out is that **no *routine* change ever forces a second coordinated cutover**: after the reset, every ordinary change must be expressible as either a free additive field or a lazy Part 2 version bump. Retiring an *old* content version is the one sanctioned exception — a fleet-wide `component migrate` is itself a deliberate, planned, reset-grade event (see [Registry floor](#registry-floor-and-forced-migration)); the goal is that nothing *unplanned* ever forces one.
 
 ### The lock changes at the reset — atomic token + forced upgrade
 
@@ -315,6 +375,19 @@ Stamp one **lock content-hash version** into the lock (the `v1:` prefix of the a
    }
    const currentLockContentVersion = 1       // == the reset baseline; bumps only on a real algo change
    const minSupportedLockContentVersion = 1  // floor; raise only after a deliberate `component migrate`
+
+   // init enforces the registry/floor contract: every version in
+   // [minSupported, current] MUST have an entry, or replay panics at
+   // runtime instead of failing the build. The map and the two consts are
+   // edited independently, so this assertion is load-bearing, not decorative.
+   func init() {
+       for v := minSupportedLockContentVersion; v <= currentLockContentVersion; v++ {
+           if _, ok := lockAlgos[v]; !ok {
+               panic(fmt.Sprintf("lockAlgos missing version %d in [%d,%d]",
+                   v, minSupportedLockContentVersion, currentLockContentVersion))
+           }
+       }
+   }
    ```
 
 3. In `checkFingerprintFreshness`, compute at the **current** version. On mismatch, if the lock's token version `< current`, recompute at the lock's token version. If *that* matches the stored digest, the inputs are unchanged and only the algorithm evolved → treat as `FreshnessCurrent` and flag for silent re-stamp. Otherwise → `FreshnessStale`. (The resolution hash reuses `computeRes1` until its algorithm first changes — see scope note.)
@@ -369,9 +442,10 @@ This is correct *by contract* (a v1 lock promises freshness under the v1 input s
 Lazy migration means an untouched lock can sit at an old version **indefinitely** (G3 by design). That makes "keep the last *N* versions" a **correctness cliff, not a tuning knob**: if pruning drops the compute function a lock still depends on, replay becomes impossible → forced `FreshnessStale` → the mass rebuild/rewrite (and, via the downstream-consumer analysis below, mass changelog churn) the whole design exists to avoid. So the floor must be explicit and paired with an escape hatch, decided now:
 
 - **`minSupportedLockContentVersion`** is a hard floor. A lock below it cannot be replayed and is treated as `Stale`. Dropping a registry entry is therefore a deliberate, breaking, announced act — never incidental cleanup.
-- **`component migrate`** (Open Q#5, promoted to a requirement) force-advances every lock to the current content version in one deliberate pass. This is the *only* sanctioned way to retire an old version: migrate the fleet first (one intentional, reviewed, fleet-wide commit), then raise the floor. Note this pass is a deliberate G1 exception — it *is* the eager migration G1 normally forbids, made safe by being explicit and operator-driven rather than a silent side effect. **Contract:** it is *offline* — it loads each lock, recomputes the fingerprint at `currentLockContentVersion`, and rewrites the token; it does **not** re-resolve upstream (`upstream-commit`/`import-commit` untouched, unlike `update --force-recalculate`) and does **not** flip the release signal (unlike `--bump`). A migration that re-resolved or bumped would no longer be a pure version advance. The on-disk *config* axis has its own verb, [`config migrate`](#config-schema-version-and-canonical-migration-future); the two are orthogonal — each lives with the artifact its command group already owns (`component` writes locks, `config` owns the TOML).
+- **`component migrate`** (Open Q#5, promoted to a requirement) force-advances every lock to the current content version in one deliberate pass. This is the *only* sanctioned way to retire an old version: migrate the fleet first (one intentional, reviewed, fleet-wide commit), then raise the floor. Note this pass is a deliberate G1 exception — it *is* the eager migration G1 normally forbids, made safe by being explicit and operator-driven rather than a silent side effect. **Contract:** it is *offline* — it loads each lock, recomputes the fingerprint at `currentLockContentVersion`, and rewrites the token; it does **not** re-resolve upstream (`upstream-commit`/`import-commit` untouched, unlike `update --force-recalculate`) and does **not** touch the manual-bump counter (unlike `--bump`). It *does*, however, move every token's digest — advancing the algorithm version is the whole point — so a fleet-wide migrate **is a fleet-wide, release-grade event**: `FindFingerprintChanges` reads each moved token as notable, exactly as [the synthetic-history trap](#the-synthetic-changelogrelease-path-is-the-real-hazard) warns. That is *why* migrate is reset-grade and rare, not a free background sweep — the release churn is the deliberate cost of retiring a version. The on-disk *config* axis has its own verb, [`config migrate`](#config-schema-version-and-canonical-migration-future); the two are orthogonal — each lives with the artifact its command group already owns (`component` writes locks, `config` owns the TOML).
+- **Floor-advance cadence.** Because raising the floor requires a release-grade `component migrate`, pruning cannot be routine — left alone, the registry, golden vectors, and deprecated tombstone fields grow **append-only** (a real cost the opaque-token model accepts; see the manifest alternative). Policy: piggyback floor-raises onto *already-planned* mass rebuilds (the next environment cutover or a major release), and enforce a CI ceiling on the `currentLockContentVersion − minSupportedLockContentVersion` *spread* so the backlog cannot grow unbounded between those planned events. The spread, not the absolute version number, is the quantity kept small.
 
-**Mixed-toolchain hazard — handled by force-rehash, not a format gate.** The classic trap is an older binary regressing a newer lock. Because the lock *format* never bumps, an old binary *can* write a reset lock — but the **atomic token** makes that harmless: it stamps a legacy (prefix-less) or lower-`v<N>` hash, which the next new-binary run detects as sub-floor and **force-rehashes** to the current version. Self-correcting, never silent corruption. The symmetric residual is a binary that predates a content-version `v2` and meets a `v2` token it cannot replay: it must **error** (the token version exceeds its `currentLockContentVersion`), not silently restamp at `v1`. A one-line write guard (refuse to write a token whose version exceeds the binary's `currentLockContentVersion`) plus the CI version-pin closes that direction.
+**Mixed-toolchain hazard — bounded by the version-pin, not auto-repair.** The classic trap is an older binary regressing a newer lock. Because the lock *format* never bumps, an old binary *can* write a reset lock, stamping a legacy (prefix-less) or lower-`v<N>` hash. In the **working tree** this is self-correcting: the next new-binary run detects the sub-floor token and force-rehashes it to the current version. But "self-correcting" stops at the working tree — if a downgraded lock is **committed**, `FindFingerprintChanges` reads `v1 → legacy → v1` as two real release events, and a published `%autorelease` increment cannot be withdrawn. So the load-bearing guard against *committed* phantom releases is the **CI version-pin**: post-cutover, no old binary may run the `update`-and-commit step. (The force-rehash only cleans the working tree; it does not undo history.) The *symmetric* residual — a binary that predates content-version `v2` meeting a `v2` token it cannot replay — is closed by a **required** write-time guard (Open Q#5, now a requirement): refuse to write a token whose version exceeds the binary's `currentLockContentVersion`, erroring rather than silently restamping at `v1`. Note this guard lives in the binary doing the write, so it constrains *newer-but-not-newest* binaries; it does **not** retroactively constrain a genuinely *old* binary — that direction is the version-pin's job.
 
 #### Replaying across a changed input set — `{a,b,c}` → `{a,b,d}`
 
@@ -387,14 +461,14 @@ Split the change into its two halves; they are handled independently:
 
 So the bump is **not breaking**: replay answers "were the *old* inputs unchanged?" without rebuilding.
 
-**The one constraint replay still imposes: a retained `projectVN` must be able to read every field it lists.** Unlike the `hashstructure` substrate, `projectV1` is immune to field *additions* (it never reflects the live struct). It is *not* immune to field *removal*: `projectV1` names `c` explicitly, so physically deleting `c` from the struct stops `projectV1` from compiling. Removal is therefore the one edit still gated by a **deprecate-then-delete** two-step, both non-breaking:
+**The one constraint replay still imposes: a field a retained version still measures must stay on the struct.** The projection is immune to field *additions* (the walker only emits fields whose tag set includes the target version, so a new field is invisible to old versions). It is *not* immune to field *removal*: v1 still measures `c` (its tag set includes v1) and the retained v1 golden vector sets `c`, so physically deleting `c` from the struct makes that vector's config unconstructable → the golden-vector test fails to build. (Hand-written `projectVN` functions would make this a *compile* error instead — a marginally stronger guard the tag walker trades for an equally-blocking CI one; see [D2](#d2--version-tagged-field-selection--golden-vectors).) Removal is therefore the one edit still gated by a **deprecate-then-delete** two-step, both non-breaking:
 
-1. **Bump to v2 measuring `{a,b,d}` but keep field `c` on the struct** so `projectV1` can still read it for replay (`projectV2` simply does not list `c`). Every old lock replays clean at v1, is recognized as unchanged, lazy re-stamps to v2. Zero forced rebuilds.
+1. **Bump to v2 measuring `{a,b,d}` but keep field `c` on the struct** so the v1 projection can still read it for replay (close `c`'s tag to `v1..v1`, so v2 does not measure it). Every old lock replays clean at v1, is recognized as unchanged, lazy re-stamps to v2. Zero forced rebuilds.
 2. **Only after the floor passes v1** (`minSupportedLockContentVersion = 2`, ideally after a deliberate `component migrate`) physically delete field `c` and `projectV1`.
 
-> **Invariant:** a field may be physically removed from the config struct only after *every* retained `projectVN` that lists it has been retired below `minSupportedLockContentVersion`. Retained projection functions and the struct they read must stay in sync — you cannot delete a field a live version still names.
+> **Invariant:** a field may be physically removed from the config struct only after *every* retained version whose tag set includes it has been retired below `minSupportedLockContentVersion`. Retained versions and the struct they read must stay in sync — you cannot delete a field a live version's golden vector still sets.
 
-This makes "drop an input" a lazy, per-component migration rather than a fleet-wide rebuild — at the cost of carrying a deprecated field on the struct until its projection function ages out.
+This makes "drop an input" a lazy, per-component migration rather than a fleet-wide rebuild — at the cost of carrying a deprecated field on the struct until the last version measuring it ages out.
 
 #### First post-reset customer
 
@@ -410,7 +484,7 @@ This is the on-disk TOML axis. It is **independent** of the fingerprint axis and
 
 The critical invariant: **migrate old TOML → latest canonical struct, then project once.** A semantically no-op migration (rename `foo`→`bar`) must produce the *same* canonical struct, hence the same projection bytes, hence no drift. This is what keeps the schema axis **orthogonal** to the lock axis: a faithful `config migrate` is a pure re-encoding that moves *no* fingerprint, so it never triggers a `component migrate`. If a TOML change genuinely alters build meaning, that is a content-version bump (Part 2), not a `config migrate`.
 
-**Resolved by projection:** the old `hashstructure` caveat — that it mixed `reflect.Type.Name()` into the hash, so renaming a Go struct moved every fingerprint even with identical content — **no longer applies.** `projectVN` hashes only the explicit field bytes it emits, never the type name. A struct rename is now genuinely drift-neutral.
+**Resolved by projection:** the old `hashstructure` caveat — that it mixed `reflect.Type.Name()` into the hash, so renaming a Go struct moved every fingerprint even with identical content — **no longer applies.** `projectVN` hashes only the explicit field bytes it emits, never the type name. A struct rename is now genuinely drift-neutral — **pinned by a golden test** (rename a fingerprinted struct while keeping its fields identical → byte-identical digest), so the property is CI-enforced, not just asserted here.
 
 ## Pipeline
 
@@ -434,12 +508,17 @@ The versioned-replay story in Part 2 must hold for **every** reader of `InputFin
 | -------- | ----- | -------- | --------------------------- |
 | `checkFingerprintFreshness` (resolver) | recomputed identity | vs stored token | Replay at token version (Part 2 core) |
 | `component update` `Changed` decision | recomputed identity | vs stored token | **Replay before `Changed`** (see churn policy seam) |
-| `changed.go` `classifyComponent` / `haveMatchingFingerprints` (CI classifier) | stored token strings | version-blind compare | **Replay-aware compare** — a v1 token must match its v2 re-stamp as "same" |
+| `changed.go` `classifyComponent` / `haveMatchingFingerprints` (CI classifier) | stored token strings (two historical git refs) | string compare | **String-only — must NOT replay** (no inputs available, and replaying historical configs would violate the no-recompute invariant); kept honest by strict-lazy churn, exactly like `FindFingerprintChanges` |
 | `synthistory.FindFingerprintChanges` | stored token strings across git history | adjacent commits | **No change needed — if migration stays lazy** |
 | `synthistory.BuildDirtyChange` | recomputed (current ver) | vs stored `headLock` token | **Replay at headLock version** before declaring dirty |
 | `ResolutionInputHash` staleness/write | recomputed resolution hash | vs stored | **Shares the version; replay reserved, not yet wired** |
 
-The `changed.go` classifier is the easily-missed fifth consumer: [`classifyComponent`](../../../internal/app/azldev/cmds/component/changed.go) and `haveMatchingFingerprints` do raw, version-blind token compares to decide CI classification. Post-switchover a v1 token and its semantically-identical v2 re-stamp are different strings, so a naive compare would misclassify the component as changed. It needs the same replay-aware comparison as the freshness check (compare at the older token's version), not a raw string equality.
+**Two comparator classes, not one — and only one of them can replay.** The consumers split cleanly by *what they hold*:
+
+- **Current-tree comparators** (`checkFingerprintFreshness`, `update`'s `Changed`, `BuildDirtyChange`) recompute against *live inputs*, so they **can and must** replay at the stored token's version. Feasible and invariant-safe.
+- **Stored-vs-stored historical comparators** (`FindFingerprintChanges`, `changed.go`'s `classifyComponent`/`haveMatchingFingerprints`) hold only committed token *strings* from two git refs — no config, no FS, no inputs. They **cannot** replay, and replaying would require recomputing a historical fingerprint, which the [forever-invariant](#back-compat-invariant--synthetic-history-reads-stored-strings-never-recomputes) forbids outright. Both stay **string-only**, kept honest by the *same* strict-lazy churn policy: under lazy migration a v1→v2 re-stamp only ever rides a commit whose inputs genuinely changed, so a raw string compare never sees a version-only delta.
+
+The `changed.go` classifier was the easily-missed member of the *second* class. The fix is **not** to make it replay-aware (impossible, and invariant-violating) — it is to confirm it lives under the strict-lazy guarantee, exactly as `FindFingerprintChanges` does. An earlier draft of this table wrongly demanded replay here; that obligation is removed.
 
 ### The synthetic changelog/release path is the real hazard
 
@@ -460,7 +539,7 @@ The single shared content version (the token's `v<N>` prefix) covers it (see [Bo
 - `ResolutionInputHash` does **not** feed `synthistory` — so an algorithm change can never mint a phantom changelog/release (that hazard is fingerprint-only). Worst case is a one-line `resolution-input-hash` rewrite per lock plus a wasted re-resolution that usually yields the same commit. Churn, not corruption.
 - It is a flat seven-field SHA256, not a struct walk, so the projection substrate leaves it untouched — it has no pending version event. Its registry slot stays `computeRes1` until its inputs genuinely change.
 
-**Decision:** the atomic token format is fixed at the reset, so there is no irreversible key-naming decision left; wire fingerprint replay in Part 2's first PR; reserve resolution replay (slot present, prior fn reused) and wire it the day `ComputeResolutionHash` first changes — a localized follow-up with no schema change. KISS/YAGNI on the second replay.
+**Decision:** the atomic token format is fixed at the reset, so there is no irreversible key-naming decision left; wire fingerprint replay in Part 2's first PR; reserve resolution replay (slot present, prior fn reused) and wire it the day `ComputeResolutionHash` first changes — a localized follow-up with no schema change. KISS/YAGNI on the second replay. **One constraint for that day:** give `ResolutionInputHash` its *own* version prefix (decoupled from the `InputFingerprint` token) when replay is wired. Sharing one integer is fine *now* because resolution has no pending version event; but a *resolution-only* algorithm change must not be forced to advance the `InputFingerprint` token — that field feeds `FindFingerprintChanges`, so bumping it for a resolution change would mint a phantom release. Independent prefixes keep a resolution bump off the release-bearing field.
 
 ## Design decisions
 
@@ -470,23 +549,24 @@ Both can omit zero values; the decisive difference is **whether an old algorithm
 
 | | Canonical projection (chosen) | `hashstructure` + `Includable` |
 | --- | --- | --- |
-| Old algorithm frozen | Yes — explicit pinned field list | No — reflects the live struct/method-set |
+| Old algorithm frozen | Yes — version-tagged fields, golden-vector pinned | No — reflects the live struct/method-set |
 | Sound replay (Part 2) | Yes | No (the disqualifier) |
-| Meaningful empties | `emitAlways` per field | `fingerprint:"always"` per field |
+| Meaningful empties | `!`-prefixed range per field | `fingerprint:"always"` per field |
 | Type-name in hash | No (rename is drift-neutral) | Yes (rename moves every hash) |
-| Plumbing | Projection encoder + golden vectors | Value-receiver `HashInclude` on every nested struct + `v.(reflect.Value)` assert |
+| Plumbing | Generic walker + version tags + golden vectors | Value-receiver `HashInclude` on every nested struct + `v.(reflect.Value)` assert |
 
 `Includable` keeps today's hashes byte-identical, which mattered for an *incremental* rollout — but that property is worthless once the reset rebuilds everything anyway, and it comes attached to a substrate that makes replay unsound. Projection trades byte-compatibility (which we are spending on the coordinated cutover regardless) for frozen replay (which we need forever). Adopted at the reset.
 
-### D2 — Explicit field lists + golden vectors over reflection tags
+### D2 — Version-tagged field selection + golden vectors
 
-Field selection lives in `projectVN` as ordinary, explicit Go code (one `emit`/`emitAlways` line per measured field), not in struct tags read by a reflective walker. Rationale:
+Field membership lives in a per-field version-set tag (`fingerprint:"v1..*"`) read by one generic walker — not in N hand-written functions, and not in the binary include/exclude tag of today's reflective audit. Rationale:
 
-- The *unsafe* failure direction is the false-negative (a meaningful field silently omitted → missed rebuild). An explicit list makes "what does v1 measure?" greppable in one function, and the **golden-vector test** turns any accidental change to a historical projection into a CI failure — a far stronger guard than a tag-presence audit.
-- It forces the "is this field's zero value build-meaningful?" decision at the call site (`emit` vs `emitAlways`), with full context.
-- It removes the `Includable` nested-struct trap entirely: there is no per-struct method to forget, no decorative tag that passes the audit while silently hashing a zero.
+- **The unsafe direction is the false-negative** (a meaningful field silently omitted → missed rebuild → stale artifact). A *mandatory* tag — absent → build failure — makes the include/exclude decision impossible to forget, restoring the safe default a bare hand-written list quietly gives up (G-1). The tag *is* the per-field completeness ledger: no separate audit, no field→emit-key bridge.
+- **Version-awareness is declarative.** A field's whole lifecycle — introduced at v3, dropped at v5, revived at v8 — is one greppable string on the field (`v3..v4,v8..*`), not a diff smeared across three function bodies. Recovery (bring-back) is *expressible* precisely because the set is non-contiguous.
+- **Golden vectors freeze it.** Editing a shipped version's output changes a checked-in `(config, version) → hash` vector → CI failure — the same backstop that would protect hand-written functions, minus the per-version boilerplate.
+- **It retires `expectedExclusions`.** The map in `fingerprint_test.go` exists to (a) force a decision on every field and (b) catch accidental exclusion-tag removal; no-tag-fail and golden vectors subsume both.
 
-The cost is writing `projectVN` by hand instead of leaning on reflection. That is the point: hand-written selection is what makes the function frozen and auditable.
+The one thing hand-written functions do better: field *removal* is **compile-enforced** there (deleting a field a retained `projectVN` still names won't compile), where the tag walker downgrades it to an equally-blocking *golden-vector* build failure. That single marginal loss buys declarative lifecycles, native completeness, and first-class recovery — a good trade. The hand-written variant is kept as [Option B](#alternatives-considered).
 
 ### D3 — Atomic self-describing token; no format bump, reconcile via force-rehash
 
@@ -496,7 +576,7 @@ The lock **format** `Version` stays at `1`. An earlier draft bumped it (1→2) a
 
 ### D4 — Project to bytes, not a `ConfigHash()` method on the type
 
-`projectVN(config) []byte` returns canonical bytes; the combiner in `fingerprint` owns the `sha256` and the version dispatch. A `ConfigHash()` method that returns a finished hash was rejected: it drags crypto + versioning onto a data type, and it tempts callers to route around the version registry to get a raw, version-agnostic hash. Returning bytes keeps the config type ignorant of versioning, and keeps the combiner the **sole version authority**. See [the seam note](#where-the-hashing-logic-should-live).
+`project(config, version) []byte` returns canonical bytes; the combiner in `fingerprint` owns the `sha256` and the version dispatch. A `ConfigHash()` method that returns a finished hash was rejected: it drags crypto + versioning onto a data type, and it tempts callers to route around the version registry to get a raw, version-agnostic hash. Returning bytes keeps the config type ignorant of versioning, and keeps the combiner the **sole version authority**. See [the seam note](#where-the-hashing-logic-should-live).
 
 ## Alternatives considered
 
@@ -505,14 +585,16 @@ The lock **format** `Version` stays at `1`. An earlier draft bumped it (1→2) a
 - **Parallel versioned structs with per-struct `Hash()`** — couples locks to Go type identity and duplicates hashing logic per version. Rejected in favor of Part 2's integer-versioned combiner over frozen projections.
 - **Bump the lock format `Version` 1→2 as a poison pill** (an earlier draft's choice) — makes old binaries hard-reject reset locks. Rejected: it also blocks old binaries from reading pins to queue a build, and it is unnecessary, since the content-version registry already force-rehashes any sub-floor or downgraded token (D3). Same-format + force-rehash keeps old binaries useful without risking silent corruption.
 - **Eager fleet-wide migration as the steady-state mechanism** — rewriting every lock on every algorithm change is the mass-churn the design exists to prevent. Rejected for the steady state. The *reset* is a deliberate, one-time, operator-driven eager pass riding an already-scheduled rebuild — the sanctioned exception, not the rule; `component migrate` is its post-reset equivalent for retiring an old version.
+- **Hand-written per-version `projectVN` selection functions (instead of version tags).** Each version gets a bespoke `func projectVN(c) []byte` with one explicit `emit`/`emitAlways` line per measured field. *Win:* field removal is **compile-enforced** — deleting a struct field a retained `projectVN` still names won't compile (the tag walker downgrades this to a CI-time golden-vector failure). *Losses:* membership is smeared across N function bodies instead of one declarative tag per field; "bring a field back a few versions later" has no first-class expression (you re-add an `emit` line, with nothing tying it to the field's earlier life); and the mandatory-decision property (G-1) needs a *separate* completeness test with an awkward field→emit-key bridge, where the tag simply *is* the ledger. Rejected in favor of version tags: the declarative lifecycle, native completeness, and expressible recovery outweigh trading one compile-time guard for an equally-blocking CI guard.
+- **Per-field hash manifest in the lock (instead of one opaque token).** Store `{field → hash}` (à la `go.sum`) rather than a single `v<N>:sha256:…` digest. *Genuine wins:* dropping a field becomes ignoring its manifest line — no projection kept alive for replay, so the **deprecate-then-delete two-step and the registry-retirement deadlock** (the append-only growth above) both vanish; and the stored-vs-stored historical comparators become structural set-diffs rather than version-blind string compares. *Why the opaque token still wins for azldev:* (1) the projection substrate **already** delivers additive immunity (G4) — the manifest's headline draw — so that advantage is moot, not additive; (2) the manifest does **not** kill the false-fresh hazard, contrary to first impression — an old lock has *no line* for a newly-measured input, so there is still no baseline to detect a change to it (the blind spot is relocated, not removed); (3) it makes *algorithm evolution* — the entire point of Part 2 — **harder**, needing per-field versioning where the token needs one integer for the whole algorithm; and (4) it bloats every lock to O(fields × components) (the well-known `go.sum` size cost). The manifest is the better tool for a *static* input set that mainly grows and shrinks; the opaque token + single version is the better tool for an *evolving hashing algorithm*, which is azldev's actual problem. Recorded explicitly because the reset bakes the storage model in — token-vs-manifest is irreversible after PR B — and the retirement deadlock the manifest would have dissolved is instead answered by the floor-advance cadence above.
 
 ## Incremental delivery
 
 The reset (Part 1) must land as one coherent change at the dev→prod cutover; its pieces are independently reviewable but ship together because they all move the hash.
 
-1. **PR A (substrate)**: `projectVN` encoder (`canonicalBuf`, `emit`/`emitAlways`), `projectV1` with the explicit field list, `sha256` combiner, and the golden-vector test. Pure addition alongside the existing path; not yet wired into `ComputeIdentity`. Unit tests: a field absent from `projectV1` is invisible to the digest; `emitAlways` fields hash even at zero; golden vectors pin the v1 output.
+1. **PR A (substrate)**: the canonical encoder (`canonicalBuf`, `emit` with a per-range always flag), the generic tag-driven `project(cfg, N)` walker + version-set tag parser, **version tags on every fingerprinted field** (absent → build failure), the `sha256` combiner, and golden vectors. The mandatory-tag test replaces both the retired `TestAllFingerprintedFieldsHaveDecision` audit and its `expectedExclusions` map — the G-1 fix is now native to the tag, no field→key bridge needed. Pure addition alongside the existing path; not yet wired into `ComputeIdentity`. Unit tests: a field tagged `v2..*` is invisible to a v1 projection; a `!`-prefixed range hashes even at zero; a field with **no** `fingerprint` tag fails the build; golden vectors pin v1; editing a shipped version's tag membership so an existing config's output moves fails a golden vector; a non-contiguous set (`v1..v1,v3..*`) round-trips through the parser.
 2. **PR B (reset cutover)**: switch `ComputeIdentity` to `projectV1`; adopt the atomic `v1:sha256:` token; unify on sha256. Lock format `Version` stays `1`. Ships at the cutover; absorbed by the scheduled rebuild. Unit tests: a legacy prefix-less token is read as sub-floor and force-rehashed to `v1`; a `v1:` token round-trips; an old binary (format `1`) still parses pins from a reset lock.
-3. **PR C (Part 2 machinery)**: the version registry (`lockAlgos`, `currentLockContentVersion`, `minSupportedLockContentVersion`), `ComputeIdentityAt`, replay-before-`Changed` in `update.go`, and replay in `checkFingerprintFreshness`, `BuildDirtyChange`, **and the `changed.go` classifier**. Resolution replay reserved (slot reuses `computeRes1`). With only `v1` registered this is inert but proven. Unit tests: a synthetic `v1`/`v2` pair with unchanged inputs → `Current` and **not** `Changed`; changed inputs → `Stale`; re-stamp only on an already-dirty write.
+3. **PR C (Part 2 machinery)**: the version registry (`lockAlgos`, `currentLockContentVersion`, `minSupportedLockContentVersion`), `ComputeIdentityAt`, and replay at the three *current-tree* sites — replay-before-`Changed` in `update.go`, `checkFingerprintFreshness`, and `BuildDirtyChange`. The two *historical* comparators (`FindFingerprintChanges`, `changed.go`'s `classifyComponent`) stay **string-only** and rely only on the strict-lazy guarantee, not replay. Resolution replay reserved (slot reuses `computeRes1`). **Not fully inert:** this PR switches the live current-tree compares from raw-string to replay-aware *on merge* — only the *registry dispatch* is dormant while just `v1` exists, and `BuildDirtyChange`'s replay is a hard prerequisite for any later PR that registers `v2`. Unit tests: a synthetic `v1`/`v2` pair with unchanged inputs → `Current` and **not** `Changed`; changed inputs → `Stale`; re-stamp only on an already-dirty write.
 4. **PR D (validation)**: scenario test (in the style of `scenario/component_changed_test.go`) — add a field absent from `projectV1` and set it on one component; assert only that lock drifts and every other lock is byte-identical.
 5. **PR E (config schema axis, later)**: `schema-version` field + load-time canonical migration + the `config migrate` command. Gated on the first post-reset non-additive TOML change not already absorbed by the reset's normalization pass.
 
@@ -523,7 +605,5 @@ Each PR is independently revertible up to the cutover. PRs A–B land together a
 1. Should a lazy re-stamp during a *read-only* command (`render`, `build` freshness check) write the lock back, or defer all writes to `component update`? Writing on read is surprising; deferring means freshness checks stay slightly slower until the next update. (Leaning: defer all writes to `update`, keeping reads side-effect-free.)
 2. For the config schema axis, does `schema-version` live per-config-file or per-component? Per-file is simpler; per-component allows mixed-version projects during migration.
 3. Should the omit-if-zero predicate use `reflect.Value.IsZero()` (Go's notion) or a config-aware notion of "unset" (e.g. nil pointer vs empty string)? `projectVN` makes this a per-field choice in code, so it can differ field to field — but a default convention is still worth settling.
-4. What is the canonical byte encoding for `projectVN` (length-prefixed key+value? a stable subset of TOML/CBOR?), and how are golden vectors stored and regenerated? This is the one substrate detail that is expensive to change after the reset.
-5. Should the residual mixed-toolchain case get a hard write-time guard (refuse to write a token whose version exceeds `currentLockContentVersion`), or is force-rehash on read + the CI version-pin enough? (The operator escape hatch is `component migrate`; this question is only about the *automatic* guard.)
 
-*Resolved in-text (recorded here so they aren't re-litigated):* the reset rides the already-scheduled dev→prod rebuild as the one sanctioned coordinated cutover; the substrate is canonical projection (frozen `projectVN` + golden vectors), not `hashstructure`; baseline `v1` is omit-if-zero with **no** include-always legacy in the registry; the lock format `Version` stays at `1` (old binaries keep reading pins to build); the substrate swap and any old-binary downgrade are reconciled by **force-rehashing** sub-floor tokens, not a format gate; the stored hash is an **atomic** `v<N>:sha256:` token; back-compat rests on the verified invariant that **no reader recomputes a historical fingerprint** (synthetic history and historic-overlay application read stored strings only); registry retention is a **floor**, not "last N"; `component migrate` is the post-reset forced-migration pass (lock axis; `config migrate` is its schema-axis sibling); one shared content version covers both stored hashes, with resolution-hash replay reserved (slot present, fn reused) until `ComputeResolutionHash` first changes.
+*Resolved in-text (recorded here so they aren't re-litigated):* the reset rides the already-scheduled dev→prod rebuild as the one sanctioned coordinated cutover; the substrate is canonical projection (frozen `projectVN` + golden vectors), not `hashstructure`; the **canonical byte encoding is the existing length-prefixed `<len>:<key>=<len>:<value>` form** used by `combineInputs`, committed and pinned by golden vectors at the reset (former Open Q#4 — a precondition for PR A, not an open question, because the reset makes it irreversible); the **version write-guard is a requirement, not an option** (former Open Q#5): a binary refuses to write a token whose version exceeds its own `currentLockContentVersion`, and the CI version-pin prevents *old* binaries from committing downgrades; **field membership is declared in mandatory per-field version-set tags** (`fingerprint:"v1..*"`; absent → build failure, `!`-prefix for always-emit), read by one generic walker — this restores "forgotten field → loud build failure" (G-1) natively and retires the `expectedExclusions` map; baseline `v1` is omit-if-zero with **no** include-always legacy in the registry; the lock format `Version` stays at `1` (old binaries keep reading pins to build); the substrate swap and any old-binary downgrade are reconciled by **force-rehashing** sub-floor tokens, not a format gate; the stored hash is an **atomic** `v<N>:sha256:` token; back-compat rests on the verified invariant that **no reader recomputes a historical fingerprint** (synthetic history and historic-overlay application read stored strings only); registry retention is a **floor**, not "last N"; `component migrate` is the post-reset forced-migration pass (lock axis; `config migrate` is its schema-axis sibling) and is itself a deliberate release-grade event; one shared content version covers both stored hashes now, with resolution-hash replay reserved (slot present, fn reused) and given its **own** prefix when `ComputeResolutionHash` first changes.
