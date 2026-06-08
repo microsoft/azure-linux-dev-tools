@@ -17,21 +17,21 @@ import (
 // ComponentOverlay represents an overlay that may be applied to a component's spec and/or its sources.
 type ComponentOverlay struct {
 	// The type of overlay to apply.
-	Type ComponentOverlayType `toml:"type" json:"type" validate:"required" jsonschema:"enum=spec-add-tag,enum=spec-insert-tag,enum=spec-set-tag,enum=spec-update-tag,enum=spec-remove-tag,enum=spec-prepend-lines,enum=spec-append-lines,enum=spec-search-replace,enum=spec-remove-section,enum=spec-remove-subpackage,enum=patch-add,enum=patch-remove,enum=file-prepend-lines,enum=file-search-replace,enum=file-add,enum=file-remove,enum=file-rename,enum=tarball-patch,title=Overlay type,description=The type of overlay to apply"`
+	Type ComponentOverlayType `toml:"type" json:"type" validate:"required" jsonschema:"enum=spec-add-tag,enum=spec-insert-tag,enum=spec-set-tag,enum=spec-update-tag,enum=spec-remove-tag,enum=spec-prepend-lines,enum=spec-append-lines,enum=spec-search-replace,enum=spec-remove-section,enum=spec-remove-subpackage,enum=patch-add,enum=patch-remove,enum=file-prepend-lines,enum=file-search-replace,enum=file-add,enum=file-remove,enum=file-rename,title=Overlay type,description=The type of overlay to apply"`
 	// Human readable description of overlay; primarily present to document the need for the change.
 	Description string `toml:"description,omitempty" json:"description,omitempty" jsonschema:"title=Description,description=Human readable description of overlay" fingerprint:"-"`
 
-	// For overlays that target files inside a source tarball, identifies the tarball to modify.
+	// For overlays that target files inside a source archive, identifies the archive to modify.
 	// Must be a filename (not a path) matching a source archive in the component's sources directory.
-	// Required for tarball-patch; optional for file-remove and file-search-replace, which operate
-	// inside the named archive instead of the loose sources tree when it is set.
-	Tarball string `toml:"tarball,omitempty" json:"tarball,omitempty" jsonschema:"title=Tarball,description=The source tarball to modify (e.g. pkg-1.0.tar.gz)"`
-	// For overlays that target files inside a source tarball, optionally overrides the top-level
+	// Only file-remove supports archive scoping; when set, it removes file(s) from inside the named
+	// archive instead of the loose sources tree.
+	Archive string `toml:"archive,omitempty" json:"archive,omitempty" jsonschema:"title=Archive,description=The source archive to modify (e.g. pkg-1.0.tar.gz)"`
+	// For overlays that target files inside a source archive, optionally overrides the top-level
 	// directory to treat as the extraction root, mirroring rpmbuild's `%setup -n`. When unset, the
 	// root is inferred: if the archive unpacks to a single top-level directory (the conventional
 	// `%{name}-%{version}` layout) that directory is used; otherwise the archive root is used.
 	// Set this when an archive's top-level directory does not follow that convention.
-	TarballRoot string `toml:"tarball-root,omitempty" json:"tarballRoot,omitempty" jsonschema:"title=Tarball root,description=Top-level directory inside the tarball to treat as the extraction root (mirrors %setup -n); inferred when unset"`
+	ArchiveRoot string `toml:"archive-root,omitempty" json:"archiveRoot,omitempty" jsonschema:"title=Archive root,description=Top-level directory inside the archive to treat as the extraction root (mirrors %setup -n); inferred when unset"`
 	// For overlays that apply to non-spec files, indicates the filename. For overlays that can
 	// apply to multiple files, supports glob patterns (including globstar).
 	Filename string `toml:"file,omitempty" json:"file,omitempty" jsonschema:"title=Filename,description=The name of the non-spec file to which this overlay applies, or a glob pattern matching multiple files"`
@@ -142,25 +142,21 @@ func (c *ComponentOverlay) ModifiesSpec() bool {
 		c.Type == ComponentOverlayRemovePatch
 }
 
-// ModifiesTarball returns true if the overlay modifies files inside a source tarball.
-// These overlays require extraction and repacking of the archive. The dedicated
-// tarball-patch type is always archive-scoped; the file-remove and file-search-replace
-// types become archive-scoped when their [ComponentOverlay.Tarball] field is set.
-func (c *ComponentOverlay) ModifiesTarball() bool {
-	if c.Type == ComponentOverlayTarballPatch {
-		return true
-	}
-
-	return c.Tarball != "" &&
+// ModifiesArchive returns true if the overlay modifies files inside a source archive.
+// These overlays require extraction and repacking of the archive. Only file-remove and
+// file-search-replace support archive scoping, and only when their
+// [ComponentOverlay.Archive] field is set.
+func (c *ComponentOverlay) ModifiesArchive() bool {
+	return c.Archive != "" &&
 		(c.Type == ComponentOverlayRemoveFile || c.Type == ComponentOverlaySearchAndReplaceInFile)
 }
 
 // ModifiesNonSpecFiles returns true if the overlay modifies non-spec files. This includes
 // hybrid overlays that modify both spec and source files (e.g., patch overlays), since
-// those also require non-spec modifications. Archive-scoped overlays (see [ModifiesTarball])
-// are excluded: they operate on files inside a tarball, not loose files in the sources tree.
+// those also require non-spec modifications. Archive-scoped overlays (see [ModifiesArchive])
+// are excluded: they operate on files inside an archive, not loose files in the sources tree.
 func (c *ComponentOverlay) ModifiesNonSpecFiles() bool {
-	if c.ModifiesTarball() {
+	if c.ModifiesArchive() {
 		return false
 	}
 
@@ -216,20 +212,15 @@ const (
 	// ComponentOverlayPrependLinesToFile is an overlay that prepends lines to a non-spec file.
 	ComponentOverlayPrependLinesToFile ComponentOverlayType = "file-prepend-lines"
 	// ComponentOverlaySearchAndReplaceInFile is an overlay that replaces text in a non-spec file.
-	// When its [ComponentOverlay.Tarball] field is set, it operates on file(s) inside that source
-	// tarball instead of loose files in the sources tree.
 	ComponentOverlaySearchAndReplaceInFile ComponentOverlayType = "file-search-replace"
 	// ComponentOverlayAddFile is an overlay that adds a non-spec file.
 	ComponentOverlayAddFile ComponentOverlayType = "file-add"
 	// ComponentOverlayRemoveFile is an overlay that removes a non-spec file. When its
-	// [ComponentOverlay.Tarball] field is set, it removes file(s) from inside that source
-	// tarball instead of loose files in the sources tree.
+	// [ComponentOverlay.Archive] field is set, it removes file(s) from inside that source
+	// archive instead of loose files in the sources tree.
 	ComponentOverlayRemoveFile ComponentOverlayType = "file-remove"
 	// ComponentOverlayRenameFile is an overlay that renames a non-spec file.
 	ComponentOverlayRenameFile ComponentOverlayType = "file-rename"
-	// ComponentOverlayTarballPatch is an overlay that applies a unified diff patch to the
-	// extracted contents of a source tarball.
-	ComponentOverlayTarballPatch ComponentOverlayType = "tarball-patch"
 )
 
 // Validate checks that required fields are set based on the overlay type. This catches
@@ -254,31 +245,29 @@ func (c *ComponentOverlay) Validate() error {
 }
 
 func (c *ComponentOverlay) validateRequiredFields(desc string) error {
-	// The tarball field scopes an overlay to operate inside a source archive. It is only
-	// accepted on the archive-capable types and must be a bare filename (not a path).
-	if c.Tarball != "" {
-		//nolint:exhaustive // Only archive-capable types accept the tarball field; the default rejects the rest.
-		switch c.Type {
-		case ComponentOverlayRemoveFile, ComponentOverlaySearchAndReplaceInFile, ComponentOverlayTarballPatch:
-			if err := c.requireFileBasename("tarball", c.Tarball, desc); err != nil {
-				return err
-			}
-		default:
-			return fmt.Errorf("overlay type %#q does not accept %#q field: %s", c.Type, "tarball", desc)
+	// The archive field scopes an overlay to operate inside a source archive. It is only
+	// accepted on file-remove and file-search-replace, and must be a bare filename (not a path).
+	if c.Archive != "" {
+		if c.Type != ComponentOverlayRemoveFile && c.Type != ComponentOverlaySearchAndReplaceInFile {
+			return fmt.Errorf("overlay type %#q does not accept %#q field: %s", c.Type, "archive", desc)
+		}
+
+		if err := c.requireFileBasename("archive", c.Archive, desc); err != nil {
+			return err
 		}
 	}
 
-	// The tarball-root override is only meaningful for archive-scoped overlays, and must be a
+	// The archive-root override is only meaningful for archive-scoped overlays, and must be a
 	// local relative path so it cannot escape the extraction directory.
-	if c.TarballRoot != "" {
-		if !c.ModifiesTarball() {
-			return fmt.Errorf("overlay type %#q does not accept %#q field: %s", c.Type, "tarball-root", desc)
+	if c.ArchiveRoot != "" {
+		if !c.ModifiesArchive() {
+			return fmt.Errorf("overlay type %#q does not accept %#q field: %s", c.Type, "archive-root", desc)
 		}
 
-		if !filepath.IsLocal(c.TarballRoot) {
+		if !filepath.IsLocal(c.ArchiveRoot) {
 			return fmt.Errorf(
 				"overlay type %#q requires %#q to be a local relative path (no %#q or absolute paths); found %#q",
-				c.Type, "tarball-root", "..", c.TarballRoot,
+				c.Type, "archive-root", "..", c.ArchiveRoot,
 			)
 		}
 	}
@@ -305,8 +294,6 @@ func (c *ComponentOverlay) validateRequiredFields(desc string) error {
 		return c.validateRemoveSubpackageOverlay(desc)
 	case ComponentOverlayAddPatch, ComponentOverlayRemovePatch:
 		return c.validatePatchOverlay(desc)
-	case ComponentOverlayTarballPatch:
-		return c.validateTarballPatchOverlay(desc)
 	default:
 		return fmt.Errorf("unknown overlay type %#q: %#q", c.Type, desc)
 	}
@@ -427,15 +414,6 @@ func (c *ComponentOverlay) validatePatchOverlay(desc string) error {
 	}
 
 	return validateGlobPattern(c.Filename, desc)
-}
-
-func (c *ComponentOverlay) validateTarballPatchOverlay(desc string) error {
-	// Tarball basename is validated pre-switch in validateRequiredFields.
-	if c.Source == "" {
-		return fmt.Errorf("overlay type %#q requires %#q field: %s", c.Type, "source", desc)
-	}
-
-	return nil
 }
 
 // requireSectionIfPackageSet checks that, for overlays that may target either a single

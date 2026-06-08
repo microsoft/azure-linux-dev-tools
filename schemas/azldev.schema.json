@@ -245,8 +245,7 @@
             "file-search-replace",
             "file-add",
             "file-remove",
-            "file-rename",
-            "tarball-patch"
+            "file-rename"
           ],
           "title": "Overlay type",
           "description": "The type of overlay to apply"
@@ -256,15 +255,15 @@
           "title": "Description",
           "description": "Human readable description of overlay"
         },
-        "tarball": {
+        "archive": {
           "type": "string",
-          "title": "Tarball",
-          "description": "The source tarball to modify (e.g. pkg-1.0.tar.gz)"
+          "title": "Archive",
+          "description": "The source archive to modify (e.g. pkg-1.0.tar.gz)"
         },
-        "tarball-root": {
+        "archive-root": {
           "type": "string",
-          "title": "Tarball root",
-          "description": "Top-level directory inside the tarball to treat as the extraction root (mirrors %setup -n); inferred when unset"
+          "title": "Archive root",
+          "description": "Top-level directory inside the archive to treat as the extraction root (mirrors %setup -n); inferred when unset"
         },
         "file": {
           "type": "string",
