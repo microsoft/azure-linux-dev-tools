@@ -4,7 +4,6 @@
 package sources
 
 import (
-	"context"
 	"os"
 	"testing"
 
@@ -16,98 +15,96 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGroupOverlaysByTarball(t *testing.T) {
-	t.Run("groups overlays by tarball name preserving order", func(t *testing.T) {
+func TestGroupOverlaysByArchive(t *testing.T) {
+	t.Run("groups overlays by archive name preserving order", func(t *testing.T) {
 		overlays := []projectconfig.ComponentOverlay{
 			{
 				Type:     projectconfig.ComponentOverlayRemoveFile,
-				Tarball:  "pkg-1.0.tar.gz",
+				Archive:  "pkg-1.0.tar.gz",
 				Filename: "unwanted.conf",
 			},
 			{
-				Type:        projectconfig.ComponentOverlaySearchAndReplaceInFile,
-				Tarball:     "pkg-1.0.tar.gz",
-				Filename:    "config.h",
-				Regex:       "old",
-				Replacement: "new",
+				Type:     projectconfig.ComponentOverlayRemoveFile,
+				Archive:  "pkg-1.0.tar.gz",
+				Filename: "config.h",
 			},
 			{
 				Type:     projectconfig.ComponentOverlayRemoveFile,
-				Tarball:  "other-2.0.tar.xz",
+				Archive:  "other-2.0.tar.xz",
 				Filename: "docs/*.md",
 			},
 		}
 
-		groups, err := groupOverlaysByTarball(overlays)
+		groups, err := groupOverlaysByArchive(overlays)
 		require.NoError(t, err)
 
 		require.Len(t, groups, 2)
 
-		assert.Equal(t, "pkg-1.0.tar.gz", groups[0].tarball)
+		assert.Equal(t, "pkg-1.0.tar.gz", groups[0].archive)
 		require.Len(t, groups[0].overlays, 2)
-		assert.Equal(t, projectconfig.ComponentOverlayRemoveFile, groups[0].overlays[0].Type)
-		assert.Equal(t, projectconfig.ComponentOverlaySearchAndReplaceInFile, groups[0].overlays[1].Type)
+		assert.Equal(t, "unwanted.conf", groups[0].overlays[0].Filename)
+		assert.Equal(t, "config.h", groups[0].overlays[1].Filename)
 
-		assert.Equal(t, "other-2.0.tar.xz", groups[1].tarball)
+		assert.Equal(t, "other-2.0.tar.xz", groups[1].archive)
 		require.Len(t, groups[1].overlays, 1)
 	})
 
 	t.Run("skips overlays that are not archive-scoped", func(t *testing.T) {
 		overlays := []projectconfig.ComponentOverlay{
 			{Type: projectconfig.ComponentOverlaySetSpecTag, Tag: "Version", Value: "1.0"},
-			{Type: projectconfig.ComponentOverlayRemoveFile, Tarball: "pkg.tar.gz", Filename: "f"},
-			// Plain (non-archive) file overlay: no Tarball set, so it must be skipped.
+			{Type: projectconfig.ComponentOverlayRemoveFile, Archive: "pkg.tar.gz", Filename: "f"},
+			// Plain (non-archive) file overlay: no Archive set, so it must be skipped.
 			{Type: projectconfig.ComponentOverlayRemoveFile, Filename: "loose.txt"},
 			{Type: projectconfig.ComponentOverlayAddFile, Filename: "new.txt", Source: "src"},
 		}
 
-		groups, err := groupOverlaysByTarball(overlays)
+		groups, err := groupOverlaysByArchive(overlays)
 		require.NoError(t, err)
 
 		require.Len(t, groups, 1)
-		assert.Equal(t, "pkg.tar.gz", groups[0].tarball)
+		assert.Equal(t, "pkg.tar.gz", groups[0].archive)
 		require.Len(t, groups[0].overlays, 1)
 	})
 
-	t.Run("reconciles matching tarball-root overrides", func(t *testing.T) {
+	t.Run("reconciles matching archive-root overrides", func(t *testing.T) {
 		overlays := []projectconfig.ComponentOverlay{
 			{
 				Type:        projectconfig.ComponentOverlayRemoveFile,
-				Tarball:     "pkg-1.0.tar.gz",
-				TarballRoot: "custom-root",
+				Archive:     "pkg-1.0.tar.gz",
+				ArchiveRoot: "custom-root",
 				Filename:    "a.conf",
 			},
 			{
 				Type:     projectconfig.ComponentOverlayRemoveFile,
-				Tarball:  "pkg-1.0.tar.gz",
+				Archive:  "pkg-1.0.tar.gz",
 				Filename: "b.conf",
 			},
 		}
 
-		groups, err := groupOverlaysByTarball(overlays)
+		groups, err := groupOverlaysByArchive(overlays)
 		require.NoError(t, err)
 
 		require.Len(t, groups, 1)
 		assert.Equal(t, "custom-root", groups[0].root)
 	})
 
-	t.Run("errors on conflicting tarball-root overrides", func(t *testing.T) {
+	t.Run("errors on conflicting archive-root overrides", func(t *testing.T) {
 		overlays := []projectconfig.ComponentOverlay{
 			{
 				Type:        projectconfig.ComponentOverlayRemoveFile,
-				Tarball:     "pkg-1.0.tar.gz",
-				TarballRoot: "root-a",
+				Archive:     "pkg-1.0.tar.gz",
+				ArchiveRoot: "root-a",
 				Filename:    "a.conf",
 			},
 			{
 				Type:        projectconfig.ComponentOverlayRemoveFile,
-				Tarball:     "pkg-1.0.tar.gz",
-				TarballRoot: "root-b",
+				Archive:     "pkg-1.0.tar.gz",
+				ArchiveRoot: "root-b",
 				Filename:    "b.conf",
 			},
 		}
 
-		_, err := groupOverlaysByTarball(overlays)
+		_, err := groupOverlaysByArchive(overlays)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "conflicting")
 	})
@@ -170,13 +167,13 @@ func TestResolveExtractRoot(t *testing.T) {
 	})
 }
 
-// TestApplyTarballOperation_FileOverlays verifies that archive-scoped file
-// overlays are routed through the shared [applyNonSpecOverlay] machinery against
-// the extract-root FS (i.e., the same code path as loose-file overlays).
-func TestApplyTarballOperation_FileOverlays(t *testing.T) {
+// TestArchiveFileRemove verifies that archive-scoped file-remove overlays are
+// routed through the shared [applyNonSpecOverlay] machinery against the
+// extract-root FS (i.e., the same code path that [processArchive] uses).
+func TestArchiveFileRemove(t *testing.T) {
 	ctx := testctx.NewCtx()
 
-	t.Run("file-remove deletes matching files in the extracted tree", func(t *testing.T) {
+	t.Run("deletes matching files in the extracted tree", func(t *testing.T) {
 		extractRoot := t.TempDir()
 		require.NoError(t, os.WriteFile(extractRoot+"/keep.txt", []byte("keep"), fileperms.PrivateFile))
 		require.NoError(t, os.WriteFile(extractRoot+"/remove.conf", []byte("x"), fileperms.PrivateFile))
@@ -188,44 +185,18 @@ func TestApplyTarballOperation_FileOverlays(t *testing.T) {
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:     projectconfig.ComponentOverlayRemoveFile,
-			Tarball:  "pkg.tar.gz",
+			Archive:  "pkg.tar.gz",
 			Filename: "*.conf",
 		}
 
-		err = applyTarballOperation(context.Background(), nil, ctx, ctx.FS(), extractFS, extractRoot, overlay)
+		err = applyNonSpecOverlay(ctx, ctx.FS(), extractFS, overlay)
 		require.NoError(t, err)
 
 		assert.FileExists(t, extractRoot+"/keep.txt")
 		assert.NoFileExists(t, extractRoot+"/remove.conf")
 	})
 
-	t.Run("file-search-replace rewrites matching content in the extracted tree", func(t *testing.T) {
-		extractRoot := t.TempDir()
-		require.NoError(t, os.WriteFile(
-			extractRoot+"/config.h", []byte("#define OLD_VALUE 1\n"), fileperms.PrivateFile))
-
-		extractFS, err := rootfs.New(extractRoot)
-		require.NoError(t, err)
-
-		defer extractFS.Close()
-
-		overlay := projectconfig.ComponentOverlay{
-			Type:        projectconfig.ComponentOverlaySearchAndReplaceInFile,
-			Tarball:     "pkg.tar.gz",
-			Filename:    "config.h",
-			Regex:       "OLD_VALUE",
-			Replacement: "NEW_VALUE",
-		}
-
-		err = applyTarballOperation(context.Background(), nil, ctx, ctx.FS(), extractFS, extractRoot, overlay)
-		require.NoError(t, err)
-
-		content, readErr := os.ReadFile(extractRoot + "/config.h")
-		require.NoError(t, readErr)
-		assert.Equal(t, "#define NEW_VALUE 1\n", string(content))
-	})
-
-	t.Run("file-remove with no match errors like a loose-file overlay", func(t *testing.T) {
+	t.Run("with no match errors like a loose-file overlay", func(t *testing.T) {
 		extractRoot := t.TempDir()
 		require.NoError(t, os.WriteFile(extractRoot+"/file.txt", nil, fileperms.PrivateFile))
 
@@ -236,11 +207,11 @@ func TestApplyTarballOperation_FileOverlays(t *testing.T) {
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:     projectconfig.ComponentOverlayRemoveFile,
-			Tarball:  "pkg.tar.gz",
+			Archive:  "pkg.tar.gz",
 			Filename: "*.conf",
 		}
 
-		err = applyTarballOperation(context.Background(), nil, ctx, ctx.FS(), extractFS, extractRoot, overlay)
+		err = applyNonSpecOverlay(ctx, ctx.FS(), extractFS, overlay)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "did not match any files")
 	})

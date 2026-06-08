@@ -246,7 +246,7 @@ func (p *sourcePreparerImpl) PrepareSources(
 	}
 
 	if applyOverlays {
-		if err := p.applyOverlaysToSources(ctx, component, outputDir); err != nil {
+		if err := p.applyOverlaysToSources(component, outputDir); err != nil {
 			return err
 		}
 
@@ -273,7 +273,7 @@ func (p *sourcePreparerImpl) PrepareSources(
 
 // applyOverlaysToSources writes the macros file and then applies all overlays.
 func (p *sourcePreparerImpl) applyOverlaysToSources(
-	ctx context.Context, component components.Component, outputDir string,
+	component components.Component, outputDir string,
 ) error {
 	var macrosFileName string
 
@@ -287,7 +287,7 @@ func (p *sourcePreparerImpl) applyOverlaysToSources(
 		macrosFileName = filepath.Base(macrosFilePath)
 	}
 
-	if err := p.applyOverlays(ctx, component, outputDir, macrosFileName); err != nil {
+	if err := p.applyOverlays(component, outputDir, macrosFileName); err != nil {
 		return fmt.Errorf("failed to apply overlays for component %#q:\n%w",
 			component.GetName(), err)
 	}
@@ -298,7 +298,7 @@ func (p *sourcePreparerImpl) applyOverlaysToSources(
 // applyOverlays applies all overlays (user-defined and system-generated) to the
 // component sources.
 func (p *sourcePreparerImpl) applyOverlays(
-	ctx context.Context, component components.Component, sourcesDirPath, macrosFileName string,
+	component components.Component, sourcesDirPath, macrosFileName string,
 ) error {
 	event := p.eventListener.StartEvent("Applying overlays", "component", component.GetName())
 	defer event.End()
@@ -317,10 +317,10 @@ func (p *sourcePreparerImpl) applyOverlays(
 		return nil
 	}
 
-	// Tarball overlays are applied first (they modify archived source files
+	// Archive overlays are applied first (they modify archived source files
 	// in-place), followed by spec and loose-file overlays. Each function
 	// self-filters to the overlay types it handles.
-	if err := p.applyTarballOverlayGroup(ctx, component, sourcesDirPath, allOverlays); err != nil {
+	if err := p.applyArchiveOverlayGroup(component, sourcesDirPath, allOverlays); err != nil {
 		return err
 	}
 
@@ -331,34 +331,28 @@ func (p *sourcePreparerImpl) applyOverlays(
 	return nil
 }
 
-// applyTarballOverlayGroup applies tarball overlays. Skipped when source
+// applyArchiveOverlayGroup applies archive overlays. Skipped when source
 // downloads were not performed.
-func (p *sourcePreparerImpl) applyTarballOverlayGroup(
-	ctx context.Context, component components.Component,
-	sourcesDirPath string, tarballOverlays []projectconfig.ComponentOverlay,
+func (p *sourcePreparerImpl) applyArchiveOverlayGroup(
+	component components.Component,
+	sourcesDirPath string, archiveOverlays []projectconfig.ComponentOverlay,
 ) error {
-	if len(tarballOverlays) == 0 {
+	if len(archiveOverlays) == 0 {
 		return nil
 	}
 
 	if p.skipLookaside {
-		slog.Warn("Skipping tarball overlays because source downloads were skipped (--skip-sources)",
+		slog.Warn("Skipping archive overlays because source downloads were skipped (--skip-sources)",
 			"component", component.GetName(),
-			"count", len(tarballOverlays))
+			"count", len(archiveOverlays))
 
 		return nil
 	}
 
-	cmdFactory, ok := p.dryRunnable.(opctx.CmdFactory)
-	if !ok {
-		return errors.New(
-			"tarball overlays require a CmdFactory; the provided DryRunnable does not implement it")
-	}
-
-	if err := applyTarballOverlays(
-		ctx, cmdFactory, p.dryRunnable, p.fs, p.eventListener, sourcesDirPath, tarballOverlays,
+	if err := applyArchiveOverlays(
+		p.dryRunnable, p.fs, p.eventListener, sourcesDirPath, archiveOverlays,
 	); err != nil {
-		return fmt.Errorf("failed to apply tarball overlays for component %#q:\n%w",
+		return fmt.Errorf("failed to apply archive overlays for component %#q:\n%w",
 			component.GetName(), err)
 	}
 
@@ -636,7 +630,7 @@ func (p *sourcePreparerImpl) DiffSources(
 	}
 
 	// Apply overlays in-place to the copied directory only.
-	if err := p.applyOverlaysToSources(ctx, component, overlaidDir); err != nil {
+	if err := p.applyOverlaysToSources(component, overlaidDir); err != nil {
 		return nil, fmt.Errorf("failed to apply overlays for component %#q:\n%w", component.GetName(), err)
 	}
 
@@ -671,11 +665,11 @@ func (p *sourcePreparerImpl) updateSourcesFile(
 	config := component.GetConfig()
 	sourceFiles := config.SourceFiles
 
-	// Derive tarball names from the component's overlays — no need to thread
+	// Derive archive names from the component's overlays — no need to thread
 	// them through the overlay application chain.
-	modifiedTarballs := tarballNamesFromOverlays(config.Overlays)
+	modifiedArchives := archiveNamesFromOverlays(config.Overlays)
 
-	if len(sourceFiles) == 0 && len(modifiedTarballs) == 0 {
+	if len(sourceFiles) == 0 && len(modifiedArchives) == 0 {
 		return nil
 	}
 
@@ -686,15 +680,15 @@ func (p *sourcePreparerImpl) updateSourcesFile(
 		return err
 	}
 
-	// Parse once, then rehash modified tarballs and merge source-files entries
+	// Parse once, then rehash modified archives and merge source-files entries
 	// on the parsed representation — single parse, single write.
 	existingLines, err := fedorasource.ReadSourcesFile(existingContent)
 	if err != nil {
 		return fmt.Errorf("failed to parse 'sources' file %#q:\n%w", sourcesFilePath, err)
 	}
 
-	// Rehash tarballs that were modified by tarball overlays in-place.
-	if err := p.rehashModifiedEntries(existingLines, outputDir, modifiedTarballs); err != nil {
+	// Rehash archives that were modified by archive overlays in-place.
+	if err := p.rehashModifiedEntries(existingLines, outputDir, modifiedArchives); err != nil {
 		return err
 	}
 
@@ -718,17 +712,17 @@ func (p *sourcePreparerImpl) updateSourcesFile(
 }
 
 // rehashModifiedEntries updates the Raw and Entry fields of parsed 'sources' lines
-// for tarballs that were modified by tarball overlays. The hash is recomputed using
+// for archives that were modified by archive overlays. The hash is recomputed using
 // the same hash type as the original entry.
 func (p *sourcePreparerImpl) rehashModifiedEntries(
-	lines []fedorasource.SourcesFileLine, outputDir string, modifiedTarballs []string,
+	lines []fedorasource.SourcesFileLine, outputDir string, modifiedArchives []string,
 ) error {
-	if len(modifiedTarballs) == 0 {
+	if len(modifiedArchives) == 0 {
 		return nil
 	}
 
-	modified := make(map[string]bool, len(modifiedTarballs))
-	for _, name := range modifiedTarballs {
+	modified := make(map[string]bool, len(modifiedArchives))
+	for _, name := range modifiedArchives {
 		modified[name] = true
 	}
 
@@ -737,15 +731,15 @@ func (p *sourcePreparerImpl) rehashModifiedEntries(
 			continue
 		}
 
-		tarballPath := filepath.Join(outputDir, line.Entry.Filename)
+		archivePath := filepath.Join(outputDir, line.Entry.Filename)
 
-		newHash, err := fileutils.ComputeFileHash(p.fs, line.Entry.HashType, tarballPath)
+		newHash, err := fileutils.ComputeFileHash(p.fs, line.Entry.HashType, archivePath)
 		if err != nil {
-			return fmt.Errorf("rehashing modified tarball %#q:\n%w", line.Entry.Filename, err)
+			return fmt.Errorf("rehashing modified archive %#q:\n%w", line.Entry.Filename, err)
 		}
 
-		slog.Debug("Rehashed modified tarball in 'sources' file",
-			"tarball", line.Entry.Filename,
+		slog.Debug("Rehashed modified archive in 'sources' file",
+			"archive", line.Entry.Filename,
 			"hashType", line.Entry.HashType,
 			"oldHash", line.Entry.Hash,
 			"newHash", newHash,
@@ -1169,14 +1163,14 @@ func (p *sourcePreparerImpl) resolveSpecPath(
 }
 
 // applyOverlayList applies a list of overlays to the component sources sequentially.
-// Archive-scoped overlays (see [projectconfig.ComponentOverlay.ModifiesTarball]) are
-// skipped here; they are handled separately by [applyTarballOverlays], which batches
+// Archive-scoped overlays (see [projectconfig.ComponentOverlay.ModifiesArchive]) are
+// skipped here; they are handled separately by [applyArchiveOverlays], which batches
 // extraction and repacking per archive.
 func (p *sourcePreparerImpl) applyOverlayList(
 	overlays []projectconfig.ComponentOverlay, sourcesDirPath, absSpecPath string,
 ) error {
 	for _, overlay := range overlays {
-		if overlay.ModifiesTarball() {
+		if overlay.ModifiesArchive() {
 			continue
 		}
 

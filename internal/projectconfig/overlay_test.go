@@ -412,27 +412,27 @@ func TestComponentOverlay_Validate(t *testing.T) {
 			errorExpected: true,
 			errorContains: "section",
 		},
-		// archive-scoped file-remove tests (tarball modifier)
+		// archive-scoped file-remove tests (archive modifier)
 		{
-			name: "file-remove with tarball valid (archive-scoped)",
+			name: "file-remove with archive valid (archive-scoped)",
 			overlay: projectconfig.ComponentOverlay{
 				Type:     projectconfig.ComponentOverlayRemoveFile,
-				Tarball:  "pkg-1.0.tar.gz",
+				Archive:  "pkg-1.0.tar.gz",
 				Filename: "unwanted.conf",
 			},
 			errorExpected: false,
 		},
 		{
-			name: "file-remove with tarball glob valid",
+			name: "file-remove with archive glob valid",
 			overlay: projectconfig.ComponentOverlay{
 				Type:     projectconfig.ComponentOverlayRemoveFile,
-				Tarball:  "pkg-1.0.tar.gz",
+				Archive:  "pkg-1.0.tar.gz",
 				Filename: "docs/**/*.md",
 			},
 			errorExpected: false,
 		},
 		{
-			name: "file-remove without tarball is a plain loose-file remove",
+			name: "file-remove without archive is a plain loose-file remove",
 			overlay: projectconfig.ComponentOverlay{
 				Type:     projectconfig.ComponentOverlayRemoveFile,
 				Filename: "unwanted.conf",
@@ -440,159 +440,88 @@ func TestComponentOverlay_Validate(t *testing.T) {
 			errorExpected: false,
 		},
 		{
-			name: "file-remove with tarball missing file",
+			name: "file-remove with archive missing file",
 			overlay: projectconfig.ComponentOverlay{
 				Type:    projectconfig.ComponentOverlayRemoveFile,
-				Tarball: "pkg-1.0.tar.gz",
+				Archive: "pkg-1.0.tar.gz",
 			},
 			errorExpected: true,
 			errorContains: "file",
 		},
 		{
-			name: "file-remove rejects tarball path",
+			name: "file-remove rejects archive path",
 			overlay: projectconfig.ComponentOverlay{
 				Type:     projectconfig.ComponentOverlayRemoveFile,
-				Tarball:  "subdir/pkg-1.0.tar.gz",
+				Archive:  "subdir/pkg-1.0.tar.gz",
 				Filename: "unwanted.conf",
 			},
 			errorExpected: true,
-			errorContains: "tarball",
+			errorContains: "archive",
 		},
 		{
-			name: "tarball rejected on overlay type that cannot be archive-scoped",
+			name: "archive rejected on overlay type that cannot be archive-scoped",
 			overlay: projectconfig.ComponentOverlay{
 				Type:     projectconfig.ComponentOverlayAddFile,
-				Tarball:  "pkg-1.0.tar.gz",
+				Archive:  "pkg-1.0.tar.gz",
 				Filename: "new.conf",
 				Source:   "files/new.conf",
 			},
 			errorExpected: true,
-			errorContains: "tarball",
+			errorContains: "archive",
 		},
 		{
-			name: "file-remove with tarball-root override valid",
+			name: "file-remove with archive-root override valid",
 			overlay: projectconfig.ComponentOverlay{
 				Type:        projectconfig.ComponentOverlayRemoveFile,
-				Tarball:     "pkg-1.0.tar.gz",
-				TarballRoot: "src-root",
+				Archive:     "pkg-1.0.tar.gz",
+				ArchiveRoot: "src-root",
 				Filename:    "unwanted.conf",
 			},
 			errorExpected: false,
 		},
 		{
-			name: "file-remove rejects non-local tarball-root",
+			name: "file-remove rejects non-local archive-root",
 			overlay: projectconfig.ComponentOverlay{
 				Type:        projectconfig.ComponentOverlayRemoveFile,
-				Tarball:     "pkg-1.0.tar.gz",
-				TarballRoot: "../escape",
+				Archive:     "pkg-1.0.tar.gz",
+				ArchiveRoot: "../escape",
 				Filename:    "unwanted.conf",
 			},
 			errorExpected: true,
-			errorContains: "tarball-root",
+			errorContains: "archive-root",
 		},
 		{
-			name: "tarball-root rejected when tarball unset",
+			name: "archive-root rejected when archive unset",
 			overlay: projectconfig.ComponentOverlay{
 				Type:        projectconfig.ComponentOverlayRemoveFile,
-				TarballRoot: "src-root",
+				ArchiveRoot: "src-root",
 				Filename:    "unwanted.conf",
 			},
 			errorExpected: true,
-			errorContains: "tarball-root",
+			errorContains: "archive-root",
 		},
 		{
-			name: "tarball-root rejected on non-archive overlay",
+			name: "archive-root rejected on non-archive overlay",
 			overlay: projectconfig.ComponentOverlay{
 				Type:        projectconfig.ComponentOverlaySetSpecTag,
 				Tag:         "Version",
 				Value:       "1.0.0",
-				TarballRoot: "src-root",
+				ArchiveRoot: "src-root",
 			},
 			errorExpected: true,
-			errorContains: "tarball-root",
+			errorContains: "archive-root",
 		},
-		// archive-scoped file-search-replace tests (tarball modifier)
+		// file-search-replace supports archive scoping
 		{
-			name: "file-search-replace with tarball valid",
+			name: "file-search-replace with archive valid (archive-scoped)",
 			overlay: projectconfig.ComponentOverlay{
 				Type:        projectconfig.ComponentOverlaySearchAndReplaceInFile,
-				Tarball:     "pkg-1.0.tar.gz",
+				Archive:     "pkg-1.0.tar.gz",
 				Filename:    "config.h",
 				Regex:       "old_value",
 				Replacement: "new_value",
 			},
 			errorExpected: false,
-		},
-		{
-			name: "file-search-replace with tarball missing file",
-			overlay: projectconfig.ComponentOverlay{
-				Type:        projectconfig.ComponentOverlaySearchAndReplaceInFile,
-				Tarball:     "pkg-1.0.tar.gz",
-				Regex:       "old_value",
-				Replacement: "new_value",
-			},
-			errorExpected: true,
-			errorContains: "file",
-		},
-		{
-			name: "file-search-replace with tarball missing regex",
-			overlay: projectconfig.ComponentOverlay{
-				Type:     projectconfig.ComponentOverlaySearchAndReplaceInFile,
-				Tarball:  "pkg-1.0.tar.gz",
-				Filename: "config.h",
-			},
-			errorExpected: true,
-			errorContains: "regex",
-		},
-		{
-			name: "file-search-replace with tarball invalid regex",
-			overlay: projectconfig.ComponentOverlay{
-				Type:        projectconfig.ComponentOverlaySearchAndReplaceInFile,
-				Tarball:     "pkg-1.0.tar.gz",
-				Filename:    "config.h",
-				Regex:       "[invalid",
-				Replacement: "new_value",
-			},
-			errorExpected: true,
-			errorContains: "regex",
-		},
-		// tarball-patch tests
-		{
-			name: "tarball-patch valid",
-			overlay: projectconfig.ComponentOverlay{
-				Type:    projectconfig.ComponentOverlayTarballPatch,
-				Tarball: "pkg-1.0.tar.gz",
-				Source:  "patches/fix.patch",
-			},
-			errorExpected: false,
-		},
-		{
-			name: "tarball-patch valid with strip level",
-			overlay: projectconfig.ComponentOverlay{
-				Type:    projectconfig.ComponentOverlayTarballPatch,
-				Tarball: "pkg-1.0.tar.gz",
-				Source:  "patches/fix.patch",
-				Value:   "2",
-			},
-			errorExpected: false,
-		},
-		{
-			name: "tarball-patch missing tarball",
-			overlay: projectconfig.ComponentOverlay{
-				Type:   projectconfig.ComponentOverlayTarballPatch,
-				Source: "patches/fix.patch",
-			},
-			errorExpected: true,
-			errorContains: "tarball",
-		},
-		{
-			name: "tarball-patch missing source",
-			overlay: projectconfig.ComponentOverlay{
-				Type:    projectconfig.ComponentOverlayTarballPatch,
-				Tarball: "pkg-1.0.tar.gz",
-			},
-			errorExpected: true,
-			errorContains: "source",
 		},
 	}
 
@@ -637,12 +566,10 @@ func TestComponentOverlay_ModifiesSpec(t *testing.T) {
 		projectconfig.ComponentOverlayAddFile,
 	}
 
-	// Archive-scoped overlays: tarball-patch is always archive-scoped, while file-remove
-	// and file-search-replace become archive-scoped only when their Tarball field is set.
-	tarballOverlays := []projectconfig.ComponentOverlay{
-		{Type: projectconfig.ComponentOverlayTarballPatch, Tarball: "pkg-1.0.tar.gz", Source: "p.patch"},
-		{Type: projectconfig.ComponentOverlayRemoveFile, Tarball: "pkg-1.0.tar.gz", Filename: "f"},
-		{Type: projectconfig.ComponentOverlaySearchAndReplaceInFile, Tarball: "pkg-1.0.tar.gz", Filename: "f"},
+	// Archive-scoped overlays: only file-remove becomes archive-scoped, and only
+	// when its Archive field is set.
+	archiveOverlays := []projectconfig.ComponentOverlay{
+		{Type: projectconfig.ComponentOverlayRemoveFile, Archive: "pkg-1.0.tar.gz", Filename: "f"},
 	}
 
 	for _, overlayType := range specOverlayTypes {
@@ -659,9 +586,9 @@ func TestComponentOverlay_ModifiesSpec(t *testing.T) {
 		})
 	}
 
-	for _, overlay := range tarballOverlays {
+	for _, overlay := range archiveOverlays {
 		t.Run(string(overlay.Type)+"_is_archive_scoped", func(t *testing.T) {
-			assert.True(t, overlay.ModifiesTarball(), "expected %s to be an archive-scoped overlay", overlay.Type)
+			assert.True(t, overlay.ModifiesArchive(), "expected %s to be an archive-scoped overlay", overlay.Type)
 			assert.False(t, overlay.ModifiesSpec(), "expected %s to not be a spec overlay", overlay.Type)
 			assert.False(t, overlay.ModifiesNonSpecFiles(),
 				"expected %s to not be a loose non-spec overlay", overlay.Type)
