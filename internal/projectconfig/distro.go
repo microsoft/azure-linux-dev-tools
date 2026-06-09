@@ -86,11 +86,19 @@ type DistroVersionDefinition struct {
 	MockConfigPathX86_64  string `toml:"mock-config-x86_64,omitempty"  json:"mockConfigX8664,omitempty"   validate:"omitempty,filepath" jsonschema:"title=Mock config file,description=Path to the x86_64 mock config file for this version"`
 	MockConfigPathAarch64 string `toml:"mock-config-aarch64,omitempty" json:"mockConfigAarch64,omitempty" validate:"omitempty,filepath" jsonschema:"title=Mock config file,description=Path to the aarch64 mock config file for this version"`
 
-	// Inputs maps build use-cases ("rpm-build", "image-build") to ordered lists
-	// of input references. Each entry references either a [RpmRepoResource] or
-	// a [RpmRepoSet]; sets are expanded at validation time.
+	// Inputs maps build use-cases ([UseCaseRPMBuild], [UseCaseImageBuild]) to
+	// ordered lists of input references. Each entry references either a
+	// [RpmRepoResource] or a [RpmRepoSet]; sets are expanded at validation time.
 	Inputs DistroVersionInputs `toml:"inputs,omitempty" json:"inputs,omitempty" jsonschema:"title=Inputs,description=Per-use-case input repositories"`
 }
+
+// Use-case identifiers for [DistroVersionInputs]. These match the TOML keys
+// under `[distros.<d>.versions.<v>.inputs]` and are the canonical names used
+// in error messages and CLI flags (e.g. `azldev repo query --use-case`).
+const (
+	UseCaseRPMBuild   = "rpm-build"
+	UseCaseImageBuild = "image-build"
+)
 
 // DistroVersionInputs maps build use-cases to ordered lists of input references.
 // Each [DistroVersionInput] entry references either a [RpmRepoResource] (by
