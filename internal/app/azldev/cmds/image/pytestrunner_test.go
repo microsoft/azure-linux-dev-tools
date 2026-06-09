@@ -218,8 +218,8 @@ func TestBuildNativePytestArgs_CapabilitiesEmpty(t *testing.T) {
 	assert.Equal(t, []string{"--capabilities", "container"}, args)
 }
 
-func TestRunPytestSuite_MissingPytestConfig(t *testing.T) {
-	suiteConfig := &projectconfig.TestSuiteConfig{
+func TestRunPytest_MissingPytestConfig(t *testing.T) {
+	testConfig := &projectconfig.TestConfig{
 		Name: "smoke",
 		Type: projectconfig.TestTypePytest,
 	}
@@ -228,7 +228,7 @@ func TestRunPytestSuite_MissingPytestConfig(t *testing.T) {
 		ImagePath: "/images/test.raw",
 	}
 
-	err := image.RunPytestSuite(nil, suiteConfig, testImageConfig(), options)
+	err := image.RunPytest(nil, testConfig, testImageConfig(), options)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "missing pytest configuration")
 }

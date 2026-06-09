@@ -6,15 +6,16 @@ Run tests against an Azure Linux image
 
 ### Synopsis
 
-Run tests against an Azure Linux image using test suites defined in the
+Run tests against an Azure Linux image using tests defined in the
 project configuration.
 
-Test suites are defined in the [test-suites] section of azldev.toml and referenced
-by images via the [images.NAME.tests] subtable. Each test suite specifies a type
-and framework-specific configuration in a matching subtable.
+Tests are defined in the [tests] section of azldev.toml and referenced by images
+via the [images.NAME.tests] subtable, either directly by name or through a
+test-group. Each test specifies a type and framework-specific configuration in
+a matching subtable.
 
-By default, all test suites associated with the named image are run. Use
---test-suite to select specific suites (may be repeated).
+By default, all tests associated with the named image (directly or via a
+test-group) are run. Use --test to select specific tests (may be repeated).
 
 The image artifact can be specified explicitly with --image-path, or resolved
 automatically from the image name in the output directory.
@@ -32,17 +33,17 @@ azldev image test IMAGE_NAME [flags]
 ### Examples
 
 ```
-  # Run all test suites for an image (artifact auto-resolved from output dir)
+  # Run all tests for an image (artifact auto-resolved from output dir)
   azldev image test vm-base
 
-  # Run all test suites with an explicit image path
+  # Run all tests with an explicit image path
   azldev image test vm-base --image-path ./out/images/vm-base/image.raw
 
-  # Run a specific test suite
-  azldev image test vm-base --test-suite common-vm-checks
+  # Run a specific test
+  azldev image test vm-base --test common-vm-checks
 
-  # Run multiple specific test suites
-  azldev image test vm-base --test-suite common-vm-checks --test-suite vm-base-checks
+  # Run multiple specific tests
+  azldev image test vm-base --test common-vm-checks --test vm-base-checks
 
   # Generate JUnit XML output
   azldev image test vm-base --junit-xml results.xml
@@ -51,10 +52,10 @@ azldev image test IMAGE_NAME [flags]
 ### Options
 
 ```
-  -h, --help                 help for test
-  -i, --image-path string    Path to the disk image file (resolved from image name if not specified)
-      --junit-xml string     Path for writing JUnit XML output
-      --test-suite strings   Name of a test suite to run (may be repeated; defaults to all suites for the image)
+  -h, --help                help for test
+  -i, --image-path string   Path to the disk image file (resolved from image name if not specified)
+      --junit-xml string    Path for writing JUnit XML output
+      --test strings        Name of a test to run (may be repeated; defaults to all tests for the image)
 ```
 
 ### Options inherited from parent commands

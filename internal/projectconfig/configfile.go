@@ -63,8 +63,13 @@ type ConfigFile struct {
 	// to be applied to sets of binary packages.
 	PackageGroups map[string]PackageGroupConfig `toml:"package-groups,omitempty" validate:"dive" jsonschema:"title=Package groups,description=Definitions of package groups for shared binary package configuration"`
 
-	// Definitions of test suites.
-	TestSuites map[string]TestSuiteConfig `toml:"test-suites,omitempty" validate:"dive" jsonschema:"title=Test Suites,description=Definitions of test suites for this project"`
+	// Definitions of tests. A test is a single unit of testing: one configuration
+	// of one runner / harness (e.g. pytest) with framework-specific options.
+	Tests map[string]TestConfig `toml:"test-suites,omitempty" validate:"dive" jsonschema:"title=Tests,description=Definitions of tests for this project"`
+
+	// Definitions of test-groups. A test-group is a named bundle of tests, referenced
+	// from images and components via [TestRef] entries with a 'group' field.
+	TestGroups map[string]TestGroupConfig `toml:"test-groups,omitempty" validate:"dive" jsonschema:"title=Test Groups,description=Definitions of test-groups (named bundles of tests) for this project"`
 
 	// Internal fields used to track the origin of the config file; `dir` is the directory
 	// that the config file's relative paths are based from.
@@ -131,19 +136,50 @@ func (f ConfigFile) Validate() error {
 		}
 	}
 
-	// Validate test suite configurations.
-	for suiteName, suite := range f.TestSuites {
-		// Suite names are used as path components (e.g., for the per-suite venv directory),
-		// so reject anything that could escape the intended directory or otherwise be unsafe
-		// across platforms.
-		if err := fileutils.ValidateFilename(suiteName); err != nil {
-			return fmt.Errorf("invalid test suite name %#q:\n%w", suiteName, err)
+	// Validate test configurations.
+	for testName, test := range f.Tests {
+		// Test names are used as path components (e.g., for a per-test venv directory),
+		// so reject anything that could escape the intended directory or otherwise be
+		// unsafe across platforms.
+		if err := fileutils.ValidateFilename(testName); err != nil {
+			return fmt.Errorf("invalid test name %#q:\n%w", testName, err)
 		}
 
-		suite.Name = suiteName
+		test.Name = testName
 
-		if err := suite.Validate(); err != nil {
-			return fmt.Errorf("invalid test suite %#q:\n%w", suiteName, err)
+		if err := test.Validate(); err != nil {
+			return fmt.Errorf("invalid test %#q:\n%w", testName, err)
+		}
+	}
+
+	// Validate test-group configurations.
+	for groupName, group := range f.TestGroups {
+		if err := fileutils.ValidateFilename(groupName); err != nil {
+			return fmt.Errorf("invalid test-group name %#q:\n%w", groupName, err)
+		}
+
+		group.Name = groupName
+
+		if err := group.Validate(); err != nil {
+			return fmt.Errorf("invalid test-group %#q:\n%w", groupName, err)
+		}
+	}
+
+	// Validate that test refs on each image have well-formed shape (exactly one of
+	// name/group). Cross-resolution against the top-level tests/test-groups maps is
+	// performed at project level.
+	for imageName, image := range f.Images {
+		ctx := fmt.Sprintf("image %#q tests.tests", imageName)
+		if err := validateTestRefs(ctx, image.Tests.Tests); err != nil {
+			return err
+		}
+	}
+
+	// Same for components.
+	for componentName, component := range f.Components {
+		ctx := fmt.Sprintf("component %#q tests.tests", componentName)
+		if err := validateTestRefs(ctx, component.Tests.Tests); err != nil {
+			return err
 		}
 	}
 

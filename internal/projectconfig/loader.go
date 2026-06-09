@@ -44,7 +44,8 @@ func loadAndResolveProjectConfig(
 		Distros:           make(map[string]DistroDefinition),
 		GroupsByComponent: make(map[string][]string),
 		PackageGroups:     make(map[string]PackageGroupConfig),
-		TestSuites:        make(map[string]TestSuiteConfig),
+		Tests:             make(map[string]TestConfig),
+		TestGroups:        make(map[string]TestGroupConfig),
 	}
 
 	for _, configFilePath := range configFilePaths {
@@ -142,7 +143,11 @@ func mergeConfigFile(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
 		return err
 	}
 
-	if err := mergeTestSuites(resolvedCfg, loadedCfg); err != nil {
+	if err := mergeTests(resolvedCfg, loadedCfg); err != nil {
+		return err
+	}
+
+	if err := mergeTestGroups(resolvedCfg, loadedCfg); err != nil {
 		return err
 	}
 
@@ -301,19 +306,37 @@ func mergePackageGroups(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error
 	return nil
 }
 
-// mergeTestSuites merges test suite definitions from a loaded config file into the
-// resolved config. Duplicate test suite names are not allowed.
-func mergeTestSuites(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
-	for suiteName, suite := range loadedCfg.TestSuites {
-		if _, ok := resolvedCfg.TestSuites[suiteName]; ok {
-			return fmt.Errorf("%w: test suite %#q", ErrDuplicateTestSuites, suiteName)
+// mergeTests merges test definitions from a loaded config file into the
+// resolved config. Duplicate test names are not allowed.
+func mergeTests(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
+	for testName, test := range loadedCfg.Tests {
+		if _, ok := resolvedCfg.Tests[testName]; ok {
+			return fmt.Errorf("%w: test %#q", ErrDuplicateTests, testName)
 		}
 
 		// Fill out fields not explicitly serialized.
-		suite.Name = suiteName
-		suite.SourceConfigFile = loadedCfg
+		test.Name = testName
+		test.SourceConfigFile = loadedCfg
 
-		resolvedCfg.TestSuites[suiteName] = *(suite.WithAbsolutePaths(loadedCfg.dir))
+		resolvedCfg.Tests[testName] = *(test.WithAbsolutePaths(loadedCfg.dir))
+	}
+
+	return nil
+}
+
+// mergeTestGroups merges test-group definitions from a loaded config file into the
+// resolved config. Duplicate test-group names are not allowed.
+func mergeTestGroups(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
+	for groupName, group := range loadedCfg.TestGroups {
+		if _, ok := resolvedCfg.TestGroups[groupName]; ok {
+			return fmt.Errorf("%w: test-group %#q", ErrDuplicateTestGroups, groupName)
+		}
+
+		// Fill out fields not explicitly serialized.
+		group.Name = groupName
+		group.SourceConfigFile = loadedCfg
+
+		resolvedCfg.TestGroups[groupName] = *(group.WithAbsolutePaths(loadedCfg.dir))
 	}
 
 	return nil

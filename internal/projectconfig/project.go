@@ -44,8 +44,11 @@ type ProjectConfig struct {
 	// Definitions of package groups with shared configuration.
 	PackageGroups map[string]PackageGroupConfig `toml:"package-groups,omitempty" json:"packageGroups,omitempty" jsonschema:"title=Package groups,description=Mapping of package group names to configurations for publish-time routing"`
 
-	// Definitions of test suites.
-	TestSuites map[string]TestSuiteConfig `toml:"test-suites,omitempty" json:"testSuites,omitempty" jsonschema:"title=Test Suites,description=Mapping of test suite names to configurations"`
+	// Definitions of tests.
+	Tests map[string]TestConfig `toml:"test-suites,omitempty" json:"testSuites,omitempty" jsonschema:"title=Tests,description=Mapping of test names to configurations"`
+
+	// Definitions of test-groups.
+	TestGroups map[string]TestGroupConfig `toml:"test-groups,omitempty" json:"testGroups,omitempty" jsonschema:"title=Test Groups,description=Mapping of test-group names to configurations"`
 
 	// Root config file path; not serialized.
 	RootConfigFilePath string `toml:"-" json:"-"`
@@ -64,7 +67,8 @@ func NewProjectConfig() ProjectConfig {
 		Resources:         ResourcesConfig{RpmRepos: make(map[string]RpmRepoResource)},
 		GroupsByComponent: make(map[string][]string),
 		PackageGroups:     make(map[string]PackageGroupConfig),
-		TestSuites:        make(map[string]TestSuiteConfig),
+		Tests:             make(map[string]TestConfig),
+		TestGroups:        make(map[string]TestGroupConfig),
 	}
 }
 
@@ -83,7 +87,15 @@ func (cfg *ProjectConfig) Validate() error {
 		return err
 	}
 
-	if err := validateImageTestReferences(cfg.Images, cfg.TestSuites); err != nil {
+	if err := validateTestGroupMembership(cfg.TestGroups, cfg.Tests); err != nil {
+		return err
+	}
+
+	if err := validateImageTestReferences(cfg.Images, cfg.Tests, cfg.TestGroups); err != nil {
+		return err
+	}
+
+	if err := validateComponentTestReferences(cfg.Components, cfg.Tests, cfg.TestGroups); err != nil {
 		return err
 	}
 
@@ -268,22 +280,118 @@ func validatePackageGroupMembership(groups map[string]PackageGroupConfig) error 
 	return nil
 }
 
-// validateImageTestReferences checks that every test suite name in an image's
-// [ImageConfig.Tests.TestSuites] list corresponds to a defined entry in the top-level
-// TestSuites map.
-func validateImageTestReferences(images map[string]ImageConfig, testSuites map[string]TestSuiteConfig) error {
-	for imageName, image := range images {
-		for _, suiteName := range image.TestNames() {
-			if _, ok := testSuites[suiteName]; !ok {
-				return fmt.Errorf(
-					"%w: image %#q references test suite %#q, which is not defined in [test-suites]",
-					ErrUndefinedTestSuite, imageName, suiteName,
-				)
+// validateImageTestReferences checks that every test name in an image's
+// [ImageConfig.Tests.Tests] list resolves to a defined entry in the top-level
+// [ProjectConfig.Tests] map, and that every group name resolves to an entry in
+// [ProjectConfig.TestGroups]. All offending references are reported together.
+func validateImageTestReferences(
+	images map[string]ImageConfig,
+	tests map[string]TestConfig,
+	testGroups map[string]TestGroupConfig,
+) error {
+	var errs []error
+
+	// Iterate in sorted order for deterministic error reporting.
+	imageNames := make([]string, 0, len(images))
+	for name := range images {
+		imageNames = append(imageNames, name)
+	}
+
+	sort.Strings(imageNames)
+
+	for _, imageName := range imageNames {
+		image := images[imageName]
+		for _, testName := range image.TestRefNames() {
+			if _, ok := tests[testName]; !ok {
+				errs = append(errs, fmt.Errorf(
+					"%w: image %#q references test %#q, which is not defined in [tests]",
+					ErrUndefinedTest, imageName, testName,
+				))
+			}
+		}
+
+		for _, groupName := range image.TestRefGroups() {
+			if _, ok := testGroups[groupName]; !ok {
+				errs = append(errs, fmt.Errorf(
+					"%w: image %#q references test-group %#q, which is not defined in [test-groups]",
+					ErrUndefinedTestGroup, imageName, groupName,
+				))
 			}
 		}
 	}
 
-	return nil
+	return errors.Join(errs...)
+}
+
+// validateComponentTestReferences mirrors [validateImageTestReferences] for
+// component-side test associations.
+func validateComponentTestReferences(
+	components map[string]ComponentConfig,
+	tests map[string]TestConfig,
+	testGroups map[string]TestGroupConfig,
+) error {
+	var errs []error
+
+	componentNames := make([]string, 0, len(components))
+	for name := range components {
+		componentNames = append(componentNames, name)
+	}
+
+	sort.Strings(componentNames)
+
+	for _, componentName := range componentNames {
+		component := components[componentName]
+		for _, testName := range component.TestRefNames() {
+			if _, ok := tests[testName]; !ok {
+				errs = append(errs, fmt.Errorf(
+					"%w: component %#q references test %#q, which is not defined in [tests]",
+					ErrUndefinedTest, componentName, testName,
+				))
+			}
+		}
+
+		for _, groupName := range component.TestRefGroups() {
+			if _, ok := testGroups[groupName]; !ok {
+				errs = append(errs, fmt.Errorf(
+					"%w: component %#q references test-group %#q, which is not defined in [test-groups]",
+					ErrUndefinedTestGroup, componentName, groupName,
+				))
+			}
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+// validateTestGroupMembership checks that every test name listed in each
+// [TestGroupConfig.Tests] member list resolves to a defined entry in the
+// top-level [ProjectConfig.Tests] map. All offending references are reported
+// together. Nested group references are not supported and never resolved.
+func validateTestGroupMembership(
+	testGroups map[string]TestGroupConfig, tests map[string]TestConfig,
+) error {
+	var errs []error
+
+	groupNames := make([]string, 0, len(testGroups))
+	for name := range testGroups {
+		groupNames = append(groupNames, name)
+	}
+
+	sort.Strings(groupNames)
+
+	for _, groupName := range groupNames {
+		group := testGroups[groupName]
+		for _, member := range group.Tests {
+			if _, ok := tests[member]; !ok {
+				errs = append(errs, fmt.Errorf(
+					"%w: test-group %#q references test %#q, which is not defined in [tests]",
+					ErrUndefinedTest, groupName, member,
+				))
+			}
+		}
+	}
+
+	return errors.Join(errs...)
 }
 
 // Default project-relative paths used when the corresponding [ProjectInfo]

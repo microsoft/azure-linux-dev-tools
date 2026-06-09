@@ -12,6 +12,84 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestProjectConfigFileValidation_TestMismatchedSubtable(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Tests: map[string]projectconfig.TestConfig{
+			"smoke": {
+				Type:   projectconfig.TestTypeLisa,
+				Pytest: &projectconfig.PytestConfig{WorkingDir: "tests"},
+			},
+		},
+	}
+
+	err := file.Validate()
+	require.Error(t, err)
+	require.ErrorIs(t, err, projectconfig.ErrMismatchedTestSubtable)
+	assert.Contains(t, err.Error(), "invalid test")
+	assert.Contains(t, err.Error(), "smoke")
+	assert.Contains(t, err.Error(), "pytest")
+}
+
+func TestProjectConfigFileValidation_TestMatchingSubtable(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Tests: map[string]projectconfig.TestConfig{
+			"smoke": {
+				Type:   projectconfig.TestTypePytest,
+				Pytest: &projectconfig.PytestConfig{WorkingDir: "tests"},
+			},
+		},
+	}
+
+	assert.NoError(t, file.Validate())
+}
+
+func TestProjectConfigFileValidation_TestMissingTypeField(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Tests: map[string]projectconfig.TestConfig{
+			"smoke": {
+				Pytest: &projectconfig.PytestConfig{WorkingDir: "tests"},
+			},
+		},
+	}
+
+	err := file.Validate()
+	require.Error(t, err)
+	require.ErrorIs(t, err, projectconfig.ErrMissingTestField)
+	assert.Contains(t, err.Error(), "type")
+}
+
+func TestProjectConfigFileValidation_TestRefMissingNameAndGroup(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Images: map[string]projectconfig.ImageConfig{
+			"vm-base": {
+				Tests: projectconfig.ImageTestsConfig{
+					Tests: []projectconfig.TestRef{{}},
+				},
+			},
+		},
+	}
+
+	err := file.Validate()
+	require.Error(t, err)
+	require.ErrorIs(t, err, projectconfig.ErrInvalidTestRef)
+}
+
+func TestProjectConfigFileValidation_TestRefBothNameAndGroup(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"kernel": {
+				Tests: projectconfig.ComponentTestsConfig{
+					Tests: []projectconfig.TestRef{{Name: "smoke", Group: "bvt"}},
+				},
+			},
+		},
+	}
+
+	err := file.Validate()
+	require.Error(t, err)
+	require.ErrorIs(t, err, projectconfig.ErrInvalidTestRef)
+}
+
 func TestProjectConfigFileValidation_EmptyFile(t *testing.T) {
 	file := projectconfig.ConfigFile{}
 	assert.NoError(t, file.Validate())

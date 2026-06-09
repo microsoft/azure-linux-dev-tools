@@ -90,7 +90,7 @@ func TestListImages_WithCapabilitiesAndTests(t *testing.T) {
 				Systemd:         lo.ToPtr(true),
 			},
 			Tests: projectconfig.ImageTestsConfig{
-				TestSuites: []projectconfig.TestSuiteRef{
+				Tests: []projectconfig.TestRef{
 					{Name: "smoke"},
 					{Name: "integration"},
 				},
@@ -106,7 +106,7 @@ func TestListImages_WithCapabilitiesAndTests(t *testing.T) {
 				Container: lo.ToPtr(true),
 			},
 			Tests: projectconfig.ImageTestsConfig{
-				TestSuites: []projectconfig.TestSuiteRef{
+				Tests: []projectconfig.TestRef{
 					{Name: "smoke"},
 				},
 			},
@@ -132,7 +132,7 @@ func TestListImages_WithCapabilitiesAndTests(t *testing.T) {
 	assert.Nil(t, results[0].Capabilities.MachineBootable)
 	assert.Equal(t, "container", results[0].CapabilitiesSummary)
 	assert.Equal(t, projectconfig.ImageTestsConfig{
-		TestSuites: []projectconfig.TestSuiteRef{{Name: "smoke"}},
+		Tests: []projectconfig.TestRef{{Name: "smoke"}},
 	}, results[0].Tests)
 	assert.Equal(t, "smoke", results[0].TestsSummary)
 	assert.Equal(t, projectconfig.ImagePublishConfig{
@@ -144,7 +144,7 @@ func TestListImages_WithCapabilitiesAndTests(t *testing.T) {
 	assert.Nil(t, results[1].Capabilities.MachineBootable)
 	assert.Nil(t, results[1].Capabilities.Container)
 	assert.Empty(t, results[1].CapabilitiesSummary)
-	assert.Empty(t, results[1].Tests.TestSuites)
+	assert.Empty(t, results[1].Tests.Tests)
 	assert.Empty(t, results[1].TestsSummary)
 	assert.Empty(t, results[1].Publish.Channels)
 	assert.Empty(t, results[1].PublishSummary)
@@ -155,7 +155,7 @@ func TestListImages_WithCapabilitiesAndTests(t *testing.T) {
 	assert.Nil(t, results[2].Capabilities.Container)
 	assert.Equal(t, "machine-bootable, systemd", results[2].CapabilitiesSummary)
 	assert.Equal(t, projectconfig.ImageTestsConfig{
-		TestSuites: []projectconfig.TestSuiteRef{{Name: "smoke"}, {Name: "integration"}},
+		Tests: []projectconfig.TestRef{{Name: "smoke"}, {Name: "integration"}},
 	}, results[2].Tests)
 	assert.Equal(t, "smoke, integration", results[2].TestsSummary)
 	assert.Equal(t, projectconfig.ImagePublishConfig{

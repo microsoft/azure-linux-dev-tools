@@ -173,6 +173,11 @@
           "$ref": "#/$defs/ComponentPublishConfig",
           "title": "Publish settings",
           "description": "Component-level publish channel settings"
+        },
+        "tests": {
+          "$ref": "#/$defs/ComponentTestsConfig",
+          "title": "Tests",
+          "description": "Test configuration for this component"
         }
       },
       "additionalProperties": false,
@@ -347,6 +352,20 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "ComponentTestsConfig": {
+      "properties": {
+        "test-suites": {
+          "items": {
+            "$ref": "#/$defs/TestRef"
+          },
+          "type": "array",
+          "title": "Tests",
+          "description": "List of test or test-group references that apply to this component"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "ConfigFile": {
       "properties": {
         "$schema": {
@@ -427,11 +446,19 @@
         },
         "test-suites": {
           "additionalProperties": {
-            "$ref": "#/$defs/TestSuiteConfig"
+            "$ref": "#/$defs/TestConfig"
           },
           "type": "object",
-          "title": "Test Suites",
-          "description": "Definitions of test suites for this project"
+          "title": "Tests",
+          "description": "Definitions of tests for this project"
+        },
+        "test-groups": {
+          "additionalProperties": {
+            "$ref": "#/$defs/TestGroupConfig"
+          },
+          "type": "object",
+          "title": "Test Groups",
+          "description": "Definitions of test-groups (named bundles of tests) for this project"
         }
       },
       "additionalProperties": false,
@@ -705,11 +732,11 @@
       "properties": {
         "test-suites": {
           "items": {
-            "$ref": "#/$defs/TestSuiteRef"
+            "$ref": "#/$defs/TestRef"
           },
           "type": "array",
-          "title": "Test Suites",
-          "description": "List of test suite references that apply to this image"
+          "title": "Tests",
+          "description": "List of test or test-group references that apply to this image"
         }
       },
       "additionalProperties": false,
@@ -1288,12 +1315,44 @@
         "subpath"
       ]
     },
-    "TestSuiteConfig": {
+    "TestConfig": {
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "pytest"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "pytest"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "lisa"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "pytest"
+              ]
+            }
+          }
+        }
+      ],
       "properties": {
         "description": {
           "type": "string",
           "title": "Description",
-          "description": "Description of this test suite"
+          "description": "Description of this test"
         },
         "type": {
           "type": "string",
@@ -1303,6 +1362,24 @@
           ],
           "title": "Type",
           "description": "Type of test framework (pytest or lisa)"
+        },
+        "kind": {
+          "items": {
+            "type": "string",
+            "enum": [
+              "functional",
+              "performance"
+            ]
+          },
+          "type": "array",
+          "uniqueItems": true,
+          "title": "Kind",
+          "description": "Classification of the test's nature (e.g. functional, performance). Closed enum; multi-valued."
+        },
+        "long-running": {
+          "type": "boolean",
+          "title": "Long running",
+          "description": "Indicates that this test may take hours to complete. Hint about cost, not a configurable timeout."
         },
         "pytest": {
           "$ref": "#/$defs/PytestConfig",
@@ -1316,19 +1393,66 @@
         "type"
       ]
     },
-    "TestSuiteRef": {
+    "TestGroupConfig": {
       "properties": {
-        "name": {
+        "description": {
           "type": "string",
-          "title": "Name",
-          "description": "Name of the test suite (must match a key in [test-suites])"
+          "title": "Description",
+          "description": "Description of this test-group"
+        },
+        "tests": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Tests",
+          "description": "Names of tests (keys in [tests]) that belong to this group"
         }
       },
       "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "name"
-      ]
+      "type": "object"
+    },
+    "TestRef": {
+      "oneOf": [
+        {
+          "not": {
+            "required": [
+              "group"
+            ]
+          },
+          "required": [
+            "name"
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "name"
+            ]
+          },
+          "required": [
+            "group"
+          ]
+        }
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^\\S",
+          "title": "Name",
+          "description": "Name of a test (key in [tests]); mutually exclusive with 'group'"
+        },
+        "group": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^\\S",
+          "title": "Group",
+          "description": "Name of a test-group (key in [test-groups]); mutually exclusive with 'name'"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
     },
     "ToolsConfig": {
       "properties": {

@@ -303,6 +303,32 @@ type ComponentConfig struct {
 	// all packages produced by this component. Overridden by package-group and per-package settings
 	// for binary and debuginfo channels.
 	Publish ComponentPublishConfig `toml:"publish,omitempty" json:"publish,omitempty" table:"-" jsonschema:"title=Publish settings,description=Component-level publish channel settings" fingerprint:"-"`
+
+	// Tests holds the test configuration for this component, including which tests
+	// and test-groups apply to it.
+	Tests ComponentTestsConfig `toml:"tests,omitempty" json:"tests,omitempty" table:"-" jsonschema:"title=Tests,description=Test configuration for this component" fingerprint:"-"`
+}
+
+// ComponentTestsConfig holds the test-related configuration for a component.
+// It mirrors [ImageTestsConfig] in shape: a list of [TestRef] entries that
+// each name a test or a test-group.
+type ComponentTestsConfig struct {
+	// Tests is the list of test references that apply to this component. Each entry
+	// must reference either a single test (by name, key in [tests]) or a
+	// test-group (by group, key in [test-groups]).
+	Tests []TestRef `toml:"test-suites,omitempty" json:"testSuites,omitempty" jsonschema:"title=Tests,description=List of test or test-group references that apply to this component"`
+}
+
+// TestRefNames returns the names of [TestConfig]s directly referenced by this component
+// (i.e., entries with [TestRef.Name] set). Group references are excluded.
+func (c *ComponentConfig) TestRefNames() []string {
+	return testRefNames(c.Tests.Tests)
+}
+
+// TestRefGroups returns the names of [TestGroupConfig]s referenced by this component
+// (i.e., entries with [TestRef.Group] set). Direct test references are excluded.
+func (c *ComponentConfig) TestRefGroups() []string {
+	return testRefGroups(c.Tests.Tests)
 }
 
 // AllowedSourceFilesHashTypes defines the set of hash types that are supported
@@ -400,6 +426,7 @@ func (c *ComponentConfig) WithAbsolutePaths(referenceDir string) *ComponentConfi
 		// absolutized; nothing reads it afterward, so preserve the original value verbatim
 		// rather than redundantly re-rooting each glob.
 		OverlayFiles: slices.Clone(c.OverlayFiles),
+		Tests:        deep.MustCopy(c.Tests),
 	}
 
 	// Fix up paths.

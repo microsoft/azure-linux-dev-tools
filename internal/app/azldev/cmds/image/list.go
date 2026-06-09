@@ -40,7 +40,8 @@ type ImageListResult struct {
 	// structure.
 	Tests projectconfig.ImageTestsConfig `json:"tests" table:"-"`
 
-	// TestsSummary is a comma-separated summary of test suite names for table display.
+	// TestsSummary is a comma-separated summary of test refs (test names and
+	// "@group" markers) for table display.
 	TestsSummary string `json:"-" table:"Tests"`
 
 	// Publish holds the publish settings for this image.
@@ -136,7 +137,7 @@ func ListImages(env *azldev.Env, options *ListImageOptions) ([]ImageListResult, 
 			Capabilities:        imageConfig.Capabilities,
 			CapabilitiesSummary: strings.Join(imageConfig.Capabilities.EnabledNames(), ", "),
 			Tests:               imageConfig.Tests,
-			TestsSummary:        strings.Join(imageConfig.TestNames(), ", "),
+			TestsSummary:        strings.Join(formatTestRefs(imageConfig.Tests.Tests), ", "),
 			Publish:             imageConfig.Publish,
 			PublishSummary:      strings.Join(imageConfig.Publish.Channels, ", "),
 			Definition: ImageDefinitionResult{
@@ -147,6 +148,23 @@ func ListImages(env *azldev.Env, options *ListImageOptions) ([]ImageListResult, 
 	}
 
 	return results, nil
+}
+
+// formatTestRefs renders a slice of [projectconfig.TestRef] for display in
+// "image list" table output. Direct test refs are emitted as bare names; group
+// refs are emitted with an "@" prefix to distinguish them. Order is preserved.
+func formatTestRefs(refs []projectconfig.TestRef) []string {
+	out := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		switch {
+		case ref.Name != "":
+			out = append(out, ref.Name)
+		case ref.Group != "":
+			out = append(out, "@"+ref.Group)
+		}
+	}
+
+	return out
 }
 
 // matchesAnyPattern returns true if name matches any of the given glob patterns.

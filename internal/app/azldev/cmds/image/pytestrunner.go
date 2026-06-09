@@ -34,18 +34,18 @@ const (
 	capabilitiesPlaceholder = "{capabilities}"
 )
 
-// RunPytestSuite runs a pytest-based test suite natively using a Python venv.
-func RunPytestSuite(
-	env *azldev.Env, suiteConfig *projectconfig.TestSuiteConfig,
+// RunPytest runs a pytest-based test natively using a Python venv.
+func RunPytest(
+	env *azldev.Env, testConfig *projectconfig.TestConfig,
 	imageConfig *projectconfig.ImageConfig, options *ImageTestOptions,
 ) error {
-	pytestConfig := suiteConfig.Pytest
+	pytestConfig := testConfig.Pytest
 	if pytestConfig == nil {
-		return fmt.Errorf("test suite %#q is missing pytest configuration", suiteConfig.Name)
+		return fmt.Errorf("test %#q is missing pytest configuration", testConfig.Name)
 	}
 
-	slog.Info("Running pytest test suite",
-		slog.String("name", suiteConfig.Name),
+	slog.Info("Running pytest test",
+		slog.String("name", testConfig.Name),
 		slog.String("working-dir", pytestConfig.WorkingDir),
 		slog.String("image-path", options.ImagePath),
 	)
@@ -68,7 +68,7 @@ func RunPytestSuite(
 	}
 
 	// Set up or reuse the venv.
-	venvDir, err := ensurePytestVenv(env, suiteConfig.Name, pytestConfig)
+	venvDir, err := ensurePytestVenv(env, testConfig.Name, pytestConfig)
 	if err != nil {
 		return err
 	}
@@ -103,7 +103,7 @@ func RunPytestSuite(
 	return nil
 }
 
-// ensurePytestVenv creates or reuses a Python venv for the given test suite and installs
+// ensurePytestVenv creates or reuses a Python venv for the given test and installs
 // dependencies according to the configured install mode. The venv is created under the
 // project's work directory.
 func ensurePytestVenv(
@@ -115,7 +115,7 @@ func ensurePytestVenv(
 		// 'pytest-venv/...' tree under the user's CWD, which is surprising and can
 		// pollute repos. Fail fast instead.
 		return "", fmt.Errorf(
-			"cannot create pytest venv for test suite %#q: project work directory is not configured",
+			"cannot create pytest venv for test %#q: project work directory is not configured",
 			testName,
 		)
 	}
