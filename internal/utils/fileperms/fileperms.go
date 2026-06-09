@@ -25,4 +25,10 @@ const (
 	PrivateDir os.FileMode = 0o700
 	// Directory permissions: user read/write/execute; group read/execute.
 	PublicDir os.FileMode = 0o755
+
+	// Read-only permissions (no write bits), for immutable or synthetic views.
+	// ReadOnlyFile: all read. ReadOnlyExec: all read/execute (directories,
+	// executables, symlinks).
+	ReadOnlyFile os.FileMode = 0o444
+	ReadOnlyExec os.FileMode = 0o555
 )
