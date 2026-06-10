@@ -252,14 +252,9 @@ func TestComputeIdentity_OverlaySourceFileChange(t *testing.T) {
 }
 
 func TestComputeIdentity_OverlayArchiveScopingChangesFP(t *testing.T) {
-	// Archive scoping fields are hashed with `,omitempty`: an unset scope must
-	// not perturb the fingerprint (so the overwhelming majority of overlays stay
-	// idempotent against already-rendered specs), but a SET scope genuinely
-	// changes the build output (a file removed from inside an archive) and so
-	// must change the fingerprint. This test pins the second half of that
-	// contract — guarding against an over-correction that excludes the fields
-	// entirely (e.g. `fingerprint:"-"`), which would let an archive overlay slip
-	// through without triggering a rebuild.
+	// Archive-scoping fields are part of the hashed config, so setting them must
+	// change the fingerprint. Guards against excluding them (e.g. `fingerprint:"-"`),
+	// which would let an archive overlay skip a rebuild.
 	ctx := newTestFS(t, map[string]string{
 		"/specs/test.spec": "Name: testpkg\nVersion: 1.0",
 	})

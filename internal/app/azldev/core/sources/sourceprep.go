@@ -671,9 +671,15 @@ func (p *sourcePreparerImpl) updateSourcesFile(
 	config := component.GetConfig()
 	sourceFiles := config.SourceFiles
 
-	// Derive archive names from the component's overlays — no need to thread
-	// them through the overlay application chain.
-	modifiedArchives := archiveNamesFromOverlays(config.Overlays)
+	// Derive the archives whose 'sources' hash needs refreshing because an archive
+	// overlay repacked them. Only meaningful when archive overlays actually ran:
+	// when skipLookaside is set, archive overlays are skipped (see
+	// [applyArchiveOverlayGroup]) and the archives may not even be present on disk,
+	// so rehashing would either fail or pointlessly rewrite an unchanged hash.
+	var modifiedArchives []string
+	if !p.skipLookaside {
+		modifiedArchives = archiveNamesFromOverlays(config.Overlays)
+	}
 
 	if len(sourceFiles) == 0 && len(modifiedArchives) == 0 {
 		return nil
