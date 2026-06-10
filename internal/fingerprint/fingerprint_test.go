@@ -251,6 +251,45 @@ func TestComputeIdentity_OverlaySourceFileChange(t *testing.T) {
 	assert.NotEqual(t, fp1, fp2, "different overlay source content must produce different fingerprints")
 }
 
+func TestComputeIdentity_OverlayArchiveScopingChangesFP(t *testing.T) {
+	// Archive scoping fields are hashed with `,omitempty`: an unset scope must
+	// not perturb the fingerprint (so the overwhelming majority of overlays stay
+	// idempotent against already-rendered specs), but a SET scope genuinely
+	// changes the build output (a file removed from inside an archive) and so
+	// must change the fingerprint. This test pins the second half of that
+	// contract — guarding against an over-correction that excludes the fields
+	// entirely (e.g. `fingerprint:"-"`), which would let an archive overlay slip
+	// through without triggering a rebuild.
+	ctx := newTestFS(t, map[string]string{
+		"/specs/test.spec": "Name: testpkg\nVersion: 1.0",
+	})
+	releaseVer := testReleaseVer
+
+	base := baseComponent()
+	base.Overlays = []projectconfig.ComponentOverlay{
+		{Type: "file-remove", Filename: "bundled.conf"},
+	}
+	fpBase := computeFingerprint(t, ctx, base, releaseVer, 0)
+
+	withArchive := baseComponent()
+	withArchive.Overlays = []projectconfig.ComponentOverlay{
+		{Type: "file-remove", Filename: "bundled.conf", Archive: "pkg-1.0.tar.gz"},
+	}
+	fpArchive := computeFingerprint(t, ctx, withArchive, releaseVer, 0)
+
+	assert.NotEqual(t, fpBase, fpArchive,
+		"setting the archive scope must change the fingerprint")
+
+	withRoot := baseComponent()
+	withRoot.Overlays = []projectconfig.ComponentOverlay{
+		{Type: "file-remove", Filename: "bundled.conf", Archive: "pkg-1.0.tar.gz", ArchiveRoot: "custom-root"},
+	}
+	fpRoot := computeFingerprint(t, ctx, withRoot, releaseVer, 0)
+
+	assert.NotEqual(t, fpArchive, fpRoot,
+		"setting the archive-root override must change the fingerprint")
+}
+
 func TestComputeIdentity_PatchAddRenameChangesFP(t *testing.T) {
 	// When patch-add omits 'file', the destination filename is derived from
 	// filepath.Base(Source). Renaming the source file changes the rendered

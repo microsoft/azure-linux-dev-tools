@@ -566,10 +566,14 @@ func TestComponentOverlay_ModifiesSpec(t *testing.T) {
 		projectconfig.ComponentOverlayAddFile,
 	}
 
-	// Archive-scoped overlays: only file-remove becomes archive-scoped, and only
-	// when its Archive field is set.
+	// Archive-scoped overlays: only file-remove/file-search-replace becomes archive-scoped,
+	// and only when its Archive field is set.
 	archiveOverlays := []projectconfig.ComponentOverlay{
 		{Type: projectconfig.ComponentOverlayRemoveFile, Archive: "pkg-1.0.tar.gz", Filename: "f"},
+		{
+			Type:    projectconfig.ComponentOverlaySearchAndReplaceInFile,
+			Archive: "pkg-1.0.tar.gz", Filename: "f", Regex: "old", Replacement: "new",
+		},
 	}
 
 	for _, overlayType := range specOverlayTypes {

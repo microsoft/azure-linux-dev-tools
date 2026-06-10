@@ -309,7 +309,7 @@ repacked.
 type = "file-remove"
 archive = "mypackage-1.0.tar.gz"
 file = "vendor/**"
-description = "Remove bundled vendor directory"
+description = "Remove all bundled vendor files"
 ```
 
 > **Tip:** Without the `archive` field, the same `file-remove` overlay removes a loose file from

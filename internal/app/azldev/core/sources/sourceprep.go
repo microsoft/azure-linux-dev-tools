@@ -331,12 +331,18 @@ func (p *sourcePreparerImpl) applyOverlays(
 	return nil
 }
 
-// applyArchiveOverlayGroup applies archive overlays. Skipped when source
-// downloads were not performed.
+// applyArchiveOverlayGroup applies the archive-scoped overlays contained in the
+// given overlay list. The list may hold overlays of any type; only those for
+// which [projectconfig.ComponentOverlay.ModifiesArchive] reports true are
+// processed here. Skipped when source downloads were not performed.
 func (p *sourcePreparerImpl) applyArchiveOverlayGroup(
 	component components.Component,
-	sourcesDirPath string, archiveOverlays []projectconfig.ComponentOverlay,
+	sourcesDirPath string, overlays []projectconfig.ComponentOverlay,
 ) error {
+	archiveOverlays := lo.Filter(overlays, func(overlay projectconfig.ComponentOverlay, _ int) bool {
+		return overlay.ModifiesArchive()
+	})
+
 	if len(archiveOverlays) == 0 {
 		return nil
 	}
@@ -350,7 +356,7 @@ func (p *sourcePreparerImpl) applyArchiveOverlayGroup(
 	}
 
 	if err := applyArchiveOverlays(
-		p.dryRunnable, p.fs, p.eventListener, sourcesDirPath, archiveOverlays,
+		p.dryRunnable, p.eventListener, sourcesDirPath, archiveOverlays,
 	); err != nil {
 		return fmt.Errorf("failed to apply archive overlays for component %#q:\n%w",
 			component.GetName(), err)

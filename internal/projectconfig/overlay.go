@@ -21,16 +21,12 @@ type ComponentOverlay struct {
 	// Human readable description of overlay; primarily present to document the need for the change.
 	Description string `toml:"description,omitempty" json:"description,omitempty" jsonschema:"title=Description,description=Human readable description of overlay" fingerprint:"-"`
 
-	// For overlays that target files inside a source archive, identifies the archive to modify.
-	// Must be a filename (not a path) matching a source archive in the component's sources directory.
-	// Only file-remove supports archive scoping; when set, it removes file(s) from inside the named
-	// archive instead of the loose sources tree.
+	// Scopes the overlay to files inside this source archive (a bare filename, not a path).
+	// Only file-remove and file-search-replace honor it; when set, the overlay operates inside
+	// the named archive instead of the loose sources tree.
 	Archive string `toml:"archive,omitempty" json:"archive,omitempty" jsonschema:"title=Archive,description=The source archive to modify (e.g. pkg-1.0.tar.gz)"`
-	// For overlays that target files inside a source archive, optionally overrides the top-level
-	// directory to treat as the extraction root, mirroring rpmbuild's `%setup -n`. When unset, the
-	// root is inferred: if the archive unpacks to a single top-level directory (the conventional
-	// `%{name}-%{version}` layout) that directory is used; otherwise the archive root is used.
-	// Set this when an archive's top-level directory does not follow that convention.
+	// Overrides the archive's extraction root (rpmbuild's `%setup -n` equivalent). When unset, the
+	// root is inferred: a single top-level directory is used, otherwise the archive root.
 	ArchiveRoot string `toml:"archive-root,omitempty" json:"archiveRoot,omitempty" jsonschema:"title=Archive root,description=Top-level directory inside the archive to treat as the extraction root (mirrors %setup -n); inferred when unset"`
 	// For overlays that apply to non-spec files, indicates the filename. For overlays that can
 	// apply to multiple files, supports glob patterns (including globstar).
