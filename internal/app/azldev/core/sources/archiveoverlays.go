@@ -12,7 +12,6 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/archive"
-	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/rootfs"
 )
 
@@ -22,7 +21,6 @@ import (
 // the same machinery as loose-file overlays ([applyNonSpecOverlay]).
 func applyArchiveOverlays(
 	dryRunnable opctx.DryRunnable,
-	fs opctx.FS,
 	eventListener opctx.EventListener,
 	sourcesDirPath string,
 	overlays []projectconfig.ComponentOverlay,
@@ -36,14 +34,19 @@ func applyArchiveOverlays(
 		return nil
 	}
 
+	operationCount := 0
+	for _, group := range groups {
+		operationCount += len(group.overlays)
+	}
+
 	event := eventListener.StartEvent("Applying archive overlays",
 		"archives", len(groups),
-		"operations", len(overlays),
+		"operations", operationCount,
 	)
 	defer event.End()
 
 	for _, group := range groups {
-		if err := processArchive(dryRunnable, fs, sourcesDirPath, group); err != nil {
+		if err := processArchive(dryRunnable, sourcesDirPath, group); err != nil {
 			return fmt.Errorf("archive overlay failed for %#q:\n%w", group.archive, err)
 		}
 	}
@@ -105,22 +108,24 @@ func groupOverlaysByArchive(overlays []projectconfig.ComponentOverlay) ([]archiv
 // and deterministically repacks it in-place with the original compression.
 func processArchive(
 	dryRunnable opctx.DryRunnable,
-	fs opctx.FS,
 	sourcesDirPath string,
 	group archiveGroup,
 ) error {
 	archivePath := filepath.Join(sourcesDirPath, group.archive)
 
-	// Create a temporary directory for extraction. The injected FS is real-filesystem
-	// backed in production, so the returned path is a genuine on-disk path usable by
-	// the [archive] package.
-	workDir, err := fileutils.MkdirTempInTempDir(fs, "archive-overlay-")
+	// Create a temporary directory for extraction directly on the real filesystem.
+	// The [archive] package operates exclusively through OS primitives ([os.Root],
+	// os.*), so the work directory must be a genuine on-disk path regardless of the
+	// injected FS implementation. Using os.MkdirTemp here (instead of the injected
+	// FS) makes that requirement explicit and keeps the path valid even when fs is
+	// an in-memory or otherwise non-OS-backed FS (e.g., in tests or alternate runners).
+	workDir, err := os.MkdirTemp("", "archive-overlay-")
 	if err != nil {
 		return fmt.Errorf("creating temp directory:\n%w", err)
 	}
 
 	defer func() {
-		if removeErr := fs.RemoveAll(workDir); removeErr != nil {
+		if removeErr := os.RemoveAll(workDir); removeErr != nil {
 			slog.Warn("Failed to clean up archive work directory", "error", removeErr)
 		}
 	}()
@@ -153,10 +158,12 @@ func processArchive(
 		}
 	}()
 
-	// Apply each overlay operation in order. Archive overlays are file removals
-	// scoped to the extracted tree, routed through the shared loose-file machinery.
+	// Apply each overlay operation in order. Archive overlays are restricted to
+	// file-remove / file-search-replace (see [projectconfig.ComponentOverlay.ModifiesArchive]),
+	// which operate solely on the destination tree, so the extract-root FS is passed as
+	// both the source and destination FS — there is no component-source FS to read from.
 	for _, overlay := range group.overlays {
-		if err := applyNonSpecOverlay(dryRunnable, fs, extractFS, overlay); err != nil {
+		if err := applyNonSpecOverlay(dryRunnable, extractFS, extractFS, overlay); err != nil {
 			return fmt.Errorf("applying %#q operation:\n%w", overlay.Type, err)
 		}
 	}
