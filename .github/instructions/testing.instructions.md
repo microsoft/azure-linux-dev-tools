@@ -144,13 +144,26 @@ to verify specific call expectations.
 
 ## Lock Files in Tests
 
-Use `env.WriteLock(t, name, lock)` to create lock files on the test filesystem:
+For unit tests using `testutils.NewTestEnv(t)`, use `env.WriteLock(t, name, lock)`
+to create lock files on the in-memory test filesystem:
 
 ```go
 lock := lockfile.New()
 lock.UpstreamCommit = "abc123"
 lock.ManualBump = 1
 env.WriteLock(t, "curl", lock)
+```
+
+For scenario project fixtures, use `projecttest.AddLock(...)` when the lock
+should be serialized with the dynamic project, or `projecttest.WriteLock(...)`
+when a test updates lock files between git commits:
+
+```go
+projecttest.NewDynamicTestProject(
+  projecttest.AddLock("curl", projecttest.WithLockInputFingerprint("sha256:v1")),
+)
+
+projecttest.WriteLock(t, projectDir, "curl", projecttest.WithLockInputFingerprint("sha256:v2"))
 ```
 
 ## Mocking External Commands
