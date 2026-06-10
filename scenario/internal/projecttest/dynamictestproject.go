@@ -139,7 +139,7 @@ func (p *dynamicTestProject) addLock(componentName string, componentLock *lockfi
 		panic(fmt.Sprintf("AddLock: lock file for component %#q already exists via AddFile", componentName))
 	}
 
-	cp := *componentLock
+	cp := deep.MustCopy(*componentLock)
 	p.locks[componentName] = &cp
 }
 
