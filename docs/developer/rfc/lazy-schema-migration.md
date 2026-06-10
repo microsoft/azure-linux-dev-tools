@@ -123,13 +123,7 @@ Two properties of `hashstructure` v2.0.2 are load-bearing for this RFC:
 
 The struct's type name *is* part of the hash (`hashstructure` mixes in `reflect.Type.Name()`), so a rename of the Go type moves every hash even when content is byte-identical.
 
-**Why this substrate cannot host frozen replay.** Every property above is resolved *at hash time against the live program*, not against a pinned description of the v1 encoding:
-
-- The set of fields walked is whatever the struct has *now* - add a field, and last year's `computeFP1` (whose body is still just `hashstructure.Hash(component)`) now includes it.
-- Whether `Includable` is consulted depends on whether the type implements it *now* - not on what was true when v1 locks were written.
-- A `value` vs `pointer` receiver subtlety even decides whether the root struct's `HashInclude` is seen at all (the top-level value is not addressable).
-
-A function meant to be "the v1 algorithm, forever" therefore changes meaning every time the struct or its method set changes. That is the disqualifier for the incremental plan (Problem 6) and the motivation for the projection substrate below, whose v1 projection emits only its version-tagged fields and reads neither the method set nor the type name - immune to all three.
+**Why this substrate cannot host frozen replay.** All three properties are resolved *at hash time against the live program*: the field set walked is whatever the struct has *now*, `Includable` is consulted only if the type implements it *now*, and a `value`-vs-`pointer` receiver subtlety even decides whether the root struct's `HashInclude` is seen at all (the top-level value is not addressable). This is [the substrate problem](#the-substrate-problem-replay-only-works-if-old-algorithms-stay-frozen) made concrete - Problem 6 - and exactly what the projection substrate below avoids by reading none of them.
 
 ## Change taxonomy
 
@@ -659,10 +653,10 @@ The lock **format** `Version` stays at `1`. Bumping it to `2` as a poison pill -
 
 ## Alternatives considered
 
-- **Incremental lazy migration on the `hashstructure` substrate** (the original plan): flip the inclusion default to omitempty via `Includable`, version the lock content, and migrate lazily - *without* a reset. Rejected: Problem 6 makes its central promise unkeepable. A "frozen" replay function built on `hashstructure.Hash` reflects the live struct, so the first field addition after the switchover moves the old algorithm's output and forces a rehash anyway. The incremental path therefore does not actually avoid a coordinated cutover - it defers one to the first field addition, on a substrate that makes replay unsound. With a coordinated cutover already scheduled (the dev→prod cutover), spending it once on a clean projection substrate is the better trade.
+- **Incremental lazy migration on the `hashstructure` substrate** (the original plan): flip the inclusion default to omitempty via `Includable`, version the lock content, and migrate lazily - *without* a reset. Rejected: [Problem 6](#the-substrate-problem-replay-only-works-if-old-algorithms-stay-frozen) makes its central promise unkeepable - the first field addition after the switchover moves the "frozen" algorithm's output and forces a rehash anyway, so it does not avoid a coordinated cutover, only defers one to that addition on a substrate that makes replay unsound. With a cutover already scheduled, spending it once on a clean projection substrate is the better trade.
 - **Global `IgnoreZeroValue`** - a blunt switch that omits *all* zero fields with no escape hatch for build-meaningful zeros, and still on the non-frozen `hashstructure` substrate. Rejected.
 - **Parallel versioned structs with per-struct `Hash()`** - couples locks to Go type identity and duplicates hashing logic per version. Rejected in favor of Part 2's integer-versioned combiner over frozen projections.
-- **Bump the lock format `Version` 1→2 as a poison pill** - makes old binaries hard-reject reset locks. Rejected: it also blocks old binaries from reading pins to queue a build, and it is unnecessary, since the content-version registry already force-rehashes any sub-floor or downgraded token (D3). Same-format + force-rehash keeps old binaries useful without risking silent corruption.
+- **Bump the lock format `Version` 1→2 as a poison pill** - rejected; see [D3](#d3-atomic-self-describing-token-no-format-bump-reconcile-via-force-rehash). It would block old binaries from reading pins to queue a build, and is unnecessary: the content-version registry already force-rehashes any sub-floor or downgraded token without a format bump.
 - **Eager fleet-wide migration as the steady-state mechanism** - rewriting every lock on every algorithm change is the mass-churn the design exists to prevent. Rejected for the steady state. The *reset* is a deliberate, one-time, operator-driven eager pass riding an already-scheduled rebuild - the sanctioned exception, not the rule; `component migrate` is its post-reset equivalent for retiring an old version.
 - **Runtime reflective walker for field selection (instead of generated functions).** One generic `project(cfg, N)` reflects the struct at hash time and emits the fields whose version-set includes N. Least code, and it shares the tag syntax with the chosen approach. Rejected: it reflects the *live* struct at hash time - Problem 6 one layer down - so its frozen-ness rests entirely on golden-vector coverage (test discipline), and field removal degrades from a compile error to a CI failure. Codegen keeps the same tags but moves the reflection to *generate* time and freezes the output as checked-in code, recovering the compile guarantee.
 - **Hand-written per-version `projectVN` functions (instead of generating them from tags).** Each version gets a bespoke function with one explicit `emit`/`emitAlways` line per measured field. Same compile guarantees as codegen (removal won't compile, literal emit-key), but: membership is smeared across N function bodies; "bring a field back a few versions later" has no first-class expression (you re-add an `emit` line, nothing ties it to the field's earlier life); and the mandatory-decision and coverage properties need separate bookkeeping the tags otherwise carry. Codegen is the same runtime with declarative authoring - strictly preferable given the existing `go generate` infrastructure.
@@ -687,7 +681,7 @@ Each PR is independently revertible up to the cutover. PRs A-B land together at 
 
 ## Decisions settled in the body
 
-Indexed here for quick reference; each is argued in full at the linked section.
+Indexed here for quick reference; each is argued in full at the linked section. The four headline trade-offs also have summary tables in [Design decisions](#design-decisions) (D1-D4).
 
 | Decision | Where |
 | -------- | ----- |
