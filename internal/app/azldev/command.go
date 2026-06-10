@@ -40,9 +40,21 @@ type (
 	cobraRunFuncType = func(command *cobra.Command, args []string) error
 
 	// Type of a function for use with [RunFunc] and siblings.
+	//
+	// The returned (result, error) pair is **not** mutually exclusive: an inner
+	// func may return a non-nil result *alongside* a non-nil error to surface
+	// partial output (e.g. per-item results for a batch where some items
+	// failed). When both are non-nil, the [RunFunc] wrapper reports the result
+	// to the user before propagating the error, so the process still exits
+	// non-zero but the user can still see what succeeded. Inner funcs that
+	// have nothing meaningful to report on the error path should return a nil
+	// result.
 	CmdFuncType = func(env *Env) (interface{}, error)
 
 	// Type of a function for use with [RunFuncWithExtraArgs] and siblings.
+	//
+	// See [CmdFuncType] for the partial-results-on-error contract; it applies
+	// identically here.
 	CmdWithExtraArgsFuncType = func(env *Env, extraArgs []string) (interface{}, error)
 )
 
@@ -50,6 +62,10 @@ type (
 // positional arguments, retrieves the [Env], invokes the provided inner function with the
 // right context objects, and then provides standard result reporting for the opaque result value
 // returned by the inner function. Fails early if no project/configuration was loaded.
+//
+// If the inner function returns a non-nil result alongside a non-nil error, the result is
+// reported to the user before the error is propagated, so callers see the partial output and
+// the command still exits non-zero. See [CmdFuncType] for details.
 func RunFunc(innerFunc CmdFuncType) cobraRunFuncType {
 	return runFuncInternal(func(env *Env, extraArgs []string) (interface{}, error) {
 		if len(extraArgs) > 0 {
@@ -65,6 +81,8 @@ func RunFunc(innerFunc CmdFuncType) cobraRunFuncType {
 // right context objects, and then provides standard result reporting for the opaque result value
 // returned by the inner function. Does *not* require valid project/configuration to have been
 // loaded.
+//
+// Reports partial results on error in the same way as [RunFunc]; see [CmdFuncType] for details.
 func RunFuncWithoutRequiredConfig(innerFunc CmdFuncType) cobraRunFuncType {
 	return runFuncInternal(func(env *Env, extraArgs []string) (interface{}, error) {
 		if len(extraArgs) > 0 {
@@ -80,6 +98,9 @@ func RunFuncWithoutRequiredConfig(innerFunc CmdFuncType) cobraRunFuncType {
 // objects and positional arguments, and then provides standard result reporting for
 // the opaque result value returned by the inner function. Fails early if no
 // project/configuration was loaded.
+//
+// Reports partial results on error in the same way as [RunFunc]; see
+// [CmdWithExtraArgsFuncType] for details.
 func RunFuncWithExtraArgs(innerFunc CmdWithExtraArgsFuncType) cobraRunFuncType {
 	return runFuncInternal(innerFunc, true)
 }
@@ -89,6 +110,9 @@ func RunFuncWithExtraArgs(innerFunc CmdWithExtraArgsFuncType) cobraRunFuncType {
 // objects and positional arguments, and then provides standard result reporting for
 // the opaque result value returned by the inner function. Does *not* require valid
 // project/configuration to have been loaded.
+//
+// Reports partial results on error in the same way as [RunFunc]; see
+// [CmdWithExtraArgsFuncType] for details.
 func RunFuncWithoutRequiredConfigWithExtraArgs(innerFunc CmdWithExtraArgsFuncType) cobraRunFuncType {
 	return runFuncInternal(innerFunc, false)
 }
@@ -124,10 +148,37 @@ func runFuncInternal(innerFunc CmdWithExtraArgsFuncType, requireConfig bool) cob
 				command.SilenceUsage = false
 			}
 
+			// Inner funcs may return partial results alongside an error
+			// (e.g. some items succeeded, some failed). Render what we have
+			// before propagating so callers see the partial output and the
+			// process still exits non-zero.
+			if results != nil && !isNilValue(results) {
+				if reportErr := reportResults(env, results); reportErr != nil {
+					return errors.Join(err, reportErr)
+				}
+			}
+
 			return err
 		}
 
 		return reportResults(env, results)
+	}
+}
+
+// isNilValue returns true if the interface holds a typed nil (e.g. a nil
+// slice, map, or pointer). reportResults' reflectable path panics on typed
+// nils, so we guard partial-result rendering against them.
+func isNilValue(v interface{}) bool {
+	if v == nil {
+		return true
+	}
+
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() { //nolint:exhaustive // only nilable kinds matter; others fall through to false
+	case reflect.Chan, reflect.Func, reflect.Map, reflect.Ptr, reflect.Slice, reflect.Interface:
+		return rv.IsNil()
+	default:
+		return false
 	}
 }
 

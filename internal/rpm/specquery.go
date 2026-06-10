@@ -26,6 +26,10 @@ type SpecInfo struct {
 	Name          string
 	Version       Version
 	RequiredFiles []string
+	// Subpackages lists the binary package names the spec produces, in the
+	// order rpmspec reports them. Empty when not queried (e.g., the
+	// per-component buildenv path that only requests --srpm output).
+	Subpackages []string
 }
 
 // NewSpecQuerier constructs a new [SpecQuerier] instance that will use the provided [buildenv.BuildEnv]
@@ -105,7 +109,7 @@ func (q *SpecQuerier) composeRpmspecCmdline(specPath string) (result []string) {
 		"-D", "_specdir " + specDirPath,
 		"-D", "with_check 0",
 		"--queryformat",
-		"name=%{name}\nepoch=%{epoch}\nversion=%{version}\nrelease=%{release}\n[source=%{SOURCE}\n][patch=%{PATCH}\n]",
+		SrpmQueryFormat,
 	}
 
 	for _, name := range q.buildOptions.With {
@@ -121,6 +125,63 @@ func (q *SpecQuerier) composeRpmspecCmdline(specPath string) (result []string) {
 	}
 
 	result = append(result, specPath)
+
+	return result
+}
+
+// Constants for the rpmspec queryformat strings used by both the per-component
+// (legacy) path and the batched query path. Exported so the batched path in
+// [github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources]
+// can build the same command lines without duplicating the format strings.
+const (
+	// SrpmQueryFormat extracts the SRPM-level NEVR plus the source/patch files
+	// referenced by the spec. Used with rpmspec -q --srpm.
+	SrpmQueryFormat = "name=%{name}\n" +
+		"epoch=%{epoch}\n" +
+		"version=%{version}\n" +
+		"release=%{release}\n" +
+		"[source=%{SOURCE}\n]" +
+		"[patch=%{PATCH}\n]"
+
+	// SubpackagesQueryFormat enumerates the binary subpackage names a spec
+	// would produce, one per line. Used with rpmspec -q (no --srpm).
+	SubpackagesQueryFormat = "subpkg=%{name}\n"
+)
+
+// ParseSrpmQueryOutput parses the stdout of `rpmspec -q --srpm --queryformat
+// SrpmQueryFormat <spec>` and returns the populated [SpecInfo] (without
+// Subpackages). Exposed so batched callers can reuse the parsing logic.
+func ParseSrpmQueryOutput(specPath, output string) (*SpecInfo, error) {
+	return parseRpmspecOutput(specPath, output)
+}
+
+// ParseSubpackagesOutput parses the stdout of `rpmspec -q --queryformat
+// SubpackagesQueryFormat <spec>` into the list of binary subpackage names in
+// the order rpmspec emitted them. Whitespace-only lines, blank prefixes, and
+// non-`subpkg=` lines (warnings, debug noise) are silently skipped.
+func ParseSubpackagesOutput(output string) []string {
+	var result []string
+
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+
+		if strings.HasPrefix(trimmed, "error: ") || strings.HasPrefix(trimmed, "warning: ") {
+			slog.Debug("Ignoring rpmspec error", "line", trimmed)
+
+			continue
+		}
+
+		if after, ok := strings.CutPrefix(trimmed, "subpkg="); ok {
+			if after != "" {
+				result = append(result, after)
+			}
+		} else {
+			slog.Debug("Ignoring unexpected line from rpmspec", "line", trimmed)
+		}
+	}
 
 	return result
 }
