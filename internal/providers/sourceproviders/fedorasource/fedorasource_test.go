@@ -38,7 +38,10 @@ SHA256 (patch-1.patch) = 67899aaa0f2f55e55e715cb65596449cb29bb0a76a764fe8f1e51bf
 `
 
 	// Expected URLs (must match the hashes in testSourcesContent).
-	testExpectedURL1 = "https://example.com/sha512/af5ae0eb4ad9c3f07b7d78ec9dfd03f6a00c257df6b829b21051d4ba2d106bf9d2f" +
+	testExpectedHash1 = "af5ae0eb4ad9c3f07b7d78ec9dfd03f6a00c257df6b829b21051d4ba2d106bf" +
+		"9d2f7563c0373b45e0ce5b1ad8a3bad9c05a2769547e67f4bc53692950db0ba37"
+	testExpectedHash2 = "67899aaa0f2f55e55e715cb65596449cb29bb0a76a764fe8f1e51bf4d0af648f"
+	testExpectedURL1  = "https://example.com/sha512/af5ae0eb4ad9c3f07b7d78ec9dfd03f6a00c257df6b829b21051d4ba2d106bf9d2f" +
 		"7563c0373b45e0ce5b1ad8a3bad9c05a2769547e67f4bc53692950db0ba37/test-package/example-1.0.tar.gz"
 	testExpectedURL2 = "https://example.com/sha256/67899aaa0f2f55e55e715cb65596449cb29bb0a76a764fe8f1e51bf4d0af648f/" +
 		"test-package/patch-1.patch"
@@ -112,8 +115,28 @@ func TestExtractSourcesFromRepo(t *testing.T) {
 		return afero.WriteFile(ctx.FS(), destPath, []byte("test patch content"), testFilePerms)
 	})
 
-	err = extractor.ExtractSourcesFromRepo(context.Background(), testRepoDir, testPackageName, testLookasideURI, nil)
+	downloads, err := extractor.ExtractSourcesFromRepo(
+		context.Background(),
+		testRepoDir,
+		testPackageName,
+		testLookasideURI,
+		nil,
+	)
 	require.NoError(t, err)
+	require.Len(t, downloads, 2)
+
+	assert.Equal(t, SourceDownload{
+		Filename: testTarballFile,
+		URL:      testExpectedURL1,
+		HashType: fileutils.HashTypeSHA512,
+		Hash:     testExpectedHash1,
+	}, downloads[0])
+	assert.Equal(t, SourceDownload{
+		Filename: testPatchFile,
+		URL:      testExpectedURL2,
+		HashType: fileutils.HashTypeSHA256,
+		Hash:     testExpectedHash2,
+	}, downloads[1])
 }
 
 func TestExtractSourcesFromRepoValidation(t *testing.T) {
@@ -125,13 +148,13 @@ func TestExtractSourcesFromRepoValidation(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("empty repo dir", func(t *testing.T) {
-		err := extractor.ExtractSourcesFromRepo(context.Background(), "", testPackageName, testLookasideURI, nil)
+		_, err := extractor.ExtractSourcesFromRepo(context.Background(), "", testPackageName, testLookasideURI, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "repository directory cannot be empty")
 	})
 
 	t.Run("empty lookaside URI", func(t *testing.T) {
-		err := extractor.ExtractSourcesFromRepo(context.Background(), testRepoDir, testPackageName, "", nil)
+		_, err := extractor.ExtractSourcesFromRepo(context.Background(), testRepoDir, testPackageName, "", nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "lookaside base URI cannot be empty")
 	})
@@ -140,7 +163,7 @@ func TestExtractSourcesFromRepoValidation(t *testing.T) {
 		require.NoError(t, ctx.FS().MkdirAll(testEmptyRepoDir, fileperms.PublicDir))
 
 		// Missing 'sources' file is valid - it means no external sources to download
-		err := extractor.ExtractSourcesFromRepo(
+		_, err := extractor.ExtractSourcesFromRepo(
 			context.Background(), testEmptyRepoDir, testPackageName, testLookasideURI, nil,
 		)
 		require.NoError(t, err)
@@ -162,7 +185,7 @@ func TestExtractSourcesFromRepoDownloadFailure(t *testing.T) {
 	mockDownloader.EXPECT().Download(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(downloadErr)
 
-	err = extractor.ExtractSourcesFromRepo(context.Background(), testRepoDir, testPackageName, testLookasideURI, nil)
+	_, err = extractor.ExtractSourcesFromRepo(context.Background(), testRepoDir, testPackageName, testLookasideURI, nil)
 	require.Error(t, err)
 	require.ErrorIs(t, err, downloadErr)
 	assert.Contains(t, err.Error(), "failed to download sources")
@@ -186,13 +209,13 @@ func TestExtractSourcesFromRepoHashMismatch(t *testing.T) {
 			return afero.WriteFile(ctx.FS(), destPath, []byte("wrong content"), testFilePerms)
 		})
 
-	err = extractor.ExtractSourcesFromRepo(context.Background(), testRepoDir, testPackageName, testLookasideURI, nil)
+	_, err = extractor.ExtractSourcesFromRepo(context.Background(), testRepoDir, testPackageName, testLookasideURI, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "hash mismatch")
 }
 
 // setupSourcesFile creates a 'sources' file in the specified directory with the given content.
-func setupSourcesFile(t *testing.T, fs afero.Fs, repoDir string, content string) {
+func setupSourcesFile(t *testing.T, fs afero.Fs, repoDir, content string) {
 	t.Helper()
 
 	sourcesPath := filepath.Join(repoDir, testSourcesFile)
