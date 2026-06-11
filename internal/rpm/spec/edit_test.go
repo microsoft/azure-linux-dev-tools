@@ -871,6 +871,116 @@ func TestSearchAndReplace(t *testing.T) {
 
 		require.Equal(t, expected, actual.String())
 	})
+
+	t.Run("replace in macro definition", func(t *testing.T) {
+		input := `
+%global with_doc 1
+Name: test
+
+%build
+make
+`
+
+		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
+
+		expected := strings.ReplaceAll(input, "%global with_doc 1", "%global with_doc 0")
+
+		err = specFile.SearchAndReplace("", "", `%global with_doc 1`, "%global with_doc 0")
+		require.NoError(t, err)
+
+		actual := new(bytes.Buffer)
+
+		err = specFile.Serialize(actual)
+		require.NoError(t, err)
+
+		require.Equal(t, expected, actual.String())
+	})
+
+	t.Run("replace in conditional header", func(t *testing.T) {
+		input := `
+Name: test
+
+%if 0%{?fedora}
+BuildRequires: fedora-only
+%endif
+
+%build
+make
+`
+
+		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
+
+		expected := strings.ReplaceAll(input, "%if 0%{?fedora}", "%if 0%{?rhel}")
+
+		err = specFile.SearchAndReplace("", "", `^%if 0%\{\?fedora\}$`, "%if 0%{?rhel}")
+		require.NoError(t, err)
+
+		actual := new(bytes.Buffer)
+
+		err = specFile.Serialize(actual)
+		require.NoError(t, err)
+
+		require.Equal(t, expected, actual.String())
+	})
+
+	t.Run("replace in multi-line macro definition", func(t *testing.T) {
+		input := `
+%global cfg_content --gcc-triple=%{_target_cpu}-redhat-linux \
+  --extra-flag=old
+Name: test
+
+%build
+make
+`
+
+		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
+
+		expected := strings.ReplaceAll(input, "redhat-linux", "azl-linux")
+
+		err = specFile.SearchAndReplace("", "", `redhat-linux`, "azl-linux")
+		require.NoError(t, err)
+
+		actual := new(bytes.Buffer)
+
+		err = specFile.Serialize(actual)
+		require.NoError(t, err)
+
+		require.Equal(t, expected, actual.String())
+	})
+
+	t.Run("replace in wrapper else branch with section filter", func(t *testing.T) {
+		input := `
+Name: test
+
+%files
+/usr/bin/test
+
+%ifarch x86_64
+%files nonlinux
+%{_datadir}/syslinux/*.exe
+%else
+%exclude %{_datadir}/syslinux/*.exe
+%endif
+`
+
+		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
+
+		expected := strings.ReplaceAll(input, "%exclude %{_datadir}/syslinux/*.exe", "")
+
+		err = specFile.SearchAndReplace("%files", "", `^%exclude %\{_datadir\}/syslinux/\*\.exe$`, "")
+		require.NoError(t, err)
+
+		actual := new(bytes.Buffer)
+
+		err = specFile.Serialize(actual)
+		require.NoError(t, err)
+
+		require.Equal(t, expected, actual.String())
+	})
 }
 
 func TestAddChangelogEntry(t *testing.T) {
@@ -1048,6 +1158,99 @@ Name: test
 		err = specFile.PrependLinesToSection("%description", "", []string{"New line"})
 		require.Error(t, err)
 	})
+
+	t.Run("prepends to first matching section only", func(t *testing.T) {
+		input := `
+Name: test
+
+%if %{with tests}
+%check
+%pytest
+%endif
+
+%check
+%pyproject_check_import
+`
+
+		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
+
+		err = specFile.PrependLinesToSection("%check", "", []string{"# disabled", "exit 0"})
+		require.NoError(t, err)
+
+		actual := new(bytes.Buffer)
+
+		err = specFile.Serialize(actual)
+		require.NoError(t, err)
+
+		assert.Equal(t, `
+Name: test
+
+%if %{with tests}
+%check
+# disabled
+exit 0
+%pytest
+%endif
+
+%check
+%pyproject_check_import
+`, actual.String())
+	})
+}
+
+func TestPrependLinesToAllSections(t *testing.T) {
+	t.Run("prepends to all matching sections", func(t *testing.T) {
+		input := `
+Name: test
+
+%if %{with tests}
+%check
+%pytest
+%endif
+
+%check
+%pyproject_check_import
+`
+
+		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
+
+		err = specFile.PrependLinesToAllSections("%check", "", []string{"# disabled", "exit 0"})
+		require.NoError(t, err)
+
+		actual := new(bytes.Buffer)
+
+		err = specFile.Serialize(actual)
+		require.NoError(t, err)
+
+		assert.Equal(t, `
+Name: test
+
+%if %{with tests}
+%check
+# disabled
+exit 0
+%pytest
+%endif
+
+%check
+# disabled
+exit 0
+%pyproject_check_import
+`, actual.String())
+	})
+
+	t.Run("no such section", func(t *testing.T) {
+		input := `
+Name: test-no-check
+`
+		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
+
+		err = specFile.PrependLinesToAllSections("%check", "", []string{"exit 0"})
+		require.Error(t, err)
+	})
 }
 
 func TestAppendLinesToSection(t *testing.T) {
@@ -1100,6 +1303,246 @@ Name: test
 
 		err = specFile.AppendLinesToSection("%description", "", []string{"New line"})
 		require.Error(t, err)
+	})
+
+	// ---- Conditional boundary tests ----
+	//
+	// These tests document AppendLinesToSection behavior at conditional boundaries.
+	// When a section is followed by a %if wrapper that contains the next section,
+	// the tree parser correctly identifies the wrapper boundary. Appended lines
+	// land at the end of the section body, before the wrapper.
+
+	t.Run("appends before conditional wrapping next section", func(t *testing.T) {
+		// The %if wraps %install, not %build. "echo done" belongs in %build.
+		input := `
+Name: test
+
+%build
+make
+
+%if %{with_docs}
+%install
+install.sh
+%endif
+`
+		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
+
+		err = specFile.AppendLinesToSection("%build", "", []string{"echo done"})
+		require.NoError(t, err)
+
+		actual := new(bytes.Buffer)
+
+		err = specFile.Serialize(actual)
+		require.NoError(t, err)
+
+		// Tree-based code correctly places "echo done" before the wrapper %if.
+		assert.Equal(t, `
+Name: test
+
+%build
+make
+
+echo done
+%if %{with_docs}
+%install
+install.sh
+%endif
+`, actual.String())
+	})
+
+	t.Run("appends before nested conditionals wrapping next section", func(t *testing.T) {
+		input := `
+Name: test
+
+%build
+make
+
+%if %{with_docs}
+%ifarch x86_64
+%install
+install.sh
+%endif
+%endif
+`
+		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
+
+		err = specFile.AppendLinesToSection("%build", "", []string{"echo done"})
+		require.NoError(t, err)
+
+		actual := new(bytes.Buffer)
+
+		err = specFile.Serialize(actual)
+		require.NoError(t, err)
+
+		// Tree-based code correctly places "echo done" before the outer wrapper.
+		assert.Equal(t, `
+Name: test
+
+%build
+make
+
+echo done
+%if %{with_docs}
+%ifarch x86_64
+%install
+install.sh
+%endif
+%endif
+`, actual.String())
+	})
+
+	t.Run("appends correctly when section has own balanced conditional", func(t *testing.T) {
+		// %if/%endif is fully within %build, so the boundary is correct.
+		input := `
+Name: test
+
+%build
+%if %{with_docs}
+make docs
+%endif
+make
+
+%install
+install.sh
+`
+		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
+
+		err = specFile.AppendLinesToSection("%build", "", []string{"echo done"})
+		require.NoError(t, err)
+
+		actual := new(bytes.Buffer)
+
+		err = specFile.Serialize(actual)
+		require.NoError(t, err)
+
+		assert.Equal(t, `
+Name: test
+
+%build
+%if %{with_docs}
+make docs
+%endif
+make
+
+echo done
+%install
+install.sh
+`, actual.String())
+	})
+
+	t.Run("appends correctly when no conditionals at boundary", func(t *testing.T) {
+		input := `
+Name: test
+
+%build
+make
+
+%install
+install.sh
+`
+		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
+
+		err = specFile.AppendLinesToSection("%build", "", []string{"echo done"})
+		require.NoError(t, err)
+
+		actual := new(bytes.Buffer)
+
+		err = specFile.Serialize(actual)
+		require.NoError(t, err)
+
+		assert.Equal(t, `
+Name: test
+
+%build
+make
+
+echo done
+%install
+install.sh
+`, actual.String())
+	})
+
+	t.Run("appends before preamble conditional wrapping next section", func(t *testing.T) {
+		// In the preamble, a trailing %if wrapper contains %description.
+		// The tree parser correctly identifies the wrapper boundary.
+		input := `
+Name: test
+Source0: test.tar.gz
+
+%if %{with_docs}
+%description
+A test package.
+%endif
+
+%build
+make
+`
+		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
+
+		err = specFile.AppendLinesToSection("", "", []string{"Vendor: Microsoft"})
+		require.NoError(t, err)
+
+		actual := new(bytes.Buffer)
+
+		err = specFile.Serialize(actual)
+		require.NoError(t, err)
+
+		// Tree-based code correctly places "Vendor: Microsoft" before the wrapper.
+		assert.Equal(t, `
+Name: test
+Source0: test.tar.gz
+
+Vendor: Microsoft
+%if %{with_docs}
+%description
+A test package.
+%endif
+
+%build
+make
+`, actual.String())
+	})
+
+	t.Run("appends inside wrapper when section is in conditional", func(t *testing.T) {
+		// %files modules-extra-matched is inside %ifnarch. The tree correctly
+		// scopes the section within the conditional, so appended lines land
+		// inside the wrapper (before %endif).
+		input := `
+Name: test
+
+%ifnarch noarch
+%files modules-extra-matched
+%endif
+
+%changelog
+`
+		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
+
+		err = specFile.AppendLinesToSection("%files", "modules-extra-matched", []string{"", "# ANCHOR"})
+		require.NoError(t, err)
+
+		actual := new(bytes.Buffer)
+
+		err = specFile.Serialize(actual)
+		require.NoError(t, err)
+
+		assert.Equal(t, `
+Name: test
+
+%ifnarch noarch
+%files modules-extra-matched
+
+# ANCHOR
+%endif
+
+%changelog
+`, actual.String())
 	})
 }
 
@@ -1411,105 +1854,105 @@ func TestParsePatchTagNumber(t *testing.T) {
 	}
 }
 
-func TestVisitTags(t *testing.T) {
-	input := `Name: main-pkg
+func TestContinuationSuppressesStructuralParsing(t *testing.T) {
+	t.Run("section keyword in continuation body is not a section start", func(t *testing.T) {
+		input := `Name: test
 Version: 1.0
-Patch0: main.patch
 
-%package devel
-Summary: Development files
-Patch1: devel.patch
+%description
+A package.
 
-%package -n other
-Summary: Other package
-Patch2: other.patch
+%install
+echo \
+%files \
+done
+
+%files
+/usr/bin/test
 `
+		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
 
-	tests := []struct {
-		name         string
-		expectedTags []string
-	}{
-		{
-			name:         "visits tags across all packages",
-			expectedTags: []string{"Name", "Version", "Patch0", "Summary", "Patch1", "Summary", "Patch2"},
-		},
-	}
+		// %files inside the continuation should NOT be treated as a section start.
+		// Only one real %files section should exist.
+		found, err := specFile.HasSection("%files")
+		require.NoError(t, err)
+		assert.True(t, found, "real %%files section should be found")
+	})
 
-	for _, testCase := range tests {
-		t.Run(testCase.name, func(t *testing.T) {
-			sf, err := spec.OpenSpec(strings.NewReader(input))
-			require.NoError(t, err)
-
-			var tags []string
-
-			err = sf.VisitTags(func(tagLine *spec.TagLine, _ *spec.Context) error {
-				tags = append(tags, tagLine.Tag)
-
-				return nil
-			})
-			require.NoError(t, err)
-			assert.Equal(t, testCase.expectedTags, tags)
-		})
-	}
-}
-
-func TestVisitTagsPackage(t *testing.T) {
-	input := `Name: main-pkg
+	t.Run("tag-like line in continuation body is not a tag", func(t *testing.T) {
+		input := `Name: test
 Version: 1.0
-Patch0: main.patch
 
-%package devel
-Summary: Development files
-Patch1: devel.patch
+%description
+A package.
 
-%package -n other
-Summary: Other package
-Patch2: other.patch
+%install
+echo \
+Name: fake \
+done
 `
+		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
 
-	tests := []struct {
-		name         string
-		packageName  string
-		expectedTags []string
-	}{
-		{
-			name:         "global package only",
-			packageName:  "",
-			expectedTags: []string{"Name", "Version", "Patch0"},
-		},
-		{
-			name:         "devel sub-package only",
-			packageName:  "devel",
-			expectedTags: []string{"Summary", "Patch1"},
-		},
-		{
-			name:         "other sub-package only",
-			packageName:  "other",
-			expectedTags: []string{"Summary", "Patch2"},
-		},
-		{
-			name:         "non-existing package returns no tags",
-			packageName:  "nonexistent",
-			expectedTags: nil,
-		},
-	}
+		// The "Name: fake" inside the continuation should not be found as a tag.
+		// GetTag should return the real "Name: test" from the preamble.
+		value, err := specFile.GetTag("", "Name")
+		require.NoError(t, err)
+		assert.Equal(t, "test", value, "should find the real Name tag, not the continuation body")
+	})
 
-	for _, testCase := range tests {
-		t.Run(testCase.name, func(t *testing.T) {
-			sf, err := spec.OpenSpec(strings.NewReader(input))
+	t.Run("normal parsing resumes after continuation ends", func(t *testing.T) {
+		input := `Name: test
+Version: 1.0
+
+%description
+A package.
+
+%build
+echo \
+%install \
+done
+
+%install
+make install
+
+%files
+/usr/bin/test
+`
+		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
+
+		found, err := specFile.HasSection("%install")
+		require.NoError(t, err)
+		assert.True(t, found, "real %%install section after continuation should be found")
+
+		found, err = specFile.HasSection("%files")
+		require.NoError(t, err)
+		assert.True(t, found, "%%files section should be found")
+	})
+
+	t.Run("chained multi-line continuation", func(t *testing.T) {
+		input := `Name: test
+Version: 1.0
+
+%build
+echo \
+%description \
+%files \
+%install \
+done
+`
+		sf, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
+
+		// None of the keywords in the continuation chain should create sections.
+		for _, sect := range []string{"%description", "%files", "%install"} {
+			found, err := sf.HasSection(sect)
 			require.NoError(t, err)
-
-			var tags []string
-
-			err = sf.VisitTagsPackage(testCase.packageName, func(tagLine *spec.TagLine, _ *spec.Context) error {
-				tags = append(tags, tagLine.Tag)
-
-				return nil
-			})
-			require.NoError(t, err)
-			assert.Equal(t, testCase.expectedTags, tags)
-		})
-	}
+			assert.False(t, found, "%%s in continuation chain should not be a section", sect)
+		}
+	})
 }
 
 func TestRemoveSection(t *testing.T) {
@@ -1960,7 +2403,7 @@ Main.
 			errorContains: "conditional block spans",
 		},
 		{
-			name: "errors on else branch inside straddling conditional",
+			name: "removes section from one branch while else branch retains sections",
 			input: `Name: test
 
 %description
@@ -1977,9 +2420,21 @@ Main.
 %files
 /usr/bin/test
 `,
-			packageName:   "foo",
-			errorExpected: true,
-			errorContains: "branch directive",
+			packageName: "foo",
+			expectedOutput: `Name: test
+
+%description
+Main.
+
+%if cond
+%else
+%files bar
+/usr/share/bar
+%endif
+
+%files
+/usr/bin/test
+`,
 		},
 		{
 			name: "errors when trimmed zone contains section content in a balanced conditional",

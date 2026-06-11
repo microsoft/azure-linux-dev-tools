@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"regexp"
 	"strconv"
-	"strings"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
@@ -46,21 +45,9 @@ func GetReleaseTagValue(fs opctx.FS, specPath string) (string, error) {
 		return "", fmt.Errorf("failed to parse spec %#q:\n%w", specPath, err)
 	}
 
-	var releaseValue string
-
-	err = openedSpec.VisitTagsPackage("", func(tagLine *spec.TagLine, _ *spec.Context) error {
-		if strings.EqualFold(tagLine.Tag, "Release") {
-			releaseValue = tagLine.Value
-		}
-
-		return nil
-	})
+	releaseValue, err := openedSpec.GetTag("", "Release")
 	if err != nil {
-		return "", fmt.Errorf("failed to visit tags in spec %#q:\n%w", specPath, err)
-	}
-
-	if releaseValue == "" {
-		return "", fmt.Errorf("release tag not found in spec %#q:\n%w", specPath, spec.ErrNoSuchTag)
+		return "", fmt.Errorf("failed to get Release tag from spec %#q:\n%w", specPath, err)
 	}
 
 	return releaseValue, nil
