@@ -747,7 +747,7 @@ Indexed here for quick reference; each is argued in full at the linked section. 
 
 | Decision | Where |
 | -------- | ----- |
-| Reset rides the already-scheduled dev→prod rebuild as the one sanctioned coordinated cutover | [§The opportunity](#the-opportunity-a-coordinated-cutover-is-already-scheduled) |
+| Reset rides the already-scheduled dev→prod rebuild as the one sanctioned coordinated cutover | [§Requirement: one mass rebuild](#requirement-one-mass-rebuild) |
 | Substrate is canonical projection (generated `projectVN` + golden vectors), not `hashstructure` | [§Substrate options](#substrate-options) |
 | Field selection is **codegen** from mandatory per-field version-set tags (absent ⇒ generation fails); `go generate` emits the per-version `projectVN` (v1 hand-written at the reset; **the whole generator** a deferred fast-follow that can regenerate v1 itself) | [§Version-tagged field selection](#version-tagged-field-selection) |
 | Emit-key = frozen TOML key (`key=` override; duplicate keys fail generation); omit-predicate splits - scalar leaves `IsZero`, composites *projected* emptiness | [§Version-tagged field selection](#version-tagged-field-selection) |
