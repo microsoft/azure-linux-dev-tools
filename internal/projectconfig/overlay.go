@@ -132,7 +132,7 @@ func (c *ComponentOverlay) ModifiesSpec() bool {
 // or a bare archive name with no inner path (e.g. "old.tar.gz", which removes the archive file
 // itself from the loose sources tree).
 func (c *ComponentOverlay) ArchiveTarget() (archiveName, innerPath string, ok bool) {
-	before, after, found := strings.Cut(c.Filename, "/")
+	before, after, found := strings.Cut(filepath.ToSlash(c.Filename), "/")
 	if !found || after == "" || !archive.IsArchiveName(before) {
 		return "", "", false
 	}
