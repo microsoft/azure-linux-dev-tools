@@ -252,9 +252,10 @@ func TestComputeIdentity_OverlaySourceFileChange(t *testing.T) {
 }
 
 func TestComputeIdentity_OverlayArchiveScopingChangesFP(t *testing.T) {
-	// Archive-scoping fields are part of the hashed config, so setting them must
-	// change the fingerprint. Guards against excluding them (e.g. `fingerprint:"-"`),
-	// which would let an archive overlay skip a rebuild.
+	// Archive scoping comes from the overlay's file path, which is part of the hashed
+	// config, so scoping an overlay to an archive must change the fingerprint. Guards
+	// against excluding the path (e.g. `fingerprint:"-"`), which would let an archive
+	// overlay skip a rebuild.
 	ctx := newTestFS(t, map[string]string{
 		"/specs/test.spec": "Name: testpkg\nVersion: 1.0",
 	})
@@ -268,21 +269,12 @@ func TestComputeIdentity_OverlayArchiveScopingChangesFP(t *testing.T) {
 
 	withArchive := baseComponent()
 	withArchive.Overlays = []projectconfig.ComponentOverlay{
-		{Type: "file-remove", Filename: "bundled.conf", Archive: "pkg-1.0.tar.gz"},
+		{Type: "file-remove", Filename: "pkg-1.0.tar.gz/bundled.conf"},
 	}
 	fpArchive := computeFingerprint(t, ctx, withArchive, releaseVer, 0)
 
 	assert.NotEqual(t, fpBase, fpArchive,
-		"setting the archive scope must change the fingerprint")
-
-	withRoot := baseComponent()
-	withRoot.Overlays = []projectconfig.ComponentOverlay{
-		{Type: "file-remove", Filename: "bundled.conf", Archive: "pkg-1.0.tar.gz", ArchiveRoot: "custom-root"},
-	}
-	fpRoot := computeFingerprint(t, ctx, withRoot, releaseVer, 0)
-
-	assert.NotEqual(t, fpArchive, fpRoot,
-		"setting the archive-root override must change the fingerprint")
+		"scoping the overlay to an archive (via the path prefix) must change the fingerprint")
 }
 
 func TestComputeIdentity_PatchAddRenameChangesFP(t *testing.T) {

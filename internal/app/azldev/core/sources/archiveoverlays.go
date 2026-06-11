@@ -25,10 +25,7 @@ func applyArchiveOverlays(
 	sourcesDirPath string,
 	overlays []projectconfig.ComponentOverlay,
 ) error {
-	groups, err := groupOverlaysByArchive(overlays)
-	if err != nil {
-		return err
-	}
+	groups := groupOverlaysByArchive(overlays)
 
 	if len(groups) == 0 {
 		return nil
@@ -57,19 +54,17 @@ func applyArchiveOverlays(
 // archiveGroup holds overlays targeting the same archive, preserving order.
 type archiveGroup struct {
 	archive  string
-	root     string
 	overlays []projectconfig.ComponentOverlay
 }
 
-// groupOverlaysByArchive groups archive overlays by their
-// [projectconfig.ComponentOverlay.Archive] field, preserving insertion order
-// within each group and across groups. Non-archive overlays are silently skipped.
+// groupOverlaysByArchive groups archive overlays by the archive named in the first
+// path segment of [projectconfig.ComponentOverlay.Filename] (see
+// [projectconfig.ComponentOverlay.ArchiveTarget]), preserving insertion order within
+// each group and across groups. Non-archive overlays are silently skipped.
 //
-// The optional [projectconfig.ComponentOverlay.ArchiveRoot] override (mirroring
-// rpmbuild's `%setup -n`) is reconciled per archive: all overlays targeting the
-// same archive that set it must agree, otherwise the configuration is ambiguous
-// and an error is returned.
-func groupOverlaysByArchive(overlays []projectconfig.ComponentOverlay) ([]archiveGroup, error) {
+// Each grouped overlay's Filename is rewritten to the in-archive glob (the archive
+// prefix stripped) so that application globs relative to the extracted tree.
+func groupOverlaysByArchive(overlays []projectconfig.ComponentOverlay) []archiveGroup {
 	orderMap := make(map[string]int)
 
 	var groups []archiveGroup
@@ -79,29 +74,25 @@ func groupOverlaysByArchive(overlays []projectconfig.ComponentOverlay) ([]archiv
 			continue
 		}
 
-		idx, exists := orderMap[overlay.Archive]
+		// ok is guaranteed true here: ModifiesArchive() implies ArchiveTarget() ok.
+		archiveName, innerGlob, _ := overlay.ArchiveTarget()
+
+		idx, exists := orderMap[archiveName]
 		if !exists {
 			idx = len(groups)
-			orderMap[overlay.Archive] = idx
+			orderMap[archiveName] = idx
 
-			groups = append(groups, archiveGroup{archive: overlay.Archive})
+			groups = append(groups, archiveGroup{archive: archiveName})
 		}
 
-		if overlay.ArchiveRoot != "" {
-			if groups[idx].root != "" && groups[idx].root != overlay.ArchiveRoot {
-				return nil, fmt.Errorf(
-					"conflicting %#q overrides for archive %#q: %#q vs %#q",
-					"archive-root", overlay.Archive, groups[idx].root, overlay.ArchiveRoot,
-				)
-			}
-
-			groups[idx].root = overlay.ArchiveRoot
-		}
-
-		groups[idx].overlays = append(groups[idx].overlays, overlay)
+		// Rewrite Filename to the in-archive glob so the in-archive application
+		// (which globs relative to the extract root) does not see the archive prefix.
+		scoped := overlay
+		scoped.Filename = innerGlob
+		groups[idx].overlays = append(groups[idx].overlays, scoped)
 	}
 
-	return groups, nil
+	return groups
 }
 
 // processArchive extracts an archive to a temp directory, applies all overlays,
@@ -113,12 +104,16 @@ func processArchive(
 ) error {
 	archivePath := filepath.Join(sourcesDirPath, group.archive)
 
-	// Create a temporary directory for extraction directly on the real filesystem.
+	if dryRunnable.DryRun() {
+		slog.Info("Dry run; would apply archive overlays",
+			"archive", group.archive, "operations", len(group.overlays))
+
+		return nil
+	}
+
 	// The [archive] package operates exclusively through OS primitives ([os.Root],
-	// os.*), so the work directory must be a genuine on-disk path regardless of the
-	// injected FS implementation. Using os.MkdirTemp here (instead of the injected
-	// FS) makes that requirement explicit and keeps the path valid even when fs is
-	// an in-memory or otherwise non-OS-backed FS (e.g., in tests or alternate runners).
+	// os.*), so extraction must use a genuine on-disk path regardless of the injected
+	// FS implementation (which may be in-memory or otherwise non-OS-backed).
 	workDir, err := os.MkdirTemp("", "archive-overlay-")
 	if err != nil {
 		return fmt.Errorf("creating temp directory:\n%w", err)
@@ -135,18 +130,15 @@ func processArchive(
 		return fmt.Errorf("extracting archive:\n%w", err)
 	}
 
-	// Determine the root of the extracted content. Most source archives have
-	// a single top-level directory (e.g., "pkg-1.0/"); group.root overrides this
-	// inference when set (mirrors rpmbuild's `%setup -n`).
-	extractRoot, err := resolveExtractRoot(workDir, group.root)
+	// Determine the root of the extracted content. Most source archives unpack to
+	// a single top-level directory (e.g., "pkg-1.0/"), which is used as the root.
+	extractRoot, err := resolveExtractRoot(workDir)
 	if err != nil {
 		return fmt.Errorf("resolving extract root:\n%w", err)
 	}
 
-	// Confine an FS to the extract root so file overlays reuse the same machinery
-	// as loose-file overlays. The extracted tree is always on the real filesystem
-	// (written by the [archive] package), so root it on an OS-backed FS regardless
-	// of the injected fs implementation.
+	// Confine an OS-backed FS to the extract root so file overlays reuse the same
+	// machinery as loose-file overlays.
 	extractFS, err := rootfs.New(extractRoot)
 	if err != nil {
 		return fmt.Errorf("confining FS to extract root:\n%w", err)
@@ -158,10 +150,9 @@ func processArchive(
 		}
 	}()
 
-	// Apply each overlay operation in order. Archive overlays are restricted to
-	// file-remove / file-search-replace (see [projectconfig.ComponentOverlay.ModifiesArchive]),
-	// which operate solely on the destination tree, so the extract-root FS is passed as
-	// both the source and destination FS — there is no component-source FS to read from.
+	// Apply each overlay in order. Archive overlays (file-remove / file-search-replace,
+	// see [projectconfig.ComponentOverlay.ModifiesArchive]) operate solely on the
+	// destination tree, so extractFS is passed as both source and destination FS.
 	for _, overlay := range group.overlays {
 		if err := applyNonSpecOverlay(dryRunnable, extractFS, extractFS, overlay); err != nil {
 			return fmt.Errorf("applying %#q operation:\n%w", overlay.Type, err)
@@ -178,35 +169,11 @@ func processArchive(
 	return nil
 }
 
-// resolveExtractRoot returns the effective root of an extracted archive.
-// When rootOverride is set (the `%setup -n` equivalent), the named subdirectory
-// of workDir is used; it must be a local path that exists as a directory. When
-// rootOverride is empty, the root is inferred: if workDir contains exactly one
-// entry and that entry is a directory (the common case for source archives like
-// "pkg-1.0/"), that subdirectory is returned; otherwise workDir itself is
-// returned.
-func resolveExtractRoot(workDir, rootOverride string) (string, error) {
-	if rootOverride != "" {
-		// Defense in depth: validation already rejects non-local overrides, but
-		// re-check before joining so a malformed value can never escape workDir.
-		if !filepath.IsLocal(rootOverride) {
-			return "", fmt.Errorf("archive root %#q is not a local path", rootOverride)
-		}
-
-		target := filepath.Join(workDir, rootOverride)
-
-		info, err := os.Stat(target)
-		if err != nil {
-			return "", fmt.Errorf("archive root %#q not found after extraction:\n%w", rootOverride, err)
-		}
-
-		if !info.IsDir() {
-			return "", fmt.Errorf("archive root %#q is not a directory", rootOverride)
-		}
-
-		return target, nil
-	}
-
+// resolveExtractRoot returns the effective root of an extracted archive. If workDir
+// contains exactly one entry and that entry is a directory (the common case for
+// source archives like "pkg-1.0/"), that subdirectory is returned; otherwise workDir
+// itself is returned.
+func resolveExtractRoot(workDir string) (string, error) {
 	entries, err := os.ReadDir(workDir)
 	if err != nil {
 		return "", fmt.Errorf("reading extracted directory:\n%w", err)
@@ -228,9 +195,14 @@ func archiveNamesFromOverlays(overlays []projectconfig.ComponentOverlay) []strin
 	var names []string
 
 	for _, overlay := range overlays {
-		if overlay.ModifiesArchive() && !seen[overlay.Archive] {
-			seen[overlay.Archive] = true
-			names = append(names, overlay.Archive)
+		if !overlay.ModifiesArchive() {
+			continue
+		}
+
+		archiveName, _, _ := overlay.ArchiveTarget()
+		if !seen[archiveName] {
+			seen[archiveName] = true
+			names = append(names, archiveName)
 		}
 	}
 
