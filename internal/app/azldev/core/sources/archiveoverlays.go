@@ -128,7 +128,7 @@ func processArchive(
 	// The [archive] package operates exclusively through OS primitives ([os.Root],
 	// os.*), so extraction must use a genuine on-disk path regardless of the injected
 	// FS implementation (which may be in-memory or otherwise non-OS-backed).
-	workDir, err := os.MkdirTemp("", "archive-overlay-")
+	workDir, err := os.MkdirTemp(sourcesDirPath, ".archive-overlay-")
 	if err != nil {
 		return false, fmt.Errorf("creating temp directory:\n%w", err)
 	}
