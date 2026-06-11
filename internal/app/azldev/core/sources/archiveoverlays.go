@@ -19,16 +19,20 @@ import (
 // them in order. Multiple overlays targeting the same archive are batched into
 // a single extract/modify/repack cycle. File removals inside the archive reuse
 // the same machinery as loose-file overlays ([applyNonSpecOverlay]).
+//
+// It returns the names of the archives that were actually repacked. In dry-run
+// mode no archive is repacked, so the returned slice is empty even when archive
+// overlays were present.
 func applyArchiveOverlays(
 	dryRunnable opctx.DryRunnable,
 	eventListener opctx.EventListener,
 	sourcesDirPath string,
 	overlays []projectconfig.ComponentOverlay,
-) error {
+) ([]string, error) {
 	groups := groupOverlaysByArchive(overlays)
 
 	if len(groups) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	operationCount := 0
@@ -42,13 +46,20 @@ func applyArchiveOverlays(
 	)
 	defer event.End()
 
+	var repacked []string
+
 	for _, group := range groups {
-		if err := processArchive(dryRunnable, sourcesDirPath, group); err != nil {
-			return fmt.Errorf("archive overlay failed for %#q:\n%w", group.archive, err)
+		didRepack, err := processArchive(dryRunnable, sourcesDirPath, group)
+		if err != nil {
+			return nil, fmt.Errorf("archive overlay failed for %#q:\n%w", group.archive, err)
+		}
+
+		if didRepack {
+			repacked = append(repacked, group.archive)
 		}
 	}
 
-	return nil
+	return repacked, nil
 }
 
 // archiveGroup holds overlays targeting the same archive, preserving order.
@@ -96,19 +107,22 @@ func groupOverlaysByArchive(overlays []projectconfig.ComponentOverlay) []archive
 }
 
 // processArchive extracts an archive to a temp directory, applies all overlays,
-// and deterministically repacks it in-place with the original compression.
+// and deterministically repacks it with the original compression, atomically
+// replacing the original via a temp file + rename. It returns true when the
+// archive was repacked. In dry-run mode it returns (false, nil) without touching
+// the archive on disk.
 func processArchive(
 	dryRunnable opctx.DryRunnable,
 	sourcesDirPath string,
 	group archiveGroup,
-) error {
+) (repacked bool, err error) {
 	archivePath := filepath.Join(sourcesDirPath, group.archive)
 
 	if dryRunnable.DryRun() {
 		slog.Info("Dry run; would apply archive overlays",
 			"archive", group.archive, "operations", len(group.overlays))
 
-		return nil
+		return false, nil
 	}
 
 	// The [archive] package operates exclusively through OS primitives ([os.Root],
@@ -116,7 +130,7 @@ func processArchive(
 	// FS implementation (which may be in-memory or otherwise non-OS-backed).
 	workDir, err := os.MkdirTemp("", "archive-overlay-")
 	if err != nil {
-		return fmt.Errorf("creating temp directory:\n%w", err)
+		return false, fmt.Errorf("creating temp directory:\n%w", err)
 	}
 
 	defer func() {
@@ -127,21 +141,21 @@ func processArchive(
 
 	// Extract the archive; compression is inferred from the filename extension.
 	if err := archive.ExtractAuto(archivePath, workDir); err != nil {
-		return fmt.Errorf("extracting archive:\n%w", err)
+		return false, fmt.Errorf("extracting archive:\n%w", err)
 	}
 
 	// Determine the root of the extracted content. Most source archives unpack to
 	// a single top-level directory (e.g., "pkg-1.0/"), which is used as the root.
 	extractRoot, err := resolveExtractRoot(workDir)
 	if err != nil {
-		return fmt.Errorf("resolving extract root:\n%w", err)
+		return false, fmt.Errorf("resolving extract root:\n%w", err)
 	}
 
 	// Confine an OS-backed FS to the extract root so file overlays reuse the same
 	// machinery as loose-file overlays.
 	extractFS, err := rootfs.New(extractRoot)
 	if err != nil {
-		return fmt.Errorf("confining FS to extract root:\n%w", err)
+		return false, fmt.Errorf("confining FS to extract root:\n%w", err)
 	}
 
 	defer func() {
@@ -155,16 +169,69 @@ func processArchive(
 	// destination tree, so extractFS is passed as both source and destination FS.
 	for _, overlay := range group.overlays {
 		if err := applyNonSpecOverlay(dryRunnable, extractFS, extractFS, overlay); err != nil {
-			return fmt.Errorf("applying %#q operation:\n%w", overlay.Type, err)
+			return false, fmt.Errorf("applying %#q operation:\n%w", overlay.Type, err)
 		}
 	}
 
-	// Deterministically repack the archive in-place, reusing the original compression.
-	if err := archive.CreateDeterministicArchiveAuto(archivePath, workDir); err != nil {
-		return fmt.Errorf("repacking archive:\n%w", err)
+	// Deterministically repack the archive, reusing the original compression, and
+	// atomically replace the original (see [repackArchiveAtomic]).
+	if err := repackArchiveAtomic(archivePath, group.archive, workDir); err != nil {
+		return false, err
 	}
 
 	slog.Info("Archive overlay applied", "archive", group.archive)
+
+	return true, nil
+}
+
+// repackArchiveAtomic deterministically repacks workDir into an archive that
+// replaces archivePath, reusing the compression inferred from archiveName.
+//
+// To avoid corrupting the fetched source archive on a mid-write failure (disk
+// full, permission error, etc.), it repacks to a temp file in the same directory
+// and atomically renames it over the original only on success. Repacking directly
+// over archivePath would truncate it first, leaving the workspace unrecoverable
+// without refetching if the repack then failed.
+func repackArchiveAtomic(archivePath, archiveName, workDir string) (err error) {
+	comp, err := archive.DetectCompression(archiveName)
+	if err != nil {
+		return fmt.Errorf("detecting compression for %#q:\n%w", archiveName, err)
+	}
+
+	tmpFile, err := os.CreateTemp(filepath.Dir(archivePath), "."+filepath.Base(archiveName)+".repack-*")
+	if err != nil {
+		return fmt.Errorf("creating temp archive:\n%w", err)
+	}
+
+	tmpPath := tmpFile.Name()
+
+	// Close the handle immediately; CreateDeterministicArchive reopens the path.
+	if closeErr := tmpFile.Close(); closeErr != nil {
+		_ = os.Remove(tmpPath)
+
+		return fmt.Errorf("closing temp archive %#q:\n%w", tmpPath, closeErr)
+	}
+
+	// Clean up the temp file unless it was successfully renamed over the original.
+	repackedOK := false
+
+	defer func() {
+		if !repackedOK {
+			if removeErr := os.Remove(tmpPath); removeErr != nil && !os.IsNotExist(removeErr) {
+				slog.Warn("Failed to clean up temp archive", "path", tmpPath, "error", removeErr)
+			}
+		}
+	}()
+
+	if err := archive.CreateDeterministicArchive(tmpPath, workDir, comp); err != nil {
+		return fmt.Errorf("repacking archive:\n%w", err)
+	}
+
+	if err := os.Rename(tmpPath, archivePath); err != nil {
+		return fmt.Errorf("replacing archive %#q with repacked archive:\n%w", archivePath, err)
+	}
+
+	repackedOK = true
 
 	return nil
 }
@@ -184,27 +251,4 @@ func resolveExtractRoot(workDir string) (string, error) {
 	}
 
 	return workDir, nil
-}
-
-// archiveNamesFromOverlays returns the unique archive filenames targeted by
-// archive overlays in the given overlay list. Used by [updateSourcesFile] to
-// determine which 'sources' entries need rehashing after overlay application.
-func archiveNamesFromOverlays(overlays []projectconfig.ComponentOverlay) []string {
-	seen := make(map[string]bool)
-
-	var names []string
-
-	for _, overlay := range overlays {
-		if !overlay.ModifiesArchive() {
-			continue
-		}
-
-		archiveName, _, _ := overlay.ArchiveTarget()
-		if !seen[archiveName] {
-			seen[archiveName] = true
-			names = append(names, archiveName)
-		}
-	}
-
-	return names
 }

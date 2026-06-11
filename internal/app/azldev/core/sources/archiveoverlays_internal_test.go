@@ -161,7 +161,9 @@ func TestProcessArchive_DryRunDoesNotModifyArchive(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, processArchive(ctx, sourcesDir, group))
+	repacked, err := processArchive(ctx, sourcesDir, group)
+	require.NoError(t, err)
+	assert.False(t, repacked, "dry-run must report that no archive was repacked")
 
 	after, err := os.ReadFile(archivePath)
 	require.NoError(t, err)

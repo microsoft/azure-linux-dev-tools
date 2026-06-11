@@ -246,11 +246,12 @@ func (p *sourcePreparerImpl) PrepareSources(
 	}
 
 	if applyOverlays {
-		if err := p.applyOverlaysToSources(component, outputDir); err != nil {
+		repackedArchives, err := p.applyOverlaysToSources(component, outputDir)
+		if err != nil {
 			return err
 		}
 
-		if err := p.updateSourcesFile(component, outputDir); err != nil {
+		if err := p.updateSourcesFile(component, outputDir, repackedArchives); err != nil {
 			return fmt.Errorf("failed to update 'sources' file for component %#q:\n%w",
 				component.GetName(), err)
 		}
@@ -272,14 +273,17 @@ func (p *sourcePreparerImpl) PrepareSources(
 }
 
 // applyOverlaysToSources writes the macros file and then applies all overlays.
+// It returns the names of any archives that were repacked by archive overlays
+// (empty in dry-run mode or when no archive overlays ran), so the caller can
+// rehash exactly those entries in the 'sources' file.
 func (p *sourcePreparerImpl) applyOverlaysToSources(
 	component components.Component, outputDir string,
-) error {
+) ([]string, error) {
 	var macrosFileName string
 
 	macrosFilePath, err := p.writeMacrosFile(component, outputDir)
 	if err != nil {
-		return fmt.Errorf("failed to write macros file for component %#q:\n%w",
+		return nil, fmt.Errorf("failed to write macros file for component %#q:\n%w",
 			component.GetName(), err)
 	}
 
@@ -287,64 +291,69 @@ func (p *sourcePreparerImpl) applyOverlaysToSources(
 		macrosFileName = filepath.Base(macrosFilePath)
 	}
 
-	if err := p.applyOverlays(component, outputDir, macrosFileName); err != nil {
-		return fmt.Errorf("failed to apply overlays for component %#q:\n%w",
+	repackedArchives, err := p.applyOverlays(component, outputDir, macrosFileName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to apply overlays for component %#q:\n%w",
 			component.GetName(), err)
 	}
 
-	return nil
+	return repackedArchives, nil
 }
 
 // applyOverlays applies all overlays (user-defined and system-generated) to the
-// component sources.
+// component sources. It returns the names of any archives that were repacked by
+// archive overlays.
 func (p *sourcePreparerImpl) applyOverlays(
 	component components.Component, sourcesDirPath, macrosFileName string,
-) error {
+) ([]string, error) {
 	event := p.eventListener.StartEvent("Applying overlays", "component", component.GetName())
 	defer event.End()
 
 	absSpecPath, err := p.resolveSpecPath(component, sourcesDirPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	allOverlays, err := p.collectOverlays(component, macrosFileName)
 	if err != nil {
-		return fmt.Errorf("failed to collect overlays for component %#q:\n%w", component.GetName(), err)
+		return nil, fmt.Errorf("failed to collect overlays for component %#q:\n%w", component.GetName(), err)
 	}
 
 	if len(allOverlays) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	// Archive overlays are applied first (they modify archived source files
 	// in-place), followed by spec and loose-file overlays. Each function
 	// self-filters to the overlay types it handles.
-	if err := p.applyArchiveOverlayGroup(component, sourcesDirPath, allOverlays); err != nil {
-		return err
+	repackedArchives, err := p.applyArchiveOverlayGroup(component, sourcesDirPath, allOverlays)
+	if err != nil {
+		return nil, err
 	}
 
 	if err := p.applyOverlayList(allOverlays, sourcesDirPath, absSpecPath); err != nil {
-		return fmt.Errorf("failed to apply overlays for component %#q:\n%w", component.GetName(), err)
+		return nil, fmt.Errorf("failed to apply overlays for component %#q:\n%w", component.GetName(), err)
 	}
 
-	return nil
+	return repackedArchives, nil
 }
 
 // applyArchiveOverlayGroup applies the archive-scoped overlays contained in the
 // given overlay list. The list may hold overlays of any type; only those for
 // which [projectconfig.ComponentOverlay.ModifiesArchive] reports true are
-// processed here. Skipped when source downloads were not performed.
+// processed here. Skipped when source downloads were not performed. It returns
+// the names of the archives that were actually repacked (empty in dry-run mode
+// or when source downloads were skipped).
 func (p *sourcePreparerImpl) applyArchiveOverlayGroup(
 	component components.Component,
 	sourcesDirPath string, overlays []projectconfig.ComponentOverlay,
-) error {
+) ([]string, error) {
 	archiveOverlays := lo.Filter(overlays, func(overlay projectconfig.ComponentOverlay, _ int) bool {
 		return overlay.ModifiesArchive()
 	})
 
 	if len(archiveOverlays) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	if p.skipLookaside {
@@ -352,17 +361,18 @@ func (p *sourcePreparerImpl) applyArchiveOverlayGroup(
 			"component", component.GetName(),
 			"count", len(archiveOverlays))
 
-		return nil
+		return nil, nil
 	}
 
-	if err := applyArchiveOverlays(
+	repackedArchives, err := applyArchiveOverlays(
 		p.dryRunnable, p.eventListener, sourcesDirPath, archiveOverlays,
-	); err != nil {
-		return fmt.Errorf("failed to apply archive overlays for component %#q:\n%w",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to apply archive overlays for component %#q:\n%w",
 			component.GetName(), err)
 	}
 
-	return nil
+	return repackedArchives, nil
 }
 
 // collectOverlays gathers all overlays for a component into a single ordered slice:
@@ -635,8 +645,10 @@ func (p *sourcePreparerImpl) DiffSources(
 		return nil, fmt.Errorf("failed to copy sources for component %#q:\n%w", component.GetName(), err)
 	}
 
-	// Apply overlays in-place to the copied directory only.
-	if err := p.applyOverlaysToSources(component, overlaidDir); err != nil {
+	// Apply overlays in-place to the copied directory only. The repacked-archive
+	// list is unused here: DiffSources diffs the trees directly and does not
+	// rewrite a 'sources' file.
+	if _, err := p.applyOverlaysToSources(component, overlaidDir); err != nil {
 		return nil, fmt.Errorf("failed to apply overlays for component %#q:\n%w", component.GetName(), err)
 	}
 
@@ -666,21 +678,15 @@ func (p *sourcePreparerImpl) DiffSources(
 // a matching upstream entry is also an error: the user expressed intent to replace something
 // that isn't there, which almost certainly indicates a stale config or filename typo.
 func (p *sourcePreparerImpl) updateSourcesFile(
-	component components.Component, outputDir string,
+	component components.Component, outputDir string, modifiedArchives []string,
 ) error {
 	config := component.GetConfig()
 	sourceFiles := config.SourceFiles
 
-	// Derive the archives whose 'sources' hash needs refreshing because an archive
-	// overlay repacked them. Only meaningful when archive overlays actually ran:
-	// when skipLookaside is set, archive overlays are skipped (see
-	// [applyArchiveOverlayGroup]) and the archives may not even be present on disk,
-	// so rehashing would either fail or pointlessly rewrite an unchanged hash.
-	var modifiedArchives []string
-	if !p.skipLookaside {
-		modifiedArchives = archiveNamesFromOverlays(config.Overlays)
-	}
-
+	// modifiedArchives lists the archives that archive overlays actually repacked
+	// during this run; their 'sources' digests must be refreshed. The list is empty
+	// when no archive overlays ran, in dry-run mode, or when source downloads were
+	// skipped, so rehashing is correctly avoided in those cases.
 	if len(sourceFiles) == 0 && len(modifiedArchives) == 0 {
 		return nil
 	}
