@@ -79,10 +79,9 @@ func DetectCompression(filename string) (Compression, error) {
 	}
 }
 
-// IsArchiveName reports whether filename has a recognized archive extension
-// (i.e. [DetectCompression] succeeds for it). It is the cheap, error-free
-// predicate form of [DetectCompression], useful for classifying a path as an
-// archive without needing the specific compression type.
+// IsArchiveName reports whether filename has a recognized archive extension.
+// It is a convenience predicate over [DetectCompression] for classifying a path
+// as an archive without needing the specific compression type.
 func IsArchiveName(filename string) bool {
 	_, err := DetectCompression(filename)
 
