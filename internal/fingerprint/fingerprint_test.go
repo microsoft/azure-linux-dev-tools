@@ -251,6 +251,32 @@ func TestComputeIdentity_OverlaySourceFileChange(t *testing.T) {
 	assert.NotEqual(t, fp1, fp2, "different overlay source content must produce different fingerprints")
 }
 
+func TestComputeIdentity_OverlayArchiveScopingChangesFP(t *testing.T) {
+	// Archive scoping comes from the overlay's file path, which is part of the hashed
+	// config, so scoping an overlay to an archive must change the fingerprint. Guards
+	// against excluding the path (e.g. `fingerprint:"-"`), which would let an archive
+	// overlay skip a rebuild.
+	ctx := newTestFS(t, map[string]string{
+		"/specs/test.spec": "Name: testpkg\nVersion: 1.0",
+	})
+	releaseVer := testReleaseVer
+
+	base := baseComponent()
+	base.Overlays = []projectconfig.ComponentOverlay{
+		{Type: "file-remove", Filename: "bundled.conf"},
+	}
+	fpBase := computeFingerprint(t, ctx, base, releaseVer, 0)
+
+	withArchive := baseComponent()
+	withArchive.Overlays = []projectconfig.ComponentOverlay{
+		{Type: "file-remove", Filename: "pkg-1.0.tar.gz/bundled.conf"},
+	}
+	fpArchive := computeFingerprint(t, ctx, withArchive, releaseVer, 0)
+
+	assert.NotEqual(t, fpBase, fpArchive,
+		"scoping the overlay to an archive (via the path prefix) must change the fingerprint")
+}
+
 func TestComputeIdentity_PatchAddRenameChangesFP(t *testing.T) {
 	// When patch-add omits 'file', the destination filename is derived from
 	// filepath.Base(Source). Renaming the source file changes the rendered

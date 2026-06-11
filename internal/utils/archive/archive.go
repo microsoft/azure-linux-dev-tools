@@ -79,6 +79,29 @@ func DetectCompression(filename string) (Compression, error) {
 	}
 }
 
+// IsArchiveName reports whether filename has a recognized archive extension.
+// It is a convenience predicate over [DetectCompression] for classifying a path
+// as an archive without needing the specific compression type.
+func IsArchiveName(filename string) bool {
+	_, err := DetectCompression(filename)
+
+	return err == nil
+}
+
+// ExtractAuto is a convenience wrapper that infers the compression from
+// archivePath's extension via [DetectCompression] and then calls [Extract].
+// Most callers should prefer this over the explicit-compression [Extract],
+// which exists for cases where the compression cannot be derived from the
+// filename.
+func ExtractAuto(archivePath, destDir string) error {
+	comp, err := DetectCompression(archivePath)
+	if err != nil {
+		return fmt.Errorf("detecting compression for %#q:\n%w", archivePath, err)
+	}
+
+	return Extract(archivePath, destDir, comp)
+}
+
 // Extract reads a tar archive, decompresses it, and extracts all entries into
 // destDir. Supported entry types are regular files, directories, and symlinks;
 // other entry types are skipped. Entry paths are confined to destDir via
@@ -172,6 +195,19 @@ func (r readerCloser) Close() error {
 	r.close()
 
 	return nil
+}
+
+// CreateDeterministicArchiveAuto is a convenience wrapper that infers the
+// compression from archivePath's extension via [DetectCompression] and then
+// calls [CreateDeterministicArchive]. Most callers should prefer this over the
+// explicit-compression [CreateDeterministicArchive].
+func CreateDeterministicArchiveAuto(archivePath, sourceDir string) error {
+	comp, err := DetectCompression(archivePath)
+	if err != nil {
+		return fmt.Errorf("detecting compression for %#q:\n%w", archivePath, err)
+	}
+
+	return CreateDeterministicArchive(archivePath, sourceDir, comp)
 }
 
 // CreateDeterministicArchive creates a new tar archive from the contents of sourceDir

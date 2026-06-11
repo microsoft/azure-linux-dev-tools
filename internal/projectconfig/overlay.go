@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/brunoga/deep"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/archive"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 )
 
@@ -119,10 +121,48 @@ func (c *ComponentOverlay) ModifiesSpec() bool {
 		c.Type == ComponentOverlayRemovePatch
 }
 
+// ArchiveTarget inspects the overlay's file path and, when it targets files inside a source
+// archive, returns the archive filename and the glob to match within the extracted archive.
+//
+// An overlay is archive-scoped when the first path segment of [ComponentOverlay.Filename] is a
+// recognized archive name (see [archive.IsArchiveName]) and a non-empty inner path follows it,
+// e.g. "pkg-1.0.tar.gz/vendor/**" yields archive="pkg-1.0.tar.gz", inner="vendor/**".
+//
+// Returns ok=false for loose-file overlays: a path with no archive prefix (e.g. "vendor/**"),
+// or a bare archive name with no inner path (e.g. "old.tar.gz", which removes the archive file
+// itself from the loose sources tree).
+func (c *ComponentOverlay) ArchiveTarget() (archiveName, innerPath string, ok bool) {
+	before, after, found := strings.Cut(filepath.ToSlash(c.Filename), "/")
+	if !found || after == "" || !archive.IsArchiveName(before) {
+		return "", "", false
+	}
+
+	return before, after, true
+}
+
+// ModifiesArchive returns true if the overlay modifies files inside a source archive.
+// These overlays require extraction and repacking of the archive. Only file-remove and
+// file-search-replace support archive scoping, and only when their [ComponentOverlay.Filename]
+// is an archive-scoped path (see [ComponentOverlay.ArchiveTarget]).
+func (c *ComponentOverlay) ModifiesArchive() bool {
+	if c.Type != ComponentOverlayRemoveFile && c.Type != ComponentOverlaySearchAndReplaceInFile {
+		return false
+	}
+
+	_, _, ok := c.ArchiveTarget()
+
+	return ok
+}
+
 // ModifiesNonSpecFiles returns true if the overlay modifies non-spec files. This includes
 // hybrid overlays that modify both spec and source files (e.g., patch overlays), since
-// those also require non-spec modifications.
+// those also require non-spec modifications. Archive-scoped overlays (see [ModifiesArchive])
+// are excluded: they operate on files inside an archive, not loose files in the sources tree.
 func (c *ComponentOverlay) ModifiesNonSpecFiles() bool {
+	if c.ModifiesArchive() {
+		return false
+	}
+
 	return c.Type == ComponentOverlayPrependLinesToFile ||
 		c.Type == ComponentOverlaySearchAndReplaceInFile ||
 		c.Type == ComponentOverlayAddFile ||
@@ -178,7 +218,10 @@ const (
 	ComponentOverlaySearchAndReplaceInFile ComponentOverlayType = "file-search-replace"
 	// ComponentOverlayAddFile is an overlay that adds a non-spec file.
 	ComponentOverlayAddFile ComponentOverlayType = "file-add"
-	// ComponentOverlayRemoveFile is an overlay that removes a non-spec file.
+	// ComponentOverlayRemoveFile is an overlay that removes a non-spec file. When its
+	// [ComponentOverlay.Filename] is an archive-scoped path (e.g. "pkg-1.0.tar.gz/vendor/**"),
+	// it removes file(s) from inside that source archive instead of loose files in the
+	// sources tree (see [ComponentOverlay.ArchiveTarget]).
 	ComponentOverlayRemoveFile ComponentOverlayType = "file-remove"
 	// ComponentOverlayRenameFile is an overlay that renames a non-spec file.
 	ComponentOverlayRenameFile ComponentOverlayType = "file-rename"
