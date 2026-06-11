@@ -17,6 +17,9 @@ import (
 type ListComponentOptions struct {
 	// Standard filter for selecting components.
 	ComponentFilter components.ComponentFilter
+	// SkipLockPopulation controls whether lock files are read during resolution.
+	// Only applicable when component list is explicitly requested by the user.
+	SkipLockPopulation bool
 }
 
 func listOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
@@ -57,26 +60,32 @@ Component name patterns support glob syntax (*, ?, []).`,
 
 	components.AddComponentFilterOptionsToCommand(cmd, &options.ComponentFilter)
 
-	// List always skips lock validation (read-only), so the flag is
-	// meaningless here. Hide it to avoid confusion.
-	_ = cmd.Flags().MarkHidden("skip-lock-validation")
+	// Add skip-lock-population flag for list command
+	cmd.Flags().BoolVar(&options.SkipLockPopulation, "skip-lock-population",
+		true,
+		"skip lock file population (default: true; set to false to read lock data)")
 
 	return cmd
 }
 
 // ListComponentConfigs lists components in the env, in accordance with options.
-// Lock validation is always skipped regardless of the caller's SkipLockValidation
-// value — list is read-only.
+// Lock validation is always skipped since list is read-only.
 func ListComponentConfigs(
 	env *azldev.Env, options *ListComponentOptions,
 ) (results []projectconfig.ComponentConfig, err error) {
 	var comps *components.ComponentSet
 
-	// List is read-only — skip lock validation so it works even when
-	// locks are missing or stale.
-	options.ComponentFilter.SkipLockValidation = true
+	// List is read-only — always skip lock validation.
+	// Determine lock mode based on user preference for population.
+	if options.SkipLockPopulation {
+		options.ComponentFilter.LockMode = components.LockModeSkipBoth
+	} else {
+		options.ComponentFilter.LockMode = components.LockModeSkipValidationPopulate
+	}
 
 	resolver := components.NewResolver(env)
+	// Set the resolver's SkipLockPopulation to match the filter's LockMode
+	resolver.SkipLockPopulation = options.SkipLockPopulation
 
 	comps, err = resolver.FindComponents(&options.ComponentFilter)
 	if err != nil {
