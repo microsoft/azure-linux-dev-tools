@@ -55,6 +55,7 @@ jobs:
           set -euxo pipefail
           sudo apt-get update
           sudo apt-get purge firefox passt
+          sudo rm -f /etc/apparmor.d/microsoft-edge-stable
           sudo systemctl reload apparmor.service
           sudo apt-get install apparmor-utils
           sudo aa-disable /usr/sbin/unix_chkpwd
@@ -90,6 +91,7 @@ jobs:
           set -euxo pipefail
           sudo apt-get update
           sudo apt-get purge firefox passt
+          sudo rm -f /etc/apparmor.d/microsoft-edge-stable
           sudo systemctl reload apparmor.service
           sudo apt-get install apparmor-utils
           sudo aa-disable /usr/sbin/unix_chkpwd
