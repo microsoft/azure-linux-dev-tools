@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/brunoga/deep"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/archive"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 )
 
@@ -21,13 +23,6 @@ type ComponentOverlay struct {
 	// Human readable description of overlay; primarily present to document the need for the change.
 	Description string `toml:"description,omitempty" json:"description,omitempty" jsonschema:"title=Description,description=Human readable description of overlay" fingerprint:"-"`
 
-	// Scopes the overlay to files inside this source archive (a bare filename, not a path).
-	// Only file-remove and file-search-replace honor it; when set, the overlay operates inside
-	// the named archive instead of the loose sources tree.
-	Archive string `toml:"archive,omitempty" json:"archive,omitempty" jsonschema:"title=Archive,description=The source archive to modify (e.g. pkg-1.0.tar.gz)"`
-	// Overrides the archive's extraction root (rpmbuild's `%setup -n` equivalent). When unset, the
-	// root is inferred: a single top-level directory is used, otherwise the archive root.
-	ArchiveRoot string `toml:"archive-root,omitempty" json:"archiveRoot,omitempty" jsonschema:"title=Archive root,description=Top-level directory inside the archive to treat as the extraction root (mirrors %setup -n); inferred when unset"`
 	// For overlays that apply to non-spec files, indicates the filename. For overlays that can
 	// apply to multiple files, supports glob patterns (including globstar).
 	Filename string `toml:"file,omitempty" json:"file,omitempty" jsonschema:"title=Filename,description=The name of the non-spec file to which this overlay applies, or a glob pattern matching multiple files"`
@@ -126,13 +121,37 @@ func (c *ComponentOverlay) ModifiesSpec() bool {
 		c.Type == ComponentOverlayRemovePatch
 }
 
+// ArchiveTarget inspects the overlay's file path and, when it targets files inside a source
+// archive, returns the archive filename and the glob to match within the extracted archive.
+//
+// An overlay is archive-scoped when the first path segment of [ComponentOverlay.Filename] is a
+// recognized archive name (see [archive.IsArchiveName]) and a non-empty inner path follows it,
+// e.g. "pkg-1.0.tar.gz/vendor/**" yields archive="pkg-1.0.tar.gz", inner="vendor/**".
+//
+// Returns ok=false for loose-file overlays: a path with no archive prefix (e.g. "vendor/**"),
+// or a bare archive name with no inner path (e.g. "old.tar.gz", which removes the archive file
+// itself from the loose sources tree).
+func (c *ComponentOverlay) ArchiveTarget() (archiveName, innerPath string, ok bool) {
+	before, after, found := strings.Cut(c.Filename, "/")
+	if !found || after == "" || !archive.IsArchiveName(before) {
+		return "", "", false
+	}
+
+	return before, after, true
+}
+
 // ModifiesArchive returns true if the overlay modifies files inside a source archive.
 // These overlays require extraction and repacking of the archive. Only file-remove and
-// file-search-replace support archive scoping, and only when their
-// [ComponentOverlay.Archive] field is set.
+// file-search-replace support archive scoping, and only when their [ComponentOverlay.Filename]
+// is an archive-scoped path (see [ComponentOverlay.ArchiveTarget]).
 func (c *ComponentOverlay) ModifiesArchive() bool {
-	return c.Archive != "" &&
-		(c.Type == ComponentOverlayRemoveFile || c.Type == ComponentOverlaySearchAndReplaceInFile)
+	if c.Type != ComponentOverlayRemoveFile && c.Type != ComponentOverlaySearchAndReplaceInFile {
+		return false
+	}
+
+	_, _, ok := c.ArchiveTarget()
+
+	return ok
 }
 
 // ModifiesNonSpecFiles returns true if the overlay modifies non-spec files. This includes
@@ -200,8 +219,9 @@ const (
 	// ComponentOverlayAddFile is an overlay that adds a non-spec file.
 	ComponentOverlayAddFile ComponentOverlayType = "file-add"
 	// ComponentOverlayRemoveFile is an overlay that removes a non-spec file. When its
-	// [ComponentOverlay.Archive] field is set, it removes file(s) from inside that source
-	// archive instead of loose files in the sources tree.
+	// [ComponentOverlay.Filename] is an archive-scoped path (e.g. "pkg-1.0.tar.gz/vendor/**"),
+	// it removes file(s) from inside that source archive instead of loose files in the
+	// sources tree (see [ComponentOverlay.ArchiveTarget]).
 	ComponentOverlayRemoveFile ComponentOverlayType = "file-remove"
 	// ComponentOverlayRenameFile is an overlay that renames a non-spec file.
 	ComponentOverlayRenameFile ComponentOverlayType = "file-rename"
@@ -210,7 +230,7 @@ const (
 // Validate checks that required fields are set based on the overlay type. This catches
 // configuration errors at load time rather than at apply time.
 //
-//nolint:cyclop,gocognit,gocyclo,funlen,maintidx // complexity is inherent to the number of overlay types.
+//nolint:cyclop,gocognit,gocyclo,funlen // complexity is inherent to the number of overlay types.
 func (c *ComponentOverlay) Validate() error {
 	desc := c.Description
 	if desc == "" {
@@ -253,33 +273,6 @@ func (c *ComponentOverlay) Validate() error {
 		}
 
 		return nil
-	}
-
-	// The archive field scopes an overlay to operate inside a source archive. It is only
-	// accepted on file-remove and file-search-replace, and must be a bare filename (not a path).
-	if c.Archive != "" {
-		if c.Type != ComponentOverlayRemoveFile && c.Type != ComponentOverlaySearchAndReplaceInFile {
-			return unexpectedField("archive")
-		}
-
-		if err := requireFileBasename("archive", c.Archive); err != nil {
-			return err
-		}
-	}
-
-	// The archive-root override is only meaningful for archive-scoped overlays, and must be a
-	// local relative path so it cannot escape the extraction directory.
-	if c.ArchiveRoot != "" {
-		if !c.ModifiesArchive() {
-			return unexpectedField("archive-root")
-		}
-
-		if !filepath.IsLocal(c.ArchiveRoot) {
-			return fmt.Errorf(
-				"overlay type %#q requires %#q to be a local relative path (no %#q or absolute paths); found %#q",
-				c.Type, "archive-root", "..", c.ArchiveRoot,
-			)
-		}
 	}
 
 	switch c.Type {

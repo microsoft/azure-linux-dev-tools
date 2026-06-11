@@ -16,97 +16,54 @@ import (
 )
 
 func TestGroupOverlaysByArchive(t *testing.T) {
-	t.Run("groups overlays by archive name preserving order", func(t *testing.T) {
+	t.Run("groups overlays by archive name preserving order and strips the prefix", func(t *testing.T) {
 		overlays := []projectconfig.ComponentOverlay{
 			{
 				Type:     projectconfig.ComponentOverlayRemoveFile,
-				Archive:  "pkg-1.0.tar.gz",
-				Filename: "unwanted.conf",
+				Filename: "pkg-1.0.tar.gz/unwanted.conf",
 			},
 			{
 				Type:     projectconfig.ComponentOverlayRemoveFile,
-				Archive:  "pkg-1.0.tar.gz",
-				Filename: "config.h",
+				Filename: "pkg-1.0.tar.gz/config.h",
 			},
 			{
 				Type:     projectconfig.ComponentOverlayRemoveFile,
-				Archive:  "other-2.0.tar.xz",
-				Filename: "docs/*.md",
+				Filename: "other-2.0.tar.xz/docs/*.md",
 			},
 		}
 
-		groups, err := groupOverlaysByArchive(overlays)
-		require.NoError(t, err)
+		groups := groupOverlaysByArchive(overlays)
 
 		require.Len(t, groups, 2)
 
 		assert.Equal(t, "pkg-1.0.tar.gz", groups[0].archive)
 		require.Len(t, groups[0].overlays, 2)
+		// Filename is rewritten to the in-archive glob (archive prefix stripped).
 		assert.Equal(t, "unwanted.conf", groups[0].overlays[0].Filename)
 		assert.Equal(t, "config.h", groups[0].overlays[1].Filename)
 
 		assert.Equal(t, "other-2.0.tar.xz", groups[1].archive)
 		require.Len(t, groups[1].overlays, 1)
+		assert.Equal(t, "docs/*.md", groups[1].overlays[0].Filename)
 	})
 
 	t.Run("skips overlays that are not archive-scoped", func(t *testing.T) {
 		overlays := []projectconfig.ComponentOverlay{
 			{Type: projectconfig.ComponentOverlaySetSpecTag, Tag: "Version", Value: "1.0"},
-			{Type: projectconfig.ComponentOverlayRemoveFile, Archive: "pkg.tar.gz", Filename: "f"},
-			// Plain (non-archive) file overlay: no Archive set, so it must be skipped.
+			{Type: projectconfig.ComponentOverlayRemoveFile, Filename: "pkg.tar.gz/f"},
+			// Plain (non-archive) file overlay: no archive prefix, so it must be skipped.
 			{Type: projectconfig.ComponentOverlayRemoveFile, Filename: "loose.txt"},
+			// Bare archive name with no inner path: a loose removal of the archive itself.
+			{Type: projectconfig.ComponentOverlayRemoveFile, Filename: "drop-me.tar.gz"},
 			{Type: projectconfig.ComponentOverlayAddFile, Filename: "new.txt", Source: "src"},
 		}
 
-		groups, err := groupOverlaysByArchive(overlays)
-		require.NoError(t, err)
+		groups := groupOverlaysByArchive(overlays)
 
 		require.Len(t, groups, 1)
 		assert.Equal(t, "pkg.tar.gz", groups[0].archive)
 		require.Len(t, groups[0].overlays, 1)
-	})
-
-	t.Run("reconciles matching archive-root overrides", func(t *testing.T) {
-		overlays := []projectconfig.ComponentOverlay{
-			{
-				Type:        projectconfig.ComponentOverlayRemoveFile,
-				Archive:     "pkg-1.0.tar.gz",
-				ArchiveRoot: "custom-root",
-				Filename:    "a.conf",
-			},
-			{
-				Type:     projectconfig.ComponentOverlayRemoveFile,
-				Archive:  "pkg-1.0.tar.gz",
-				Filename: "b.conf",
-			},
-		}
-
-		groups, err := groupOverlaysByArchive(overlays)
-		require.NoError(t, err)
-
-		require.Len(t, groups, 1)
-		assert.Equal(t, "custom-root", groups[0].root)
-	})
-
-	t.Run("errors on conflicting archive-root overrides", func(t *testing.T) {
-		overlays := []projectconfig.ComponentOverlay{
-			{
-				Type:        projectconfig.ComponentOverlayRemoveFile,
-				Archive:     "pkg-1.0.tar.gz",
-				ArchiveRoot: "root-a",
-				Filename:    "a.conf",
-			},
-			{
-				Type:        projectconfig.ComponentOverlayRemoveFile,
-				Archive:     "pkg-1.0.tar.gz",
-				ArchiveRoot: "root-b",
-				Filename:    "b.conf",
-			},
-		}
-
-		_, err := groupOverlaysByArchive(overlays)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "conflicting")
+		assert.Equal(t, "f", groups[0].overlays[0].Filename)
 	})
 }
 
@@ -115,7 +72,7 @@ func TestResolveExtractRoot(t *testing.T) {
 		workDir := t.TempDir()
 		require.NoError(t, os.MkdirAll(workDir+"/pkg-1.0", 0o755))
 
-		root, err := resolveExtractRoot(workDir, "")
+		root, err := resolveExtractRoot(workDir)
 		require.NoError(t, err)
 		assert.Equal(t, workDir+"/pkg-1.0", root)
 	})
@@ -125,45 +82,9 @@ func TestResolveExtractRoot(t *testing.T) {
 		require.NoError(t, os.MkdirAll(workDir+"/dirA", 0o755))
 		require.NoError(t, os.WriteFile(workDir+"/loose.txt", nil, fileperms.PrivateFile))
 
-		root, err := resolveExtractRoot(workDir, "")
+		root, err := resolveExtractRoot(workDir)
 		require.NoError(t, err)
 		assert.Equal(t, workDir, root)
-	})
-
-	t.Run("override selects named subdirectory", func(t *testing.T) {
-		workDir := t.TempDir()
-		// Two top-level dirs so the heuristic would not pick one.
-		require.NoError(t, os.MkdirAll(workDir+"/dirA", 0o755))
-		require.NoError(t, os.MkdirAll(workDir+"/dirB", 0o755))
-
-		root, err := resolveExtractRoot(workDir, "dirB")
-		require.NoError(t, err)
-		assert.Equal(t, workDir+"/dirB", root)
-	})
-
-	t.Run("override missing directory errors", func(t *testing.T) {
-		workDir := t.TempDir()
-
-		_, err := resolveExtractRoot(workDir, "does-not-exist")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not found")
-	})
-
-	t.Run("override pointing at a file errors", func(t *testing.T) {
-		workDir := t.TempDir()
-		require.NoError(t, os.WriteFile(workDir+"/afile", nil, fileperms.PrivateFile))
-
-		_, err := resolveExtractRoot(workDir, "afile")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not a directory")
-	})
-
-	t.Run("non-local override is rejected", func(t *testing.T) {
-		workDir := t.TempDir()
-
-		_, err := resolveExtractRoot(workDir, "../escape")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not a local path")
 	})
 }
 
@@ -185,7 +106,6 @@ func TestArchiveFileRemove(t *testing.T) {
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:     projectconfig.ComponentOverlayRemoveFile,
-			Archive:  "pkg.tar.gz",
 			Filename: "*.conf",
 		}
 
@@ -207,7 +127,6 @@ func TestArchiveFileRemove(t *testing.T) {
 
 		overlay := projectconfig.ComponentOverlay{
 			Type:     projectconfig.ComponentOverlayRemoveFile,
-			Archive:  "pkg.tar.gz",
 			Filename: "*.conf",
 		}
 
@@ -215,4 +134,36 @@ func TestArchiveFileRemove(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "did not match any files")
 	})
+}
+
+// TestProcessArchive_DryRunDoesNotModifyArchive verifies that, in dry-run mode,
+// processArchive skips the extract/repack cycle entirely and leaves the original
+// archive on disk byte-for-byte unchanged (repacking would otherwise rewrite it).
+func TestProcessArchive_DryRunDoesNotModifyArchive(t *testing.T) {
+	ctx := testctx.NewCtx()
+	ctx.DryRunValue = true
+
+	sourcesDir := t.TempDir()
+
+	const archiveName = "pkg-1.0.tar.gz"
+
+	archivePath := sourcesDir + "/" + archiveName
+
+	// Content need not be a valid archive: dry-run returns before extraction, and
+	// the test only asserts the bytes are untouched.
+	original := []byte("original archive bytes")
+	require.NoError(t, os.WriteFile(archivePath, original, fileperms.PrivateFile))
+
+	group := archiveGroup{
+		archive: archiveName,
+		overlays: []projectconfig.ComponentOverlay{
+			{Type: projectconfig.ComponentOverlayRemoveFile, Filename: "remove.conf"},
+		},
+	}
+
+	require.NoError(t, processArchive(ctx, sourcesDir, group))
+
+	after, err := os.ReadFile(archivePath)
+	require.NoError(t, err)
+	assert.Equal(t, original, after, "dry-run must not modify the archive on disk")
 }

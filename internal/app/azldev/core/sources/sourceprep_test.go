@@ -155,8 +155,7 @@ func TestPrepareSources_ArchiveOverlayRehashesSourcesEntry(t *testing.T) {
 		Overlays: []projectconfig.ComponentOverlay{
 			{
 				Type:     projectconfig.ComponentOverlayRemoveFile,
-				Archive:  archiveName,
-				Filename: "remove-me.txt",
+				Filename: archiveName + "/remove-me.txt",
 			},
 		},
 	})
@@ -208,6 +207,68 @@ func TestPrepareSources_ArchiveOverlayRehashesSourcesEntry(t *testing.T) {
 	assert.Equal(t, fileutils.HashTypeSHA256, entry.HashType, "original hash type must be preserved")
 	assert.Equal(t, repackedHash, entry.Hash, "'sources' entry must record the repacked archive's hash")
 	assert.NotEqual(t, originalHash, entry.Hash, "'sources' entry hash must have been updated")
+}
+
+// TestPrepareSources_ArchiveOverlayMissingSourcesEntryErrors verifies that when an
+// archive-scoped overlay repacks an archive that has no matching 'sources' entry,
+// preparation fails instead of silently leaving a stale (or absent) digest.
+func TestPrepareSources_ArchiveOverlayMissingSourcesEntryErrors(t *testing.T) {
+	const (
+		componentName = "test-component"
+		archiveName   = "pkg-1.0.tar.gz"
+	)
+
+	// Host FS + real temp dir: archive extraction/repacking happens on disk.
+	ctx := testctx.NewCtx(testctx.WithHostFS())
+	outputDir := t.TempDir()
+
+	archivePath := filepath.Join(outputDir, archiveName)
+	sourcesPath := filepath.Join(outputDir, fedorasource.SourcesFileName)
+
+	// Build a deterministic archive with a file to remove, but deliberately seed a
+	// 'sources' file that has NO entry for this archive.
+	stagingDir := t.TempDir()
+	pkgRoot := filepath.Join(stagingDir, "pkg-1.0")
+	require.NoError(t, os.MkdirAll(pkgRoot, fileperms.PublicDir))
+	require.NoError(t, os.WriteFile(filepath.Join(pkgRoot, "remove-me.txt"), []byte("delete me"), fileperms.PrivateFile))
+	require.NoError(t, archive.CreateDeterministicArchiveAuto(archivePath, stagingDir))
+
+	// 'sources' file references some unrelated file, not the archive being modified.
+	require.NoError(t, fileutils.WriteFile(
+		ctx.FS(), sourcesPath,
+		[]byte("SHA256 (unrelated.tar.gz) = 0000000000000000000000000000000000000000000000000000000000000000\n"),
+		fileperms.PublicFile))
+
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+	sourceManager := sourceproviders_test.NewMockSourceManager(ctrl)
+
+	component.EXPECT().GetName().AnyTimes().Return(componentName)
+	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
+		Overlays: []projectconfig.ComponentOverlay{
+			{
+				Type:     projectconfig.ComponentOverlayRemoveFile,
+				Filename: archiveName + "/remove-me.txt",
+			},
+		},
+	})
+
+	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, outputDir).Return(nil)
+	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, outputDir, gomock.Any()).DoAndReturn(
+		func(_ interface{}, _ interface{}, dir string, _ ...sourceproviders.FetchComponentOption) error {
+			return fileutils.WriteFile(
+				ctx.FS(), filepath.Join(dir, componentName+".spec"),
+				[]byte("# test spec"), fileperms.PublicFile)
+		},
+	)
+
+	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx)
+	require.NoError(t, err)
+
+	err = preparer.PrepareSources(ctx, component, outputDir, true /*applyOverlays*/)
+	require.Error(t, err, "preparing sources should fail when a modified archive has no 'sources' entry")
+	assert.Contains(t, err.Error(), archiveName,
+		"error should identify the archive missing from the 'sources' file")
 }
 
 func TestPrepareSources_SourceManagerError(t *testing.T) {

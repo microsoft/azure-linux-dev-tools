@@ -231,16 +231,6 @@
           "title": "Description",
           "description": "Human readable description of overlay"
         },
-        "archive": {
-          "type": "string",
-          "title": "Archive",
-          "description": "The source archive to modify (e.g. pkg-1.0.tar.gz)"
-        },
-        "archive-root": {
-          "type": "string",
-          "title": "Archive root",
-          "description": "Top-level directory inside the archive to treat as the extraction root (mirrors %setup -n); inferred when unset"
-        },
         "file": {
           "type": "string",
           "title": "Filename",

@@ -725,7 +725,8 @@ func (p *sourcePreparerImpl) updateSourcesFile(
 
 // rehashModifiedEntries updates the Raw and Entry fields of parsed 'sources' lines
 // for archives that were modified by archive overlays. The hash is recomputed using
-// the same hash type as the original entry.
+// the same hash type as the original entry. It returns an error if any modified
+// archive has no matching 'sources' entry, since that would leave a stale digest.
 func (p *sourcePreparerImpl) rehashModifiedEntries(
 	lines []fedorasource.SourcesFileLine, outputDir string, modifiedArchives []string,
 ) error {
@@ -733,13 +734,20 @@ func (p *sourcePreparerImpl) rehashModifiedEntries(
 		return nil
 	}
 
-	modified := make(map[string]bool, len(modifiedArchives))
+	// Track which archives we actually rehashed so we can detect any that were
+	// repacked by an overlay but have no matching 'sources' entry. Leaving such
+	// an archive unrehashed would record a stale digest, so it is treated as an error.
+	rehashed := make(map[string]bool, len(modifiedArchives))
 	for _, name := range modifiedArchives {
-		modified[name] = true
+		rehashed[name] = false
 	}
 
 	for idx, line := range lines {
-		if line.Entry == nil || !modified[line.Entry.Filename] {
+		if line.Entry == nil {
+			continue
+		}
+
+		if _, ok := rehashed[line.Entry.Filename]; !ok {
 			continue
 		}
 
@@ -759,6 +767,26 @@ func (p *sourcePreparerImpl) rehashModifiedEntries(
 
 		lines[idx].Raw = fedorasource.FormatSourcesEntry(line.Entry.Filename, line.Entry.HashType, newHash)
 		lines[idx].Entry.Hash = newHash
+		rehashed[line.Entry.Filename] = true
+	}
+
+	// Any archive that an overlay repacked but that has no 'sources' entry would
+	// silently keep a stale digest. Surface this as an error identifying the
+	// missing filenames rather than producing an inconsistent 'sources' file.
+	var missing []string
+
+	for name, done := range rehashed {
+		if !done {
+			missing = append(missing, name)
+		}
+	}
+
+	if len(missing) > 0 {
+		slices.Sort(missing)
+
+		return fmt.Errorf(
+			"archive overlay(s) modified %d archive(s) with no matching 'sources' entry to rehash: %s",
+			len(missing), strings.Join(missing, ", "))
 	}
 
 	return nil
