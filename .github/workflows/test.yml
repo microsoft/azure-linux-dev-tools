@@ -55,11 +55,7 @@ jobs:
           set -euxo pipefail
           sudo apt-get update
           sudo apt-get purge firefox passt
-          # Microsoft Edge (preinstalled on the runner image) ships two AppArmor
-          # profiles attached to the same binary (/etc/apparmor.d/msedge and
-          # /etc/apparmor.d/microsoft-edge-stable). That duplicate attachment makes
-          # aa-disable abort while parsing all profiles, so remove them first.
-          sudo rm -f /etc/apparmor.d/msedge /etc/apparmor.d/microsoft-edge-stable
+          sudo rm -f /etc/apparmor.d/microsoft-edge-stable
           sudo systemctl reload apparmor.service
           sudo apt-get install apparmor-utils
           sudo aa-disable /usr/sbin/unix_chkpwd
@@ -95,11 +91,7 @@ jobs:
           set -euxo pipefail
           sudo apt-get update
           sudo apt-get purge firefox passt
-          # Microsoft Edge (preinstalled on the runner image) ships two AppArmor
-          # profiles attached to the same binary (/etc/apparmor.d/msedge and
-          # /etc/apparmor.d/microsoft-edge-stable). That duplicate attachment makes
-          # aa-disable abort while parsing all profiles, so remove them first.
-          sudo rm -f /etc/apparmor.d/msedge /etc/apparmor.d/microsoft-edge-stable
+          sudo rm -f /etc/apparmor.d/microsoft-edge-stable
           sudo systemctl reload apparmor.service
           sudo apt-get install apparmor-utils
           sudo aa-disable /usr/sbin/unix_chkpwd

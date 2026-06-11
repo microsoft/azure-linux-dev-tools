@@ -79,6 +79,16 @@ func DetectCompression(filename string) (Compression, error) {
 	}
 }
 
+// IsArchiveName reports whether filename has a recognized archive extension
+// (i.e. [DetectCompression] succeeds for it). It is the cheap, error-free
+// predicate form of [DetectCompression], useful for classifying a path as an
+// archive without needing the specific compression type.
+func IsArchiveName(filename string) bool {
+	_, err := DetectCompression(filename)
+
+	return err == nil
+}
+
 // ExtractAuto is a convenience wrapper that infers the compression from
 // archivePath's extension via [DetectCompression] and then calls [Extract].
 // Most callers should prefer this over the explicit-compression [Extract],

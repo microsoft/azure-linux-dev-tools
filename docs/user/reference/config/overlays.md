@@ -48,26 +48,33 @@ successfully makes a replacement to at least one matching file.
 | `file-rename` | Renames a file within the same directory | `file`, `replacement` | Name of file to rename |
 
 > **Tip:** `file-remove` and `file-search-replace` can also operate inside a source archive by
-> setting the `archive` field — see [Archive Overlays](#archive-overlays).
+> prefixing the `file` path with the archive name — see [Archive Overlays](#archive-overlays).
 
 ### Archive Overlays
 
 A `file-remove` or `file-search-replace` overlay can modify files **inside** a source archive
-instead of loose files in the sources tree. Set the `archive` field to scope it to that archive.
-The archive is extracted into a temporary directory, the matching files are modified with the
-same machinery as loose-file overlays, and the archive is repacked with its original compression
-format. Extraction and repacking are handled natively.
+instead of loose files in the sources tree. This is detected from the `file` path: when its first
+segment is a source archive (e.g. `pkg-1.0.tar.gz`) followed by an inner path, the overlay is
+scoped to that archive and the remainder is matched against its contents. The archive is extracted,
+the matching files are modified with the same machinery as loose-file overlays, and the archive is
+repacked with its original compression format.
+
+```
+file = "pkg-1.0.tar.gz/vendor/**"   # inside the archive (glob = vendor/**)
+file = "vendor/**"                  # loose files in the sources tree
+file = "old.tar.gz"                 # removes the archive file itself (bare name, no inner path)
+```
 
 > **Note:** Archive overlays are batched per archive — all overlays targeting the same archive
 > share a single extract/modify/repack cycle — and the `sources` file is rehashed afterward to
 > reflect the repacked archive. They are processed independently of spec and loose-file overlays.
 
-> **Extraction root:** The `file` glob in an archive overlay is interpreted relative to the archive's extraction root. By default the root is inferred: if the archive unpacks to a single top-level directory (the conventional `%{name}-%{version}` layout) that directory is used; otherwise the archive root is used. Set `archive-root` to override this — the equivalent of rpmbuild's `%setup -n` — when an archive's top-level directory does not follow that convention.
+> **Extraction root:** The inner path is interpreted relative to the archive's extraction root: if the archive unpacks to a single top-level directory (the conventional `%{name}-%{version}` layout) that directory is the root; otherwise the archive root is used.
 
 | Type | Description | Required Fields |
 |------|-------------|-----------------|
-| `file-remove` + `archive` | Removes file(s) matching a glob pattern from inside an archive | `archive`, `file` |
-| `file-search-replace` + `archive` | Regex-based search and replace on file(s) inside an archive | `archive`, `file`, `regex` |
+| `file-remove` (archive-scoped path) | Removes file(s) matching a glob pattern from inside an archive | `file` (e.g. `pkg-1.0.tar.gz/vendor/**`) |
+| `file-search-replace` (archive-scoped path) | Regex-based search and replace on file(s) inside an archive | `file`, `regex` |
 
 ## Field Reference
 
@@ -75,8 +82,6 @@ format. Extraction and repacking are handled natively.
 |-------|----------|-------------|---------|
 | Type | `type` | **Required.** The overlay type to apply | All overlays |
 | Description | `description` | Human-readable explanation documenting the need for the change; helps identify overlays in error messages | All (optional) |
-| Archive | `archive` | The source archive filename to scope an overlay to (must be a basename, not a path). When set, the overlay operates on files inside that archive. | `file-remove`, `file-search-replace` (optional) |
-| Archive root | `archive-root` | Top-level directory inside the archive to treat as the extraction root (mirrors `%setup -n`); inferred when unset. Must be a local relative path (no `..` or absolute paths). When multiple overlays target the same archive, any that set this must agree. | archive-scoped `file-remove` / `file-search-replace` (optional) |
 | Tag | `tag` | The spec tag name (e.g., `BuildRequires`, `Requires`, `Version`) | `spec-add-tag`, `spec-insert-tag`, `spec-set-tag`, `spec-update-tag`, `spec-remove-tag` |
 | Value | `value` | The tag value to set, or value to match for removal. | `spec-add-tag`, `spec-insert-tag`, `spec-set-tag`, `spec-update-tag`, `spec-remove-tag` (optional for matching) |
 | Section | `section` | The spec section to target (e.g., `%build`, `%install`, `%files`, `%description`) | `spec-prepend-lines`, `spec-append-lines`, `spec-search-replace` (optional), `spec-remove-section` |
@@ -84,7 +89,7 @@ format. Extraction and repacking are handled natively.
 | Regex | `regex` | Regular expression pattern to match | `spec-search-replace`, `file-search-replace` |
 | Replacement | `replacement` | Literal replacement text; capture group references like `$1` are **not** expanded. Omit or leave empty to delete matched text. | `spec-search-replace`, `file-search-replace`, `file-rename` |
 | Lines | `lines` | Array of text lines to insert | `spec-prepend-lines`, `spec-append-lines`, `file-prepend-lines` |
-| File | `file` | The name of the non-spec file to modify or add, or a glob pattern. For an archive-scoped overlay, it is matched against the archive's extracted contents. | `file-prepend-lines`, `file-search-replace`, `file-add`, `file-remove`, `file-rename`, `patch-add` (optional), `patch-remove` |
+| File | `file` | The name of the non-spec file to modify or add, or a glob pattern. An archive-scoped path (e.g. `pkg-1.0.tar.gz/vendor/**`) targets files inside that source archive. | `file-prepend-lines`, `file-search-replace`, `file-add`, `file-remove`, `file-rename`, `patch-add` (optional), `patch-remove` |
 | Source | `source` | Path to source file for `file-add` and `patch-add`; relative paths are relative to the config file that defines the overlay (the overlay file if loaded via [`overlay-files`](#per-file-overlay-format), otherwise the component config) | `file-add`, `patch-add` |
 | Metadata | `metadata` | Documentation table describing intent and provenance — see [Overlay Metadata](#overlay-metadata). Not allowed inside an overlay file loaded via `overlay-files` (the file-level `[metadata]` block applies to every overlay in the file). | All (optional) |
 
@@ -443,30 +448,27 @@ description = "Remove CVE patches that are now upstream"
 
 ### Removing a File from an Archive
 
-Set the `archive` field on a `file-remove` overlay to delete files matching a glob pattern from
-inside a source archive. The archive is extracted, matching files are removed, and the archive is
-repacked.
+Prefix the `file` path with the archive name to delete files matching a glob pattern from inside a
+source archive. The archive is extracted, matching files are removed, and the archive is repacked.
 
 ```toml
 [[components.mypackage.overlays]]
 type = "file-remove"
-archive = "mypackage-1.0.tar.gz"
-file = "vendor/**"
+file = "mypackage-1.0.tar.gz/vendor/**"
 description = "Remove all bundled vendor files"
 ```
 
-> **Tip:** Without the `archive` field, the same `file-remove` overlay removes a loose file from
-> the sources tree instead. The `archive` field is the only thing that scopes it to an archive.
+> **Tip:** Without the archive-name prefix, the same `file-remove` overlay removes a loose file
+> from the sources tree instead.
 
 ### Search and Replace Inside an Archive
 
-Set the `archive` field on a `file-search-replace` overlay to rewrite content inside an archive:
+Prefix the `file` path with the archive name to rewrite content inside an archive:
 
 ```toml
 [[components.mypackage.overlays]]
 type = "file-search-replace"
-archive = "mypackage-1.0.tar.xz"
-file = "configure.ac"
+file = "mypackage-1.0.tar.xz/configure.ac"
 regex = "AC_CHECK_LIB\\(old_lib"
 replacement = "AC_CHECK_LIB(new_lib"
 description = "Update library reference in configure script"
