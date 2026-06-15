@@ -1,0 +1,157 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+package projectconfig
+
+import (
+	"errors"
+	"fmt"
+	"path"
+	"path/filepath"
+	"sort"
+
+	"github.com/bmatcuk/doublestar/v4"
+	"github.com/brunoga/deep"
+	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
+	"github.com/pelletier/go-toml/v2"
+)
+
+// ErrOverlayFilePerOverlayMetadata is returned when a `.overlay.toml` file declares
+// `metadata` on an individual `[[overlays]]` entry. Each file represents one logical
+// change; the file-level `[metadata]` block is the single source of truth and is
+// stamped onto every overlay in the file at load time.
+var ErrOverlayFilePerOverlayMetadata = errors.New(
+	"per-overlay metadata is not allowed inside a .overlay.toml file; declare metadata once at the file level",
+)
+
+// ErrOverlayFileEmpty is returned when a `.overlay.toml` file decodes to zero
+// overlays. Such a file is almost certainly a typo (e.g. `[overlays]` instead of
+// `[[overlays]]`) and would otherwise silently contribute nothing.
+var ErrOverlayFileEmpty = errors.New("overlay file declares no overlays")
+
+// overlayFileSuffix is the required filename suffix for files scanned from a
+// component's [ComponentConfig.OverlayDir].
+const overlayFileSuffix = "*.overlay.toml"
+
+// OverlayFile is the on-disk representation of a single `.overlay.toml` document. Each
+// file represents one logical change: the file-level [OverlayFile.Metadata] is applied
+// to every overlay in [OverlayFile.Overlays] at load time, after which the resulting
+// overlays are appended to the owning component's [ComponentConfig.Overlays] slice.
+type OverlayFile struct {
+	// Metadata is the shared metadata for every overlay in this file. Required.
+	Metadata OverlayMetadata `toml:"metadata"`
+
+	// Overlays is the ordered list of overlays applied by this file. Must be non-empty.
+	// Per-overlay `metadata` is not allowed — the file-level [OverlayFile.Metadata] is
+	// the single source of truth.
+	Overlays []ComponentOverlay `toml:"overlays"`
+}
+
+// applyOverlayDirs scans each component's [ComponentConfig.OverlayDir] (when set),
+// parses every `*.overlay.toml` file in deterministic (filename) order, stamps the
+// per-file metadata onto each overlay, and appends the resulting overlays to the
+// component's [ComponentConfig.Overlays] slice. Inline overlays declared directly on
+// the component come first; file-sourced overlays are appended after them.
+//
+// Called from [loadProjectConfigFile] after TOML decode but before [ConfigFile.Validate],
+// so all per-overlay validation rules apply uniformly regardless of declaration site.
+func applyOverlayDirs(fs opctx.FS, cfg *ConfigFile, permissiveConfigParsing bool) error {
+	for componentName, component := range cfg.Components {
+		if component.OverlayDir == "" {
+			continue
+		}
+
+		absDir := makeAbsolute(cfg.dir, component.OverlayDir)
+
+		loaded, err := loadOverlayDir(fs, absDir, permissiveConfigParsing)
+		if err != nil {
+			return fmt.Errorf("component %#q overlay-dir %q:\n%w", componentName, component.OverlayDir, err)
+		}
+
+		component.Overlays = append(component.Overlays, loaded...)
+		cfg.Components[componentName] = component
+	}
+
+	return nil
+}
+
+// loadOverlayDir parses every `*.overlay.toml` file in absDir (sorted by filename),
+// validates each file's metadata, stamps the file metadata onto each overlay, and
+// resolves overlay `source` paths relative to the overlay file.
+func loadOverlayDir(
+	fs opctx.FS, absDir string, permissiveConfigParsing bool,
+) ([]ComponentOverlay, error) {
+	pattern := path.Join(absDir, overlayFileSuffix)
+
+	matches, err := fileutils.Glob(
+		fs, pattern,
+		doublestar.WithFailOnIOErrors(),
+		doublestar.WithFilesOnly(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan for overlay files:\n%w", err)
+	}
+
+	sort.Strings(matches)
+
+	var result []ComponentOverlay
+
+	for _, overlayPath := range matches {
+		fromFile, err := loadOverlayFile(fs, overlayPath, permissiveConfigParsing)
+		if err != nil {
+			return nil, err
+		}
+
+		result = append(result, fromFile...)
+	}
+
+	return result, nil
+}
+
+// loadOverlayFile parses a single `.overlay.toml` file, validates its metadata,
+// stamps the metadata onto each overlay, and absolutizes per-overlay `source`
+// paths relative to the file's directory.
+func loadOverlayFile(
+	fs opctx.FS, overlayPath string, permissiveConfigParsing bool,
+) ([]ComponentOverlay, error) {
+	file, err := fs.Open(overlayPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open overlay file %q:\n%w", overlayPath, err)
+	}
+	defer file.Close()
+
+	decoder := toml.NewDecoder(file)
+
+	if !permissiveConfigParsing {
+		decoder.DisallowUnknownFields()
+	}
+
+	var ofile OverlayFile
+	if err := decoder.Decode(&ofile); err != nil {
+		return nil, fmt.Errorf("failed to parse overlay file %q:\n%w", overlayPath, err)
+	}
+
+	if err := ofile.Metadata.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid [metadata] in overlay file %q:\n%w", overlayPath, err)
+	}
+
+	if len(ofile.Overlays) == 0 {
+		return nil, fmt.Errorf("%w: %q", ErrOverlayFileEmpty, overlayPath)
+	}
+
+	overlayDir := filepath.Dir(overlayPath)
+
+	for idx := range ofile.Overlays {
+		overlay := &ofile.Overlays[idx]
+
+		if overlay.Metadata != nil {
+			return nil, fmt.Errorf("%w (overlay %d in %q)", ErrOverlayFilePerOverlayMetadata, idx+1, overlayPath)
+		}
+
+		overlay.Metadata = deep.MustCopy(&ofile.Metadata)
+		overlay.Source = makeAbsolute(overlayDir, overlay.Source)
+	}
+
+	return ofile.Overlays, nil
+}

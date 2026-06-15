@@ -119,6 +119,11 @@
           "title": "Overlays",
           "description": "Overlays to apply to this component's spec and/or sources"
         },
+        "overlay-dir": {
+          "type": "string",
+          "title": "Overlay directory",
+          "description": "Directory (relative to the component config file) scanned for *.overlay.toml files at load time"
+        },
         "build": {
           "$ref": "#/$defs/ComponentBuildConfig",
           "title": "Build configuration",
@@ -278,6 +283,11 @@
           "type": "string",
           "title": "Source",
           "description": "For overlays that require a source file as input"
+        },
+        "metadata": {
+          "$ref": "#/$defs/OverlayMetadata",
+          "title": "Metadata",
+          "description": "Optional documentation metadata describing the overlay's intent and provenance"
         }
       },
       "additionalProperties": false,
@@ -709,6 +719,75 @@
       "type": "object",
       "required": [
         "type"
+      ]
+    },
+    "OverlayMetadata": {
+      "properties": {
+        "category": {
+          "type": "string",
+          "enum": [
+            "backport-fedora",
+            "upstream-fix",
+            "azl-dependency-pruning",
+            "azl-feature-disablement",
+            "azl-branding-policy",
+            "azl-build",
+            "azl-test-disablement",
+            "azl-security-compliance",
+            "azl-release-management",
+            "azl-missing-dependency-workaround",
+            "azl-platform-adaptation"
+          ],
+          "title": "Category",
+          "description": "Classification of the overlay's intent"
+        },
+        "commits": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Commits",
+          "description": "URLs of upstream commits this overlay backports or references"
+        },
+        "fixed-in": {
+          "type": "string",
+          "title": "Fixed in",
+          "description": "Upstream version or Fedora NVR where the fix lands"
+        },
+        "removable-after": {
+          "type": "string",
+          "title": "Removable after",
+          "description": "Fedora branch after which this overlay can be dropped. Only valid for the 'backport-fedora' category."
+        },
+        "pr": {
+          "type": "string",
+          "title": "Upstream PR",
+          "description": "URL of the upstream pull request"
+        },
+        "bug": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Issue-tracker links",
+          "description": "URLs of related issue-tracker entries"
+        },
+        "upstreamability": {
+          "type": "string",
+          "enum": [
+            "yes",
+            "no",
+            "unknown"
+          ],
+          "title": "Upstreamability",
+          "description": "Whether this overlay's change can be upstreamed: 'yes'",
+          "default": "unknown"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "category"
       ]
     },
     "PackageConfig": {

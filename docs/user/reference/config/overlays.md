@@ -61,9 +61,136 @@ successfully makes a replacement to at least one matching file.
 | Replacement | `replacement` | Literal replacement text; capture group references like `$1` are **not** expanded. Omit or leave empty to delete matched text. | `spec-search-replace`, `file-search-replace`, `file-rename` |
 | Lines | `lines` | Array of text lines to insert | `spec-prepend-lines`, `spec-append-lines`, `file-prepend-lines` |
 | File | `file` | The name of the non-spec file to modify or add | `file-prepend-lines`, `file-search-replace`, `file-add`, `file-remove`, `file-rename`, `patch-add` (optional), `patch-remove` |
-| Source | `source` | Path to source file for `file-add` and `patch-add`; relative paths are relative to the config file | `file-add`, `patch-add` |
+| Source | `source` | Path to source file for `file-add` and `patch-add`; relative paths are relative to the config file that defines the overlay (the `.overlay.toml` file if loaded from an [overlay directory](#per-file-overlay-format-overlaytoml), otherwise the component config) | `file-add`, `patch-add` |
+| Metadata | `metadata` | Documentation table describing intent and provenance — see [Overlay Metadata](#overlay-metadata). Not allowed inside a `.overlay.toml` file (the file-level `[metadata]` block applies to every overlay in the file). | All (optional) |
 
 > **Note:** For `file-rename`, the `replacement` field is a **filename only** (not a path). The file is renamed within its current directory.
+
+### Component-level fields for overlays
+
+In addition to per-overlay fields, the following fields are set directly on the component:
+
+| Field | TOML Key | Description |
+|-------|----------|-------------|
+| Overlay directory | `overlay-dir` | Path (relative to the component's config file) to a directory of `*.overlay.toml` files. Each file is loaded at config-load time and its overlays are appended to `overlays` in filename order. See [Per-file overlay format](#per-file-overlay-format-overlaytoml). |
+
+## Overlay Metadata
+
+Overlays can carry an optional `metadata` table that documents *why* the overlay exists and *when* it can be removed. Metadata is reviewed by humans and surfaced in tooling; it does **not** affect how the overlay is applied and is excluded from component fingerprints (so editing metadata never invalidates build caches).
+
+### `metadata` fields
+
+| Field | TOML Key | Description |
+|-------|----------|-------------|
+| Category | `category` | **Required.** Classification of the overlay's intent. See the table below. |
+| Commits | `commits` | List of upstream commit URLs (Fedora dist-git or upstream project) that this overlay backports or implements. Each entry must be an absolute http(s) URL. |
+| Fixed in | `fixed-in` | Upstream version or Fedora NVR where the fix lands (e.g. `xclock-1.1.1-11.fc44`, `4.11.2`). |
+| Removable after | `removable-after` | A Fedora branch (e.g. `f44`); the overlay can be dropped once AZL bumps past it. Only valid when `category = "backport-fedora"`. |
+| PR | `pr` | URL of the upstream pull request that carries (or proposes) the fix. |
+| Bug | `bug` | List of bug-tracker URLs related to this overlay. |
+| Upstreamability | `upstreamability` | Whether this change can be upstreamed: `"yes"`, `"no"`, or `"unknown"`. Defaults to `"unknown"` (not yet assessed) when omitted. |
+
+### Categories
+
+| Category | When to use |
+|----------|-------------|
+| `backport-fedora` | Fix exists in some Fedora branch. The overlay backports it. Self-resolves when AZL bumps past it. Requires at least one of `commits` or `fixed-in`. |
+| `upstream-fix` | Fix is **not** in any Fedora branch; the overlay is a candidate for upstreaming. |
+| `azl-dependency-pruning` | Removing dependencies not shipped in AZL. |
+| `azl-feature-disablement` | Disabling unneeded features or subpackages. |
+| `azl-branding-policy` | Fedora→Azure Linux name/path changes; RHEL/enterprise convention alignment. |
+| `azl-build` | Toolchain, mock, or CI environment adjustments. |
+| `azl-test-disablement` | Skipping failing tests. |
+| `azl-security-compliance` | FIPS or crypto-policy changes. |
+| `azl-release-management` | Release-tag and changelog mechanics. |
+| `azl-missing-dependency-workaround` | Temporary workaround for packages not yet imported into AZL. |
+| `azl-platform-adaptation` | Architecture-specific adjustments. |
+
+### Inline metadata example
+
+TOML inline tables (`metadata = { ... }`) must fit on a single line. When the metadata has more than one or two fields, use a sub-table (`[components.<name>.overlays.metadata]`) so each field gets its own line:
+
+```toml
+[[components.xclock.overlays]]
+type = "spec-search-replace"
+description = "Pass --force to autoreconf"
+regex = "autoreconf -i"
+replacement = "autoreconf -fi"
+
+  [components.xclock.overlays.metadata]
+  category = "backport-fedora"
+  commits = ["https://src.fedoraproject.org/rpms/xclock/c/1e407488"]
+  fixed-in = "xclock-1.1.1-11.fc44"
+  removable-after = "f44"
+```
+
+For short metadata, the single-line inline form is also valid:
+
+```toml
+[[components.xclock.overlays]]
+type = "spec-set-tag"
+tag = "Vendor"
+value = "Microsoft"
+metadata = { category = "azl-branding-policy" }
+```
+
+## Per-file overlay format (`.overlay.toml`)
+
+When a single logical change (a CVE backport, a feature disablement, a Fedora cherry-pick…) needs **several overlays** that all share the same provenance, declaring them inline in the component config gets noisy and makes the boundary between unrelated changes hard to see. Use the per-file format instead.
+
+### Layout
+
+Set `overlay-dir` on the component and drop one `*.overlay.toml` file per logical change into that directory:
+
+```
+base/comps/mypackage/
+├── mypackage.comp.toml
+└── overlays/
+    ├── 0001-cve-2024-1234.overlay.toml
+    ├── 0002-disable-broken-tests.overlay.toml
+    └── 0003-azl-branding.overlay.toml
+```
+
+```toml
+# mypackage.comp.toml
+[components.mypackage]
+overlay-dir = "overlays"
+```
+
+Files are loaded in **filename (lexicographic) order**, so prefix each file with a numeric ordinal (`0001-`, `0002-`, …) to make the apply order obvious and stable. Files that don't end in `.overlay.toml` are ignored, so you can keep `README.md` or other notes alongside.
+
+Overlays loaded from `.overlay.toml` files are **appended after** any inline overlays declared directly on the component.
+
+### File structure
+
+Each `.overlay.toml` file represents one logical change. It has:
+
+* exactly one top-level `[metadata]` table (uses the same fields documented in [Overlay Metadata](#overlay-metadata)); and
+* one or more `[[overlays]]` entries, applied in declaration order.
+
+Per-overlay `metadata` is **not allowed** inside a `.overlay.toml` file — the file-level `[metadata]` is the single source of truth and is stamped onto every overlay in the file. Relative `source` paths are resolved against the directory of the `.overlay.toml` file (not the component config).
+
+```toml
+# overlays/0001-cve-2024-1234.overlay.toml
+[metadata]
+category = "backport-fedora"
+commits = ["https://src.fedoraproject.org/rpms/mypackage/c/abc123def456"]
+fixed-in = "3.2.0"
+bug = ["https://bugzilla.redhat.com/show_bug.cgi?id=12345"]
+
+[[overlays]]
+type = "patch-add"
+source = "patches/CVE-2024-1234.patch"
+
+[[overlays]]
+type = "spec-append-lines"
+section = "%changelog"
+lines = ["- Fix CVE-2024-1234"]
+```
+
+### Inspecting overlay metadata
+
+Use `azldev component overlays` to list overlays (and their metadata) for one or more components. The command is read-only and supports `--category` and `--only-annotated` filters; output is available as a table (default) or JSON (`-O json`).
 
 ## Examples
 

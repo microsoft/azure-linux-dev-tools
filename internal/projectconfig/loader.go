@@ -433,6 +433,13 @@ func loadProjectConfigFile(
 	cfg.sourcePath = absFilePath
 	cfg.dir = filepath.Dir(absFilePath)
 
+	// Resolve per-component overlay directories (`.overlay.toml` files), stamping each
+	// file's [metadata] onto its overlays and appending them to the component before
+	// validation runs.
+	if err := applyOverlayDirs(fs, cfg, permissiveConfigParsing); err != nil {
+		return nil, err
+	}
+
 	// Make sure that the read data is internally consistent.
 	err = cfg.Validate()
 	if err != nil {

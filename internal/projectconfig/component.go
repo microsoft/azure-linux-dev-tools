@@ -273,6 +273,15 @@ type ComponentConfig struct {
 	// Overlays to apply to sources after they've been acquired. May mutate the spec as well as sources.
 	Overlays []ComponentOverlay `toml:"overlays,omitempty" json:"overlays,omitempty" table:"-" jsonschema:"title=Overlays,description=Overlays to apply to this component's spec and/or sources"`
 
+	// OverlayDir, if set, names a directory (relative to this component config file) that
+	// is scanned for `*.overlay.toml` files at load time. Each file represents one logical
+	// change: a file-level `[metadata]` block plus an ordered list of `[[overlays]]`. The
+	// per-file metadata is stamped onto every overlay in the file and the overlays are
+	// appended to [ComponentConfig.Overlays] in filename order (which is why a `0001-`,
+	// `0002-` numeric prefix convention is recommended). Excluded from the fingerprint
+	// because the value affects only where overlays are sourced from, not their content.
+	OverlayDir string `toml:"overlay-dir,omitempty" json:"overlayDir,omitempty" table:"-" jsonschema:"title=Overlay directory,description=Directory (relative to the component config file) scanned for *.overlay.toml files at load time" fingerprint:"-"`
+
 	// Configuration for building the component.
 	Build ComponentBuildConfig `toml:"build,omitempty" json:"build,omitempty" table:"-" jsonschema:"title=Build configuration,description=Configuration for building the component"`
 
@@ -383,6 +392,10 @@ func (c *ComponentConfig) WithAbsolutePaths(referenceDir string) *ComponentConfi
 		SourceFiles:      deep.MustCopy(c.SourceFiles),
 		Packages:         deep.MustCopy(c.Packages),
 		Publish:          deep.MustCopy(c.Publish),
+		// OverlayDir is consumed at load time (see applyOverlayDirs) before paths are
+		// absolutized; nothing reads it afterward, so preserve the original value verbatim
+		// rather than redundantly re-rooting it.
+		OverlayDir: c.OverlayDir,
 	}
 
 	// Fix up paths.
