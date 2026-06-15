@@ -1012,14 +1012,14 @@ func validateRpmRepoSetTemplate(name string, tmpl *RpmRepoSetTemplate) error {
 // [ResourcesConfig.EffectiveRpmRepos] happens in [ProjectConfig.Validate] via
 // validateDistroVersionInputs.
 func (v DistroVersionDefinition) EffectiveRpmBuildRepos(resources *ResourcesConfig) ([]string, error) {
-	return effectiveInputRepos("rpm-build", v.Inputs.RpmBuild, resources)
+	return effectiveInputRepos(UseCaseRPMBuild, v.Inputs.RpmBuild, resources)
 }
 
 // EffectiveImageBuildRepos returns the deduplicated, ordered list of effective
 // repo names exposed to the image-build use-case for this distro version. Same
 // semantics as [DistroVersionDefinition.EffectiveRpmBuildRepos].
 func (v DistroVersionDefinition) EffectiveImageBuildRepos(resources *ResourcesConfig) ([]string, error) {
-	return effectiveInputRepos("image-build", v.Inputs.ImageBuild, resources)
+	return effectiveInputRepos(UseCaseImageBuild, v.Inputs.ImageBuild, resources)
 }
 
 func effectiveInputRepos(
