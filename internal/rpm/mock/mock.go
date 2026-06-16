@@ -242,9 +242,7 @@ func (r *Runner) InitRoot(ctx context.Context) (err error) {
 		return fmt.Errorf("failed to create external command for mock:\n%w", err)
 	}
 
-	if !r.verbose {
-		extcmd.SetLongRunning("Waiting for mock (initializing build root)...")
-	}
+	extcmd.SetLongRunning("Waiting for mock (initializing build root)...")
 
 	err = extcmd.Run(ctx)
 	if err != nil {
@@ -359,9 +357,7 @@ func (r *Runner) BuildSRPM(
 		return fmt.Errorf("failed to create external command for mock:\n%w", err)
 	}
 
-	if !r.verbose {
-		extcmd.SetLongRunning("Waiting for mock (building SRPM)...")
-	}
+	extcmd.SetLongRunning("Waiting for mock (building SRPM)...")
 
 	// Watch output logs in real-time so we can asynchronously synthesize progress updates.
 	err = addMockCmdListeners(r.eventListener, extcmd, outputDirPath)
@@ -440,11 +436,7 @@ func (r *Runner) BuildRPM(ctx context.Context, srpmPath, outputDirPath string, o
 		return fmt.Errorf("failed to create external command for mock:\n%w", err)
 	}
 
-	// In verbose mode, mock streams its full build output to the console, so we skip the
-	// indeterminate progress spinner (which would otherwise fight with the live output).
-	if !r.verbose {
-		extcmd = extcmd.SetLongRunning("Waiting for mock (building RPM)...")
-	}
+	extcmd = extcmd.SetLongRunning("Waiting for mock (building RPM)...")
 
 	// Watch output logs in real-time so we can asynchronously synthesize progress updates.
 	err = addMockCmdListeners(r.eventListener, extcmd, outputDirPath)
@@ -601,11 +593,7 @@ func (r *Runner) InstallPackages(ctx context.Context, packages []string) error {
 		return fmt.Errorf("failed to create external command for mock:\n%w", err)
 	}
 
-	// In verbose mode, mock streams its output directly to the console, so we skip the
-	// indeterminate progress spinner (which would otherwise fight with the live output).
-	if !r.verbose {
-		extcmd = extcmd.SetLongRunning("Waiting for mock (installing packages)...")
-	}
+	extcmd = extcmd.SetLongRunning("Waiting for mock (installing packages)...")
 
 	err = extcmd.Run(ctx)
 	if err != nil {
@@ -641,11 +629,7 @@ func (r *Runner) ScrubRoot(ctx context.Context) error {
 		return fmt.Errorf("failed to create external command for mock:\n%w", err)
 	}
 
-	// In verbose mode, mock streams its output directly to the console, so we skip the
-	// indeterminate progress spinner (which would otherwise fight with the live output).
-	if !r.verbose {
-		extcmd = extcmd.SetLongRunning("Waiting for mock (cleaning build root)...")
-	}
+	extcmd = extcmd.SetLongRunning("Waiting for mock (cleaning build root)...")
 
 	err = extcmd.Run(ctx)
 	if err != nil {
