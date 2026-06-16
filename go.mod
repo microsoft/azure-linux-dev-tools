@@ -25,6 +25,7 @@ require (
 	github.com/go-playground/validator/v10 v10.30.3
 	github.com/google/renameio v1.0.1
 	github.com/google/uuid v1.6.0
+	github.com/gowebpki/jcs v1.0.1
 	github.com/h2non/gock v1.2.0
 	github.com/invopop/jsonschema v0.14.0
 	github.com/jedib0t/go-pretty/v6 v6.8.1
