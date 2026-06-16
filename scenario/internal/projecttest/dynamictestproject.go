@@ -32,6 +32,8 @@ type dynamicTestProject struct {
 
 	// Maps component name to lock file content.
 	locks map[string]*lockfile.ComponentLock
+	// Maps lock relative file path to component name.
+	lockPaths map[string]string
 
 	// initGitRepo causes [Serialize] to initialize a git repo in the project directory
 	// and commit all files. Required for commands that use synthetic history (e.g., render).
@@ -46,6 +48,7 @@ func NewDynamicTestProject(options ...DynamicTestProjectOption) *dynamicTestProj
 		configFile: projectgen.GenerateBasicConfig("test-project"),
 		otherFiles: make(map[string][]byte),
 		locks:      make(map[string]*lockfile.ComponentLock),
+		lockPaths:  make(map[string]string),
 	}
 
 	// Make sure we have an empty component map so we can easily add to it later.
@@ -136,11 +139,15 @@ func (p *dynamicTestProject) addComponent(componentConfig *projectconfig.Compone
 func (p *dynamicTestProject) addLock(componentName string, componentLock *lockfile.ComponentLock) {
 	lockRelPath := lockRelativePath(componentName)
 	if _, exists := p.otherFiles[lockRelPath]; exists {
-		panic(fmt.Sprintf("AddLock: lock file for component %#q already exists via AddFile", componentName))
+		panic(fmt.Sprintf(
+			"AddLock: lock file for component %#q at path %#q already exists via AddFile",
+			componentName, lockRelPath,
+		))
 	}
 
 	cp := deep.MustCopy(*componentLock)
 	p.locks[componentName] = &cp
+	p.lockPaths[lockRelPath] = componentName
 }
 
 // AddLock adds (or updates) a lock file for the component in the project.
@@ -160,10 +167,11 @@ func AddFile(relativePath, content string) DynamicTestProjectOption {
 	}
 
 	return func(project *dynamicTestProject) {
-		for componentName := range project.locks {
-			if cleaned == lockRelativePath(componentName) {
-				panic(fmt.Sprintf("AddFile: path %#q already exists via AddLock", relativePath))
-			}
+		if componentName, exists := project.lockPaths[cleaned]; exists {
+			panic(fmt.Sprintf(
+				"AddFile: path %#q conflicts with AddLock for component %#q at path %#q",
+				relativePath, componentName, cleaned,
+			))
 		}
 
 		project.otherFiles[cleaned] = []byte(content)
