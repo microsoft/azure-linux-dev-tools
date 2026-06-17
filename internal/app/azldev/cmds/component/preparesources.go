@@ -138,7 +138,7 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 		)
 	}
 
-	preparerOpts = appendPrepareSourcesOptions(env, preparerOpts, options, distro)
+	preparerOpts = appendPrepareSourcesOptions(preparerOpts, options)
 
 	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, preparerOpts...)
 	if err != nil {
@@ -190,13 +190,10 @@ func CheckOutputDir(env *azldev.Env, options *PrepareSourcesOptions) error {
 }
 
 // appendPrepareSourcesOptions appends conditional preparer options that control
-// hashing and lookaside behavior. Extracted from
-// [PrepareComponentSources] to keep cyclomatic complexity within limits.
+// hashing and lookaside behavior.
 func appendPrepareSourcesOptions(
-	_ *azldev.Env,
 	opts []sources.PreparerOption,
 	options *PrepareSourcesOptions,
-	_ sourceproviders.ResolvedDistro,
 ) []sources.PreparerOption {
 	if options.AllowNoHashes {
 		opts = append(opts, sources.WithAllowNoHashes())

@@ -140,7 +140,9 @@ func processArchive(
 	}()
 
 	// Extract the archive; compression is inferred from the filename extension.
-	if err := archive.ExtractAuto(archivePath, workDir); err != nil {
+	// Fail on entry types we can't repack (hardlinks, devices, ...) so they
+	// aren't silently dropped from the repacked archive.
+	if err := archive.ExtractAuto(archivePath, workDir, archive.WithErrorOnUnsupportedEntry()); err != nil {
 		return false, fmt.Errorf("extracting archive:\n%w", err)
 	}
 
