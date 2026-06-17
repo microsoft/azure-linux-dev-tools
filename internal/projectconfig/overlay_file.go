@@ -6,6 +6,7 @@ package projectconfig
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"path"
 	"path/filepath"
 	"sort"
@@ -185,7 +186,15 @@ func loadOverlayFile(
 	}
 
 	if err := ofile.Metadata.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid [metadata] in overlay file %q:\n%w", overlayPath, err)
+		if !permissiveConfigParsing {
+			return nil, fmt.Errorf("invalid [metadata] in overlay file %q:\n%w", overlayPath, err)
+		}
+
+		slog.Warn(
+			"Overlay file metadata validation failed; continuing due to '--permissive-config'",
+			"overlayFile", overlayPath,
+			"error", err,
+		)
 	}
 
 	if len(ofile.Overlays) == 0 {

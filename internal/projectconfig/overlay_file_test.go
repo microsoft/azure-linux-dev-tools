@@ -156,6 +156,33 @@ value = "Microsoft"
 	assert.Contains(t, err.Error(), "category")
 }
 
+func TestLoadOverlayFile_PermissiveTolerates_InvalidMetadata(t *testing.T) {
+	ctx := testctx.NewCtx()
+	overlayPath := filepath.Join(badOverlayTestDir, "0001-bad.overlay.toml")
+
+	// Same fixture as the strict counterpart above: category is missing, which
+	// fails OverlayMetadata.Validate(). Under permissive parsing the load must
+	// still succeed so older configs targeting a stricter newer schema can be
+	// inspected.
+	require.NoError(t, fileutils.WriteFile(ctx.FS(),
+		overlayPath,
+		[]byte(`
+[metadata]
+# Missing category.
+commits = ["abc"]
+
+[[overlays]]
+type = "spec-set-tag"
+tag = "Vendor"
+value = "Microsoft"
+`), fileperms.PrivateFile))
+
+	loaded, err := loadOverlayFile(ctx.FS(), overlayPath, true)
+	require.NoError(t, err)
+	require.Len(t, loaded, 1)
+	assert.Equal(t, ComponentOverlaySetSpecTag, loaded[0].Type)
+}
+
 func TestLoadOverlayDir_ResolvesSourceRelativeToOverlayFile(t *testing.T) {
 	ctx := testctx.NewCtx()
 	overlayDir := "/project/comps/foo/overlays"
