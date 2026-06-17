@@ -187,14 +187,61 @@ func TestRoundTrip_AllCompressions(t *testing.T) {
 	}
 }
 
+func TestExtract_MislabeledCompression(t *testing.T) {
+	// Some upstream archives are published with a compression extension that
+	// doesn't match their bytes (e.g. an uncompressed tar named ".txz"). Extract
+	// must sniff the real format from the magic bytes rather than trusting the
+	// caller-supplied (extension-derived) compression.
+	tests := []struct {
+		name string
+		// actual is the format the bytes are really written in.
+		actual archive.Compression
+		// claimed is the (wrong) compression Extract is told to use.
+		claimed archive.Compression
+	}{
+		{"plain tar claimed as xz", archive.CompressionNone, archive.CompressionXZ},
+		{"plain tar claimed as gzip", archive.CompressionNone, archive.CompressionGzip},
+		{"gzip claimed as xz", archive.CompressionGzip, archive.CompressionXZ},
+		{"xz claimed as none", archive.CompressionXZ, archive.CompressionNone},
+		{"zstd claimed as gzip", archive.CompressionZstd, archive.CompressionGzip},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			sourceDir := filepath.Join(tmpDir, "src")
+			extractDir := filepath.Join(tmpDir, "out")
+
+			require.NoError(t, os.MkdirAll(sourceDir, 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(sourceDir, "a.txt"), []byte("alpha"), 0o600))
+
+			// Write the archive in its real format but with a mismatched name.
+			archivePath := filepath.Join(tmpDir, "pkg.txz")
+			require.NoError(t, archive.CreateDeterministicArchive(archivePath, sourceDir, testCase.actual))
+
+			// Extract is given the wrong compression; magic-byte sniffing must
+			// recover the real format and extract successfully.
+			require.NoError(t, archive.Extract(archivePath, extractDir, testCase.claimed))
+
+			got, err := os.ReadFile(filepath.Join(extractDir, "a.txt"))
+			require.NoError(t, err)
+			assert.Equal(t, "alpha", string(got))
+		})
+	}
+}
+
 func TestUnsupportedCompression(t *testing.T) {
 	tmpDir := t.TempDir()
-	archivePath := filepath.Join(tmpDir, "archive.bin")
-	require.NoError(t, os.WriteFile(archivePath, []byte("dummy"), 0o600))
 
 	bogus := archive.Compression(99)
 
-	err := archive.Extract(archivePath, tmpDir, bogus)
+	// Extract sniffs real compression from magic bytes and only falls back to
+	// the caller-supplied value when there are no bytes to inspect. Use an empty
+	// file so the bogus value actually reaches the decompressor guard.
+	emptyPath := filepath.Join(tmpDir, "empty.bin")
+	require.NoError(t, os.WriteFile(emptyPath, nil, 0o600))
+
+	err := archive.Extract(emptyPath, tmpDir, bogus)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported compression type")
 

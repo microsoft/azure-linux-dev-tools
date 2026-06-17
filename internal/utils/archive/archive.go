@@ -20,6 +20,8 @@ package archive
 
 import (
 	"archive/tar"
+	"bufio"
+	"bytes"
 	"compress/gzip"
 	"errors"
 	"fmt"
@@ -49,6 +51,11 @@ const (
 	// CompressionZstd indicates zstandard compression (.tar.zst or .tzst).
 	CompressionZstd
 )
+
+// compressionMagicLen is the number of leading bytes [sniffCompression] needs
+// to recognize every supported compressed format (xz has the longest, 6-byte,
+// signature).
+const compressionMagicLen = 6
 
 // maxEntryBytes caps the decompressed size of any single regular-file entry
 // extracted by [Extract]. This prevents a decompression-bomb archive from
@@ -125,7 +132,13 @@ func Extract(archivePath, destDir string, comp Compression) (err error) {
 	}
 	defer defers.HandleDeferError(file.Close, &err)
 
-	decompressed, closer, err := newDecompressor(file, comp)
+	// Prefer the actual compression detected from the leading magic bytes over
+	// the caller-supplied (extension-derived) value: upstream archives are
+	// sometimes mislabeled, e.g. an uncompressed tar published as ".txz".
+	bufReader := bufio.NewReader(file)
+	magic, _ := bufReader.Peek(compressionMagicLen)
+
+	decompressed, closer, err := newDecompressor(bufReader, sniffCompression(magic, comp))
 	if err != nil {
 		return err
 	}
@@ -149,6 +162,29 @@ func Extract(archivePath, destDir string, comp Compression) (err error) {
 		if err := extractEntry(root, header, tarReader); err != nil {
 			return fmt.Errorf("extracting %#q from %#q:\n%w", header.Name, archivePath, err)
 		}
+	}
+}
+
+// sniffCompression returns the compression format implied by the leading magic
+// bytes, falling back to fallback when no known signature matches (an
+// uncompressed tar carries no leading magic). All supported compressed formats
+// have a fixed-position header, so this is authoritative over the filename
+// extension.
+func sniffCompression(magic []byte, fallback Compression) Compression {
+	switch {
+	case bytes.HasPrefix(magic, []byte{0xFD, '7', 'z', 'X', 'Z', 0x00}):
+		return CompressionXZ
+	case bytes.HasPrefix(magic, []byte{0x1F, 0x8B}):
+		return CompressionGzip
+	case bytes.HasPrefix(magic, []byte{0x28, 0xB5, 0x2F, 0xFD}):
+		return CompressionZstd
+	case len(magic) == 0:
+		// Unreadable/empty peek: defer to the extension-derived hint.
+		return fallback
+	default:
+		// No compression signature: an uncompressed tar (whatever the
+		// extension claims). A real tar's "ustar" magic sits at byte 257.
+		return CompressionNone
 	}
 }
 
