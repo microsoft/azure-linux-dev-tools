@@ -254,13 +254,12 @@ func TestComponentOverlay_Validate(t *testing.T) {
 			errorContains: "file",
 		},
 		{
-			name: "file-add missing source",
+			name: "file-add missing source is valid (defaults to file)",
 			overlay: projectconfig.ComponentOverlay{
 				Type:     projectconfig.ComponentOverlayAddFile,
 				Filename: "new-file.txt",
 			},
-			errorExpected: true,
-			errorContains: "source",
+			errorExpected: false,
 		},
 		// Description included in error
 		{
@@ -468,4 +467,55 @@ func TestComponentOverlay_ModifiesSpec(t *testing.T) {
 			assert.False(t, overlay.ModifiesSpec(), "expected %s to not be a spec overlay", overlayType)
 		})
 	}
+}
+
+func TestComponentOverlay_WithAbsolutePaths(t *testing.T) {
+	const testRefDir = "/ref/dir"
+
+	t.Run("file-add uses explicit source when provided", func(t *testing.T) {
+		overlay := projectconfig.ComponentOverlay{
+			Type:     projectconfig.ComponentOverlayAddFile,
+			Filename: "dest.txt",
+			Source:   "custom/source.txt",
+		}
+
+		result := overlay.WithAbsolutePaths(testRefDir)
+
+		assert.Equal(t, "/ref/dir/custom/source.txt", result.Source)
+		assert.Equal(t, "dest.txt", result.Filename)
+	})
+
+	t.Run("file-add defaults source to file when omitted", func(t *testing.T) {
+		overlay := projectconfig.ComponentOverlay{
+			Type:     projectconfig.ComponentOverlayAddFile,
+			Filename: "dest.txt",
+		}
+
+		result := overlay.WithAbsolutePaths(testRefDir)
+
+		assert.Equal(t, "/ref/dir/dest.txt", result.Source)
+		assert.Equal(t, "dest.txt", result.Filename)
+	})
+
+	t.Run("file-add source default does not mutate original overlay", func(t *testing.T) {
+		overlay := projectconfig.ComponentOverlay{
+			Type:     projectconfig.ComponentOverlayAddFile,
+			Filename: "dest.txt",
+		}
+
+		_ = overlay.WithAbsolutePaths(testRefDir)
+
+		assert.Empty(t, overlay.Source, "original overlay should not be mutated")
+	})
+
+	t.Run("non file-add overlays do not default source from file", func(t *testing.T) {
+		overlay := projectconfig.ComponentOverlay{
+			Type:     projectconfig.ComponentOverlayAddPatch,
+			Filename: "dest.patch",
+		}
+
+		result := overlay.WithAbsolutePaths(testRefDir)
+
+		assert.Empty(t, result.Source, "patch-add should not default source from file")
+	})
 }
