@@ -98,17 +98,18 @@ description: "Instructions for working on the azldev Go codebase. IMPORTANT: Alw
     }
     ```
 
-## Component Fingerprinting — `fingerprint:"-"` Tags
+## Component Fingerprinting: version-set tags + `projectV1`
 
-Structs in `internal/projectconfig/` are hashed by `hashstructure.Hash()` to detect component changes. Fields **included by default** (safe: false positive > false negative).
+Structs in `internal/projectconfig/` feed the component fingerprint, and **every field must carry an explicit `fingerprint` tag** - an absent tag fails `TestAllFingerprintedFieldsHaveDecision`. (The live hash is still `hashstructure.Hash()`; the hand-written `projectV1` in `internal/fingerprint/project.go` is wired in parallel and replaces it at the reset.)
 
-When adding a new field to a fingerprinted struct, ask: **"Does changing this field change the build output?"**
-- **Yes** (build flags, spec source, defines, etc.) → do nothing, included automatically.
-- **No** (human docs, scheduling hints, CI policy, metadata, back-references) → add `fingerprint:"-"` to the struct tag and register the exclusion in `expectedExclusions` in `internal/projectconfig/fingerprint_test.go`.
+When adding a field to a fingerprinted struct, ask: **"Does changing this field change the build output?"**
+- **No** (human docs, scheduling hints, CI policy, metadata, back-references) → tag it `fingerprint:"-"` and register the exclusion in `expectedExclusions` in `internal/projectconfig/fingerprint_test.go`.
+- **Yes** (build flags, spec source, defines, etc.) → tag it `fingerprint:"v1..*"` (omit-if-zero) and wire it into `projectV1`: add its `emit`/sub-projector line, set it in `emissionProbeConfig`, then append a `<toml-key>-set` golden vector with `go test ./internal/fingerprint -run TestGoldenVectors -update-golden`. The golden table is append-only - never edit an existing digest. The full contract lives in `goldenConfigs`'s doc comment.
+- **Build-meaningful zero?** A field whose *zero value* changes the build (e.g. a `bool` where `false` is a deliberate setting) is tagged `fingerprint:"!v1..*"` (always-emit) and wired with `builder.emitAlways(...)`, **not** `builder.emit(...)`; it MUST get a golden vector at its zero value (the differ-from-`minimal` guard in `golden_internal_test.go` then proves it actually emits).
 
-If a parent struct field is already excluded (e.g. `Failure ComponentBuildFailureConfig ... fingerprint:"-"`), do **not** also tag the inner struct's fields — `hashstructure` skips the entire subtree.
+If a parent field is already excluded (e.g. `Failure ComponentBuildFailureConfig ... fingerprint:"-"`), do **not** tag the inner struct's fields - the excluded subtree is pruned from both the walk and `projectV1`.
 
-Run `mage unit` to verify — the guard test will catch unregistered exclusions or missing tags.
+Run `mage unit` to verify: the decision test catches a missing tag, the emission probe catches a measured-but-unemitted field, and the golden vectors catch a moved digest.
 
 ### Cmdline Returns
 

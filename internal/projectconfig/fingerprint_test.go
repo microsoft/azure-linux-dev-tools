@@ -7,18 +7,25 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/microsoft/azure-linux-dev-tools/internal/fingerprint"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestAllFingerprintedFieldsHaveDecision verifies that every field in every
-// fingerprinted struct has been consciously categorized as either included
-// (no fingerprint tag) or excluded (`fingerprint:"-"`).
+// fingerprinted struct carries an explicit, valid fingerprint decision: either a
+// version-set tag (e.g. `fingerprint:"v1..*"`) declaring when it is measured, or
+// `fingerprint:"-"` excluding it. An absent tag is now a failure - the
+// mandatory-decision rule the projection substrate relies on (a forgotten field
+// must never silently drop out of the hash).
 //
-// This test serves two purposes:
-//  1. It ensures that newly added fields default to **included** in the fingerprint
-//     (the safe default — you get a false positive, never a false negative).
-//  2. It catches accidental removal of `fingerprint:"-"` tags from excluded fields,
+// This test serves three purposes:
+//  1. It enforces the mandatory tag via [fingerprint.ValidateFieldTag], which also
+//     rejects malformed / future-referencing tags and the unimplemented
+//     composite-'!' placeholder.
+//  2. It ensures version-set tags parse and resolve an emit-key.
+//  3. It catches accidental removal of `fingerprint:"-"` tags from excluded fields,
 //     since all exclusions are tracked in expectedExclusions.
 func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
 	// All struct types whose fields participate in component fingerprinting.
@@ -94,7 +101,8 @@ func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
 		"SpecSource.Path": true,
 	}
 
-	// Collect all actual exclusions found via reflection, and flag invalid tag values.
+	// Collect all actual exclusions found via reflection, and validate every
+	// field's tag through the production decision gate.
 	actualExclusions := make(map[string]bool)
 
 	for _, st := range fingerprintedStructs {
@@ -102,27 +110,14 @@ func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
 			field := st.Field(i)
 			key := st.Name() + "." + field.Name
 
-			tag := field.Tag.Get("fingerprint")
+			// ValidateFieldTag enforces the mandatory decision: an absent tag,
+			// a malformed/future-referencing version set, or an unimplemented
+			// composite-'!' all fail here.
+			require.NoErrorf(t, fingerprint.ValidateFieldTag(field),
+				"field %q has no valid fingerprint decision", key)
 
-			switch tag {
-			case "":
-				// No tag — included by default (the safe default).
-			case "-":
+			if field.Tag.Get("fingerprint") == "-" {
 				actualExclusions[key] = true
-			default:
-				// hashstructure only recognises "" (include) and "-" (exclude).
-				// Any other value is silently treated as included, which is
-				// almost certainly a typo.
-				//
-				// The richer version-range grammar (fingerprint.parseVersionSet)
-				// is NOT yet wired here: while the legacy hashstructure path is
-				// active, only ""/"-" are valid and any range tag is rejected so
-				// nobody adds one ahead of the part 2/3 wiring. When hashstructure
-				// is removed, replace this switch with a parseVersionSet call.
-				assert.Failf(t, "invalid fingerprint tag",
-					"field %q has unrecognised fingerprint tag value %q — "+
-						"only `fingerprint:\"-\"` (exclude) is valid; "+
-						"remove the tag to include the field", key, tag)
 			}
 		}
 	}

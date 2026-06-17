@@ -60,15 +60,17 @@ type SourceFileReference struct {
 	Component ComponentReference `toml:"-" json:"-" fingerprint:"-"`
 
 	// Name of the source file; must be non-empty.
-	Filename string `toml:"filename" json:"filename"`
+	Filename string `toml:"filename" json:"filename" fingerprint:"v1..*"`
 
 	// Hash of the source file, expressed as a hex string.
-	Hash string `toml:"hash,omitempty" json:"hash,omitempty"`
+	Hash string `toml:"hash,omitempty" json:"hash,omitempty" fingerprint:"v1..*"`
 
 	// Type of hash used by Hash (e.g., "SHA256", "SHA512").
-	HashType fileutils.HashType `toml:"hash-type,omitempty" json:"hashType,omitempty" jsonschema:"enum=SHA256,enum=SHA512,title=Hash type,description=Hash algorithm used for the hash value"`
+	HashType fileutils.HashType `toml:"hash-type,omitempty" json:"hashType,omitempty" jsonschema:"enum=SHA256,enum=SHA512,title=Hash type,description=Hash algorithm used for the hash value" fingerprint:"v1..*"`
 
 	// Origin for this source file. When omitted, the file is resolved via the lookaside cache.
+	// fingerprint:"-" prunes this subtree; a build-effective field added here is unmeasured
+	// until the parent is un-pruned.
 	Origin Origin `toml:"origin,omitempty" json:"origin,omitempty" fingerprint:"-"`
 
 	// ReplaceUpstream, when true, intentionally replaces an upstream entry with the same
@@ -76,7 +78,7 @@ type SourceFileReference struct {
 	// entry must exist or source preparation fails. When false (the default), a filename
 	// collision with an existing 'sources' entry is treated as an error.
 	// [SourceFileReference.ReplaceReason] is required when this is true.
-	ReplaceUpstream bool `toml:"replace-upstream,omitempty" json:"replaceUpstream,omitempty" jsonschema:"title=Replace upstream,description=When true\\, intentionally replaces a same-named entry in the upstream 'sources' file. Requires 'replace-reason'."`
+	ReplaceUpstream bool `toml:"replace-upstream,omitempty" json:"replaceUpstream,omitempty" jsonschema:"title=Replace upstream,description=When true\\, intentionally replaces a same-named entry in the upstream 'sources' file. Requires 'replace-reason'." fingerprint:"v1..*"`
 
 	// ReplaceReason is a human-readable explanation for why an upstream 'sources' entry is
 	// being replaced. Required when [SourceFileReference.ReplaceUpstream] is true; must be
@@ -174,7 +176,7 @@ const (
 // ReleaseConfig holds release-related configuration for a component.
 type ReleaseConfig struct {
 	// Calculation controls how the Release tag is managed during rendering.
-	Calculation ReleaseCalculation `toml:"calculation,omitempty" json:"calculation,omitempty" validate:"omitempty,oneof=auto autorelease static manual" jsonschema:"enum=auto,enum=autorelease,enum=static,enum=manual,default=auto,title=Release calculation,description=Controls how the Release tag is managed during rendering. Empty or omitted means auto."`
+	Calculation ReleaseCalculation `toml:"calculation,omitempty" json:"calculation,omitempty" validate:"omitempty,oneof=auto autorelease static manual" jsonschema:"enum=auto,enum=autorelease,enum=static,enum=manual,default=auto,title=Release calculation,description=Controls how the Release tag is managed during rendering. Empty or omitted means auto." fingerprint:"v1..*"`
 }
 
 // FreshnessStatus indicates whether a component's current config matches
@@ -265,30 +267,35 @@ type ComponentConfig struct {
 	Locked *ComponentLockData `toml:"-" json:"locked,omitempty" table:"-" fingerprint:"-"`
 
 	// Where to get its spec and adjacent files from.
-	Spec SpecSource `toml:"spec,omitempty" json:"spec,omitempty" jsonschema:"title=Spec,description=Identifies where to find the spec for this component"`
+	Spec SpecSource `toml:"spec,omitempty" json:"spec,omitempty" jsonschema:"title=Spec,description=Identifies where to find the spec for this component" fingerprint:"v1..*"`
 
 	// Release configuration for this component.
-	Release ReleaseConfig `toml:"release,omitempty" json:"release,omitempty" table:"-" jsonschema:"title=Release configuration,description=Configuration for how the Release tag is managed during rendering."`
+	Release ReleaseConfig `toml:"release,omitempty" json:"release,omitempty" table:"-" jsonschema:"title=Release configuration,description=Configuration for how the Release tag is managed during rendering." fingerprint:"v1..*"`
 
 	// Overlays to apply to sources after they've been acquired. May mutate the spec as well as sources.
-	Overlays []ComponentOverlay `toml:"overlays,omitempty" json:"overlays,omitempty" table:"-" jsonschema:"title=Overlays,description=Overlays to apply to this component's spec and/or sources"`
+	Overlays []ComponentOverlay `toml:"overlays,omitempty" json:"overlays,omitempty" table:"-" jsonschema:"title=Overlays,description=Overlays to apply to this component's spec and/or sources" fingerprint:"v1..*"`
 
 	// Configuration for building the component.
-	Build ComponentBuildConfig `toml:"build,omitempty" json:"build,omitempty" table:"-" jsonschema:"title=Build configuration,description=Configuration for building the component"`
+	Build ComponentBuildConfig `toml:"build,omitempty" json:"build,omitempty" table:"-" jsonschema:"title=Build configuration,description=Configuration for building the component" fingerprint:"v1..*"`
 
 	// Configuration for rendering the component.
-	Render ComponentRenderConfig `toml:"render,omitempty" json:"render,omitempty" table:"-" jsonschema:"title=Render configuration,description=Configuration for rendering the component"`
+	Render ComponentRenderConfig `toml:"render,omitempty" json:"render,omitempty" table:"-" jsonschema:"title=Render configuration,description=Configuration for rendering the component" fingerprint:"v1..*"`
 
 	// Source file references for this component.
-	SourceFiles []SourceFileReference `toml:"source-files,omitempty" json:"sourceFiles,omitempty" table:"-" jsonschema:"title=Source files,description=Source files to download for this component"`
+	SourceFiles []SourceFileReference `toml:"source-files,omitempty" json:"sourceFiles,omitempty" table:"-" jsonschema:"title=Source files,description=Source files to download for this component" fingerprint:"v1..*"`
 
 	// Per-package configuration overrides, keyed by exact binary package name.
 	// Takes precedence over package-group defaults.
-	Packages map[string]PackageConfig `toml:"packages,omitempty" json:"packages,omitempty" table:"-" validate:"dive" jsonschema:"title=Package overrides,description=Per-package configuration overrides keyed by exact binary package name"`
+	// Kept measured (not pruned with "-"): every PackageConfig leaf is publish-only, so each
+	// entry projects empty and adds no fingerprint bytes today, while the completeness walk still
+	// descends so a future build-effective PackageConfig field is auto-measured.
+	Packages map[string]PackageConfig `toml:"packages,omitempty" json:"packages,omitempty" table:"-" validate:"dive" jsonschema:"title=Package overrides,description=Per-package configuration overrides keyed by exact binary package name" fingerprint:"v1..*"`
 
 	// Publish holds the component-level publish settings. These provide default channels for
 	// all packages produced by this component. Overridden by package-group and per-package settings
 	// for binary and debuginfo channels.
+	// fingerprint:"-" prunes this subtree; a build-effective field added here is unmeasured
+	// until the parent is un-pruned.
 	Publish ComponentPublishConfig `toml:"publish,omitempty" json:"publish,omitempty" table:"-" jsonschema:"title=Publish settings,description=Component-level publish channel settings" fingerprint:"-"`
 }
 

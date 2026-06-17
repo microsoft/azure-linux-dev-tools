@@ -17,27 +17,27 @@ import (
 // ComponentOverlay represents an overlay that may be applied to a component's spec and/or its sources.
 type ComponentOverlay struct {
 	// The type of overlay to apply.
-	Type ComponentOverlayType `toml:"type" json:"type" validate:"required" jsonschema:"enum=spec-add-tag,enum=spec-insert-tag,enum=spec-set-tag,enum=spec-update-tag,enum=spec-remove-tag,enum=spec-prepend-lines,enum=spec-append-lines,enum=spec-search-replace,enum=spec-remove-section,enum=spec-remove-subpackage,enum=patch-add,enum=patch-remove,enum=file-prepend-lines,enum=file-search-replace,enum=file-add,enum=file-remove,enum=file-rename,title=Overlay type,description=The type of overlay to apply"`
+	Type ComponentOverlayType `toml:"type" json:"type" validate:"required" jsonschema:"enum=spec-add-tag,enum=spec-insert-tag,enum=spec-set-tag,enum=spec-update-tag,enum=spec-remove-tag,enum=spec-prepend-lines,enum=spec-append-lines,enum=spec-search-replace,enum=spec-remove-section,enum=spec-remove-subpackage,enum=patch-add,enum=patch-remove,enum=file-prepend-lines,enum=file-search-replace,enum=file-add,enum=file-remove,enum=file-rename,title=Overlay type,description=The type of overlay to apply" fingerprint:"v1..*"`
 	// Human readable description of overlay; primarily present to document the need for the change.
 	Description string `toml:"description,omitempty" json:"description,omitempty" jsonschema:"title=Description,description=Human readable description of overlay" fingerprint:"-"`
 
 	// For overlays that apply to non-spec files, indicates the filename. For overlays that can
 	// apply to multiple files, supports glob patterns (including globstar).
-	Filename string `toml:"file,omitempty" json:"file,omitempty" jsonschema:"title=Filename,description=The name of the non-spec file to which this overlay applies, or a glob pattern matching multiple files"`
+	Filename string `toml:"file,omitempty" json:"file,omitempty" jsonschema:"title=Filename,description=The name of the non-spec file to which this overlay applies, or a glob pattern matching multiple files" fingerprint:"v1..*"`
 	// For overlays that apply to specs, indicates the name of the section to which it applies.
-	SectionName string `toml:"section,omitempty" json:"section,omitempty" jsonschema:"title=Section name,description=The name of the section to which this overlay applies"`
+	SectionName string `toml:"section,omitempty" json:"section,omitempty" jsonschema:"title=Section name,description=The name of the section to which this overlay applies" fingerprint:"v1..*"`
 	// For overlays that apply to specs, indicates the name of the sub-package to which it applies.
-	PackageName string `toml:"package,omitempty" json:"package,omitempty" jsonschema:"title=Package name,description=The name of the sub-package to which this overlay applies"`
+	PackageName string `toml:"package,omitempty" json:"package,omitempty" jsonschema:"title=Package name,description=The name of the sub-package to which this overlay applies" fingerprint:"v1..*"`
 	// For overlays that apply to spec tags, indicates the name of the tag.
-	Tag string `toml:"tag,omitempty" json:"tag,omitempty" jsonschema:"title=Tag,description=For overlays that apply to spec tags, indicates the name of the tag"`
+	Tag string `toml:"tag,omitempty" json:"tag,omitempty" jsonschema:"title=Tag,description=For overlays that apply to spec tags, indicates the name of the tag" fingerprint:"v1..*"`
 	// For overlays that apply to values in specs, an exact string value to match.
-	Value string `toml:"value,omitempty" json:"value,omitempty" jsonschema:"title=Value,description=An exact string value to match in the spec"`
+	Value string `toml:"value,omitempty" json:"value,omitempty" jsonschema:"title=Value,description=An exact string value to match in the spec" fingerprint:"v1..*"`
 	// For overlays that use a regular expression to match text in the spec, the regular expression to match.
-	Regex string `toml:"regex,omitempty" json:"regex,omitempty" jsonschema:"title=Regular expression,description=The regular expression to match in the spec"`
+	Regex string `toml:"regex,omitempty" json:"regex,omitempty" jsonschema:"title=Regular expression,description=The regular expression to match in the spec" fingerprint:"v1..*"`
 	// For overlays that replace text in a spec, the replacement text to use.
-	Replacement string `toml:"replacement,omitempty" json:"replacement,omitempty" jsonschema:"title=Replacement text,description=The replacement text to use in the spec"`
+	Replacement string `toml:"replacement,omitempty" json:"replacement,omitempty" jsonschema:"title=Replacement text,description=The replacement text to use in the spec" fingerprint:"v1..*"`
 	// For overlays that reference lines of text, the lines of text to use.
-	Lines []string `toml:"lines,omitempty" json:"lines,omitempty" jsonschema:"title=Lines,description=The lines of text to use"`
+	Lines []string `toml:"lines,omitempty" json:"lines,omitempty" jsonschema:"title=Lines,description=The lines of text to use" fingerprint:"v1..*"`
 	// For overlays that require a source file as input, indicates a path to that file; relative paths are relative to
 	// the config file that defines the overlay.
 	// Excluded from fingerprint because it contains an absolute path that varies by checkout
