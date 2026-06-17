@@ -20,7 +20,7 @@ It supports:
 1. Install `golang` and other prerequisites via your system's package manager, e.g.:
 
    ```console
-   dnf install -y golang mock dnf-utils mock-rpmautospec
+   dnf install -y golang mock dnf-utils mock-rpmautospec kiwi
    ```
 
    Note: `mock-rpmautospec` plugin hooks `rpmautospec` into mock's build lifecycle. It pulls `rpmautospec` as a dependency which processes `%autorelease` and `%autochangelog` macros in spec files.
