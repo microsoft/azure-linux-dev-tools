@@ -16,12 +16,10 @@ import (
 type OverlayCategory string
 
 const (
-	// OverlayCategoryBackportFedora applies a fix that already exists in some Fedora branch.
-	// The overlay can be dropped once AZL bumps its upstream pin past the fix.
-	OverlayCategoryBackportFedora OverlayCategory = "backport-fedora"
-	// OverlayCategoryUpstreamFix applies a fix that is NOT yet in any Fedora branch and is
-	// a candidate for upstreaming.
-	OverlayCategoryUpstreamFix OverlayCategory = "upstream-fix"
+	// OverlayCategoryBackportDistGit applies a fix backported from (or being upstreamed to)
+	// a dist-git or upstream project. The overlay can be dropped once AZL bumps its upstream
+	// pin past the fix.
+	OverlayCategoryBackportDistGit OverlayCategory = "backport-dist-git"
 	// OverlayCategoryAZLDependencyPruning removes dependencies that are not shipped in AZL.
 	OverlayCategoryAZLDependencyPruning OverlayCategory = "azl-dependency-pruning"
 	// OverlayCategoryAZLFeatureDisablement disables unneeded features or subpackages.
@@ -48,8 +46,7 @@ const (
 //
 //nolint:gochecknoglobals // effectively a constant; Go doesn't allow const slices.
 var allOverlayCategories = []OverlayCategory{
-	OverlayCategoryBackportFedora,
-	OverlayCategoryUpstreamFix,
+	OverlayCategoryBackportDistGit,
 	OverlayCategoryAZLDependencyPruning,
 	OverlayCategoryAZLFeatureDisablement,
 	OverlayCategoryAZLBrandingPolicy,
@@ -98,19 +95,11 @@ func (u OverlayUpstreamability) IsValid() bool {
 // are optional but constrained by category-specific rules (see [OverlayMetadata.Validate]).
 type OverlayMetadata struct {
 	// Category classifies the overlay's intent. Required.
-	Category OverlayCategory `toml:"category" json:"category" jsonschema:"required,enum=backport-fedora,enum=upstream-fix,enum=azl-dependency-pruning,enum=azl-feature-disablement,enum=azl-branding-policy,enum=azl-build,enum=azl-test-disablement,enum=azl-security-compliance,enum=azl-release-management,enum=azl-missing-dependency-workaround,enum=azl-platform-adaptation,title=Category,description=Classification of the overlay's intent"`
+	Category OverlayCategory `toml:"category" json:"category" jsonschema:"required,enum=backport-dist-git,enum=azl-dependency-pruning,enum=azl-feature-disablement,enum=azl-branding-policy,enum=azl-build,enum=azl-test-disablement,enum=azl-security-compliance,enum=azl-release-management,enum=azl-missing-dependency-workaround,enum=azl-platform-adaptation,title=Category,description=Classification of the overlay's intent"`
 
 	// Commits lists URLs of upstream commits (typically Fedora dist-git or upstream-project
 	// commits) that this overlay backports or references.
 	Commits []string `toml:"commits,omitempty" json:"commits,omitempty" validate:"omitempty,dive,http_url" jsonschema:"title=Commits,description=URLs of upstream commits this overlay backports or references"`
-
-	// FixedIn names the upstream version or Fedora NVR where the fix lands (for example
-	// 'xclock-1.1.1-11.fc44' or '4.11.2').
-	FixedIn string `toml:"fixed-in,omitempty" json:"fixedIn,omitempty" jsonschema:"title=Fixed in,description=Upstream version or Fedora NVR where the fix lands"`
-
-	// RemovableAfter names a Fedora branch (for example 'f44'); the overlay may be dropped
-	// once AZL bumps past this branch. Only meaningful for the 'backport-fedora' category.
-	RemovableAfter string `toml:"removable-after,omitempty" json:"removableAfter,omitempty" jsonschema:"title=Removable after,description=Fedora branch after which this overlay can be dropped. Only valid for the 'backport-fedora' category."`
 
 	// PR is a link to the upstream pull request that carries (or proposes) the fix.
 	PR string `toml:"pr,omitempty" json:"pr,omitempty" validate:"omitempty,http_url" jsonschema:"title=Upstream PR,description=URL of the upstream pull request"`
@@ -120,8 +109,30 @@ type OverlayMetadata struct {
 
 	// Upstreamability records whether this overlay's change can be upstreamed: 'yes', 'no',
 	// or 'unknown'. Omitting the field defaults to 'unknown' (not yet assessed).
-	Upstreamability OverlayUpstreamability `toml:"upstreamability,omitempty" json:"upstreamability,omitempty" jsonschema:"enum=yes,enum=no,enum=unknown,default=unknown,title=Upstreamability,description=Whether this overlay's change can be upstreamed: 'yes', 'no', or 'unknown' (the default)"`
+	Upstreamability OverlayUpstreamability `toml:"upstreamability,omitempty" json:"upstreamability,omitempty" jsonschema:"enum=yes,enum=no,enum=unknown,default=unknown,title=Upstreamability,description=Whether this overlay's change can be upstreamed: 'yes'; 'no'; or 'unknown' (the default)"`
 }
+
+// clone returns a deep copy of the metadata. It is used to stamp a single file-level
+// [OverlayMetadata] onto every overlay in a `.overlay.toml` file without aliasing the
+// slice fields. A manual copy is preferred over a reflection-based deep copy so that a
+// future struct change can never panic during config load.
+func (m *OverlayMetadata) clone() *OverlayMetadata {
+	if m == nil {
+		return nil
+	}
+
+	cp := *m
+	cp.Commits = slices.Clone(m.Commits)
+	cp.BugLinks = slices.Clone(m.BugLinks)
+
+	return &cp
+}
+
+// metadataValidator is a shared, concurrency-safe validator instance reused across all
+// [OverlayMetadata.Validate] calls to avoid per-call allocation.
+//
+//nolint:gochecknoglobals // validator instances are safe for concurrent use once configured.
+var metadataValidator = validator.New()
 
 // Validate checks that the metadata is internally consistent: the category is recognized,
 // category-specific required fields are present, and URL-shaped fields parse as URLs.
@@ -134,19 +145,12 @@ func (m *OverlayMetadata) Validate() error {
 		return fmt.Errorf("unknown overlay category %#q", string(m.Category))
 	}
 
-	// 'backport-fedora' is the only category that imposes an extra required field; all
+	// 'backport-dist-git' is the only category that imposes an extra required field; all
 	// other categories require nothing beyond a valid 'category'.
-	if m.Category == OverlayCategoryBackportFedora && len(m.Commits) == 0 && m.FixedIn == "" {
+	if m.Category == OverlayCategoryBackportDistGit && len(m.Commits) == 0 {
 		return fmt.Errorf(
-			"overlay category %#q requires at least one of 'commits' or 'fixed-in'",
+			"overlay category %#q requires at least one entry in 'commits'",
 			string(m.Category),
-		)
-	}
-
-	if m.RemovableAfter != "" && m.Category != OverlayCategoryBackportFedora {
-		return fmt.Errorf(
-			"'removable-after' is only valid for overlay category %#q; found category %#q",
-			string(OverlayCategoryBackportFedora), string(m.Category),
 		)
 	}
 
@@ -160,7 +164,7 @@ func (m *OverlayMetadata) Validate() error {
 
 	// Field-level constraints (for example 'pr' and 'bug' must be http(s) URLs) are
 	// expressed as 'validate' struct tags and enforced here.
-	if err := validator.New().Struct(m); err != nil {
+	if err := metadataValidator.Struct(m); err != nil {
 		return fmt.Errorf("invalid overlay metadata:\n%w", err)
 	}
 

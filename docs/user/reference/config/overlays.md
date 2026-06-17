@@ -84,8 +84,6 @@ Overlays can carry an optional `metadata` table that documents *why* the overlay
 |-------|----------|-------------|
 | Category | `category` | **Required.** Classification of the overlay's intent. See the table below. |
 | Commits | `commits` | List of upstream commit URLs (Fedora dist-git or upstream project) that this overlay backports or implements. Each entry must be an absolute http(s) URL. |
-| Fixed in | `fixed-in` | Upstream version or Fedora NVR where the fix lands (e.g. `xclock-1.1.1-11.fc44`, `4.11.2`). |
-| Removable after | `removable-after` | A Fedora branch (e.g. `f44`); the overlay can be dropped once AZL bumps past it. Only valid when `category = "backport-fedora"`. |
 | PR | `pr` | URL of the upstream pull request that carries (or proposes) the fix. |
 | Bug | `bug` | List of bug-tracker URLs related to this overlay. |
 | Upstreamability | `upstreamability` | Whether this change can be upstreamed: `"yes"`, `"no"`, or `"unknown"`. Defaults to `"unknown"` (not yet assessed) when omitted. |
@@ -94,8 +92,7 @@ Overlays can carry an optional `metadata` table that documents *why* the overlay
 
 | Category | When to use |
 |----------|-------------|
-| `backport-fedora` | Fix exists in some Fedora branch. The overlay backports it. Self-resolves when AZL bumps past it. Requires at least one of `commits` or `fixed-in`. |
-| `upstream-fix` | Fix is **not** in any Fedora branch; the overlay is a candidate for upstreaming. |
+| `backport-dist-git` | Fix backported from (or being upstreamed to) a dist-git or upstream project. Self-resolves when AZL bumps past it. Requires at least one entry in `commits`. |
 | `azl-dependency-pruning` | Removing dependencies not shipped in AZL. |
 | `azl-feature-disablement` | Disabling unneeded features or subpackages. |
 | `azl-branding-policy` | Fedora→Azure Linux name/path changes; RHEL/enterprise convention alignment. |
@@ -118,10 +115,8 @@ regex = "autoreconf -i"
 replacement = "autoreconf -fi"
 
   [components.xclock.overlays.metadata]
-  category = "backport-fedora"
+  category = "backport-dist-git"
   commits = ["https://src.fedoraproject.org/rpms/xclock/c/1e407488"]
-  fixed-in = "xclock-1.1.1-11.fc44"
-  removable-after = "f44"
 ```
 
 For short metadata, the single-line inline form is also valid:
@@ -173,9 +168,8 @@ Per-overlay `metadata` is **not allowed** inside a `.overlay.toml` file — the 
 ```toml
 # overlays/0001-cve-2024-1234.overlay.toml
 [metadata]
-category = "backport-fedora"
+category = "backport-dist-git"
 commits = ["https://src.fedoraproject.org/rpms/mypackage/c/abc123def456"]
-fixed-in = "3.2.0"
 bug = ["https://bugzilla.redhat.com/show_bug.cgi?id=12345"]
 
 [[overlays]]

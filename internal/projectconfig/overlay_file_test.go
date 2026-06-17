@@ -17,7 +17,7 @@ import (
 
 const validBackportOverlayFile = `
 [metadata]
-category = "backport-fedora"
+category = "backport-dist-git"
 commits = ["https://src.fedoraproject.org/rpms/ant/c/4ca7a3b"]
 
 [[overlays]]
@@ -61,11 +61,11 @@ value = "Microsoft"
 	// 0001-* contributes first.
 	assert.Equal(t, ComponentOverlaySearchAndReplaceInSpec, loaded[0].Type)
 	require.NotNil(t, loaded[0].Metadata)
-	assert.Equal(t, OverlayCategoryBackportFedora, loaded[0].Metadata.Category)
+	assert.Equal(t, OverlayCategoryBackportDistGit, loaded[0].Metadata.Category)
 
 	assert.Equal(t, ComponentOverlayRemoveSubpackage, loaded[1].Type)
 	require.NotNil(t, loaded[1].Metadata)
-	assert.Equal(t, OverlayCategoryBackportFedora, loaded[1].Metadata.Category)
+	assert.Equal(t, OverlayCategoryBackportDistGit, loaded[1].Metadata.Category)
 
 	// Mutating one overlay's metadata must not affect another (each must own a copy).
 	loaded[0].Metadata.Commits = append(loaded[0].Metadata.Commits, "mutated")
@@ -77,18 +77,25 @@ value = "Microsoft"
 	assert.Equal(t, OverlayCategoryAZLBrandingPolicy, loaded[2].Metadata.Category)
 }
 
-func TestLoadOverlayDir_EmptyDirReturnsNothing(t *testing.T) {
+func TestLoadOverlayDir_NoOverlayFilesIsError(t *testing.T) {
 	ctx := testctx.NewCtx()
 	overlayDir := "/project/comps/empty/overlays"
 
-	// A non-overlay file alongside must not be picked up.
+	// A non-overlay file alongside must not be picked up; a directory containing no
+	// *.overlay.toml files is a misconfiguration and must error.
 	require.NoError(t, fileutils.WriteFile(ctx.FS(),
 		filepath.Join(overlayDir, "README.md"),
 		[]byte("not an overlay"), fileperms.PrivateFile))
 
-	loaded, err := loadOverlayDir(ctx.FS(), overlayDir, false)
-	require.NoError(t, err)
-	assert.Empty(t, loaded)
+	_, err := loadOverlayDir(ctx.FS(), overlayDir, false)
+	require.ErrorIs(t, err, ErrOverlayDirNoFiles)
+}
+
+func TestLoadOverlayDir_MissingDirIsError(t *testing.T) {
+	ctx := testctx.NewCtx()
+
+	_, err := loadOverlayDir(ctx.FS(), "/project/comps/does-not-exist/overlays", false)
+	require.ErrorIs(t, err, ErrOverlayDirNoFiles)
 }
 
 func TestLoadOverlayDir_RejectsPerOverlayMetadata(t *testing.T) {
@@ -157,7 +164,7 @@ func TestLoadOverlayDir_ResolvesSourceRelativeToOverlayFile(t *testing.T) {
 		filepath.Join(overlayDir, "0001-patch.overlay.toml"),
 		[]byte(`
 [metadata]
-category = "backport-fedora"
+category = "backport-dist-git"
 commits = ["https://src.fedoraproject.org/rpms/foo/c/abc"]
 
 [[overlays]]
@@ -214,11 +221,11 @@ func TestApplyOverlayDirs_AppendsAfterInlineOverlays(t *testing.T) {
 	// metadata stamped onto each.
 	assert.Equal(t, ComponentOverlaySearchAndReplaceInSpec, ant.Overlays[1].Type)
 	require.NotNil(t, ant.Overlays[1].Metadata)
-	assert.Equal(t, OverlayCategoryBackportFedora, ant.Overlays[1].Metadata.Category)
+	assert.Equal(t, OverlayCategoryBackportDistGit, ant.Overlays[1].Metadata.Category)
 
 	assert.Equal(t, ComponentOverlayRemoveSubpackage, ant.Overlays[2].Type)
 	require.NotNil(t, ant.Overlays[2].Metadata)
-	assert.Equal(t, OverlayCategoryBackportFedora, ant.Overlays[2].Metadata.Category)
+	assert.Equal(t, OverlayCategoryBackportDistGit, ant.Overlays[2].Metadata.Category)
 }
 
 func TestApplyOverlayDirs_NoopWhenOverlayDirUnset(t *testing.T) {
@@ -261,7 +268,7 @@ func TestApplyOverlayDirs_AcceptsAbsoluteOverlayDir(t *testing.T) {
 	ant := cfg.Components["ant"]
 	require.Len(t, ant.Overlays, 2, "absolute overlay-dir is not re-rooted under cfg.dir")
 	require.NotNil(t, ant.Overlays[0].Metadata)
-	assert.Equal(t, OverlayCategoryBackportFedora, ant.Overlays[0].Metadata.Category)
+	assert.Equal(t, OverlayCategoryBackportDistGit, ant.Overlays[0].Metadata.Category)
 }
 
 // TestLoadAndResolveProjectConfig_OverlayDir exercises the full loader pipeline
@@ -287,5 +294,5 @@ overlay-dir = "comps/ant/overlays"
 	require.True(t, ok, "ant component should be present")
 	require.Len(t, ant.Overlays, 2)
 	require.NotNil(t, ant.Overlays[0].Metadata)
-	assert.Equal(t, OverlayCategoryBackportFedora, ant.Overlays[0].Metadata.Category)
+	assert.Equal(t, OverlayCategoryBackportDistGit, ant.Overlays[0].Metadata.Category)
 }

@@ -11,7 +11,6 @@ import (
 	"sort"
 
 	"github.com/bmatcuk/doublestar/v4"
-	"github.com/brunoga/deep"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/pelletier/go-toml/v2"
@@ -29,6 +28,21 @@ var ErrOverlayFilePerOverlayMetadata = errors.New(
 // overlays. Such a file is almost certainly a typo (e.g. `[overlays]` instead of
 // `[[overlays]]`) and would otherwise silently contribute nothing.
 var ErrOverlayFileEmpty = errors.New("overlay file declares no overlays")
+
+// ErrOverlayDirNoFiles is returned when a component's [ComponentConfig.OverlayDir]
+// resolves to a directory that contains no `*.overlay.toml` files. A configured but
+// empty overlay directory is almost always a misconfiguration (wrong path or missing
+// files) and is surfaced as an error rather than silently contributing nothing.
+var ErrOverlayDirNoFiles = errors.New("overlay-dir contains no *.overlay.toml files")
+
+// ErrOverlayDirInDefaultConfig is returned when `overlay-dir` is set on a default
+// component config. Overlay directories are resolved per concrete component before
+// default configs are merged in, so a value set on a default would be silently
+// ignored. Until overlay-dir is wired through the default-merge path, declaring it on
+// a default config is rejected.
+var ErrOverlayDirInDefaultConfig = errors.New(
+	"overlay-dir is not supported on default-component-config; set it on individual components",
+)
 
 // overlayFileSuffix is the required filename suffix for files scanned from a
 // component's [ComponentConfig.OverlayDir].
@@ -57,6 +71,10 @@ type OverlayFile struct {
 // Called from [loadProjectConfigFile] after TOML decode but before [ConfigFile.Validate],
 // so all per-overlay validation rules apply uniformly regardless of declaration site.
 func applyOverlayDirs(fs opctx.FS, cfg *ConfigFile, permissiveConfigParsing bool) error {
+	if err := rejectOverlayDirInDefaults(cfg); err != nil {
+		return err
+	}
+
 	for componentName, component := range cfg.Components {
 		if component.OverlayDir == "" {
 			continue
@@ -76,6 +94,33 @@ func applyOverlayDirs(fs opctx.FS, cfg *ConfigFile, permissiveConfigParsing bool
 	return nil
 }
 
+// rejectOverlayDirInDefaults returns [ErrOverlayDirInDefaultConfig] if any default
+// component config in cfg sets `overlay-dir`. Overlay directories are resolved per
+// concrete component (see [applyOverlayDirs]) before default configs are merged, so a
+// value declared on a default would be silently dropped. This stopgap surfaces the
+// misconfiguration until overlay-dir is plumbed through the default-merge path.
+func rejectOverlayDirInDefaults(cfg *ConfigFile) error {
+	if cfg.DefaultComponentConfig != nil && cfg.DefaultComponentConfig.OverlayDir != "" {
+		return fmt.Errorf("%w (project-level default-component-config)", ErrOverlayDirInDefaultConfig)
+	}
+
+	for name, group := range cfg.ComponentGroups {
+		if group.DefaultComponentConfig.OverlayDir != "" {
+			return fmt.Errorf("%w (component-group %#q)", ErrOverlayDirInDefaultConfig, name)
+		}
+	}
+
+	for name, distro := range cfg.Distros {
+		for version, versionDef := range distro.Versions {
+			if versionDef.DefaultComponentConfig.OverlayDir != "" {
+				return fmt.Errorf("%w (distro %#q version %#q)", ErrOverlayDirInDefaultConfig, name, version)
+			}
+		}
+	}
+
+	return nil
+}
+
 // loadOverlayDir parses every `*.overlay.toml` file in absDir (sorted by filename),
 // validates each file's metadata, stamps the file metadata onto each overlay, and
 // resolves overlay `source` paths relative to the overlay file.
@@ -87,10 +132,17 @@ func loadOverlayDir(
 	matches, err := fileutils.Glob(
 		fs, pattern,
 		doublestar.WithFailOnIOErrors(),
+		doublestar.WithFailOnPatternNotExist(),
 		doublestar.WithFilesOnly(),
 	)
-	if err != nil {
+
+	switch {
+	case errors.Is(err, doublestar.ErrPatternNotExist):
+		return nil, fmt.Errorf("%w: %q", ErrOverlayDirNoFiles, absDir)
+	case err != nil:
 		return nil, fmt.Errorf("failed to scan for overlay files:\n%w", err)
+	case len(matches) == 0:
+		return nil, fmt.Errorf("%w: %q", ErrOverlayDirNoFiles, absDir)
 	}
 
 	sort.Strings(matches)
@@ -149,7 +201,7 @@ func loadOverlayFile(
 			return nil, fmt.Errorf("%w (overlay %d in %q)", ErrOverlayFilePerOverlayMetadata, idx+1, overlayPath)
 		}
 
-		overlay.Metadata = deep.MustCopy(&ofile.Metadata)
+		overlay.Metadata = ofile.Metadata.clone()
 		overlay.Source = makeAbsolute(overlayDir, overlay.Source)
 	}
 

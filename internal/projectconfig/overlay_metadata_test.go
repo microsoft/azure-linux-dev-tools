@@ -18,38 +18,24 @@ func TestOverlayMetadata_Validate(t *testing.T) {
 		errorContains string
 	}{
 		{
-			name: "backport-fedora with commits is valid",
+			name: "backport-dist-git with commits is valid",
 			metadata: projectconfig.OverlayMetadata{
-				Category: projectconfig.OverlayCategoryBackportFedora,
+				Category: projectconfig.OverlayCategoryBackportDistGit,
 				Commits:  []string{"https://src.fedoraproject.org/rpms/xclock/c/abc123"},
 			},
 		},
 		{
-			name: "backport-fedora with fixed-in is valid",
+			name: "backport-dist-git requires commits",
 			metadata: projectconfig.OverlayMetadata{
-				Category: projectconfig.OverlayCategoryBackportFedora,
-				FixedIn:  "xclock-1.1.1-11.fc44",
+				Category: projectconfig.OverlayCategoryBackportDistGit,
 			},
+			errorContains: "commits",
 		},
 		{
-			name: "backport-fedora with removable-after is valid",
+			name: "backport-dist-git with pr valid",
 			metadata: projectconfig.OverlayMetadata{
-				Category:       projectconfig.OverlayCategoryBackportFedora,
-				FixedIn:        "xclock-1.1.1-11.fc44",
-				RemovableAfter: "f44",
-			},
-		},
-		{
-			name: "backport-fedora requires commits or fixed-in",
-			metadata: projectconfig.OverlayMetadata{
-				Category: projectconfig.OverlayCategoryBackportFedora,
-			},
-			errorContains: "commits' or 'fixed-in",
-		},
-		{
-			name: "upstream-fix valid",
-			metadata: projectconfig.OverlayMetadata{
-				Category: projectconfig.OverlayCategoryUpstreamFix,
+				Category: projectconfig.OverlayCategoryBackportDistGit,
+				Commits:  []string{"https://src.fedoraproject.org/rpms/xclock/c/abc123"},
 				PR:       "https://github.com/example/repo/pull/1",
 			},
 		},
@@ -84,17 +70,9 @@ func TestOverlayMetadata_Validate(t *testing.T) {
 			errorContains: "unknown upstreamability",
 		},
 		{
-			name: "removable-after rejected outside backport-fedora",
-			metadata: projectconfig.OverlayMetadata{
-				Category:       projectconfig.OverlayCategoryAZLBuild,
-				RemovableAfter: "f44",
-			},
-			errorContains: "removable-after",
-		},
-		{
 			name: "missing category",
 			metadata: projectconfig.OverlayMetadata{
-				FixedIn: "1.0",
+				Commits: []string{"https://example.com/commit/abc"},
 			},
 			errorContains: "category",
 		},
@@ -108,7 +86,7 @@ func TestOverlayMetadata_Validate(t *testing.T) {
 		{
 			name: "invalid pr url",
 			metadata: projectconfig.OverlayMetadata{
-				Category: projectconfig.OverlayCategoryUpstreamFix,
+				Category: projectconfig.OverlayCategoryAZLBuild,
 				PR:       "not-a-url",
 			},
 			errorContains: "PR",
@@ -116,7 +94,7 @@ func TestOverlayMetadata_Validate(t *testing.T) {
 		{
 			name: "non-http pr url rejected",
 			metadata: projectconfig.OverlayMetadata{
-				Category: projectconfig.OverlayCategoryUpstreamFix,
+				Category: projectconfig.OverlayCategoryAZLBuild,
 				PR:       "ftp://example.com/pr/1",
 			},
 			errorContains: "PR",
@@ -160,9 +138,9 @@ func TestComponentOverlay_Validate_Metadata(t *testing.T) {
 	require.NoError(t, overlay.Validate())
 
 	// Overlay with invalid metadata fails — wraps the metadata error.
-	overlay.Metadata.RemovableAfter = "f44"
+	overlay.Metadata.Upstreamability = projectconfig.OverlayUpstreamability("bogus")
 
 	err := overlay.Validate()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "removable-after")
+	assert.Contains(t, err.Error(), "unknown upstreamability")
 }

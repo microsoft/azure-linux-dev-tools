@@ -726,8 +726,7 @@
         "category": {
           "type": "string",
           "enum": [
-            "backport-fedora",
-            "upstream-fix",
+            "backport-dist-git",
             "azl-dependency-pruning",
             "azl-feature-disablement",
             "azl-branding-policy",
@@ -748,16 +747,6 @@
           "type": "array",
           "title": "Commits",
           "description": "URLs of upstream commits this overlay backports or references"
-        },
-        "fixed-in": {
-          "type": "string",
-          "title": "Fixed in",
-          "description": "Upstream version or Fedora NVR where the fix lands"
-        },
-        "removable-after": {
-          "type": "string",
-          "title": "Removable after",
-          "description": "Fedora branch after which this overlay can be dropped. Only valid for the 'backport-fedora' category."
         },
         "pr": {
           "type": "string",
@@ -780,7 +769,7 @@
             "unknown"
           ],
           "title": "Upstreamability",
-          "description": "Whether this overlay's change can be upstreamed: 'yes'",
+          "description": "Whether this overlay's change can be upstreamed: 'yes'; 'no'; or 'unknown' (the default)",
           "default": "unknown"
         }
       },

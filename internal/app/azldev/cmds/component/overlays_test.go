@@ -41,9 +41,8 @@ func seedComponentsWithOverlays(t *testing.T, testEnv *testutils.TestEnv) {
 				Type:   projectconfig.ComponentOverlayAddPatch,
 				Source: "patches/fix.patch",
 				Metadata: &projectconfig.OverlayMetadata{
-					Category: projectconfig.OverlayCategoryBackportFedora,
+					Category: projectconfig.OverlayCategoryBackportDistGit,
 					Commits:  []string{"https://src.fedoraproject.org/rpms/pkg-a/c/abc"},
-					FixedIn:  "1.2.3",
 				},
 			},
 			{
@@ -64,7 +63,7 @@ func seedComponentsWithOverlays(t *testing.T, testEnv *testutils.TestEnv) {
 				Tag:   "Packager",
 				Value: "azl",
 				Metadata: &projectconfig.OverlayMetadata{
-					Category:        projectconfig.OverlayCategoryUpstreamFix,
+					Category:        projectconfig.OverlayCategoryAZLBuild,
 					PR:              "https://github.com/example/repo/pull/1",
 					Upstreamability: projectconfig.OverlayUpstreamabilityYes,
 				},
@@ -92,10 +91,9 @@ func TestListOverlays_AllComponents(t *testing.T) {
 
 	assert.Equal(t, "pkg-a", results[1].Component)
 	assert.Equal(t, 2, results[1].Index)
-	assert.Equal(t, projectconfig.OverlayCategoryBackportFedora, results[1].Category)
+	assert.Equal(t, projectconfig.OverlayCategoryBackportDistGit, results[1].Category)
 	require.NotNil(t, results[1].Metadata)
 	assert.Equal(t, []string{"https://src.fedoraproject.org/rpms/pkg-a/c/abc"}, results[1].Metadata.Commits)
-	assert.Equal(t, "1.2.3", results[1].Metadata.FixedIn)
 
 	assert.Equal(t, "pkg-a", results[2].Component)
 	assert.Equal(t, 3, results[2].Index)
@@ -103,7 +101,7 @@ func TestListOverlays_AllComponents(t *testing.T) {
 	assert.Empty(t, results[2].Category)
 
 	assert.Equal(t, "pkg-b", results[3].Component)
-	assert.Equal(t, projectconfig.OverlayCategoryUpstreamFix, results[3].Category)
+	assert.Equal(t, projectconfig.OverlayCategoryAZLBuild, results[3].Category)
 }
 
 func TestListOverlays_OnlyAnnotated(t *testing.T) {
@@ -131,7 +129,7 @@ func TestListOverlays_FilterByCategory(t *testing.T) {
 
 	options := &component.OverlaysOptions{
 		ComponentFilter: components.ComponentFilter{IncludeAllComponents: true},
-		Category:        string(projectconfig.OverlayCategoryBackportFedora),
+		Category:        string(projectconfig.OverlayCategoryBackportDistGit),
 	}
 
 	results, err := component.ListOverlays(testEnv.Env, options)
@@ -169,7 +167,7 @@ func TestListOverlays_Upstreamable(t *testing.T) {
 	require.Len(t, results, 1, "only the upstreamable overlay in pkg-b should be included")
 	assert.Equal(t, "pkg-b", results[0].Component)
 	assert.Equal(t, projectconfig.OverlayUpstreamabilityYes, results[0].Upstreamability)
-	assert.Equal(t, projectconfig.OverlayCategoryUpstreamFix, results[0].Category)
+	assert.Equal(t, projectconfig.OverlayCategoryAZLBuild, results[0].Category)
 }
 
 func TestListOverlays_UnknownUpstreamabilityRejected(t *testing.T) {

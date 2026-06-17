@@ -31,7 +31,7 @@ azldev component overlays [flags]
   azldev component overlays -a --only-annotated
 
   # Filter by category
-  azldev component overlays -a --category backport-fedora
+  azldev component overlays -a --category backport-dist-git
 
   # List only overlays that can be upstreamed
   azldev component overlays -a --upstreamability yes

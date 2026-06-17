@@ -60,7 +60,7 @@ so it is fast and works even when locks are missing or stale.`,
   azldev component overlays -a --only-annotated
 
   # Filter by category
-  azldev component overlays -a --category backport-fedora
+  azldev component overlays -a --category backport-dist-git
 
   # List only overlays that can be upstreamed
   azldev component overlays -a --upstreamability yes
@@ -127,7 +127,8 @@ func ListOverlays(env *azldev.Env, options *OverlaysOptions) ([]OverlayInfo, err
 		return nil, fmt.Errorf("%w: unknown overlay category %#q", azldev.ErrInvalidUsage, options.Category)
 	}
 
-	if _, err := normalizeUpstreamabilityFilter(options.Upstreamability); err != nil {
+	wantUpstreamability, err := normalizeUpstreamabilityFilter(options.Upstreamability)
+	if err != nil {
 		return nil, err
 	}
 
@@ -148,7 +149,7 @@ func ListOverlays(env *azldev.Env, options *OverlaysOptions) ([]OverlayInfo, err
 		for idx, overlay := range config.Overlays {
 			info := buildOverlayInfo(comp.GetName(), idx+1, &overlay)
 
-			if !overlayInfoMatchesFilters(info, options) {
+			if !overlayInfoMatchesFilters(info, options, wantUpstreamability) {
 				continue
 			}
 
@@ -212,8 +213,11 @@ func normalizeUpstreamabilityFilter(value string) (projectconfig.OverlayUpstream
 }
 
 // overlayInfoMatchesFilters reports whether an [OverlayInfo] passes the user-supplied
-// category, only-annotated, and upstreamability filters.
-func overlayInfoMatchesFilters(info OverlayInfo, options *OverlaysOptions) bool {
+// category, only-annotated, and upstreamability filters. wantUpstreamability is the
+// pre-normalized '--upstreamability' value computed once by [ListOverlays].
+func overlayInfoMatchesFilters(
+	info OverlayInfo, options *OverlaysOptions, wantUpstreamability projectconfig.OverlayUpstreamability,
+) bool {
 	if options.OnlyAnnotated && info.Metadata == nil {
 		return false
 	}
@@ -222,12 +226,8 @@ func overlayInfoMatchesFilters(info OverlayInfo, options *OverlaysOptions) bool 
 		return false
 	}
 
-	if options.Upstreamability != "" {
-		// The filter value is validated upfront in ListOverlays, so the error is unreachable here.
-		want, _ := normalizeUpstreamabilityFilter(options.Upstreamability)
-		if info.Upstreamability != want {
-			return false
-		}
+	if options.Upstreamability != "" && info.Upstreamability != wantUpstreamability {
+		return false
 	}
 
 	return true
