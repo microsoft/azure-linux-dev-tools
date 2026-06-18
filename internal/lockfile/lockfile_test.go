@@ -156,6 +156,31 @@ func TestLoadUnsupportedVersion(t *testing.T) {
 	assert.ErrorContains(t, err, "unsupported lock file version")
 }
 
+// TestFormatVersionIndependentOfTokenVersion pins the lock *format* version at 1
+// and shows it is independent of the content version carried in the
+// input-fingerprint token prefix (v<N>:sha256:...). A later format bump must not
+// silently break historical reads, and a content-version bump (Part 2) must not
+// require a format bump.
+func TestFormatVersionIndependentOfTokenVersion(t *testing.T) {
+	// Format version is 1 and writes are exact-match (New seeds it).
+	assert.Equal(t, 1, lockfile.New().Version,
+		"lock format version is 1; the content version lives in the token prefix")
+
+	memFS := afero.NewMemMapFs()
+	lockPath, err := lockfile.LockPath(testLockDir, "tokentest")
+	require.NoError(t, err)
+
+	lock := lockfile.New()
+	lock.InputFingerprint = "v1:sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+	require.NoError(t, lock.Save(memFS, lockPath))
+
+	loaded, err := lockfile.Load(memFS, lockPath)
+	require.NoError(t, err)
+	assert.Equal(t, 1, loaded.Version, "format version stays 1 across a v1 content token")
+	assert.Equal(t, lock.InputFingerprint, loaded.InputFingerprint,
+		"the atomic v1:sha256: token round-trips byte-for-byte")
+}
+
 func TestLoadMissingFile(t *testing.T) {
 	fs := afero.NewMemMapFs()
 

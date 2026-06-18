@@ -31,6 +31,8 @@ Documentation structure: `docs/user/reference/cli/` (auto-generated CLI docs, re
 
 The TOML config files in `defaultconfigs/` are loaded via `internal/projectconfig/`.
 
+**CRITICAL when editing config structs or fingerprinting:** Adding a field to `ComponentConfig` or its component structs (or touching `projectV1` / fingerprint tags / golden vectors) has silent traps and required manual steps. You MUST read `.github/instructions/projectconfig-fingerprint.instructions.md` before such changes. This also applies to CONSUMERS of fingerprint data (e.g., checking changed components between two commits via lockfile data).
+
 **IMPORTANT**: Code generation runs automatically with build/test commands. `mage generate` (runs `go generate` for each package in parallel) is a prerequisite for building and runs automatically with `mage build` and `mage unit`. `mage docs` rebuilds the binary and updates the JSON schema (`schemas/azldev.schema.json`) and CLI docs (`docs/user/reference/cli/`). Run `mage docs` explicitly after changing config structs or Cobra command descriptions so that checked-in generated files stay current (checked by PR gates).
 
 **CRITICAL**: Run `mage scenarioUpdate` when test expectations change (updates snapshots).

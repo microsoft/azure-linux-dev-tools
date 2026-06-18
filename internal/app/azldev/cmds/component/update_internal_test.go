@@ -4,6 +4,7 @@
 package component
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
@@ -82,7 +83,7 @@ func TestSaveComponentLocks_ComputesFingerprint(t *testing.T) {
 	lock := readLock(t, store, "curl")
 	assert.Equal(t, testCommitHash, lock.UpstreamCommit)
 	assert.NotEmpty(t, lock.InputFingerprint, "fingerprint should be computed and stored")
-	assert.Contains(t, lock.InputFingerprint, "sha256:", "fingerprint should have sha256 prefix")
+	assert.True(t, strings.HasPrefix(lock.InputFingerprint, "v1:sha256:"), "fingerprint carries the v1:sha256: token")
 }
 
 func TestSaveComponentLocks_DetectsFingerprintChange(t *testing.T) {
@@ -322,8 +323,12 @@ func TestBumpComponents_BumpsLocalWithLock(t *testing.T) {
 	specPath := "/specs/local-pkg/local-pkg.spec"
 	require.NoError(t, fileutils.WriteFile(env.TestFS, specPath, []byte("Name: local-pkg\n"), fileperms.PrivateFile))
 
+	// A v1: placeholder so the post-bump assertion checks the bump changed the hash,
+	// not merely that the legacy -> v1 format prefix changed.
+	const placeholderFP = "v1:sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
 	lock := lockfile.New()
-	lock.InputFingerprint = "sha256:old-fingerprint"
+	lock.InputFingerprint = placeholderFP
 
 	require.NoError(t, store.Save("local-pkg", lock))
 
@@ -343,7 +348,7 @@ func TestBumpComponents_BumpsLocalWithLock(t *testing.T) {
 
 	bumpedLock := readLock(t, store, "local-pkg")
 	assert.Equal(t, 1, bumpedLock.ManualBump)
-	assert.NotEqual(t, "sha256:old-fingerprint", bumpedLock.InputFingerprint,
+	assert.NotEqual(t, placeholderFP, bumpedLock.InputFingerprint,
 		"fingerprint must change after bump")
 }
 

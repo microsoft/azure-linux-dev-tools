@@ -7,46 +7,42 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
-	"sort"
 	"strconv"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
-	"github.com/mitchellh/hashstructure/v2"
 )
 
-// fingerprintTagName is the struct tag name used by hashstructure to determine
-// field inclusion. Fields tagged with `fingerprint:"-"` are excluded.
+// fingerprintTagName is the struct tag name that marks field inclusion. Fields
+// tagged with `fingerprint:"-"` are excluded from the projection.
 const fingerprintTagName = "fingerprint"
 
-// ComponentIdentity holds the computed fingerprint for a single component plus
-// a breakdown of individual input hashes for debugging.
+// ComponentIdentity holds the computed fingerprint for a single component.
 type ComponentIdentity struct {
-	// Fingerprint is the overall SHA256 hash combining all inputs.
+	// Fingerprint is the atomic "v<N>:sha256:..." content token combining the
+	// canonical config projection with the non-config inputs.
 	Fingerprint string `json:"fingerprint"`
-	// Inputs provides the individual input hashes that were combined.
-	Inputs ComponentInputs `json:"inputs"`
 }
 
-// ComponentInputs contains the individual input hashes that comprise a component's
-// fingerprint.
-type ComponentInputs struct {
-	// ConfigHash is the hash of the resolved component config fields (uint64 from hashstructure).
-	ConfigHash uint64 `json:"configHash"`
+// componentInputs holds the non-config inputs that ComputeIdentity folds into the
+// fingerprint document alongside the canonical config projection. It is never
+// serialized (the document is assembled as an explicit map), so its fields carry
+// no json tags.
+type componentInputs struct {
 	// SourceIdentity is the opaque identity string for the component's source.
 	// For local specs this is a content hash; for upstream specs this is a commit hash.
-	SourceIdentity string `json:"sourceIdentity,omitempty"`
+	SourceIdentity string
 	// OverlayFileHashes maps overlay index (as string) to a combined hash of the
 	// source file's basename and content. Keyed by index rather than path to avoid
 	// checkout-location dependence.
-	OverlayFileHashes map[string]string `json:"overlayFileHashes,omitempty"`
+	OverlayFileHashes map[string]string
 	// ManualBump is the manual rebuild counter from the lock file. Almost always 0;
 	// used for mass-rebuild scenarios.
-	ManualBump int `json:"manualBump"`
+	ManualBump int
 	// ReleaseVer is the distro's formal releasever (e.g., "4.0"), which feeds into
 	// RPM macros like %{dist}. Different release versions produce different package
 	// NEVRAs even with identical specs.
-	ReleaseVer string `json:"releaseVer"`
+	ReleaseVer string
 }
 
 // IdentityOptions holds additional inputs for computing a component's identity
@@ -78,7 +74,7 @@ func ComputeIdentity(
 	releaseVer string,
 	opts IdentityOptions,
 ) (*ComponentIdentity, error) {
-	inputs := ComponentInputs{
+	inputs := componentInputs{
 		ManualBump:     opts.ManualBump,
 		SourceIdentity: opts.SourceIdentity,
 		ReleaseVer:     releaseVer,
@@ -105,15 +101,18 @@ func ComputeIdentity(
 		}
 	}
 
-	// 3. Hash the resolved config struct (excluding fingerprint:"-" fields).
-	configHash, err := hashstructure.Hash(component, hashstructure.FormatV2, &hashstructure.HashOptions{
-		TagName: fingerprintTagName,
-	})
+	// 3. Project the resolved config to a canonical JSON tree (excluding
+	//    fingerprint:"-" fields). The omit predicate treats a nil-or-empty scalar
+	//    slice as a zero value inside the hash boundary, so nil-vs-empty differences
+	//    collapse regardless of how the caller obtained the config.
+	projection, err := projectV1(component)
 	if err != nil {
-		return nil, fmt.Errorf("hashing component config:\n%w", err)
+		return nil, fmt.Errorf("projecting component config:\n%w", err)
 	}
 
-	inputs.ConfigHash = configHash
+	if projection == nil {
+		projection = map[string]any{}
+	}
 
 	// 4. Hash overlay source file contents. Each overlay owns its identity
 	//    computation via [projectconfig.ComponentOverlay.SourceContentIdentity].
@@ -132,38 +131,30 @@ func ComputeIdentity(
 
 	inputs.OverlayFileHashes = overlayHashes
 
-	// 5. Combine all inputs into the overall fingerprint.
-	return &ComponentIdentity{
-		Fingerprint: combineInputs(inputs),
-		Inputs:      inputs,
-	}, nil
-}
-
-// combineInputs deterministically combines all input hashes into a single SHA256 fingerprint.
-func combineInputs(inputs ComponentInputs) string {
-	hasher := sha256.New()
-
-	// Write each input in a fixed order with field labels for domain separation.
-	writeField(hasher, "config_hash", strconv.FormatUint(inputs.ConfigHash, 10))
-	writeField(hasher, "source_identity", inputs.SourceIdentity)
-	writeField(hasher, "manual_bump", strconv.Itoa(inputs.ManualBump))
-	writeField(hasher, "release_ver", inputs.ReleaseVer)
-
-	// Overlay file hashes in sorted key order for determinism.
-	if len(inputs.OverlayFileHashes) > 0 {
-		keys := make([]string, 0, len(inputs.OverlayFileHashes))
-		for key := range inputs.OverlayFileHashes {
-			keys = append(keys, key)
-		}
-
-		sort.Strings(keys)
-
-		for _, key := range keys {
-			writeField(hasher, "overlay:"+key, inputs.OverlayFileHashes[key])
-		}
+	// 5. Assemble the single canonical document - the config projection plus the
+	//    non-config inputs, each under its own object key for domain separation -
+	//    canonicalize it with RFC 8785, sha256 it, and stamp the atomic
+	//    "v<version>:sha256:..." content token. Version and digest are written
+	//    together as one string so they can never desync (RFC D3).
+	document := map[string]any{
+		"config":         projection,
+		"sourceIdentity": inputs.SourceIdentity,
+		"manualBump":     inputs.ManualBump,
+		"releaseVer":     inputs.ReleaseVer,
 	}
 
-	return sha256Hex(hasher.Sum(nil))
+	if len(inputs.OverlayFileHashes) > 0 {
+		document["overlays"] = inputs.OverlayFileHashes
+	}
+
+	digest, err := canonicalDigest(document)
+	if err != nil {
+		return nil, fmt.Errorf("computing fingerprint digest:\n%w", err)
+	}
+
+	return &ComponentIdentity{
+		Fingerprint: fmt.Sprintf("v%d:%s", currentContentVersion, digest),
+	}, nil
 }
 
 // writeField writes a labeled value to the hasher for domain separation.

@@ -13,6 +13,8 @@ type CheckConfig struct {
 	// Skip indicates whether the %check section should be disabled for this component.
 	Skip bool `toml:"skip,omitempty" json:"skip,omitempty" jsonschema:"title=Skip check,description=Disables the %check section by prepending 'exit 0' when set to true" fingerprint:"v1..*"`
 	// SkipReason provides a required justification when Skip is true.
+	// Don't include in fingerprint calc, this is purely cosmetic.
+	// If a rebuild is required then use a manual bump to trigger it.
 	SkipReason string `toml:"skip_reason,omitempty" json:"skipReason,omitempty" jsonschema:"title=Skip reason,description=Required justification for skipping the %check section" fingerprint:"-"`
 }
 

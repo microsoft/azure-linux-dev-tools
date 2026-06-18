@@ -4,11 +4,9 @@
 package projectconfig_test
 
 import (
-	"reflect"
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/fingerprint"
-	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,20 +26,10 @@ import (
 //  3. It catches accidental removal of `fingerprint:"-"` tags from excluded fields,
 //     since all exclusions are tracked in expectedExclusions.
 func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
-	// All struct types whose fields participate in component fingerprinting.
-	// When adding a new struct that feeds into the fingerprint, add it here.
-	fingerprintedStructs := []reflect.Type{
-		reflect.TypeFor[projectconfig.ComponentConfig](),
-		reflect.TypeFor[projectconfig.ComponentBuildConfig](),
-		reflect.TypeFor[projectconfig.CheckConfig](),
-		reflect.TypeFor[projectconfig.PackageConfig](),
-		reflect.TypeFor[projectconfig.ComponentOverlay](),
-		reflect.TypeFor[projectconfig.SpecSource](),
-		reflect.TypeFor[projectconfig.DistroReference](),
-		reflect.TypeFor[projectconfig.SourceFileReference](),
-		reflect.TypeFor[projectconfig.ReleaseConfig](),
-		reflect.TypeFor[projectconfig.ComponentRenderConfig](),
-	}
+	// All struct types whose fields participate in component fingerprinting -
+	// the single source of truth lives in fingerprint.FingerprintedStructTypes();
+	// add a new fingerprinted struct there, not here.
+	fingerprintedStructs := fingerprint.FingerprintedStructTypes()
 
 	// Maps "StructName.FieldName" for every field that should carry a
 	// `fingerprint:"-"` tag. Catches accidental tag removal.
