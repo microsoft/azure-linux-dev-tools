@@ -64,6 +64,12 @@ plus a summary; a full JSON report covering every mutant is written to `out/muta
 Reading results: a **KILLED** mutant was caught by a test, a **LIVED** mutant is a
 real assertion gap to fix, **NOT COVERED** means no test exercises that code.
 
+When to reach for it:
+- After writing or substantially changing a package's unit tests — confirm the tests *assert* on
+  behavior, not just execute it.
+- When adding a new package or non-trivial logic alongside its fresh tests.
+- `mage mutationDiff <ref>` is the cheapest audit: it only mutates what your branch changed.
+
 Caveats — agents MUST respect these:
 - Only **unit tests** run; scenario/e2e tests are build-tag gated and never execute.
   The `scenario/` and `magefiles/` trees and generated `*_mocks.go` are excluded.
