@@ -121,6 +121,8 @@ func createTestTarGz(t *testing.T, path string, entries []testTarEntry) {
 			header.Size = int64(len(entry.content))
 		case tar.TypeSymlink:
 			header.Linkname = entry.linkname
+		case tar.TypeLink:
+			header.Linkname = entry.linkname
 		}
 
 		require.NoError(t, tarWriter.WriteHeader(header))
@@ -248,6 +250,48 @@ func TestUnsupportedCompression(t *testing.T) {
 	err = archive.CreateDeterministicArchive(filepath.Join(tmpDir, "out.bin"), tmpDir, bogus)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported compression type")
+}
+
+// TestExtract_UnsupportedEntryType verifies the handling of tar entries whose
+// type cannot be materialized (here, a hardlink). By default such entries are
+// skipped; with [archive.WithErrorOnUnsupportedEntry] they cause a failure so
+// callers that repack the tree don't silently drop them.
+func TestExtract_UnsupportedEntryType(t *testing.T) {
+	makeArchive := func(t *testing.T) string {
+		t.Helper()
+
+		archivePath := filepath.Join(t.TempDir(), "pkg.tar.gz")
+		createTestTarGz(t, archivePath, []testTarEntry{
+			{name: "pkg/real.txt", typeflag: tar.TypeReg, content: "hello"},
+			// A hardlink to the regular file above: a valid tar entry type that
+			// Extract cannot materialize.
+			{name: "pkg/link.txt", typeflag: tar.TypeLink, linkname: "pkg/real.txt"},
+		})
+
+		return archivePath
+	}
+
+	t.Run("skipped by default", func(t *testing.T) {
+		extractDir := filepath.Join(t.TempDir(), "out")
+
+		require.NoError(t, archive.Extract(makeArchive(t), extractDir, archive.CompressionGzip))
+
+		// The regular file is extracted; the unsupported hardlink is skipped.
+		assert.FileExists(t, filepath.Join(extractDir, "pkg", "real.txt"))
+		assert.NoFileExists(t, filepath.Join(extractDir, "pkg", "link.txt"))
+	})
+
+	t.Run("errors with WithErrorOnUnsupportedEntry", func(t *testing.T) {
+		extractDir := filepath.Join(t.TempDir(), "out")
+
+		err := archive.Extract(
+			makeArchive(t), extractDir, archive.CompressionGzip,
+			archive.WithErrorOnUnsupportedEntry(),
+		)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unsupported type")
+		assert.Contains(t, err.Error(), "link.txt")
+	})
 }
 
 func TestCreateDeterministicArchive_PreservesSymlinks(t *testing.T) {

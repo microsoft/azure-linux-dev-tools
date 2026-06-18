@@ -161,11 +161,13 @@ func (c *ComponentOverlay) ModifiesArchive() bool {
 	return ok
 }
 
-// ModifiesNonSpecFiles returns true if the overlay modifies non-spec files. This includes
-// hybrid overlays that modify both spec and source files (e.g., patch overlays), since
-// those also require non-spec modifications. Archive-scoped overlays (see [ModifiesArchive])
-// are excluded: they operate on files inside an archive, not loose files in the sources tree.
-func (c *ComponentOverlay) ModifiesNonSpecFiles() bool {
+// ModifiesLooseFiles returns true if the overlay modifies loose files in the
+// sources tree (as opposed to the spec or files inside an archive). This includes
+// hybrid overlays that modify both the spec and loose source files (e.g., patch
+// overlays), since those also require loose-file modifications. Archive-scoped
+// overlays (see [ModifiesArchive]) are excluded: they operate on files inside an
+// archive, not loose files in the sources tree.
+func (c *ComponentOverlay) ModifiesLooseFiles() bool {
 	if c.ModifiesArchive() {
 		return false
 	}

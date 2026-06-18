@@ -11,6 +11,11 @@
 // are not policed by [os.Root]; this package additionally rejects any symlink
 // whose target is non-local via [filepath.IsLocal].
 //
+// Only regular files, directories, and symlinks are extracted. Other entry
+// types (hardlinks, devices, FIFOs, etc.) are skipped by default, or cause a
+// failure when [WithErrorOnUnsupportedEntry] is set — callers that repack the
+// tree must set it so such entries aren't silently dropped.
+//
 // Archive creation is designed for reproducible builds: file ordering is
 // lexicographic, timestamps are pinned to Unix epoch, and owner/group metadata
 // is zeroed out. This matches the
@@ -100,22 +105,47 @@ func IsArchiveName(filename string) bool {
 // Most callers should prefer this over the explicit-compression [Extract],
 // which exists for cases where the compression cannot be derived from the
 // filename.
-func ExtractAuto(archivePath, destDir string) error {
+func ExtractAuto(archivePath, destDir string, opts ...ExtractOption) error {
 	comp, err := DetectCompression(archivePath)
 	if err != nil {
 		return fmt.Errorf("detecting compression for %#q:\n%w", archivePath, err)
 	}
 
-	return Extract(archivePath, destDir, comp)
+	return Extract(archivePath, destDir, comp, opts...)
+}
+
+// ExtractOption configures the behavior of [Extract] and [ExtractAuto].
+type ExtractOption func(*extractConfig)
+
+// extractConfig holds the resolved options for an extraction.
+type extractConfig struct {
+	errorOnUnsupportedEntry bool
+}
+
+// WithErrorOnUnsupportedEntry makes [Extract] fail on tar entries it cannot
+// materialize (anything but a regular file, directory, or symlink). Without it
+// such entries are skipped; callers that repack the tree should set it so the
+// entries aren't silently dropped from the rebuilt archive.
+func WithErrorOnUnsupportedEntry() ExtractOption {
+	return func(c *extractConfig) {
+		c.errorOnUnsupportedEntry = true
+	}
 }
 
 // Extract reads a tar archive, decompresses it, and extracts all entries into
-// destDir. Supported entry types are regular files, directories, and symlinks;
-// other entry types are skipped. Entry paths are confined to destDir via
-// [os.Root]: any path that would escape destDir is rejected by the runtime.
-// Symlink targets are validated separately by this package — see the package
-// doc for details.
-func Extract(archivePath, destDir string, comp Compression) (err error) {
+// destDir. Entry paths are confined to destDir via [os.Root]: any path that
+// would escape destDir is rejected by the runtime. Symlink targets are
+// validated separately by this package — see the package doc for details.
+//
+// Only regular files, directories, and symlinks are supported. Other entry
+// types are skipped by default, or fail when [WithErrorOnUnsupportedEntry] is
+// set (required by callers that repack the tree).
+func Extract(archivePath, destDir string, comp Compression, opts ...ExtractOption) (err error) {
+	var cfg extractConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
 	if err := os.MkdirAll(destDir, fileperms.PublicDir); err != nil {
 		return fmt.Errorf("creating destination %#q:\n%w", destDir, err)
 	}
@@ -159,7 +189,7 @@ func Extract(archivePath, destDir string, comp Compression) (err error) {
 			return fmt.Errorf("reading tar entry from %#q:\n%w", archivePath, readErr)
 		}
 
-		if err := extractEntry(root, header, tarReader); err != nil {
+		if err := extractEntry(root, header, tarReader, cfg); err != nil {
 			return fmt.Errorf("extracting %#q from %#q:\n%w", header.Name, archivePath, err)
 		}
 	}
@@ -233,19 +263,6 @@ func (r readerCloser) Close() error {
 	return nil
 }
 
-// CreateDeterministicArchiveAuto is a convenience wrapper that infers the
-// compression from archivePath's extension via [DetectCompression] and then
-// calls [CreateDeterministicArchive]. Most callers should prefer this over the
-// explicit-compression [CreateDeterministicArchive].
-func CreateDeterministicArchiveAuto(archivePath, sourceDir string) error {
-	comp, err := DetectCompression(archivePath)
-	if err != nil {
-		return fmt.Errorf("detecting compression for %#q:\n%w", archivePath, err)
-	}
-
-	return CreateDeterministicArchive(archivePath, sourceDir, comp)
-}
-
 // CreateDeterministicArchive creates a new tar archive from the contents of sourceDir
 // and writes it to archivePath on the OS filesystem, replacing any existing file.
 //
@@ -307,7 +324,7 @@ func deterministicEpoch() time.Time {
 	return time.Unix(0, 0).UTC()
 }
 
-func extractEntry(root *os.Root, header *tar.Header, tarReader io.Reader) error {
+func extractEntry(root *os.Root, header *tar.Header, tarReader io.Reader, cfg extractConfig) error {
 	name := header.Name
 
 	if header.Typeflag == tar.TypeDir {
@@ -344,6 +361,14 @@ func extractEntry(root *os.Root, header *tar.Header, tarReader io.Reader) error 
 	case tar.TypeReg:
 		return extractRegularFile(root, header, tarReader)
 	default:
+		// Unsupported entry type (hardlink, device, FIFO, ...): fail when the
+		// caller is strict (repacking would drop it), otherwise skip and log.
+		if cfg.errorOnUnsupportedEntry {
+			return fmt.Errorf(
+				"tar entry %#q has unsupported type (typeflag %d); only regular files, directories, and symlinks are supported",
+				name, header.Typeflag)
+		}
+
 		slog.Debug("Skipping unsupported tar entry type", "name", name, "typeflag", header.Typeflag)
 
 		return nil

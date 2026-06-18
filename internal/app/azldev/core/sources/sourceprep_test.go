@@ -134,7 +134,7 @@ func TestPrepareSources_ArchiveOverlayRehashesSourcesEntry(t *testing.T) {
 	require.NoError(t, os.MkdirAll(pkgRoot, fileperms.PublicDir))
 	require.NoError(t, os.WriteFile(filepath.Join(pkgRoot, "keep.txt"), []byte("keep me"), fileperms.PrivateFile))
 	require.NoError(t, os.WriteFile(filepath.Join(pkgRoot, "remove-me.txt"), []byte("delete me"), fileperms.PrivateFile))
-	require.NoError(t, archive.CreateDeterministicArchiveAuto(archivePath, stagingDir))
+	require.NoError(t, archive.CreateDeterministicArchive(archivePath, stagingDir, archive.CompressionGzip))
 
 	// Record the original hash of the archive and seed a 'sources' file with it.
 	// Use SHA256 (not the SHA512 default) so the test also proves the hash *type*
@@ -231,7 +231,7 @@ func TestPrepareSources_ArchiveOverlayMissingSourcesEntryErrors(t *testing.T) {
 	pkgRoot := filepath.Join(stagingDir, "pkg-1.0")
 	require.NoError(t, os.MkdirAll(pkgRoot, fileperms.PublicDir))
 	require.NoError(t, os.WriteFile(filepath.Join(pkgRoot, "remove-me.txt"), []byte("delete me"), fileperms.PrivateFile))
-	require.NoError(t, archive.CreateDeterministicArchiveAuto(archivePath, stagingDir))
+	require.NoError(t, archive.CreateDeterministicArchive(archivePath, stagingDir, archive.CompressionGzip))
 
 	// 'sources' file references some unrelated file, not the archive being modified.
 	require.NoError(t, fileutils.WriteFile(

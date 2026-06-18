@@ -71,6 +71,8 @@ file = "old.tar.gz"                 # removes the archive file itself (bare name
 
 > **Extraction root:** The inner path is interpreted relative to the archive's extraction root: if the archive unpacks to a single top-level directory (the conventional `%{name}-%{version}` layout) that directory is the root; otherwise the archive root is used.
 
+> **Supported entry types:** Only regular files, directories, and symlinks are supported inside an archive overlay's target. If the archive contains an entry that cannot be repacked safely (a hardlink, device node, FIFO, etc.), the overlay fails with an error rather than silently dropping the entry from the repacked archive.
+
 | Type | Description | Required Fields |
 |------|-------------|-----------------|
 | `file-remove` (archive-scoped path) | Removes file(s) matching a glob pattern from inside an archive | `file` (e.g. `pkg-1.0.tar.gz/vendor/**`) |

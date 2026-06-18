@@ -527,8 +527,8 @@ func TestComponentOverlay_ModifiesSpec(t *testing.T) {
 		t.Run(string(overlay.Type)+"_is_archive_scoped", func(t *testing.T) {
 			assert.True(t, overlay.ModifiesArchive(), "expected %s to be an archive-scoped overlay", overlay.Type)
 			assert.False(t, overlay.ModifiesSpec(), "expected %s to not be a spec overlay", overlay.Type)
-			assert.False(t, overlay.ModifiesNonSpecFiles(),
-				"expected %s to not be a loose non-spec overlay", overlay.Type)
+			assert.False(t, overlay.ModifiesLooseFiles(),
+				"expected %s to not be a loose-file overlay", overlay.Type)
 		})
 	}
 }
