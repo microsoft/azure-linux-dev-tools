@@ -218,6 +218,28 @@ func sniffCompression(magic []byte, fallback Compression) Compression {
 	}
 }
 
+// SniffCompressionFromFile determines an existing archive's compression by
+// inspecting its leading magic bytes — authoritative over the filename
+// extension.
+func SniffCompressionFromFile(archivePath string, fallback Compression) (comp Compression, err error) {
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return fallback, fmt.Errorf("opening %#q for compression sniffing:\n%w", archivePath, err)
+	}
+	defer defers.HandleDeferError(file.Close, &err)
+
+	magic := make([]byte, compressionMagicLen)
+
+	bytesRead, readErr := io.ReadFull(file, magic)
+	// Short files are fine — a tiny tar may be under compressionMagicLen bytes.
+	// Only a genuine read error (not EOF/short read) is fatal.
+	if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
+		return fallback, fmt.Errorf("reading %#q header:\n%w", archivePath, readErr)
+	}
+
+	return sniffCompression(magic[:bytesRead], fallback), nil
+}
+
 // newDecompressor wraps reader in the chosen decompressor. For
 // [CompressionNone] the returned closer is nil; otherwise it is the
 // decompressor itself.
@@ -326,6 +348,10 @@ func deterministicEpoch() time.Time {
 
 func extractEntry(root *os.Root, header *tar.Header, tarReader io.Reader, cfg extractConfig) error {
 	name := header.Name
+
+	if header.Typeflag == tar.TypeXGlobalHeader || header.Typeflag == tar.TypeXHeader {
+		return nil
+	}
 
 	if header.Typeflag == tar.TypeDir {
 		if err := root.MkdirAll(name, fileperms.PublicDir); err != nil {

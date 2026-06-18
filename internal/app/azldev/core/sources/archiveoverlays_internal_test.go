@@ -450,3 +450,107 @@ func TestProcessArchive_DirectoryHandling(t *testing.T) {
 		assert.False(t, repacked)
 	})
 }
+
+// TestProcessArchive_PreservesMislabeledFormatOnRepack verifies that when an
+// archive's extension lies about its real format (here a plain, uncompressed tar
+// named ".tar.gz"), the repacked archive keeps the real on-disk format (plain
+// tar) rather than being "healed" to match the extension. The misleading name is
+// preserved; only the contents change.
+func TestProcessArchive_PreservesMislabeledFormatOnRepack(t *testing.T) {
+	ctx := testctx.NewCtx()
+	sourcesDir := t.TempDir()
+
+	// Misleading name: ".tar.gz" extension, but written as an uncompressed tar.
+	const archiveName = "pkg.tar.gz"
+
+	archivePath := filepath.Join(sourcesDir, archiveName)
+
+	staging := t.TempDir()
+	stageFiles(t, staging, map[string]string{
+		"pkg-1.0/remove-me.txt": "junk",
+		"pkg-1.0/keep.txt":      "keep",
+	})
+	require.NoError(t, archive.CreateDeterministicArchive(archivePath, staging, archive.CompressionNone))
+
+	// Precondition: the file really is an uncompressed tar despite its name.
+	preComp, err := archive.SniffCompressionFromFile(archivePath, archive.CompressionGzip)
+	require.NoError(t, err)
+	require.Equal(t, archive.CompressionNone, preComp)
+
+	group := archiveGroup{
+		archive: archiveName,
+		overlays: []projectconfig.ComponentOverlay{
+			{Type: projectconfig.ComponentOverlayRemoveFile, Filename: "remove-me.txt"},
+		},
+	}
+
+	repacked, err := processArchive(ctx, sourcesDir, group)
+	require.NoError(t, err)
+	assert.True(t, repacked)
+
+	// The overlay was applied (file removed)...
+	assert.Equal(t, []string{"pkg-1.0/keep.txt"}, extractedRegularFiles(t, archivePath))
+
+	// ...and the repacked archive preserves the real format: still an uncompressed
+	// tar, NOT re-compressed to gzip to match the ".tar.gz" extension.
+	postComp, err := archive.SniffCompressionFromFile(archivePath, archive.CompressionGzip)
+	require.NoError(t, err)
+	assert.Equal(t, archive.CompressionNone, postComp,
+		"repack must preserve the original (sniffed) format, keeping the misleading extension")
+}
+
+// TestProcessArchive_RepackedArchiveHasNormalPermissions is a regression test:
+// the repack writes to an os.CreateTemp placeholder (mode 0600) before renaming
+// it over the original. Because CreateDeterministicArchive only truncates an
+// existing file, reusing that placeholder would leave the repacked archive at
+// 0600. processArchive removes the placeholder first so the archive is recreated
+// with normal permissions; assert it does not regress to 0600.
+func TestProcessArchive_RepackedArchiveHasNormalPermissions(t *testing.T) {
+	ctx := testctx.NewCtx()
+	sourcesDir := t.TempDir()
+
+	const archiveName = "pkg.tar.gz"
+
+	archivePath := filepath.Join(sourcesDir, archiveName)
+
+	staging := t.TempDir()
+	stageFiles(t, staging, map[string]string{
+		"pkg-1.0/remove-me.txt": "junk",
+		"pkg-1.0/keep.txt":      "keep",
+	})
+	require.NoError(t, archive.CreateDeterministicArchive(archivePath, staging, archive.CompressionGzip))
+	// Seed the original archive at the restrictive 0600 so the test would fail if
+	// the repack inherited the original's (or the temp placeholder's) mode instead
+	// of recreating the file with normal permissions.
+	require.NoError(t, os.Chmod(archivePath, 0o600))
+
+	group := archiveGroup{
+		archive: archiveName,
+		overlays: []projectconfig.ComponentOverlay{
+			{Type: projectconfig.ComponentOverlayRemoveFile, Filename: "remove-me.txt"},
+		},
+	}
+
+	repacked, err := processArchive(ctx, sourcesDir, group)
+	require.NoError(t, err)
+	require.True(t, repacked)
+
+	// Compare against a freshly os.Create'd file in the same dir: that is exactly
+	// the mode a normal (non-placeholder) create yields under this umask. This is
+	// umask-independent and proves the archive was recreated rather than inheriting
+	// the 0600 placeholder.
+	refPath := filepath.Join(sourcesDir, "reference")
+	refFile, err := os.Create(refPath)
+	require.NoError(t, err)
+	require.NoError(t, refFile.Close())
+
+	refInfo, err := os.Stat(refPath)
+	require.NoError(t, err)
+
+	info, err := os.Stat(archivePath)
+	require.NoError(t, err)
+	assert.Equal(t, refInfo.Mode().Perm(), info.Mode().Perm(),
+		"repacked archive must have normal create permissions, not the 0600 temp-file mode")
+	assert.NotEqual(t, os.FileMode(0o600), info.Mode().Perm(),
+		"repacked archive must not inherit the 0600 temp-file permissions")
+}
