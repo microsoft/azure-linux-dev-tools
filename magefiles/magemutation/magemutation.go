@@ -21,21 +21,6 @@ import (
 
 var ErrMutation = errors.New("mutation testing failed")
 
-// timeoutCoefficient multiplies the baseline test duration to derive each
-// mutant's test timeout. Gremlins' default is too small for this repo's fast
-// suites: each mutant must recompile before running, and that build alone can
-// exceed the default timeout, so nearly every mutant is wrongly reported as
-// TIMED OUT (which gremlins counts toward efficacy, inflating it to a bogus
-// 100%). A generous coefficient leaves room for the per-mutant build+test.
-const timeoutCoefficient = "20"
-
-// actionableStatuses limits the per-mutant console output to the mutants worth
-// acting on: LIVED (a real test gap) and NOT_COVERED (code with no test at all).
-// KILLED and other statuses are omitted from the console to keep it readable;
-// the JSON report (see runGremlins) always contains every mutant. Letters map to
-// gremlins statuses: l=LIVED, c=NOT_COVERED.
-const actionableStatuses = "lc"
-
 // gremlinsFlakeSignature is the panic gremlins prints when its per-worker copy of
 // the module tree fails mid-walk (e.g. a concurrent git/IDE operation removes a
 // file under .git). gremlins discards the real error and panics with this
@@ -100,10 +85,7 @@ func runGremlins(description string, extraArgs ...string) error {
 	mageutil.MagePrintf(mageutil.MsgStart, "Running mutation testing %s...\n", description)
 
 	args := []string{
-		"unleash",
-		"--timeout-coefficient", timeoutCoefficient,
-		// Console shows only mutants needing attention; the JSON report has them all.
-		"--output-statuses", actionableStatuses,
+		"unleash", // Config is loaded from .gremlins.yaml
 		"--output", reportPath,
 	}
 	for _, pattern := range excludeFiles() {
