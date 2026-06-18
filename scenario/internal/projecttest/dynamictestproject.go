@@ -145,7 +145,7 @@ func (p *dynamicTestProject) addLock(componentName string, componentLock *lockfi
 		))
 	}
 
-	cp := deep.MustCopy(*componentLock)
+	cp := *componentLock
 	p.locks[componentName] = &cp
 	p.lockPaths[lockRelPath] = componentName
 }
