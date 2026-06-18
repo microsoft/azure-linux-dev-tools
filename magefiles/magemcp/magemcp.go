@@ -164,19 +164,18 @@ func scenarioUpdateTool() mcp.Tool {
 func mutationTool() mcp.Tool {
 	return mcp.Tool{
 		Name: "mage_mutation",
-		Description: "Run mutation testing (gremlins) on a Go package to assess how thoroughly its " +
-			"UNIT tests actually verify behavior (not just line coverage). It introduces small changes " +
-			"('mutants') into the source and reports whether the tests catch them: a KILLED mutant is caught, " +
-			"a LIVED mutant is a real test gap, and NOT COVERED means the code has no test exercising it. " +
-			"Use this when hardening or reviewing the tests of a package. Takes a 'path' argument scoping " +
-			"the run (e.g. './internal/rpm' for one package, or './' for the whole repo, which takes a few " +
-			"minutes); the scenario/ and magefiles/ trees and generated mocks are excluded automatically, " +
-			"and scenario tests are never run. The output lists only the mutants worth acting on (LIVED and " +
+		Description: "Run mutation testing (gremlins) to assess how thoroughly UNIT tests actually verify " +
+			"behavior (not just line coverage). It introduces small changes ('mutants') into the source and " +
+			"reports whether the tests catch them: a KILLED mutant is caught, a LIVED mutant is a real test " +
+			"gap, and NOT COVERED means no test exercises the code. Provide EITHER 'path' to mutation-test a " +
+			"package (e.g. './internal/rpm', or './' for the whole repo, which takes a few minutes) OR 'diff' " +
+			"to mutate only the lines changed versus a git ref (e.g. 'main') - the fastest way to check a " +
+			"branch's new code. The scenario/ and magefiles/ trees and generated mocks are excluded, and " +
+			"scenario tests are never run. The output lists only the mutants worth acting on (LIVED and " +
 			"NOT COVERED) plus a summary; a full JSON report covering every mutant is written to " +
-			"out/mutation-report.json - read that file for complete results. Note that some LIVED mutants " +
-			"are 'equivalent' and cannot be killed, so inspect results before changing tests. It is slower " +
-			"than unit tests (it recompiles and reruns the package's tests for each mutant), so prefer " +
-			"scoping to the package you care about.",
+			"out/mutation-report.json - read that file for complete results. Some LIVED mutants are " +
+			"'equivalent' and cannot be killed, so inspect before changing tests. It is slower than unit " +
+			"tests (it recompiles and reruns tests per mutant), so prefer scoping with 'path' or 'diff'.",
 		InputSchema: mutationSchema(),
 	}
 }
@@ -207,16 +206,22 @@ func verboseSchema() mcp.ToolInputSchema {
 	}
 }
 
-// mutationSchema is the input schema for the mage_mutation tool, which requires
-// a 'path' identifying the single package to mutation-test.
+// mutationSchema is the input schema for the mage_mutation tool. Exactly one of
+// 'path' or 'diff' must be supplied; this is enforced by the handler, since JSON
+// schema can't cleanly express "exactly one of".
 func mutationSchema() mcp.ToolInputSchema {
 	return mcp.ToolInputSchema{
 		Type: "object",
 		Properties: map[string]any{
 			"path": map[string]any{
 				"type": "string",
-				"description": "The Go package path to mutation-test, e.g. './internal/rpm' for one " +
-					"package or './' for the whole repo. Scoping to a package gives quicker feedback.",
+				"description": "Package path to mutation-test, e.g. './internal/rpm' (or './' for the whole " +
+					"repo). Provide either 'path' or 'diff', not both.",
+			},
+			"diff": map[string]any{
+				"type": "string",
+				"description": "Git branch or commit to diff against, e.g. 'main' or 'HEAD~3'. Only lines changed versus " +
+					"this ref are mutated. Provide either 'path' or 'diff', not both.",
 			},
 			"verbose": map[string]any{
 				"type":        "boolean",
@@ -224,7 +229,6 @@ func mutationSchema() mcp.ToolInputSchema {
 				"default":     false,
 			},
 		},
-		Required: []string{"path"},
 	}
 }
 
@@ -265,29 +269,50 @@ func allHandler(projectRootDir string) server.ToolHandlerFunc {
 	return createMageHandler(projectRootDir, "all")
 }
 
-// mutationHandler runs 'mage mutation <path>'. Unlike the other tools it reads a
-// required 'path' argument identifying the single package to mutation-test.
+// mutationHandler runs the mage_mutation tool. It routes to 'mage mutation
+// <path>' or 'mage mutationDiff <diff>' depending on which argument is set;
+// exactly one of 'path' or 'diff' is required.
 func mutationHandler(projectRootDir string) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		fmt.Fprintf(os.Stderr, "Handling tool request: %s\n", request.Params.Name)
 
-		args, ok := request.Params.Arguments.(map[string]any)
+		args, ok := toArgsMap(request.Params.Arguments)
 		if !ok {
 			return invalidArgsResult(request.Params.Name), nil
 		}
 
-		path, hasPath := args["path"].(string)
-		if !hasPath || strings.TrimSpace(path) == "" {
-			return &mcp.CallToolResult{
-				IsError: true,
-				Content: []mcp.Content{
-					mcp.NewTextContent("The 'mage_mutation' tool requires a non-empty 'path' argument, " +
-						"e.g. './internal/rpm'."),
-				},
-			}, nil
-		}
+		path := trimmedStringArg(args, "path")
+		diff := trimmedStringArg(args, "diff")
 
-		return runMageTool(ctx, projectRootDir, getVerboseFlag(args), "mutation", path), nil
+		switch {
+		case path != "" && diff != "":
+			return mutationArgError("provide either 'path' or 'diff', not both"), nil
+		case diff != "":
+			return runMageTool(ctx, projectRootDir, getVerboseFlag(args), "mutationDiff", diff), nil
+		case path != "":
+			return runMageTool(ctx, projectRootDir, getVerboseFlag(args), "mutation", path), nil
+		default:
+			return mutationArgError("provide a 'path' (e.g. './internal/rpm') or a 'diff' ref (e.g. 'main')"), nil
+		}
+	}
+}
+
+// trimmedStringArg returns the trimmed string value of args[key], or "" if it is
+// absent or not a string.
+func trimmedStringArg(args map[string]any, key string) string {
+	value, _ := args[key].(string)
+
+	return strings.TrimSpace(value)
+}
+
+// mutationArgError builds the error result returned when the mage_mutation
+// arguments are missing or contradictory.
+func mutationArgError(detail string) *mcp.CallToolResult {
+	return &mcp.CallToolResult{
+		IsError: true,
+		Content: []mcp.Content{
+			mcp.NewTextContent("The 'mage_mutation' tool requires you to " + detail + "."),
+		},
 	}
 }
 
@@ -296,13 +321,27 @@ func createMageHandler(projectRootDir string, mageArgs ...string) server.ToolHan
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		fmt.Fprintf(os.Stderr, "Handling tool request: %s with args: %v\n", request.Params.Name, mageArgs)
 
-		args, ok := request.Params.Arguments.(map[string]any)
+		args, ok := toArgsMap(request.Params.Arguments)
 		if !ok {
 			return invalidArgsResult(request.Params.Name), nil
 		}
 
 		return runMageTool(ctx, projectRootDir, getVerboseFlag(args), mageArgs...), nil
 	}
+}
+
+// toArgsMap normalizes a tool call's raw arguments to a map. MCP clients may omit
+// arguments entirely (a nil value), which is valid for tools whose parameters are
+// all optional; that is treated as an empty map. Only a non-nil value of an
+// unexpected (non-object) type is rejected.
+func toArgsMap(raw any) (map[string]any, bool) {
+	if raw == nil {
+		return map[string]any{}, true
+	}
+
+	args, ok := raw.(map[string]any)
+
+	return args, ok
 }
 
 // invalidArgsResult builds the error result returned when a tool's arguments

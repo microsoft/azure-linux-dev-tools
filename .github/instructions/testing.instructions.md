@@ -57,9 +57,9 @@ Coverage shows whether a line *ran*; mutation testing shows whether a test would
   whole repo, which takes a few minutes).
 - `mage mutationDiff <ref>` — only mutate lines changed vs a git ref (e.g. `main`).
 
-Also available to agents as the `mage_mutation` MCP tool (takes a `path`). The console lists only
-the mutants worth acting on (LIVED + NOT COVERED) plus a summary; a full JSON report covering every
-mutant is written to `out/mutation-report.json`.
+Also available to agents as the `mage_mutation` MCP tool, which takes either a `path` or a `diff`
+ref (the same two modes). The console lists only the mutants worth acting on (LIVED + NOT COVERED)
+plus a summary; a full JSON report covering every mutant is written to `out/mutation-report.json`.
 
 Reading results: a **KILLED** mutant was caught by a test, a **LIVED** mutant is a
 real assertion gap to fix, **NOT COVERED** means no test exercises that code.
