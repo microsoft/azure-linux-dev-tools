@@ -195,9 +195,15 @@ func processArchive(
 // over archivePath would truncate it first, leaving the workspace unrecoverable
 // without refetching if the repack then failed.
 func repackArchiveAtomic(archivePath, archiveName, workDir string) (err error) {
-	comp, err := archive.DetectCompression(archiveName)
+	// Fall back to the extension only if the archive is empty (nothing to sniff).
+	extComp, err := archive.DetectCompression(archiveName)
 	if err != nil {
 		return fmt.Errorf("detecting compression for %#q:\n%w", archiveName, err)
+	}
+
+	comp, err := archive.SniffCompressionFromFile(archivePath, extComp)
+	if err != nil {
+		return fmt.Errorf("sniffing compression for %#q:\n%w", archiveName, err)
 	}
 
 	tmpFile, err := os.CreateTemp(filepath.Dir(archivePath), "."+filepath.Base(archiveName)+".repack-*")
@@ -212,6 +218,10 @@ func repackArchiveAtomic(archivePath, archiveName, workDir string) (err error) {
 		_ = os.Remove(tmpPath)
 
 		return fmt.Errorf("closing temp archive %#q:\n%w", tmpPath, closeErr)
+	}
+
+	if removeErr := os.Remove(tmpPath); removeErr != nil && !os.IsNotExist(removeErr) {
+		return fmt.Errorf("removing temp archive placeholder %#q:\n%w", tmpPath, removeErr)
 	}
 
 	// Clean up the temp file unless it was successfully renamed over the original.
