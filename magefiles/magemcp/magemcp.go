@@ -51,8 +51,9 @@ func main() {
 	mcpServer.AddTool(fixAllTool(), fixAllHandler(projectRootDir))
 	mcpServer.AddTool(scenarioUpdateTool(), scenarioUpdateHandler(projectRootDir))
 	mcpServer.AddTool(scenarioTool(), scenarioHandler(projectRootDir))
+	mcpServer.AddTool(mutationTool(), mutationHandler(projectRootDir))
 	mcpServer.AddTool(allTool(), allHandler(projectRootDir))
-	fmt.Fprintf(os.Stderr, "Registered 9 MCP tools\n")
+	fmt.Fprintf(os.Stderr, "Registered 10 MCP tools\n")
 
 	// Start the server
 	fmt.Fprintf(os.Stderr, "Starting MCP server on stdio...\n")
@@ -160,6 +161,26 @@ func scenarioUpdateTool() mcp.Tool {
 	}
 }
 
+func mutationTool() mcp.Tool {
+	return mcp.Tool{
+		Name: "mage_mutation",
+		Description: "Run mutation testing (gremlins) on a Go package to assess how thoroughly its " +
+			"UNIT tests actually verify behavior (not just line coverage). It introduces small changes " +
+			"('mutants') into the source and reports whether the tests catch them: a KILLED mutant is caught, " +
+			"a LIVED mutant is a real test gap, and NOT COVERED means the code has no test exercising it. " +
+			"Use this when hardening or reviewing the tests of a package. Takes a 'path' argument scoping " +
+			"the run (e.g. './internal/rpm' for one package, or './' for the whole repo, which takes a few " +
+			"minutes); the scenario/ and magefiles/ trees and generated mocks are excluded automatically, " +
+			"and scenario tests are never run. The output lists only the mutants worth acting on (LIVED and " +
+			"NOT COVERED) plus a summary; a full JSON report covering every mutant is written to " +
+			"out/mutation-report.json - read that file for complete results. Note that some LIVED mutants " +
+			"are 'equivalent' and cannot be killed, so inspect results before changing tests. It is slower " +
+			"than unit tests (it recompiles and reruns the package's tests for each mutant), so prefer " +
+			"scoping to the package you care about.",
+		InputSchema: mutationSchema(),
+	}
+}
+
 func allTool() mcp.Tool {
 	return mcp.Tool{
 		Name: "mage_all",
@@ -183,6 +204,27 @@ func verboseSchema() mcp.ToolInputSchema {
 				"default":     false,
 			},
 		},
+	}
+}
+
+// mutationSchema is the input schema for the mage_mutation tool, which requires
+// a 'path' identifying the single package to mutation-test.
+func mutationSchema() mcp.ToolInputSchema {
+	return mcp.ToolInputSchema{
+		Type: "object",
+		Properties: map[string]any{
+			"path": map[string]any{
+				"type": "string",
+				"description": "The Go package path to mutation-test, e.g. './internal/rpm' for one " +
+					"package or './' for the whole repo. Scoping to a package gives quicker feedback.",
+			},
+			"verbose": map[string]any{
+				"type":        "boolean",
+				"description": "Enable verbose output",
+				"default":     false,
+			},
+		},
+		Required: []string{"path"},
 	}
 }
 
@@ -223,6 +265,32 @@ func allHandler(projectRootDir string) server.ToolHandlerFunc {
 	return createMageHandler(projectRootDir, "all")
 }
 
+// mutationHandler runs 'mage mutation <path>'. Unlike the other tools it reads a
+// required 'path' argument identifying the single package to mutation-test.
+func mutationHandler(projectRootDir string) server.ToolHandlerFunc {
+	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		fmt.Fprintf(os.Stderr, "Handling tool request: %s\n", request.Params.Name)
+
+		args, ok := request.Params.Arguments.(map[string]any)
+		if !ok {
+			return invalidArgsResult(request.Params.Name), nil
+		}
+
+		path, hasPath := args["path"].(string)
+		if !hasPath || strings.TrimSpace(path) == "" {
+			return &mcp.CallToolResult{
+				IsError: true,
+				Content: []mcp.Content{
+					mcp.NewTextContent("The 'mage_mutation' tool requires a non-empty 'path' argument, " +
+						"e.g. './internal/rpm'."),
+				},
+			}, nil
+		}
+
+		return runMageTool(ctx, projectRootDir, getVerboseFlag(args), "mutation", path), nil
+	}
+}
+
 // Generic handler creator.
 func createMageHandler(projectRootDir string, mageArgs ...string) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -230,39 +298,54 @@ func createMageHandler(projectRootDir string, mageArgs ...string) server.ToolHan
 
 		args, ok := request.Params.Arguments.(map[string]any)
 		if !ok {
-			return &mcp.CallToolResult{
-				IsError: true,
-				Content: []mcp.Content{
-					mcp.NewTextContent("Invalid arguments provided to tool: " + request.Params.Name),
-				},
-			}, nil
+			return invalidArgsResult(request.Params.Name), nil
 		}
 
-		verbose := getVerboseFlag(args)
+		return runMageTool(ctx, projectRootDir, getVerboseFlag(args), mageArgs...), nil
+	}
+}
 
-		fmt.Fprintf(os.Stderr, "Running mage command: mage %s (verbose=%v)\n", strings.Join(mageArgs, " "), verbose)
+// invalidArgsResult builds the error result returned when a tool's arguments
+// cannot be parsed.
+func invalidArgsResult(toolName string) *mcp.CallToolResult {
+	return &mcp.CallToolResult{
+		IsError: true,
+		Content: []mcp.Content{
+			mcp.NewTextContent("Invalid arguments provided to tool: " + toolName),
+		},
+	}
+}
 
-		output, err := callMage(ctx, projectRootDir, verbose, mageArgs...)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Mage command failed: %v\n", err)
+// runMageTool invokes mage with the given arguments and converts the result
+// into an MCP tool result.
+func runMageTool(
+	ctx context.Context,
+	projectRootDir string,
+	verbose bool,
+	mageArgs ...string,
+) *mcp.CallToolResult {
+	fmt.Fprintf(os.Stderr, "Running mage command: mage %s (verbose=%v)\n", strings.Join(mageArgs, " "), verbose)
 
-			return &mcp.CallToolResult{
-				IsError: true,
-				Content: []mcp.Content{
-					mcp.NewTextContent("Error running mage command: " + err.Error()),
-					mcp.NewTextContent("Mage command output:\n\n" + output),
-				},
-			}, nil
-		} else {
-			fmt.Fprintf(os.Stderr, "Mage command completed successfully\n")
+	output, err := callMage(ctx, projectRootDir, verbose, mageArgs...)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Mage command failed: %v\n", err)
 
-			return &mcp.CallToolResult{
-				IsError: false,
-				Content: []mcp.Content{
-					mcp.NewTextContent("Mage command output:\n\n" + output),
-				},
-			}, nil
+		return &mcp.CallToolResult{
+			IsError: true,
+			Content: []mcp.Content{
+				mcp.NewTextContent("Error running mage command: " + err.Error()),
+				mcp.NewTextContent("Mage command output:\n\n" + output),
+			},
 		}
+	}
+
+	fmt.Fprintf(os.Stderr, "Mage command completed successfully\n")
+
+	return &mcp.CallToolResult{
+		IsError: false,
+		Content: []mcp.Content{
+			mcp.NewTextContent("Mage command output:\n\n" + output),
+		},
 	}
 }
 

@@ -6,6 +6,7 @@ This document provides guidelines for writing and maintaining tests within the A
 
 - [Unit Tests](#unit-tests)
 - [Scenario Tests](#scenario-tests)
+- [Mutation Testing](#mutation-testing)
 - [Test Utilities](#test-utilities)
 - [Mocking dependencies](#mocking-dependencies)
   - [Generating Mocks](#generating-mocks)
@@ -34,6 +35,48 @@ This document provides guidelines for writing and maintaining tests within the A
 - Include both positive and negative test cases
 - Use `mage scenarioUpdate` when test expectations change and snapshots need updating
 - Use existing test helpers in `scenario/internal/cmdtest`
+
+## Mutation Testing
+
+Mutation testing measures how good the tests actually are (as opposed to mere line coverage) by
+introducing small changes ("mutants") into the source and checking whether the test suite catches
+them. A mutant that tests fail on is *killed*; one that passes is a *lived* mutant and points to a
+real gap in test assertions. The project uses [gremlins](https://github.com/go-gremlins/gremlins),
+pinned in `tools/gremlins`.
+
+Mutation testing recompiles and reruns the tests for every mutant, so it's slower than unit tests;
+running the whole repo (`./`) takes a few minutes. Scope it for quicker feedback:
+
+```bash
+# Scope to a single package.
+mage mutation ./internal/rpm
+
+# Scope to only the lines changed relative to a git ref (fastest; ideal on a branch).
+mage mutationDiff main
+```
+
+Interpreting the output:
+
+- **Test efficacy** is the percentage of `KILLED` mutants over `KILLED + LIVED`. Higher is better.
+- **LIVED** mutants are the actionable signal: a change the tests did not detect.
+- **NOT COVERED** mutants are in code with no test coverage at all.
+- Some `LIVED` mutants are *equivalent* (e.g. `len(x) > 0` vs `>= 0` when the loop body no-ops on an
+  empty slice) and cannot be killed. Inspect before "fixing".
+
+The console output is filtered to just the actionable mutants (`LIVED` and `NOT COVERED`) plus the
+summary totals; a full JSON report covering every mutant (including `KILLED`) is written to
+`out/mutation-report.json` for tooling or detailed review.
+
+Mutation testing only exercises **unit tests**. Scenario tests are gated behind the `scenario` build
+tag and are not run by gremlins, so they never slow down a mutation run. The targets also exclude the
+`scenario/` and `magefiles/` trees and generated mocks from the mutant set to avoid `NOT COVERED`
+noise.
+
+> **Note**: The mage targets pass a generous `--timeout-coefficient` to gremlins. The per-mutant
+> timeout is derived from the baseline test duration, but each mutant also recompiles; on this
+> repo's fast suites the default timeout is too tight to cover that build, so mutants get
+> mis-reported as `TIMED OUT` (which gremlins counts as killed, inflating efficacy to a bogus
+> 100%). If you run `gremlins` directly, pass `--timeout-coefficient 20` to get accurate results.
 
 ## Test Utilities
 
