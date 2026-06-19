@@ -76,7 +76,7 @@ noise.
 > timeout is derived from the baseline test duration, but each mutant also recompiles; on this
 > repo's fast suites the default timeout is too tight to cover that build, so mutants get
 > mis-reported as `TIMED OUT` (which gremlins counts as killed, inflating efficacy to a bogus
-> 100%). If you run `gremlins` directly, pass `--timeout-coefficient 20` to get accurate results.
+> 100%). If you run `gremlins` directly, pass `--timeout-coefficient 100` to get accurate results.
 
 ## Test Utilities
 
