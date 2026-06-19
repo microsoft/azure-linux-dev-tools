@@ -292,7 +292,7 @@
      "openWorldHint": true,
      "readOnlyHint": false
     },
-    "description": "List overlays and their metadata for components in this project",
+    "description": "List documentation metadata for components' overlays and groups",
     "inputSchema": {
      "properties": {
       "accept-all": {
@@ -307,7 +307,7 @@
       },
       "category": {
        "default": "",
-       "description": "only include overlays whose metadata declares this category",
+       "description": "only include entries whose metadata declares this category",
        "type": "string"
       },
       "color": {
@@ -331,6 +331,11 @@
        "description": "dry run only (do not take action)",
        "type": "boolean"
       },
+      "groups": {
+       "default": false,
+       "description": "list component-group metadata (default lists both overlays and groups)",
+       "type": "boolean"
+      },
       "network-retries": {
        "default": 3,
        "description": "maximum number of attempts for network operations (minimum 1)",
@@ -343,12 +348,17 @@
       },
       "only-annotated": {
        "default": false,
-       "description": "exclude overlays that have no metadata",
+       "description": "exclude entries that have no metadata",
        "type": "boolean"
       },
       "output-format": {
        "description": "output format {csv, json, markdown, table}",
        "type": "string"
+      },
+      "overlays": {
+       "default": false,
+       "description": "list overlay metadata (default lists both overlays and groups)",
+       "type": "boolean"
       },
       "permissive-config": {
        "default": false,
@@ -371,7 +381,7 @@
       },
       "upstreamability": {
        "default": "",
-       "description": "only include overlays whose metadata declares this upstreamability ('yes', 'no', or 'unknown')",
+       "description": "only include entries whose metadata declares this upstreamability ('yes', 'no', or 'unknown')",
        "type": "string"
       },
       "verbose": {
@@ -383,7 +393,7 @@
      "required": [],
      "type": "object"
     },
-    "name": "component-overlays"
+    "name": "component-metadata"
    },
    {
     "annotations": {

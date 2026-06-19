@@ -43,7 +43,7 @@ components defined in the project configuration.
 * [azldev component changed](azldev_component_changed.md)	 - Detect which components changed between two git refs
 * [azldev component diff-sources](azldev_component_diff-sources.md)	 - Show the diff that overlays apply to a component's sources
 * [azldev component list](azldev_component_list.md)	 - List components in this project
-* [azldev component overlays](azldev_component_overlays.md)	 - List overlays and their metadata for components in this project
+* [azldev component metadata](azldev_component_metadata.md)	 - List documentation metadata for components' overlays and groups
 * [azldev component prepare-sources](azldev_component_prepare-sources.md)	 - Prepare buildable sources for components
 * [azldev component query](azldev_component_query.md)	 - Query info for components in this project
 * [azldev component render](azldev_component_render.md)	 - Render post-overlay specs and sidecar files to a checked-in directory

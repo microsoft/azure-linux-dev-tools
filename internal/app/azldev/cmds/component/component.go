@@ -32,5 +32,5 @@ components defined in the project configuration.`,
 	queryOnAppInit(app, cmd)
 	renderOnAppInit(app, cmd)
 	updateOnAppInit(app, cmd)
-	overlaysOnAppInit(app, cmd)
+	metadataOnAppInit(app, cmd)
 }
