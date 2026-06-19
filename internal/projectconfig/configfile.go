@@ -97,6 +97,11 @@ func (f ConfigFile) Validate() error {
 		}
 	}
 
+	// Validate component group metadata.
+	if err := validateComponentGroupMetadata(f.ComponentGroups); err != nil {
+		return err
+	}
+
 	// Per-component snapshot timestamps are not allowed. Components inherit
 	// the snapshot from the distro/group default-component-config or the
 	// project's default-distro. Per-component snapshots would create
@@ -144,6 +149,22 @@ func (f ConfigFile) Validate() error {
 
 		if err := suite.Validate(); err != nil {
 			return fmt.Errorf("invalid test suite %#q:\n%w", suiteName, err)
+		}
+	}
+
+	return nil
+}
+
+// validateComponentGroupMetadata validates the optional documentation metadata declared
+// on each component group.
+func validateComponentGroupMetadata(groups map[string]ComponentGroupConfig) error {
+	for groupName, group := range groups {
+		if group.Metadata == nil {
+			continue
+		}
+
+		if err := group.Metadata.Validate(); err != nil {
+			return fmt.Errorf("invalid component group %#q:\n%w", groupName, err)
 		}
 	}
 

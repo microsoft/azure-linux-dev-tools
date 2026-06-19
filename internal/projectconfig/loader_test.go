@@ -485,6 +485,51 @@ specs = ["SPECS/**/*.spec"]
 	assert.Equal(t, []string{"core"}, config.GroupsByComponent["bar"])
 }
 
+func TestLoadAndResolveProjectConfig_ComponentGroupWithMetadata(t *testing.T) {
+	const configContents = `
+[component-groups.core]
+specs = ["SPECS/**/*.spec"]
+
+[component-groups.core.metadata]
+category = "backport-dist-git"
+commits = ["https://example.com/commit/abc"]
+pr = "https://example.com/pr/1"
+upstreamability = "yes"
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.NoError(t, err)
+
+	if assert.Contains(t, config.ComponentGroups, "core") {
+		group := config.ComponentGroups["core"]
+		require.NotNil(t, group.Metadata)
+		assert.Equal(t, OverlayCategoryBackportDistGit, group.Metadata.Category)
+		assert.Equal(t, []string{"https://example.com/commit/abc"}, group.Metadata.Commits)
+		assert.Equal(t, "https://example.com/pr/1", group.Metadata.PR)
+		assert.Equal(t, OverlayUpstreamabilityYes, group.Metadata.Upstreamability)
+	}
+}
+
+func TestLoadAndResolveProjectConfig_ComponentGroupMetadataMissingCategory(t *testing.T) {
+	const configContents = `
+[component-groups.core]
+specs = ["SPECS/**/*.spec"]
+
+[component-groups.core.metadata]
+pr = "https://example.com/pr/1"
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.Error(t, err)
+	assert.Nil(t, config)
+}
+
 func TestLoadAndResolveProjectConfig_GroupsByComponent_MultipleGroups(t *testing.T) {
 	testFiles := []struct {
 		path     string

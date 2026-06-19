@@ -7,10 +7,33 @@ Component groups organize related components together and let you apply shared d
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
 | Description | `description` | string | No | Human-readable description of this group |
+| Metadata | `metadata` | [OverlayMetadata](overlays.md) | No | Optional documentation metadata describing the group's intent and provenance |
 | Components | `components` | string array | No | List of component names that belong to this group |
 | Specs | `specs` | string array | No | Glob patterns for discovering local spec files to include as group members |
 | Excluded paths | `excluded-paths` | string array | No | Glob patterns for paths to exclude from spec discovery |
 | Default component config | `default-component-config` | [ComponentConfig](components.md) | No | Default configuration inherited by all components in this group |
+
+## Metadata
+
+The optional `[component-groups.<name>.metadata]` table documents the group's intent and provenance. It shares exactly the same fields and validation rules as [overlay metadata](overlays.md): a required `category`, plus optional commit/PR/bug links and an upstreamability assessment. It is documentation only — it does not affect how members are resolved or built.
+
+| Field | TOML Key | Type | Required | Description |
+|-------|----------|------|----------|-------------|
+| Category | `category` | enum | **Yes** | Classification of the group's intent (e.g. `backport-dist-git`, `azl-test-disablement`) |
+| Commits | `commits` | string array (URLs) | No | Upstream commit URLs this group references; required when `category = "backport-dist-git"` |
+| Upstream PR | `pr` | string (URL) | No | URL of the related upstream pull request |
+| Issue-tracker links | `bug` | string array (URLs) | No | URLs of related issue-tracker entries |
+| Upstreamability | `upstreamability` | enum (`yes`/`no`/`unknown`) | No | Whether the group's change can be upstreamed (defaults to `unknown`) |
+
+```toml
+[component-groups.check-skip-initial-failures]
+description = "Components with check failures during initial distro bringup"
+components = ["bats", "dnf", "git"]
+
+[component-groups.check-skip-initial-failures.metadata]
+category = "azl-test-disablement"
+upstreamability = "unknown"
+```
 
 ## Component Membership
 
