@@ -72,11 +72,10 @@ tag and are not run by gremlins, so they never slow down a mutation run. The tar
 `scenario/` and `magefiles/` trees and generated mocks from the mutant set to avoid `NOT COVERED`
 noise.
 
-> **Note**: The mage targets pass a generous `--timeout-coefficient` to gremlins. The per-mutant
-> timeout is derived from the baseline test duration, but each mutant also recompiles; on this
-> repo's fast suites the default timeout is too tight to cover that build, so mutants get
-> mis-reported as `TIMED OUT` (which gremlins counts as killed, inflating efficacy to a bogus
-> 100%). If you run `gremlins` directly, pass `--timeout-coefficient 100` to get accurate results.
+> **Note**: Timeout tuning is configured in `.gremlins.yaml` (`unleash.timeout-coefficient`, currently 100).
+> On this repo's fast suites, gremlins' default is often too tight once recompilation is included, so mutants can be
+> mis-reported as `TIMED OUT` (which gremlins counts as killed, inflating efficacy).
+> If you run `gremlins` without the repo config, pass a higher `--timeout-coefficient` (e.g. 100) for accurate results.
 
 ## Test Utilities
 

@@ -53,7 +53,7 @@ func Mutation(path string) error {
 			"(or './' for the whole repo)", ErrMutation)
 	}
 
-	return runGremlins(fmt.Sprintf("on '%s'", path), path)
+	return runGremlins(fmt.Sprintf("on %#q", path), path)
 }
 
 // MutationDiff runs gremlins mutation testing only on the lines changed
@@ -64,7 +64,7 @@ func MutationDiff(ref string) error {
 		return fmt.Errorf("%w: a git ref is required, e.g. 'mage mutationDiff main'", ErrMutation)
 	}
 
-	return runGremlins(fmt.Sprintf("against the diff vs '%s'", ref), "--diff", ref)
+	return runGremlins(fmt.Sprintf("against the diff vs %#q", ref), "--diff", ref)
 }
 
 // runGremlins invokes the gremlins tool with this repo's standard options.
@@ -98,7 +98,7 @@ func runGremlins(description string, extraArgs ...string) error {
 		return mageutil.PrintAndReturnError("Mutation testing failed.", ErrMutation, err)
 	}
 
-	mageutil.MagePrintf(mageutil.MsgSuccess, "Mutation testing complete. Full JSON report: %s\n", reportPath)
+	mageutil.MagePrintf(mageutil.MsgSuccess, "Mutation testing complete. Full JSON report: %#q\n", reportPath)
 
 	return nil
 }
