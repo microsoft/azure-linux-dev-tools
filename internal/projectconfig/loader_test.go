@@ -494,7 +494,7 @@ specs = ["SPECS/**/*.spec"]
 category = "backport-dist-git"
 commits = ["https://example.com/commit/abc"]
 pr = "https://example.com/pr/1"
-upstreamability = "yes"
+upstreamable = true
 `
 
 	ctx := testctx.NewCtx()
@@ -509,7 +509,8 @@ upstreamability = "yes"
 		assert.Equal(t, OverlayCategoryBackportDistGit, group.Metadata.Category)
 		assert.Equal(t, []string{"https://example.com/commit/abc"}, group.Metadata.Commits)
 		assert.Equal(t, "https://example.com/pr/1", group.Metadata.PR)
-		assert.Equal(t, OverlayUpstreamabilityYes, group.Metadata.Upstreamability)
+		require.NotNil(t, group.Metadata.Upstreamable)
+		assert.True(t, *group.Metadata.Upstreamable)
 	}
 }
 

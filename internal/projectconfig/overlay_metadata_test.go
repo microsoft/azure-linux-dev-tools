@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -48,26 +49,18 @@ func TestOverlayMetadata_Validate(t *testing.T) {
 		{
 			name: "azl-branding-policy may carry pr and commits",
 			metadata: projectconfig.OverlayMetadata{
-				Category:        projectconfig.OverlayCategoryAZLBrandingPolicy,
-				PR:              "https://github.com/example/repo/pull/2",
-				Commits:         []string{"https://github.com/example/repo/commit/deadbeef"},
-				Upstreamability: projectconfig.OverlayUpstreamabilityYes,
+				Category:     projectconfig.OverlayCategoryAZLBrandingPolicy,
+				PR:           "https://github.com/example/repo/pull/2",
+				Commits:      []string{"https://github.com/example/repo/commit/deadbeef"},
+				Upstreamable: lo.ToPtr(true),
 			},
 		},
 		{
-			name: "upstreamability no is valid",
+			name: "upstreamable false is valid",
 			metadata: projectconfig.OverlayMetadata{
-				Category:        projectconfig.OverlayCategoryAZLBuild,
-				Upstreamability: projectconfig.OverlayUpstreamabilityNo,
+				Category:     projectconfig.OverlayCategoryAZLBuild,
+				Upstreamable: lo.ToPtr(false),
 			},
-		},
-		{
-			name: "unknown upstreamability rejected",
-			metadata: projectconfig.OverlayMetadata{
-				Category:        projectconfig.OverlayCategoryAZLBuild,
-				Upstreamability: projectconfig.OverlayUpstreamability("maybe"),
-			},
-			errorContains: "unknown upstreamability",
 		},
 		{
 			name: "missing category",
@@ -138,9 +131,9 @@ func TestComponentOverlay_Validate_Metadata(t *testing.T) {
 	require.NoError(t, overlay.Validate())
 
 	// Overlay with invalid metadata fails — wraps the metadata error.
-	overlay.Metadata.Upstreamability = projectconfig.OverlayUpstreamability("bogus")
+	overlay.Metadata.Category = projectconfig.OverlayCategory("bogus")
 
 	err := overlay.Validate()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown upstreamability")
+	assert.Contains(t, err.Error(), "unknown overlay category")
 }

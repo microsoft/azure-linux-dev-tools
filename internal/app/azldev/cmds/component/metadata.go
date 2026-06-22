@@ -48,10 +48,10 @@ type MetadataOptions struct {
 	// OnlyAnnotated, when true, excludes entries with no metadata.
 	OnlyAnnotated bool
 
-	// Upstreamability, when non-empty, filters output to entries whose metadata declares
-	// this upstreamability ('yes', 'no', or 'unknown'). Entries with no metadata count as
-	// 'unknown'.
-	Upstreamability string
+	// Upstreamable, when non-empty, filters output to entries whose metadata declares this
+	// upstreamability ('true', 'false', or 'unknown'). Entries with no metadata, or whose
+	// metadata omits the field, count as 'unknown'.
+	Upstreamable string
 }
 
 // wantOverlays reports whether overlay entries should be listed. With no source flag set,
@@ -111,7 +111,7 @@ sources, so it is fast and works even when locks are missing or stale.`,
   azldev component metadata -a --category backport-dist-git
 
   # List only entries that can be upstreamed
-  azldev component metadata -a --upstreamability yes
+  azldev component metadata -a --upstreamable true
 
   # JSON output for scripting
   azldev component metadata -a -q -O json`,
@@ -135,8 +135,8 @@ sources, so it is fast and works even when locks are missing or stale.`,
 		"only include entries whose metadata declares this category")
 	cmd.Flags().BoolVar(&options.OnlyAnnotated, "only-annotated", false,
 		"exclude entries that have no metadata")
-	cmd.Flags().StringVar(&options.Upstreamability, "upstreamability", "",
-		"only include entries whose metadata declares this upstreamability ('yes', 'no', or 'unknown')")
+	cmd.Flags().StringVar(&options.Upstreamable, "upstreamable", "",
+		"only include entries whose metadata declares this upstreamability ('true', 'false', or 'unknown')")
 
 	// This command is read-only; lock validation is irrelevant.
 	_ = cmd.Flags().MarkHidden("skip-lock-validation")
@@ -170,10 +170,10 @@ type MetadataInfo struct {
 	// forcing callers to drill into [MetadataInfo.Metadata]. Empty when the entry has no metadata.
 	Category projectconfig.OverlayCategory `json:"category,omitempty" table:",omitempty"`
 
-	// Upstreamability surfaces [projectconfig.OverlayMetadata.Upstreamability] for tabular
-	// output. Always populated: entries without metadata (or with the field omitted) report
-	// 'unknown', so this is never empty and is always rendered.
-	Upstreamability projectconfig.OverlayUpstreamability `json:"upstreamability"`
+	// Upstreamable surfaces [projectconfig.OverlayMetadata.Upstreamable] for tabular
+	// output. Nil when the entry has no metadata or its metadata omits the field, which
+	// renders as a blank cell (upstreamability not assessed).
+	Upstreamable *bool `json:"upstreamable,omitempty" table:",omitempty"`
 
 	// Metadata is the full metadata for the entry. Nil when it has none.
 	Metadata *projectconfig.OverlayMetadata `json:"metadata,omitempty" table:"-"`
@@ -188,7 +188,7 @@ func ListMetadata(env *azldev.Env, options *MetadataOptions) ([]MetadataInfo, er
 		return nil, fmt.Errorf("%w: unknown overlay category %#q", azldev.ErrInvalidUsage, options.Category)
 	}
 
-	wantUpstreamability, err := normalizeUpstreamabilityFilter(options.Upstreamability)
+	wantUpstreamable, err := normalizeUpstreamableFilter(options.Upstreamable)
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +208,7 @@ func ListMetadata(env *azldev.Env, options *MetadataOptions) ([]MetadataInfo, er
 		name := comp.GetName()
 
 		for _, info := range collectMetadataInfos(env, name, comp.GetConfig(), options) {
-			if metadataInfoMatchesFilters(info, options, wantUpstreamability) {
+			if metadataInfoMatchesFilters(info, options, wantUpstreamable) {
 				results = append(results, info)
 			}
 		}
@@ -251,13 +251,12 @@ func buildOverlayMetadataInfo(
 	componentName string, idx int, overlay *projectconfig.ComponentOverlay,
 ) MetadataInfo {
 	info := MetadataInfo{
-		Component:       componentName,
-		Source:          MetadataSourceOverlay,
-		Index:           idx,
-		Type:            overlay.Type,
-		Description:     overlay.Description,
-		Metadata:        overlay.Metadata,
-		Upstreamability: projectconfig.OverlayUpstreamabilityUnknown,
+		Component:   componentName,
+		Source:      MetadataSourceOverlay,
+		Index:       idx,
+		Type:        overlay.Type,
+		Description: overlay.Description,
+		Metadata:    overlay.Metadata,
 	}
 
 	applyMetadataSummary(&info, overlay.Metadata)
@@ -271,12 +270,11 @@ func buildGroupMetadataInfo(
 	componentName, groupName string, group projectconfig.ComponentGroupConfig,
 ) MetadataInfo {
 	info := MetadataInfo{
-		Component:       componentName,
-		Source:          MetadataSourceGroup,
-		Group:           groupName,
-		Description:     group.Description,
-		Metadata:        group.Metadata,
-		Upstreamability: projectconfig.OverlayUpstreamabilityUnknown,
+		Component:   componentName,
+		Source:      MetadataSourceGroup,
+		Group:       groupName,
+		Description: group.Description,
+		Metadata:    group.Metadata,
 	}
 
 	applyMetadataSummary(&info, group.Metadata)
@@ -284,46 +282,48 @@ func buildGroupMetadataInfo(
 	return info
 }
 
-// applyMetadataSummary copies the category and upstreamability summary fields from the
-// (possibly nil) metadata onto the info. Entries without metadata keep the 'unknown'
-// upstreamability set by the caller.
+// applyMetadataSummary copies the category and upstreamable summary fields from the
+// (possibly nil) metadata onto the info. Entries without metadata leave the fields unset
+// (category empty, upstreamability not assessed).
 func applyMetadataSummary(info *MetadataInfo, metadata *projectconfig.OverlayMetadata) {
 	if metadata == nil {
 		return
 	}
 
 	info.Category = metadata.Category
-	if u := metadata.Upstreamability; u != "" {
-		info.Upstreamability = u
-	}
+	info.Upstreamable = metadata.Upstreamable
 }
 
-// normalizeUpstreamabilityFilter validates a user-supplied '--upstreamability' filter
-// value. An empty string means no filter was requested. Only 'yes', 'no', and 'unknown'
-// are accepted; any other value yields an [azldev.ErrInvalidUsage] error.
-func normalizeUpstreamabilityFilter(value string) (projectconfig.OverlayUpstreamability, error) {
+// normalizeUpstreamableFilter validates a user-supplied '--upstreamable' filter value. An
+// empty string means no filter was requested. Only 'true', 'false', and 'unknown' are
+// accepted; any other value yields an [azldev.ErrInvalidUsage] error. The returned string
+// Recognized values for the '--upstreamable' filter flag. Kept as named constants so
+// [normalizeUpstreamableFilter] (which validates user input) and [upstreamableMatches]
+// (which interprets it) stay in sync.
+const (
+	upstreamableFilterTrue    = "true"
+	upstreamableFilterFalse   = "false"
+	upstreamableFilterUnknown = "unknown"
+)
+
+// is the normalized filter ("", "true", "false", or "unknown").
+func normalizeUpstreamableFilter(value string) (string, error) {
 	switch value {
-	case "":
-		return "", nil
-	case string(projectconfig.OverlayUpstreamabilityUnknown):
-		return projectconfig.OverlayUpstreamabilityUnknown, nil
-	case string(projectconfig.OverlayUpstreamabilityYes):
-		return projectconfig.OverlayUpstreamabilityYes, nil
-	case string(projectconfig.OverlayUpstreamabilityNo):
-		return projectconfig.OverlayUpstreamabilityNo, nil
+	case "", upstreamableFilterTrue, upstreamableFilterFalse, upstreamableFilterUnknown:
+		return value, nil
 	default:
 		return "", fmt.Errorf(
-			"%w: unknown upstreamability %#q; want 'yes', 'no', or 'unknown'",
+			"%w: unknown upstreamable value %#q; want 'true', 'false', or 'unknown'",
 			azldev.ErrInvalidUsage, value,
 		)
 	}
 }
 
 // metadataInfoMatchesFilters reports whether a [MetadataInfo] passes the user-supplied
-// category, only-annotated, and upstreamability filters. wantUpstreamability is the
-// pre-normalized '--upstreamability' value computed once by [ListMetadata].
+// category, only-annotated, and upstreamable filters. wantUpstreamable is the
+// pre-normalized '--upstreamable' value computed once by [ListMetadata].
 func metadataInfoMatchesFilters(
-	info MetadataInfo, options *MetadataOptions, wantUpstreamability projectconfig.OverlayUpstreamability,
+	info MetadataInfo, options *MetadataOptions, wantUpstreamable string,
 ) bool {
 	if options.OnlyAnnotated && info.Metadata == nil {
 		return false
@@ -333,11 +333,29 @@ func metadataInfoMatchesFilters(
 		return false
 	}
 
-	if options.Upstreamability != "" && info.Upstreamability != wantUpstreamability {
+	if wantUpstreamable != "" && !upstreamableMatches(info.Upstreamable, wantUpstreamable) {
 		return false
 	}
 
 	return true
+}
+
+// upstreamableMatches reports whether an entry's upstreamable value (nil meaning "not
+// assessed") matches the normalized filter ('true', 'false', or 'unknown'). The 'unknown'
+// arm matches both unannotated entries (no metadata at all) and annotated entries that
+// omit the field, since both are unassessed; combine with '--only-annotated' to restrict
+// to entries whose author left the field blank.
+func upstreamableMatches(upstreamable *bool, want string) bool {
+	switch want {
+	case upstreamableFilterUnknown:
+		return upstreamable == nil
+	case upstreamableFilterTrue:
+		return upstreamable != nil && *upstreamable
+	case upstreamableFilterFalse:
+		return upstreamable != nil && !*upstreamable
+	default:
+		return false
+	}
 }
 
 // sortMetadataInfos orders entries by component, then overlays before groups. Overlay

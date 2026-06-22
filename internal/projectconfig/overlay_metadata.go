@@ -63,32 +63,6 @@ func (c OverlayCategory) IsValid() bool {
 	return slices.Contains(allOverlayCategories, c)
 }
 
-// OverlayUpstreamability records whether an overlay's change can be sent upstream. It
-// defaults to 'unknown' (not yet assessed) when the field is omitted.
-type OverlayUpstreamability string
-
-const (
-	// OverlayUpstreamabilityUnknown means upstreamability has not been assessed. It is the
-	// default when the field is omitted (an empty value is treated as 'unknown').
-	OverlayUpstreamabilityUnknown OverlayUpstreamability = "unknown"
-	// OverlayUpstreamabilityYes means the change is a candidate for upstreaming.
-	OverlayUpstreamabilityYes OverlayUpstreamability = "yes"
-	// OverlayUpstreamabilityNo means the change is intentionally AZL-specific and will
-	// never be upstreamed.
-	OverlayUpstreamabilityNo OverlayUpstreamability = "no"
-)
-
-// IsValid reports whether u is one of the recognized [OverlayUpstreamability] values. An
-// empty value is accepted and means the field was omitted (defaults to 'unknown').
-func (u OverlayUpstreamability) IsValid() bool {
-	switch u {
-	case "", OverlayUpstreamabilityUnknown, OverlayUpstreamabilityYes, OverlayUpstreamabilityNo:
-		return true
-	default:
-		return false
-	}
-}
-
 // OverlayMetadata describes the intent and provenance of an overlay. It is documentation
 // only — it does not affect how the overlay is applied and is excluded from component
 // fingerprints. When present, it must declare a [OverlayMetadata.Category]; other fields
@@ -107,9 +81,9 @@ type OverlayMetadata struct {
 	// BugLinks holds URLs of issue-tracker entries related to this overlay.
 	BugLinks []string `toml:"bug,omitempty" json:"bug,omitempty" validate:"omitempty,dive,http_url" jsonschema:"title=Issue-tracker links,description=URLs of related issue-tracker entries"`
 
-	// Upstreamability records whether this overlay's change can be upstreamed: 'yes', 'no',
-	// or 'unknown'. Omitting the field defaults to 'unknown' (not yet assessed).
-	Upstreamability OverlayUpstreamability `toml:"upstreamability,omitempty" json:"upstreamability,omitempty" jsonschema:"enum=yes,enum=no,enum=unknown,default=unknown,title=Upstreamability,description=Whether this overlay's change can be upstreamed: 'yes'; 'no'; or 'unknown' (the default)"`
+	// Upstreamable records whether this overlay's change can be upstreamed. It is omitted
+	// (nil) when upstreamability has not yet been assessed.
+	Upstreamable *bool `toml:"upstreamable,omitempty" json:"upstreamable,omitempty" jsonschema:"title=Upstreamable,description=Whether this overlay's change can be upstreamed; omit if not yet assessed"`
 }
 
 // clone returns a deep copy of the metadata. It is used to stamp a single file-level
@@ -121,11 +95,16 @@ func (m *OverlayMetadata) clone() *OverlayMetadata {
 		return nil
 	}
 
-	cp := *m
-	cp.Commits = slices.Clone(m.Commits)
-	cp.BugLinks = slices.Clone(m.BugLinks)
+	cloned := *m
+	cloned.Commits = slices.Clone(m.Commits)
+	cloned.BugLinks = slices.Clone(m.BugLinks)
 
-	return &cp
+	if m.Upstreamable != nil {
+		upstreamable := *m.Upstreamable
+		cloned.Upstreamable = &upstreamable
+	}
+
+	return &cloned
 }
 
 // metadataValidator is a shared, concurrency-safe validator instance reused across all
@@ -151,14 +130,6 @@ func (m *OverlayMetadata) Validate() error {
 		return fmt.Errorf(
 			"overlay category %#q requires at least one entry in 'commits'",
 			string(m.Category),
-		)
-	}
-
-	if !m.Upstreamability.IsValid() {
-		return fmt.Errorf(
-			"unknown upstreamability %#q; want %#q, %#q, or %#q",
-			string(m.Upstreamability), string(OverlayUpstreamabilityYes),
-			string(OverlayUpstreamabilityNo), string(OverlayUpstreamabilityUnknown),
 		)
 	}
 

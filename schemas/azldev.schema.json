@@ -766,16 +766,10 @@
           "title": "Issue-tracker links",
           "description": "URLs of related issue-tracker entries"
         },
-        "upstreamability": {
-          "type": "string",
-          "enum": [
-            "yes",
-            "no",
-            "unknown"
-          ],
-          "title": "Upstreamability",
-          "description": "Whether this overlay's change can be upstreamed: 'yes'; 'no'; or 'unknown' (the default)",
-          "default": "unknown"
+        "upstreamable": {
+          "type": "boolean",
+          "title": "Upstreamable",
+          "description": "Whether this overlay's change can be upstreamed; omit if not yet assessed"
         }
       },
       "additionalProperties": false,

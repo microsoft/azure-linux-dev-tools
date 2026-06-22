@@ -379,9 +379,9 @@
        "description": "Spec path",
        "type": "string"
       },
-      "upstreamability": {
+      "upstreamable": {
        "default": "",
-       "description": "only include entries whose metadata declares this upstreamability ('yes', 'no', or 'unknown')",
+       "description": "only include entries whose metadata declares this upstreamability ('true', 'false', or 'unknown')",
        "type": "string"
       },
       "verbose": {

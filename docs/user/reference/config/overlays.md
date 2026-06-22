@@ -86,7 +86,7 @@ Overlays can carry an optional `metadata` table that documents *why* the overlay
 | Commits | `commits` | List of upstream commit URLs (Fedora dist-git or upstream project) that this overlay backports or implements. Each entry must be an absolute http(s) URL. |
 | PR | `pr` | URL of the upstream pull request that carries (or proposes) the fix. |
 | Bug | `bug` | List of bug-tracker URLs related to this overlay. |
-| Upstreamability | `upstreamability` | Whether this change can be upstreamed: `"yes"`, `"no"`, or `"unknown"`. Defaults to `"unknown"` (not yet assessed) when omitted. |
+| Upstreamable | `upstreamable` | Boolean indicating whether this change can be upstreamed: `true` or `false`. Omit the field when upstreamability has not yet been assessed. |
 
 ### Categories
 
@@ -184,7 +184,7 @@ lines = ["- Fix CVE-2024-1234"]
 
 ### Inspecting overlay metadata
 
-Use `azldev component metadata` to list documentation metadata for one or more components. By default it lists metadata from both sources — component overlays and the component groups each component belongs to — tagging each row with its `source`. Pass `--overlays` or `--groups` to restrict to one source. The command is read-only and supports `--category`, `--only-annotated`, and `--upstreamability` filters; output is available as a table (default) or JSON (`-O json`).
+Use `azldev component metadata` to list documentation metadata for one or more components. By default it lists metadata from both sources — component overlays and the component groups each component belongs to — tagging each row with its `source`. Pass `--overlays` or `--groups` to restrict to one source. The command is read-only and supports `--category`, `--only-annotated`, and `--upstreamable` filters; output is available as a table (default) or JSON (`-O json`).
 
 ## Examples
 

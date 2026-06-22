@@ -10,6 +10,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -63,9 +64,9 @@ func seedComponentsWithOverlays(t *testing.T, testEnv *testutils.TestEnv) {
 				Tag:   "Packager",
 				Value: "azl",
 				Metadata: &projectconfig.OverlayMetadata{
-					Category:        projectconfig.OverlayCategoryAZLBuild,
-					PR:              "https://github.com/example/repo/pull/1",
-					Upstreamability: projectconfig.OverlayUpstreamabilityYes,
+					Category:     projectconfig.OverlayCategoryAZLBuild,
+					PR:           "https://github.com/example/repo/pull/1",
+					Upstreamable: lo.ToPtr(true),
 				},
 			},
 		},
@@ -160,29 +161,75 @@ func TestListMetadata_Upstreamable(t *testing.T) {
 
 	options := &component.MetadataOptions{
 		ComponentFilter: components.ComponentFilter{IncludeAllComponents: true},
-		Upstreamability: "yes",
+		Upstreamable:    "true",
 	}
 
 	results, err := component.ListMetadata(testEnv.Env, options)
 	require.NoError(t, err)
 	require.Len(t, results, 1, "only the upstreamable overlay in pkg-b should be included")
 	assert.Equal(t, "pkg-b", results[0].Component)
-	assert.Equal(t, projectconfig.OverlayUpstreamabilityYes, results[0].Upstreamability)
+	require.NotNil(t, results[0].Upstreamable)
+	assert.True(t, *results[0].Upstreamable)
 	assert.Equal(t, projectconfig.OverlayCategoryAZLBuild, results[0].Category)
 }
 
-func TestListMetadata_UnknownUpstreamabilityRejected(t *testing.T) {
+func TestListMetadata_UnknownUpstreamableRejected(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
 	seedComponentsWithOverlays(t, testEnv)
 
 	options := &component.MetadataOptions{
 		ComponentFilter: components.ComponentFilter{IncludeAllComponents: true},
-		Upstreamability: "maybe",
+		Upstreamable:    "maybe",
 	}
 
 	_, err := component.ListMetadata(testEnv.Env, options)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown upstreamability")
+	assert.Contains(t, err.Error(), "unknown upstreamable value")
+}
+
+func TestListMetadata_UpstreamableFalse(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+	seedComponentWithGroups(t, testEnv)
+
+	options := &component.MetadataOptions{
+		ComponentFilter: components.ComponentFilter{IncludeAllComponents: true},
+		Upstreamable:    "false",
+	}
+
+	results, err := component.ListMetadata(testEnv.Env, options)
+	require.NoError(t, err)
+	require.Len(t, results, 1, "only the group annotated as not-upstreamable should be included")
+	assert.Equal(t, component.MetadataSourceGroup, results[0].Source)
+	assert.Equal(t, "annotated-group", results[0].Group)
+	require.NotNil(t, results[0].Upstreamable)
+	assert.False(t, *results[0].Upstreamable)
+}
+
+func TestListMetadata_UpstreamableUnknown(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+	seedComponentWithGroups(t, testEnv)
+
+	options := &component.MetadataOptions{
+		ComponentFilter: components.ComponentFilter{IncludeAllComponents: true},
+		Upstreamable:    "unknown",
+	}
+
+	results, err := component.ListMetadata(testEnv.Env, options)
+	require.NoError(t, err)
+	// 'unknown' matches both annotated entries that omit the field (the overlay) and
+	// unannotated entries (the bare group). The 'false'-annotated group is excluded.
+	require.Len(t, results, 2)
+
+	for _, info := range results {
+		assert.Nil(t, info.Upstreamable)
+	}
+
+	assert.Equal(t, component.MetadataSourceOverlay, results[0].Source)
+	require.NotNil(t, results[0].Metadata, "annotated overlay without 'upstreamable' must still match 'unknown'")
+
+	assert.Equal(t, component.MetadataSourceGroup, results[1].Source)
+	assert.Equal(t, "bare-group", results[1].Group)
+	assert.Nil(t, results[1].Metadata, "unannotated entry must also match 'unknown'")
 }
 
 // seedComponentWithGroups adds a component with one annotated overlay that belongs to two
@@ -209,8 +256,8 @@ func seedComponentWithGroups(t *testing.T, testEnv *testutils.TestEnv) {
 		Description: "Group with metadata",
 		Components:  []string{"pkg-a"},
 		Metadata: &projectconfig.OverlayMetadata{
-			Category:        projectconfig.OverlayCategoryAZLTestDisablement,
-			Upstreamability: projectconfig.OverlayUpstreamabilityNo,
+			Category:     projectconfig.OverlayCategoryAZLTestDisablement,
+			Upstreamable: lo.ToPtr(false),
 		},
 	}
 
@@ -247,12 +294,13 @@ func TestListMetadata_DefaultListsBothSources(t *testing.T) {
 	assert.Equal(t, 0, results[1].Index)
 	require.NotNil(t, results[1].Metadata)
 	assert.Equal(t, projectconfig.OverlayCategoryAZLTestDisablement, results[1].Category)
-	assert.Equal(t, projectconfig.OverlayUpstreamabilityNo, results[1].Upstreamability)
+	require.NotNil(t, results[1].Upstreamable)
+	assert.False(t, *results[1].Upstreamable)
 
 	assert.Equal(t, component.MetadataSourceGroup, results[2].Source)
 	assert.Equal(t, "bare-group", results[2].Group)
 	assert.Nil(t, results[2].Metadata)
-	assert.Equal(t, projectconfig.OverlayUpstreamabilityUnknown, results[2].Upstreamability)
+	assert.Nil(t, results[2].Upstreamable)
 }
 
 func TestListMetadata_OverlaysOnly(t *testing.T) {

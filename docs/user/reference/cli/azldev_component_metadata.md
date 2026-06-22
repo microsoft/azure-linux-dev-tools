@@ -48,7 +48,7 @@ azldev component metadata [flags]
   azldev component metadata -a --category backport-dist-git
 
   # List only entries that can be upstreamed
-  azldev component metadata -a --upstreamability yes
+  azldev component metadata -a --upstreamable true
 
   # JSON output for scripting
   azldev component metadata -a -q -O json
@@ -66,7 +66,7 @@ azldev component metadata [flags]
       --only-annotated                exclude entries that have no metadata
       --overlays                      list overlay metadata (default lists both overlays and groups)
   -s, --spec-path stringArray         Spec path
-      --upstreamability string        only include entries whose metadata declares this upstreamability ('yes', 'no', or 'unknown')
+      --upstreamable string           only include entries whose metadata declares this upstreamability ('true', 'false', or 'unknown')
 ```
 
 ### Options inherited from parent commands

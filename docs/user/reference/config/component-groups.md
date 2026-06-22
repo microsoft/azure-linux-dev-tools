@@ -15,7 +15,7 @@ Component groups organize related components together and let you apply shared d
 
 ## Metadata
 
-The optional `[component-groups.<name>.metadata]` table documents the group's intent and provenance. It shares exactly the same fields and validation rules as [overlay metadata](overlays.md): a required `category`, plus optional commit/PR/bug links and an upstreamability assessment. It is documentation only — it does not affect how members are resolved or built.
+The optional `[component-groups.<name>.metadata]` table documents the group's intent and provenance. It shares exactly the same fields and validation rules as [overlay metadata](overlays.md): a required `category`, plus optional commit/PR/bug links and an upstreamable assessment. It is documentation only — it does not affect how members are resolved or built.
 
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
@@ -23,7 +23,7 @@ The optional `[component-groups.<name>.metadata]` table documents the group's in
 | Commits | `commits` | string array (URLs) | No | Upstream commit URLs this group references; required when `category = "backport-dist-git"` |
 | Upstream PR | `pr` | string (URL) | No | URL of the related upstream pull request |
 | Issue-tracker links | `bug` | string array (URLs) | No | URLs of related issue-tracker entries |
-| Upstreamability | `upstreamability` | enum (`yes`/`no`/`unknown`) | No | Whether the group's change can be upstreamed (defaults to `unknown`) |
+| Upstreamable | `upstreamable` | boolean | No | Whether the group's change can be upstreamed (`true`/`false`); omit when not yet assessed |
 
 ```toml
 [component-groups.check-skip-initial-failures]
@@ -32,7 +32,7 @@ components = ["bats", "dnf", "git"]
 
 [component-groups.check-skip-initial-failures.metadata]
 category = "azl-test-disablement"
-upstreamability = "unknown"
+# upstreamable omitted: upstreamability for this group has not been assessed yet.
 ```
 
 ## Component Membership
