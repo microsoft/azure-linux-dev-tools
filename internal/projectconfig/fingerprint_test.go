@@ -70,6 +70,8 @@ func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
 		// ComponentOverlay.Source — absolute path that varies by checkout location.
 		// Overlay content is hashed separately by ComputeIdentity.
 		"ComponentOverlay.Source": true,
+		// ComponentOverlay.Metadata — documentation describing overlay intent and provenance.
+		"ComponentOverlay.Metadata": true,
 
 		// SourceFileReference.Component — back-reference to parent, not a build input.
 		"SourceFileReference.Component": true,
