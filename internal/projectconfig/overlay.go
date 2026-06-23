@@ -152,12 +152,21 @@ func (c *ComponentOverlay) ArchiveTarget() (archiveName, innerPath string, ok bo
 	return before, after, true
 }
 
+// SupportsArchiveScope reports whether the overlay type can target files inside a source
+// archive via an archive-scoped [ComponentOverlay.Filename] (see [ComponentOverlay.ArchiveTarget]).
+// Only file-remove and file-search-replace extract and repack archives; all other types treat
+// the path as loose files in the sources tree.
+func (c *ComponentOverlay) SupportsArchiveScope() bool {
+	return c.Type == ComponentOverlayRemoveFile || c.Type == ComponentOverlaySearchAndReplaceInFile
+}
+
 // ModifiesArchive returns true if the overlay modifies files inside a source archive.
 // These overlays require extraction and repacking of the archive. Only file-remove and
-// file-search-replace support archive scoping, and only when their [ComponentOverlay.Filename]
-// is an archive-scoped path (see [ComponentOverlay.ArchiveTarget]).
+// file-search-replace support archive scoping (see [ComponentOverlay.SupportsArchiveScope]),
+// and only when their [ComponentOverlay.Filename] is an archive-scoped path
+// (see [ComponentOverlay.ArchiveTarget]).
 func (c *ComponentOverlay) ModifiesArchive() bool {
-	if c.Type != ComponentOverlayRemoveFile && c.Type != ComponentOverlaySearchAndReplaceInFile {
+	if !c.SupportsArchiveScope() {
 		return false
 	}
 
@@ -263,6 +272,16 @@ func (c *ComponentOverlay) Validate() error {
 }
 
 func (c *ComponentOverlay) validateRequiredFields(desc string) error {
+	// Archive-scoped file paths (e.g. "pkg-1.0.tar.gz/vendor/**") are only meaningful for overlay
+	// types that extract and repack archives. Reject them early for every other type so a stray
+	// archive prefix isn't silently misinterpreted as a directory name in the loose sources tree.
+	if _, _, ok := c.ArchiveTarget(); ok && !c.SupportsArchiveScope() {
+		return fmt.Errorf(
+			"overlay type %#q does not support archive-scoped file paths; found %#q",
+			c.Type, c.Filename,
+		)
+	}
+
 	switch c.Type {
 	case ComponentOverlayAddSpecTag, ComponentOverlayInsertSpecTag,
 		ComponentOverlaySetSpecTag, ComponentOverlayUpdateSpecTag, ComponentOverlayRemoveSpecTag:

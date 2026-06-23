@@ -319,6 +319,54 @@ func TestComponentOverlay_Validate(t *testing.T) {
 			errorExpected: true,
 			errorContains: "source",
 		},
+		// Archive-scoped path validation: only file-remove and file-search-replace support it.
+		{
+			name: "file-remove archive-scoped path accepted",
+			overlay: projectconfig.ComponentOverlay{
+				Type:     projectconfig.ComponentOverlayRemoveFile,
+				Filename: "pkg-1.0.tar.gz/vendor/**",
+			},
+			errorExpected: false,
+		},
+		{
+			name: "file-search-replace archive-scoped path accepted",
+			overlay: projectconfig.ComponentOverlay{
+				Type:        projectconfig.ComponentOverlaySearchAndReplaceInFile,
+				Filename:    "pkg-1.0.tar.gz/vendor/config.h",
+				Regex:       "old",
+				Replacement: "new",
+			},
+			errorExpected: false,
+		},
+		{
+			name: "file-add archive-scoped path rejected",
+			overlay: projectconfig.ComponentOverlay{
+				Type:     projectconfig.ComponentOverlayAddFile,
+				Filename: "pkg-1.0.tar.gz/vendor/new.txt",
+				Source:   "/path/to/source.txt",
+			},
+			errorExpected: true,
+			errorContains: "archive-scoped",
+		},
+		{
+			name: "file-prepend-lines archive-scoped path rejected",
+			overlay: projectconfig.ComponentOverlay{
+				Type:     projectconfig.ComponentOverlayPrependLinesToFile,
+				Filename: "pkg-1.0.tar.gz/vendor/config.h",
+				Lines:    []string{"// header"},
+			},
+			errorExpected: true,
+			errorContains: "archive-scoped",
+		},
+		{
+			name: "patch-remove archive-scoped path rejected",
+			overlay: projectconfig.ComponentOverlay{
+				Type:     projectconfig.ComponentOverlayRemovePatch,
+				Filename: "pkg-1.0.tar.gz/fix.patch",
+			},
+			errorExpected: true,
+			errorContains: "archive-scoped",
+		},
 		// Description included in error
 		{
 			name: "error includes description",
