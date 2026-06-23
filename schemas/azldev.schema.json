@@ -169,6 +169,11 @@
           "title": "Description",
           "description": "Description of this component group"
         },
+        "metadata": {
+          "$ref": "#/$defs/OverlayMetadata",
+          "title": "Metadata",
+          "description": "Optional documentation metadata for this component group"
+        },
         "components": {
           "items": {
             "type": "string"
