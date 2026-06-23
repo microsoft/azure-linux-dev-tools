@@ -62,8 +62,90 @@ successfully makes a replacement to at least one matching file.
 | Lines | `lines` | Array of text lines to insert | `spec-prepend-lines`, `spec-append-lines`, `file-prepend-lines` |
 | File | `file` | The name of the non-spec file to modify or add | `file-prepend-lines`, `file-search-replace`, `file-add`, `file-remove`, `file-rename`, `patch-add` (optional), `patch-remove` |
 | Source | `source` | Path to source file for `file-add` and `patch-add`; relative paths are relative to the config file | `file-add`, `patch-add` |
+| Metadata | `metadata` | Documentation table describing intent and provenance — see [Overlay Metadata](#overlay-metadata). | All (optional) |
 
 > **Note:** For `file-rename`, the `replacement` field is a **filename only** (not a path). The file is renamed within its current directory.
+
+## Overlay Metadata
+
+Overlays can carry an optional `metadata` table that documents *why* the overlay exists and *when* it can be removed. Metadata is reviewed by humans and surfaced in tooling; it does **not** affect how the overlay is applied and is excluded from component fingerprints (so editing metadata never invalidates build caches).
+
+### `metadata` fields
+
+| Field | TOML Key | Description |
+|-------|----------|-------------|
+| Category | `category` | **Required.** Classification of the overlay's intent. See the table below. |
+| Commits | `commits` | List of upstream commit URLs (Fedora dist-git or upstream project) that this overlay backports or implements. Each entry must be an absolute http(s) URL. |
+| Bugs | `bugs` | List of bug-tracker references. Each entry is a table with a required `url`. See [Bug references](#bug-references). |
+| Upstreamable | `upstreamable` | Boolean indicating whether this change can be upstreamed: `true` or `false`. Omit the field when upstreamability has not yet been assessed. |
+
+### Categories
+
+| Category | When to use |
+|----------|-------------|
+| `backport-dist-git` | Fix backported from (or being upstreamed to) a dist-git or upstream project. Self-resolves when AZL bumps past it. Requires at least one entry in `commits`. |
+| `azl-pruning` | Removing content from a component for AZL: dependencies that are not shipped, unneeded features, subpackages, or files. |
+| `azl-compatibility` | Making a component work in the AZL build/runtime environment: toolchain and mock adjustments, and similar compatibility fixes that are not themselves backports. |
+| `azl-dep-missing-workaround` | Working around a runtime or build dependency that has not yet been imported into AZL (or is unavailable on a given target). Drop the overlay once the dependency lands. |
+| `azl-branding-policy` | Fedora→Azure Linux name/path changes; RHEL/enterprise convention alignment. |
+| `azl-disable-flaky-tests` | Skipping tests that fail intermittently or due to environmental flakiness rather than a real problem with the component. |
+| `azl-disable-unsupported-tests` | Skipping tests that cannot meaningfully run in AZL's build/runtime environment (e.g. tests that require network access, root, or hardware that is unavailable in mock). |
+| `azl-security-compliance` | FIPS or crypto-policy changes. |
+| `azl-release-management` | Release-tag and changelog mechanics. |
+| `azl-platform-adaptation` | Architecture-specific adjustments. |
+
+### Bug references
+
+The `bugs` field is a list of references to issue-tracker entries. Each entry is a table with a single required field:
+
+| Field | TOML Key | Description |
+|-------|----------|-------------|
+| URL | `url` | **Required.** HTTP(S) link to the bug entry. |
+
+Example:
+
+```toml
+[[components.mypackage.overlays.metadata.bugs]]
+url = "https://bugzilla.redhat.com/show_bug.cgi?id=2234567"
+
+[[components.mypackage.overlays.metadata.bugs]]
+url = "https://github.com/example/repo/issues/42"
+```
+
+The inline-table form is more compact for short lists:
+
+```toml
+bugs = [
+  { url = "https://bugzilla.redhat.com/show_bug.cgi?id=2234567" },
+  { url = "https://github.com/example/repo/issues/42" },
+]
+```
+
+### Inline metadata example
+
+TOML inline tables (`metadata = { ... }`) must fit on a single line. When the metadata has more than one or two fields, use a sub-table (`[components.<name>.overlays.metadata]`) so each field gets its own line:
+
+```toml
+[[components.xclock.overlays]]
+type = "spec-search-replace"
+description = "Pass --force to autoreconf"
+regex = "autoreconf -i"
+replacement = "autoreconf -fi"
+
+  [components.xclock.overlays.metadata]
+  category = "backport-dist-git"
+  commits = ["https://src.fedoraproject.org/rpms/xclock/c/1e407488"]
+```
+
+For short metadata, the single-line inline form is also valid:
+
+```toml
+[[components.xclock.overlays]]
+type = "spec-set-tag"
+tag = "Vendor"
+value = "Microsoft"
+metadata = { category = "azl-branding-policy" }
+```
 
 ## Examples
 
