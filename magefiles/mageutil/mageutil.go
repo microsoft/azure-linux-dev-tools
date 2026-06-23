@@ -33,6 +33,7 @@ const (
 	EditorconfigCheckerTool = "editorconfig-checker"
 	GoLicenseTool           = "go-licenses"
 	GoStringerTool          = "stringer"
+	GremlinsTool            = "gremlins"
 )
 
 var (
