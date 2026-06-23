@@ -61,10 +61,18 @@ successfully makes a replacement to at least one matching file.
 | Replacement | `replacement` | Literal replacement text; capture group references like `$1` are **not** expanded. Omit or leave empty to delete matched text. | `spec-search-replace`, `file-search-replace`, `file-rename` |
 | Lines | `lines` | Array of text lines to insert | `spec-prepend-lines`, `spec-append-lines`, `file-prepend-lines` |
 | File | `file` | The name of the non-spec file to modify or add | `file-prepend-lines`, `file-search-replace`, `file-add`, `file-remove`, `file-rename`, `patch-add` (optional), `patch-remove` |
-| Source | `source` | Path to source file for `file-add` and `patch-add`; relative paths are relative to the config file | `file-add`, `patch-add` |
-| Metadata | `metadata` | Documentation table describing intent and provenance — see [Overlay Metadata](#overlay-metadata). | All (optional) |
+| Source | `source` | Path to source file for `file-add` and `patch-add`; relative paths are relative to the config file that defines the overlay (the overlay file if loaded via [`overlay-files`](#per-file-overlay-format), otherwise the component config) | `file-add`, `patch-add` |
+| Metadata | `metadata` | Documentation table describing intent and provenance — see [Overlay Metadata](#overlay-metadata). Not allowed inside an overlay file loaded via `overlay-files` (the file-level `[metadata]` block applies to every overlay in the file). | All (optional) |
 
 > **Note:** For `file-rename`, the `replacement` field is a **filename only** (not a path). The file is renamed within its current directory.
+
+### Component-level fields for overlays
+
+In addition to per-overlay fields, the following fields are set directly on the component:
+
+| Field | TOML Key | Description |
+|-------|----------|-------------|
+| Overlay files | `overlay-files` | List of glob patterns (relative to the component's config file) matched against the filesystem at load time to locate per-file overlay documents. Patterns support `**` (globstar). Matches are concatenated in declaration order; within a single pattern, matches are applied in filename (lexicographic) order, with full path as a tie-breaker for duplicate filenames. Each pattern must match at least one file. Duplicate matches across patterns are de-duplicated. See [Per-file overlay format](#per-file-overlay-format). |
 
 ## Overlay Metadata
 
@@ -145,6 +153,59 @@ type = "spec-set-tag"
 tag = "Vendor"
 value = "Microsoft"
 metadata = { category = "azl-branding-policy" }
+```
+
+## Per-file overlay format
+
+When a single logical change (a CVE backport, a feature disablement, a Fedora cherry-pick…) needs **several overlays** that all share the same provenance, declaring them inline in the component config gets noisy and makes the boundary between unrelated changes hard to see. Use the per-file format instead.
+
+### Layout
+
+Set `overlay-files` on the component to one or more globs (relative to the component config) and drop one overlay file per logical change into a directory of your choosing. The conventional layout uses a sibling `overlays/` directory and a `*.overlay.toml` filename suffix, but neither is required — `overlay-files` is just a glob, so any layout you can describe with `**`/`*` patterns works.
+
+```
+base/comps/mypackage/
+├── mypackage.comp.toml
+└── overlays/
+    ├── 0001-cve-2024-1234.overlay.toml
+    ├── 0002-disable-broken-tests.overlay.toml
+    └── 0003-azl-branding.overlay.toml
+```
+
+```toml
+# mypackage.comp.toml
+[components.mypackage]
+overlay-files = ["overlays/*.overlay.toml"]
+```
+
+Files are loaded in **filename (lexicographic) order** within each glob, using the full path as a tie-breaker when multiple matches have the same filename. Globs are concatenated in declaration order, so prefix each file with a numeric ordinal (`0001-`, `0002-`, …) to make the apply order obvious and stable. Files that don't match any of your globs are ignored, so you can keep `README.md` or other notes alongside without naming them out explicitly. Each declared glob must match at least one file; an empty match is treated as a misconfiguration and surfaced as an error.
+
+Overlays loaded via `overlay-files` are **appended after** any inline overlays declared directly on the component.
+
+### File structure
+
+Each overlay file represents one logical change. It has:
+
+* exactly one top-level `[metadata]` table (uses the same fields documented in [Overlay Metadata](#overlay-metadata)); and
+* one or more `[[overlays]]` entries, applied in declaration order.
+
+Per-overlay `metadata` is **not allowed** inside an overlay file — the file-level `[metadata]` is the single source of truth and is stamped onto every overlay in the file. Relative `source` paths are resolved against the directory of the overlay file (not the component config).
+
+```toml
+# overlays/0001-cve-2024-1234.overlay.toml
+[metadata]
+category = "backport-dist-git"
+commits = ["https://src.fedoraproject.org/rpms/mypackage/c/abc123def456"]
+bugs = [{ url = "https://bugzilla.redhat.com/show_bug.cgi?id=12345" }]
+
+[[overlays]]
+type = "patch-add"
+source = "patches/CVE-2024-1234.patch"
+
+[[overlays]]
+type = "spec-append-lines"
+section = "%changelog"
+lines = ["- Fix CVE-2024-1234"]
 ```
 
 ## Examples

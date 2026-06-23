@@ -406,6 +406,49 @@ func TestComponentPublishConfig_Validate(t *testing.T) {
 	}
 }
 
+func TestComponentConfig_OverlayFilesValidate(t *testing.T) {
+	t.Parallel()
+
+	validate := validator.New()
+
+	validCases := []struct {
+		name         string
+		overlayFiles []string
+	}{
+		{name: "unset"},
+		{name: "empty slice", overlayFiles: []string{}},
+		{name: "non-empty pattern", overlayFiles: []string{"overlays/*.overlay.toml"}},
+	}
+
+	for _, testCase := range validCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := projectconfig.ComponentConfig{OverlayFiles: testCase.overlayFiles}
+			require.NoError(t, validate.Struct(&cfg))
+		})
+	}
+
+	invalidCases := []struct {
+		name         string
+		overlayFiles []string
+	}{
+		{name: "empty pattern", overlayFiles: []string{""}},
+		{name: "empty pattern among valid patterns", overlayFiles: []string{"overlays/*.overlay.toml", ""}},
+	}
+
+	for _, testCase := range invalidCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := projectconfig.ComponentConfig{OverlayFiles: testCase.overlayFiles}
+			err := validate.Struct(&cfg)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "OverlayFiles")
+		})
+	}
+}
+
 func TestIsDebugInfoPackage(t *testing.T) {
 	t.Parallel()
 

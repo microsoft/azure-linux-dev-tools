@@ -135,6 +135,14 @@
           "title": "Overlays",
           "description": "Overlays to apply to this component's spec and/or sources"
         },
+        "overlay-files": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Overlay files",
+          "description": "Glob patterns (relative to the component config file) matched against the filesystem to locate per-file overlay documents at load time"
+        },
         "build": {
           "$ref": "#/$defs/ComponentBuildConfig",
           "title": "Build configuration",
