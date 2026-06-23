@@ -73,6 +73,10 @@ func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
 		// ComponentOverlay.Metadata — documentation describing overlay intent and provenance.
 		"ComponentOverlay.Metadata": true,
 
+		// ComponentConfig.OverlayFiles — affects only where overlays are sourced from, not
+		// their content; the resulting overlays are fingerprinted normally.
+		"ComponentConfig.OverlayFiles": true,
+
 		// SourceFileReference.Component — back-reference to parent, not a build input.
 		"SourceFileReference.Component": true,
 

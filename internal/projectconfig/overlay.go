@@ -45,10 +45,10 @@ type ComponentOverlay struct {
 	Source string `toml:"source,omitempty" json:"source,omitempty" jsonschema:"title=Source,description=For overlays that require a source file as input, indicates a path to that file; relative paths are relative to the config file that defines the overlay" fingerprint:"-"`
 
 	// Metadata describes the intent and provenance of the overlay (category, related
-	// commits/PR, bug links, etc.). Optional. Populated either inline in the component
-	// config file or by the [ComponentConfig.OverlayFiles] loader, which stamps the
-	// per-file metadata onto every overlay declared in that file. Excluded from the
-	// fingerprint because it is documentation only.
+	// commits, bug links, upstreamability, etc.). Optional. Populated either inline
+	// in the component config file or by the [ComponentConfig.OverlayFiles] loader,
+	// which stamps the per-file metadata onto every overlay declared in that file.
+	// Excluded from the fingerprint because it is documentation only.
 	Metadata *OverlayMetadata `toml:"metadata,omitempty" json:"metadata,omitempty" jsonschema:"title=Metadata,description=Optional documentation metadata describing the overlay's intent and provenance" fingerprint:"-"`
 }
 
