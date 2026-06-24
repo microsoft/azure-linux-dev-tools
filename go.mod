@@ -40,7 +40,7 @@ require (
 	github.com/muesli/termenv v0.16.0
 	github.com/nxadm/tail v1.4.11
 	github.com/opencontainers/selinux v1.15.1
-	github.com/pelletier/go-toml/v2 v2.4.0
+	github.com/pelletier/go-toml/v2 v2.4.2
 	github.com/pmezard/go-difflib v1.0.0
 	github.com/samber/lo v1.53.0
 	github.com/samber/slog-multi v1.8.0
