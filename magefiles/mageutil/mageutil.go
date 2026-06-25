@@ -9,11 +9,13 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 
 	"github.com/magefile/mage/mg"
 	"github.com/magefile/mage/sh"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 )
 
 type MessageType int
@@ -165,6 +167,49 @@ func FilterLicenseNoise(output string) string {
 	}
 
 	return strings.Join(kept, "\n")
+}
+
+// licenseFileNameRegexp matches the base names of files that hold license texts or copyright
+// notices (e.g. 'LICENSE', 'LICENSE.BSD', 'COPYING.md', 'NOTICE'). It mirrors the filenames that
+// go-licenses itself recognizes when locating a package's license.
+var licenseFileNameRegexp = regexp.MustCompile(`(?i)^(LICEN[CS]E|COPYING|COPYRIGHT|NOTICE|PATENTS)`)
+
+// IsLicenseFile reports whether a file with the given base name holds license or copyright text.
+func IsLicenseFile(name string) bool {
+	return licenseFileNameRegexp.MatchString(name)
+}
+
+// CopyLicenseFiles copies every license or copyright file found directly in srcDir into destDir,
+// creating destDir if any such file exists. Subdirectories are not traversed. It is used to collect
+// the license notices of modules that are otherwise excluded from go-licenses' "save" command (which
+// would copy their entire source tree) without also copying their source.
+func CopyLicenseFiles(srcDir, destDir string) error {
+	entries, err := os.ReadDir(srcDir)
+	if err != nil {
+		return fmt.Errorf("%w: failed to read directory %#q:\n%w", ErrFile, srcDir, err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !IsLicenseFile(entry.Name()) {
+			continue
+		}
+
+		if err := createDir(destDir); err != nil {
+			return err
+		}
+
+		contents, err := os.ReadFile(filepath.Join(srcDir, entry.Name()))
+		if err != nil {
+			return fmt.Errorf("%w: failed to read license file %#q:\n%w", ErrFile, entry.Name(), err)
+		}
+
+		destPath := filepath.Join(destDir, entry.Name())
+		if err := os.WriteFile(destPath, contents, fileperms.PublicFile); err != nil {
+			return fmt.Errorf("%w: failed to write license file %#q:\n%w", ErrFile, destPath, err)
+		}
+	}
+
+	return nil
 }
 
 // getCallerFunctionName returns the name of the function that called the function that called it.

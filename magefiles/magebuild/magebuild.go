@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -371,14 +372,55 @@ func collectLicenses() error {
 	// (assembly) code. Capture stderr, strip those warnings, and only surface what's left on failure.
 	var stderr strings.Builder
 
-	if _, err := sh.Exec(env, os.Stdout, &stderr, cmdAbsPath,
-		"save", "--save_path", mageutil.LicenseDir(), "--force", "./..."); err != nil {
+	// Some dependencies are dual-licensed under a reciprocal license (e.g. MPL-2.0) in addition to a
+	// permissive one. For those, go-licenses' "save" would copy the module's entire source tree. We
+	// only consume the permissively-licensed portions, so we exclude them from the bulk save and copy
+	// just their license files afterwards.
+	saveArgs := []string{"save", "--save_path", mageutil.LicenseDir(), "--force"}
+	for _, module := range licenseSourceExclusions {
+		saveArgs = append(saveArgs, "--ignore", module)
+	}
+
+	saveArgs = append(saveArgs, "./...")
+
+	if _, err := sh.Exec(env, os.Stdout, &stderr, cmdAbsPath, saveArgs...); err != nil {
 		mageutil.PrintLicenseOutput(stderr.String())
 
 		return mageutil.PrintAndReturnError(errorText, ErrLicenses, err)
 	}
 
+	if err := saveExcludedModuleLicenses(licenseSourceExclusions); err != nil {
+		return mageutil.PrintAndReturnError(errorText, ErrLicenses, err)
+	}
+
 	mageutil.MagePrintln(mageutil.MsgSuccess, successText)
+
+	return nil
+}
+
+// licenseSourceExclusions lists module paths that go-licenses' "save" command would otherwise copy in
+// full because they are dual-licensed under a reciprocal license (e.g. MPL-2.0) in addition to a
+// permissive one. We only consume the permissively-licensed portions of these modules, so their
+// license files are collected by [saveExcludedModuleLicenses] without their source.
+var licenseSourceExclusions = []string{ //nolint:gochecknoglobals // static config list, simplest as a package var
+	"github.com/cyphar/filepath-securejoin",
+}
+
+// saveExcludedModuleLicenses copies just the license files of the given modules into the license
+// directory. These modules are excluded from the go-licenses "save" command (which would otherwise
+// copy their entire source tree), so we collect their license notices here without the source.
+func saveExcludedModuleLicenses(modules []string) error {
+	for _, module := range modules {
+		moduleDir, err := sh.Output(mg.GoCmd(), "list", "-m", "-f", "{{.Dir}}", module)
+		if err != nil {
+			return fmt.Errorf("failed to locate module %#q:\n%w", module, err)
+		}
+
+		destDir := filepath.Join(mageutil.LicenseDir(), filepath.FromSlash(module))
+		if err := mageutil.CopyLicenseFiles(moduleDir, destDir); err != nil {
+			return fmt.Errorf("failed to copy license files for module %#q:\n%w", module, err)
+		}
+	}
 
 	return nil
 }
