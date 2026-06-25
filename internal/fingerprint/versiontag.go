@@ -21,7 +21,7 @@ const excludeTag = "-"
 // keyPrefix is the fingerprint-tag prefix for an explicit emit-key override.
 const keyPrefix = "key="
 
-// versionRange is one half-open or closed membership range in a version set.
+// versionRange is one closed (inclusive) membership range in a version set.
 // A range covers [low, high]; high == versionOpen means open-ended ("*").
 type versionRange struct {
 	low        int
@@ -66,6 +66,12 @@ func parseVersionSet(tag string, currentVersion int) (versionSet, error) {
 			return versionSet{}, fmt.Errorf("empty key= override in fingerprint tag %#q", tag)
 		}
 
+		if !isValidEmitKey(emitKey) {
+			return versionSet{}, fmt.Errorf(
+				"invalid key= override %#q in fingerprint tag %#q: must be a bare identifier "+
+					"(letters, digits, '-', '_', '.')", emitKey, tag)
+		}
+
 		set.emitKey = emitKey
 		members = members[1:]
 	}
@@ -95,9 +101,30 @@ func parseVersionSet(tag string, currentVersion int) (versionSet, error) {
 	return set, nil
 }
 
+// isValidEmitKey reports whether s is a bare emit-key identifier - the character
+// set of a frozen TOML key (letters, digits, '-', '_', '.'). The grammar's key=
+// override takes an identifier, so a malformed value like "foo bar" is rejected
+// up front rather than silently freezing an odd emit-key.
+func isValidEmitKey(s string) bool {
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '-', r == '_', r == '.':
+		default:
+			return false
+		}
+	}
+
+	return s != ""
+}
+
 // parseRange parses a single "[!]vLow[..(vHigh|*)]" member.
 func parseRange(member string, currentVersion int) (versionRange, error) {
 	rng := versionRange{}
+
+	// rangeText keeps the original member (including any leading '!') for error
+	// messages, so a malformed "!v3..v1" is reported as written, not as "v3..v1".
+	rangeText := member
 
 	if strings.HasPrefix(member, "!") {
 		rng.alwaysEmit = true
@@ -126,7 +153,7 @@ func parseRange(member string, currentVersion int) (versionRange, error) {
 		}
 
 		if highVersion < lowVersion {
-			return versionRange{}, fmt.Errorf("range %#q is inverted: high bound is below low bound", member)
+			return versionRange{}, fmt.Errorf("range %#q is inverted: high bound is below low bound", rangeText)
 		}
 
 		rng.high = highVersion
@@ -134,12 +161,12 @@ func parseRange(member string, currentVersion int) (versionRange, error) {
 
 	if rng.low > currentVersion {
 		return versionRange{}, fmt.Errorf(
-			"range %#q references v%d, which is beyond the current version v%d", member, rng.low, currentVersion)
+			"range %#q references v%d, which is beyond the current version v%d", rangeText, rng.low, currentVersion)
 	}
 
 	if rng.high != versionOpen && rng.high > currentVersion {
 		return versionRange{}, fmt.Errorf(
-			"range %#q references v%d, which is beyond the current version v%d", member, rng.high, currentVersion)
+			"range %#q references v%d, which is beyond the current version v%d", rangeText, rng.high, currentVersion)
 	}
 
 	return rng, nil

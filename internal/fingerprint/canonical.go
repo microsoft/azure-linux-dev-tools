@@ -185,6 +185,12 @@ func scalarToJSON(rval reflect.Value) (any, error) {
 
 		return number, nil
 	case reflect.Slice:
+		if rval.Type().Elem().Kind() == reflect.Uint8 {
+			return nil, fmt.Errorf(
+				"%s is not encodable at v1: a byte slice ([]byte) must be represented as a string in the config schema",
+				rval.Type())
+		}
+
 		out := make([]any, 0, rval.Len())
 		for i := range rval.Len() {
 			elem, err := scalarToJSON(rval.Index(i))
