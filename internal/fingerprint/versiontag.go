@@ -4,9 +4,10 @@
 package fingerprint
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -46,6 +47,13 @@ type versionSet struct {
 // future-referencing (any bound above currentVersion), and duplicate-key= tags.
 // An absent tag is the caller's responsibility: the empty string is rejected
 // here because every fingerprinted field must carry an explicit decision.
+//
+// This grammar is not yet active on the projectconfig structs: the legacy
+// hashstructure path still measures fields and treats any non-"-" tag as
+// "included", so introducing a range tag is behaviour-neutral until the wiring in
+// part 2/3. At that point TestAllFingerprintedFieldsHaveDecision is updated to
+// delegate to this parser; today it accepts only ""/"-" and fails loudly on a
+// richer tag, which is the desired guard against jumping ahead of the wiring.
 func parseVersionSet(tag string, currentVersion int) (versionSet, error) {
 	if tag == excludeTag {
 		return versionSet{excluded: true}, nil
@@ -214,8 +222,8 @@ func parseVersion(token string) (int, error) {
 // so a version can never match two ranges (which would alias two always-emit
 // flags).
 func sortAndValidateRanges(ranges []versionRange) error {
-	sort.Slice(ranges, func(i, j int) bool {
-		return ranges[i].low < ranges[j].low
+	slices.SortFunc(ranges, func(a, b versionRange) int {
+		return cmp.Compare(a.low, b.low)
 	})
 
 	for i := 1; i < len(ranges); i++ {

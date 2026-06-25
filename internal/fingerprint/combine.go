@@ -17,6 +17,11 @@ import (
 // keys provide domain separation between the config projection and the non-config
 // inputs, so no manual length-prefixing is needed; JCS sorts keys and pins number
 // and string formatting, so the bytes are stable across runs and Go versions.
+//
+// Cross-language RFC 8785 reproducibility is a hard requirement (a fingerprint must
+// be reconstructable outside Go), which is why this uses the JCS reference
+// implementation rather than encoding/json alone; the JSON-safe integer ceiling in
+// scalarToJSON (see maxSafeInteger) is the deliberate consequence of that choice.
 func canonicalDigest(document map[string]any) (string, error) {
 	raw, err := json.Marshal(document)
 	if err != nil {
@@ -30,5 +35,11 @@ func canonicalDigest(document map[string]any) (string, error) {
 
 	sum := sha256.Sum256(canonical)
 
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
+	return sha256Hex(sum[:]), nil
+}
+
+// sha256Hex renders a digest as the canonical "sha256:<hex>" fingerprint token used
+// across this package.
+func sha256Hex(sum []byte) string {
+	return "sha256:" + hex.EncodeToString(sum)
 }

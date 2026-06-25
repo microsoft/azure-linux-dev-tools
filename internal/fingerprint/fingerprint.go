@@ -5,7 +5,6 @@ package fingerprint
 
 import (
 	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"sort"
@@ -164,7 +163,7 @@ func combineInputs(inputs ComponentInputs) string {
 		}
 	}
 
-	return "sha256:" + hex.EncodeToString(hasher.Sum(nil))
+	return sha256Hex(hasher.Sum(nil))
 }
 
 // writeField writes a labeled value to the hasher for domain separation.
@@ -219,5 +218,5 @@ func ComputeResolutionHash(inputs UpstreamCommitResolutionInputs) string {
 	writeField(hasher, "upstream_commit_pin", inputs.UpstreamCommitPin)
 	writeField(hasher, "upstream_name", inputs.UpstreamName)
 
-	return "sha256:" + hex.EncodeToString(hasher.Sum(nil))
+	return sha256Hex(hasher.Sum(nil))
 }

@@ -8,10 +8,13 @@ import (
 	"reflect"
 )
 
-// maxSafeInteger is the largest integer (2^53) that survives RFC 8785's
-// ECMAScript number serialization without precision loss. An integer of greater
-// magnitude is rejected rather than silently coerced - such a value is almost
-// always an identifier or hash that belongs in the config as a string.
+// maxSafeInteger is the largest integer magnitude (2^53) that survives RFC 8785's
+// ECMAScript number serialization without precision loss. Note this is 2^53, one
+// more than ECMAScript's Number.MAX_SAFE_INTEGER (2^53-1): 2^53 is itself exactly
+// representable, and its only non-representable neighbour 2^53+1 is rejected by the
+// strict ">" bound in scalarToJSON. An integer of greater magnitude is rejected
+// rather than silently coerced - such a value is almost always an identifier or
+// hash that belongs in the config as a string.
 const maxSafeInteger = 1 << 53
 
 // treeBuilder accumulates the canonical projection of a struct as a JSON-able
@@ -35,6 +38,10 @@ type treeBuilder struct {
 }
 
 func (b *treeBuilder) set(key string, value any) {
+	if b.err != nil {
+		return
+	}
+
 	if b.out == nil {
 		b.out = map[string]any{}
 	}
@@ -86,8 +93,11 @@ func (b *treeBuilder) emitScalar(key string, value any, always bool) {
 	b.set(key, encoded)
 }
 
-// emitMap adds a scalar-valued map, measuring key membership. Struct-valued maps
-// are a composite and must be projected entry-by-entry through emitComposite.
+// emitMap adds a scalar-leaf-valued map, measuring key membership: each value is a
+// scalar or a scalar slice (matching scalarToJSON's leaf set). Interface-kind values
+// (from a map[string]any) are unwrapped to their concrete value, as emitScalar does.
+// Struct-valued maps are a composite and must be projected entry-by-entry through
+// emitComposite.
 func (b *treeBuilder) emitMap(key string, mapValue any) {
 	if b.err != nil {
 		return
@@ -114,7 +124,21 @@ func (b *treeBuilder) emitMap(key string, mapValue any) {
 
 	iter := rval.MapRange()
 	for iter.Next() {
-		encoded, err := scalarToJSON(iter.Value())
+		entryVal := iter.Value()
+		if entryVal.Kind() == reflect.Interface {
+			entryVal = entryVal.Elem()
+		}
+
+		if !isScalarLeaf(entryVal) {
+			b.err = fmt.Errorf(
+				"emitMap %#q entry %#q: kind %s is not an encodable scalar leaf; "+
+					"struct-valued maps use emitComposite",
+				key, iter.Key().String(), entryVal.Kind())
+
+			return
+		}
+
+		encoded, err := scalarToJSON(entryVal)
 		if err != nil {
 			b.err = fmt.Errorf("encoding map %#q entry %#q:\n%w", key, iter.Key().String(), err)
 
@@ -130,6 +154,10 @@ func (b *treeBuilder) emitMap(key string, mapValue any) {
 // emitComposite adds a nested-struct projection, omitting it when the
 // sub-projector produced no measured keys (projected emptiness).
 func (b *treeBuilder) emitComposite(key string, sub map[string]any) {
+	if b.err != nil {
+		return
+	}
+
 	if len(sub) == 0 {
 		return
 	}
@@ -140,6 +168,10 @@ func (b *treeBuilder) emitComposite(key string, sub map[string]any) {
 // emitSlice adds a struct-slice projection, omitting it when empty. A JSON array
 // preserves order, so reordering elements is a different encoding.
 func (b *treeBuilder) emitSlice(key string, elems []any) {
+	if b.err != nil {
+		return
+	}
+
 	if len(elems) == 0 {
 		return
 	}

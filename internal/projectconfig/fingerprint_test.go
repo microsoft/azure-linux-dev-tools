@@ -113,6 +113,12 @@ func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
 				// hashstructure only recognises "" (include) and "-" (exclude).
 				// Any other value is silently treated as included, which is
 				// almost certainly a typo.
+				//
+				// The richer version-range grammar (fingerprint.parseVersionSet)
+				// is NOT yet wired here: while the legacy hashstructure path is
+				// active, only ""/"-" are valid and any range tag is rejected so
+				// nobody adds one ahead of the part 2/3 wiring. When hashstructure
+				// is removed, replace this switch with a parseVersionSet call.
 				assert.Failf(t, "invalid fingerprint tag",
 					"field %q has unrecognised fingerprint tag value %q — "+
 						"only `fingerprint:\"-\"` (exclude) is valid; "+
