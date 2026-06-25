@@ -4,6 +4,7 @@
 package fingerprint
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 
@@ -184,17 +185,50 @@ func TestTreeBuilder_EmitMapErrors(t *testing.T) {
 
 func TestTreeBuilder_CompositeAndSliceProjectedEmptiness(t *testing.T) {
 	var omitted treeBuilder
-	omitted.emitComposite("build", nil)
-	omitted.emitComposite("spec", map[string]any{})
-	omitted.emitSlice("overlays", nil)
-	omitted.emitSlice("source-files", []any{})
+	omitted.emitComposite("build", nil, nil)
+	omitted.emitComposite("spec", map[string]any{}, nil)
+	omitted.emitSlice("overlays", nil, nil)
+	omitted.emitSlice("source-files", []any{}, nil)
 	assert.Nil(t, mustResult(t, &omitted), "composites/slices that projected empty are omitted")
 
 	var emitted treeBuilder
-	emitted.emitComposite("build", map[string]any{"with": []any{"x"}})
-	emitted.emitSlice("overlays", []any{map[string]any{"tag": "a"}})
+	emitted.emitComposite("build", map[string]any{"with": []any{"x"}}, nil)
+	emitted.emitSlice("overlays", []any{map[string]any{"tag": "a"}}, nil)
 	assert.Equal(t, map[string]any{
 		"build":    map[string]any{"with": []any{"x"}},
 		"overlays": []any{map[string]any{"tag": "a"}},
 	}, mustResult(t, &emitted))
+}
+
+// TestTreeBuilder_CompositeSliceErrorThreading verifies that a non-nil
+// sub-projector error passed to emitComposite/emitSlice is folded into the
+// deferred error (wrapped with the key), and that the first error wins.
+func TestTreeBuilder_CompositeSliceErrorThreading(t *testing.T) {
+	sentinel := errors.New("sub-projector failed")
+
+	var fromComposite treeBuilder
+	fromComposite.emitComposite("spec", nil, sentinel)
+	fromComposite.emit("after", "ignored")
+	_, err := fromComposite.result()
+	require.ErrorIs(t, err, sentinel, "emitComposite folds a sub-projector error into the deferred error")
+	assert.Contains(t, err.Error(), "spec", "the threaded error is wrapped with the composite key")
+
+	var fromSlice treeBuilder
+	fromSlice.emitSlice("overlays", nil, sentinel)
+	_, err = fromSlice.result()
+	require.ErrorIs(t, err, sentinel, "emitSlice folds an element-projector error into the deferred error")
+	assert.Contains(t, err.Error(), "overlays", "the threaded error is wrapped with the slice key")
+
+	// A non-nil sub-projector error is reported even when the sub-map is non-empty.
+	var nonEmptyErr treeBuilder
+	nonEmptyErr.emitComposite("spec", map[string]any{"k": "v"}, sentinel)
+	_, err = nonEmptyErr.result()
+	require.ErrorIs(t, err, sentinel, "the error takes precedence over a would-be emission")
+
+	// First error wins: a later emit failure does not overwrite the threaded one.
+	var firstWins treeBuilder
+	firstWins.emitComposite("spec", nil, sentinel)
+	firstWins.emit("bad", nil)
+	_, err = firstWins.result()
+	require.ErrorIs(t, err, sentinel, "the first (threaded) error wins")
 }

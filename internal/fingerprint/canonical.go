@@ -152,9 +152,18 @@ func (b *treeBuilder) emitMap(key string, mapValue any) {
 }
 
 // emitComposite adds a nested-struct projection, omitting it when the
-// sub-projector produced no measured keys (projected emptiness).
-func (b *treeBuilder) emitComposite(key string, sub map[string]any) {
+// sub-projector produced no measured keys (projected emptiness). A non-nil err
+// from the sub-projector is folded into the deferred error (wrapped with key), so
+// a projector threads sub-projection errors without a manual check, under the same
+// deferred-error discipline as the scalar emitters.
+func (b *treeBuilder) emitComposite(key string, sub map[string]any, err error) {
 	if b.err != nil {
+		return
+	}
+
+	if err != nil {
+		b.err = fmt.Errorf("%s:\n%w", key, err)
+
 		return
 	}
 
@@ -166,9 +175,16 @@ func (b *treeBuilder) emitComposite(key string, sub map[string]any) {
 }
 
 // emitSlice adds a struct-slice projection, omitting it when empty. A JSON array
-// preserves order, so reordering elements is a different encoding.
-func (b *treeBuilder) emitSlice(key string, elems []any) {
+// preserves order, so reordering elements is a different encoding. A non-nil err
+// from the element projector is folded into the deferred error (wrapped with key).
+func (b *treeBuilder) emitSlice(key string, elems []any, err error) {
 	if b.err != nil {
+		return
+	}
+
+	if err != nil {
+		b.err = fmt.Errorf("%s:\n%w", key, err)
+
 		return
 	}
 
