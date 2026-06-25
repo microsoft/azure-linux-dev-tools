@@ -106,16 +106,34 @@ func parseVersionSet(tag string, currentVersion int) (versionSet, error) {
 // override takes an identifier, so a malformed value like "foo bar" is rejected
 // up front rather than silently freezing an odd emit-key.
 func isValidEmitKey(s string) bool {
+	if s == "" {
+		return false
+	}
+
 	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
-			r == '-', r == '_', r == '.':
-		default:
+		if !isEmitKeyChar(r) {
 			return false
 		}
 	}
 
-	return s != ""
+	return true
+}
+
+// isEmitKeyChar reports whether r is allowed in an emit-key: a letter, digit,
+// '-', '_', or '.'.
+func isEmitKeyChar(r rune) bool {
+	switch {
+	case r >= 'a' && r <= 'z':
+		return true
+	case r >= 'A' && r <= 'Z':
+		return true
+	case r >= '0' && r <= '9':
+		return true
+	case r == '-', r == '_', r == '.':
+		return true
+	default:
+		return false
+	}
 }
 
 // parseRange parses a single "[!]vLow[..(vHigh|*)]" member.

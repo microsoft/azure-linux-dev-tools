@@ -88,6 +88,12 @@ func TestScalarToJSON_RejectsUnsafeIntegers(t *testing.T) {
 	_, err := scalarToJSON(reflect.ValueOf(int64(maxSafeInteger)))
 	require.NoError(t, err, "2^53 is exactly representable and allowed")
 
+	_, err = scalarToJSON(reflect.ValueOf(int64(-maxSafeInteger)))
+	require.NoError(t, err, "-2^53 is exactly representable and allowed (the negative boundary)")
+
+	_, err = scalarToJSON(reflect.ValueOf(uint64(maxSafeInteger)))
+	require.NoError(t, err, "a uint64 at exactly 2^53 is allowed (the unsigned boundary)")
+
 	_, err = scalarToJSON(reflect.ValueOf(int64(maxSafeInteger + 1)))
 	require.Error(t, err, "2^53+1 cannot survive RFC 8785's number model")
 
@@ -96,6 +102,14 @@ func TestScalarToJSON_RejectsUnsafeIntegers(t *testing.T) {
 
 	_, err = scalarToJSON(reflect.ValueOf(uint64(maxSafeInteger + 1)))
 	require.Error(t, err, "a uint64 above 2^53 is rejected")
+}
+
+// TestScalarToJSON_RejectsByteSlice pins that a []byte is rejected rather than
+// encoded as a JSON number array: the RFC lists []byte-style values as
+// fail-generation, so the encoder refuses one (it must be a string instead).
+func TestScalarToJSON_RejectsByteSlice(t *testing.T) {
+	_, err := scalarToJSON(reflect.ValueOf([]byte("abc")))
+	require.Error(t, err, "a byte slice ([]byte) is not encodable at v1")
 }
 
 func TestScalarToJSON_UnpinnedKindsFail(t *testing.T) {

@@ -96,6 +96,8 @@ func TestParseVersionSet_Rejects(t *testing.T) {
 		{"key override not first", "v1..*,key=foo", 1},
 		{"empty key override", "key=,v1..*", 1},
 		{"key override without ranges", "key=foo", 1},
+		{"key override with space", "key=foo bar,v1..*", 1},
+		{"key override with symbol", "key=foo@bar,v1..*", 1},
 	}
 
 	for _, testCase := range tests {
@@ -126,4 +128,28 @@ func TestVersionSet_ResolveEmitKey(t *testing.T) {
 
 	_, err = noOverride.resolveEmitKey("-")
 	require.Error(t, err, "a '-' toml key is not usable")
+}
+
+// TestVersionSet_EmitKeyAcceptsIdentifierChars exercises every allowed emit-key
+// character class (lowercase, uppercase, digit, '-', '_', '.') so a boundary
+// change to isValidEmitKey's char ranges is caught.
+func TestVersionSet_EmitKeyAcceptsIdentifierChars(t *testing.T) {
+	set, err := parseVersionSet("key=az.AZ-09_,v1..*", 1)
+	require.NoError(t, err)
+
+	key, err := set.resolveEmitKey("ignored")
+	require.NoError(t, err)
+	assert.Equal(t, "az.AZ-09_", key, "a key= override of allowed identifier chars is accepted verbatim")
+}
+
+// TestParseRange_ErrorPreservesBangPrefix pins that range errors report the
+// original member text including a leading '!', not the stripped form.
+func TestParseRange_ErrorPreservesBangPrefix(t *testing.T) {
+	_, err := parseVersionSet("!v3..v1", 3)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "!v3..v1", "an inverted '!'-range is reported as written, with '!'")
+
+	_, err = parseVersionSet("!v3..*", 1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "!v3..*", "a future-referencing '!'-range keeps the '!'")
 }
