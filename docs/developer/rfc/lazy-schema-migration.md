@@ -162,7 +162,7 @@ The projection substrate is what makes G4 true for old locks and what makes Part
 
 The substrate above fixes *what* is measured and *that* an old algorithm can be frozen; it leaves open *how* the projected fields are serialized into the bytes `sha256` consumes. The reset serializes them as **canonical JSON**. `projectVN` builds a JSON-able projection tree (`map[string]any`); the combiner assembles one document - `{config: <projection>, sourceIdentity, manualBump, releaseVer, overlays}` - serializes it with **RFC 8785 (JSON Canonicalization Scheme, JCS)**, and `sha256`s the result. The document's object keys supply the domain separation a manual `<len>:<key>=<len>:<value>` length-prefixing would otherwise need, so there is no separate length-prefix combiner.
 
-The hand-rolled length-prefixed `<len>:<key>=<len>:<value>` byte encoder is desribed in [also-considered alternatives](#alternatives-considered). Field selection, omit-if-zero, always-emit, and the frozen TOML emit-key are unchanged - only the serialization differs.
+The hand-rolled length-prefixed `<len>:<key>=<len>:<value>` byte encoder is described in [also-considered alternatives](#alternatives-considered). Field selection, omit-if-zero, always-emit, and the frozen TOML emit-key are unchanged - only the serialization differs.
 
 Why JCS rather than stdlib `encoding/json`:
 
