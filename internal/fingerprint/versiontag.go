@@ -119,17 +119,17 @@ func isValidEmitKey(s string) bool {
 	return true
 }
 
-// isEmitKeyChar reports whether r is allowed in an emit-key: a letter, digit,
+// isEmitKeyChar reports whether char is allowed in an emit-key: a letter, digit,
 // '-', '_', or '.'.
-func isEmitKeyChar(r rune) bool {
+func isEmitKeyChar(char rune) bool {
 	switch {
-	case r >= 'a' && r <= 'z':
+	case char >= 'a' && char <= 'z':
 		return true
-	case r >= 'A' && r <= 'Z':
+	case char >= 'A' && char <= 'Z':
 		return true
-	case r >= '0' && r <= '9':
+	case char >= '0' && char <= '9':
 		return true
-	case r == '-', r == '_', r == '.':
+	case char == '-', char == '_', char == '.':
 		return true
 	default:
 		return false
