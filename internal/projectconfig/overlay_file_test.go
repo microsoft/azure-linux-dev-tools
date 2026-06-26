@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//nolint:testpackage // Allow to test private functions (i.e., applyOverlayFiles).
+//nolint:testpackage // Allow to test private functions (i.e., loadOverlayFiles).
 package projectconfig
 
 import (
@@ -149,28 +149,56 @@ value = "fourth"
 	assert.Equal(t, "fourth", loaded[3].Value)
 }
 
-func TestLoadOverlayFiles_NoMatchesIsError(t *testing.T) {
+func TestLoadOverlayFiles_NoMatchesIsNoop(t *testing.T) {
 	ctx := testctx.NewCtx()
 	overlayDir := "/project/comps/empty/overlays"
 
 	// A non-overlay file alongside must not be picked up; a glob that matches no
-	// files is a misconfiguration and must error.
+	// files contributes no overlays.
 	require.NoError(t, fileutils.WriteFile(ctx.FS(),
 		filepath.Join(overlayDir, "README.md"),
 		[]byte("not an overlay"), fileperms.PrivateFile))
 
-	_, err := loadOverlayFiles(ctx.FS(), "/project", []string{overlayGlob(overlayDir)}, false)
-	require.ErrorIs(t, err, ErrOverlayFilesNoMatches)
+	loaded, err := loadOverlayFiles(ctx.FS(), "/project", []string{overlayGlob(overlayDir)}, false)
+	require.NoError(t, err)
+	assert.Empty(t, loaded)
 }
 
-func TestLoadOverlayFiles_MissingDirIsError(t *testing.T) {
+func TestLoadOverlayFiles_MissingDirIsNoop(t *testing.T) {
+	ctx := testctx.NewCtx()
+
+	loaded, err := loadOverlayFiles(
+		ctx.FS(), "/project",
+		[]string{overlayGlob("/project/comps/does-not-exist/overlays")}, false,
+	)
+	require.NoError(t, err)
+	assert.Empty(t, loaded)
+}
+
+func TestLoadOverlayFiles_MissingLiteralPathErrors(t *testing.T) {
 	ctx := testctx.NewCtx()
 
 	_, err := loadOverlayFiles(
 		ctx.FS(), "/project",
-		[]string{overlayGlob("/project/comps/does-not-exist/overlays")}, false,
+		[]string{"/project/comps/does-not-exist/overlays/0001-missing.overlay.toml"}, false,
 	)
 	require.ErrorIs(t, err, ErrOverlayFilesNoMatches)
+}
+
+func TestLoadOverlayFiles_NoMatchDoesNotBlockLaterMatches(t *testing.T) {
+	ctx := testctx.NewCtx()
+	overlayDir := antOverlayDir
+
+	require.NoError(t, fileutils.WriteFile(ctx.FS(),
+		filepath.Join(overlayDir, "0001-backport.overlay.toml"),
+		[]byte(validBackportOverlayFile), fileperms.PrivateFile))
+
+	loaded, err := loadOverlayFiles(ctx.FS(), "/project", []string{
+		overlayGlob("/project/comps/does-not-exist/overlays"),
+		overlayGlob(overlayDir),
+	}, false)
+	require.NoError(t, err)
+	require.Len(t, loaded, 2)
 }
 
 func TestLoadOverlayFiles_RejectsPerOverlayMetadata(t *testing.T) {
@@ -229,6 +257,28 @@ value = "Microsoft"
 	_, err := loadOverlayFiles(ctx.FS(), "/project", []string{overlayGlob(overlayDir)}, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "category")
+}
+
+func TestLoadOverlayFiles_RejectsInvalidOverlay(t *testing.T) {
+	ctx := testctx.NewCtx()
+	overlayDir := badOverlayTestDir
+
+	require.NoError(t, fileutils.WriteFile(ctx.FS(),
+		filepath.Join(overlayDir, "0001-bad.overlay.toml"),
+		[]byte(`
+[metadata]
+category = "azl-branding-policy"
+
+[[overlays]]
+type = "spec-set-tag"
+tag = "Vendor"
+`), fileperms.PrivateFile))
+
+	_, err := loadOverlayFiles(ctx.FS(), "/project", []string{overlayGlob(overlayDir)}, false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid overlay 1")
+	assert.Contains(t, err.Error(), "requires")
+	assert.Contains(t, err.Error(), "value")
 }
 
 func TestLoadOverlayFile_PermissiveTolerates_InvalidMetadata(t *testing.T) {
@@ -319,7 +369,7 @@ func TestLoadOverlayFiles_DoubleStarMatchesNested(t *testing.T) {
 	require.Len(t, loaded, 2, "**-style glob must descend into subdirectories")
 }
 
-func TestApplyOverlayFiles_AppendsAfterInlineOverlays(t *testing.T) {
+func TestExpandResolvedOverlayFiles_AppendsAfterInlineOverlays(t *testing.T) {
 	ctx := testctx.NewCtx()
 	overlayDir := antOverlayDir
 
@@ -327,147 +377,60 @@ func TestApplyOverlayFiles_AppendsAfterInlineOverlays(t *testing.T) {
 		filepath.Join(overlayDir, "0001-backport.overlay.toml"),
 		[]byte(validBackportOverlayFile), fileperms.PrivateFile))
 
-	cfg := &ConfigFile{
-		dir: "/project",
-		Components: map[string]ComponentConfig{
-			"ant": {
-				OverlayFiles: []string{"comps/ant/overlays/*.overlay.toml"},
-				Overlays: []ComponentOverlay{
-					{
-						Type:  ComponentOverlaySetSpecTag,
-						Tag:   "Vendor",
-						Value: "Microsoft",
-						Metadata: &OverlayMetadata{
-							Category: OverlayCategoryAZLBrandingPolicy,
-						},
-					},
+	cfg := &ConfigFile{dir: "/project"}
+	component := ComponentConfig{
+		Name:             "ant",
+		SourceConfigFile: cfg,
+		OverlayFiles:     []string{"comps/ant/overlays/*.overlay.toml"},
+		Overlays: []ComponentOverlay{
+			{
+				Type:  ComponentOverlaySetSpecTag,
+				Tag:   "Vendor",
+				Value: "Microsoft",
+				Metadata: &OverlayMetadata{
+					Category: OverlayCategoryAZLBrandingPolicy,
 				},
 			},
 		},
 	}
 
-	require.NoError(t, applyOverlayFiles(ctx.FS(), cfg, false))
+	expanded, err := ExpandResolvedOverlayFiles(ctx.FS(), component, "/project", false)
+	require.NoError(t, err)
 
-	ant := cfg.Components["ant"]
-	require.Len(t, ant.Overlays, 3, "inline overlay + two file-sourced overlays")
+	require.Len(t, expanded.Overlays, 3, "inline overlay + two file-sourced overlays")
+	assert.Empty(t, expanded.OverlayFiles, "overlay-files should be consumed after expansion")
 
 	// Inline first.
-	assert.Equal(t, ComponentOverlaySetSpecTag, ant.Overlays[0].Type)
-	assert.Equal(t, OverlayCategoryAZLBrandingPolicy, ant.Overlays[0].Metadata.Category)
+	assert.Equal(t, ComponentOverlaySetSpecTag, expanded.Overlays[0].Type)
+	assert.Equal(t, OverlayCategoryAZLBrandingPolicy, expanded.Overlays[0].Metadata.Category)
 
 	// File-sourced overlays appended in file/declaration order, with the file's
 	// metadata stamped onto each.
-	assert.Equal(t, ComponentOverlaySearchAndReplaceInSpec, ant.Overlays[1].Type)
-	require.NotNil(t, ant.Overlays[1].Metadata)
-	assert.Equal(t, OverlayCategoryBackportDistGit, ant.Overlays[1].Metadata.Category)
+	assert.Equal(t, ComponentOverlaySearchAndReplaceInSpec, expanded.Overlays[1].Type)
+	require.NotNil(t, expanded.Overlays[1].Metadata)
+	assert.Equal(t, OverlayCategoryBackportDistGit, expanded.Overlays[1].Metadata.Category)
 
-	assert.Equal(t, ComponentOverlayRemoveSubpackage, ant.Overlays[2].Type)
-	require.NotNil(t, ant.Overlays[2].Metadata)
-	assert.Equal(t, OverlayCategoryBackportDistGit, ant.Overlays[2].Metadata.Category)
+	assert.Equal(t, ComponentOverlayRemoveSubpackage, expanded.Overlays[2].Type)
+	require.NotNil(t, expanded.Overlays[2].Metadata)
+	assert.Equal(t, OverlayCategoryBackportDistGit, expanded.Overlays[2].Metadata.Category)
 }
 
-func TestApplyOverlayFiles_NoopWhenUnset(t *testing.T) {
+func TestExpandResolvedOverlayFiles_NoopWhenUnset(t *testing.T) {
 	ctx := testctx.NewCtx()
 
-	cfg := &ConfigFile{
-		dir: "/project",
-		Components: map[string]ComponentConfig{
-			"ant": {
-				Overlays: []ComponentOverlay{
-					{Type: ComponentOverlayAddSpecTag, Tag: "Vendor", Value: "Microsoft"},
-				},
-			},
+	component := ComponentConfig{
+		Name: "ant",
+		Overlays: []ComponentOverlay{
+			{Type: ComponentOverlayAddSpecTag, Tag: "Vendor", Value: "Microsoft"},
 		},
 	}
 
-	require.NoError(t, applyOverlayFiles(ctx.FS(), cfg, false))
-
-	ant := cfg.Components["ant"]
-	require.Len(t, ant.Overlays, 1, "no overlay-files, no merging")
+	expanded, err := ExpandResolvedOverlayFiles(ctx.FS(), component, "", false)
+	require.NoError(t, err)
+	require.Len(t, expanded.Overlays, 1, "no overlay-files, no merging")
 }
 
-func TestRejectOverlayFilesInDefaults(t *testing.T) {
-	const overlayFilePattern = "overlays/*.overlay.toml"
-
-	testCases := []struct {
-		name          string
-		cfg           ConfigFile
-		errorContains string
-	}{
-		{
-			name: "project-level default-component-config",
-			cfg: ConfigFile{
-				DefaultComponentConfig: &ComponentConfig{
-					OverlayFiles: []string{overlayFilePattern},
-				},
-			},
-			errorContains: "project-level default-component-config",
-		},
-		{
-			name: "component-group default-component-config",
-			cfg: ConfigFile{
-				ComponentGroups: map[string]ComponentGroupConfig{
-					"core": {
-						DefaultComponentConfig: ComponentConfig{
-							OverlayFiles: []string{overlayFilePattern},
-						},
-					},
-				},
-			},
-			errorContains: "component-group `core`",
-		},
-		{
-			name: "distro version default-component-config",
-			cfg: ConfigFile{
-				Distros: map[string]DistroDefinition{
-					"azl": {
-						Versions: map[string]DistroVersionDefinition{
-							"3.0": {
-								DefaultComponentConfig: ComponentConfig{
-									OverlayFiles: []string{overlayFilePattern},
-								},
-							},
-						},
-					},
-				},
-			},
-			errorContains: "distro `azl` version `3.0`",
-		},
-		{
-			name: "unset defaults",
-			cfg: ConfigFile{
-				DefaultComponentConfig: &ComponentConfig{},
-				ComponentGroups: map[string]ComponentGroupConfig{
-					"core": {},
-				},
-				Distros: map[string]DistroDefinition{
-					"azl": {
-						Versions: map[string]DistroVersionDefinition{
-							"3.0": {},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			err := rejectOverlayFilesInDefaults(&testCase.cfg)
-
-			if testCase.errorContains == "" {
-				require.NoError(t, err)
-
-				return
-			}
-
-			require.ErrorIs(t, err, ErrOverlayFilesInDefaultConfig)
-			assert.Contains(t, err.Error(), testCase.errorContains)
-		})
-	}
-}
-
-func TestApplyOverlayFiles_AcceptsAbsoluteGlob(t *testing.T) {
+func TestExpandResolvedOverlayFiles_AcceptsAbsoluteGlob(t *testing.T) {
 	ctx := testctx.NewCtx()
 	absDir := "/elsewhere/overlays"
 
@@ -475,43 +438,48 @@ func TestApplyOverlayFiles_AcceptsAbsoluteGlob(t *testing.T) {
 		filepath.Join(absDir, "0001-backport.overlay.toml"),
 		[]byte(validBackportOverlayFile), fileperms.PrivateFile))
 
-	cfg := &ConfigFile{
-		dir: "/project",
-		Components: map[string]ComponentConfig{
-			"ant": {OverlayFiles: []string{overlayGlob(absDir)}},
-		},
-	}
+	component := ComponentConfig{Name: "ant", OverlayFiles: []string{overlayGlob(absDir)}}
 
-	require.NoError(t, applyOverlayFiles(ctx.FS(), cfg, false))
+	expanded, err := ExpandResolvedOverlayFiles(ctx.FS(), component, "", false)
+	require.NoError(t, err)
 
-	ant := cfg.Components["ant"]
-	require.Len(t, ant.Overlays, 2, "absolute glob is not re-rooted under cfg.dir")
-	require.NotNil(t, ant.Overlays[0].Metadata)
-	assert.Equal(t, OverlayCategoryBackportDistGit, ant.Overlays[0].Metadata.Category)
+	require.Len(t, expanded.Overlays, 2, "absolute glob is not re-rooted under cfg.dir")
+	require.NotNil(t, expanded.Overlays[0].Metadata)
+	assert.Equal(t, OverlayCategoryBackportDistGit, expanded.Overlays[0].Metadata.Category)
 }
 
-// TestLoadAndResolveProjectConfig_OverlayFiles exercises the full loader pipeline
-// (loadAndResolveProjectConfig -> loadProjectConfigFile -> applyOverlayFiles) and
-// guards against regressions that drop the overlay-files hook from the loader.
-func TestLoadAndResolveProjectConfig_OverlayFiles(t *testing.T) {
+func TestExpandResolvedOverlayFiles_RequiresReferenceDirForRelativePattern(t *testing.T) {
 	ctx := testctx.NewCtx()
 
-	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(`
-[components.ant]
-overlay-files = ["comps/ant/overlays/*.overlay.toml"]
-`), fileperms.PrivateFile))
+	_, err := ExpandResolvedOverlayFiles(ctx.FS(), ComponentConfig{
+		Name:         "ant",
+		OverlayFiles: []string{"overlays/*.overlay.toml"},
+	}, "", false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no reference directory")
+}
+
+func TestExpandResolvedOverlayFiles_DefaultPatternUsesConcreteComponentConfigDir(t *testing.T) {
+	ctx := testctx.NewCtx()
+	componentConfig := &ConfigFile{dir: "/project/comps/ant"}
 
 	require.NoError(t, fileutils.WriteFile(ctx.FS(),
 		"/project/comps/ant/overlays/0001-backport.overlay.toml",
 		[]byte(validBackportOverlayFile), fileperms.PrivateFile))
 
-	cfg, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	resolved, err := ResolveComponentConfig(
+		ComponentConfig{Name: "ant", SourceConfigFile: componentConfig},
+		ComponentConfig{OverlayFiles: []string{"overlays/*.overlay.toml"}},
+		ComponentConfig{},
+		nil,
+		nil,
+	)
 	require.NoError(t, err)
-	require.NotNil(t, cfg)
 
-	ant, ok := cfg.Components["ant"]
-	require.True(t, ok, "ant component should be present")
-	require.Len(t, ant.Overlays, 2)
-	require.NotNil(t, ant.Overlays[0].Metadata)
-	assert.Equal(t, OverlayCategoryBackportDistGit, ant.Overlays[0].Metadata.Category)
+	expanded, err := ExpandResolvedOverlayFiles(ctx.FS(), resolved, componentConfig.Dir(), false)
+	require.NoError(t, err)
+	require.Len(t, expanded.Overlays, 2)
+	assert.Empty(t, expanded.OverlayFiles)
+	require.NotNil(t, expanded.Overlays[0].Metadata)
+	assert.Equal(t, OverlayCategoryBackportDistGit, expanded.Overlays[0].Metadata.Category)
 }

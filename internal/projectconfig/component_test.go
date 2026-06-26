@@ -183,6 +183,45 @@ func TestMergeComponentUpdates(t *testing.T) {
 	require.Equal(t, []string{"x", "y", "w"}, base.Build.Without)
 }
 
+func TestMergeComponentUpdates_OverlayFilesOverride(t *testing.T) {
+	base := projectconfig.ComponentConfig{
+		OverlayFiles: []string{"overlays/*.overlay.toml"},
+	}
+
+	updates := projectconfig.ComponentConfig{
+		OverlayFiles: []string{"custom/*.overlay.toml"},
+	}
+
+	err := base.MergeUpdatesFrom(&updates)
+	require.NoError(t, err)
+	require.Equal(t, []string{"custom/*.overlay.toml"}, base.OverlayFiles)
+}
+
+func TestMergeComponentUpdates_OverlayFilesEmptyOverride(t *testing.T) {
+	base := projectconfig.ComponentConfig{
+		OverlayFiles: []string{"overlays/*.overlay.toml"},
+	}
+
+	updates := projectconfig.ComponentConfig{
+		OverlayFiles: []string{},
+	}
+
+	err := base.MergeUpdatesFrom(&updates)
+	require.NoError(t, err)
+	require.NotNil(t, base.OverlayFiles)
+	require.Empty(t, base.OverlayFiles)
+}
+
+func TestMergeComponentUpdates_OverlayFilesInheritWhenUnset(t *testing.T) {
+	base := projectconfig.ComponentConfig{
+		OverlayFiles: []string{"overlays/*.overlay.toml"},
+	}
+
+	err := base.MergeUpdatesFrom(&projectconfig.ComponentConfig{})
+	require.NoError(t, err)
+	require.Equal(t, []string{"overlays/*.overlay.toml"}, base.OverlayFiles)
+}
+
 func TestAllowedSourceFilesHashTypes_MatchesJSONSchemaEnum(t *testing.T) {
 	// Extract enum values from the jsonschema tag on
 	// [projectconfig.SourceFileReference.HashType].
@@ -323,6 +362,27 @@ func TestResolveComponentConfig(t *testing.T) {
 		)
 		require.NoError(t, err)
 		assert.Equal(t, "comp-commit", resolved.Spec.UpstreamCommit)
+	})
+
+	t.Run("component empty overlay files clears group defaults", func(t *testing.T) {
+		groups := map[string]projectconfig.ComponentGroupConfig{
+			"core": {
+				DefaultComponentConfig: projectconfig.ComponentConfig{
+					OverlayFiles: []string{"overlays/*.overlay.toml"},
+				},
+			},
+		}
+		comp := projectconfig.ComponentConfig{
+			Name:         "curl",
+			OverlayFiles: []string{},
+		}
+
+		resolved, err := projectconfig.ResolveComponentConfig(
+			comp, projectconfig.ComponentConfig{}, distroDefaults, groups, []string{"core"},
+		)
+		require.NoError(t, err)
+		require.NotNil(t, resolved.OverlayFiles)
+		assert.Empty(t, resolved.OverlayFiles)
 	})
 
 	t.Run("missing group errors", func(t *testing.T) {
