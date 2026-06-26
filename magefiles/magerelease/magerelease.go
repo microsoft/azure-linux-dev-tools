@@ -32,9 +32,16 @@ var (
 func Changelog() error {
 	mageutil.MagePrintln(mageutil.MsgStart, "Generating changelog draft with git-cliff...")
 
-	cliff, err := exec.LookPath("git-cliff")
-	if err != nil {
-		return mageutil.PrintAndReturnError(gitCliffInstallHint(), ErrChangelog, err)
+	// git-cliff is an external (non-Go) tool installed separately, so invoke it by name and let
+	// PATH resolution happen at execution time (the repo forbids exec.LookPath for tool checks).
+	// Probe it once up front so a missing binary surfaces an actionable install hint.
+	const cliff = "git-cliff"
+	if _, err := sh.Output(cliff, "--version"); err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return mageutil.PrintAndReturnError(gitCliffInstallHint(), ErrChangelog, err)
+		}
+
+		return mageutil.PrintAndReturnError("git-cliff is installed but failed to run.", ErrChangelog, err)
 	}
 
 	projectDir := mageutil.AzldevProjectDir()
@@ -56,7 +63,7 @@ func Changelog() error {
 
 	// --bump computes the next version from the commits; --unreleased limits to commits since the
 	// last release tag; --prepend inserts the new section at the top of the existing changelog.
-	err = sh.Run(cliff, "--config", configPath, "--bump", "--unreleased", "--prepend", changelogPath)
+	err := sh.Run(cliff, "--config", configPath, "--bump", "--unreleased", "--prepend", changelogPath)
 	if err != nil {
 		return mageutil.PrintAndReturnError("git-cliff failed to generate the changelog.", ErrChangelog, err)
 	}
