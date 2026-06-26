@@ -1,0 +1,81 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+#
+# git-cliff configuration for generating azldev's CHANGELOG.md from Conventional
+# Commits. Run it via `mage changelog`; see docs/developer/how-to/releasing.md.
+# Reference: https://git-cliff.org
+#
+# The generated entries are a *draft*: a human (or Copilot) prunes and rewords
+# them into user-facing notes before a release. Internal commit types (docs,
+# test, chore, build, ci, style, refactor, and dependency bumps) are skipped so
+# the draft starts close to user-facing.
+
+[changelog]
+# The markdownlint-disable-file comment scopes two relaxations to CHANGELOG.md
+# only (no repo-wide markdownlint config): MD013 because auto-generated entries
+# are one line per commit and can exceed the line length, and MD024 because the
+# Keep a Changelog format repeats '### Added'/'### Fixed' under every version.
+header = """
+# Changelog
+
+<!-- markdownlint-disable-file MD013 MD024 -->
+
+All notable changes to `azldev` are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+"""
+# Per-version section in Keep a Changelog style. `version` is unset when
+# rendering unreleased commits, which yields an `## [Unreleased]` heading. The
+# leading blank line keeps a blank line above each version heading (markdownlint
+# MD022) when the section is prepended below the file header or another version.
+body = """
+
+{% if version %}\
+## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+## [Unreleased]
+{% endif %}\
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim | upper_first }}
+{% for commit in commits %}
+- {{ commit.message | split(pat="\n") | first | upper_first | trim }}\
+{% endfor %}
+{% endfor %}\
+"""
+# Collapse any run of 3+ newlines left by the template into a single blank line
+# so the rendered changelog has no double blank lines (markdownlint MD012).
+postprocessors = [{ pattern = '\n{3,}', replace = "\n\n" }]
+trim = true
+footer = ""
+
+[git]
+conventional_commits = true
+# Keep non-conventional commits (e.g. early "README.md committed" bootstrap
+# commits) instead of treating them as parse errors. They fall through to the
+# catch-all `.*` skip parser below, so they're dropped quietly rather than
+# emitting a "commit(s) skipped due to parse error(s)" warning during the
+# full-history version bump.
+filter_unconventional = false
+# Drop commits that don't match a kept parser below (cuts internal noise).
+filter_commits = true
+# ...but never drop a breaking change, even if its type is skipped above.
+protect_breaking_commits = true
+# Only consider release tags; ignore local scratch tags like `bak/*`, `wip-*`.
+tag_pattern = "v[0-9]*"
+sort_commits = "oldest"
+commit_parsers = [
+    { message = "^feat", group = "Added" },
+    { message = "^fix", group = "Fixed" },
+    { message = "^perf", group = "Changed" },
+    { message = "^revert", group = "Removed" },
+    { message = "^refactor", skip = true },
+    { message = "^docs", skip = true },
+    { message = "^test", skip = true },
+    { message = "^chore", skip = true },
+    { message = "^build", skip = true },
+    { message = "^ci", skip = true },
+    { message = "^style", skip = true },
+    # Skip anything that didn't match a kept type above.
+    { message = ".*", skip = true },
+]

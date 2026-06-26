@@ -10,6 +10,7 @@ To get started developing `azldev`, review the [Getting Started guide](./how-to/
 * [Submitting Pull Requests](./how-to/pull-requests.md)
 * [Configuration management](./how-to/config-management.md)
 * [Add go tools](./how-to/add-go-tool.md)
+* [Cut a release](./how-to/releasing.md)
 
 ## Reference
 

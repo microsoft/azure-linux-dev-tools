@@ -16,6 +16,8 @@ import (
 	//mage:import
 	"github.com/microsoft/azure-linux-dev-tools/magefiles/magecheckfix"
 	//mage:import
+	_ "github.com/microsoft/azure-linux-dev-tools/magefiles/magerelease"
+	//mage:import
 	_ "github.com/microsoft/azure-linux-dev-tools/magefiles/magemutation"
 	//mage:import
 	"github.com/microsoft/azure-linux-dev-tools/magefiles/magescenario"
