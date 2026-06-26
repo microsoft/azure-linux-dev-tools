@@ -72,7 +72,7 @@ In addition to per-overlay fields, the following fields are set directly on the 
 
 | Field | TOML Key | Description |
 |-------|----------|-------------|
-| Overlay files | `overlay-files` | List of glob patterns (relative to the component's config file) matched against the filesystem at load time to locate per-file overlay documents. Patterns support `**` (globstar). Matches are concatenated in declaration order; within a single pattern, matches are applied in filename (lexicographic) order, with full path as a tie-breaker for duplicate filenames. Each pattern must match at least one file. Duplicate matches across patterns are de-duplicated. See [Per-file overlay format](#per-file-overlay-format). |
+| Overlay files | `overlay-files` | List of path or glob patterns matched against the filesystem after component config resolution to locate per-file overlay documents. Relative patterns are resolved from the concrete component's config file, or from the matched spec file's directory for spec-discovered components. Patterns support `**` (globstar). Matches are concatenated in declaration order; within a single pattern, matches are applied in filename (lexicographic) order, with full path as a tie-breaker for duplicate filenames. Glob patterns that match no files are ignored; literal paths must match a file. Duplicate matches across patterns are de-duplicated. See [Per-file overlay format](#per-file-overlay-format). |
 
 ## Overlay Metadata
 
@@ -163,6 +163,8 @@ When a single logical change (a CVE backport, a feature disablement, a Fedora ch
 
 Set `overlay-files` on the component to one or more globs (relative to the component config) and drop one overlay file per logical change into a directory of your choosing. The conventional layout uses a sibling `overlays/` directory and a `*.overlay.toml` filename suffix, but neither is required — `overlay-files` is just a glob, so any layout you can describe with `**`/`*` patterns works.
 
+`overlay-files` can also be inherited from `default-component-config` at the project, distro, or component-group level. Inherited relative patterns are still resolved for each concrete component: from its component config file when it has one, or from the matched spec file's directory when it is discovered by a component group's `specs` pattern. This makes defaults useful for component-local discovery patterns such as `overlay-files = ["overlays/*.overlay.toml"]`. If a component sets `overlay-files`, that value replaces the inherited list; use `overlay-files = []` to disable inherited overlay files for a component, or include both patterns explicitly when you want to keep default discovery and add component-specific locations.
+
 ```
 base/comps/mypackage/
 ├── mypackage.comp.toml
@@ -178,7 +180,7 @@ base/comps/mypackage/
 overlay-files = ["overlays/*.overlay.toml"]
 ```
 
-Files are loaded in **filename (lexicographic) order** within each glob, using the full path as a tie-breaker when multiple matches have the same filename. Globs are concatenated in declaration order, so prefix each file with a numeric ordinal (`0001-`, `0002-`, …) to make the apply order obvious and stable. Files that don't match any of your globs are ignored, so you can keep `README.md` or other notes alongside without naming them out explicitly. Each declared glob must match at least one file; an empty match is treated as a misconfiguration and surfaced as an error.
+Files are loaded in **filename (lexicographic) order** within each glob, using the full path as a tie-breaker when multiple matches have the same filename. Globs are concatenated in declaration order, so prefix each file with a numeric ordinal (`0001-`, `0002-`, …) to make the apply order obvious and stable. Files that don't match any of your globs are ignored, so you can keep `README.md` or other notes alongside without naming them out explicitly. A declared glob that matches no files contributes no overlays; a literal path without wildcard characters must match a file.
 
 Overlays loaded via `overlay-files` are **appended after** any inline overlays declared directly on the component.
 

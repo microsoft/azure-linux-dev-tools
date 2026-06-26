@@ -141,7 +141,7 @@
           },
           "type": "array",
           "title": "Overlay files",
-          "description": "Glob patterns (relative to the component config file) matched against the filesystem to locate per-file overlay documents at load time"
+          "description": "Path or glob patterns (relative to the component config file or matched spec directory) matched against the filesystem to locate per-file overlay documents after component config resolution. Use an empty list to disable inherited overlay-file patterns"
         },
         "build": {
           "$ref": "#/$defs/ComponentBuildConfig",

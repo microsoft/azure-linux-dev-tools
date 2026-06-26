@@ -201,9 +201,9 @@ func TestFindComponents_FoundGroups(t *testing.T) {
 	}
 
 	// Setup the specs and compose a list of expected components.
-	expectedComponentConfigs := []projectconfig.ComponentConfig{}
-	for _, specPath := range specPaths {
-		expectedComponentConfigs = append(expectedComponentConfigs, setupTestSpec(t, env, specPath))
+	expectedComponentConfigs := make([]projectconfig.ComponentConfig, len(specPaths))
+	for idx, specPath := range specPaths {
+		expectedComponentConfigs[idx] = setupTestSpec(t, env, specPath)
 	}
 
 	// Find!
@@ -703,6 +703,92 @@ func TestFindAllSpecPaths_MultipleSpecs(t *testing.T) {
 	specPaths, err := components.FindAllSpecPaths(env.Env)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"/specs/a/test-a.spec", "/specs/b/test-b.spec"}, specPaths)
+}
+
+func TestFindComponents_SpecDiscoveredComponentInheritsOverlayFilesFromDefaults(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	touchFile(t, env, "/specs/ant/ant.spec")
+	require.NoError(t, fileutils.WriteFile(env.TestFS,
+		"/specs/ant/overlays/0001-branding.overlay.toml",
+		[]byte(`
+[metadata]
+category = "azl-branding-policy"
+
+[[overlays]]
+type  = "spec-set-tag"
+tag   = "Vendor"
+value = "Microsoft"
+`), fileperms.PrivateFile))
+
+	env.Config.ComponentGroups["specs"] = projectconfig.ComponentGroupConfig{
+		SpecPathPatterns: []string{"/specs/**/*.spec"},
+		DefaultComponentConfig: projectconfig.ComponentConfig{
+			OverlayFiles: []string{"overlays/*.overlay.toml"},
+		},
+	}
+
+	filter := &components.ComponentFilter{
+		IncludeAllComponents: true,
+		SkipLockValidation:   true,
+	}
+
+	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
+	require.NoError(t, err)
+
+	comp, ok := resolved.TryGet("ant")
+	require.True(t, ok)
+
+	overlays := comp.GetConfig().Overlays
+	require.Len(t, overlays, 1)
+	assert.Empty(t, comp.GetConfig().OverlayFiles)
+	assert.Equal(t, projectconfig.ComponentOverlaySetSpecTag, overlays[0].Type)
+	assert.Equal(t, "Vendor", overlays[0].Tag)
+	require.NotNil(t, overlays[0].Metadata)
+	assert.Equal(t, projectconfig.OverlayCategoryAZLBrandingPolicy, overlays[0].Metadata.Category)
+}
+
+func TestFindComponents_SpecPathFilterInheritsOverlayFilesFromGroupDefaults(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	touchFile(t, env, "/specs/ant/ant.spec")
+	require.NoError(t, fileutils.WriteFile(env.TestFS,
+		"/specs/ant/overlays/0001-branding.overlay.toml",
+		[]byte(`
+[metadata]
+category = "azl-branding-policy"
+
+[[overlays]]
+type  = "spec-set-tag"
+tag   = "Vendor"
+value = "Microsoft"
+`), fileperms.PrivateFile))
+
+	env.Config.ComponentGroups["specs"] = projectconfig.ComponentGroupConfig{
+		SpecPathPatterns: []string{"/specs/**/*.spec"},
+		DefaultComponentConfig: projectconfig.ComponentConfig{
+			OverlayFiles: []string{"overlays/*.overlay.toml"},
+		},
+	}
+
+	filter := &components.ComponentFilter{
+		SpecPaths:          []string{"/specs/ant/ant.spec"},
+		SkipLockValidation: true,
+	}
+
+	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
+	require.NoError(t, err)
+
+	comp, ok := resolved.TryGet("ant")
+	require.True(t, ok)
+
+	overlays := comp.GetConfig().Overlays
+	require.Len(t, overlays, 1)
+	assert.Empty(t, comp.GetConfig().OverlayFiles)
+	assert.Equal(t, projectconfig.ComponentOverlaySetSpecTag, overlays[0].Type)
+	assert.Equal(t, "Vendor", overlays[0].Tag)
+	require.NotNil(t, overlays[0].Metadata)
+	assert.Equal(t, projectconfig.OverlayCategoryAZLBrandingPolicy, overlays[0].Metadata.Category)
 }
 
 // When a lock file exists for a component, the resolver should attach all of
