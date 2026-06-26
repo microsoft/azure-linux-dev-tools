@@ -99,11 +99,11 @@ pkg.go.dev fetch directly from this repository's Git tags:
 
    ```console
    GOPROXY=https://proxy.golang.org go list \
-     -m github.com/microsoft/azure-linux-dev-tools@v0.1.1
+     -m github.com/microsoft/azure-linux-dev-tools@vX.Y.Z
    ```
 
    Then visit
-   `https://pkg.go.dev/github.com/microsoft/azure-linux-dev-tools@v0.1.1` once to
+   `https://pkg.go.dev/github.com/microsoft/azure-linux-dev-tools@vX.Y.Z` once to
    prompt the docs build.
 
 5. (Optional) Create a GitHub Release for the tag with that version's
