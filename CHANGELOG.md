@@ -1,5 +1,7 @@
 # Changelog
 
+<!-- markdownlint-disable-file MD013 MD024 -->
+
 All notable changes to `azldev` are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
