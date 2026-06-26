@@ -1,0 +1,71 @@
+name: "Release"
+
+# Runs on every push to main. When CHANGELOG.md carries a new version, tags it
+# (via the idempotent `mage release`), pushes the tag, and publishes a GitHub
+# Release with that version's changelog notes. Normal merges are a no-op because
+# the changelog's top version is already tagged. See docs/developer/how-to/releasing.md.
+on:
+  push:
+    branches: [main]
+
+# Don't run two releases at once.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  release:
+    name: "Tag release"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Push the release tag.
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          # Need full history and tags to detect existing releases and tag HEAD.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Get go tools
+        uses: ./.github/getgotools
+
+      - name: Create release tag from changelog
+        run: |
+          # Annotated tags (git tag -a) need a committer identity, which the runner lacks.
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          mage release
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^## \[\([0-9.]*\)\].*/\1/p' CHANGELOG.md | head -1)"
+          if [ -z "$version" ]; then
+            echo "no '## [X.Y.Z]' heading found in CHANGELOG.md" >&2
+            exit 1
+          fi
+          tag="v${version}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "Tag \`${tag}\` already on remote; nothing to release." >> "$GITHUB_STEP_SUMMARY"
+          else
+            git push "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "refs/tags/${tag}"
+            # Release notes = this version's changelog section (its body, without the heading line).
+            awk '/^## \[/{n++; next} n==1' CHANGELOG.md > "${RUNNER_TEMP}/release-notes.md"
+            gh release create "${tag}" --repo "${REPO}" --title "${tag}" --notes-file "${RUNNER_TEMP}/release-notes.md"
+            echo "Published release \`${tag}\` with notes from CHANGELOG.md." >> "$GITHUB_STEP_SUMMARY"
+
+            # Warm the module proxy and pkg.go.dev so the new version is discoverable promptly.
+            # Upstream only: a fork declares the upstream module path in go.mod, so the proxy would
+            # reject a request under the fork's path -- warming there just errors. Best-effort.
+            if [ "${REPO}" = "microsoft/azure-linux-dev-tools" ]; then
+              module="$(awk '/^module /{print $2; exit}' go.mod)"
+              GOPROXY=https://proxy.golang.org go list -m "${module}@${tag}" \
+                || echo "proxy warm deferred; it will index on first use"
+              curl -fsS -o /dev/null "https://pkg.go.dev/${module}@${tag}" || true
+            fi
+          fi

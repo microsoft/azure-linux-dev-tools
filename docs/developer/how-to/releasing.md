@@ -5,6 +5,22 @@ This guide covers releasing the `azldev` Go module so that
 
 ## TL;DR
 
+Releases run through CI — the recommended path, with nothing to install
+locally:
+
+1. Trigger the [**Prepare release** workflow][prepare-release-run]
+   (**Run workflow** → `main`). It drafts the next changelog section and pushes
+   a `release/vX.Y.Z` branch.
+2. Wait ~30 seconds, the output summary of the workflow will generate a link to create the PR.
+3. On merge, the [**release** workflow][release-run] tags `vX.Y.Z`, publishes a
+   GitHub Release from the changelog, and warms the proxy + pkg.go.dev — no
+   further action needed.
+
+See [Automated releases (CI)](#automated-releases-ci) for what each workflow
+does.
+
+Local steps are:
+
 ```console
 # One-time: install the changelog generator (git-cliff)
 cargo binstall git-cliff         # or: cargo install git-cliff --locked, or: brew install git-cliff
@@ -21,7 +37,8 @@ git tag -d vX.Y.Z
 git push origin vX.Y.Z           # pushing the tag is what publishes the release
 ```
 
-Each step is explained in full under [Cut a release](#cut-a-release) below.
+Each manual step is explained in full under [Cut a release](#cut-a-release)
+below.
 
 ## Versioning policy
 
@@ -76,7 +93,9 @@ pkg.go.dev fetch directly from this repository's Git tags:
    nothing, so the same command is safe to automate on every merge to `main`.
 
 4. Warm the proxy and pkg.go.dev so the new version is discoverable promptly.
-   This is harmless and only triggers indexing of an already-public tag:
+   The CI release workflow does this automatically (upstream only); the commands
+   below are for a manual release. It is harmless — it only triggers indexing of
+   an already-public tag:
 
    ```console
    GOPROXY=https://proxy.golang.org go list \
@@ -87,9 +106,9 @@ pkg.go.dev fetch directly from this repository's Git tags:
    `https://pkg.go.dev/github.com/microsoft/azure-linux-dev-tools@v0.1.1` once to
    prompt the docs build.
 
-5. (Optional, recommended) Create a GitHub Release for the tag and paste the new
-   `CHANGELOG.md` section as the release notes. A GitHub Release is separate from
-   the Git tag, so you can add notes even to a tag that already exists.
+5. (Optional) Create a GitHub Release for the tag with that version's
+   `CHANGELOG.md` section as the notes. The CI release workflow does this
+   automatically; for a manual release, use `gh release create`.
 
 ## Changelog
 
@@ -123,6 +142,26 @@ cargo binstall git-cliff   # or: cargo install git-cliff --locked, or: brew inst
 > Tip: the generated draft is a natural place to let Copilot help rewrite commit
 > subjects into concise, user-facing notes before you commit.
 
+## Automated releases (CI)
+
+Two workflows automate the manual steps above, reusing the same mage targets so
+there is no second code path:
+
+* [`prepare-release.yml`](../../../.github/workflows/prepare-release.yml)
+  (manual **Run workflow**): checks out `main`, installs the pinned git-cliff,
+  runs `mage changelog`, and pushes a `release/vX.Y.Z` branch. It does **not**
+  open the PR — open it yourself from that branch, curate the draft, and merge.
+* [`release.yml`](../../../.github/workflows/release.yml) (on push to `main`):
+  runs `mage release`, pushes the tag, publishes a GitHub Release whose notes are
+  that version's `CHANGELOG.md` section, and (on the upstream repo) warms the
+  module proxy and pkg.go.dev. It is a no-op on ordinary merges because the
+  changelog's top version is already tagged; it only releases when a release PR
+  bumps the changelog to a new version.
+
+Both push with the default `GITHUB_TOKEN` (`contents: write`) — no PAT needed.
+A tag pushed by `GITHUB_TOKEN` does not itself trigger further workflows, which
+only matters if a tag-triggered build is added later.
+
 ## Fixing a bad release
 
 Proxy versions are immutable — you cannot delete or move a published version.
@@ -141,3 +180,5 @@ retract (
 [semver]: https://semver.org/
 [proxy]: https://proxy.golang.org/
 [retract]: https://go.dev/ref/mod#go-mod-file-retract
+[prepare-release-run]: https://github.com/microsoft/azure-linux-dev-tools/actions/workflows/prepare-release.yml
+[release-run]: https://github.com/microsoft/azure-linux-dev-tools/actions/workflows/release.yml
