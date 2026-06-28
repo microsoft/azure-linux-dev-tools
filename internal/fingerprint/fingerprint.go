@@ -5,7 +5,6 @@ package fingerprint
 
 import (
 	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"sort"
@@ -16,9 +15,9 @@ import (
 	"github.com/mitchellh/hashstructure/v2"
 )
 
-// hashstructureTagName is the struct tag name used by hashstructure to determine
+// fingerprintTagName is the struct tag name used by hashstructure to determine
 // field inclusion. Fields tagged with `fingerprint:"-"` are excluded.
-const hashstructureTagName = "fingerprint"
+const fingerprintTagName = "fingerprint"
 
 // ComponentIdentity holds the computed fingerprint for a single component plus
 // a breakdown of individual input hashes for debugging.
@@ -108,7 +107,7 @@ func ComputeIdentity(
 
 	// 3. Hash the resolved config struct (excluding fingerprint:"-" fields).
 	configHash, err := hashstructure.Hash(component, hashstructure.FormatV2, &hashstructure.HashOptions{
-		TagName: hashstructureTagName,
+		TagName: fingerprintTagName,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("hashing component config:\n%w", err)
@@ -164,7 +163,7 @@ func combineInputs(inputs ComponentInputs) string {
 		}
 	}
 
-	return "sha256:" + hex.EncodeToString(hasher.Sum(nil))
+	return sha256Hex(hasher.Sum(nil))
 }
 
 // writeField writes a labeled value to the hasher for domain separation.
@@ -219,5 +218,5 @@ func ComputeResolutionHash(inputs UpstreamCommitResolutionInputs) string {
 	writeField(hasher, "upstream_commit_pin", inputs.UpstreamCommitPin)
 	writeField(hasher, "upstream_name", inputs.UpstreamName)
 
-	return "sha256:" + hex.EncodeToString(hasher.Sum(nil))
+	return sha256Hex(hasher.Sum(nil))
 }

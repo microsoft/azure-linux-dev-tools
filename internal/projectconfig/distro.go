@@ -14,9 +14,9 @@ import (
 // Encapsulates a reference to a version of a distro.
 type DistroReference struct {
 	// Name of the referenced distro.
-	Name string `toml:"name" json:"name,omitempty" jsonschema:"required,title=Name,description=Name of the referenced distro"`
+	Name string `toml:"name" json:"name,omitempty" jsonschema:"required,title=Name,description=Name of the referenced distro" fingerprint:"v1..*"`
 	// Version of the referenced distro.
-	Version string `toml:"version,omitempty" json:"version,omitempty" jsonschema:"title=Version,description=Version of the referenced distro"`
+	Version string `toml:"version,omitempty" json:"version,omitempty" jsonschema:"title=Version,description=Version of the referenced distro" fingerprint:"v1..*"`
 	// Snapshot date/time for source code if specified components will use source as it existed at this time.
 	// Note: set this on the distro or group default-component-config, not on individual components.
 	// Per-component snapshots are rejected when lock validation is enabled.

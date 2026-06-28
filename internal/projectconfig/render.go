@@ -11,5 +11,5 @@ type ComponentRenderConfig struct {
 	// Some specs use macros that spectool cannot expand, causing referenced
 	// files to be incorrectly removed. Setting this to true preserves all
 	// files from the dist-git checkout.
-	SkipFileFilter bool `toml:"skip-file-filter,omitempty" json:"skipFileFilter,omitempty" jsonschema:"title=Skip file filter,description=Disable post-render file filtering for specs with unexpandable macros in Source/Patch tags"`
+	SkipFileFilter bool `toml:"skip-file-filter,omitempty" json:"skipFileFilter,omitempty" jsonschema:"title=Skip file filter,description=Disable post-render file filtering for specs with unexpandable macros in Source/Patch tags" fingerprint:"v1..*"`
 }
