@@ -710,6 +710,14 @@ func (p *sourcePreparerImpl) updateSourcesFile(
 		return err
 	}
 
+	// In full prep-sources mode, cross-check any 'overlay'-origin source-file entries against
+	// the hashes that were just computed so stale stated hashes are caught immediately.
+	if !p.skipLookaside {
+		if err := validateOverlayResultHashes(existingLines, sourceFiles, modifiedArchives, component.GetName()); err != nil {
+			return err
+		}
+	}
+
 	mergedLines, err := p.buildSourceEntries(sourceFiles, existingLines, component.GetName(), outputDir)
 	if err != nil {
 		return err
@@ -793,6 +801,63 @@ func (p *sourcePreparerImpl) rehashModifiedEntries(
 		return fmt.Errorf(
 			"archive overlay(s) modified %d archive(s) with no matching 'sources' entry to rehash: %s",
 			len(missing), strings.Join(missing, ", "))
+	}
+
+	return nil
+}
+
+// validateOverlayResultHashes cross-checks [projectconfig.OriginTypeOverlay] source-file entries
+// against the post-overlay hashes that [rehashModifiedEntries] just computed in existingLines.
+// A mismatch means the stated hash in the config is stale and must be updated.
+// It is a no-op when no archives were repacked in this run.
+func validateOverlayResultHashes(
+	lines []fedorasource.SourcesFileLine,
+	sourceFiles []projectconfig.SourceFileReference,
+	modifiedArchives []string,
+	componentName string,
+) error {
+	if len(modifiedArchives) == 0 {
+		return nil
+	}
+
+	// Only validate archives that were actually repacked in this run.
+	repacked := make(map[string]bool, len(modifiedArchives))
+	for _, name := range modifiedArchives {
+		repacked[name] = true
+	}
+
+	// Build a filename → computed (post-overlay) entry map from the updated lines.
+	computedByName := make(map[string]fedorasource.SourcesFileEntry, len(lines))
+	for _, line := range lines {
+		if line.Entry != nil {
+			computedByName[line.Entry.Filename] = *line.Entry
+		}
+	}
+
+	for _, ref := range sourceFiles {
+		if ref.Origin.Type != projectconfig.OriginTypeOverlay {
+			continue
+		}
+
+		if !repacked[ref.Filename] {
+			continue
+		}
+
+		computed, ok := computedByName[ref.Filename]
+		if !ok {
+			// Missing upstream entry will be reported by processSourceRef.
+			continue
+		}
+
+		if computed.HashType != ref.HashType || computed.Hash != ref.Hash {
+			return fmt.Errorf(
+				"component %#q: archive %#q 'source-files' hash does not match the hash computed "+
+					"after applying overlays; update the 'hash' and 'hash-type' fields in the "+
+					"'source-files' entry:\n  stated:   %s %s\n  computed: %s %s",
+				componentName, ref.Filename,
+				ref.HashType, ref.Hash,
+				computed.HashType, computed.Hash)
+		}
 	}
 
 	return nil
