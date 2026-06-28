@@ -119,11 +119,13 @@ const (
 func ChangedComponents(
 	env *azldev.Env, options *ChangedComponentOptions,
 ) ([]ChangedResult, error) {
-	// Changed compares lock files between git refs — skip validation since
-	// the current working-tree locks may legitimately be stale.
-	options.ComponentFilter.SkipLockValidation = true
+	// Changed compares lock files between git refs — skip both validation and population
+	// since it reads locks directly from git commits (ReadAllAtCommit).
+	options.ComponentFilter.LockMode = components.LockModeSkipBoth
 
 	resolver := components.NewResolver(env)
+	// Skip lock population since changed reads locks directly from git commits
+	resolver.SkipLockPopulation = true
 
 	comps, err := resolver.FindComponents(&options.ComponentFilter)
 	if err != nil {

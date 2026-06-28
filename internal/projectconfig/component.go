@@ -327,8 +327,8 @@ func (c *ComponentConfig) MergeUpdatesFrom(other *ComponentConfig) error {
 
 // EffectiveUpstreamCommit returns the commit to use for upstream operations.
 // Prefers the locked commit (resolved reality) over the config pin (user intent).
-// Falls back to Spec.UpstreamCommit for SkipLockValidation paths (update, list,
-// changed) where Locked may be nil. Returns empty string when neither is set.
+// Falls back to Spec.UpstreamCommit for LockModeSkipBoth paths (list, changed)
+// where Locked may be nil. Returns empty string when neither is set.
 func (c *ComponentConfig) EffectiveUpstreamCommit() string {
 	if c.Locked != nil && c.Locked.UpstreamCommit != "" {
 		return c.Locked.UpstreamCommit
