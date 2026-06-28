@@ -28,7 +28,7 @@ image based on an inject-files.yaml configuration file.`,
 		Example: `  # Inject files into an image
   azldev image inject-files --image-file base.vhdx --image-config inject-files.yaml --output-path out/`,
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
-			return true, injectFileIntoImage(env, options)
+			return nil, injectFileIntoImage(env, options)
 		}),
 	}
 

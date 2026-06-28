@@ -106,3 +106,36 @@ func TestValidateFilename(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateRelPath(t *testing.T) {
+	tests := []struct {
+		name          string
+		path          string
+		expectedError string
+	}{
+		{name: "valid single segment", path: "curl.spec"},
+		{name: "valid nested", path: "c/curl/curl.spec"},
+		{name: "empty", path: "", expectedError: "cannot be empty"},
+		{name: "absolute", path: "/etc/passwd", expectedError: "must be relative"},
+		{name: "traversal segment", path: "c/../etc/passwd", expectedError: "canonical form"},
+		{name: "leading dot segment", path: "./curl.spec", expectedError: "canonical form"},
+		{name: "trailing slash", path: "c/curl/", expectedError: "canonical form"},
+		{name: "double slash", path: "c//curl.spec", expectedError: "canonical form"},
+		{name: "parent ref only", path: "..", expectedError: "not a valid file name"},
+		{name: "whitespace segment", path: "c/cu rl/curl.spec", expectedError: "whitespace"},
+		{name: "null byte segment", path: "c/curl\x00/curl.spec", expectedError: "null bytes"},
+		{name: "backslash segment", path: "c\\curl\\curl.spec", expectedError: "backslashes"},
+		{name: "non-ascii segment", path: "c/cu\x80rl/curl.spec", expectedError: "ASCII"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := fileutils.ValidateRelPath(tc.path)
+			if tc.expectedError != "" {
+				assert.ErrorContains(t, err, tc.expectedError)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}

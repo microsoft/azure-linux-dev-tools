@@ -193,7 +193,7 @@ func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]Updat
 	if options.Bump {
 		results, bumpErr := bumpComponents(env, store, comps, options)
 		if bumpErr != nil {
-			return results, bumpErr
+			return filterDisplayResults(results), bumpErr
 		}
 
 		logUpdateSummary(results)
@@ -205,19 +205,19 @@ func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]Updat
 
 	// Don't save if the context was cancelled (Ctrl+C).
 	if env.Context().Err() != nil {
-		return results, errors.New("update cancelled; lock files not updated")
+		return filterDisplayResults(results), errors.New("update cancelled; lock files not updated")
 	}
 
 	// Check results and bail on errors before saving.
 	if err := checkUpdateErrors(results); err != nil {
-		return results, err
+		return filterDisplayResults(results), err
 	}
 
 	// Write per-component lock files only on full success.
 	// saveComponentLocks may flip Changed for fingerprint-only diffs.
 	// In --check-only mode it computes everything but skips disk writes.
 	if err := saveComponentLocks(env, store, results, options.CheckOnly); err != nil {
-		return results, err
+		return filterDisplayResults(results), err
 	}
 
 	// Log summary after save so Changed counts include fingerprint-only diffs.
@@ -235,7 +235,7 @@ func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]Updat
 	// resolved set is empty (e.g., all components removed from config).
 	wouldPrune, orphanErr := handleOrphanLocks(store, comps, options)
 	if orphanErr != nil {
-		return results, orphanErr
+		return filterDisplayResults(results), orphanErr
 	}
 
 	if options.CheckOnly {
@@ -661,14 +661,16 @@ func logUpdateSummary(results []UpdateResult) {
 		"skipped", skipped)
 }
 
-// filterDisplayResults returns changed and skipped results for table display.
-// Up-to-date components (not Changed, not Skipped) are excluded — they
-// represent the common "nothing to do" case and would dominate the output.
+// filterDisplayResults returns changed, skipped, and errored results for table
+// display. Up-to-date components (not Changed, not Skipped, no Error) are
+// excluded — they represent the common "nothing to do" case and would dominate
+// the output. Errored entries are kept so the user can see what failed when
+// the command exits non-zero via the partial-results-on-error path.
 func filterDisplayResults(results []UpdateResult) []UpdateResult {
 	var tableResults []UpdateResult
 
 	for idx := range results {
-		if results[idx].Changed || results[idx].Skipped {
+		if results[idx].Changed || results[idx].Skipped || results[idx].Error != "" {
 			tableResults = append(tableResults, results[idx])
 		}
 	}

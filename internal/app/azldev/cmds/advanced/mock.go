@@ -126,7 +126,7 @@ running smoke tests. Packages can be pre-installed into the chroot using
   azldev advanced mock shell -- rpm -qa`,
 		RunE: azldev.RunFuncWithoutRequiredConfigWithExtraArgs(
 			func(env *azldev.Env, extraArgs []string) (results interface{}, err error) {
-				return true, RunShell(env, options, extraArgs)
+				return nil, RunShell(env, options, extraArgs)
 			},
 		),
 	}

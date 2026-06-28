@@ -173,7 +173,7 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 	}
 
 	// Create mock processor for rpmautospec/spectool.
-	mockProcessor := createMockProcessor(env)
+	mockProcessor := createMockProcessor(env, mockPackagesForRender())
 	if mockProcessor == nil {
 		return nil, errors.New(
 			"mock config required for rendering; ensure the project has a valid distro with mock config")
@@ -343,21 +343,17 @@ func checkRenderErrors(results []*RenderResult, failOnError bool) error {
 	}
 
 	failCount := errCount + cancelledCount
-
-	if failCount > 0 {
-		slog.Error("Some components failed to render",
-			"errorCount", errCount, "cancelledCount", cancelledCount)
-
-		if failOnError {
-			return fmt.Errorf("%d component(s) failed to render", failCount)
-		}
+	if failCount == 0 {
+		return nil
 	}
 
-	// When FailOnError is not set, intentionally return nil error even when
-	// some components fail. Returning an error would suppress the results
-	// table (runFuncInternal skips reportResults on error), hiding the status
-	// of all ~7k components. Individual failures are visible in the table's
-	// Status/Error columns and via RENDER_FAILED marker files.
+	slog.Error("Some components failed to render",
+		"errorCount", errCount, "cancelledCount", cancelledCount)
+
+	if failOnError {
+		return fmt.Errorf("%d component(s) failed to render", failCount)
+	}
+
 	return nil
 }
 
@@ -1124,28 +1120,6 @@ func writeFailureMarkers(
 
 		writeRenderErrorMarker(fileSystem, result.OutputDir)
 	}
-}
-
-// createMockProcessor creates a [sources.MockProcessor] using the project's
-// mock config. Returns nil if the mock config is not available (e.g., no project
-// config loaded, or no mock config path configured).
-func createMockProcessor(env *azldev.Env) *sources.MockProcessor {
-	_, distroVerDef, err := env.Distro()
-	if err != nil {
-		slog.Info("Mock processor unavailable; could not resolve distro", "error", err)
-
-		return nil
-	}
-
-	if distroVerDef.MockConfigPath == "" {
-		slog.Info("Mock processor unavailable; no mock config path configured")
-
-		return nil
-	}
-
-	slog.Info("Mock processor available", "mockConfig", distroVerDef.MockConfigPath)
-
-	return sources.NewMockProcessor(env, distroVerDef.MockConfigPath)
 }
 
 // validateCleanStaleOptions enforces the constraints around --clean-stale.
