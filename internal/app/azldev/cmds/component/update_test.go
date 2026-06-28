@@ -139,7 +139,7 @@ func TestUpdateComponents_WritesFingerprint(t *testing.T) {
 	require.NoError(t, loadErr)
 	assert.Equal(t, commit, lock.UpstreamCommit)
 	assert.NotEmpty(t, lock.InputFingerprint, "lock should have a computed fingerprint")
-	assert.Contains(t, lock.InputFingerprint, "sha256:")
+	assert.True(t, strings.HasPrefix(lock.InputFingerprint, "v1:sha256:"), "lock carries the v1:sha256: token")
 }
 
 // TestUpdateComponents_FingerprintLifecycle exercises the full update → modify → re-update
@@ -281,7 +281,7 @@ func TestUpdateComponents_LocalComponentWritesLock(t *testing.T) {
 	require.NoError(t, loadErr)
 	assert.Empty(t, lock.UpstreamCommit, "local lock should have empty upstream-commit")
 	assert.NotEmpty(t, lock.InputFingerprint, "local lock should have a fingerprint")
-	assert.Contains(t, lock.InputFingerprint, "sha256:")
+	assert.True(t, strings.HasPrefix(lock.InputFingerprint, "v1:sha256:"), "local lock carries the v1:sha256: token")
 }
 
 // TestUpdateComponents_LocalSpecChangeRefreshesFingerprint verifies that
@@ -386,6 +386,46 @@ func TestUpdateComponents_AdvancesStaleLock(t *testing.T) {
 	require.NoError(t, loadErr)
 	assert.Equal(t, advancedCommit, updatedLock.UpstreamCommit,
 		"lock file on disk must contain the new commit")
+}
+
+// TestUpdateComponents_ForceRehashesLegacyToken verifies the reset's force-rehash
+// reconciliation: a pre-reset lock carrying a prefix-less (sub-floor) token is
+// re-stamped to the atomic v1:sha256: token on the next update. No replay
+// registry is involved - the recomputed v1 token simply never equals the legacy
+// token, so the existing inequality check re-stamps it (one path covers pre-reset
+// locks and any old-binary downgrade).
+func TestUpdateComponents_ForceRehashesLegacyToken(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	const commit = "resolved-aaa111"
+
+	// Pre-populate a lock with a legacy, prefix-less token at the same commit
+	// the mock resolves to, so only the token (not the upstream commit) is stale.
+	require.NoError(t, fileutils.MkdirAll(env.TestFS, testLockDir))
+
+	preLock := lockfile.New()
+	preLock.UpstreamCommit = commit
+	preLock.InputFingerprint = "sha256:legacy-prefixless-token"
+
+	preStore := lockfile.NewStore(env.TestFS, testLockDir)
+	require.NoError(t, preStore.Save("curl", preLock))
+
+	addUpstreamComponent(env, "curl")
+	setupMockGit(env, commit)
+
+	_, err := componentcmds.UpdateComponents(env.Env, &componentcmds.UpdateComponentOptions{
+		ComponentFilter: components.ComponentFilter{IncludeAllComponents: true},
+	})
+	require.NoError(t, err)
+
+	freshStore := lockfile.NewStore(env.TestFS, testLockDir)
+	updatedLock, loadErr := freshStore.Get("curl")
+	require.NoError(t, loadErr)
+
+	assert.True(t, strings.HasPrefix(updatedLock.InputFingerprint, "v1:sha256:"),
+		"legacy prefix-less token must force-rehash to the v1:sha256: token")
+	assert.NotEqual(t, "sha256:legacy-prefixless-token", updatedLock.InputFingerprint,
+		"the legacy token must not survive the update")
 }
 
 // TestUpdateComponents_CheckOnlyAndBumpRejected verifies that callers (CLI or

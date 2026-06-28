@@ -1,0 +1,7 @@
+{
+  "_README": "Frozen v1 projection digests. APPEND-ONLY: never edit an existing digest - a new encoding is a new content version, not an edit here. Management rules and the additive-field workflow live in goldenConfigs's doc comment in golden_internal_test.go.",
+  "defines-empty-value": "sha256:0c279e94184764f5337a3560ed925a72ce77d799b80f35f8d8bc391c6c02d7ee",
+  "maximal": "sha256:5e847df93fb896e3b7a0e0508755087bbb3dc18713a210c03c451d04a5d276b6",
+  "minimal": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+  "single-overlay": "sha256:bb3a8d293e79ff82d245d4b5efa6c9d3f3039ee9271dc12d5e89e375eafb0a95"
+}

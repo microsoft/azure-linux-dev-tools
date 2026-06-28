@@ -71,7 +71,7 @@ func TestComputeIdentity_Deterministic(t *testing.T) {
 	fp2 := computeFingerprint(t, ctx, comp, releaseVer, 0)
 
 	assert.Equal(t, fp1, fp2, "identical inputs must produce identical fingerprints")
-	assert.Contains(t, fp1, "sha256:", "fingerprint should have sha256: prefix")
+	assert.True(t, strings.HasPrefix(fp1, "v1:sha256:"), "fingerprint is the atomic v1:sha256: token")
 }
 
 func TestComputeIdentity_SourceIdentityChange(t *testing.T) {
@@ -483,30 +483,31 @@ func TestComputeIdentity_SourceFileNoHash_Error(t *testing.T) {
 	assert.Contains(t, err.Error(), "no hash")
 }
 
-func TestComputeIdentity_InputsBreakdown(t *testing.T) {
-	ctx := newTestFS(t, map[string]string{
-		"/specs/test.spec":   "Name: testpkg\nVersion: 1.0",
-		"/patches/fix.patch": "patch content here",
-	})
-
+func TestComputeIdentity_OverlaySourceContentFolds(t *testing.T) {
 	comp := baseComponent()
 	comp.Overlays = []projectconfig.ComponentOverlay{
 		{Type: "patch-add", Source: "/patches/fix.patch"},
 	}
-	releaseVer := testReleaseVer
+	opts := fingerprint.IdentityOptions{ManualBump: 3, SourceIdentity: "test-source-identity-hash"}
 
-	identity, err := fingerprint.ComputeIdentity(ctx.FS(), comp, releaseVer, fingerprint.IdentityOptions{
-		ManualBump:     3,
-		SourceIdentity: "test-source-identity-hash",
+	ctxA := newTestFS(t, map[string]string{
+		"/specs/test.spec":   "Name: testpkg\nVersion: 1.0",
+		"/patches/fix.patch": "patch content A",
 	})
+	idA, err := fingerprint.ComputeIdentity(ctxA.FS(), comp, testReleaseVer, opts)
 	require.NoError(t, err)
 
-	assert.NotEmpty(t, identity.Fingerprint)
-	assert.NotZero(t, identity.Inputs.ConfigHash)
-	assert.Equal(t, "test-source-identity-hash", identity.Inputs.SourceIdentity)
-	assert.Equal(t, 3, identity.Inputs.ManualBump)
-	assert.Equal(t, testReleaseVer, identity.Inputs.ReleaseVer)
-	assert.Contains(t, identity.Inputs.OverlayFileHashes, "0")
+	ctxB := newTestFS(t, map[string]string{
+		"/specs/test.spec":   "Name: testpkg\nVersion: 1.0",
+		"/patches/fix.patch": "patch content B",
+	})
+	idB, err := fingerprint.ComputeIdentity(ctxB.FS(), comp, testReleaseVer, opts)
+	require.NoError(t, err)
+
+	assert.True(t, strings.HasPrefix(idA.Fingerprint, "v1:sha256:"),
+		"fingerprint is the atomic v1:sha256: content token")
+	assert.NotEqual(t, idA.Fingerprint, idB.Fingerprint,
+		"overlay source file content must fold into the fingerprint")
 }
 
 func TestComputeIdentity_MissingSourceIdentity_Error(t *testing.T) {

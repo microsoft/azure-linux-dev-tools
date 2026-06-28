@@ -108,9 +108,16 @@ func Parse(data []byte) (*ComponentLock, error) {
 		return nil, fmt.Errorf("parsing lock file:\n%w", err)
 	}
 
-	if lock.Version != currentVersion {
+	// Read gate accepts any format version in [1, currentVersion] (RFC ratified
+	// insurance): a later format bump must not silently break historical reads
+	// through Parse. Writes stay exact-match via New(). Version 0 (a missing
+	// version field / empty file) is malformed, not a historical version, so it
+	// is rejected. The *content* version is carried in the input-fingerprint
+	// token prefix (v<N>:sha256:...), not here, so a content-version bump never
+	// requires a format bump.
+	if lock.Version < 1 || lock.Version > currentVersion {
 		return nil, fmt.Errorf(
-			"unsupported lock file version %d (expected %d)",
+			"unsupported lock file version %d (supported 1..%d)",
 			lock.Version, currentVersion)
 	}
 

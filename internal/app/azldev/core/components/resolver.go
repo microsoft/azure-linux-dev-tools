@@ -691,6 +691,11 @@ func (r *Resolver) checkFingerprintFreshness(config *projectconfig.ComponentConf
 			config.Locked.Freshness = projectconfig.FreshnessCurrent
 		}
 	} else {
+		// Includes the reset's force-rehash case: a pre-reset prefix-less token
+		// never equals the recomputed v1:sha256: token, so it reads as Stale and
+		// is re-stamped on the next update. Inequality IS the reconciliation; do
+		// not make it version-aware before the replay registry (Part 2 of the
+		// lazy-schema-migration RFC) exists.
 		config.Locked.Freshness = projectconfig.FreshnessStale
 
 		slog.Debug("Component is stale (build inputs changed)",

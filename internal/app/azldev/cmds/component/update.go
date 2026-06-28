@@ -430,7 +430,13 @@ func updateComponentLock(env *azldev.Env, store *lockfile.Store, result *UpdateR
 
 	// Mark as changed if fingerprint differs (catches config/overlay edits
 	// even when the upstream commit is unchanged). This is the user-visible
-	// "changed" flag — it drives render/build decisions.
+	// "changed" flag - it drives render/build decisions.
+	//
+	// This inequality is also the reset's force-rehash: a pre-reset prefix-less
+	// (sub-floor) token never equals the recomputed v1:sha256: token, so it is
+	// re-stamped here. Do NOT make this comparison version-aware before the replay
+	// registry (Part 2 of the lazy-schema-migration RFC) exists, or legacy tokens
+	// would be treated as fresh and never upgrade.
 	if lock.InputFingerprint != identity.Fingerprint {
 		result.Changed = true
 	}

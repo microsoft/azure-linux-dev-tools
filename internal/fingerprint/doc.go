@@ -8,6 +8,5 @@
 //
 // The primary entry point is [ComputeIdentity], which takes a resolved
 // [projectconfig.ComponentConfig] and additional context, and returns a
-// [ComponentIdentity] containing the overall fingerprint hash plus a breakdown
-// of individual input hashes for debugging.
+// [ComponentIdentity] holding the atomic "v<N>:sha256:..." content token.
 package fingerprint
