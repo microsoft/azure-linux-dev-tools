@@ -323,6 +323,10 @@ func (c *ComponentOverlay) Validate() error {
 			)
 		}
 
+		if err := fileutils.ValidateFilename(c.Archive); err != nil {
+			return fmt.Errorf("unsafe overlay 'archive' field %#q: %s:\n%w", c.Archive, desc, err)
+		}
+
 		if !c.SupportsArchiveScope() {
 			return fmt.Errorf(
 				"overlay type %#q does not support archive-scoped file paths: %s",
