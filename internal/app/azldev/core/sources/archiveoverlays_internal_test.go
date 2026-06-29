@@ -20,7 +20,7 @@ import (
 )
 
 func TestGroupOverlaysByArchive(t *testing.T) {
-	t.Run("groups overlays by archive name preserving order and strips the prefix", func(t *testing.T) {
+	t.Run("groups overlays by archive name preserving order", func(t *testing.T) {
 		overlays := []projectconfig.ComponentOverlay{
 			{
 				Type:     projectconfig.ComponentOverlayRemoveFile,
@@ -45,7 +45,6 @@ func TestGroupOverlaysByArchive(t *testing.T) {
 
 		assert.Equal(t, "pkg-1.0.tar.gz", groups[0].archive)
 		require.Len(t, groups[0].overlays, 2)
-		// Filename contains only the inner-archive glob (no archive prefix).
 		assert.Equal(t, "unwanted.conf", groups[0].overlays[0].Filename)
 		assert.Equal(t, "config.h", groups[0].overlays[1].Filename)
 
