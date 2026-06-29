@@ -49,7 +49,7 @@ The rendered shape becomes:
 [new era: our overlay commits on the new base]                     (continues)
 ```
 
-This optimization significantly reduces the complexity of the history generate, we no longer need to reconcile the new and old branches commit-by-commit.
+This optimization significantly reduces the complexity of the history generation; we no longer need to reconcile the new and old branches commit-by-commit.
 
 The hard requirement is that the old era is **not wholesale-replaced**. A few cosmetic
 field changes leaking in from an upstream scrub are acceptable; dropping or
@@ -59,7 +59,7 @@ re-synthesizing the old era's entries is not.
 
 1. **Record each discontinuity as a transition in the lock, applied by `update`.** When
    `update` moves a component across a discontinuity it appends a transition (old pin to
-   new pin) to a map in the lock and emits a single transition commit at render.
+   new pin) to a transition list in the lock and emits a single transition commit at render.
    `import-commit` stays write-once; the prior pin lives in the transition record rather
    than overwriting the fork.
 2. **Graft the old era from upstream; never wholesale-replace it.** At render the old
@@ -85,38 +85,38 @@ reachable from the new pin), `update` errors and writes nothing, pointing the us
 flag below.
 
 `update --allow-discontinuity` opts in to recording the jump. It appends the transition
-(old pin to new pin) to the lock's transition map and proceeds, producing the additive
+(old pin to new pin) to the lock's transition list and proceeds, producing the additive
 transition commit at render. The outcome is reviewable: the lock diff shows exactly which
 discontinuity was accepted, and the `reason` records why.
 
 The same guard applies at render. If history reconstruction hits a gap with no matching
-transition in the map, it errors rather than silently dropping entries (today's behavior).
+transition in the list, it errors rather than silently dropping entries (today's behavior).
 
 ## Lock file example
 
 A component that has crossed one discontinuity (an f43 to f44 advance over divergent
-history) carries a transition map:
+history) carries a transition list:
 
 ```toml
 # Managed by azldev component update. Do not edit manually.
 version = 1
-import-commit = '1f0c9d2a7b4e5c6d8a9b0c1d2e3f405162738495'   # original fork point
-upstream-commit = 'c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7' # current pin, on f44 (post-rewrite)
-input-fingerprint = 'sha256:...'
-resolution-input-hash = 'sha256:...'
+import-commit = "1f0c9d2a7b4e5c6d8a9b0c1d2e3f405162738495"   # original fork point
+upstream-commit = "c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7" # current pin, on f44 (post-rewrite)
+input-fingerprint = "sha256:..."
+resolution-input-hash = "sha256:..."
 
 # Each entry records a re-base of our package onto a new upstream lineage.
 # 'from' is the prior era's tip; 'to' is the lineage we continued on.
 [[transitions]]
-from = '9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4938271605'   # old pin, last commit on f43
-to = 'a1b2c3d4e5f60718293a4b5c6d7e8f9001122334'     # the f44 pin we advanced to
-reason = 'branch-advance: f43 -> f44'
+from = "9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4938271605"   # old pin, last commit on f43
+to = "a1b2c3d4e5f60718293a4b5c6d7e8f9001122334"     # the f44 pin we advanced to
+reason = "branch-advance: f43 -> f44"
 
 # Appended later, when f44 itself was force-pushed. Nothing above is rewritten.
 [[transitions]]
-from = 'a1b2c3d4e5f60718293a4b5c6d7e8f9001122334'   # prior tip, the f44 pin above
-to = 'c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7'     # new pin, post-rewrite f44
-reason = 'upstream-rewrite: f44 bademail'
+from = "a1b2c3d4e5f60718293a4b5c6d7e8f9001122334"   # prior tip, the f44 pin above
+to = "c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7"     # new pin, post-rewrite f44
+reason = "upstream-rewrite: f44 bademail"
 ```
 
 A later crossing (for example an f44 history rewrite) adds another `[[transitions]]`
