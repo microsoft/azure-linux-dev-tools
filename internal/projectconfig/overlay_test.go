@@ -262,12 +262,13 @@ func TestComponentOverlay_Validate(t *testing.T) {
 			errorExpected: true,
 			errorContains: "source",
 		},
-		// Archive-scoped path validation: only file-remove and file-search-replace support it.
+		// Archive-scoped validation: only file-remove and file-search-replace support 'archive' field.
 		{
 			name: "file-remove archive-scoped path accepted",
 			overlay: projectconfig.ComponentOverlay{
 				Type:     projectconfig.ComponentOverlayRemoveFile,
-				Filename: "pkg-1.0.tar.gz/vendor/**",
+				Archive:  "pkg-1.0.tar.gz",
+				Filename: "vendor/**",
 			},
 			errorExpected: false,
 		},
@@ -275,40 +276,63 @@ func TestComponentOverlay_Validate(t *testing.T) {
 			name: "file-search-replace archive-scoped path accepted",
 			overlay: projectconfig.ComponentOverlay{
 				Type:        projectconfig.ComponentOverlaySearchAndReplaceInFile,
-				Filename:    "pkg-1.0.tar.gz/vendor/config.h",
+				Archive:     "pkg-1.0.tar.gz",
+				Filename:    "vendor/config.h",
 				Regex:       "old",
 				Replacement: "new",
 			},
 			errorExpected: false,
 		},
 		{
-			name: "file-add archive-scoped path rejected",
+			name: "file-add archive field rejected",
 			overlay: projectconfig.ComponentOverlay{
 				Type:     projectconfig.ComponentOverlayAddFile,
-				Filename: "pkg-1.0.tar.gz/vendor/new.txt",
+				Archive:  "pkg-1.0.tar.gz",
+				Filename: "vendor/new.txt",
 				Source:   "/path/to/source.txt",
 			},
 			errorExpected: true,
 			errorContains: "archive-scoped",
 		},
 		{
-			name: "file-prepend-lines archive-scoped path rejected",
+			name: "file-prepend-lines archive field rejected",
 			overlay: projectconfig.ComponentOverlay{
 				Type:     projectconfig.ComponentOverlayPrependLinesToFile,
-				Filename: "pkg-1.0.tar.gz/vendor/config.h",
+				Archive:  "pkg-1.0.tar.gz",
+				Filename: "vendor/config.h",
 				Lines:    []string{"// header"},
 			},
 			errorExpected: true,
 			errorContains: "archive-scoped",
 		},
 		{
-			name: "patch-remove archive-scoped path rejected",
+			name: "patch-remove archive field rejected",
 			overlay: projectconfig.ComponentOverlay{
 				Type:     projectconfig.ComponentOverlayRemovePatch,
-				Filename: "pkg-1.0.tar.gz/fix.patch",
+				Archive:  "pkg-1.0.tar.gz",
+				Filename: "fix.patch",
 			},
 			errorExpected: true,
 			errorContains: "archive-scoped",
+		},
+		{
+			name: "archive field with unrecognized extension rejected",
+			overlay: projectconfig.ComponentOverlay{
+				Type:     projectconfig.ComponentOverlayRemoveFile,
+				Archive:  "pkg-1.0.zip",
+				Filename: "vendor/**",
+			},
+			errorExpected: true,
+			errorContains: "not a recognized archive name",
+		},
+		{
+			name: "archive field without file field rejected",
+			overlay: projectconfig.ComponentOverlay{
+				Type:    projectconfig.ComponentOverlayRemoveFile,
+				Archive: "pkg-1.0.tar.gz",
+			},
+			errorExpected: true,
+			errorContains: "file",
 		},
 		// Description included in error
 		{
@@ -460,12 +484,13 @@ func TestComponentOverlay_Validate(t *testing.T) {
 			errorExpected: true,
 			errorContains: "section",
 		},
-		// archive-scoped file-remove tests (archive derived from path prefix)
+		// archive-scoped file-remove tests (explicit 'archive' field)
 		{
 			name: "file-remove archive-scoped valid",
 			overlay: projectconfig.ComponentOverlay{
 				Type:     projectconfig.ComponentOverlayRemoveFile,
-				Filename: "pkg-1.0.tar.gz/unwanted.conf",
+				Archive:  "pkg-1.0.tar.gz",
+				Filename: "unwanted.conf",
 			},
 			errorExpected: false,
 		},
@@ -473,7 +498,8 @@ func TestComponentOverlay_Validate(t *testing.T) {
 			name: "file-remove archive-scoped glob valid",
 			overlay: projectconfig.ComponentOverlay{
 				Type:     projectconfig.ComponentOverlayRemoveFile,
-				Filename: "pkg-1.0.tar.gz/docs/**/*.md",
+				Archive:  "pkg-1.0.tar.gz",
+				Filename: "docs/**/*.md",
 			},
 			errorExpected: false,
 		},
@@ -486,19 +512,20 @@ func TestComponentOverlay_Validate(t *testing.T) {
 			errorExpected: false,
 		},
 		{
-			name: "file-remove without archive prefix is a plain loose-file remove",
+			name: "file-remove without archive field is a plain loose-file remove",
 			overlay: projectconfig.ComponentOverlay{
 				Type:     projectconfig.ComponentOverlayRemoveFile,
 				Filename: "unwanted.conf",
 			},
 			errorExpected: false,
 		},
-		// file-search-replace supports archive scoping via the path prefix
+		// file-search-replace supports archive scoping via the explicit 'archive' field
 		{
 			name: "file-search-replace archive-scoped valid",
 			overlay: projectconfig.ComponentOverlay{
 				Type:        projectconfig.ComponentOverlaySearchAndReplaceInFile,
-				Filename:    "pkg-1.0.tar.gz/config.h",
+				Archive:     "pkg-1.0.tar.gz",
+				Filename:    "config.h",
 				Regex:       "old_value",
 				Replacement: "new_value",
 			},
@@ -548,12 +575,12 @@ func TestComponentOverlay_ModifiesSpec(t *testing.T) {
 	}
 
 	// Archive-scoped overlays: only file-remove/file-search-replace become archive-scoped,
-	// and only when their file path carries an archive prefix (e.g. "pkg-1.0.tar.gz/...").
+	// and only when [ComponentOverlay.Archive] is set.
 	archiveOverlays := []projectconfig.ComponentOverlay{
-		{Type: projectconfig.ComponentOverlayRemoveFile, Filename: "pkg-1.0.tar.gz/f"},
+		{Type: projectconfig.ComponentOverlayRemoveFile, Archive: "pkg-1.0.tar.gz", Filename: "f"},
 		{
-			Type:     projectconfig.ComponentOverlaySearchAndReplaceInFile,
-			Filename: "pkg-1.0.tar.gz/f", Regex: "old", Replacement: "new",
+			Type:    projectconfig.ComponentOverlaySearchAndReplaceInFile,
+			Archive: "pkg-1.0.tar.gz", Filename: "f", Regex: "old", Replacement: "new",
 		},
 	}
 

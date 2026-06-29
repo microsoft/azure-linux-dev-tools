@@ -24,15 +24,18 @@ func TestGroupOverlaysByArchive(t *testing.T) {
 		overlays := []projectconfig.ComponentOverlay{
 			{
 				Type:     projectconfig.ComponentOverlayRemoveFile,
-				Filename: "pkg-1.0.tar.gz/unwanted.conf",
+				Archive:  "pkg-1.0.tar.gz",
+				Filename: "unwanted.conf",
 			},
 			{
 				Type:     projectconfig.ComponentOverlayRemoveFile,
-				Filename: "pkg-1.0.tar.gz/config.h",
+				Archive:  "pkg-1.0.tar.gz",
+				Filename: "config.h",
 			},
 			{
 				Type:     projectconfig.ComponentOverlayRemoveFile,
-				Filename: "other-2.0.tar.xz/docs/*.md",
+				Archive:  "other-2.0.tar.xz",
+				Filename: "docs/*.md",
 			},
 		}
 
@@ -42,7 +45,7 @@ func TestGroupOverlaysByArchive(t *testing.T) {
 
 		assert.Equal(t, "pkg-1.0.tar.gz", groups[0].archive)
 		require.Len(t, groups[0].overlays, 2)
-		// Filename is rewritten to the in-archive glob (archive prefix stripped).
+		// Filename contains only the inner-archive glob (no archive prefix).
 		assert.Equal(t, "unwanted.conf", groups[0].overlays[0].Filename)
 		assert.Equal(t, "config.h", groups[0].overlays[1].Filename)
 
@@ -54,10 +57,10 @@ func TestGroupOverlaysByArchive(t *testing.T) {
 	t.Run("skips overlays that are not archive-scoped", func(t *testing.T) {
 		overlays := []projectconfig.ComponentOverlay{
 			{Type: projectconfig.ComponentOverlaySetSpecTag, Tag: "Version", Value: "1.0"},
-			{Type: projectconfig.ComponentOverlayRemoveFile, Filename: "pkg.tar.gz/f"},
-			// Plain (non-archive) file overlay: no archive prefix, so it must be skipped.
+			{Type: projectconfig.ComponentOverlayRemoveFile, Archive: "pkg.tar.gz", Filename: "f"},
+			// Plain (non-archive) file overlay: no archive field, so it must be skipped.
 			{Type: projectconfig.ComponentOverlayRemoveFile, Filename: "loose.txt"},
-			// Bare archive name with no inner path: a loose removal of the archive itself.
+			// Bare archive name with no archive field: a loose removal of the archive itself.
 			{Type: projectconfig.ComponentOverlayRemoveFile, Filename: "drop-me.tar.gz"},
 			{Type: projectconfig.ComponentOverlayAddFile, Filename: "new.txt", Source: "src"},
 		}

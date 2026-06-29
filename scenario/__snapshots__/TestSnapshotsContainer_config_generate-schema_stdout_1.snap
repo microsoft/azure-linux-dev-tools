@@ -260,6 +260,11 @@
           "title": "Filename",
           "description": "The name of the non-spec file to which this overlay applies"
         },
+        "archive": {
+          "type": "string",
+          "title": "Archive",
+          "description": "For archive-scoped overlays"
+        },
         "section": {
           "type": "string",
           "title": "Section name",

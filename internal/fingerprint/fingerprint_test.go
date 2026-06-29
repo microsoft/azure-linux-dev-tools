@@ -269,12 +269,12 @@ func TestComputeIdentity_OverlayArchiveScopingChangesFP(t *testing.T) {
 
 	withArchive := baseComponent()
 	withArchive.Overlays = []projectconfig.ComponentOverlay{
-		{Type: "file-remove", Filename: "pkg-1.0.tar.gz/bundled.conf"},
+		{Type: "file-remove", Archive: "pkg-1.0.tar.gz", Filename: "bundled.conf"},
 	}
 	fpArchive := computeFingerprint(t, ctx, withArchive, releaseVer, 0)
 
 	assert.NotEqual(t, fpBase, fpArchive,
-		"scoping the overlay to an archive (via the path prefix) must change the fingerprint")
+		"scoping the overlay to an archive (via the 'archive' field) must change the fingerprint")
 }
 
 func TestComputeIdentity_PatchAddRenameChangesFP(t *testing.T) {

@@ -155,7 +155,8 @@ func TestPrepareSources_ArchiveOverlayRehashesSourcesEntry(t *testing.T) {
 		Overlays: []projectconfig.ComponentOverlay{
 			{
 				Type:     projectconfig.ComponentOverlayRemoveFile,
-				Filename: archiveName + "/remove-me.txt",
+				Archive:  archiveName,
+				Filename: "remove-me.txt",
 			},
 		},
 	})
@@ -248,7 +249,8 @@ func TestPrepareSources_ArchiveOverlayMissingSourcesEntryErrors(t *testing.T) {
 		Overlays: []projectconfig.ComponentOverlay{
 			{
 				Type:     projectconfig.ComponentOverlayRemoveFile,
-				Filename: archiveName + "/remove-me.txt",
+				Archive:  archiveName,
+				Filename: "remove-me.txt",
 			},
 		},
 	})

@@ -68,13 +68,9 @@ type archiveGroup struct {
 	overlays []projectconfig.ComponentOverlay
 }
 
-// groupOverlaysByArchive groups archive overlays by the archive named in the first
-// path segment of [projectconfig.ComponentOverlay.Filename] (see
-// [projectconfig.ComponentOverlay.ArchiveTarget]), preserving insertion order within
-// each group and across groups. Non-archive overlays are silently skipped.
-//
-// Each grouped overlay's Filename is rewritten to the in-archive glob (the archive
-// prefix stripped) so that application globs relative to the extracted tree.
+// groupOverlaysByArchive groups archive overlays by [projectconfig.ComponentOverlay.Archive],
+// preserving insertion order within each group and across groups.
+// Non-archive overlays are silently skipped.
 func groupOverlaysByArchive(overlays []projectconfig.ComponentOverlay) []archiveGroup {
 	orderMap := make(map[string]int)
 
@@ -85,8 +81,7 @@ func groupOverlaysByArchive(overlays []projectconfig.ComponentOverlay) []archive
 			continue
 		}
 
-		// ok is guaranteed true here: ModifiesArchive() implies ArchiveTarget() ok.
-		archiveName, innerGlob, _ := overlay.ArchiveTarget()
+		archiveName := overlay.Archive
 
 		idx, exists := orderMap[archiveName]
 		if !exists {
@@ -96,11 +91,7 @@ func groupOverlaysByArchive(overlays []projectconfig.ComponentOverlay) []archive
 			groups = append(groups, archiveGroup{archive: archiveName})
 		}
 
-		// Rewrite Filename to the in-archive glob so the in-archive application
-		// (which globs relative to the extract root) does not see the archive prefix.
-		scoped := overlay
-		scoped.Filename = innerGlob
-		groups[idx].overlays = append(groups[idx].overlays, scoped)
+		groups[idx].overlays = append(groups[idx].overlays, overlay)
 	}
 
 	return groups

@@ -200,7 +200,8 @@ func TestPrepareSources_RemoveFileGlob_Archive(t *testing.T) {
 				Overlays: []projectconfig.ComponentOverlay{
 					{
 						Type:     projectconfig.ComponentOverlayRemoveFile,
-						Filename: archiveName + "/" + testCase.pattern,
+						Archive:  archiveName,
+						Filename: testCase.pattern,
 					},
 				},
 			})
@@ -324,7 +325,8 @@ func TestPrepareSources_SearchReplaceInArchiveRehashesEntry(t *testing.T) {
 		Overlays: []projectconfig.ComponentOverlay{
 			{
 				Type:        projectconfig.ComponentOverlaySearchAndReplaceInFile,
-				Filename:    archiveName + "/configure.ac",
+				Archive:     archiveName,
+				Filename:    "configure.ac",
 				Regex:       "old_lib",
 				Replacement: "new_lib",
 			},
@@ -407,7 +409,7 @@ func TestPrepareSources_SkipSourcesSkipsArchiveOverlays(t *testing.T) {
 	component.EXPECT().GetName().AnyTimes().Return(componentName)
 	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
 		Overlays: []projectconfig.ComponentOverlay{
-			{Type: projectconfig.ComponentOverlayRemoveFile, Filename: archiveName + "/remove-me.txt"},
+			{Type: projectconfig.ComponentOverlayRemoveFile, Archive: archiveName, Filename: "remove-me.txt"},
 		},
 	})
 
