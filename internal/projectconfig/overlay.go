@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
-	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/brunoga/deep"
@@ -17,6 +16,8 @@ import (
 )
 
 // ComponentOverlay represents an overlay that may be applied to a component's spec and/or its sources.
+//
+//nolint:recvcheck // HashInclude needs a value receiver for hashstructure; all other methods use pointer receivers.
 type ComponentOverlay struct {
 	// The type of overlay to apply.
 	Type ComponentOverlayType `toml:"type" json:"type" validate:"required" jsonschema:"enum=spec-add-tag,enum=spec-insert-tag,enum=spec-set-tag,enum=spec-update-tag,enum=spec-remove-tag,enum=spec-prepend-lines,enum=spec-append-lines,enum=spec-search-replace,enum=spec-remove-section,enum=spec-remove-subpackage,enum=patch-add,enum=patch-remove,enum=file-prepend-lines,enum=file-search-replace,enum=file-add,enum=file-remove,enum=file-rename,title=Overlay type,description=The type of overlay to apply"`
@@ -26,6 +27,11 @@ type ComponentOverlay struct {
 	// For overlays that apply to non-spec files, indicates the filename. For overlays that can
 	// apply to multiple files, supports glob patterns (including globstar).
 	Filename string `toml:"file,omitempty" json:"file,omitempty" jsonschema:"title=Filename,description=The name of the non-spec file to which this overlay applies, or a glob pattern matching multiple files"`
+	// For archive-scoped overlays (file-remove and file-search-replace), the name of the source
+	// archive to extract, modify, and repack (e.g. "pkg-1.0.tar.gz"). When set, [ComponentOverlay.Filename]
+	// is interpreted as a glob relative to the archive's extraction root rather than a loose
+	// file in the sources tree.
+	Archive string `toml:"archive,omitempty" json:"archive,omitempty" jsonschema:"title=Archive,description=For archive-scoped overlays, the source archive to extract and repack (e.g. pkg-1.0.tar.gz). When set, the 'file' field is a glob relative to the archive's extraction root"`
 	// For overlays that apply to specs, indicates the name of the section to which it applies.
 	// Optional for spec-prepend-lines, spec-append-lines, and spec-search-replace: when omitted,
 	// the overlay targets the entire spec file (prepend at top, append at end, search-replace
@@ -133,23 +139,18 @@ func (c *ComponentOverlay) ModifiesSpec() bool {
 		c.Type == ComponentOverlayRemovePatch
 }
 
-// ArchiveTarget inspects the overlay's file path and, when it targets files inside a source
-// archive, returns the archive filename and the glob to match within the extracted archive.
+// ArchiveTarget returns the archive name and the inner-archive glob when the overlay
+// is archive-scoped (i.e. [ComponentOverlay.Archive] is non-empty and
+// [ComponentOverlay.Filename] provides the inner path).
 //
-// An overlay is archive-scoped when the first path segment of [ComponentOverlay.Filename] is a
-// recognized archive name (see [archive.IsArchiveName]) and a non-empty inner path follows it,
-// e.g. "pkg-1.0.tar.gz/vendor/**" yields archive="pkg-1.0.tar.gz", inner="vendor/**".
-//
-// Returns ok=false for loose-file overlays: a path with no archive prefix (e.g. "vendor/**"),
-// or a bare archive name with no inner path (e.g. "old.tar.gz", which removes the archive file
-// itself from the loose sources tree).
+// Returns ok=false when [ComponentOverlay.Archive] is empty, indicating a loose-file
+// overlay whose [ComponentOverlay.Filename] refers to files in the sources tree directly.
 func (c *ComponentOverlay) ArchiveTarget() (archiveName, innerPath string, ok bool) {
-	before, after, found := strings.Cut(filepath.ToSlash(c.Filename), "/")
-	if !found || after == "" || !archive.IsArchiveName(before) {
+	if c.Archive == "" || c.Filename == "" {
 		return "", "", false
 	}
 
-	return before, after, true
+	return c.Archive, c.Filename, true
 }
 
 // SupportsArchiveScope reports whether the overlay type can target files inside a source
@@ -193,6 +194,26 @@ func (c *ComponentOverlay) ModifiesLooseFiles() bool {
 		c.Type == ComponentOverlayRenameFile ||
 		c.Type == ComponentOverlayAddPatch ||
 		c.Type == ComponentOverlayRemovePatch
+}
+
+// HashInclude implements the hashstructure Includable interface so the
+// [ComponentOverlay.Archive] field is omitted from the component fingerprint while it holds
+// its default (empty) value. A defaulted Archive therefore reproduces the pre-existing fingerprint
+// (no cascading rebuild for existing overlays), while a non-empty Archive contributes to the hash.
+// Every other field is always included, preserving existing hashing behaviour.
+//
+// NOTE: Remove this method once the RFC for explicit fingerprint exclusions is implemented and
+// [ComponentOverlay.Archive] can be tagged with `fingerprint:"-,nonzero"` (or equivalent) instead.
+//
+// NOTE: the value receiver is required — [fingerprint.ComputeIdentity] hashes the component by
+// value, so the struct (and its nested fields) are not addressable and a pointer-receiver method
+// would never be detected by hashstructure.
+func (c ComponentOverlay) HashInclude(field string, _ any) (bool, error) {
+	if field == "Archive" {
+		return c.Archive != "", nil
+	}
+
+	return true, nil
 }
 
 // ComponentOverlayType is the type of a component overlay.
@@ -241,10 +262,10 @@ const (
 	ComponentOverlaySearchAndReplaceInFile ComponentOverlayType = "file-search-replace"
 	// ComponentOverlayAddFile is an overlay that adds a non-spec file.
 	ComponentOverlayAddFile ComponentOverlayType = "file-add"
-	// ComponentOverlayRemoveFile is an overlay that removes a non-spec file. When its
-	// [ComponentOverlay.Filename] is an archive-scoped path (e.g. "pkg-1.0.tar.gz/vendor/**"),
-	// it removes file(s) from inside that source archive instead of loose files in the
-	// sources tree (see [ComponentOverlay.ArchiveTarget]).
+	// ComponentOverlayRemoveFile is an overlay that removes a non-spec file. When
+	// [ComponentOverlay.Archive] is set, it removes file(s) matching the glob in
+	// [ComponentOverlay.Filename] from inside that source archive instead of loose
+	// files in the sources tree (see [ComponentOverlay.ArchiveTarget]).
 	ComponentOverlayRemoveFile ComponentOverlayType = "file-remove"
 	// ComponentOverlayRenameFile is an overlay that renames a non-spec file.
 	ComponentOverlayRenameFile ComponentOverlayType = "file-rename"
@@ -272,14 +293,25 @@ func (c *ComponentOverlay) Validate() error {
 }
 
 func (c *ComponentOverlay) validateRequiredFields(desc string) error {
-	// Archive-scoped file paths (e.g. "pkg-1.0.tar.gz/vendor/**") are only meaningful for overlay
-	// types that extract and repack archives. Reject them early for every other type so a stray
-	// archive prefix isn't silently misinterpreted as a directory name in the loose sources tree.
-	if _, _, ok := c.ArchiveTarget(); ok && !c.SupportsArchiveScope() {
-		return fmt.Errorf(
-			"overlay type %#q does not support archive-scoped file paths; found %#q",
-			c.Type, c.Filename,
-		)
+	// Validate the 'archive' field when present.
+	if c.Archive != "" {
+		if !archive.IsArchiveName(c.Archive) {
+			return fmt.Errorf(
+				"overlay 'archive' field %#q is not a recognized archive name: %s",
+				c.Archive, desc,
+			)
+		}
+
+		if !c.SupportsArchiveScope() {
+			return fmt.Errorf(
+				"overlay type %#q does not support archive-scoped file paths: %s",
+				c.Type, desc,
+			)
+		}
+
+		if c.Filename == "" {
+			return fmt.Errorf("overlay type %#q requires %#q field: %s", c.Type, "file", desc)
+		}
 	}
 
 	switch c.Type {
