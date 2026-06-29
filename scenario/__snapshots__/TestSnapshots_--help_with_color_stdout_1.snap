@@ -16,6 +16,7 @@ Primary commands:
   [1;36mimage[0m        Manage Azure Linux images
   [1;36mpackage[0m      Manage binary package configuration
   [1;36mproject[0m      Manage Azure Linux projects
+  [1;36mrepo[0m         Inspect and manage RPM repositories
 
 Meta commands:
   [1;36mcompletion[0m   Generate the autocompletion script for the specified shell

@@ -19,6 +19,8 @@ This repo contains configs for the `golangci-lint` linter. It is installed as pa
 | `mage unit` | Run unit tests | After writing tests |
 | `mage scenario` | Run scenario tests (SLOW) | For major changes |
 | `mage scenarioUpdate` | Update test snapshots | When test expectations change |
+| `mage mutation <path>` | Run mutation testing on a package; writes `out/mutation-report.json` | To assess test quality of a package |
+| `mage mutationDiff <ref>` | Run mutation testing on lines changed vs a git ref | To check test quality of a branch's changes |
 | `mage check all` | Run all quality checks | Before committing |
 | `mage fix all` | Auto-fix code issues | When linting fails |
 | `mage generate` | Run `go generate ./...` (mockgen, stringer, etc.) | Seldom needed directly; runs automatically with build/test |

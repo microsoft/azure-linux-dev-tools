@@ -20,7 +20,7 @@ It supports:
 1. Install `golang` and other prerequisites via your system's package manager, e.g.:
 
    ```console
-   dnf install -y golang mock dnf-utils mock-rpmautospec
+   dnf install -y golang mock dnf-utils mock-rpmautospec kiwi
    ```
 
    Note: `mock-rpmautospec` plugin hooks `rpmautospec` into mock's build lifecycle. It pulls `rpmautospec` as a dependency which processes `%autorelease` and `%autochangelog` macros in spec files.
@@ -64,8 +64,7 @@ For development setup and workflow, please consult our [Developer Guide](./docs/
 
 ## Getting Help
 
-Have questions, found a bug, or need a new feature? Open an issue in our [GitHub
-repository](https://github.com/microsoft/azure-linux-dev-tools/issues/new).
+Have questions, found a bug, or need a new feature? Open an issue in our [GitHub repository](https://github.com/microsoft/azure-linux-dev-tools/issues/new/choose). For guidance on how to file an issue, see [how to report issues](https://aka.ms/azurelinux-reportissues).
 
 For security issues, please see the [security policy](./SECURITY.md).
 

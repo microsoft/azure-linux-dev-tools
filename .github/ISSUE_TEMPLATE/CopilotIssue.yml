@@ -1,6 +1,6 @@
 name: Copilot Issue
 description: Create an issue to be assigned to GitHub Copilot for automated resolution.
-title: "[Copilot] "
+title: "[Copilot]: "
 labels: ["copilot"]
 body:
   - type: markdown

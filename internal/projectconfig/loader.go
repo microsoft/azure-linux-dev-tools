@@ -58,7 +58,15 @@ func loadAndResolveProjectConfig(
 	// Validate the resulting configuration.
 	err := resolvedCfg.Validate()
 	if err != nil {
-		return nil, err
+		if permissiveConfigParsing {
+			slog.Warn(
+				"Project config validation failed; continuing due to '--permissive-config'",
+				"configFiles", configFilePaths,
+				"error", err,
+			)
+		} else {
+			return nil, err
+		}
 	}
 
 	return resolvedCfg, nil
@@ -424,6 +432,13 @@ func loadProjectConfigFile(
 	// Keep track of where this came from.
 	cfg.sourcePath = absFilePath
 	cfg.dir = filepath.Dir(absFilePath)
+
+	// Resolve per-component overlay file globs, stamping each
+	// file's [metadata] onto its overlays and appending them to the component before
+	// validation runs.
+	if err := applyOverlayFiles(fs, cfg, permissiveConfigParsing); err != nil {
+		return nil, err
+	}
 
 	// Make sure that the read data is internally consistent.
 	err = cfg.Validate()

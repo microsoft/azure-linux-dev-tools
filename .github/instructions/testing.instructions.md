@@ -48,6 +48,37 @@ repositories (e.g. `microsoft/azurelinux`) and can be expensive. They reuse
 the same scenario container framework (`cmdtest`/`containertest`) but skip the
 in-memory project synthesis layer.
 
+## Assessing Test Quality (Mutation Testing)
+
+Coverage shows whether a line *ran*; mutation testing shows whether a test would
+*catch a bug* in it. Run [gremlins](https://github.com/go-gremlins/gremlins) via:
+
+- `mage mutation ./internal/<pkg>` — scope to a package for quick feedback (pass `./` to run the
+  whole repo, which takes a few minutes).
+- `mage mutationDiff <ref>` — only mutate lines changed vs a git ref (e.g. `main`).
+
+Also available to agents as the `mage_mutation` MCP tool, which takes either a `path` or a `diff`
+ref (the same two modes). The console lists only the mutants worth acting on (LIVED + NOT COVERED)
+plus a summary; a full JSON report covering every mutant is written to `out/mutation-report.json`.
+
+Reading results: a **KILLED** mutant was caught by a test, a **LIVED** mutant is a
+real assertion gap to fix, **NOT COVERED** means no test exercises that code.
+
+When to reach for it:
+- After writing or substantially changing a package's unit tests — confirm the tests *assert* on
+  behavior, not just execute it.
+- When adding a new package or non-trivial logic alongside its fresh tests.
+- `mage mutationDiff <ref>` is the cheapest audit: it only mutates what your branch changed.
+
+Caveats — agents MUST respect these:
+- Only **unit tests** run; scenario/e2e tests are build-tag gated and never execute.
+  The `scenario/` and `magefiles/` trees and generated `*_mocks.go` are excluded.
+- Some **LIVED mutants are equivalent** (e.g. `len(x) > 0` vs `>= 0` when the loop
+  body no-ops on an empty collection) and cannot be killed — inspect before adding a
+  test; do NOT contort tests to kill an equivalent mutant.
+- It is **slower than unit tests** and **not a CI gate** — an on-demand audit tool. Do NOT add it
+  to `mage all` or block on it.
+
 ## Test Environment
 
 Use `testutils.NewTestEnv(t)` for tests that need an `azldev.Env`. It provides:
@@ -190,6 +221,7 @@ New component subcommands (`internal/app/azldev/cmds/component/`) require:
 - `mage scenarioUpdate` — update snapshot baselines (review diffs!)
 - `mage generate` — standalone codegen (also runs implicitly with unit/build)
 - `mage docs` — build binary + regenerate CLI docs and JSON schema
+- `mage mutation ./internal/<pkg>` / `mage mutationDiff <ref>` — mutation testing to audit unit-test quality (SLOW; scope required; see "Assessing Test Quality" above)
 
 ## Common Pitfalls
 

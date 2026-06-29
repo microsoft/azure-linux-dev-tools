@@ -3,6 +3,22 @@
   "$id": "https://github.com/microsoft/azure-linux-dev-tools/internal/projectconfig/config-file",
   "$ref": "#/$defs/ConfigFile",
   "$defs": {
+    "BugRef": {
+      "properties": {
+        "url": {
+          "type": "string",
+          "pattern": "^https?://",
+          "format": "uri",
+          "title": "URL",
+          "description": "HTTP(S) link to the bug entry"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "url"
+      ]
+    },
     "CheckConfig": {
       "properties": {
         "skip": {
@@ -118,6 +134,14 @@
           "type": "array",
           "title": "Overlays",
           "description": "Overlays to apply to this component's spec and/or sources"
+        },
+        "overlay-files": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Overlay files",
+          "description": "Glob patterns (relative to the component config file) matched against the filesystem to locate per-file overlay documents at load time"
         },
         "build": {
           "$ref": "#/$defs/ComponentBuildConfig",
@@ -278,6 +302,11 @@
           "type": "string",
           "title": "Source",
           "description": "For overlays that require a source file as input"
+        },
+        "metadata": {
+          "$ref": "#/$defs/OverlayMetadata",
+          "title": "Metadata",
+          "description": "Optional documentation metadata describing the overlay's intent and provenance"
         }
       },
       "additionalProperties": false,
@@ -709,6 +738,53 @@
       "type": "object",
       "required": [
         "type"
+      ]
+    },
+    "OverlayMetadata": {
+      "properties": {
+        "category": {
+          "type": "string",
+          "enum": [
+            "backport-dist-git",
+            "azl-pruning",
+            "azl-compatibility",
+            "azl-dep-missing-workaround",
+            "azl-branding-policy",
+            "azl-disable-flaky-tests",
+            "azl-disable-unsupported-tests",
+            "azl-security-compliance",
+            "azl-release-management",
+            "azl-platform-adaptation"
+          ],
+          "title": "Category",
+          "description": "Classification of the overlay's intent"
+        },
+        "commits": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Commits",
+          "description": "URLs of upstream commits this overlay backports or references"
+        },
+        "bugs": {
+          "items": {
+            "$ref": "#/$defs/BugRef"
+          },
+          "type": "array",
+          "title": "Bug references",
+          "description": "References to issue-tracker entries related to this overlay"
+        },
+        "upstreamable": {
+          "type": "boolean",
+          "title": "Upstreamable",
+          "description": "Whether this overlay's change can be upstreamed; omit if not yet assessed"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "category"
       ]
     },
     "PackageConfig": {

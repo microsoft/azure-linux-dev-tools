@@ -17,6 +17,7 @@ Available tools:
 - `mage_fix_all` - Auto-fix code issues (modifies files)
 - `mage_scenario` - Run scenario tests (slow)
 - `mage_scenario_update` - Update test snapshots (modifies test files)
+- `mage_mutation` - Run mutation testing to audit unit-test quality (on-demand; takes a `path` or `diff`)
 - `mage_all` - Run all build and test targets (slow)
 
 The server operates in the project root directory and executes `go run magefile.go <target>` commands.

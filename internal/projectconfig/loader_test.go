@@ -122,6 +122,29 @@ key = "value"
 	assert.Equal(t, "/project/artifacts/logs", config.Project.LogDir)
 }
 
+func TestLoadAndResolveProjectConfig_PermissiveParsing_IgnoresValidationError(t *testing.T) {
+	// This config is structurally valid TOML but fails semantic validation: the
+	// component group references a component that is not defined.
+	const configContents = `
+[component-groups.my-group]
+components = ["missing-component"]
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	// Strict parsing should fail because the referenced component is undefined.
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.ErrorIs(t, err, ErrUndefinedComponent)
+	assert.Nil(t, config)
+
+	// Permissive parsing should ignore the validation error and return the config.
+	config, err = loadAndResolveProjectConfig(ctx.FS(), true, testConfigPath)
+	require.NoError(t, err)
+	require.NotNil(t, config)
+	assert.Contains(t, config.ComponentGroups, "my-group")
+}
+
 func TestLoadAndResolveProjectConfig_EmptyFile(t *testing.T) {
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte{}, fileperms.PrivateFile))

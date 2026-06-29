@@ -33,6 +33,7 @@ const (
 	EditorconfigCheckerTool = "editorconfig-checker"
 	GoLicenseTool           = "go-licenses"
 	GoStringerTool          = "stringer"
+	GremlinsTool            = "gremlins"
 )
 
 var (
@@ -126,6 +127,44 @@ func CreateBuildDir() error {
 
 func CreateLicenseDir() error {
 	return createDir(LicenseDir())
+}
+
+// PrintLicenseOutput filters benign go-licenses warnings out of output and prints whatever remains.
+func PrintLicenseOutput(output string) {
+	filtered := FilterLicenseNoise(output)
+	if filtered == "" {
+		return
+	}
+
+	for _, line := range strings.Split(filtered, "\n") {
+		MagePrintln(MsgInfo, line)
+	}
+}
+
+// FilterLicenseNoise strips go-licenses' benign "contains non-Go code" glog warnings (and their
+// following file-path continuation lines) from the given output, returning the remaining lines.
+func FilterLicenseNoise(output string) string {
+	var kept []string
+
+	skipping := false
+
+	for _, line := range strings.Split(output, "\n") {
+		switch {
+		case strings.Contains(line, "contains non-Go code that can't be inspected"):
+			// Start of a warning block; drop this line and its path continuation lines.
+			skipping = true
+		case skipping && strings.HasPrefix(line, "/"):
+			// Continuation file path under the current warning; drop it.
+		default:
+			skipping = false
+
+			if strings.TrimSpace(line) != "" {
+				kept = append(kept, line)
+			}
+		}
+	}
+
+	return strings.Join(kept, "\n")
 }
 
 // getCallerFunctionName returns the name of the function that called the function that called it.
