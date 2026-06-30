@@ -452,3 +452,125 @@ func TestProjectConfigFileValidation_PerComponentSnapshotDisallowed(t *testing.T
 	assert.Contains(t, err.Error(), "snapshot")
 	assert.Contains(t, err.Error(), "test-component")
 }
+
+// --- Custom origin source file validation ---
+
+func TestValidateCustomSourceRef_ValidCustomOrigin(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"comp": {
+				SourceFiles: []projectconfig.SourceFileReference{
+					{
+						Filename: "gen.tar.gz",
+						Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeCustom},
+						Script:   "gen.sh",
+					},
+				},
+			},
+		},
+	}
+	assert.NoError(t, file.Validate())
+}
+
+func TestValidateCustomSourceRef_MissingScript(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"comp": {
+				SourceFiles: []projectconfig.SourceFileReference{
+					{
+						Filename: "gen.tar.gz",
+						Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeCustom},
+						// Script intentionally absent
+					},
+				},
+			},
+		},
+	}
+	err := file.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "script")
+	assert.Contains(t, err.Error(), "gen.tar.gz")
+	assert.Contains(t, err.Error(), "comp")
+}
+
+func TestValidateCustomSourceRef_ScriptOnDownloadOrigin(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"comp": {
+				SourceFiles: []projectconfig.SourceFileReference{
+					{
+						Filename: "src.tar.gz",
+						Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/src.tar.gz"},
+						Script:   "gen.sh",
+					},
+				},
+			},
+		},
+	}
+	err := file.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "'script'")
+	assert.Contains(t, err.Error(), "custom")
+}
+
+func TestValidateCustomSourceRef_MockPackagesOnDownloadOrigin(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"comp": {
+				SourceFiles: []projectconfig.SourceFileReference{
+					{
+						Filename:     "src.tar.gz",
+						Origin:       projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/src.tar.gz"},
+						MockPackages: []string{"curl"},
+					},
+				},
+			},
+		},
+	}
+	err := file.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "'mock-packages'")
+	assert.Contains(t, err.Error(), "custom")
+}
+
+func TestValidateCustomSourceRef_UriOnCustomOrigin(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"comp": {
+				SourceFiles: []projectconfig.SourceFileReference{
+					{
+						Filename: "gen.tar.gz",
+						Origin: projectconfig.Origin{
+							Type: projectconfig.OriginTypeCustom,
+							Uri:  "https://example.com/should-not-be-here",
+						},
+						Script: "gen.sh",
+					},
+				},
+			},
+		},
+	}
+	err := file.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "'uri'")
+	assert.Contains(t, err.Error(), "custom")
+}
+
+func TestValidateCustomSourceRef_InvalidScriptFilename(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"comp": {
+				SourceFiles: []projectconfig.SourceFileReference{
+					{
+						Filename: "gen.tar.gz",
+						Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeCustom},
+						Script:   "../../escape.sh", // path traversal attempt
+					},
+				},
+			},
+		},
+	}
+	err := file.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "script")
+}

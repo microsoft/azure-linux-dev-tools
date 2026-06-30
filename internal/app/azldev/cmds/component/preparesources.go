@@ -115,6 +115,8 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 	}
 
 	// Create source manager to handle all source fetching, both local and upstream.
+	// Custom source generation (origin type 'custom') is automatically enabled when
+	// the distro has a 'mock-config' configured — no per-command wiring required.
 	sourceManager, err = sourceproviders.NewSourceManager(env, distro)
 	if err != nil {
 		return fmt.Errorf("failed to create source manager:\n%w", err)
@@ -130,21 +132,7 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 			"synthetic history requires overlays to be applied")
 	}
 
-	var preparerOpts []sources.PreparerOption
-	if !options.WithoutGitRepo && !options.SkipOverlays {
-		preparerOpts = append(preparerOpts,
-			sources.WithGitRepo(env, env.LockReader(), distro.Version.ReleaseVer),
-			sources.WithDirtyDetection(),
-		)
-	}
-
-	if options.AllowNoHashes {
-		preparerOpts = append(preparerOpts, sources.WithAllowNoHashes())
-	}
-
-	if options.SkipSources {
-		preparerOpts = append(preparerOpts, sources.WithSkipLookaside())
-	}
+	preparerOpts := buildPreparerOptions(env, distro, options)
 
 	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, preparerOpts...)
 	if err != nil {
@@ -157,6 +145,33 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 	}
 
 	return nil
+}
+
+// buildPreparerOptions assembles [sources.PreparerOption] values based on the resolved
+// distro and command-line options.
+func buildPreparerOptions(
+	env *azldev.Env,
+	distro sourceproviders.ResolvedDistro,
+	options *PrepareSourcesOptions,
+) []sources.PreparerOption {
+	var opts []sources.PreparerOption
+
+	if !options.WithoutGitRepo && !options.SkipOverlays {
+		opts = append(opts,
+			sources.WithGitRepo(env, env.LockReader(), distro.Version.ReleaseVer),
+			sources.WithDirtyDetection(),
+		)
+	}
+
+	if options.AllowNoHashes {
+		opts = append(opts, sources.WithAllowNoHashes())
+	}
+
+	if options.SkipSources {
+		opts = append(opts, sources.WithSkipLookaside())
+	}
+
+	return opts
 }
 
 // CheckOutputDir verifies the output directory state before source preparation.
