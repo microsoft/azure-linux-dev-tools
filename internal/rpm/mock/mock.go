@@ -242,9 +242,7 @@ func (r *Runner) InitRoot(ctx context.Context) (err error) {
 		return fmt.Errorf("failed to create external command for mock:\n%w", err)
 	}
 
-	if !r.verbose {
-		extcmd.SetLongRunning("Waiting for mock (initializing build root)...")
-	}
+	extcmd.SetLongRunning("Waiting for mock (initializing build root)...")
 
 	err = extcmd.Run(ctx)
 	if err != nil {
@@ -359,9 +357,7 @@ func (r *Runner) BuildSRPM(
 		return fmt.Errorf("failed to create external command for mock:\n%w", err)
 	}
 
-	if !r.verbose {
-		extcmd.SetLongRunning("Waiting for mock (building SRPM)...")
-	}
+	extcmd.SetLongRunning("Waiting for mock (building SRPM)...")
 
 	// Watch output logs in real-time so we can asynchronously synthesize progress updates.
 	err = addMockCmdListeners(r.eventListener, extcmd, outputDirPath)
@@ -644,7 +640,10 @@ func (r *Runner) ScrubRoot(ctx context.Context) error {
 }
 
 func (r *Runner) getBaseArgs() (args []string) {
-	if !r.verbose {
+	if r.verbose {
+		// Have mock stream its full build output (including build.log) live to the console.
+		args = append(args, "--verbose")
+	} else {
 		args = append(args, "--quiet")
 	}
 
