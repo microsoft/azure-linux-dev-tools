@@ -959,6 +959,133 @@ Name: test
 	})
 }
 
+func TestPrependLines(t *testing.T) {
+	t.Run("empty spec", func(t *testing.T) {
+		specFile, err := spec.OpenSpec(strings.NewReader(""))
+		require.NoError(t, err)
+
+		specFile.PrependLines([]string{"New line", "Next line"})
+
+		actual := new(bytes.Buffer)
+		err = specFile.Serialize(actual)
+		require.NoError(t, err)
+
+		assert.Equal(t, `New line
+Next line
+`, actual.String())
+	})
+
+	t.Run("spec starting with a section header", func(t *testing.T) {
+		input := `%description
+A package.
+`
+		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
+
+		specFile.PrependLines([]string{"# top comment"})
+
+		actual := new(bytes.Buffer)
+		err = specFile.Serialize(actual)
+		require.NoError(t, err)
+
+		assert.Equal(t, `# top comment
+%description
+A package.
+`, actual.String())
+	})
+
+	t.Run("spec with preamble and sections", func(t *testing.T) {
+		input := `Name: test
+Version: 1.0
+
+%description
+A package.
+`
+		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
+
+		specFile.PrependLines([]string{"# header line 1", "# header line 2"})
+
+		actual := new(bytes.Buffer)
+		err = specFile.Serialize(actual)
+		require.NoError(t, err)
+
+		assert.Equal(t, `# header line 1
+# header line 2
+Name: test
+Version: 1.0
+
+%description
+A package.
+`, actual.String())
+	})
+}
+
+func TestAppendLines(t *testing.T) {
+	t.Run("empty spec", func(t *testing.T) {
+		specFile, err := spec.OpenSpec(strings.NewReader(""))
+		require.NoError(t, err)
+
+		specFile.AppendLines([]string{"New line", "Next line"})
+
+		actual := new(bytes.Buffer)
+		err = specFile.Serialize(actual)
+		require.NoError(t, err)
+
+		assert.Equal(t, `New line
+Next line
+`, actual.String())
+	})
+
+	t.Run("spec ending with changelog", func(t *testing.T) {
+		input := `Name: test
+
+%description
+A package.
+
+%changelog
+* Mon Jan 01 2024 User <user@example.com> - 1.0-1
+- Initial release
+`
+		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
+
+		specFile.AppendLines([]string{"# trailing comment"})
+
+		actual := new(bytes.Buffer)
+		err = specFile.Serialize(actual)
+		require.NoError(t, err)
+
+		assert.Equal(t, `Name: test
+
+%description
+A package.
+
+%changelog
+* Mon Jan 01 2024 User <user@example.com> - 1.0-1
+- Initial release
+# trailing comment
+`, actual.String())
+	})
+
+	t.Run("preamble only", func(t *testing.T) {
+		input := `Name: test
+`
+		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
+
+		specFile.AppendLines([]string{"# tail"})
+
+		actual := new(bytes.Buffer)
+		err = specFile.Serialize(actual)
+		require.NoError(t, err)
+
+		assert.Equal(t, `Name: test
+# tail
+`, actual.String())
+	})
+}
+
 func TestPrependLinesToSection(t *testing.T) {
 	t.Run("empty spec", func(t *testing.T) {
 		input := ""
