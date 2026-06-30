@@ -545,8 +545,14 @@ func (r *Runner) ensureMockPresentAndConfigured() error {
 	return nil
 }
 
-// Builds a wrapper command that will run the specified inside a mock chroot.
-func (r *Runner) CmdInChroot(ctx context.Context, args []string, interactive bool) (cmd opctx.Cmd, err error) {
+// CmdInChroot builds a wrapper command that will run the specified args inside a mock chroot.
+// When pipeOutput is true, the command's stdout and stderr are connected to the process
+// stdout and stderr so output is visible to the user in real time. Leave pipeOutput false
+// when the caller intends to capture output itself (e.g. via [opctx.Cmd.RunAndGetOutput] or
+// [opctx.Cmd.SetRealTimeStdoutListener]).
+func (r *Runner) CmdInChroot(
+	ctx context.Context, args []string, interactive bool, pipeOutput bool,
+) (cmd opctx.Cmd, err error) {
 	// We're going to need to run mock, so make sure we can.
 	err = r.ensureMockPresentAndConfigured()
 	if err != nil {
@@ -569,7 +575,14 @@ func (r *Runner) CmdInChroot(ctx context.Context, args []string, interactive boo
 		mockArgs = append(mockArgs, shellquote.Join(args...))
 	}
 
-	cmd, err = r.cmdFactory.Command(exec.CommandContext(ctx, MockBinary, mockArgs...))
+	rawCmd := exec.CommandContext(ctx, MockBinary, mockArgs...)
+
+	if pipeOutput {
+		rawCmd.Stdout = os.Stdout
+		rawCmd.Stderr = os.Stderr
+	}
+
+	cmd, err = r.cmdFactory.Command(rawCmd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create command to run in mock root:\n%w", err)
 	}

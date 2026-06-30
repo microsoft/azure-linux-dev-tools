@@ -184,7 +184,7 @@ func (p *MockProcessor) BatchProcess(
 	workers := strconv.Itoa(max(1, maxWorkers)) // 1x CPU; mock work is CPU-bound
 	args := []string{"python3", chrootScript, chrootStagingPath, workers}
 
-	cmd, err := runner.CmdInChroot(ctx, args, false)
+	cmd, err := runner.CmdInChroot(ctx, args, false, false /*pipeOutput: uses SetRealTimeStdoutListener*/)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create batch command in mock:\n%w", err)
 	}

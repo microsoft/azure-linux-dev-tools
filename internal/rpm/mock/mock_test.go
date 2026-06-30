@@ -221,7 +221,7 @@ func TestCmdInChroot_MockNotPresent(t *testing.T) {
 
 	runner := mock.NewRunner(ctx, testMockConfigPath)
 
-	_, err := runner.CmdInChroot(ctx, []string{"arg1", "arg2"}, true /*interactive*/)
+	_, err := runner.CmdInChroot(ctx, []string{"arg1", "arg2"}, true /*interactive*/, false /*pipeOutput*/)
 	require.Error(t, err)
 }
 
@@ -230,7 +230,7 @@ func TestCmdInChroot_Success(t *testing.T) {
 
 	runner := mock.NewRunner(ctx, testMockConfigPath)
 
-	cmd, err := runner.CmdInChroot(ctx, []string{"arg1", "arg2 with spaces"}, true /*interactive*/)
+	cmd, err := runner.CmdInChroot(ctx, []string{"arg1", "arg2 with spaces"}, true /*interactive*/, false /*pipeOutput*/)
 	require.NoError(t, err)
 	require.NotNil(t, cmd)
 
@@ -249,7 +249,7 @@ func TestCmdInChroot_BindMount(t *testing.T) {
 	runner.AddBindMount("/host-path", "/mock-path")
 	assert.Equal(t, map[string]string{"/host-path": "/mock-path"}, runner.BindMounts())
 
-	cmd, err := runner.CmdInChroot(ctx, []string{"arg"}, false /*interactive*/)
+	cmd, err := runner.CmdInChroot(ctx, []string{"arg"}, false /*interactive*/, false /*pipeOutput*/)
 	require.NoError(t, err)
 	require.NotNil(t, cmd)
 
@@ -264,7 +264,7 @@ func TestCmdInChroot_NoPreClean(t *testing.T) {
 	runner.WithNoPreClean()
 	assert.True(t, runner.HasNoPreClean())
 
-	cmd, err := runner.CmdInChroot(ctx, []string{"arg"}, false /*interactive*/)
+	cmd, err := runner.CmdInChroot(ctx, []string{"arg"}, false /*interactive*/, false /*pipeOutput*/)
 	require.NoError(t, err)
 	require.NotNil(t, cmd)
 
@@ -279,7 +279,7 @@ func TestCmdInChroot_EnableNetworking(t *testing.T) {
 	runner.EnableNetwork()
 	assert.True(t, runner.HasNetworkEnabled())
 
-	cmd, err := runner.CmdInChroot(ctx, []string{"arg"}, false /*interactive*/)
+	cmd, err := runner.CmdInChroot(ctx, []string{"arg"}, false /*interactive*/, false /*pipeOutput*/)
 	require.NoError(t, err)
 	require.NotNil(t, cmd)
 
@@ -294,7 +294,7 @@ func TestCmdInChroot_ConfigOpts(t *testing.T) {
 	runner.WithConfigOpts(map[string]string{"cleanup_on_success": "True", "cleanup_on_failure": "False"})
 	assert.Equal(t, map[string]string{"cleanup_on_success": "True", "cleanup_on_failure": "False"}, runner.ConfigOpts())
 
-	cmd, err := runner.CmdInChroot(ctx, []string{"arg"}, false /*interactive*/)
+	cmd, err := runner.CmdInChroot(ctx, []string{"arg"}, false /*interactive*/, false /*pipeOutput*/)
 	require.NoError(t, err)
 	require.NotNil(t, cmd)
 
@@ -311,7 +311,7 @@ func TestCmdInChroot_Unprivileged(t *testing.T) {
 	runner := mock.NewRunner(ctx, testMockConfigPath)
 	runner.WithUnprivileged()
 
-	cmd, err := runner.CmdInChroot(ctx, []string{"arg"}, false /*interactive*/)
+	cmd, err := runner.CmdInChroot(ctx, []string{"arg"}, false /*interactive*/, false /*pipeOutput*/)
 	require.NoError(t, err)
 	require.NotNil(t, cmd)
 
