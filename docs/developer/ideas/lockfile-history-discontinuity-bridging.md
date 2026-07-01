@@ -63,9 +63,16 @@ re-synthesizing the old era's entries is not.
    `import-commit` stays write-once; the prior pin lives in the transition record rather
    than overwriting the fork.
 2. **Graft the old era from upstream; never wholesale-replace it.** At render the old
-   era's lineage is fetched from upstream (the previous branch tip, or its
-   `refs/archive/...` entry) and walked exactly as before, so our interleaved overlay
-   entries and the old release count survive verbatim.
+   era's lineage is fetched from live upstream and walked, so our interleaved overlay
+   entries and the old release count survive. We keep no copy of upstream code. When a
+   rewrite renumbered the old lineage, an old-to-new commit translation map (recorded at
+   `update` time) lets us render the old era through the current post-rewrite twins, so the
+   live branch is sufficient and `refs/archive/*` is consulted only once, when the map is
+   built. If the old lineage is genuinely gone and no twin exists, that map is the escape
+   hatch: it drops per-commit fidelity and keeps only a monotonic release (placeholder
+   entries with the correct count). Reconstruction generalizes today's single mainline walk
+   into one walk per era, spliced at the transition commits; the rest of the pipeline
+   (interleaving, linearizing, release counting) is reused.
 3. **Lump the incoming branch's divergent detail into the transition.** In the divergent
    case the new branch's internal commits are absorbed into the single "rebased onto
    `<ref>`" commit rather than replayed as separate entries. The new pin's tree is the
@@ -73,9 +80,11 @@ re-synthesizing the old era's entries is not.
    that preserves the new branch's per-commit detail is possible, since a graft reparents
    one commit and keeps the history above the splice, but it is deferred: it adds
    complexity for little value under the "our linear package" framing.)
-4. **Keep the release monotonic.** `%autorelease` counts commits, so the transition must
-   never lower the count. Preserve the prior era's count (retain empty commits, or record
-   a release floor in the lock). This is a hard RPM upgrade-path constraint.
+4. **Keep the release monotonic.** `%autorelease` counts commits in the rebuilt history,
+   so the transition must never lower the count: the preserved old era carries it forward,
+   and the escape hatch emits placeholder commits to hold the count when the lineage is
+   unreachable. The concrete release-bump accounting reuses logic from a separate
+   workstream, so it is out of scope here. This is a hard RPM upgrade-path constraint.
 
 ## UX
 
@@ -99,7 +108,7 @@ history) carries a transition list:
 
 ```toml
 # Managed by azldev component update. Do not edit manually.
-version = 1
+version = 2   # transitions-bearing locks are v2 so older readers refuse rather than ignore them
 import-commit = "1f0c9d2a7b4e5c6d8a9b0c1d2e3f405162738495"   # original fork point
 upstream-commit = "c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7" # current pin, on f44 (post-rewrite)
 input-fingerprint = "sha256:..."
@@ -119,10 +128,10 @@ to = "c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7"     # new pin, post-rewrite f44
 reason = "upstream-rewrite: f44 bademail"
 ```
 
-A later crossing (for example an f44 history rewrite) adds another `[[transitions]]`
-entry. The array order does not matter: each `to` links to the next entry's `from`, so
-reconstruction follows that chain from `upstream-commit` back to `import-commit`
-regardless of how the entries are written.
+The list is ordered and append-only: each entry's `to` equals the next entry's `from`,
+the newest `to` is the current `upstream-commit`, and the oldest era anchors to
+`import-commit`. `update` validates that chain when it writes a transition, so cycles,
+forks, and gaps are rejected at write time rather than discovered during render.
 
 ## Issues in the current code
 
@@ -131,19 +140,29 @@ regardless of how the entries are written.
   force push triggers this error. It would also trigger on a branch advance if the old pin is not
   reachable from the new tip (e.g., non-linear history).
 - [buildInterleavedSequence](../../../internal/app/azldev/core/sources/synthistory.go#L240-L246)
-  silently drops synthetic commits whose upstream commit is not in the walked history.
-  Its own comment already says "Will be useful for when we switch branches." Dropping our
-  overlay entries is the wholesale-replace failure mode, and it also breaks release
-  monotonicity.
-- The clone is single-branch and full-depth
+  drops synthetic commits whose upstream commit is not in the walked history, after only a
+  `slog.Warn`. Its own comment already says "Will be useful for when we switch branches."
+  Dropping our overlay entries is the wholesale-replace failure mode, and it also breaks
+  release monotonicity.
+- The clone passes `--branch` (not `--single-branch`)
   ([fedorasourceprovider.go](../../../internal/providers/sourceproviders/fedorasourceprovider.go#L137),
-  [WithGitBranch](../../../internal/utils/git/git.go#L207-L211)); orphaned and archived
-  lineages are never fetched, so the walk cannot see them even when they exist upstream.
+  [WithGitBranch](../../../internal/utils/git/git.go#L207-L211)), so other branch heads are
+  fetched but the walk, anchored at the new tip, cannot reach a divergent old head;
+  `refs/archive/*` is outside the default refspec and is never fetched at all. Either way
+  the old lineage is invisible to the current single-range walk.
 - The lock schema records a single `import-commit` / `upstream-commit`
   ([ComponentLock](../../../internal/lockfile/lockfile.go#L30-L65)) with no notion of eras
   or transitions; multiple discontinuities over a component's life cannot be represented.
 - `import-commit` is documented write-once, yet the only remediation today rewrites it.
   The transition record restores that invariant.
+
+## Open questions
+
+- Batch semantics of `--allow-discontinuity`: per-component versus a global blanket over a
+  bulk `update`, batch failure handling, and whether `reason` is generated or author-supplied.
+- Fetch strategy for the rewritten lineage: the explicit refspec or fetch-by-hash for
+  `refs/archive/*` (outside the default `refs/heads/*`) and the cost of fetching it once when
+  the translation map is built.
 
 ## Related
 
