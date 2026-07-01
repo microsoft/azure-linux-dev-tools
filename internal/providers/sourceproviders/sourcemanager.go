@@ -350,8 +350,8 @@ func (m *sourceManager) FetchFiles(
 		if fileRef.Origin.Type == projectconfig.OriginTypeCustom && len(m.fileProviders) == 0 {
 			return fmt.Errorf(
 				"source file %#q has 'custom' origin but no file provider is available; "+
-					"set 'mock-config' on the distro %#q version definition to enable custom source generation",
-				fileRef.Filename, component.GetConfig().Spec.UpstreamDistro.Name)
+					"set 'mock-config' on the project distro version definition to enable custom source generation",
+				fileRef.Filename)
 		}
 
 		err := m.fetchSourceFile(ctx, httpDownloader, component, fileRef, destDirPath)
