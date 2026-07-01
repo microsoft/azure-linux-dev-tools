@@ -15,6 +15,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource"
+	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/mock"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/downloader"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/git"
@@ -26,14 +27,26 @@ import (
 // Provider is an abstract interface implemented by a source provider.
 type Provider interface{}
 
+// ErrNotFound is returned by a [FileSourceProvider] when it does not handle the
+// given file reference. The source manager tries the next registered provider on
+// this error, eventually falling back to lookaside cache and configured origins.
+var ErrNotFound = errors.New("file not handled by this provider")
+
 // FileSourceProvider is an abstract interface implemented by a source provider that can retrieve individual
 // source files.
 type FileSourceProvider interface {
 	Provider
 
-	// GetFiles retrieves the specified source files and places them in the provided directory. If a file
-	// is not known to (or handled by) the providers, the error will be (or will wrap) ErrNotFound.
-	GetFiles(ctx context.Context, fileRefs []projectconfig.SourceFileReference, destDirPath string) error
+	// GetFile retrieves a single source file and places it in destDirPath.
+	// Implementations must return [ErrNotFound] (or an error wrapping it) when the
+	// provider does not handle the given file reference, so the manager can try the
+	// next registered provider before falling back to lookaside and configured origins.
+	GetFile(
+		ctx context.Context,
+		component components.Component,
+		fileRef projectconfig.SourceFileReference,
+		destDirPath string,
+	) error
 }
 
 // SourceIdentityProvider resolves a reproducible identity string for a component's source.
@@ -232,6 +245,13 @@ func NewSourceManager(env *azldev.Env, distro ResolvedDistro) (SourceManager, er
 	// Create component providers
 	manager.createComponentProviders(distro)
 
+	// Automatically register the custom file source provider when the distro has
+	// a mock config path. This makes 'custom' origin source files available to all
+	// commands (build, prep-sources, diff-sources, etc.) without any per-command
+	// wiring. The provider only spins up a mock chroot when GetFile is actually
+	// called for a custom-origin file, so registering it upfront is cheap.
+	manager.createFileProviders(env)
+
 	// Ensure at least one provider was created successfully
 	if len(manager.upstreamComponentProviders) == 0 &&
 		len(manager.fileProviders) == 0 {
@@ -260,6 +280,48 @@ func (m *sourceManager) createComponentProviders(distro ResolvedDistro) {
 	slog.Debug("Registered Fedora component provider")
 }
 
+// createFileProviders registers [FileSourceProvider] implementations based on the
+// project's default distro configuration. This follows the same pattern as the
+// render and build commands, which both use [azldev.Env.Distro] (the project-level
+// default) rather than the per-component resolved distro for mock operations.
+// Currently this registers a [customFileSourceProvider] when the project distro
+// has a 'mock-config' path configured, enabling 'custom' origin source files for
+// all commands without per-command wiring.
+//
+// Failures are logged and the provider is skipped, matching the tolerant
+// registration pattern used by [createComponentProviders].
+func (m *sourceManager) createFileProviders(env *azldev.Env) {
+	_, distroVerDef, err := env.Distro()
+	if err != nil {
+		slog.Debug("Cannot resolve project distro; 'custom' origin source generation will be unavailable",
+			"error", err)
+
+		return
+	}
+
+	mockConfigPath := distroVerDef.MockConfigPath
+	if mockConfigPath == "" {
+		slog.Debug("No 'mock-config' set on the project distro version; 'custom' origin source generation is unavailable")
+
+		return
+	}
+
+	if _, statErr := env.FS().Stat(mockConfigPath); statErr != nil {
+		slog.Warn("Mock config not accessible; 'custom' origin source generation will be unavailable",
+			"path", mockConfigPath,
+			"error", statErr)
+
+		return
+	}
+
+	m.fileProviders = append(m.fileProviders, &customFileSourceProvider{
+		fs:     m.fs,
+		runner: mock.NewRunner(env, mockConfigPath),
+	})
+
+	slog.Debug("Registered custom file source provider", "mockConfig", mockConfigPath)
+}
+
 func (m *sourceManager) FetchFiles(
 	ctx context.Context,
 	component components.Component,
@@ -279,6 +341,18 @@ func (m *sourceManager) FetchFiles(
 
 	for i := range sourceFiles {
 		fileRef := &sourceFiles[i]
+
+		// Fail fast when a 'custom' origin source file has no registered provider.
+		// This means the distro has no 'mock-config' set (or the file was inaccessible),
+		// so no generation can happen. Surfacing the error here — before any network
+		// or disk work — gives a clearer diagnosis than the message produced deep in
+		// the fetch fallback path.
+		if fileRef.Origin.Type == projectconfig.OriginTypeCustom && len(m.fileProviders) == 0 {
+			return fmt.Errorf(
+				"source file %#q has 'custom' origin but no file provider is available; "+
+					"set 'mock-config' on the project distro version definition to enable custom source generation",
+				fileRef.Filename)
+		}
 
 		err := m.fetchSourceFile(ctx, httpDownloader, component, fileRef, destDirPath)
 		if err != nil {
@@ -318,6 +392,19 @@ func (m *sourceManager) fetchSourceFile(
 		return nil
 	}
 
+	// Try each registered file provider. Providers return [ErrNotFound] to signal
+	// they don't handle this reference; any other error is fatal.
+	for _, provider := range m.fileProviders {
+		err := provider.GetFile(ctx, component, *fileRef, destDirPath)
+		if err == nil {
+			return nil
+		}
+
+		if !errors.Is(err, ErrNotFound) {
+			return fmt.Errorf("file provider failed for %#q:\n%w", fileRef.Filename, err)
+		}
+	}
+
 	// Phase 1: Try lookaside cache if hash info is available
 	if fileRef.Hash != "" && fileRef.HashType != "" {
 		lookasideErr := m.tryLookasideDownload(ctx, httpDownloader, component, fileRef, destPath)
@@ -341,7 +428,7 @@ func (m *sourceManager) fetchSourceFile(
 			fileRef.Filename)
 	}
 
-	return m.downloadFromOrigin(ctx, httpDownloader, fileRef, destPath)
+	return m.fetchFromOrigin(ctx, httpDownloader, fileRef, destPath)
 }
 
 // tryLookasideDownload attempts to download a source file from the lookaside cache.
@@ -377,8 +464,12 @@ func (m *sourceManager) tryLookasideDownload(
 	return nil
 }
 
-// downloadFromOrigin downloads a source file using its configured origin.
-func (m *sourceManager) downloadFromOrigin(
+// fetchFromOrigin acquires a source file using its configured origin.
+// For [projectconfig.OriginTypeCustom], callers should have already dispatched
+// to a registered [FileSourceProvider] — reaching this function for a custom
+// origin means no provider was configured.
+// For [projectconfig.OriginTypeURI], the file is downloaded from the configured URI.
+func (m *sourceManager) fetchFromOrigin(
 	ctx context.Context,
 	httpDownloader downloader.Downloader,
 	fileRef *projectconfig.SourceFileReference,
@@ -402,6 +493,14 @@ func (m *sourceManager) downloadFromOrigin(
 		}
 
 		return nil
+
+	case projectconfig.OriginTypeCustom:
+		// The file provider dispatch in fetchSourceFile should have handled this.
+		// Reaching here means no [FileSourceProvider] was registered for 'custom' origin.
+		return fmt.Errorf(
+			"source file %#q has 'custom' origin but no provider handled it; "+
+				"ensure the distro has a 'mock-config' configured",
+			fileRef.Filename)
 
 	default:
 		return fmt.Errorf("unsupported origin type %#q for source file %#q",
