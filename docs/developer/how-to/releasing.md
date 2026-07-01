@@ -154,11 +154,12 @@ there is no second code path:
   installs the pinned git-cliff, runs `mage changelog`, and pushes a
   `release/vX.Y.Z` branch. It does **not** open the PR — open it yourself from
   that branch, curate the draft, and merge.
-* [`release.yml`](../../../.github/workflows/release.yml) (on push to `main`):
-  runs `mage release`, pushes the tag, and publishes a GitHub Release whose notes
-  are that version's `CHANGELOG.md` section. It is a no-op on ordinary merges
-  because the changelog's top version is already tagged; it only releases when a
-  release PR bumps the changelog to a new version.
+* [`release.yml`](../../../.github/workflows/release.yml) (on pushes to `main`
+  that change `CHANGELOG.md`): runs `mage release`, pushes the tag, and publishes
+  a GitHub Release whose notes are that version's `CHANGELOG.md` section. The path
+  filter keeps ordinary merges from triggering it; it also stays idempotent — a
+  `CHANGELOG.md` edit that doesn't bump the version is a no-op because the top
+  version is already tagged.
 
 Both push with the default `GITHUB_TOKEN` (`contents: write`) — no PAT needed.
 A tag pushed by `GITHUB_TOKEN` does not itself trigger further workflows, which

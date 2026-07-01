@@ -1,12 +1,15 @@
 name: "Release"
 
-# Runs on every push to main. When CHANGELOG.md carries a new version, tags it
-# (via the idempotent `mage release`), pushes the tag, and publishes a GitHub
-# Release with that version's changelog notes. Normal merges are a no-op because
-# the changelog's top version is already tagged. See docs/developer/how-to/releasing.md.
+# Runs when a push to main changes CHANGELOG.md -- i.e. when a release PR merges.
+# Tags the new version via the idempotent `mage release`, pushes the tag, and
+# publishes a GitHub Release with that version's changelog notes. Still idempotent:
+# if the top version is already tagged (e.g. a later CHANGELOG.md edit) it's a
+# no-op. See docs/developer/how-to/releasing.md.
 on:
   push:
     branches: [main]
+    paths:
+      - CHANGELOG.md
 
 # Don't run two releases at once.
 concurrency:
