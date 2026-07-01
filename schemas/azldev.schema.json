@@ -720,7 +720,8 @@
         "type": {
           "type": "string",
           "enum": [
-            "download"
+            "download",
+            "overlay"
           ],
           "title": "Origin type",
           "description": "Type of origin for this source file"

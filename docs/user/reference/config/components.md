@@ -319,8 +319,21 @@ The `origin` field specifies how to obtain the source file.
 
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
-| Type | `type` | string | **Yes** | Origin type. Currently only `"download"` is supported. |
-| URI | `uri` | string | No | URI to download the file from (required when type is `"download"`) |
+| Type | `type` | string | **Yes** | Origin type: `"download"` or `"overlay"` (see below) |
+| URI | `uri` | string | No | URI to download the file from (required when type is `"download"`; must be omitted when type is `"overlay"`) |
+
+#### `"download"` origin
+
+Downloads the file from the given `uri`. Tries the lookaside cache first using `hash`/`hash-type`, then falls back to the URI.
+
+#### `"overlay"` origin
+
+Used when archive overlays (see [Archive overlays](overlays.md#archive-overlays)) modify an existing upstream source archive. No download occurs; the archive is already present on disk as a spec source. The `hash` and `hash-type` fields record the **expected hash after all overlays have been applied** to that archive.
+
+- **`hash` and `hash-type` are required** for `"overlay"` entries — the hash cannot be computed at render time because sources are not downloaded.
+- **`replace-upstream = true` is required** — the archive already exists in the upstream `sources` file, and this entry replaces its hash with the post-overlay value.
+- During `prep-sources` (full run), azldev verifies that the hash it computed after repacking the archive matches the stated `hash`. A mismatch means the config is stale and must be updated.
+- During `render --check-only`, the stated hash is injected directly without downloading or repacking, allowing the check to pass deterministically.
 
 ### Example
 
@@ -337,6 +350,31 @@ hash = "57aa116d1c91a9ec36ab8b46c9164ae19af192b..."
 hash-type = "SHA512"
 origin = { type = "download", uri = "https://example.com/repo/pkgs/shim/shimaa64.efi/sha512/.../shimaa64.efi" }
 ```
+
+### Recording the post-overlay hash for archive overlays
+
+When you apply archive overlays (e.g. removing vendored files from a tarball) using `file-remove` or `file-search-replace` with an archive-scoped path, the repacked archive has a different hash than the original. Use a `source-files` entry with `origin.type = "overlay"` to record the expected post-overlay hash:
+
+```toml
+[[components.apache-commons-compress.source-files]]
+filename = "commons-compress-1.27.1-src.tar.gz"
+hash = "c7a2cef26959e687ad19b96b5ba8393d7514095e13bf0f29bd41e6b3c3cb2260d8ff23283ff3d5fd137b2522b843e7f0f50ab46bcf0f66df5383674f35f223ab"
+hash-type = "SHA512"
+origin = { type = "overlay" }
+replace-upstream = true
+replace-reason = "Upstream source tarball contains test fixtures flagged as malware by the AZL RPM signing pipeline. These files are not needed at runtime and are removed to allow SRPM publication."
+```
+
+**Workflow:**
+
+1. Add the archive overlay(s) in the component's `[[overlays]]` array.
+2. Run `prep-sources` once — this repacks the archive and prints the computed hash in the error message.
+3. Paste the computed `hash` and `hash-type` into the `source-files` entry above.
+4. Run `prep-sources` again to confirm the hash matches, then commit.
+
+After that, `render --check-only` will pass deterministically without downloading or repacking the archive.
+
+`replace-upstream = true` and `replace-reason` are required because the archive is already in the upstream `sources` file. The entry replaces its hash with the post-overlay value, regardless of how many overlays target that archive.
 
 ### Replacing an upstream `sources` entry
 

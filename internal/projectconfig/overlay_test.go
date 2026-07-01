@@ -262,6 +262,54 @@ func TestComponentOverlay_Validate(t *testing.T) {
 			errorExpected: true,
 			errorContains: "source",
 		},
+		// Archive-scoped path validation: only file-remove and file-search-replace support it.
+		{
+			name: "file-remove archive-scoped path accepted",
+			overlay: projectconfig.ComponentOverlay{
+				Type:     projectconfig.ComponentOverlayRemoveFile,
+				Filename: "pkg-1.0.tar.gz/vendor/**",
+			},
+			errorExpected: false,
+		},
+		{
+			name: "file-search-replace archive-scoped path accepted",
+			overlay: projectconfig.ComponentOverlay{
+				Type:        projectconfig.ComponentOverlaySearchAndReplaceInFile,
+				Filename:    "pkg-1.0.tar.gz/vendor/config.h",
+				Regex:       "old",
+				Replacement: "new",
+			},
+			errorExpected: false,
+		},
+		{
+			name: "file-add archive-scoped path rejected",
+			overlay: projectconfig.ComponentOverlay{
+				Type:     projectconfig.ComponentOverlayAddFile,
+				Filename: "pkg-1.0.tar.gz/vendor/new.txt",
+				Source:   "/path/to/source.txt",
+			},
+			errorExpected: true,
+			errorContains: "archive-scoped",
+		},
+		{
+			name: "file-prepend-lines archive-scoped path rejected",
+			overlay: projectconfig.ComponentOverlay{
+				Type:     projectconfig.ComponentOverlayPrependLinesToFile,
+				Filename: "pkg-1.0.tar.gz/vendor/config.h",
+				Lines:    []string{"// header"},
+			},
+			errorExpected: true,
+			errorContains: "archive-scoped",
+		},
+		{
+			name: "patch-remove archive-scoped path rejected",
+			overlay: projectconfig.ComponentOverlay{
+				Type:     projectconfig.ComponentOverlayRemovePatch,
+				Filename: "pkg-1.0.tar.gz/fix.patch",
+			},
+			errorExpected: true,
+			errorContains: "archive-scoped",
+		},
 		// Description included in error
 		{
 			name: "error includes description",
@@ -412,6 +460,50 @@ func TestComponentOverlay_Validate(t *testing.T) {
 			errorExpected: true,
 			errorContains: "section",
 		},
+		// archive-scoped file-remove tests (archive derived from path prefix)
+		{
+			name: "file-remove archive-scoped valid",
+			overlay: projectconfig.ComponentOverlay{
+				Type:     projectconfig.ComponentOverlayRemoveFile,
+				Filename: "pkg-1.0.tar.gz/unwanted.conf",
+			},
+			errorExpected: false,
+		},
+		{
+			name: "file-remove archive-scoped glob valid",
+			overlay: projectconfig.ComponentOverlay{
+				Type:     projectconfig.ComponentOverlayRemoveFile,
+				Filename: "pkg-1.0.tar.gz/docs/**/*.md",
+			},
+			errorExpected: false,
+		},
+		{
+			name: "file-remove of a bare archive name is a plain loose-file remove",
+			overlay: projectconfig.ComponentOverlay{
+				Type:     projectconfig.ComponentOverlayRemoveFile,
+				Filename: "old.tar.gz",
+			},
+			errorExpected: false,
+		},
+		{
+			name: "file-remove without archive prefix is a plain loose-file remove",
+			overlay: projectconfig.ComponentOverlay{
+				Type:     projectconfig.ComponentOverlayRemoveFile,
+				Filename: "unwanted.conf",
+			},
+			errorExpected: false,
+		},
+		// file-search-replace supports archive scoping via the path prefix
+		{
+			name: "file-search-replace archive-scoped valid",
+			overlay: projectconfig.ComponentOverlay{
+				Type:        projectconfig.ComponentOverlaySearchAndReplaceInFile,
+				Filename:    "pkg-1.0.tar.gz/config.h",
+				Regex:       "old_value",
+				Replacement: "new_value",
+			},
+			errorExpected: false,
+		},
 	}
 
 	for _, testCase := range testCases {
@@ -455,6 +547,16 @@ func TestComponentOverlay_ModifiesSpec(t *testing.T) {
 		projectconfig.ComponentOverlayAddFile,
 	}
 
+	// Archive-scoped overlays: only file-remove/file-search-replace become archive-scoped,
+	// and only when their file path carries an archive prefix (e.g. "pkg-1.0.tar.gz/...").
+	archiveOverlays := []projectconfig.ComponentOverlay{
+		{Type: projectconfig.ComponentOverlayRemoveFile, Filename: "pkg-1.0.tar.gz/f"},
+		{
+			Type:     projectconfig.ComponentOverlaySearchAndReplaceInFile,
+			Filename: "pkg-1.0.tar.gz/f", Regex: "old", Replacement: "new",
+		},
+	}
+
 	for _, overlayType := range specOverlayTypes {
 		t.Run(string(overlayType)+"_is_spec_overlay", func(t *testing.T) {
 			overlay := projectconfig.ComponentOverlay{Type: overlayType}
@@ -466,6 +568,15 @@ func TestComponentOverlay_ModifiesSpec(t *testing.T) {
 		t.Run(string(overlayType)+"_is_not_spec_overlay", func(t *testing.T) {
 			overlay := projectconfig.ComponentOverlay{Type: overlayType}
 			assert.False(t, overlay.ModifiesSpec(), "expected %s to not be a spec overlay", overlayType)
+		})
+	}
+
+	for _, overlay := range archiveOverlays {
+		t.Run(string(overlay.Type)+"_is_archive_scoped", func(t *testing.T) {
+			assert.True(t, overlay.ModifiesArchive(), "expected %s to be an archive-scoped overlay", overlay.Type)
+			assert.False(t, overlay.ModifiesSpec(), "expected %s to not be a spec overlay", overlay.Type)
+			assert.False(t, overlay.ModifiesLooseFiles(),
+				"expected %s to not be a loose-file overlay", overlay.Type)
 		})
 	}
 }

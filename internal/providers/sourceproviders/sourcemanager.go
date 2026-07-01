@@ -305,6 +305,13 @@ func (m *sourceManager) fetchSourceFile(
 
 	destPath := filepath.Join(destDirPath, fileRef.Filename)
 
+	// Overlay-origin entries declare the post-overlay hash of an archive that is already
+	// present as a spec source. No download is needed; the hash is used only to update
+	// the 'sources' file during render and to validate the output of 'prep-sources'.
+	if fileRef.Origin.Type == projectconfig.OriginTypeOverlay {
+		return nil
+	}
+
 	sourceExists, err := fileutils.Exists(m.fs, destPath)
 	if err != nil {
 		return fmt.Errorf("failed to check existence of destination file %#q:\n%w", destPath, err)
@@ -402,6 +409,12 @@ func (m *sourceManager) downloadFromOrigin(
 		}
 
 		return nil
+
+	case projectconfig.OriginTypeOverlay:
+		// Overlay-origin files are skipped before reaching this point in fetchSourceFile.
+		// This case should never be reached.
+		return fmt.Errorf("internal error: download attempted for 'overlay'-origin source file %#q",
+			fileRef.Filename)
 
 	default:
 		return fmt.Errorf("unsupported origin type %#q for source file %#q",

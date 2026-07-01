@@ -138,13 +138,7 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 		)
 	}
 
-	if options.AllowNoHashes {
-		preparerOpts = append(preparerOpts, sources.WithAllowNoHashes())
-	}
-
-	if options.SkipSources {
-		preparerOpts = append(preparerOpts, sources.WithSkipLookaside())
-	}
+	preparerOpts = appendPrepareSourcesOptions(preparerOpts, options)
 
 	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, preparerOpts...)
 	if err != nil {
@@ -193,4 +187,21 @@ func CheckOutputDir(env *azldev.Env, options *PrepareSourcesOptions) error {
 		"output directory %#q already exists and is not empty;\n"+
 			"use --force to delete and recreate it",
 		options.OutputDir)
+}
+
+// appendPrepareSourcesOptions appends conditional preparer options that control
+// hashing and lookaside behavior.
+func appendPrepareSourcesOptions(
+	opts []sources.PreparerOption,
+	options *PrepareSourcesOptions,
+) []sources.PreparerOption {
+	if options.AllowNoHashes {
+		opts = append(opts, sources.WithAllowNoHashes())
+	}
+
+	if options.SkipSources {
+		opts = append(opts, sources.WithSkipLookaside())
+	}
+
+	return opts
 }

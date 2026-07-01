@@ -246,12 +246,12 @@ func (p *sourcePreparerImpl) PrepareSources(
 	}
 
 	if applyOverlays {
-		err := p.applyOverlaysToSources(ctx, component, outputDir)
+		repackedArchives, err := p.applyOverlaysToSources(component, outputDir)
 		if err != nil {
 			return err
 		}
 
-		if err := p.updateSourcesFile(component, outputDir); err != nil {
+		if err := p.updateSourcesFile(component, outputDir, repackedArchives); err != nil {
 			return fmt.Errorf("failed to update 'sources' file for component %#q:\n%w",
 				component.GetName(), err)
 		}
@@ -273,17 +273,17 @@ func (p *sourcePreparerImpl) PrepareSources(
 }
 
 // applyOverlaysToSources writes the macros file and then applies all overlays.
+// It returns the names of any archives that were repacked by archive overlays
+// (empty in dry-run mode or when no archive overlays ran), so the caller can
+// rehash exactly those entries in the 'sources' file.
 func (p *sourcePreparerImpl) applyOverlaysToSources(
-	ctx context.Context, component components.Component, outputDir string,
-) error {
-	// Emit computed macros to a macros file in the output directory.
-	// If the build configuration produces no macros, no file is written and
-	// macrosFileName will be empty.
+	component components.Component, outputDir string,
+) ([]string, error) {
 	var macrosFileName string
 
 	macrosFilePath, err := p.writeMacrosFile(component, outputDir)
 	if err != nil {
-		return fmt.Errorf("failed to write macros file for component %#q:\n%w",
+		return nil, fmt.Errorf("failed to write macros file for component %#q:\n%w",
 			component.GetName(), err)
 	}
 
@@ -291,47 +291,88 @@ func (p *sourcePreparerImpl) applyOverlaysToSources(
 		macrosFileName = filepath.Base(macrosFilePath)
 	}
 
-	// Apply all overlays to prepared sources.
-	if err := p.applyOverlays(ctx, component, outputDir, macrosFileName); err != nil {
-		return fmt.Errorf("failed to apply overlays for component %#q:\n%w", component.GetName(), err)
+	repackedArchives, err := p.applyOverlays(component, outputDir, macrosFileName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to apply overlays for component %#q:\n%w",
+			component.GetName(), err)
 	}
 
-	return nil
+	return repackedArchives, nil
 }
 
 // applyOverlays applies all overlays (user-defined and system-generated) to the
-// component sources. Overlay application is decoupled from git history generation:
-// overlays modify the working tree; synthetic history is recorded separately by
-// [trySyntheticHistory].
+// component sources. It returns the names of any archives that were repacked by
+// archive overlays.
 func (p *sourcePreparerImpl) applyOverlays(
-	_ context.Context, component components.Component, sourcesDirPath, macrosFileName string,
-) error {
+	component components.Component, sourcesDirPath, macrosFileName string,
+) ([]string, error) {
 	event := p.eventListener.StartEvent("Applying overlays", "component", component.GetName())
 	defer event.End()
 
-	// Resolve the spec path once for all overlay operations in this call.
 	absSpecPath, err := p.resolveSpecPath(component, sourcesDirPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	// Collect all overlays in application order. This ensures every change is
-	// captured in the synthetic history, including build configuration changes.
 	allOverlays, err := p.collectOverlays(component, macrosFileName)
 	if err != nil {
-		return fmt.Errorf("failed to collect overlays for component %#q:\n%w", component.GetName(), err)
+		return nil, fmt.Errorf("failed to collect overlays for component %#q:\n%w", component.GetName(), err)
 	}
 
 	if len(allOverlays) == 0 {
-		return nil
+		return nil, nil
 	}
 
-	// Apply all overlays to the working tree.
+	// Archive overlays are applied first (they modify archived source files
+	// in-place), followed by spec and loose-file overlays. Each function
+	// self-filters to the overlay types it handles.
+	repackedArchives, err := p.applyArchiveOverlayGroup(component, sourcesDirPath, allOverlays)
+	if err != nil {
+		return nil, err
+	}
+
 	if err := p.applyOverlayList(allOverlays, sourcesDirPath, absSpecPath); err != nil {
-		return fmt.Errorf("failed to apply overlays for component %#q:\n%w", component.GetName(), err)
+		return nil, fmt.Errorf("failed to apply overlays for component %#q:\n%w", component.GetName(), err)
 	}
 
-	return nil
+	return repackedArchives, nil
+}
+
+// applyArchiveOverlayGroup applies the archive-scoped overlays contained in the
+// given overlay list. The list may hold overlays of any type; only those for
+// which [projectconfig.ComponentOverlay.ModifiesArchive] reports true are
+// processed here. Skipped when source downloads were not performed. It returns
+// the names of the archives that were actually repacked (empty in dry-run mode
+// or when source downloads were skipped).
+func (p *sourcePreparerImpl) applyArchiveOverlayGroup(
+	component components.Component,
+	sourcesDirPath string, overlays []projectconfig.ComponentOverlay,
+) ([]string, error) {
+	archiveOverlays := lo.Filter(overlays, func(overlay projectconfig.ComponentOverlay, _ int) bool {
+		return overlay.ModifiesArchive()
+	})
+
+	if len(archiveOverlays) == 0 {
+		return nil, nil
+	}
+
+	if p.skipLookaside {
+		slog.Warn("Skipping archive overlays because source downloads were skipped (--skip-sources)",
+			"component", component.GetName(),
+			"count", len(archiveOverlays))
+
+		return nil, nil
+	}
+
+	repackedArchives, err := applyArchiveOverlays(
+		p.dryRunnable, p.eventListener, sourcesDirPath, archiveOverlays,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to apply archive overlays for component %#q:\n%w",
+			component.GetName(), err)
+	}
+
+	return repackedArchives, nil
 }
 
 // collectOverlays gathers all overlays for a component into a single ordered slice:
@@ -604,8 +645,10 @@ func (p *sourcePreparerImpl) DiffSources(
 		return nil, fmt.Errorf("failed to copy sources for component %#q:\n%w", component.GetName(), err)
 	}
 
-	// Apply overlays in-place to the copied directory only.
-	if err := p.applyOverlaysToSources(ctx, component, overlaidDir); err != nil {
+	// Apply overlays in-place to the copied directory only. The repacked-archive
+	// list is unused here: DiffSources diffs the trees directly and does not
+	// rewrite a 'sources' file.
+	if _, err := p.applyOverlaysToSources(component, overlaidDir); err != nil {
 		return nil, fmt.Errorf("failed to apply overlays for component %#q:\n%w", component.GetName(), err)
 	}
 
@@ -634,9 +677,17 @@ func (p *sourcePreparerImpl) DiffSources(
 // enforced by [projectconfig.ConfigFile.Validate]). Setting `ReplaceUpstream` = true without
 // a matching upstream entry is also an error: the user expressed intent to replace something
 // that isn't there, which almost certainly indicates a stale config or filename typo.
-func (p *sourcePreparerImpl) updateSourcesFile(component components.Component, outputDir string) error {
-	sourceFiles := component.GetConfig().SourceFiles
-	if len(sourceFiles) == 0 {
+func (p *sourcePreparerImpl) updateSourcesFile(
+	component components.Component, outputDir string, modifiedArchives []string,
+) error {
+	config := component.GetConfig()
+	sourceFiles := config.SourceFiles
+
+	// modifiedArchives lists the archives that archive overlays actually repacked
+	// during this run; their 'sources' digests must be refreshed. The list is empty
+	// when no archive overlays ran, in dry-run mode, or when source downloads were
+	// skipped, so rehashing is correctly avoided in those cases.
+	if len(sourceFiles) == 0 && len(modifiedArchives) == 0 {
 		return nil
 	}
 
@@ -647,7 +698,27 @@ func (p *sourcePreparerImpl) updateSourcesFile(component components.Component, o
 		return err
 	}
 
-	mergedLines, err := p.buildSourceEntries(sourceFiles, existingContent, component.GetName(), outputDir)
+	// Parse once, then rehash modified archives and merge source-files entries
+	// on the parsed representation — single parse, single write.
+	existingLines, err := fedorasource.ReadSourcesFile(existingContent)
+	if err != nil {
+		return fmt.Errorf("failed to parse 'sources' file %#q:\n%w", sourcesFilePath, err)
+	}
+
+	// Rehash archives that were modified by archive overlays in-place.
+	if err := p.rehashModifiedEntries(existingLines, outputDir, modifiedArchives); err != nil {
+		return err
+	}
+
+	// In full prep-sources mode, cross-check any 'overlay'-origin source-file entries against
+	// the hashes that were just computed so stale stated hashes are caught immediately.
+	if !p.skipLookaside {
+		if err := validateOverlayResultHashes(existingLines, sourceFiles, modifiedArchives, component.GetName()); err != nil {
+			return err
+		}
+	}
+
+	mergedLines, err := p.buildSourceEntries(sourceFiles, existingLines, component.GetName(), outputDir)
 	if err != nil {
 		return err
 	}
@@ -661,6 +732,132 @@ func (p *sourcePreparerImpl) updateSourcesFile(component components.Component, o
 		fileperms.PublicFile,
 	); err != nil {
 		return fmt.Errorf("failed to write 'sources' file %#q:\n%w", sourcesFilePath, err)
+	}
+
+	return nil
+}
+
+// rehashModifiedEntries updates the Raw and Entry fields of parsed 'sources' lines
+// for archives that were modified by archive overlays. The hash is recomputed using
+// the same hash type as the original entry. It returns an error if any modified
+// archive has no matching 'sources' entry, since that would leave a stale digest.
+func (p *sourcePreparerImpl) rehashModifiedEntries(
+	lines []fedorasource.SourcesFileLine, outputDir string, modifiedArchives []string,
+) error {
+	if len(modifiedArchives) == 0 {
+		return nil
+	}
+
+	// Track which archives we actually rehashed so we can detect any that were
+	// repacked by an overlay but have no matching 'sources' entry. Leaving such
+	// an archive unrehashed would record a stale digest, so it is treated as an error.
+	rehashed := make(map[string]bool, len(modifiedArchives))
+	for _, name := range modifiedArchives {
+		rehashed[name] = false
+	}
+
+	for idx, line := range lines {
+		if line.Entry == nil {
+			continue
+		}
+
+		if _, ok := rehashed[line.Entry.Filename]; !ok {
+			continue
+		}
+
+		archivePath := filepath.Join(outputDir, line.Entry.Filename)
+
+		newHash, err := fileutils.ComputeFileHash(p.fs, line.Entry.HashType, archivePath)
+		if err != nil {
+			return fmt.Errorf("rehashing modified archive %#q:\n%w", line.Entry.Filename, err)
+		}
+
+		slog.Debug("Rehashed modified archive in 'sources' file",
+			"archive", line.Entry.Filename,
+			"hashType", line.Entry.HashType,
+			"oldHash", line.Entry.Hash,
+			"newHash", newHash,
+		)
+
+		lines[idx].Raw = fedorasource.FormatSourcesEntry(line.Entry.Filename, line.Entry.HashType, newHash)
+		lines[idx].Entry.Hash = newHash
+		rehashed[line.Entry.Filename] = true
+	}
+
+	// Any archive that an overlay repacked but that has no 'sources' entry would
+	// silently keep a stale digest. Surface this as an error identifying the
+	// missing filenames rather than producing an inconsistent 'sources' file.
+	var missing []string
+
+	for name, done := range rehashed {
+		if !done {
+			missing = append(missing, name)
+		}
+	}
+
+	if len(missing) > 0 {
+		slices.Sort(missing)
+
+		return fmt.Errorf(
+			"archive overlay(s) modified %d archive(s) with no matching 'sources' entry to rehash: %s",
+			len(missing), strings.Join(missing, ", "))
+	}
+
+	return nil
+}
+
+// validateOverlayResultHashes cross-checks [projectconfig.OriginTypeOverlay] source-file entries
+// against the post-overlay hashes that [rehashModifiedEntries] just computed in existingLines.
+// A mismatch means the stated hash in the config is stale and must be updated.
+// It is a no-op when no archives were repacked in this run.
+func validateOverlayResultHashes(
+	lines []fedorasource.SourcesFileLine,
+	sourceFiles []projectconfig.SourceFileReference,
+	modifiedArchives []string,
+	componentName string,
+) error {
+	if len(modifiedArchives) == 0 {
+		return nil
+	}
+
+	// Only validate archives that were actually repacked in this run.
+	repacked := make(map[string]bool, len(modifiedArchives))
+	for _, name := range modifiedArchives {
+		repacked[name] = true
+	}
+
+	// Build a filename → computed (post-overlay) entry map from the updated lines.
+	computedByName := make(map[string]fedorasource.SourcesFileEntry, len(lines))
+	for _, line := range lines {
+		if line.Entry != nil {
+			computedByName[line.Entry.Filename] = *line.Entry
+		}
+	}
+
+	for _, ref := range sourceFiles {
+		if ref.Origin.Type != projectconfig.OriginTypeOverlay {
+			continue
+		}
+
+		if !repacked[ref.Filename] {
+			continue
+		}
+
+		computed, ok := computedByName[ref.Filename]
+		if !ok {
+			// Missing upstream entry will be reported by processSourceRef.
+			continue
+		}
+
+		if computed.HashType != ref.HashType || computed.Hash != ref.Hash {
+			return fmt.Errorf(
+				"component %#q: archive %#q 'source-files' hash does not match the hash computed "+
+					"after applying overlays; update the 'hash' and 'hash-type' fields in the "+
+					"'source-files' entry:\n  stated:   %s %s\n  computed: %s %s",
+				componentName, ref.Filename,
+				ref.HashType, ref.Hash,
+				computed.HashType, computed.Hash)
+		}
 	}
 
 	return nil
@@ -685,32 +882,24 @@ func (p *sourcePreparerImpl) readSourcesFileIfExists(sourcesFilePath string) (st
 	return string(data), nil
 }
 
-// buildSourceEntries validates [projectconfig.SourceFileReference] entries and returns
-// the merged set of lines ready to be written to the 'sources' file. Before returning,
-// it logs an INFO-level event indicating that the 'sources' file will be updated,
-// including the counts of newly added and replaced entries.
+// buildSourceEntries merges user-declared [projectconfig.SourceFileReference] entries
+// into the parsed 'sources' lines. Returns the final set of raw lines ready to be
+// written to the 'sources' file.
 //
 // Output ordering and preservation:
-//   - Each line of [existingContent] is emitted verbatim, except for entry lines whose
+//   - Each existing line is emitted verbatim, except for entry lines whose
 //     filename matches a replacement, which are swapped for the new formatted entry.
-//     Comments and blank lines from the original file are kept in their original positions.
-//   - Brand-new entries (no upstream filename collision) are appended after the upstream
-//     content in the order they appear in [sourceFiles].
+//     Comments and blank lines are kept in their original positions.
+//   - Brand-new entries (no upstream filename collision) are appended after the
+//     existing content in the order they appear in [sourceFiles].
 //
 // Collision rules and hash resolution are documented on [sourcePreparerImpl.processSourceRef].
 func (p *sourcePreparerImpl) buildSourceEntries(
 	sourceFiles []projectconfig.SourceFileReference,
-	existingContent string,
+	existingLines []fedorasource.SourcesFileLine,
 	componentName string,
 	outputDir string,
 ) (mergedLines []string, err error) {
-	existingLines, err := fedorasource.ReadSourcesFile(existingContent)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"failed to parse existing 'sources' file at %#q:\n%w",
-			filepath.Join(outputDir, fedorasource.SourcesFileName), err)
-	}
-
 	// Index upstream entries by filename for O(1) collision lookup. The parser
 	// (fedorasource.ReadSourcesFile) errors on duplicate filenames, so the
 	// entries are guaranteed unique by the time we get here.
@@ -1085,10 +1274,17 @@ func (p *sourcePreparerImpl) resolveSpecPath(
 }
 
 // applyOverlayList applies a list of overlays to the component sources sequentially.
+// Archive-scoped overlays (see [projectconfig.ComponentOverlay.ModifiesArchive]) are
+// skipped here; they are handled separately by [applyArchiveOverlays], which batches
+// extraction and repacking per archive.
 func (p *sourcePreparerImpl) applyOverlayList(
 	overlays []projectconfig.ComponentOverlay, sourcesDirPath, absSpecPath string,
 ) error {
 	for _, overlay := range overlays {
+		if overlay.ModifiesArchive() {
+			continue
+		}
+
 		if err := ApplyOverlayToSources(
 			p.dryRunnable, p.fs, overlay, sourcesDirPath, absSpecPath,
 		); err != nil {

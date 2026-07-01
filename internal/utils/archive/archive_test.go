@@ -52,6 +52,63 @@ func TestDetectCompression(t *testing.T) {
 	}
 }
 
+// TestSniffCompressionFromFile verifies that compression is detected from the
+// file's real magic bytes, ignoring (and overriding) the filename extension.
+func TestSniffCompressionFromFile(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Write a real archive of each format under a deliberately misleading ".txz"
+	// name, then assert the sniffer reports the real format, not what the name claims.
+	write := func(t *testing.T, name string, comp archive.Compression) string {
+		t.Helper()
+
+		src := filepath.Join(t.TempDir(), "src")
+		require.NoError(t, os.MkdirAll(src, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(src, "a.txt"), []byte("hi"), 0o600))
+
+		path := filepath.Join(tmpDir, name)
+		require.NoError(t, archive.CreateDeterministicArchive(path, src, comp))
+
+		return path
+	}
+
+	tests := []struct {
+		name string
+		comp archive.Compression
+	}{
+		{"plain-tar-named.txz", archive.CompressionNone},
+		{"gzip-named.txz", archive.CompressionGzip},
+		{"xz-named.tar", archive.CompressionXZ},
+		{"zstd-named.tgz", archive.CompressionZstd},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			path := write(t, testCase.name, testCase.comp)
+
+			// Fallback is deliberately a wrong value to prove it is never used
+			// for a non-empty file.
+			got, err := archive.SniffCompressionFromFile(path, archive.CompressionGzip)
+			require.NoError(t, err)
+			assert.Equal(t, testCase.comp, got)
+		})
+	}
+
+	t.Run("empty file uses fallback", func(t *testing.T) {
+		path := filepath.Join(tmpDir, "empty.txz")
+		require.NoError(t, os.WriteFile(path, nil, 0o600))
+
+		got, err := archive.SniffCompressionFromFile(path, archive.CompressionXZ)
+		require.NoError(t, err)
+		assert.Equal(t, archive.CompressionXZ, got)
+	})
+
+	t.Run("missing file errors", func(t *testing.T) {
+		_, err := archive.SniffCompressionFromFile(filepath.Join(tmpDir, "nope.tar"), archive.CompressionNone)
+		require.Error(t, err)
+	})
+}
+
 func TestExtractAndRepack(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -121,6 +178,8 @@ func createTestTarGz(t *testing.T, path string, entries []testTarEntry) {
 			header.Size = int64(len(entry.content))
 		case tar.TypeSymlink:
 			header.Linkname = entry.linkname
+		case tar.TypeLink:
+			header.Linkname = entry.linkname
 		}
 
 		require.NoError(t, tarWriter.WriteHeader(header))
@@ -187,20 +246,164 @@ func TestRoundTrip_AllCompressions(t *testing.T) {
 	}
 }
 
+func TestExtract_MislabeledCompression(t *testing.T) {
+	// Some upstream archives are published with a compression extension that
+	// doesn't match their bytes (e.g. an uncompressed tar named ".txz"). Extract
+	// must sniff the real format from the magic bytes rather than trusting the
+	// caller-supplied (extension-derived) compression.
+	tests := []struct {
+		name string
+		// actual is the format the bytes are really written in.
+		actual archive.Compression
+		// claimed is the (wrong) compression Extract is told to use.
+		claimed archive.Compression
+	}{
+		{"plain tar claimed as xz", archive.CompressionNone, archive.CompressionXZ},
+		{"plain tar claimed as gzip", archive.CompressionNone, archive.CompressionGzip},
+		{"gzip claimed as xz", archive.CompressionGzip, archive.CompressionXZ},
+		{"xz claimed as none", archive.CompressionXZ, archive.CompressionNone},
+		{"zstd claimed as gzip", archive.CompressionZstd, archive.CompressionGzip},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			sourceDir := filepath.Join(tmpDir, "src")
+			extractDir := filepath.Join(tmpDir, "out")
+
+			require.NoError(t, os.MkdirAll(sourceDir, 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(sourceDir, "a.txt"), []byte("alpha"), 0o600))
+
+			// Write the archive in its real format but with a mismatched name.
+			archivePath := filepath.Join(tmpDir, "pkg.txz")
+			require.NoError(t, archive.CreateDeterministicArchive(archivePath, sourceDir, testCase.actual))
+
+			// Extract is given the wrong compression; magic-byte sniffing must
+			// recover the real format and extract successfully.
+			require.NoError(t, archive.Extract(archivePath, extractDir, testCase.claimed))
+
+			got, err := os.ReadFile(filepath.Join(extractDir, "a.txt"))
+			require.NoError(t, err)
+			assert.Equal(t, "alpha", string(got))
+		})
+	}
+}
+
 func TestUnsupportedCompression(t *testing.T) {
 	tmpDir := t.TempDir()
-	archivePath := filepath.Join(tmpDir, "archive.bin")
-	require.NoError(t, os.WriteFile(archivePath, []byte("dummy"), 0o600))
 
 	bogus := archive.Compression(99)
 
-	err := archive.Extract(archivePath, tmpDir, bogus)
+	// Extract sniffs real compression from magic bytes and only falls back to
+	// the caller-supplied value when there are no bytes to inspect. Use an empty
+	// file so the bogus value actually reaches the decompressor guard.
+	emptyPath := filepath.Join(tmpDir, "empty.bin")
+	require.NoError(t, os.WriteFile(emptyPath, nil, 0o600))
+
+	err := archive.Extract(emptyPath, tmpDir, bogus)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported compression type")
 
 	err = archive.CreateDeterministicArchive(filepath.Join(tmpDir, "out.bin"), tmpDir, bogus)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported compression type")
+}
+
+// TestExtract_UnsupportedEntryType verifies the handling of tar entries whose
+// type cannot be materialized (here, a hardlink). By default such entries are
+// skipped; with [archive.WithErrorOnUnsupportedEntry] they cause a failure so
+// callers that repack the tree don't silently drop them.
+func TestExtract_UnsupportedEntryType(t *testing.T) {
+	makeArchive := func(t *testing.T) string {
+		t.Helper()
+
+		archivePath := filepath.Join(t.TempDir(), "pkg.tar.gz")
+		createTestTarGz(t, archivePath, []testTarEntry{
+			{name: "pkg/real.txt", typeflag: tar.TypeReg, content: "hello"},
+			// A hardlink to the regular file above: a valid tar entry type that
+			// Extract cannot materialize.
+			{name: "pkg/link.txt", typeflag: tar.TypeLink, linkname: "pkg/real.txt"},
+		})
+
+		return archivePath
+	}
+
+	t.Run("skipped by default", func(t *testing.T) {
+		extractDir := filepath.Join(t.TempDir(), "out")
+
+		require.NoError(t, archive.Extract(makeArchive(t), extractDir, archive.CompressionGzip))
+
+		// The regular file is extracted; the unsupported hardlink is skipped.
+		assert.FileExists(t, filepath.Join(extractDir, "pkg", "real.txt"))
+		assert.NoFileExists(t, filepath.Join(extractDir, "pkg", "link.txt"))
+	})
+
+	t.Run("errors with WithErrorOnUnsupportedEntry", func(t *testing.T) {
+		extractDir := filepath.Join(t.TempDir(), "out")
+
+		err := archive.Extract(
+			makeArchive(t), extractDir, archive.CompressionGzip,
+			archive.WithErrorOnUnsupportedEntry(),
+		)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unsupported type")
+		assert.Contains(t, err.Error(), "link.txt")
+	})
+}
+
+// TestExtract_PaxGlobalHeaderIgnored is a regression test: git-generated
+// tarballs (e.g. GitHub archives) begin with a "pax_global_header" entry
+// (typeflag 'g'). It is tar metadata, not file content, so it must be skipped
+// even under [archive.WithErrorOnUnsupportedEntry] — otherwise repack-strict
+// callers cannot extract any git-generated source archive.
+func TestExtract_PaxGlobalHeaderIgnored(t *testing.T) {
+	archivePath := filepath.Join(t.TempDir(), "pkg.tar.gz")
+
+	file, err := os.Create(archivePath)
+	require.NoError(t, err)
+
+	gzWriter := gzip.NewWriter(file)
+	tarWriter := tar.NewWriter(gzWriter)
+
+	// Leading PAX global header carrying a commit hash, exactly as `git archive`
+	// emits. Go names it "pax_global_header" on read-back.
+	require.NoError(t, tarWriter.WriteHeader(&tar.Header{
+		Typeflag: tar.TypeXGlobalHeader,
+		Name:     "pax_global_header",
+		PAXRecords: map[string]string{
+			"comment": "0123456789abcdef0123456789abcdef01234567",
+		},
+	}))
+
+	const fileContent = "hello"
+
+	require.NoError(t, tarWriter.WriteHeader(&tar.Header{
+		Typeflag: tar.TypeReg,
+		Name:     "pkg-1.0/real.txt",
+		Mode:     0o644,
+		Size:     int64(len(fileContent)),
+	}))
+	_, err = tarWriter.Write([]byte(fileContent))
+	require.NoError(t, err)
+
+	require.NoError(t, tarWriter.Close())
+	require.NoError(t, gzWriter.Close())
+	require.NoError(t, file.Close())
+
+	extractDir := filepath.Join(t.TempDir(), "out")
+
+	// Strict mode must succeed: the global header is skipped, the file extracted.
+	require.NoError(t, archive.Extract(
+		archivePath, extractDir, archive.CompressionGzip,
+		archive.WithErrorOnUnsupportedEntry(),
+	))
+
+	content, err := os.ReadFile(filepath.Join(extractDir, "pkg-1.0", "real.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, fileContent, string(content))
+
+	// The pax header must not have produced a file on disk.
+	assert.NoFileExists(t, filepath.Join(extractDir, "pax_global_header"))
 }
 
 func TestCreateDeterministicArchive_PreservesSymlinks(t *testing.T) {
