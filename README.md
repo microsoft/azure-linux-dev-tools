@@ -1,5 +1,8 @@
 # Azure Linux Dev Tools
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/microsoft/azure-linux-dev-tools.svg)](https://pkg.go.dev/github.com/microsoft/azure-linux-dev-tools)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+
 Azure Linux Dev Tools is a collection of utilities useful for development
 of the Azure Linux distro.
 
@@ -28,8 +31,11 @@ It supports:
 1. Install `azldev`:
 
     ```console
-    go install github.com/microsoft/azure-linux-dev-tools/cmd/azldev@main
+    go install github.com/microsoft/azure-linux-dev-tools/cmd/azldev@latest
     ```
+
+   To pin a specific release instead of tracking the latest, replace `@latest`
+   with a version tag, e.g. `@v0.1.0`.
 
 1. To ensure you can build using `mock` you must be a member of the `mock` group, e.g.:
 
@@ -61,6 +67,10 @@ this repo's [User Guide](./docs/user).
 Please see our [Contribution Guidelines](./CONTRIBUTING.md) for our project.
 
 For development setup and workflow, please consult our [Developer Guide](./docs/developer).
+
+## Changelog
+
+Notable changes for each release are recorded in the [changelog](./CHANGELOG.md).
 
 ## Getting Help
 
