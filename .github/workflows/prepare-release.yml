@@ -24,6 +24,9 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          # Always draft from the repo's default branch (main upstream), not the
+          # branch this workflow_dispatch happened to be launched from.
+          ref: ${{ github.event.repository.default_branch }}
           # git-cliff needs full history and tags to compute the next version.
           fetch-depth: 0
           persist-credentials: false
@@ -70,17 +73,28 @@ jobs:
             exit 0
           fi
 
-          version="$(sed -n 's/^## \[\([0-9.]*\)\].*/\1/p' CHANGELOG.md | head -1)"
+          version="$(sed -n 's/^## \[\([0-9]\+\.[0-9]\+\.[0-9]\+\)\].*/\1/p' CHANGELOG.md | head -1)"
           if [ -z "$version" ]; then
             echo "no '## [X.Y.Z]' heading found in CHANGELOG.md" >&2
             exit 1
           fi
           branch="release/v${version}"
 
-          # Refuse to clobber an existing release branch (e.g. a prior prepare-release run that
-          # has not been merged or cleaned up yet).
+          # A release branch for this version already exists (e.g. a prior prepare-release run
+          # that hasn't been merged or cleaned up). Fail rather than clobber it -- but leave a
+          # summary with the PR link so recovery is a click away. ($GITHUB_STEP_SUMMARY still
+          # renders even though the step exits non-zero.)
           if git ls-remote --exit-code --heads origin "refs/heads/${branch}" >/dev/null 2>&1; then
-            echo "Release branch '${branch}' already exists on the remote; merge or delete it before preparing again." >&2
+            pr_url="${SERVER_URL}/${REPO}/pull/new/${branch}"
+            {
+              echo "### Release branch already exists"
+              echo ""
+              echo "Branch \`${branch}\` already exists, so no new draft was created."
+              echo ""
+              echo "**[Open its pull request →](${pr_url})** to finish the release, or delete the"
+              echo "branch and re-run this workflow to regenerate the draft from the latest \`main\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "Release branch '${branch}' already exists; open its PR or delete it and re-run." >&2
             exit 1
           fi
 

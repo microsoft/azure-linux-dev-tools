@@ -12,9 +12,8 @@ locally:
    (**Run workflow** → `main`). It drafts the next changelog section and pushes
    a `release/vX.Y.Z` branch.
 2. Wait ~30 seconds, the output summary of the workflow will generate a link to create the PR.
-3. On merge, the [**release** workflow][release-run] tags `vX.Y.Z`, publishes a
-   GitHub Release from the changelog, and warms the proxy + pkg.go.dev — no
-   further action needed.
+3. On merge, the [**release** workflow][release-run] tags `vX.Y.Z` and publishes
+   a GitHub Release from the changelog — no further action needed.
 
 See [Automated releases (CI)](#automated-releases-ci) for what each workflow
 does.
@@ -92,10 +91,9 @@ pkg.go.dev fetch directly from this repository's Git tags:
    `mage release` is idempotent: if that version is already tagged it does
    nothing, so the same command is safe to automate on every merge to `main`.
 
-4. Warm the proxy and pkg.go.dev so the new version is discoverable promptly.
-   The CI release workflow does this automatically (upstream only); the commands
-   below are for a manual release. It is harmless — it only triggers indexing of
-   an already-public tag:
+4. (Optional) The proxy and pkg.go.dev index a new version on the first request,
+   so nothing is required here. To make a release discoverable immediately, warm
+   them by hand — this only triggers indexing of an already-public tag:
 
    ```console
    GOPROXY=https://proxy.golang.org go list \
@@ -148,15 +146,15 @@ Two workflows automate the manual steps above, reusing the same mage targets so
 there is no second code path:
 
 * [`prepare-release.yml`](../../../.github/workflows/prepare-release.yml)
-  (manual **Run workflow**): checks out `main`, installs the pinned git-cliff,
-  runs `mage changelog`, and pushes a `release/vX.Y.Z` branch. It does **not**
-  open the PR — open it yourself from that branch, curate the draft, and merge.
+  (manual **Run workflow**): checks out the repo's default branch (`main`),
+  installs the pinned git-cliff, runs `mage changelog`, and pushes a
+  `release/vX.Y.Z` branch. It does **not** open the PR — open it yourself from
+  that branch, curate the draft, and merge.
 * [`release.yml`](../../../.github/workflows/release.yml) (on push to `main`):
-  runs `mage release`, pushes the tag, publishes a GitHub Release whose notes are
-  that version's `CHANGELOG.md` section, and (on the upstream repo) warms the
-  module proxy and pkg.go.dev. It is a no-op on ordinary merges because the
-  changelog's top version is already tagged; it only releases when a release PR
-  bumps the changelog to a new version.
+  runs `mage release`, pushes the tag, and publishes a GitHub Release whose notes
+  are that version's `CHANGELOG.md` section. It is a no-op on ordinary merges
+  because the changelog's top version is already tagged; it only releases when a
+  release PR bumps the changelog to a new version.
 
 Both push with the default `GITHUB_TOKEN` (`contents: write`) — no PAT needed.
 A tag pushed by `GITHUB_TOKEN` does not itself trigger further workflows, which
@@ -164,10 +162,24 @@ only matters if a tag-triggered build is added later.
 
 ## Fixing a bad release
 
-Proxy versions are immutable — you cannot delete or move a published version.
-To withdraw one, [retract][retract] it: add a `retract` directive to `go.mod`
-describing the bad version(s) and release a new patch. `go get` will then skip
-the retracted versions.
+### If the release workflow fails partway
+
+The [release workflow][release-run] is idempotent: it skips the tag push and the
+GitHub Release when they already exist, so the fix is usually just to **re-run it
+before pushing anything else to `main`**. The tag is created on whatever commit
+is at the top of `main` at run time, so if an unrelated commit lands before you
+re-run, the tag could point at it instead of the release commit. If that happens
+— and no one has fetched `module@vX.Y.Z` through the proxy yet — delete the
+remote tag and GitHub Release, then re-run. Once the proxy has served the
+version it is immutable; retract it instead (below).
+
+### Withdrawing a published version
+
+A version becomes immutable the first time the [Go module proxy][proxy] serves
+`module@vX.Y.Z` — after that you cannot delete or move it. To withdraw one,
+[retract][retract] it: add a `retract` directive to `go.mod` describing the bad
+version(s) and release a new patch. `go get` will then skip the retracted
+versions.
 
 ```go
 // in go.mod
