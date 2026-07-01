@@ -33,7 +33,11 @@ mage release                     # creates annotated tag vX.Y.Z on HEAD (does no
 # Undo a local tag created by mistake (before pushing)
 git tag -d vX.Y.Z
 
-git push origin vX.Y.Z           # pushing the tag is what publishes the release
+git push origin vX.Y.Z           # pushing the tag publishes the version to the Go proxy
+
+# 3. Create the GitHub Release with this version's changelog notes
+gh release create vX.Y.Z --title vX.Y.Z \
+  --notes-file <(awk '/^## \[[0-9]/{n++; next} n==1' CHANGELOG.md)
 ```
 
 Each manual step is explained in full under [Cut a release](#cut-a-release)
