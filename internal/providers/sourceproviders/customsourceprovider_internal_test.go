@@ -107,8 +107,8 @@ func TestPrepareStagingDirs_ScriptIsStagedAndExecutable(t *testing.T) {
 
 	defer cleanup()
 
-	// Script should have been copied into the staging dir.
-	data, readErr := afero.ReadFile(afero.NewOsFs(), filepath.Join(scriptDir, "gen.sh"))
+	// Script should have been copied into the staging dir on the same FS.
+	data, readErr := afero.ReadFile(memFS, filepath.Join(scriptDir, "gen.sh"))
 	require.NoError(t, readErr)
 	assert.Equal(t, scriptContent, string(data))
 }

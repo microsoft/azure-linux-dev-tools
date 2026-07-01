@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
@@ -24,7 +23,7 @@ import (
 const customGenScriptDir = "/azldev-gen/script"
 
 // customGenOutputDir is the path inside the mock chroot where the generation script
-// must write its output (read-write).
+// must write its output.
 const customGenOutputDir = "/azldev-gen/output"
 
 // customFileSourceProvider implements [FileSourceProvider] for source files with
@@ -168,21 +167,21 @@ func prepareStagingDirs(
 	scriptHostPath string,
 	scriptName string,
 ) (scriptDir string, outputDir string, cleanup func(), err error) {
-	scriptDir, err = os.MkdirTemp("", "azldev-script-*")
+	scriptDir, err = fileutils.MkdirTempInTempDir(fs, "azldev-script-*")
 	if err != nil {
 		return "", "", nil, fmt.Errorf("failed to create temporary script directory:\n%w", err)
 	}
 
-	outputDir, err = os.MkdirTemp("", "azldev-output-*")
+	outputDir, err = fileutils.MkdirTempInTempDir(fs, "azldev-output-*")
 	if err != nil {
-		_ = os.RemoveAll(scriptDir)
+		_ = fs.RemoveAll(scriptDir)
 
 		return "", "", nil, fmt.Errorf("failed to create temporary output directory:\n%w", err)
 	}
 
 	cleanup = func() {
-		_ = os.RemoveAll(scriptDir)
-		_ = os.RemoveAll(outputDir)
+		_ = fs.RemoveAll(scriptDir)
+		_ = fs.RemoveAll(outputDir)
 	}
 
 	// Copy the script into the staging directory so we bind-mount only that file,
@@ -197,7 +196,7 @@ func prepareStagingDirs(
 
 	hostScriptCopy := filepath.Join(scriptDir, scriptName)
 
-	if writeErr := os.WriteFile(hostScriptCopy, scriptData, fileperms.PublicExecutable); writeErr != nil {
+	if writeErr := fileutils.WriteFile(fs, hostScriptCopy, scriptData, fileperms.PublicExecutable); writeErr != nil {
 		cleanup()
 
 		return "", "", nil, fmt.Errorf("failed to stage generation script to %#q:\n%w",
