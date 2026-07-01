@@ -57,7 +57,8 @@ jobs:
           if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
             echo "Tag \`${tag}\` already on remote." >> "$GITHUB_STEP_SUMMARY"
           else
-            git push "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "refs/tags/${tag}"
+            gh auth setup-git
+            git push origin "refs/tags/${tag}"
             echo "Pushed tag \`${tag}\`." >> "$GITHUB_STEP_SUMMARY"
           fi
 

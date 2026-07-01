@@ -89,7 +89,8 @@ jobs:
           git switch -c "$branch"
           git add CHANGELOG.md
           git commit -m "chore: prepare release v${version}"
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "$branch"
+          gh auth setup-git
+          git push origin "$branch"
 
           # Build the create-PR URL from the current server/repo so it points at this repo (fork or
           # upstream). GitHub's pull/new/<branch> form targets the repo's default branch as the base.
