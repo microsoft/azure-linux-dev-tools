@@ -305,6 +305,14 @@ type ComponentConfig struct {
 	// all packages produced by this component. Overridden by package-group and per-package settings
 	// for binary and debuginfo channels.
 	Publish ComponentPublishConfig `toml:"publish,omitempty" json:"publish,omitempty" table:"-" jsonschema:"title=Publish settings,description=Component-level publish channel settings" fingerprint:"-"`
+
+	// Tests holds the new-shape per-component tests block:
+	//
+	//   tests.tests = [{ name = "..." }, { group = "..." }]
+	//
+	// References must resolve to entries in the project-level [tests] or
+	// [test-groups] maps; resolution is the responsibility of the test layer.
+	Tests *ComponentTestsConfig `toml:"tests,omitempty" json:"tests,omitempty" table:"-" jsonschema:"title=Tests,description=Per-component test or test-group references" fingerprint:"-"`
 }
 
 // AllowedSourceFilesHashTypes defines the set of hash types that are supported
@@ -408,6 +416,7 @@ func (c *ComponentConfig) WithAbsolutePaths(referenceDir string) *ComponentConfi
 		// here so inherited patterns can be interpreted relative to the concrete component
 		// config file.
 		OverlayFiles: slices.Clone(c.OverlayFiles),
+		Tests:        deep.MustCopy(c.Tests),
 	}
 
 	// Fix up paths.

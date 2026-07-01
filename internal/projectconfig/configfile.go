@@ -66,6 +66,12 @@ type ConfigFile struct {
 	// Definitions of test suites.
 	TestSuites map[string]TestSuiteConfig `toml:"test-suites,omitempty" validate:"dive" jsonschema:"title=Test Suites,description=Definitions of test suites for this project"`
 
+	// Definitions of individual tests (new schema, [tests.X]).
+	Tests map[string]TestDefinition `toml:"tests,omitempty" validate:"dive" jsonschema:"title=Tests,description=Definitions of individual tests"`
+
+	// Definitions of test groups (new schema, [test-groups.X]).
+	TestGroups map[string]TestGroup `toml:"test-groups,omitempty" validate:"dive" jsonschema:"title=Test Groups,description=Definitions of named bundles of tests"`
+
 	// Internal fields used to track the origin of the config file; `dir` is the directory
 	// that the config file's relative paths are based from.
 	sourcePath string `toml:"-"`
@@ -144,6 +150,13 @@ func (f ConfigFile) Validate() error {
 
 		if err := suite.Validate(); err != nil {
 			return fmt.Errorf("invalid test suite %#q:\n%w", suiteName, err)
+		}
+	}
+
+	// Validate individual test definitions and ensure framework subtable/type match.
+	for testName, testDef := range f.Tests {
+		if err := testDef.Validate(testName); err != nil {
+			return fmt.Errorf("invalid test %#q:\n%w", testName, err)
 		}
 	}
 
