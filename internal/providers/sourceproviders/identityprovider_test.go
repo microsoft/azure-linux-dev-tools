@@ -218,7 +218,7 @@ func TestRPMProvider_ResolveIdentity(t *testing.T) {
 		mockRPMProvider := rpmprovider_test.NewMockRPMProvider(ctrl)
 		mockRPMProvider.EXPECT().
 			GetRPM(gomock.Any(), "test-pkg", nil).
-			Return(io.NopCloser(strings.NewReader(rpmContent)), nil)
+			Return(io.NopCloser(strings.NewReader(rpmContent)), "", nil)
 
 		provider, provErr := sourceproviders.NewRPMContentsProviderImpl(
 			rpm_test.NewMockRPMExtractor(ctrl), mockRPMProvider)
@@ -234,7 +234,7 @@ func TestRPMProvider_ResolveIdentity(t *testing.T) {
 		mockRPMProvider := rpmprovider_test.NewMockRPMProvider(ctrl)
 		mockRPMProvider.EXPECT().
 			GetRPM(gomock.Any(), "test-pkg", nil).
-			Return(nil, errors.New("download failed"))
+			Return(nil, "", errors.New("download failed"))
 
 		provider, provErr := sourceproviders.NewRPMContentsProviderImpl(
 			rpm_test.NewMockRPMExtractor(ctrl), mockRPMProvider)
@@ -293,8 +293,8 @@ type noOpDownloader struct{}
 
 func (d *noOpDownloader) ExtractSourcesFromRepo(
 	_ context.Context, _, _, _ string, _ []string, _ ...fedorasource.ExtractOption,
-) error {
-	return nil
+) ([]fedorasource.SourceDownload, error) {
+	return nil, nil
 }
 
 // --- ResolveIdentity always resolves from upstream ---

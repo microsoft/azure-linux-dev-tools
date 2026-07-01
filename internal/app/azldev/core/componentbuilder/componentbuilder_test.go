@@ -55,15 +55,15 @@ func setupBuilder(t *testing.T) *componentBuilderTestParams {
 		func(
 			_ context.Context, component components.Component,
 			outputDir string, _ ...sourceproviders.FetchComponentOption,
-		) error {
+		) ([]sourceproviders.SourceProvenance, error) {
 			// Create the expected spec file.
 			specPath := filepath.Join(outputDir, component.GetName()+".spec")
 
-			return fileutils.WriteFile(testEnv.Env.FS(), specPath, []byte("# test spec"), fileperms.PublicFile)
+			return nil, fileutils.WriteFile(testEnv.Env.FS(), specPath, []byte("# test spec"), fileperms.PublicFile)
 		},
 	)
 
-	sourceManager.EXPECT().FetchFiles(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return(nil)
+	sourceManager.EXPECT().FetchFiles(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().Return(nil, nil)
 
 	preparer, err := sources.NewPreparer(sourceManager, testEnv.Env.FS(), testEnv.Env, testEnv.Env)
 

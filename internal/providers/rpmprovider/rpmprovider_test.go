@@ -195,9 +195,10 @@ func TestGetRPM(t *testing.T) {
 			Return(packageURL, nil).
 			Times(1)
 
-		rpmStream, err := provider.GetRPM(t.Context(), packageName, packageVersion)
+		rpmStream, rpmURL, err := provider.GetRPM(t.Context(), packageName, packageVersion)
 		require.NoError(t, err)
 		require.NotNil(t, rpmStream)
+		assert.Equal(t, packageURL, rpmURL)
 
 		rpmData, err := io.ReadAll(rpmStream)
 		require.NoError(t, err)
@@ -213,9 +214,10 @@ func TestGetRPM(t *testing.T) {
 			Return(packageURL, nil).
 			Times(1)
 
-		rpmStream, err := provider.GetRPM(t.Context(), packageName, nil)
+		rpmStream, rpmURL, err := provider.GetRPM(t.Context(), packageName, nil)
 		require.NoError(t, err)
 		require.NotNil(t, rpmStream)
+		assert.Equal(t, packageURL, rpmURL)
 
 		rpmData, err := io.ReadAll(rpmStream)
 		require.NoError(t, err)
@@ -224,7 +226,7 @@ func TestGetRPM(t *testing.T) {
 	})
 
 	t.Run("empty package name should fail", func(t *testing.T) {
-		_, err := provider.GetRPM(t.Context(), "", nil)
+		_, _, err := provider.GetRPM(t.Context(), "", nil)
 		assert.Error(t, err)
 	})
 
@@ -235,7 +237,7 @@ func TestGetRPM(t *testing.T) {
 			Return("", errors.New(errorMessage)).
 			Times(1)
 
-		_, err := provider.GetRPM(t.Context(), packageName, nil)
+		_, _, err := provider.GetRPM(t.Context(), packageName, nil)
 		assert.Contains(t, err.Error(), errorMessage)
 		assert.Contains(t, err.Error(), packageName)
 	})
@@ -261,7 +263,7 @@ func TestGetRPMFailureSimulation(t *testing.T) {
 			Return("", querierError).
 			Times(1)
 
-		stream, err := provider.GetRPM(t.Context(), packageName, packageVersion)
+		stream, _, err := provider.GetRPM(t.Context(), packageName, packageVersion)
 		require.Error(t, err)
 		assert.Nil(t, stream)
 
@@ -289,7 +291,7 @@ func TestGetRPMFailureSimulation(t *testing.T) {
 		mockedDownloadProvider, err := rpmprovider.NewRPMProviderImpl(eventListener, mockDownloader, mockQuerier)
 		require.NoError(t, err)
 
-		stream, err := mockedDownloadProvider.GetRPM(t.Context(), packageName, packageVersion)
+		stream, _, err := mockedDownloadProvider.GetRPM(t.Context(), packageName, packageVersion)
 		require.Error(t, err)
 		assert.Nil(t, stream)
 
@@ -320,7 +322,7 @@ func TestGetRPMFailureSimulation(t *testing.T) {
 				Return(test.url, nil).
 				Times(1)
 
-			stream, err := provider.GetRPM(t.Context(), packageName, packageVersion)
+			stream, _, err := provider.GetRPM(t.Context(), packageName, packageVersion)
 			require.Error(t, err)
 			assert.Nil(t, stream)
 			assert.Contains(t, err.Error(), test.url)

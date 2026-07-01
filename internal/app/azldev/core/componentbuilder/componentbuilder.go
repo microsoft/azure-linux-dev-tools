@@ -125,7 +125,7 @@ func (b *Builder) prepSourcesForSRPM(
 		return "", fmt.Errorf("failed to create work dir for source preparation:\n%w", err)
 	}
 
-	err = b.sourcePreparer.PrepareSources(ctx, component, preparedSourcesDir, true /*applyOverlays?*/)
+	_, err = b.sourcePreparer.PrepareSources(ctx, component, preparedSourcesDir, true /*applyOverlays?*/)
 	if err != nil {
 		return "", fmt.Errorf("failed to prepare sources:\n%w", err)
 	}
