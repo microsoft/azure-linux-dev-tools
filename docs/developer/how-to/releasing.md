@@ -12,7 +12,8 @@ locally:
    (**Run workflow** → `main`). It drafts the next changelog section and pushes
    a `release/vX.Y.Z` branch.
 2. Wait ~30 seconds, the output summary of the workflow will generate a link to create the PR.
-3. On merge, the [**release** workflow][release-run] tags `vX.Y.Z` and publishes
+3. Edit the draft changelog into user-facing notes, then merge the PR to `main`. Consider using '@copilot Update the new changelog section into user-facing release notes' in GitHub to help rewrite the changelog.
+4. On merge, the [**release** workflow][release-run] tags `vX.Y.Z` and publishes
    a GitHub Release from the changelog — no further action needed.
 
 See [Automated releases (CI)](#automated-releases-ci) for what each workflow
