@@ -1435,12 +1435,13 @@
           "description": "Description of this test"
         },
         "kind": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array",
+          "type": "string",
+          "enum": [
+            "functional",
+            "performance"
+          ],
           "title": "Kind",
-          "description": "Test kind hints (e.g. functional or performance)"
+          "description": "Kind hint for the test"
         },
         "long-running": {
           "type": "boolean",
@@ -1486,11 +1487,27 @@
         },
         "tests": {
           "items": {
-            "$ref": "#/$defs/TestRef"
+            "not": {
+              "required": [
+                "group"
+              ]
+            },
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^\\S",
+                "description": "Name of a test"
+              }
+            },
+            "type": "object",
+            "required": [
+              "name"
+            ]
           },
           "type": "array",
           "title": "Tests",
-          "description": "Member references (each is either {name=...} or {group=...})"
+          "description": "Ordered test references for this group (name only)"
         }
       },
       "additionalProperties": false,

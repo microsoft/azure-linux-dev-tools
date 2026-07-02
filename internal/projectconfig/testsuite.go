@@ -29,9 +29,23 @@ var (
 	ErrMissingTestField = errors.New("missing required test field")
 	// ErrUndefinedTestSuite is returned when an image references a test suite name that is not defined.
 	ErrUndefinedTestSuite = errors.New("undefined test suite reference")
+	// ErrUndefinedTest is returned when a test reference points to a missing [tests] entry.
+	ErrUndefinedTest = errors.New("undefined test reference")
+	// ErrUndefinedTestGroup is returned when a test reference points to a missing [test-groups] entry.
+	ErrUndefinedTestGroup = errors.New("undefined test group reference")
+	// ErrInvalidTestRef is returned when a TestRef has neither or both of name/group set.
+	ErrInvalidTestRef = errors.New("invalid test reference")
+	// ErrDuplicateTestRef is returned when a list contains the same test ref more than once.
+	ErrDuplicateTestRef = errors.New("duplicate test reference")
+	// ErrNestedTestGroupReference is returned when a [test-groups] member uses a group ref.
+	ErrNestedTestGroupReference = errors.New("nested test group reference")
 	// ErrMismatchedTestSubtable is returned when a test config has a subtable that does not
 	// match its declared type.
 	ErrMismatchedTestSubtable = errors.New("mismatched test subtable")
+	// ErrUnknownTestKind is returned for unrecognized test kinds.
+	ErrUnknownTestKind = errors.New("unknown test kind")
+	// ErrInvalidLisaSelection is returned when a lisa test has invalid or missing selectors.
+	ErrInvalidLisaSelection = errors.New("invalid lisa selection")
 	// ErrInvalidInstallMode is returned when a [PytestConfig.Install] value is not recognized.
 	ErrInvalidInstallMode = errors.New("invalid install mode")
 )

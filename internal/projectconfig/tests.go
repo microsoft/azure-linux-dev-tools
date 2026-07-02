@@ -4,11 +4,34 @@
 package projectconfig
 
 import (
+	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/invopop/jsonschema"
 	orderedmap "github.com/pb33f/ordered-map/v2"
 )
+
+// TestKind indicates what kind of behavior a test exercises.
+type TestKind string
+
+const (
+	TestKindFunctional  TestKind = "functional"
+	TestKindPerformance TestKind = "performance"
+)
+
+func (k TestKind) IsValid() bool {
+	switch k {
+	case "":
+		return true
+	case TestKindFunctional,
+		TestKindPerformance:
+		return true
+	default:
+		return false
+	}
+}
 
 func orderedMapWithConst(key string, value any) *orderedmap.OrderedMap[string, *jsonschema.Schema] {
 	m := orderedmap.New[string, *jsonschema.Schema]()
@@ -30,8 +53,8 @@ type TestDefinition struct {
 	// Human-readable description.
 	Description string `toml:"description,omitempty" json:"description,omitempty" jsonschema:"title=Description,description=Description of this test"`
 
-	// Kind hints at what the test exercises (e.g. functional, performance).
-	Kind []string `toml:"kind,omitempty" json:"kind,omitempty" jsonschema:"title=Kind,description=Test kind hints (e.g. functional or performance)"`
+	// Kind hints at what the test exercises.
+	Kind TestKind `toml:"kind,omitempty" json:"kind,omitempty" jsonschema:"title=Kind,description=Kind hint for the test,enum=functional,enum=performance"`
 
 	// LongRunning hints to schedulers/policy that this test may take a long time.
 	LongRunning bool `toml:"long-running,omitempty" json:"longRunning,omitempty" jsonschema:"title=Long running,description=Hints that this test may run for hours"`
@@ -53,9 +76,9 @@ type TestGroup struct {
 	// Human-readable description.
 	Description string `toml:"description,omitempty" json:"description,omitempty" jsonschema:"title=Description,description=Description of this test group"`
 
-	// Tests is the ordered list of test or nested-group references that make up
-	// the group's membership.
-	Tests []TestRef `toml:"tests,omitempty" json:"tests,omitempty" jsonschema:"title=Tests,description=Member references (each is either {name=...} or {group=...})"`
+	// Tests is the ordered list of test references that make up the group's
+	// membership. Group refs are validated as invalid at load time.
+	Tests []TestRef `toml:"tests,omitempty" json:"tests,omitempty" jsonschema:"title=Tests,description=Ordered test references for this group (name only)"`
 }
 
 // TestRef is a reference to either a test (by name) or another group (by name).
@@ -83,6 +106,10 @@ func (t TestDefinition) Validate(testName string) error {
 		return fmt.Errorf("%w: test %#q is missing required field 'type'", ErrMissingTestField, testName)
 	}
 
+	if !t.Kind.IsValid() {
+		return fmt.Errorf("%w: test %#q has invalid kind %#q", ErrUnknownTestKind, testName, t.Kind)
+	}
+
 	type testTypeRule struct {
 		required   string
 		disallowed []string
@@ -99,13 +126,13 @@ func (t TestDefinition) Validate(testName string) error {
 		return fmt.Errorf("%w: %#q (test: %#q)", ErrUnknownTestType, t.Type, testName)
 	}
 
-	subtableLengths := map[string]int{
-		"pytest": len(t.Pytest),
-		"lisa":   len(t.Lisa),
-		"tmt":    len(t.Tmt),
+	subtablePresence := map[string]bool{
+		"pytest": t.Pytest != nil,
+		"lisa":   t.Lisa != nil,
+		"tmt":    t.Tmt != nil,
 	}
 
-	if subtableLengths[rule.required] == 0 {
+	if !subtablePresence[rule.required] {
 		return fmt.Errorf(
 			"%w: test %#q of type %#q requires a [%s] subtable",
 			ErrMissingTestField,
@@ -116,7 +143,7 @@ func (t TestDefinition) Validate(testName string) error {
 	}
 
 	for _, subtable := range rule.disallowed {
-		if subtableLengths[subtable] > 0 {
+		if subtablePresence[subtable] {
 			return fmt.Errorf(
 				"%w: test %#q of type %#q cannot include subtable '%s'",
 				ErrMismatchedTestSubtable,
@@ -127,7 +154,298 @@ func (t TestDefinition) Validate(testName string) error {
 		}
 	}
 
+	if t.Type == "lisa" {
+		if err := validateLisaSelection(t.Lisa, testName); err != nil {
+			return err
+		}
+	}
+
 	return nil
+}
+
+// JSONSchemaExtend narrows [TestGroup.Tests] to name-only refs so editor-time
+// validation matches runtime behavior (group refs in [test-groups] are rejected).
+func (TestGroup) JSONSchemaExtend(schema *jsonschema.Schema) {
+	if schema == nil || schema.Properties == nil {
+		return
+	}
+
+	testsProp, ok := schema.Properties.Get("tests")
+	if !ok || testsProp == nil {
+		return
+	}
+
+	minLen := uint64(1)
+	itemProps := orderedmap.New[string, *jsonschema.Schema]()
+	itemProps.Set("name", &jsonschema.Schema{
+		Type:        "string",
+		MinLength:   &minLen,
+		Pattern:     "^\\S",
+		Description: "Name of a test",
+	})
+
+	testsProp.Items = &jsonschema.Schema{
+		Type:       "object",
+		Properties: itemProps,
+		Required:   []string{"name"},
+		Not: &jsonschema.Schema{
+			Required: []string{"group"},
+		},
+	}
+}
+
+func validateLisaSelection(lisa map[string]any, testName string) error {
+	hasSelector := false
+
+	if rawCriteria, ok := lisa["criteria"]; ok {
+		hasSelector = true
+
+		if err := validateLisaCriteria(rawCriteria, testName); err != nil {
+			return err
+		}
+	}
+
+	if rawName, ok := lisa["testcaseName"]; ok {
+		hasSelector = true
+
+		if !isNonEmptyString(rawName) {
+			return fmt.Errorf(
+				"%w: test %#q lisa.testcaseName must be a non-empty string",
+				ErrInvalidLisaSelection,
+				testName,
+			)
+		}
+	}
+
+	if rawName, ok := lisa["name"]; ok {
+		hasSelector = true
+
+		if !isNonEmptyString(rawName) {
+			return fmt.Errorf(
+				"%w: test %#q lisa.name must be a non-empty string",
+				ErrInvalidLisaSelection,
+				testName,
+			)
+		}
+	}
+
+	if rawNames, ok := lisa["testcaseNames"]; ok {
+		hasSelector = true
+
+		if err := validateStringList(rawNames, "lisa.testcaseNames", testName); err != nil {
+			return err
+		}
+	}
+
+	if !hasSelector {
+		return fmt.Errorf(
+			"%w: test %#q of type %#q must set at least one LISA selector: criteria, testcaseName, testcaseNames, or name",
+			ErrInvalidLisaSelection,
+			testName,
+			"lisa",
+		)
+	}
+
+	return nil
+}
+
+func validateLisaCriteria(rawCriteria any, testName string) error {
+	criteriaList, err := normalizeCriteriaList(rawCriteria)
+	if err != nil {
+		return fmt.Errorf("%w: test %#q lisa.criteria %w", ErrInvalidLisaSelection, testName, err)
+	}
+
+	for idx, criteria := range criteriaList {
+		if err := validateSingleLisaCriteria(criteria, testName, idx); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func normalizeCriteriaList(rawCriteria any) ([]map[string]any, error) {
+	switch criteriaValue := rawCriteria.(type) {
+	case map[string]any:
+		if len(criteriaValue) == 0 {
+			return nil, errors.New("must not be empty")
+		}
+
+		return []map[string]any{criteriaValue}, nil
+	case []any:
+		if len(criteriaValue) == 0 {
+			return nil, errors.New("must not be an empty list")
+		}
+
+		result := make([]map[string]any, 0, len(criteriaValue))
+
+		for entryIndex, item := range criteriaValue {
+			criteriaMap, ok := item.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("entry %d must be a table/object", entryIndex)
+			}
+
+			if len(criteriaMap) == 0 {
+				return nil, fmt.Errorf("entry %d must not be empty", entryIndex)
+			}
+
+			result = append(result, criteriaMap)
+		}
+
+		return result, nil
+	default:
+		return nil, errors.New("must be a table or list of tables")
+	}
+}
+
+func validateSingleLisaCriteria(criteria map[string]any, testName string, idx int) error {
+	allowedKeys := map[string]bool{
+		"name":          true,
+		"area":          true,
+		"category":      true,
+		"priority":      true,
+		"tags":          true,
+		"testcaseName":  true,
+		"testcaseNames": true,
+	}
+
+	hasSelector := false
+
+	for key, value := range criteria {
+		if !allowedKeys[key] {
+			return fmt.Errorf(
+				"%w: test %#q lisa.criteria[%d] contains unsupported selector %#q",
+				ErrInvalidLisaSelection,
+				testName,
+				idx,
+				key,
+			)
+		}
+
+		switch key {
+		case "name", "area", "category", "testcaseName":
+			if !isNonEmptyString(value) {
+				return fmt.Errorf(
+					"%w: test %#q lisa.criteria[%d].%s must be a non-empty string",
+					ErrInvalidLisaSelection,
+					testName,
+					idx,
+					key,
+				)
+			}
+
+			hasSelector = true
+		case "priority":
+			if err := validateLisaPriority(value, testName, idx); err != nil {
+				return err
+			}
+
+			hasSelector = true
+		case "tags", "testcaseNames":
+			fieldName := "lisa.criteria[" + strconv.Itoa(idx) + "]." + key
+
+			if err := validateStringList(value, fieldName, testName); err != nil {
+				return err
+			}
+
+			hasSelector = true
+		}
+	}
+
+	if !hasSelector {
+		return fmt.Errorf(
+			"%w: test %#q lisa.criteria[%d] must include at least one selector",
+			ErrInvalidLisaSelection,
+			testName,
+			idx,
+		)
+	}
+
+	return nil
+}
+
+func validateLisaPriority(value any, testName string, idx int) error {
+	if isLisaPriorityValue(value) {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"%w: test %#q lisa.criteria[%d].priority must be an integer 0..4 or a non-empty list of integers 0..4",
+		ErrInvalidLisaSelection,
+		testName,
+		idx,
+	)
+}
+
+func isLisaPriorityValue(value any) bool {
+	if parsed, ok := parseLisaPriority(value); ok {
+		return parsed >= 0 && parsed <= 4
+	}
+
+	priorityList, ok := value.([]any)
+	if !ok || len(priorityList) == 0 {
+		return false
+	}
+
+	for _, item := range priorityList {
+		parsed, ok := parseLisaPriority(item)
+		if !ok || parsed < 0 || parsed > 4 {
+			return false
+		}
+	}
+
+	return true
+}
+
+func parseLisaPriority(value any) (int, bool) {
+	switch typed := value.(type) {
+	case int:
+		return typed, true
+	case int64:
+		return int(typed), true
+	case float64:
+		if typed != float64(int(typed)) {
+			return 0, false
+		}
+
+		return int(typed), true
+	default:
+		return 0, false
+	}
+}
+
+func validateStringList(value any, fieldName string, testName string) error {
+	items, ok := value.([]any)
+	if !ok || len(items) == 0 {
+		return fmt.Errorf(
+			"%w: test %#q %s must be a non-empty list of non-empty strings",
+			ErrInvalidLisaSelection,
+			testName,
+			fieldName,
+		)
+	}
+
+	for _, item := range items {
+		if !isNonEmptyString(item) {
+			return fmt.Errorf(
+				"%w: test %#q %s must be a non-empty list of non-empty strings",
+				ErrInvalidLisaSelection,
+				testName,
+				fieldName,
+			)
+		}
+	}
+
+	return nil
+}
+
+func isNonEmptyString(value any) bool {
+	s, ok := value.(string)
+	if !ok {
+		return false
+	}
+
+	return strings.TrimSpace(s) != ""
 }
 
 // JSONSchemaExtend tightens [TestDefinition] so the framework-specific subtable

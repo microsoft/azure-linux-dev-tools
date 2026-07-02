@@ -4,7 +4,7 @@ The `[tests]` and `[test-groups]` sections declare framework-agnostic test
 metadata that components and images can target by name. Each test entry
 binds a single test (a pytest run, a LISA case, or a TMT plan)
 to a named identifier; each group entry bundles tests (and
-nested groups) under one name so callers can reference a curated set
+named references) under one name so callers can reference a curated set
 without enumerating every member.
 
 ## Test Definition
@@ -19,7 +19,7 @@ by azldev so frameworks can evolve independently.
 |-------|----------|------|----------|-------------|
 | Type | `type` | string | Yes | Test framework: `pytest`, `lisa`, or `tmt` |
 | Description | `description` | string | No | Human-readable description |
-| Kind | `kind` | string array | No | Free-form hints (e.g. `functional`, `performance`, `bvt`) |
+| Kind | `kind` | string | No | Test kind hint: `functional` or `performance` |
 | Long running | `long-running` | boolean | No | Hints that this test may run for hours |
 | Required capabilities | `required-capabilities` | string array | No | Capability tokens the image must declare for this test to be applicable |
 | Lisa | `lisa` | table | No | LISA-specific configuration (opaque to azldev) |
@@ -28,13 +28,13 @@ by azldev so frameworks can evolve independently.
 
 ## Test Group
 
-Each entry under `[test-groups.<name>]` names an ordered list of test or
-nested-group references that callers can target as a single unit.
+Each entry under `[test-groups.<name>]` names an ordered list of test
+references that callers can target as a single unit.
 
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
 | Description | `description` | string | No | Human-readable description |
-| Tests | `tests` | array of [TestRef](#test-reference) | No | Ordered members of the group |
+| Tests | `tests` | array of [TestRef](#test-reference) | No | Ordered members of the group (name refs only) |
 
 ## Test Reference
 
@@ -64,7 +64,7 @@ tests = [{ group = "bvt" }]
 [tests.bvt-ssh]
 type        = "pytest"
 description = "Basic SSH boot verification"
-kind        = ["functional", "bvt"]
+kind        = "functional"
 required-capabilities = ["ssh"]
 pytest = { working-dir = "tests/bvt", test-paths = ["test_ssh.py"] }
 
@@ -77,11 +77,8 @@ lisa        = { case = "kdump.smoke" }
 description = "Build verification tests"
 tests = [
   { name  = "bvt-ssh" },
-  { group = "bvt-extras" },
+  { name  = "kdump-smoke" },
 ]
-
-[test-groups.bvt-extras]
-tests = [{ name = "kdump-smoke" }]
 ```
 
 ## Related Resources
