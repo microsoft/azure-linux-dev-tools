@@ -38,7 +38,7 @@ git push origin vX.Y.Z           # pushing the tag publishes the version to the 
 
 # 3. Create the GitHub Release with this version's changelog notes
 gh release create vX.Y.Z --title vX.Y.Z \
-  --notes-file <(awk '/^## \[[0-9]/{n++; next} n==1' CHANGELOG.md)
+  --notes-file <(awk '/^##[[:space:]]+\[[0-9]/{n++; next} n==1' CHANGELOG.md)
 ```
 
 Each manual step is explained in full under [Cut a release](#cut-a-release)

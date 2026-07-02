@@ -47,7 +47,7 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          version="$(sed -n 's/^## \[\([0-9]\+\.[0-9]\+\.[0-9]\+\)\].*/\1/p' CHANGELOG.md | head -1)"
+          version="$(sed -n 's/^##[[:space:]]\+\[\([0-9]\+\.[0-9]\+\.[0-9]\+\)\].*/\1/p' CHANGELOG.md | head -1)"
           if [ -z "$version" ]; then
             echo "no '## [X.Y.Z]' heading found in CHANGELOG.md" >&2
             exit 1
@@ -73,9 +73,10 @@ jobs:
 
           # Release notes = this version's changelog section (its body, without the heading line).
           # Match only numeric version headings so this stays in sync with the version parsed
-          # above and can never capture a non-release heading.
+          # above and can never capture a non-release heading. Tolerate any whitespace after '##'
+          # to match `mage release`.
           notes="${RUNNER_TEMP}/release-notes.md"
-          awk '/^## \[[0-9]/{n++; next} n==1' CHANGELOG.md > "${notes}"
+          awk '/^##[[:space:]]+\[[0-9]/{n++; next} n==1' CHANGELOG.md > "${notes}"
           if [ ! -s "${notes}" ]; then
             echo "no changelog notes found for ${tag}" >&2
             exit 1
