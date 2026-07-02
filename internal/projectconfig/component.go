@@ -110,6 +110,11 @@ type ComponentGroupConfig struct {
 	// A human-friendly description of this component group.
 	Description string `toml:"description,omitempty" json:"description,omitempty" jsonschema:"title=Description,description=Description of this component group"`
 
+	// Optional documentation metadata describing this component group's intent and provenance.
+	// It reuses the overlay metadata schema (see [OverlayMetadata]) and does not affect how the
+	// group's members are resolved or built.
+	Metadata *OverlayMetadata `toml:"metadata,omitempty" json:"metadata,omitempty" jsonschema:"title=Metadata,description=Optional documentation metadata for this component group"`
+
 	// List of explicitly included components, identified by name.
 	Components []string `toml:"components,omitempty" json:"components,omitempty" jsonschema:"title=Components,description=List of component names that are members of this group"`
 
