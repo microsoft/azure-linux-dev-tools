@@ -47,28 +47,28 @@ func TestImageCapabilities_EnabledNames(t *testing.T) {
 	})
 }
 
-func TestImageConfig_TestNames(t *testing.T) {
+func TestImageConfig_TestRefNames(t *testing.T) {
 	t.Run("with tests", func(t *testing.T) {
 		img := projectconfig.ImageConfig{
 			Tests: projectconfig.ImageTestsConfig{
-				TestSuites: []projectconfig.TestSuiteRef{
+				Tests: []projectconfig.TestRef{
 					{Name: "smoke"},
 					{Name: "integration"},
 				},
 			},
 		}
-		assert.Equal(t, []string{"smoke", "integration"}, img.TestNames())
+		assert.Equal(t, []string{"smoke", "integration"}, img.TestRefNames())
 	})
 
 	t.Run("no tests returns empty", func(t *testing.T) {
 		img := projectconfig.ImageConfig{}
-		assert.Empty(t, img.TestNames())
+		assert.Empty(t, img.TestRefNames())
 	})
 }
 
-func TestTestSuiteConfig_Validate(t *testing.T) {
+func TestTestConfig_Validate(t *testing.T) {
 	t.Run("valid pytest config", func(t *testing.T) {
-		testConfig := projectconfig.TestSuiteConfig{
+		testConfig := projectconfig.TestConfig{
 			Name: "smoke",
 			Type: projectconfig.TestTypePytest,
 			Pytest: &projectconfig.PytestConfig{
@@ -87,7 +87,7 @@ func TestTestSuiteConfig_Validate(t *testing.T) {
 			projectconfig.PytestInstallNone,
 		} {
 			t.Run(string(mode), func(t *testing.T) {
-				testConfig := projectconfig.TestSuiteConfig{
+				testConfig := projectconfig.TestConfig{
 					Name: "smoke",
 					Type: projectconfig.TestTypePytest,
 					Pytest: &projectconfig.PytestConfig{
@@ -101,7 +101,7 @@ func TestTestSuiteConfig_Validate(t *testing.T) {
 	})
 
 	t.Run("valid pytest config with empty install mode", func(t *testing.T) {
-		testConfig := projectconfig.TestSuiteConfig{
+		testConfig := projectconfig.TestConfig{
 			Name: "smoke",
 			Type: projectconfig.TestTypePytest,
 			Pytest: &projectconfig.PytestConfig{
@@ -112,7 +112,7 @@ func TestTestSuiteConfig_Validate(t *testing.T) {
 	})
 
 	t.Run("invalid install mode", func(t *testing.T) {
-		testConfig := projectconfig.TestSuiteConfig{
+		testConfig := projectconfig.TestConfig{
 			Name: "smoke",
 			Type: projectconfig.TestTypePytest,
 			Pytest: &projectconfig.PytestConfig{
@@ -131,7 +131,7 @@ func TestTestSuiteConfig_Validate(t *testing.T) {
 			projectconfig.PytestInstallRequirements,
 		} {
 			t.Run(string(mode), func(t *testing.T) {
-				testConfig := projectconfig.TestSuiteConfig{
+				testConfig := projectconfig.TestConfig{
 					Name: "smoke",
 					Type: projectconfig.TestTypePytest,
 					Pytest: &projectconfig.PytestConfig{
@@ -148,7 +148,7 @@ func TestTestSuiteConfig_Validate(t *testing.T) {
 	})
 
 	t.Run("install none without working-dir is valid", func(t *testing.T) {
-		testConfig := projectconfig.TestSuiteConfig{
+		testConfig := projectconfig.TestConfig{
 			Name: "smoke",
 			Type: projectconfig.TestTypePytest,
 			Pytest: &projectconfig.PytestConfig{
@@ -160,7 +160,7 @@ func TestTestSuiteConfig_Validate(t *testing.T) {
 
 	t.Run("default install without working-dir is valid", func(t *testing.T) {
 		// Default mode is 'none' (no install) and so doesn't require working-dir.
-		testConfig := projectconfig.TestSuiteConfig{
+		testConfig := projectconfig.TestConfig{
 			Name:   "smoke",
 			Type:   projectconfig.TestTypePytest,
 			Pytest: &projectconfig.PytestConfig{
@@ -171,7 +171,7 @@ func TestTestSuiteConfig_Validate(t *testing.T) {
 	})
 
 	t.Run("pytest missing subtable", func(t *testing.T) {
-		testConfig := projectconfig.TestSuiteConfig{
+		testConfig := projectconfig.TestConfig{
 			Name: "smoke",
 			Type: projectconfig.TestTypePytest,
 		}
@@ -182,7 +182,7 @@ func TestTestSuiteConfig_Validate(t *testing.T) {
 	})
 
 	t.Run("valid lisa type", func(t *testing.T) {
-		testConfig := projectconfig.TestSuiteConfig{
+		testConfig := projectconfig.TestConfig{
 			Name: "vm-tests",
 			Type: projectconfig.TestTypeLisa,
 		}
@@ -190,7 +190,7 @@ func TestTestSuiteConfig_Validate(t *testing.T) {
 	})
 
 	t.Run("valid lisa type with description", func(t *testing.T) {
-		testConfig := projectconfig.TestSuiteConfig{
+		testConfig := projectconfig.TestConfig{
 			Name:        "vm-tests",
 			Description: "VM integration tests using LISA",
 			Type:        projectconfig.TestTypeLisa,
@@ -199,7 +199,7 @@ func TestTestSuiteConfig_Validate(t *testing.T) {
 	})
 
 	t.Run("lisa rejects pytest subtable", func(t *testing.T) {
-		testConfig := projectconfig.TestSuiteConfig{
+		testConfig := projectconfig.TestConfig{
 			Name: "vm-tests",
 			Type: projectconfig.TestTypeLisa,
 			Pytest: &projectconfig.PytestConfig{
@@ -215,7 +215,7 @@ func TestTestSuiteConfig_Validate(t *testing.T) {
 	})
 
 	t.Run("unknown test type", func(t *testing.T) {
-		testConfig := projectconfig.TestSuiteConfig{
+		testConfig := projectconfig.TestConfig{
 			Name: "bad",
 			Type: "unknown-type",
 		}
@@ -225,7 +225,7 @@ func TestTestSuiteConfig_Validate(t *testing.T) {
 	})
 
 	t.Run("missing type returns missing-field error", func(t *testing.T) {
-		testConfig := projectconfig.TestSuiteConfig{
+		testConfig := projectconfig.TestConfig{
 			Name: "smoke",
 			// Type intentionally omitted.
 		}
@@ -233,6 +233,45 @@ func TestTestSuiteConfig_Validate(t *testing.T) {
 		require.Error(t, err)
 		require.ErrorIs(t, err, projectconfig.ErrMissingTestField)
 		assert.Contains(t, err.Error(), "type")
+	})
+
+	t.Run("valid kinds", func(t *testing.T) {
+		testConfig := projectconfig.TestConfig{
+			Name: "smoke",
+			Type: projectconfig.TestTypeLisa,
+			Kind: []projectconfig.TestKind{
+				projectconfig.TestKindFunctional,
+				projectconfig.TestKindPerformance,
+			},
+		}
+		assert.NoError(t, testConfig.Validate())
+	})
+
+	t.Run("unknown kind", func(t *testing.T) {
+		testConfig := projectconfig.TestConfig{
+			Name: "smoke",
+			Type: projectconfig.TestTypeLisa,
+			Kind: []projectconfig.TestKind{"bogus"},
+		}
+		err := testConfig.Validate()
+		require.Error(t, err)
+		require.ErrorIs(t, err, projectconfig.ErrUnknownTestKind)
+		assert.Contains(t, err.Error(), "bogus")
+	})
+
+	t.Run("duplicate kind", func(t *testing.T) {
+		testConfig := projectconfig.TestConfig{
+			Name: "smoke",
+			Type: projectconfig.TestTypeLisa,
+			Kind: []projectconfig.TestKind{
+				projectconfig.TestKindFunctional,
+				projectconfig.TestKindFunctional,
+			},
+		}
+		err := testConfig.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "duplicate kind")
+		assert.Contains(t, err.Error(), string(projectconfig.TestKindFunctional))
 	})
 }
 
@@ -253,16 +292,16 @@ func TestPytestConfig_EffectiveInstallMode(t *testing.T) {
 	})
 }
 
-func TestTestSuiteConfig_MergeUpdatesFrom(t *testing.T) {
+func TestTestConfig_MergeUpdatesFrom(t *testing.T) {
 	t.Run("merge overrides non-zero fields", func(t *testing.T) {
-		base := projectconfig.TestSuiteConfig{
+		base := projectconfig.TestConfig{
 			Name: "smoke",
 			Type: projectconfig.TestTypePytest,
 			Pytest: &projectconfig.PytestConfig{
 				WorkingDir: "tests",
 			},
 		}
-		other := projectconfig.TestSuiteConfig{
+		other := projectconfig.TestConfig{
 			Description: "Updated description",
 		}
 		require.NoError(t, base.MergeUpdatesFrom(&other))
@@ -271,14 +310,14 @@ func TestTestSuiteConfig_MergeUpdatesFrom(t *testing.T) {
 	})
 
 	t.Run("merge appends test-paths", func(t *testing.T) {
-		base := projectconfig.TestSuiteConfig{
+		base := projectconfig.TestConfig{
 			Name: "smoke",
 			Type: projectconfig.TestTypePytest,
 			Pytest: &projectconfig.PytestConfig{
 				TestPaths: []string{"cases/"},
 			},
 		}
-		other := projectconfig.TestSuiteConfig{
+		other := projectconfig.TestConfig{
 			Pytest: &projectconfig.PytestConfig{
 				TestPaths: []string{"extra/"},
 			},
@@ -288,16 +327,16 @@ func TestTestSuiteConfig_MergeUpdatesFrom(t *testing.T) {
 	})
 }
 
-func TestValidateTestSuiteReferences(t *testing.T) {
+func TestValidateTestReferences(t *testing.T) {
 	t.Run("valid references", func(t *testing.T) {
 		cfg := projectconfig.ProjectConfig{
 			Images: map[string]projectconfig.ImageConfig{
 				"myimage": {
 					Name:  "myimage",
-					Tests: projectconfig.ImageTestsConfig{TestSuites: []projectconfig.TestSuiteRef{{Name: "smoke"}}},
+					Tests: projectconfig.ImageTestsConfig{Tests: []projectconfig.TestRef{{Name: "smoke"}}},
 				},
 			},
-			TestSuites: map[string]projectconfig.TestSuiteConfig{
+			Tests: map[string]projectconfig.TestConfig{
 				"smoke": {
 					Name: "smoke",
 					Type: projectconfig.TestTypePytest,
@@ -320,10 +359,10 @@ func TestValidateTestSuiteReferences(t *testing.T) {
 			Images: map[string]projectconfig.ImageConfig{
 				"myimage": {
 					Name:  "myimage",
-					Tests: projectconfig.ImageTestsConfig{TestSuites: []projectconfig.TestSuiteRef{{Name: "nonexistent"}}},
+					Tests: projectconfig.ImageTestsConfig{Tests: []projectconfig.TestRef{{Name: "nonexistent"}}},
 				},
 			},
-			TestSuites:        make(map[string]projectconfig.TestSuiteConfig),
+			Tests:             make(map[string]projectconfig.TestConfig),
 			Components:        make(map[string]projectconfig.ComponentConfig),
 			ComponentGroups:   make(map[string]projectconfig.ComponentGroupConfig),
 			Distros:           make(map[string]projectconfig.DistroDefinition),
@@ -332,7 +371,7 @@ func TestValidateTestSuiteReferences(t *testing.T) {
 		}
 		err := cfg.Validate()
 		require.Error(t, err)
-		require.ErrorIs(t, err, projectconfig.ErrUndefinedTestSuite)
+		require.ErrorIs(t, err, projectconfig.ErrUndefinedTest)
 		assert.Contains(t, err.Error(), "nonexistent")
 	})
 
@@ -341,7 +380,7 @@ func TestValidateTestSuiteReferences(t *testing.T) {
 			Images: map[string]projectconfig.ImageConfig{
 				"myimage": {Name: "myimage"},
 			},
-			TestSuites:        make(map[string]projectconfig.TestSuiteConfig),
+			Tests:             make(map[string]projectconfig.TestConfig),
 			Components:        make(map[string]projectconfig.ComponentConfig),
 			ComponentGroups:   make(map[string]projectconfig.ComponentGroupConfig),
 			Distros:           make(map[string]projectconfig.DistroDefinition),

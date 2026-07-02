@@ -827,7 +827,7 @@ rpm-channel = "devel"
 	}
 }
 
-func TestLoadAndResolveProjectConfig_TestSuite(t *testing.T) {
+func TestLoadAndResolveProjectConfig_Test(t *testing.T) {
 	const configContents = `
 [test-suites.smoke]
 type = "pytest"
@@ -847,11 +847,11 @@ extra-args = ["--image-path", "{image-path}"]
 	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
 	require.NoError(t, err)
 
-	require.Len(t, config.TestSuites, 1)
+	require.Len(t, config.Tests, 1)
 
 	// Check pytest test.
-	if assert.Contains(t, config.TestSuites, "smoke") {
-		smokeTest := config.TestSuites["smoke"]
+	if assert.Contains(t, config.Tests, "smoke") {
+		smokeTest := config.Tests["smoke"]
 		assert.Equal(t, "smoke", smokeTest.Name)
 		assert.Equal(t, TestTypePytest, smokeTest.Type)
 		assert.Equal(t, "Smoke tests for images", smokeTest.Description)
@@ -895,7 +895,7 @@ test-paths = ["other/"]
 	}
 
 	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testFiles[0].path)
-	require.ErrorIs(t, err, ErrDuplicateTestSuites)
+	require.ErrorIs(t, err, ErrDuplicateTests)
 }
 
 func TestLoadAndResolveProjectConfig_InvalidTestType(t *testing.T) {
@@ -927,7 +927,7 @@ type = "pytest"
 	assert.ErrorIs(t, err, ErrMissingTestField)
 }
 
-func TestLoadAndResolveProjectConfig_TestSuiteMissingType(t *testing.T) {
+func TestLoadAndResolveProjectConfig_TestMissingType(t *testing.T) {
 	const configContents = `
 [test-suites.smoke]
 # 'type' intentionally omitted.
@@ -943,7 +943,7 @@ description = "no type set"
 	assert.Contains(t, err.Error(), "type")
 }
 
-func TestLoadAndResolveProjectConfig_TestSuiteInvalidName(t *testing.T) {
+func TestLoadAndResolveProjectConfig_TestInvalidName(t *testing.T) {
 	// Names containing path separators or traversal segments must be rejected at
 	// config load time since they are used as path components (e.g., venv directories).
 	const configContents = `
@@ -959,7 +959,7 @@ working-dir = "tests"
 
 	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid test suite name")
+	assert.Contains(t, err.Error(), "invalid test name")
 }
 
 func TestLoadAndResolveProjectConfig_ImageWithValidTestRef(t *testing.T) {
@@ -985,7 +985,7 @@ test-suites = [{ name = "smoke" }]
 	require.NoError(t, err)
 
 	if assert.Contains(t, config.Images, "myimage") {
-		assert.Equal(t, []TestSuiteRef{{Name: "smoke"}}, config.Images["myimage"].Tests.TestSuites)
+		assert.Equal(t, []TestRef{{Name: "smoke"}}, config.Images["myimage"].Tests.Tests)
 	}
 }
 
@@ -1003,7 +1003,7 @@ test-suites = [{ name = "nonexistent" }]
 
 	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
 	require.Error(t, err)
-	require.ErrorIs(t, err, ErrUndefinedTestSuite)
+	require.ErrorIs(t, err, ErrUndefinedTest)
 	assert.Contains(t, err.Error(), "nonexistent")
 }
 
@@ -1105,7 +1105,7 @@ rpm-channel = "new-channel"
 		"rpm-channel should take precedence over the deprecated channel field")
 }
 
-func TestLoadAndResolveProjectConfig_TestSuiteInstallMode(t *testing.T) {
+func TestLoadAndResolveProjectConfig_TestInstallMode(t *testing.T) {
 	const configContents = `
 [test-suites.smoke]
 type = "pytest"
@@ -1122,15 +1122,15 @@ test-paths = ["cases/"]
 	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
 	require.NoError(t, err)
 
-	if assert.Contains(t, config.TestSuites, "smoke") {
-		smokeTest := config.TestSuites["smoke"]
+	if assert.Contains(t, config.Tests, "smoke") {
+		smokeTest := config.Tests["smoke"]
 		require.NotNil(t, smokeTest.Pytest)
 		assert.Equal(t, PytestInstallRequirements, smokeTest.Pytest.Install)
 		assert.Equal(t, PytestInstallRequirements, smokeTest.Pytest.EffectiveInstallMode())
 	}
 }
 
-func TestLoadAndResolveProjectConfig_TestSuiteInvalidInstallMode(t *testing.T) {
+func TestLoadAndResolveProjectConfig_TestInvalidInstallMode(t *testing.T) {
 	const configContents = `
 [test-suites.smoke]
 type = "pytest"

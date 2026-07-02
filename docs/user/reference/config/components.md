@@ -16,6 +16,7 @@ A component definition tells azldev where to find the spec file, how to customiz
 | Render config | `render` | [RenderConfig](#render-configuration) | No | Options controlling spec rendering behavior |
 | Source files | `source-files` | array of [SourceFileReference](#source-file-references) | No | Additional source files to download for this component |
 | Package overrides | `packages` | map of string → [PackageConfig](package-groups.md#package-config) | No | Exact per-package configuration overrides; highest priority in the resolution order |
+| Tests | `tests` | [ComponentTests](#component-tests) | No | Test references that apply to this component (see [Tests](tests.md)) |
 
 ### Bare Components
 
@@ -299,6 +300,24 @@ rpm-channel = "rpm-devel"
 [components.curl.packages.libcurl-minimal.publish]
 rpm-channel = "none"
 ```
+
+## Component Tests
+
+The `[components.<name>.tests]` subtable lists test or test-group references that apply to this component. Each entry is a [TestRef](tests.md#test-reference) with exactly one of `name` or `group` set.
+
+| Field | TOML Key | Type | Required | Description |
+|-------|----------|------|----------|-------------|
+| Tests | `test-suites` | array of [TestRef](tests.md#test-reference) | No | References to `[test-suites.<name>]` entries or `[test-groups.<name>]` entries |
+
+```toml
+[components.kernel.tests]
+test-suites = [
+  { group = "kernel-bvt" },
+  { name  = "kdump-smoke" },
+]
+```
+
+Test associations are metadata and never participate in fingerprints — adding, removing, or renaming a test reference does not invalidate a component's build.
 
 ## Source File References
 

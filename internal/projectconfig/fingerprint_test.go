@@ -65,6 +65,11 @@ func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
 		// ComponentConfig.Publish — post-build routing (where to publish), not a build input.
 		"ComponentConfig.Publish": true,
 
+		// ComponentConfig.Tests — test associations are metadata about which tests apply
+		// to this component, not inputs to the build. They must not drift lock fingerprints
+		// — adding/removing a test ref should never trigger a rebuild.
+		"ComponentConfig.Tests": true,
+
 		// ComponentOverlay.Description — human-readable documentation for the overlay.
 		"ComponentOverlay.Description": true,
 		// ComponentOverlay.Source — absolute path that varies by checkout location.

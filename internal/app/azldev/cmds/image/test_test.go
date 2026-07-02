@@ -21,7 +21,7 @@ func TestNewImageTestCmd(t *testing.T) {
 func TestNewImageTestCmd_Flags(t *testing.T) {
 	cmd := image.NewImageTestCmd()
 
-	assert.NotNil(t, cmd.Flags().Lookup("test-suite"))
+	assert.NotNil(t, cmd.Flags().Lookup("test"))
 	assert.NotNil(t, cmd.Flags().Lookup("image-path"))
 	assert.NotNil(t, cmd.Flags().Lookup("junit-xml"))
 }

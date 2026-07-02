@@ -35,11 +35,11 @@ The `capabilities` subtable describes what the image supports. All fields are op
 
 ## Image Tests
 
-The `tests` subtable links an image to one or more test suites defined in the top-level [`[test-suites]`](test-suites.md) section.
+The `tests` subtable links an image to tests and test-groups defined in the top-level [`[test-suites]` / `[test-groups]`](tests.md) sections. Each entry is a [TestRef](tests.md#test-reference) with exactly one of `name` or `group` set.
 
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
-| Test Suites | `test-suites` | array of inline tables | No | List of test suite references. Each entry must have a `name` field matching a key in `[test-suites]`. |
+| Tests | `test-suites` | array of [TestRef](tests.md#test-reference) | No | References to `[test-suites.<name>]` entries or `[test-groups.<name>]` entries |
 
 ## Image Publish
 
@@ -85,7 +85,7 @@ description = "Azure-optimized VM image"
 definition = { type = "kiwi", path = "vm-azure/vm-azure.kiwi", profile = "azure" }
 ```
 
-### Image with test suite references
+### Image with test references
 
 ```toml
 [images.vm-base]
@@ -98,8 +98,8 @@ systemd = true
 
 [images.vm-base.tests]
 test-suites = [
-  { name = "smoke" },
-  { name = "integration" },
+  { group = "smoke" },
+  { name  = "integration-boot" },
 ]
 ```
 
@@ -117,5 +117,5 @@ channels = ["registry-prod", "registry-staging"]
 ## Related Resources
 
 - [Config File Structure](config-file.md) — top-level config file layout
-- [Test Suites](test-suites.md) — test suite definitions
+- [Tests](tests.md) — test and test-group definitions referenced by `[images.<name>.tests]`
 - [Tools](tools.md) — Image Customizer tool configuration
