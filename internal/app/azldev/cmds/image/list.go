@@ -38,7 +38,7 @@ type ImageListResult struct {
 
 	// Tests holds the test configuration for this image, matching the original config
 	// structure.
-	Tests projectconfig.ImageTestsConfig `json:"tests" table:"-"`
+	Tests *projectconfig.ImageTestsConfig `json:"tests,omitempty" table:"-"`
 
 	// TestsSummary is a comma-separated summary of test suite names for table display.
 	TestsSummary string `json:"-" table:"Tests"`

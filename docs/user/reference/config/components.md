@@ -16,6 +16,7 @@ A component definition tells azldev where to find the spec file, how to customiz
 | Render config | `render` | [RenderConfig](#render-configuration) | No | Options controlling spec rendering behavior |
 | Source files | `source-files` | array of [SourceFileReference](#source-file-references) | No | Additional source files to download for this component |
 | Package overrides | `packages` | map of string → [PackageConfig](package-groups.md#package-config) | No | Exact per-package configuration overrides; highest priority in the resolution order |
+| Tests | `tests` | [ComponentTests](#component-tests) | No | Test references that apply to this component (see [Tests and Test Groups](tests.md)) |
 
 ### Bare Components
 
@@ -300,6 +301,24 @@ rpm-channel = "rpm-devel"
 rpm-channel = "none"
 ```
 
+## Component Tests
+
+The `[components.<name>.tests]` subtable lists test or test-group
+references that apply to the component. Each entry is a [TestRef](tests.md#test-reference)
+with exactly one of `name` or `group`.
+
+| Field | TOML Key | Type | Required | Description |
+|-------|----------|------|----------|-------------|
+| Tests | `tests` | array of [TestRef](tests.md#test-reference) | No | References to `[tests.<name>]` entries or `[test-groups.<name>]` entries |
+
+```toml
+[components.kernel.tests]
+tests = [
+  { group = "kernel-bvt" },
+  { name  = "kdump-smoke" },
+]
+```
+
 ## Source File References
 
 The `[[components.<name>.source-files]]` array defines additional source files that azldev should download before building. These are files not available in the dist-git repository or lookaside cache — typically binaries, pre-built artifacts, or files from custom hosting.
@@ -461,5 +480,6 @@ lines = ["cp -vf %{shimdirx64}/$(basename %{shimefix64}) %{shimefix64} ||:"]
 - [Distros](distros.md) — distro definitions and `default-component-config` inheritance
 - [Component Groups](component-groups.md) — grouping components with shared defaults
 - [Package Groups](package-groups.md) — project-level package groups and full resolution order
+- [Tests and Test Groups](tests.md) — definitions referenced by `[components.<name>.tests]`
 - [Configuration System](../../explanation/config-system.md) — inheritance and merge behavior
 - [JSON Schema](../../../../schemas/azldev.schema.json) — machine-readable schema

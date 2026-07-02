@@ -173,6 +173,11 @@
           "$ref": "#/$defs/ComponentPublishConfig",
           "title": "Publish settings",
           "description": "Component-level publish channel settings"
+        },
+        "tests": {
+          "$ref": "#/$defs/ComponentTestsConfig",
+          "title": "Tests",
+          "description": "Per-component test or test-group references"
         }
       },
       "additionalProperties": false,
@@ -347,6 +352,20 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "ComponentTestsConfig": {
+      "properties": {
+        "tests": {
+          "items": {
+            "$ref": "#/$defs/TestRef"
+          },
+          "type": "array",
+          "title": "Tests",
+          "description": "Per-component test or test-group references"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "ConfigFile": {
       "properties": {
         "$schema": {
@@ -432,6 +451,22 @@
           "type": "object",
           "title": "Test Suites",
           "description": "Definitions of test suites for this project"
+        },
+        "tests": {
+          "additionalProperties": {
+            "$ref": "#/$defs/TestDefinition"
+          },
+          "type": "object",
+          "title": "Tests",
+          "description": "Definitions of individual tests"
+        },
+        "test-groups": {
+          "additionalProperties": {
+            "$ref": "#/$defs/TestGroup"
+          },
+          "type": "object",
+          "title": "Test Groups",
+          "description": "Definitions of named bundles of tests"
         }
       },
       "additionalProperties": false,
@@ -710,6 +745,14 @@
           "type": "array",
           "title": "Test Suites",
           "description": "List of test suite references that apply to this image"
+        },
+        "tests": {
+          "items": {
+            "$ref": "#/$defs/TestRef"
+          },
+          "type": "array",
+          "title": "Tests",
+          "description": "List of test or test-group references that apply to this image"
         }
       },
       "additionalProperties": false,
@@ -1287,6 +1330,230 @@
         "name",
         "subpath"
       ]
+    },
+    "TestDefinition": {
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "pytest"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "lisa"
+                  ]
+                },
+                {
+                  "required": [
+                    "tmt"
+                  ]
+                }
+              ]
+            },
+            "required": [
+              "pytest"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "lisa"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "pytest"
+                  ]
+                },
+                {
+                  "required": [
+                    "tmt"
+                  ]
+                }
+              ]
+            },
+            "required": [
+              "lisa"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "tmt"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "pytest"
+                  ]
+                },
+                {
+                  "required": [
+                    "lisa"
+                  ]
+                }
+              ]
+            },
+            "required": [
+              "tmt"
+            ]
+          }
+        }
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "pytest",
+            "lisa",
+            "tmt"
+          ],
+          "title": "Type",
+          "description": "Test framework type"
+        },
+        "description": {
+          "type": "string",
+          "title": "Description",
+          "description": "Description of this test"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "functional",
+            "performance"
+          ],
+          "title": "Kind",
+          "description": "Kind hint for the test"
+        },
+        "long-running": {
+          "type": "boolean",
+          "title": "Long running",
+          "description": "Hints that this test may run for hours"
+        },
+        "required-capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Required capabilities",
+          "description": "Capability tokens the image must declare"
+        },
+        "lisa": {
+          "type": "object",
+          "title": "LISA config",
+          "description": "LISA-specific configuration"
+        },
+        "tmt": {
+          "type": "object",
+          "title": "TMT config",
+          "description": "TMT-specific configuration"
+        },
+        "pytest": {
+          "type": "object",
+          "title": "Pytest config",
+          "description": "pytest-specific configuration"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type"
+      ]
+    },
+    "TestGroup": {
+      "properties": {
+        "description": {
+          "type": "string",
+          "title": "Description",
+          "description": "Description of this test group"
+        },
+        "tests": {
+          "items": {
+            "not": {
+              "required": [
+                "group"
+              ]
+            },
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^\\S",
+                "description": "Name of a test"
+              }
+            },
+            "type": "object",
+            "required": [
+              "name"
+            ]
+          },
+          "type": "array",
+          "title": "Tests",
+          "description": "Ordered test references for this group (name only)"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "TestRef": {
+      "oneOf": [
+        {
+          "not": {
+            "required": [
+              "group"
+            ]
+          },
+          "required": [
+            "name"
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "name"
+            ]
+          },
+          "required": [
+            "group"
+          ]
+        }
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^\\S",
+          "title": "Name",
+          "description": "Name of a test (mutually exclusive with group)"
+        },
+        "group": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^\\S",
+          "title": "Group",
+          "description": "Name of a test group (mutually exclusive with name)"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
     },
     "TestSuiteConfig": {
       "properties": {

@@ -985,6 +985,7 @@ test-suites = [{ name = "smoke" }]
 	require.NoError(t, err)
 
 	if assert.Contains(t, config.Images, "myimage") {
+		require.NotNil(t, config.Images["myimage"].Tests)
 		assert.Equal(t, []TestSuiteRef{{Name: "smoke"}}, config.Images["myimage"].Tests.TestSuites)
 	}
 }

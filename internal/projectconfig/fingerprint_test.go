@@ -65,6 +65,9 @@ func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
 		// ComponentConfig.Publish — post-build routing (where to publish), not a build input.
 		"ComponentConfig.Publish": true,
 
+		// ComponentConfig.Tests — test selection metadata (new schema), not a build input.
+		"ComponentConfig.Tests": true,
+
 		// ComponentOverlay.Description — human-readable documentation for the overlay.
 		"ComponentOverlay.Description": true,
 		// ComponentOverlay.Source — absolute path that varies by checkout location.
