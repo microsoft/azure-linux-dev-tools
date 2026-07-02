@@ -53,8 +53,8 @@ func ApplyOverlayToSources(
 		}
 	}
 
-	// Apply the non-spec file component, if any.
-	if !overlay.ModifiesNonSpecFiles() {
+	// Apply the loose-file component, if any.
+	if !overlay.ModifiesLooseFiles() {
 		return nil
 	}
 
