@@ -5,6 +5,22 @@ This guide covers releasing the `azldev` Go module so that
 
 ## TL;DR
 
+Releases run through CI — the recommended path, with nothing to install
+locally:
+
+1. Trigger the [**Prepare release** workflow][prepare-release-run]
+   (**Run workflow** → `main`). It drafts the next changelog section and pushes
+   a `release/vX.Y.Z` branch.
+2. Wait ~30 seconds, the output summary of the workflow will generate a link to create the PR.
+3. Edit the draft changelog into user-facing notes, then merge the PR to `main`. Consider using '@copilot Update the new changelog section into user-facing release notes' in GitHub to help rewrite the changelog.
+4. On merge, the [**release** workflow][release-run] tags `vX.Y.Z` and publishes
+   a GitHub Release from the changelog — no further action needed.
+
+See [Automated releases (CI)](#automated-releases-ci) for what each workflow
+does.
+
+Local steps are:
+
 ```console
 # One-time: install the changelog generator (git-cliff)
 cargo binstall git-cliff         # or: cargo install git-cliff --locked, or: brew install git-cliff
@@ -18,10 +34,15 @@ mage release                     # creates annotated tag vX.Y.Z on HEAD (does no
 # Undo a local tag created by mistake (before pushing)
 git tag -d vX.Y.Z
 
-git push origin vX.Y.Z           # pushing the tag is what publishes the release
+git push origin vX.Y.Z           # pushing the tag publishes the version to the Go proxy
+
+# 3. Create the GitHub Release with this version's changelog notes
+gh release create vX.Y.Z --title vX.Y.Z \
+  --notes-file <(awk '/^##[[:space:]]+\[[0-9]/{n++; next} n==1' CHANGELOG.md)
 ```
 
-Each step is explained in full under [Cut a release](#cut-a-release) below.
+Each manual step is explained in full under [Cut a release](#cut-a-release)
+below.
 
 ## Versioning policy
 
@@ -75,21 +96,22 @@ pkg.go.dev fetch directly from this repository's Git tags:
    `mage release` is idempotent: if that version is already tagged it does
    nothing, so the same command is safe to automate on every merge to `main`.
 
-4. Warm the proxy and pkg.go.dev so the new version is discoverable promptly.
-   This is harmless and only triggers indexing of an already-public tag:
+4. (Optional) The proxy and pkg.go.dev index a new version on the first request,
+   so nothing is required here. To make a release discoverable immediately, warm
+   them by hand — this only triggers indexing of an already-public tag:
 
    ```console
    GOPROXY=https://proxy.golang.org go list \
-     -m github.com/microsoft/azure-linux-dev-tools@v0.1.1
+     -m github.com/microsoft/azure-linux-dev-tools@vX.Y.Z
    ```
 
    Then visit
-   `https://pkg.go.dev/github.com/microsoft/azure-linux-dev-tools@v0.1.1` once to
+   `https://pkg.go.dev/github.com/microsoft/azure-linux-dev-tools@vX.Y.Z` once to
    prompt the docs build.
 
-5. (Optional, recommended) Create a GitHub Release for the tag and paste the new
-   `CHANGELOG.md` section as the release notes. A GitHub Release is separate from
-   the Git tag, so you can add notes even to a tag that already exists.
+5. (Optional) Create a GitHub Release for the tag with that version's
+   `CHANGELOG.md` section as the notes. The CI release workflow does this
+   automatically; for a manual release, use `gh release create`.
 
 ## Changelog
 
@@ -123,12 +145,47 @@ cargo binstall git-cliff   # or: cargo install git-cliff --locked, or: brew inst
 > Tip: the generated draft is a natural place to let Copilot help rewrite commit
 > subjects into concise, user-facing notes before you commit.
 
+## Automated releases (CI)
+
+Two workflows automate the manual steps above, reusing the same mage targets so
+there is no second code path:
+
+* [`prepare-release.yml`](../../../.github/workflows/prepare-release.yml)
+  (manual **Run workflow**): checks out the repo's default branch (`main`),
+  installs the pinned git-cliff, runs `mage changelog`, and pushes a
+  `release/vX.Y.Z` branch. It does **not** open the PR — open it yourself from
+  that branch, curate the draft, and merge.
+* [`release.yml`](../../../.github/workflows/release.yml) (on pushes to `main`
+  that change `CHANGELOG.md`): runs `mage release`, pushes the tag, and publishes
+  a GitHub Release whose notes are that version's `CHANGELOG.md` section. The path
+  filter keeps ordinary merges from triggering it; it also stays idempotent — a
+  `CHANGELOG.md` edit that doesn't bump the version is a no-op because the top
+  version is already tagged.
+
+Both push with the default `GITHUB_TOKEN` (`contents: write`) — no PAT needed.
+A tag pushed by `GITHUB_TOKEN` does not itself trigger further workflows, which
+only matters if a tag-triggered build is added later.
+
 ## Fixing a bad release
 
-Proxy versions are immutable — you cannot delete or move a published version.
-To withdraw one, [retract][retract] it: add a `retract` directive to `go.mod`
-describing the bad version(s) and release a new patch. `go get` will then skip
-the retracted versions.
+### If the release workflow fails partway
+
+The [release workflow][release-run] is idempotent: it skips the tag push and the
+GitHub Release when they already exist, so the fix is usually just to **re-run it
+before pushing anything else to `main`**. The tag is created on whatever commit
+is at the top of `main` at run time, so if an unrelated commit lands before you
+re-run, the tag could point at it instead of the release commit. If that happens
+— and no one has fetched `module@vX.Y.Z` through the proxy yet — delete the
+remote tag and GitHub Release, then re-run. Once the proxy has served the
+version it is immutable; retract it instead (below).
+
+### Withdrawing a published version
+
+A version becomes immutable the first time the [Go module proxy][proxy] serves
+`module@vX.Y.Z` — after that you cannot delete or move it. To withdraw one,
+[retract][retract] it: add a `retract` directive to `go.mod` describing the bad
+version(s) and release a new patch. `go get` will then skip the retracted
+versions.
 
 ```go
 // in go.mod
@@ -141,3 +198,5 @@ retract (
 [semver]: https://semver.org/
 [proxy]: https://proxy.golang.org/
 [retract]: https://go.dev/ref/mod#go-mod-file-retract
+[prepare-release-run]: https://github.com/microsoft/azure-linux-dev-tools/actions/workflows/prepare-release.yml
+[release-run]: https://github.com/microsoft/azure-linux-dev-tools/actions/workflows/release.yml
