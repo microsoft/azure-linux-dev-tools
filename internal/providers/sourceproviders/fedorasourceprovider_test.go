@@ -194,8 +194,16 @@ func TestGetComponentFromGit(t *testing.T) {
 		})
 
 		// Execute the method under test
-		err = provider.GetComponent(context.Background(), mockComponent, destDir)
+		provenance, err := provider.GetComponent(context.Background(), mockComponent, destDir)
 		require.NoError(t, err)
+
+		// Verify provenance returned from dist-git extraction
+		require.Len(t, provenance, 1, "should return provenance for the lookaside download")
+		assert.Equal(t, testFileName, provenance[0].Filename)
+		assert.Equal(t, sourceproviders.SourceOriginLookaside, provenance[0].OriginType)
+		assert.Equal(t, fileutils.HashType(testHashType), provenance[0].HashType)
+		assert.Equal(t, testHash, provenance[0].Hash)
+		assert.NotEmpty(t, provenance[0].URL, "lookaside URL should be populated")
 
 		// Verify the spec file was copied to destination
 		specPath := destDir + "/" + testPackageName + ".spec"
@@ -301,7 +309,7 @@ func TestGetComponentFromGit(t *testing.T) {
 		require.NoError(t, err)
 
 		// Should succeed — the file is in skipFilenames so the 404 lookaside download is skipped
-		err = provider.GetComponent(context.Background(), mockComponent, testDestDir)
+		_, err = provider.GetComponent(context.Background(), mockComponent, testDestDir)
 		require.NoError(t, err)
 
 		// Verify the pre-existing file was preserved (not overwritten by git repo version)
@@ -363,7 +371,7 @@ func TestGetComponentFromGit(t *testing.T) {
 			Name: testPackageName,
 		})
 
-		err = provider.GetComponent(context.Background(), mockComponent, destDir)
+		_, err = provider.GetComponent(context.Background(), mockComponent, destDir)
 		require.NoError(t, err)
 
 		// Verify only spec file exists (no lookaside downloads)
@@ -391,7 +399,7 @@ func TestGetComponentFromGit(t *testing.T) {
 		emptyNameComponent := components_testutils.NewMockComponent(ctrl)
 		emptyNameComponent.EXPECT().GetName().AnyTimes().Return("")
 
-		err = provider.GetComponent(context.Background(), emptyNameComponent, destDir)
+		_, err = provider.GetComponent(context.Background(), emptyNameComponent, destDir)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "component name cannot be empty")
 
@@ -401,7 +409,7 @@ func TestGetComponentFromGit(t *testing.T) {
 			Name: testPackageName,
 		})
 
-		err = provider.GetComponent(context.Background(), mockComponent, "")
+		_, err = provider.GetComponent(context.Background(), mockComponent, "")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "destination path cannot be empty")
 	})
@@ -430,7 +438,7 @@ func TestGetComponentFromGit(t *testing.T) {
 		cloneError := errors.New("clone failed")
 		mockGitProvider.EXPECT().Clone(gomock.Any(), repoURL, gomock.Any(), gomock.Any()).Return(cloneError)
 
-		err = provider.GetComponent(context.Background(), mockComponent, destDir)
+		_, err = provider.GetComponent(context.Background(), mockComponent, destDir)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, cloneError)
 	})
@@ -473,9 +481,9 @@ func TestGetComponentFromGit(t *testing.T) {
 		extractorError := errors.New("extraction failed")
 		mockExtractor.EXPECT().
 			ExtractSourcesFromRepo(gomock.Any(), gomock.Any(), testPackageName, gomock.Any(), gomock.Any()).
-			Return(extractorError)
+			Return(nil, extractorError)
 
-		err = provider.GetComponent(context.Background(), mockComponent, destDir)
+		_, err = provider.GetComponent(context.Background(), mockComponent, destDir)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, extractorError)
 	})
@@ -533,9 +541,9 @@ func TestGetComponentFromGit(t *testing.T) {
 		// Extractor succeeds
 		mockExtractor.EXPECT().
 			ExtractSourcesFromRepo(gomock.Any(), gomock.Any(), upstreamName, gomock.Any(), gomock.Any()).
-			Return(nil)
+			Return(nil, nil)
 
-		err = provider.GetComponent(context.Background(), mockComponent, destDir)
+		_, err = provider.GetComponent(context.Background(), mockComponent, destDir)
 		require.NoError(t, err)
 
 		// Verify spec file was renamed to component name
@@ -595,9 +603,9 @@ func TestGetComponentFromGit(t *testing.T) {
 		// Extractor succeeds
 		mockExtractor.EXPECT().
 			ExtractSourcesFromRepo(gomock.Any(), gomock.Any(), upstreamName, gomock.Any(), gomock.Any()).
-			Return(nil)
+			Return(nil, nil)
 
-		err = provider.GetComponent(context.Background(), mockComponent, destDir)
+		_, err = provider.GetComponent(context.Background(), mockComponent, destDir)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to rename fetched spec file")
 	})
@@ -643,7 +651,7 @@ func TestGetComponentFromGit(t *testing.T) {
 		// ExtractSourcesFromRepo must NOT be called — no EXPECT set for it.
 		// gomock will fail if it's called unexpectedly.
 
-		err = provider.GetComponent(context.Background(), mockComponent, destDir, sourceproviders.WithSkipLookaside())
+		_, err = provider.GetComponent(context.Background(), mockComponent, destDir, sourceproviders.WithSkipLookaside())
 		require.NoError(t, err)
 
 		// Verify spec file was still copied to destination.
@@ -713,9 +721,9 @@ func TestCheckoutTargetCommit(t *testing.T) {
 		// Extractor succeeds
 		mockExtractor.EXPECT().
 			ExtractSourcesFromRepo(gomock.Any(), gomock.Any(), testPackageName, gomock.Any(), gomock.Any()).
-			Return(nil)
+			Return(nil, nil)
 
-		err = provider.GetComponent(context.Background(), mockComponent, destDir)
+		_, err = provider.GetComponent(context.Background(), mockComponent, destDir)
 		require.NoError(t, err)
 	})
 
@@ -766,9 +774,9 @@ func TestCheckoutTargetCommit(t *testing.T) {
 		// Extractor succeeds
 		mockExtractor.EXPECT().
 			ExtractSourcesFromRepo(gomock.Any(), gomock.Any(), testPackageName, gomock.Any(), gomock.Any()).
-			Return(nil)
+			Return(nil, nil)
 
-		err = provider.GetComponent(context.Background(), mockComponent, destDir)
+		_, err = provider.GetComponent(context.Background(), mockComponent, destDir)
 		require.NoError(t, err)
 	})
 
@@ -807,7 +815,7 @@ func TestCheckoutTargetCommit(t *testing.T) {
 			GetCommitHashBeforeDate(gomock.Any(), gomock.Any(), snapshotTime).
 			Return("", hashError)
 
-		err = provider.GetComponent(context.Background(), mockComponent, destDir)
+		_, err = provider.GetComponent(context.Background(), mockComponent, destDir)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "resolving commit for snapshot time")
 		assert.ErrorIs(t, err, hashError)
@@ -854,7 +862,7 @@ func TestCheckoutTargetCommit(t *testing.T) {
 			Checkout(gomock.Any(), gomock.Any(), snapshotCommitHash).
 			Return(checkoutError)
 
-		err = provider.GetComponent(context.Background(), mockComponent, destDir)
+		_, err = provider.GetComponent(context.Background(), mockComponent, destDir)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to checkout commit")
 		assert.ErrorIs(t, err, checkoutError)
@@ -886,7 +894,7 @@ func TestCheckoutTargetCommit(t *testing.T) {
 			Clone(gomock.Any(), repoURL, gomock.Any(), gomock.Any()).
 			Return(nil)
 
-		err = provider.GetComponent(context.Background(), mockComponent, destDir)
+		_, err = provider.GetComponent(context.Background(), mockComponent, destDir)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid snapshot time")
 	})
@@ -941,9 +949,9 @@ func TestCheckoutTargetCommit_UpstreamCommit(t *testing.T) {
 		// Extractor succeeds
 		mockExtractor.EXPECT().
 			ExtractSourcesFromRepo(gomock.Any(), gomock.Any(), testPackageName, gomock.Any(), gomock.Any()).
-			Return(nil)
+			Return(nil, nil)
 
-		err = provider.GetComponent(context.Background(), mockComponent, destDir)
+		_, err = provider.GetComponent(context.Background(), mockComponent, destDir)
 		require.NoError(t, err)
 	})
 
@@ -993,9 +1001,9 @@ func TestCheckoutTargetCommit_UpstreamCommit(t *testing.T) {
 		// Extractor succeeds
 		mockExtractor.EXPECT().
 			ExtractSourcesFromRepo(gomock.Any(), gomock.Any(), testPackageName, gomock.Any(), gomock.Any()).
-			Return(nil)
+			Return(nil, nil)
 
-		err = provider.GetComponent(context.Background(), mockComponent, destDir)
+		_, err = provider.GetComponent(context.Background(), mockComponent, destDir)
 		require.NoError(t, err)
 	})
 
@@ -1036,7 +1044,7 @@ func TestCheckoutTargetCommit_UpstreamCommit(t *testing.T) {
 			Checkout(gomock.Any(), gomock.Any(), upstreamCommitHash).
 			Return(checkoutError)
 
-		err = provider.GetComponent(context.Background(), mockComponent, destDir)
+		_, err = provider.GetComponent(context.Background(), mockComponent, destDir)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to checkout commit")
 		assert.ErrorIs(t, err, checkoutError)
@@ -1098,8 +1106,8 @@ func TestGetComponent_LockedCommitTakesPriorityOverConfigPin(t *testing.T) {
 
 	mockExtractor.EXPECT().
 		ExtractSourcesFromRepo(gomock.Any(), gomock.Any(), testPackageName, gomock.Any(), gomock.Any()).
-		Return(nil)
+		Return(nil, nil)
 
-	err = provider.GetComponent(context.Background(), mockComponent, destDir)
+	_, err = provider.GetComponent(context.Background(), mockComponent, destDir)
 	require.NoError(t, err)
 }

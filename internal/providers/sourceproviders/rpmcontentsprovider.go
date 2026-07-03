@@ -10,11 +10,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
+	"path"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/rpmprovider"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/defers"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 )
 
 // RPMContentsProviderImpl implements [ComponentSourceProvider]. It relies on
@@ -50,31 +53,65 @@ func NewRPMContentsProviderImpl(
 // in the provided destination path.
 func (r *RPMContentsProviderImpl) GetComponent(
 	ctx context.Context, component components.Component, destDirPath string, _ ...FetchComponentOption,
-) (err error) {
+) (_ []SourceProvenance, err error) {
 	if component.GetName() == "" {
-		return errors.New("component name cannot be empty")
+		return nil, errors.New("component name cannot be empty")
 	}
 
 	if destDirPath == "" {
-		return errors.New("destination path cannot be empty")
+		return nil, errors.New("destination path cannot be empty")
 	}
 
 	// Get the RPM
-	rpmReader, err := r.rpmProvider.GetRPM(ctx, component.GetName(), nil)
+	rpmReader, rpmURL, err := r.rpmProvider.GetRPM(ctx, component.GetName(), nil)
 	if err != nil {
-		return fmt.Errorf("failed to get the RPM file for component %#q: %w",
+		return nil, fmt.Errorf("failed to get the RPM file for component %#q:\n%w",
 			component.GetName(), err)
 	}
 	defer defers.HandleDeferError(rpmReader.Close, &err)
 
+	// Hash the SRPM while extracting so provenance includes a checksum
+	// without requiring a second download.
+	hasher := sha256.New()
+	teeReader := io.TeeReader(rpmReader, hasher)
+
 	// Extract the RPM contents
-	err = r.extractor.Extract(rpmReader, destDirPath)
+	err = r.extractor.Extract(teeReader, destDirPath)
 	if err != nil {
-		return fmt.Errorf("failed to extract the RPM file of component %#q: %w",
+		return nil, fmt.Errorf("failed to extract the RPM file of component %#q:\n%w",
 			component.GetName(), err)
 	}
 
-	return nil
+	var provenance []SourceProvenance
+
+	if rpmURL != "" {
+		filename := filenameFromURL(rpmURL, component.GetName()+".src.rpm")
+		provenance = []SourceProvenance{{
+			Filename:   filename,
+			OriginType: SourceOriginURL,
+			URL:        rpmURL,
+			HashType:   fileutils.HashTypeSHA256,
+			Hash:       hex.EncodeToString(hasher.Sum(nil)),
+		}}
+	}
+
+	return provenance, nil
+}
+
+// filenameFromURL extracts the base filename from a URL path.
+// Falls back to fallback if the URL cannot be parsed or the path is empty.
+func filenameFromURL(rawURL, fallback string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fallback
+	}
+
+	base := path.Base(parsed.Path)
+	if base == "" || base == "." || base == "/" {
+		return fallback
+	}
+
+	return base
 }
 
 // ResolveIdentity implements [SourceIdentityProvider] by downloading the source RPM
@@ -88,7 +125,7 @@ func (r *RPMContentsProviderImpl) ResolveIdentity(
 		return "", errors.New("component name cannot be empty")
 	}
 
-	rpmReader, err := r.rpmProvider.GetRPM(ctx, component.GetName(), nil)
+	rpmReader, _, err := r.rpmProvider.GetRPM(ctx, component.GetName(), nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to get RPM for identity of component %#q:\n%w",
 			component.GetName(), err)

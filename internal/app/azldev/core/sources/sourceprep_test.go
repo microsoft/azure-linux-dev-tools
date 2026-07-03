@@ -71,17 +71,20 @@ func TestPrepareSources_Success(t *testing.T) {
 
 	component.EXPECT().GetName().AnyTimes().Return("test-component")
 	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{})
-	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil)
+	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil, nil)
 	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).DoAndReturn(
-		func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
+		func(
+			_ interface{}, _ interface{}, outputDir string,
+			_ ...sourceproviders.FetchComponentOption,
+		) ([]sourceproviders.SourceProvenance, error) {
 			// Create the expected spec file.
-			return fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte("# test spec"), fileperms.PublicFile)
+			return nil, fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte("# test spec"), fileperms.PublicFile)
 		},
 	)
 
 	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx)
 	require.NoError(t, err)
-	err = preparer.PrepareSources(ctx, component, testOutputDir, true /*applyOverlays?*/)
+	_, err = preparer.PrepareSources(ctx, component, testOutputDir, true /*applyOverlays?*/)
 	require.NoError(t, err)
 
 	macrosFileName := "test-component" + sources.MacrosFileExtension
@@ -99,6 +102,178 @@ func TestPrepareSources_Success(t *testing.T) {
 	assert.NotContains(t, string(specContents), "Source9999")
 }
 
+func TestPrepareSources_ProvenanceReport(t *testing.T) {
+	const (
+		testSpecName   = "test-component.spec"
+		outputSpecPath = testOutputDir + "/" + testSpecName
+	)
+
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+	sourceManager := sourceproviders_test.NewMockSourceManager(ctrl)
+	ctx := testctx.NewCtx()
+
+	component.EXPECT().GetName().AnyTimes().Return("test-component")
+	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{})
+
+	fileProv := []sourceproviders.SourceProvenance{
+		{
+			Filename:   "extra.tar.gz",
+			OriginType: sourceproviders.SourceOriginURL,
+			URL:        "https://example.com/extra.tar.gz",
+		},
+	}
+	sourceManager.EXPECT().
+		FetchFiles(gomock.Any(), component, testOutputDir).
+		Return(fileProv, nil)
+
+	compProv := []sourceproviders.SourceProvenance{
+		{
+			Filename:   "src.tar.gz",
+			OriginType: sourceproviders.SourceOriginLookaside,
+			URL:        "https://lookaside.example.com/pkg/src.tar.gz/sha512/abc/src.tar.gz",
+		},
+	}
+	sourceManager.EXPECT().
+		FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).
+		DoAndReturn(func(
+			_ interface{}, _ interface{}, _ string,
+			_ ...sourceproviders.FetchComponentOption,
+		) ([]sourceproviders.SourceProvenance, error) {
+			err := fileutils.WriteFile(
+				ctx.FS(), outputSpecPath,
+				[]byte("# test spec"), fileperms.PublicFile)
+
+			return compProv, err
+		})
+
+	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx)
+	require.NoError(t, err)
+
+	report, err := preparer.PrepareSources(
+		ctx, component, testOutputDir, true)
+	require.NoError(t, err)
+	require.NotNil(t, report)
+
+	assert.Equal(t, "test-component", report.ComponentName)
+	require.Len(t, report.Sources, 2)
+
+	assert.Equal(t, "extra.tar.gz", report.Sources[0].Filename)
+	assert.Equal(t, sourceproviders.SourceOriginURL, report.Sources[0].OriginType)
+	assert.Equal(t, "https://example.com/extra.tar.gz", report.Sources[0].URL)
+
+	assert.Equal(t, "src.tar.gz", report.Sources[1].Filename)
+	assert.Equal(t, sourceproviders.SourceOriginLookaside, report.Sources[1].OriginType)
+}
+
+func TestPrepareSources_ProvenanceReportFillsResolvedHashes(t *testing.T) {
+	const (
+		testSpecPath = testOutputDir + "/test-component.spec"
+		testFilePath = testOutputDir + "/test-file.tar.gz"
+		// Pre-computed SHA-512 hash of "hello world".
+		testFileSHA512 = "309ecc489c12d6eb4cc40f50c902f2b4d0ed77ee511a7c7a9bcd3ca86d4cd86f" +
+			"989dd35bc5ff499670da34255b45b0cfd830e81f605dcf7dc5542e93ae9cd76f"
+	)
+
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+	sourceManager := sourceproviders_test.NewMockSourceManager(ctrl)
+	ctx := testctx.NewCtx()
+
+	component.EXPECT().GetName().AnyTimes().Return("test-component")
+	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
+		SourceFiles: []projectconfig.SourceFileReference{{
+			Filename: "test-file.tar.gz",
+			Origin: projectconfig.Origin{
+				Type: projectconfig.OriginTypeURI,
+				Uri:  "https://example.com/test-file.tar.gz",
+			},
+		}},
+	})
+
+	sourceManager.EXPECT().
+		FetchFiles(gomock.Any(), component, testOutputDir).
+		Return([]sourceproviders.SourceProvenance{{
+			Filename:   "test-file.tar.gz",
+			OriginType: sourceproviders.SourceOriginURL,
+			URL:        "https://example.com/test-file.tar.gz",
+		}}, nil)
+
+	sourceManager.EXPECT().
+		FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).
+		DoAndReturn(func(
+			_ interface{}, _ interface{}, outputDir string,
+			_ ...sourceproviders.FetchComponentOption,
+		) ([]sourceproviders.SourceProvenance, error) {
+			if err := fileutils.WriteFile(ctx.FS(), testFilePath, []byte("hello world"), fileperms.PublicFile); err != nil {
+				return nil, err
+			}
+
+			return nil, fileutils.WriteFile(ctx.FS(), testSpecPath, []byte("# test spec"), fileperms.PublicFile)
+		})
+
+	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx, sources.WithAllowNoHashes())
+	require.NoError(t, err)
+
+	report, err := preparer.PrepareSources(ctx, component, testOutputDir, true)
+	require.NoError(t, err)
+	require.NotNil(t, report)
+	require.Len(t, report.Sources, 1)
+	assert.Equal(t, fileutils.HashTypeSHA512, report.Sources[0].HashType)
+	assert.Equal(t, testFileSHA512, report.Sources[0].Hash)
+}
+
+func TestPrepareSources_SkipOverlays_EnrichesFromUpstreamSources(t *testing.T) {
+	const (
+		testSpecPath   = testOutputDir + "/test-component.spec"
+		testSourcePath = testOutputDir + "/sources"
+	)
+
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+	sourceManager := sourceproviders_test.NewMockSourceManager(ctrl)
+	ctx := testctx.NewCtx()
+
+	component.EXPECT().GetName().AnyTimes().Return("test-component")
+	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{})
+
+	// FetchFiles returns provenance with empty hash (simulating --allow-no-hashes).
+	sourceManager.EXPECT().
+		FetchFiles(gomock.Any(), component, testOutputDir).
+		Return([]sourceproviders.SourceProvenance{{
+			Filename:   "src.tar.gz",
+			OriginType: sourceproviders.SourceOriginURL,
+			URL:        "https://example.com/src.tar.gz",
+		}}, nil)
+
+	// FetchComponent creates a sources file (as the upstream clone would) and a spec.
+	sourceManager.EXPECT().
+		FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).
+		DoAndReturn(func(
+			_ interface{}, _ interface{}, outputDir string,
+			_ ...sourceproviders.FetchComponentOption,
+		) ([]sourceproviders.SourceProvenance, error) {
+			sourcesContent := "SHA512 (src.tar.gz) = abc123def456"
+			if err := fileutils.WriteFile(ctx.FS(), testSourcePath, []byte(sourcesContent), fileperms.PublicFile); err != nil {
+				return nil, err
+			}
+
+			return nil, fileutils.WriteFile(ctx.FS(), testSpecPath, []byte("# test spec"), fileperms.PublicFile)
+		})
+
+	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx, sources.WithAllowNoHashes())
+	require.NoError(t, err)
+
+	// applyOverlays = false — enrichment still runs and back-fills from the upstream 'sources' file.
+	report, err := preparer.PrepareSources(ctx, component, testOutputDir, false)
+	require.NoError(t, err)
+	require.NotNil(t, report)
+	require.Len(t, report.Sources, 1)
+
+	assert.Equal(t, fileutils.HashTypeSHA512, report.Sources[0].HashType, "hash type should be enriched from sources file")
+	assert.Equal(t, "abc123def456", report.Sources[0].Hash, "hash should be enriched from sources file")
+}
+
 func TestPrepareSources_SourceManagerError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	component := components_testutils.NewMockComponent(ctrl)
@@ -108,12 +283,12 @@ func TestPrepareSources_SourceManagerError(t *testing.T) {
 	expectedErr := errors.New("failed to fetch files")
 
 	component.EXPECT().GetName().AnyTimes().Return("test-component")
-	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(expectedErr)
+	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil, expectedErr)
 
 	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx)
 	require.NoError(t, err)
 
-	err = preparer.PrepareSources(ctx, component, testOutputDir, true /*applyOverlays?*/)
+	_, err = preparer.PrepareSources(ctx, component, testOutputDir, true /*applyOverlays?*/)
 	require.Error(t, err)
 	require.ErrorIs(t, err, expectedErr)
 }
@@ -137,7 +312,10 @@ func TestPrepareSources_WithSkipLookaside_SkipsFetchFiles(t *testing.T) {
 
 	// FetchComponent should still be called, with at least the SkipLookaside option.
 	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).DoAndReturn(
-		func(_ interface{}, _ interface{}, outputDir string, opts ...sourceproviders.FetchComponentOption) error {
+		func(
+			_ interface{}, _ interface{}, outputDir string,
+			opts ...sourceproviders.FetchComponentOption,
+		) ([]sourceproviders.SourceProvenance, error) {
 			// Verify SkipLookaside is actually set by applying the received options.
 			var resolved sourceproviders.FetchComponentOptions
 			for _, opt := range opts {
@@ -146,14 +324,14 @@ func TestPrepareSources_WithSkipLookaside_SkipsFetchFiles(t *testing.T) {
 
 			assert.True(t, resolved.SkipLookaside, "FetchComponent should receive SkipLookaside option")
 
-			return fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte("# test spec"), fileperms.PublicFile)
+			return nil, fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte("# test spec"), fileperms.PublicFile)
 		},
 	)
 
 	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx, sources.WithSkipLookaside())
 	require.NoError(t, err)
 
-	err = preparer.PrepareSources(ctx, component, testOutputDir, true /*applyOverlays?*/)
+	_, err = preparer.PrepareSources(ctx, component, testOutputDir, true /*applyOverlays?*/)
 	require.NoError(t, err)
 }
 
@@ -172,17 +350,20 @@ func TestPrepareSources_WithoutSkipLookaside_CallsFetchFiles(t *testing.T) {
 	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{})
 
 	// Without WithSkipLookaside, FetchFiles MUST be called.
-	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil)
+	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil, nil)
 	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).DoAndReturn(
-		func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
-			return fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte("# test spec"), fileperms.PublicFile)
+		func(
+			_ interface{}, _ interface{}, outputDir string,
+			_ ...sourceproviders.FetchComponentOption,
+		) ([]sourceproviders.SourceProvenance, error) {
+			return nil, fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte("# test spec"), fileperms.PublicFile)
 		},
 	)
 
 	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx)
 	require.NoError(t, err)
 
-	err = preparer.PrepareSources(ctx, component, testOutputDir, true /*applyOverlays?*/)
+	_, err = preparer.PrepareSources(ctx, component, testOutputDir, true /*applyOverlays?*/)
 	require.NoError(t, err)
 }
 
@@ -198,19 +379,22 @@ func TestPrepareSources_WritesMacrosFile(t *testing.T) {
 			With: []string{"feature"},
 		},
 	})
-	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil)
+	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil, nil)
 	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).DoAndReturn(
-		func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
+		func(
+			_ interface{}, _ interface{}, outputDir string,
+			_ ...sourceproviders.FetchComponentOption,
+		) ([]sourceproviders.SourceProvenance, error) {
 			// Create the expected spec file.
 			specPath := filepath.Join(outputDir, "my-package.spec")
 
-			return fileutils.WriteFile(ctx.FS(), specPath, []byte("# test spec"), fileperms.PublicFile)
+			return nil, fileutils.WriteFile(ctx.FS(), specPath, []byte("# test spec"), fileperms.PublicFile)
 		},
 	)
 
 	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx)
 	require.NoError(t, err)
-	err = preparer.PrepareSources(ctx, component, testOutputDir, true /*applyOverlays?*/)
+	_, err = preparer.PrepareSources(ctx, component, testOutputDir, true /*applyOverlays?*/)
 	require.NoError(t, err)
 
 	// Verify file exists with expected name.
@@ -448,9 +632,12 @@ func TestPrepareSources_CheckSkip(t *testing.T) {
 			},
 		},
 	})
-	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil)
+	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil, nil)
 	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).DoAndReturn(
-		func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
+		func(
+			_ interface{}, _ interface{}, outputDir string,
+			_ ...sourceproviders.FetchComponentOption,
+		) ([]sourceproviders.SourceProvenance, error) {
 			// Create the expected spec file with a %check section.
 			specContent := `Name: test-component
 Version: 1.0
@@ -461,13 +648,13 @@ Summary: Test component
 make test
 `
 
-			return fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte(specContent), fileperms.PublicFile)
+			return nil, fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte(specContent), fileperms.PublicFile)
 		},
 	)
 
 	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx)
 	require.NoError(t, err)
-	err = preparer.PrepareSources(ctx, component, testOutputDir, true /*applyOverlays?*/)
+	_, err = preparer.PrepareSources(ctx, component, testOutputDir, true /*applyOverlays?*/)
 	require.NoError(t, err)
 
 	// Verify spec has check skip prepended.
@@ -505,9 +692,12 @@ func TestPrepareSources_CheckSkipDisabled(t *testing.T) {
 			},
 		},
 	})
-	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil)
+	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil, nil)
 	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).DoAndReturn(
-		func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
+		func(
+			_ interface{}, _ interface{}, outputDir string,
+			_ ...sourceproviders.FetchComponentOption,
+		) ([]sourceproviders.SourceProvenance, error) {
 			// Create the expected spec file with a %check section.
 			specContent := `Name: test-component
 Version: 1.0
@@ -518,13 +708,13 @@ Summary: Test component
 make test
 `
 
-			return fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte(specContent), fileperms.PublicFile)
+			return nil, fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte(specContent), fileperms.PublicFile)
 		},
 	)
 
 	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx)
 	require.NoError(t, err)
-	err = preparer.PrepareSources(ctx, component, testOutputDir, true /*applyOverlays?*/)
+	_, err = preparer.PrepareSources(ctx, component, testOutputDir, true /*applyOverlays?*/)
 	require.NoError(t, err)
 
 	// Verify spec does NOT have check skip prepended.
@@ -551,12 +741,17 @@ func TestDiffSources_NoOverlays(t *testing.T) {
 	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{})
 
 	// DiffSources fetches sources once, then copies them for overlay application.
-	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, gomock.Any()).Times(1).Return(nil)
+	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, gomock.Any()).Times(1).Return(nil, nil)
 	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, gomock.Any()).Times(1).DoAndReturn(
-		func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
+		func(
+			_ interface{}, _ interface{}, outputDir string,
+			_ ...sourceproviders.FetchComponentOption,
+		) ([]sourceproviders.SourceProvenance, error) {
 			specPath := filepath.Join(outputDir, "test-component.spec")
+			specContent := "Name: test-component\nVersion: 1.0\n"
 
-			return fileutils.WriteFile(ctx.FS(), specPath, []byte("Name: test-component\nVersion: 1.0\n"), fileperms.PublicFile)
+			return nil, fileutils.WriteFile(
+				ctx.FS(), specPath, []byte(specContent), fileperms.PublicFile)
 		},
 	)
 
@@ -594,12 +789,17 @@ func TestDiffSources_WithOverlays(t *testing.T) {
 	})
 
 	// DiffSources fetches sources once, then copies them for overlay application.
-	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, gomock.Any()).Times(1).Return(nil)
+	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, gomock.Any()).Times(1).Return(nil, nil)
 	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, gomock.Any()).Times(1).DoAndReturn(
-		func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
+		func(
+			_ interface{}, _ interface{}, outputDir string,
+			_ ...sourceproviders.FetchComponentOption,
+		) ([]sourceproviders.SourceProvenance, error) {
 			specPath := filepath.Join(outputDir, "test-component.spec")
+			specContent := "Name: test-component\nVersion: 1.0\n"
 
-			return fileutils.WriteFile(ctx.FS(), specPath, []byte("Name: test-component\nVersion: 1.0\n"), fileperms.PublicFile)
+			return nil, fileutils.WriteFile(
+				ctx.FS(), specPath, []byte(specContent), fileperms.PublicFile)
 		},
 	)
 
@@ -635,7 +835,7 @@ func TestDiffSources_FetchError(t *testing.T) {
 	component.EXPECT().GetName().AnyTimes().Return("test-component")
 
 	expectedErr := errors.New("network failure")
-	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, gomock.Any()).Return(expectedErr)
+	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, gomock.Any()).Return(nil, expectedErr)
 
 	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx)
 	require.NoError(t, err)
@@ -935,26 +1135,29 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 			component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
 				SourceFiles: testCase.sourceFiles,
 			})
-			sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil)
+			sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil, nil)
 			sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).DoAndReturn(
-				func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
+				func(
+					_ interface{}, _ interface{}, outputDir string,
+					_ ...sourceproviders.FetchComponentOption,
+				) ([]sourceproviders.SourceProvenance, error) {
 					// Create existing 'sources' file if specified.
 					if testCase.existingSourcesContent != "" {
 						err := fileutils.WriteFile(ctx.FS(), filepath.Join(outputDir, fedorasource.SourcesFileName),
 							[]byte(testCase.existingSourcesContent), fileperms.PublicFile)
 						if err != nil {
-							return err
+							return nil, err
 						}
 					}
 
-					return fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte("# test spec"), fileperms.PublicFile)
+					return nil, fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte("# test spec"), fileperms.PublicFile)
 				},
 			)
 
 			preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx)
 			require.NoError(t, err)
 
-			err = preparer.PrepareSources(ctx, component, testOutputDir, true /*applyOverlays?*/)
+			_, err = preparer.PrepareSources(ctx, component, testOutputDir, true /*applyOverlays?*/)
 			if testCase.expectError {
 				require.Error(t, err)
 
@@ -1137,15 +1340,18 @@ func TestPrepareSources_AllowNoHashes(t *testing.T) {
 			})
 
 			if !testCase.skipLookaside {
-				sourceManager.EXPECT().FetchFiles(gomock.Any(), comp, testOutputDir).Return(nil)
+				sourceManager.EXPECT().FetchFiles(gomock.Any(), comp, testOutputDir).Return(nil, nil)
 			}
 
 			sourceManager.EXPECT().FetchComponent(gomock.Any(), comp, testOutputDir, gomock.Any()).DoAndReturn(
-				func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
+				func(
+					_ interface{}, _ interface{}, outputDir string,
+					_ ...sourceproviders.FetchComponentOption,
+				) ([]sourceproviders.SourceProvenance, error) {
 					if testCase.existingSourcesContent != "" {
 						if err := fileutils.WriteFile(ctx.FS(), filepath.Join(outputDir, fedorasource.SourcesFileName),
 							[]byte(testCase.existingSourcesContent), fileperms.PublicFile); err != nil {
-							return err
+							return nil, err
 						}
 					}
 
@@ -1155,19 +1361,19 @@ func TestPrepareSources_AllowNoHashes(t *testing.T) {
 							filePath := filepath.Join(outputDir, sf.Filename)
 							if err := fileutils.WriteFile(ctx.FS(), filePath,
 								[]byte(testFileContent), fileperms.PublicFile); err != nil {
-								return err
+								return nil, err
 							}
 						}
 					}
 
-					return fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte("# test spec"), fileperms.PublicFile)
+					return nil, fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte("# test spec"), fileperms.PublicFile)
 				},
 			)
 
 			preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx, testCase.preparerOpts...)
 			require.NoError(t, err)
 
-			err = preparer.PrepareSources(ctx, comp, testOutputDir, true /*applyOverlays?*/)
+			_, err = preparer.PrepareSources(ctx, comp, testOutputDir, true /*applyOverlays?*/)
 			if testCase.expectError {
 				require.Error(t, err)
 

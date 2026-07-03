@@ -5,6 +5,8 @@ package sourceproviders_test
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -24,6 +26,7 @@ import (
 const (
 	testDestDir       = "/output"
 	testSourceTarball = "source.tar.gz"
+	testSourceSHA256  = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
 )
 
 // testDefaultDistro returns a [sourceproviders.ResolvedDistro] matching the test
@@ -74,7 +77,7 @@ func TestSourceManager_FetchComponent_EmptyComponentName(t *testing.T) {
 	sourceManager, err := sourceproviders.NewSourceManager(env.Env, testDefaultDistro())
 	require.NoError(t, err)
 
-	err = sourceManager.FetchComponent(t.Context(), component, "/output")
+	_, err = sourceManager.FetchComponent(t.Context(), component, "/output")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "component name is empty")
 }
@@ -103,7 +106,7 @@ func TestSourceManager_FetchComponent_LocalComponent_SpecError(t *testing.T) {
 	sourceManager, err := sourceproviders.NewSourceManager(env.Env, testDefaultDistro())
 	require.NoError(t, err)
 
-	err = sourceManager.FetchComponent(t.Context(), component, "/output")
+	_, err = sourceManager.FetchComponent(t.Context(), component, "/output")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to fetch local component")
 }
@@ -184,7 +187,7 @@ func TestSourceManager_FetchComponent_LocalComponent_ProviderError(t *testing.T)
 	sourceManager, err := sourceproviders.NewSourceManager(env.Env, testDefaultDistro())
 	require.NoError(t, err)
 
-	err = sourceManager.FetchComponent(t.Context(), component, "/output")
+	_, err = sourceManager.FetchComponent(t.Context(), component, "/output")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to fetch local component")
 }
@@ -213,7 +216,7 @@ func TestSourceManager_FetchComponent_UpstreamComponent_AllProvidersFail(t *test
 	sourceManager, err := sourceproviders.NewSourceManager(env.Env, testDefaultDistro())
 	require.NoError(t, err)
 
-	err = sourceManager.FetchComponent(t.Context(), component, "/output")
+	_, err = sourceManager.FetchComponent(t.Context(), component, "/output")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to fetch upstream component")
 }
@@ -243,7 +246,7 @@ func TestSourceManager_FetchComponent_EmptyDestPath(t *testing.T) {
 	require.NoError(t, err)
 
 	// Empty destination path should be caught by the provider
-	err = sourceManager.FetchComponent(t.Context(), component, "")
+	_, err = sourceManager.FetchComponent(t.Context(), component, "")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "destination path cannot be empty")
 }
@@ -263,7 +266,7 @@ func TestSourceManager_FetchFiles_NoSourceFiles(t *testing.T) {
 	sourceManager, err := sourceproviders.NewSourceManager(env.Env, testDefaultDistro())
 	require.NoError(t, err)
 
-	err = sourceManager.FetchFiles(t.Context(), component, testDestDir)
+	_, err = sourceManager.FetchFiles(t.Context(), component, testDestDir)
 	require.NoError(t, err)
 }
 
@@ -291,8 +294,98 @@ func TestSourceManager_FetchFiles_ExistingFile(t *testing.T) {
 	sourceManager, err := sourceproviders.NewSourceManager(env.Env, testDefaultDistro())
 	require.NoError(t, err)
 
-	err = sourceManager.FetchFiles(t.Context(), component, testDestDir)
+	provenance, err := sourceManager.FetchFiles(t.Context(), component, testDestDir)
 	require.NoError(t, err)
+	assert.Empty(t, provenance, "existing files should be skipped from provenance")
+}
+
+func TestSourceManager_FetchFiles_LookasideProvenance(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+
+	expectedPath := "/lookaside/test-component/source.tar.gz/sha256/" + testSourceSHA256 + "/source.tar.gz"
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != expectedPath {
+			http.NotFound(writer, request)
+
+			return
+		}
+
+		_, _ = writer.Write([]byte("hello world"))
+	}))
+	defer server.Close()
+
+	distro := testDefaultDistro()
+	distro.Definition.LookasideBaseURI = server.URL + "/lookaside/$pkg/$filename/$hashtype/$hash/$filename"
+
+	componentConfig := &projectconfig.ComponentConfig{
+		SourceFiles: []projectconfig.SourceFileReference{{
+			Filename: testSourceTarball,
+			Hash:     testSourceSHA256,
+			HashType: fileutils.HashTypeSHA256,
+		}},
+	}
+
+	component.EXPECT().GetName().AnyTimes().Return("test-component")
+	component.EXPECT().GetConfig().AnyTimes().Return(componentConfig)
+
+	sourceManager, err := sourceproviders.NewSourceManager(env.Env, distro)
+	require.NoError(t, err)
+
+	provenance, err := sourceManager.FetchFiles(t.Context(), component, testDestDir)
+	require.NoError(t, err)
+	require.Len(t, provenance, 1)
+
+	assert.Equal(t, testSourceTarball, provenance[0].Filename)
+	assert.Equal(t, sourceproviders.SourceOriginLookaside, provenance[0].OriginType)
+	assert.Equal(t, server.URL+expectedPath, provenance[0].URL)
+	assert.Equal(t, fileutils.HashTypeSHA256, provenance[0].HashType)
+	assert.Equal(t, testSourceSHA256, provenance[0].Hash)
+}
+
+func TestSourceManager_FetchFiles_OriginFallbackProvenance(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write([]byte("hello world"))
+	}))
+	defer server.Close()
+
+	distro := testDefaultDistro()
+	distro.Definition.LookasideBaseURI = ""
+
+	originURL := server.URL + "/origin/source.tar.gz"
+	componentConfig := &projectconfig.ComponentConfig{
+		SourceFiles: []projectconfig.SourceFileReference{{
+			Filename: testSourceTarball,
+			Hash:     testSourceSHA256,
+			HashType: fileutils.HashTypeSHA256,
+			Origin: projectconfig.Origin{
+				Type: projectconfig.OriginTypeURI,
+				Uri:  originURL,
+			},
+		}},
+	}
+
+	component.EXPECT().GetName().AnyTimes().Return("test-component")
+	component.EXPECT().GetConfig().AnyTimes().Return(componentConfig)
+
+	sourceManager, err := sourceproviders.NewSourceManager(env.Env, distro)
+	require.NoError(t, err)
+
+	provenance, err := sourceManager.FetchFiles(t.Context(), component, testDestDir)
+	require.NoError(t, err)
+	require.Len(t, provenance, 1)
+
+	assert.Equal(t, testSourceTarball, provenance[0].Filename)
+	assert.Equal(t, sourceproviders.SourceOriginURL, provenance[0].OriginType)
+	assert.Equal(t, originURL, provenance[0].URL)
+	assert.Equal(t, fileutils.HashTypeSHA256, provenance[0].HashType)
+	assert.Equal(t, testSourceSHA256, provenance[0].Hash)
 }
 
 func TestSourceManager_FetchFiles_Errors(t *testing.T) {
@@ -364,7 +457,7 @@ func TestSourceManager_FetchFiles_Errors(t *testing.T) {
 			sourceManager, err := sourceproviders.NewSourceManager(env.Env, distro)
 			require.NoError(t, err)
 
-			err = sourceManager.FetchFiles(t.Context(), component, testDestDir)
+			_, err = sourceManager.FetchFiles(t.Context(), component, testDestDir)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), testCase.expectedError)
 		})
@@ -522,7 +615,7 @@ func TestSourceManager_FetchComponent_LocalComponent_WithSkipLookaside(t *testin
 	require.NoError(t, err)
 
 	// With SkipLookaside, downloadLookasideSources is not called and the fetch succeeds.
-	err = sourceManager.FetchComponent(t.Context(), component, testDestDir, sourceproviders.WithSkipLookaside())
+	_, err = sourceManager.FetchComponent(t.Context(), component, testDestDir, sourceproviders.WithSkipLookaside())
 	require.NoError(t, err)
 
 	// Spec was copied to destination (FetchLocalComponent still ran).
