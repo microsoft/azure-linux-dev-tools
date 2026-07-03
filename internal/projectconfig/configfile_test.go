@@ -17,6 +17,281 @@ func TestProjectConfigFileValidation_EmptyFile(t *testing.T) {
 	assert.NoError(t, file.Validate())
 }
 
+func TestProjectConfigFileValidation_TestDefinitionMismatchedSubtable(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Tests: map[string]projectconfig.TestDefinition{
+			"smoke": {
+				Type:   "pytest",
+				Pytest: map[string]any{"working-dir": "tests"},
+				Lisa:   map[string]any{"suite": "vm"},
+			},
+		},
+	}
+
+	err := file.Validate()
+	require.Error(t, err)
+	require.ErrorIs(t, err, projectconfig.ErrMismatchedTestSubtable)
+	assert.Contains(t, err.Error(), "invalid test")
+	assert.Contains(t, err.Error(), "smoke")
+	assert.Contains(t, err.Error(), "lisa")
+}
+
+func TestProjectConfigFileValidation_TestDefinitionMatchingSubtable(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Tests: map[string]projectconfig.TestDefinition{
+			"smoke": {
+				Type:   "pytest",
+				Pytest: map[string]any{"working-dir": "tests"},
+			},
+		},
+	}
+
+	assert.NoError(t, file.Validate())
+}
+
+func TestProjectConfigFileValidation_TestDefinitionRequiredSubtablePresentButEmpty(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Tests: map[string]projectconfig.TestDefinition{
+			"smoke": {
+				Type:   "pytest",
+				Pytest: map[string]any{},
+			},
+		},
+	}
+
+	assert.NoError(t, file.Validate())
+}
+
+func TestProjectConfigFileValidation_TestDefinitionDisallowedSubtablePresentButEmpty(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Tests: map[string]projectconfig.TestDefinition{
+			"smoke": {
+				Type:   "pytest",
+				Pytest: map[string]any{"working-dir": "tests"},
+				Lisa:   map[string]any{},
+			},
+		},
+	}
+
+	err := file.Validate()
+	require.Error(t, err)
+	require.ErrorIs(t, err, projectconfig.ErrMismatchedTestSubtable)
+	assert.Contains(t, err.Error(), "smoke")
+	assert.Contains(t, err.Error(), "lisa")
+}
+
+func TestProjectConfigFileValidation_TestDefinitionInvalidKind(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Tests: map[string]projectconfig.TestDefinition{
+			"smoke": {
+				Type:   "pytest",
+				Kind:   projectconfig.TestKind("unknown-kind"),
+				Pytest: map[string]any{"working-dir": "tests"},
+			},
+		},
+	}
+
+	err := file.Validate()
+	require.Error(t, err)
+	require.ErrorIs(t, err, projectconfig.ErrUnknownTestKind)
+	assert.Contains(t, err.Error(), "unknown-kind")
+}
+
+func TestProjectConfigFileValidation_LisaSelectionMissing(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Tests: map[string]projectconfig.TestDefinition{
+			"smoke": {
+				Type: "lisa",
+				Lisa: map[string]any{
+					"source": map[string]any{"git-url": "https://example.com/lisa.git", "ref": "main"},
+				},
+			},
+		},
+	}
+
+	err := file.Validate()
+	require.Error(t, err)
+	require.ErrorIs(t, err, projectconfig.ErrInvalidLisaSelection)
+	assert.Contains(t, err.Error(), "must set at least one LISA selector")
+}
+
+func TestProjectConfigFileValidation_LisaSelectionCriteriaValid(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Tests: map[string]projectconfig.TestDefinition{
+			"smoke": {
+				Type: "lisa",
+				Lisa: map[string]any{
+					"criteria": map[string]any{"priority": []any{1, 2}, "tags": []any{"vm", "smoke"}},
+				},
+			},
+			"perf": {
+				Type: "lisa",
+				Lisa: map[string]any{
+					"criteria": []any{
+						map[string]any{"area": "network", "category": "performance"},
+						map[string]any{"testcaseNames": []any{"case_a", "case_b"}},
+					},
+				},
+			},
+		},
+	}
+
+	assert.NoError(t, file.Validate())
+}
+
+func TestProjectConfigFileValidation_LisaSelectionUnsupportedCriteriaKey(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Tests: map[string]projectconfig.TestDefinition{
+			"smoke": {
+				Type: "lisa",
+				Lisa: map[string]any{
+					"criteria": map[string]any{"suite": "smoke"},
+				},
+			},
+		},
+	}
+
+	err := file.Validate()
+	require.Error(t, err)
+	require.ErrorIs(t, err, projectconfig.ErrInvalidLisaSelection)
+	assert.Contains(t, err.Error(), "unsupported selector")
+}
+
+func TestProjectConfigFileValidation_UndefinedTestReferenceInGroup(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		TestGroups: map[string]projectconfig.TestGroup{
+			"bvt": {
+				Tests: []projectconfig.TestRef{{Name: "does-not-exist"}},
+			},
+		},
+	}
+
+	err := file.Validate()
+	require.Error(t, err)
+	require.ErrorIs(t, err, projectconfig.ErrUndefinedTest)
+	assert.Contains(t, err.Error(), "does-not-exist")
+}
+
+func TestProjectConfigFileValidation_UndefinedTestGroupReferenceInComponent(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"openssl": {
+				Tests: &projectconfig.ComponentTestsConfig{
+					Tests: []projectconfig.TestRef{{Group: "missing-group"}},
+				},
+			},
+		},
+	}
+
+	err := file.Validate()
+	require.Error(t, err)
+	require.ErrorIs(t, err, projectconfig.ErrUndefinedTestGroup)
+	assert.Contains(t, err.Error(), "missing-group")
+}
+
+func TestProjectConfigFileValidation_InvalidTestReferenceShapeInImage(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Images: map[string]projectconfig.ImageConfig{
+			"base": {
+				Tests: &projectconfig.ImageTestsConfig{
+					Tests: []projectconfig.TestRef{{Name: "smoke", Group: "bvt"}},
+				},
+			},
+		},
+		Tests: map[string]projectconfig.TestDefinition{
+			"smoke": {
+				Type:   "pytest",
+				Pytest: map[string]any{"working-dir": "tests"},
+			},
+		},
+		TestGroups: map[string]projectconfig.TestGroup{
+			"bvt": {Tests: []projectconfig.TestRef{{Name: "smoke"}}},
+		},
+	}
+
+	err := file.Validate()
+	require.Error(t, err)
+	require.ErrorIs(t, err, projectconfig.ErrInvalidTestRef)
+	assert.Contains(t, err.Error(), "exactly one")
+}
+
+func TestProjectConfigFileValidation_DuplicateTestReferenceInGroup(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Tests: map[string]projectconfig.TestDefinition{
+			"smoke": {
+				Type:   "pytest",
+				Pytest: map[string]any{"working-dir": "tests"},
+			},
+		},
+		TestGroups: map[string]projectconfig.TestGroup{
+			"bvt": {
+				Tests: []projectconfig.TestRef{
+					{Name: "smoke"},
+					{Name: "smoke"},
+				},
+			},
+		},
+	}
+
+	err := file.Validate()
+	require.Error(t, err)
+	require.ErrorIs(t, err, projectconfig.ErrDuplicateTestRef)
+	assert.Contains(t, err.Error(), "duplicates")
+	assert.Contains(t, err.Error(), "smoke")
+}
+
+func TestProjectConfigFileValidation_DuplicateTestGroupReferenceInImage(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Tests: map[string]projectconfig.TestDefinition{
+			"smoke": {
+				Type:   "pytest",
+				Pytest: map[string]any{"working-dir": "tests"},
+			},
+		},
+		TestGroups: map[string]projectconfig.TestGroup{
+			"bvt": {
+				Tests: []projectconfig.TestRef{{Name: "smoke"}},
+			},
+		},
+		Images: map[string]projectconfig.ImageConfig{
+			"base": {
+				Tests: &projectconfig.ImageTestsConfig{
+					Tests: []projectconfig.TestRef{
+						{Group: "bvt"},
+						{Group: "bvt"},
+					},
+				},
+			},
+		},
+	}
+
+	err := file.Validate()
+	require.Error(t, err)
+	require.ErrorIs(t, err, projectconfig.ErrDuplicateTestRef)
+	assert.Contains(t, err.Error(), "duplicates")
+	assert.Contains(t, err.Error(), "bvt")
+}
+
+func TestProjectConfigFileValidation_NestedTestGroupReferenceNotAllowed(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Tests: map[string]projectconfig.TestDefinition{
+			"smoke": {
+				Type:   "pytest",
+				Pytest: map[string]any{"working-dir": "tests"},
+			},
+		},
+		TestGroups: map[string]projectconfig.TestGroup{
+			"a": {Tests: []projectconfig.TestRef{{Group: "b"}}},
+			"b": {Tests: []projectconfig.TestRef{{Name: "smoke"}}},
+		},
+	}
+
+	err := file.Validate()
+	require.Error(t, err)
+	require.ErrorIs(t, err, projectconfig.ErrNestedTestGroupReference)
+	assert.Contains(t, err.Error(), "is not allowed in [test-groups]")
+}
+
 func TestProjectConfigFileValidation_DefaultProjectInfo(t *testing.T) {
 	file := projectconfig.ConfigFile{
 		Project: &projectconfig.ProjectInfo{},
