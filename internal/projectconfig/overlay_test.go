@@ -164,7 +164,7 @@ func TestComponentOverlay_Validate(t *testing.T) {
 				Lines:       []string{"# Top of file"},
 			},
 			errorExpected: true,
-			errorContains: "package",
+			errorContains: "requires `section` field when `package` is set",
 		},
 		{
 			name: "spec-append-lines whole-file (no section) valid",
