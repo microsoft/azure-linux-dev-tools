@@ -1,5 +1,12 @@
 # Contribution Guidelines
 
+## Azure Linux Contribution Philosophy and Best Practices
+
+Before contributing, please review our [Azure Linux contribution philosophy and best practices](https://aka.ms/azurelinux-contributing). It covers the principles we follow when accepting changes and other guidance that will help
+your PR land smoothly.
+
+Guidelines specific to this repo can be found below.
+
 ## Contributing License Agreement
 
 This project welcomes contributions and suggestions.  Most contributions require you to agree to a

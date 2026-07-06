@@ -24,6 +24,7 @@ type PrepareSourcesOptions struct {
 	WithoutGitRepo bool
 	Force          bool
 	AllowNoHashes  bool
+	SkipSources    bool
 }
 
 func prepareOnAppInit(_ *azldev.App, sourceCmd *cobra.Command) {
@@ -73,6 +74,9 @@ Only one component may be selected at a time.`,
 	cmd.Flags().BoolVar(&options.Force, "force", false, "delete and recreate the output directory if it already exists")
 	cmd.Flags().BoolVar(&options.AllowNoHashes, "allow-no-hashes", false,
 		"compute missing hashes by downloading source files from their origin")
+	cmd.Flags().BoolVar(&options.SkipSources, "skip-sources", false,
+		"skip downloading fetched sources when preparing the package (useful to extract "+
+			"dist-git metadata when source files are not needed)")
 
 	return cmd
 }
@@ -136,6 +140,10 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 
 	if options.AllowNoHashes {
 		preparerOpts = append(preparerOpts, sources.WithAllowNoHashes())
+	}
+
+	if options.SkipSources {
+		preparerOpts = append(preparerOpts, sources.WithSkipLookaside())
 	}
 
 	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, preparerOpts...)

@@ -1,6 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+// Package azldev_cli wires together and runs the azldev command-line application.
+//
+// It is the entry point used by the azldev command (see
+// github.com/microsoft/azure-linux-dev-tools/cmd/azldev); end users should
+// install and run that command rather than importing this package directly.
 package azldev_cli
 
 import (
@@ -14,9 +19,12 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/image"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/pkg"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/project"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/repo"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/version"
 )
 
+// Main constructs the azldev CLI application, runs it with the process
+// arguments, and exits the process with the resulting status code.
 func Main() {
 	// Instantiate the main CLI app instance.
 	app := InstantiateApp()
@@ -27,7 +35,8 @@ func Main() {
 	os.Exit(ret)
 }
 
-// Constructs a new instance of the main CLI application, with all subcommands registered.
+// InstantiateApp constructs a new instance of the azldev CLI application with
+// all subcommands registered.
 func InstantiateApp() *azldev.App {
 	// Instantiate the main CLI application.
 	app := azldev.NewApp(azldev.DefaultFileSystemFactory(), azldev.DefaultOSEnvFactory())
@@ -41,6 +50,7 @@ func InstantiateApp() *azldev.App {
 	image.OnAppInit(app)
 	pkg.OnAppInit(app)
 	project.OnAppInit(app)
+	repo.OnAppInit(app)
 	version.OnAppInit(app)
 
 	return app

@@ -85,6 +85,49 @@ type DistroVersionDefinition struct {
 	MockConfigPath        string `toml:"mock-config,omitempty"         json:"mockConfig,omitempty"        validate:"omitempty,filepath" jsonschema:"title=Mock config file,description=Path to the mock config file for this version"`
 	MockConfigPathX86_64  string `toml:"mock-config-x86_64,omitempty"  json:"mockConfigX8664,omitempty"   validate:"omitempty,filepath" jsonschema:"title=Mock config file,description=Path to the x86_64 mock config file for this version"`
 	MockConfigPathAarch64 string `toml:"mock-config-aarch64,omitempty" json:"mockConfigAarch64,omitempty" validate:"omitempty,filepath" jsonschema:"title=Mock config file,description=Path to the aarch64 mock config file for this version"`
+
+	// Inputs maps build use-cases ([UseCaseRPMBuild], [UseCaseImageBuild]) to
+	// ordered lists of input references. Each entry references either a
+	// [RpmRepoResource] or a [RpmRepoSet]; sets are expanded at validation time.
+	Inputs DistroVersionInputs `toml:"inputs,omitempty" json:"inputs,omitempty" jsonschema:"title=Inputs,description=Per-use-case input repositories"`
+}
+
+// Use-case identifiers for [DistroVersionInputs]. These match the TOML keys
+// under `[distros.<d>.versions.<v>.inputs]` and are the canonical names used
+// in error messages and CLI flags (e.g. `azldev repo query --use-case`).
+const (
+	UseCaseRPMBuild   = "rpm-build"
+	UseCaseImageBuild = "image-build"
+)
+
+// DistroVersionInputs maps build use-cases to ordered lists of input references.
+// Each [DistroVersionInput] entry references either a [RpmRepoResource] (by
+// `repo`) or a [RpmRepoSet] (by `set`); sets are expanded at validation time
+// into their constituent repo names. The final, deduplicated effective list is
+// what consumers (mock, kiwi) see.
+type DistroVersionInputs struct {
+	// RpmBuild is the ordered list of inputs made available when building RPMs
+	// (the mock/comp build path). Order is preserved on emission but not
+	// interpreted as priority by dnf.
+	RpmBuild []DistroVersionInput `toml:"rpm-build,omitempty" json:"rpmBuild,omitempty" jsonschema:"title=RPM-build inputs,description=Repos and repo-sets made available to mock when building RPMs"`
+
+	// ImageBuild is the ordered list of inputs made available when building
+	// images (the kiwi/image build path). Order is preserved on emission but
+	// not interpreted as priority by kiwi.
+	ImageBuild []DistroVersionInput `toml:"image-build,omitempty" json:"imageBuild,omitempty" jsonschema:"title=Image-build inputs,description=Repos and repo-sets made available to kiwi when building images"`
+}
+
+// DistroVersionInput is a single entry in a [DistroVersionInputs] list. Exactly
+// one of `Repo` or `Set` must be set; the validator rejects entries that set
+// neither or both.
+type DistroVersionInput struct {
+	// Repo names a top-level [ResourcesConfig.RpmRepos] entry. Mutually
+	// exclusive with `Set`.
+	Repo string `toml:"repo,omitempty" json:"repo,omitempty" jsonschema:"title=Repo,description=Name of an entry under [resources.rpm-repos]; mutually exclusive with set"`
+
+	// Set names a top-level [ResourcesConfig.RpmRepoSets] entry. Mutually
+	// exclusive with `Repo`.
+	Set string `toml:"set,omitempty" json:"set,omitempty" jsonschema:"title=Set,description=Name of an entry under [resources.rpm-repo-sets]; mutually exclusive with repo"`
 }
 
 // MergeUpdatesFrom mutates the distro definition, updating it with overrides present in other.

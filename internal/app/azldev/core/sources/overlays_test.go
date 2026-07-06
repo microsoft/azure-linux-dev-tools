@@ -1353,3 +1353,96 @@ Main.
 		assert.Contains(t, err.Error(), "not found")
 	})
 }
+
+func TestApplySpecOverlay_InvalidRegex(t *testing.T) {
+	specContent := `Name: test
+Version: 1.0
+
+%build
+make
+`
+	overlay := projectconfig.ComponentOverlay{
+		Type:        projectconfig.ComponentOverlaySearchAndReplaceInSpec,
+		Regex:       `(?P<invalid`,
+		Replacement: "replaced",
+	}
+
+	_, err := applyOverlayToSpecContents(t, overlay, specContent)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "search and replace")
+}
+
+func TestApplyNonSpecOverlay_InvalidRegex(t *testing.T) {
+	ctx := testctx.NewCtx()
+	testFS := ctx.FS()
+
+	// Write source files to the destination directory.
+	const destDir = "/dest"
+	require.NoError(t, testFS.MkdirAll(destDir, fileperms.PublicDir))
+	require.NoError(t, fileutils.WriteFile(testFS, destDir+"/config.txt",
+		[]byte("DEBUG=false\n"), fileperms.PublicFile))
+
+	overlay := projectconfig.ComponentOverlay{
+		Type:        projectconfig.ComponentOverlaySearchAndReplaceInFile,
+		Filename:    "config.txt",
+		Regex:       `(?P<invalid`,
+		Replacement: "replaced",
+	}
+
+	err := sources.ApplyOverlayToSources(ctx, testFS, overlay, destDir, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "regex")
+}
+
+func TestApplyNonSpecOverlay_MissingSourceFile(t *testing.T) {
+	ctx := testctx.NewCtx()
+	testFS := ctx.FS()
+
+	const destDir = "/dest"
+	require.NoError(t, testFS.MkdirAll(destDir, fileperms.PublicDir))
+
+	overlay := projectconfig.ComponentOverlay{
+		Type:     projectconfig.ComponentOverlayAddFile,
+		Filename: "extra.txt",
+		Source:   "/nonexistent/path/extra.txt",
+	}
+
+	err := sources.ApplyOverlayToSources(ctx, testFS, overlay, destDir, "")
+	require.Error(t, err)
+}
+
+func TestApplyNonSpecOverlay_SearchReplaceOnNonexistentFile(t *testing.T) {
+	ctx := testctx.NewCtx()
+	testFS := ctx.FS()
+
+	const destDir = "/dest"
+	require.NoError(t, testFS.MkdirAll(destDir, fileperms.PublicDir))
+
+	overlay := projectconfig.ComponentOverlay{
+		Type:        projectconfig.ComponentOverlaySearchAndReplaceInFile,
+		Filename:    "nonexistent.txt",
+		Regex:       `pattern`,
+		Replacement: "replaced",
+	}
+
+	err := sources.ApplyOverlayToSources(ctx, testFS, overlay, destDir, "")
+	require.Error(t, err)
+}
+
+func TestApplyAddPatchOverlay_MissingPatchFile(t *testing.T) {
+	ctx := testctx.NewCtx()
+	testFS := ctx.FS()
+
+	const destDir = "/dest"
+	require.NoError(t, testFS.MkdirAll(destDir, fileperms.PublicDir))
+	require.NoError(t, fileutils.WriteFile(testFS, destDir+"/test.spec",
+		[]byte("Name: test\nVersion: 1.0\n"), fileperms.PublicFile))
+
+	overlay := projectconfig.ComponentOverlay{
+		Type:   projectconfig.ComponentOverlayAddPatch,
+		Source: "/nonexistent/fix.patch",
+	}
+
+	err := sources.ApplyOverlayToSources(ctx, testFS, overlay, destDir, destDir+"/test.spec")
+	require.Error(t, err)
+}

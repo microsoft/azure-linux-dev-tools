@@ -633,7 +633,16 @@ func TestBuildLookasideURL(t *testing.T) {
 			filename:      "source.tar.gz",
 			hashType:      "SHA512",
 			hash:          "abc123",
-			expectedError: "missing scheme or host",
+			expectedError: "missing scheme",
+		},
+		{
+			name:          "template without host is rejected for non-file scheme",
+			template:      "https:///$pkg/$filename/$hashtype/$hash",
+			pkg:           "my-pkg",
+			filename:      "source.tar.gz",
+			hashType:      "SHA512",
+			hash:          "abc123",
+			expectedError: "missing host",
 		},
 	}
 
@@ -700,7 +709,19 @@ func TestBuildDistGitURL(t *testing.T) {
 			name:          "template without scheme is rejected",
 			template:      "example.com/rpms/$pkg.git",
 			pkg:           "curl",
-			expectedError: "missing scheme or host",
+			expectedError: "missing scheme",
+		},
+		{
+			name:          "template without host is rejected for non-file scheme",
+			template:      "https:///rpms/$pkg.git",
+			pkg:           "curl",
+			expectedError: "missing host",
+		},
+		{
+			name:     "file URI is accepted without host",
+			template: "file:///srv/dist-git/$pkg.git",
+			pkg:      "curl",
+			expected: "file:///srv/dist-git/curl.git",
 		},
 	}
 
