@@ -18,6 +18,10 @@ const embedfsRootDir = "/content"
 // Name of the root default configuration file that should be loaded from these default files.
 const rootDefaultConfigFilename = "defaults.toml"
 
+// DefaultRpmRepoSetTemplateName is the name of the built-in standard Azure
+// Linux rpm-repo-set-template defined in `content/defaults.toml`.
+const DefaultRpmRepoSetTemplateName = "azl-standard"
+
 // The embedded filesystem containing compiled-in default configuration files. This configuration
 // defines distro-level defaults for consistency.
 //

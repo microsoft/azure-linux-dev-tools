@@ -41,6 +41,7 @@ azldev component prepare-sources [flags]
   -o, --output-dir string             output directory
       --skip-lock-validation          skip lock file consistency checks
       --skip-overlays                 skip applying overlays to prepared sources
+      --skip-sources                  skip downloading fetched sources when preparing the package (useful to extract dist-git metadata when source files are not needed)
   -s, --spec-path stringArray         Spec path
       --without-git                   Disable dist-git repository creation (enabled by default)
 ```

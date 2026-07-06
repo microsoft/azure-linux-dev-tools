@@ -65,3 +65,17 @@ updates:
         update-types:
           - "minor"
           - "patch"
+
+  # git-cliff CLI (used by 'mage changelog'), pinned via a Cargo manifest so the
+  # version is visible to Dependabot and security scanners.
+  - package-ecosystem: "cargo"
+    directory: "/tools/git-cliff"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      dependabot-cargo-tools:
+        applies-to: version-updates
+        patterns:
+          - "*"

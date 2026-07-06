@@ -16,6 +16,8 @@ The `azldev-mage-builder` MCP server can run build commands without requesting p
 - `mage fix all` (NOT `golangci-lint run --fix`) - Auto-fixes formatting and simple linting issues
 - `mage check all` (NOT `golangci-lint run`) - Runs all quality checks
 - `mage scenario`  (NOT manual test commands) - Runs end-to-end tests (SLOW)
+- `mage e2e` - Runs the heavier `//go:build e2e` tests against real upstream repos (NOT run by `mage scenario`/`mage all`; intended for CI only)
+- `mage mutation ./internal/<pkg>` - Mutation testing (gremlins) to audit unit-test *quality* (does a test actually catch a bug?), not just coverage. Available as the `mage_mutation` MCP tool. Slower than unit tests; scope to a package for quick feedback (`./` runs the whole repo in a few min). Console shows only survivors/uncovered; full JSON report at `out/mutation-report.json`. On-demand audit tool, NOT part of `mage all`/CI. See `testing.instructions.md`.
 
 - `run-azldev-from-out-bin` MCP server **IF** available (NOT `go run ./cmd/azldev` or `./azldev`)
 

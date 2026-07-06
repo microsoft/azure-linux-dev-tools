@@ -836,3 +836,41 @@ func TestStoreValidateConsistency(t *testing.T) {
 		assert.Contains(t, orphans, "removed")
 	})
 }
+
+func TestParse_EmptyContent(t *testing.T) {
+	// Empty content has version=0 which doesn't match currentVersion=1.
+	_, err := lockfile.Parse([]byte(""))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported lock file version")
+}
+
+func TestParse_VersionZero(t *testing.T) {
+	_, err := lockfile.Parse([]byte("version = 0"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported lock file version")
+}
+
+func TestParse_GarbageContent(t *testing.T) {
+	_, err := lockfile.Parse([]byte("\x00\x01\x02binary garbage"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parsing lock file")
+}
+
+func TestParse_ValidMinimal(t *testing.T) {
+	lock, err := lockfile.Parse([]byte("version = 1\n"))
+	require.NoError(t, err)
+	assert.Equal(t, 1, lock.Version)
+	assert.Empty(t, lock.UpstreamCommit)
+}
+
+func TestLockPath_InvalidComponentName(t *testing.T) {
+	// Path traversal attempts should be rejected.
+	_, err := lockfile.LockPath(testLockDir, "../escape")
+	require.Error(t, err)
+
+	_, err = lockfile.LockPath(testLockDir, "../../etc/passwd")
+	require.Error(t, err)
+
+	_, err = lockfile.LockPath(testLockDir, "")
+	require.Error(t, err)
+}

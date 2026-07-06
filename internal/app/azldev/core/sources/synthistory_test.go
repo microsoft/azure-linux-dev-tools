@@ -231,6 +231,135 @@ func TestCommitInterleavedHistory_Interleaved(t *testing.T) {
 	assert.Contains(t, logCommits[3].Message, "upstream: v1.0") // import-commit (kept)
 }
 
+func TestCommitInterleavedHistory_MultipleCyclesAutoreleaseLifecycle(t *testing.T) {
+	// Simulates a realistic autorelease/autochangelog lifecycle:
+	//   upstream₁ → us₁(overlay) → us₂(manual-bump) → upstream₂ → us₃(overlay)
+	// Three fingerprint changes across two upstream commits, exercising
+	// multiple interleaved changes on the same older upstream before a rebase.
+	memFS := memfs.New()
+	storer := memory.NewStorage()
+
+	repo, err := gogit.Init(storer, memFS)
+	require.NoError(t, err)
+
+	worktree, err := repo.Worktree()
+	require.NoError(t, err)
+
+	// Upstream commit 1 (initial import).
+	specFile, err := memFS.Create("package.spec")
+	require.NoError(t, err)
+
+	_, _ = specFile.Write([]byte("Name: package\nVersion: 1.0\nRelease: %autorelease\n"))
+	require.NoError(t, specFile.Close())
+
+	_, err = worktree.Add("package.spec")
+	require.NoError(t, err)
+
+	upstream1, err := worktree.Commit("upstream: v1.0", &gogit.CommitOptions{
+		Author: &object.Signature{
+			Name: "Upstream", Email: "upstream@fedora.org",
+			When: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+		},
+	})
+	require.NoError(t, err)
+
+	// Upstream commit 2 (version bump).
+	specFile, err = memFS.Create("package.spec")
+	require.NoError(t, err)
+
+	_, _ = specFile.Write([]byte("Name: package\nVersion: 2.0\nRelease: %autorelease\n"))
+	require.NoError(t, specFile.Close())
+
+	_, err = worktree.Add("package.spec")
+	require.NoError(t, err)
+
+	upstream2, err := worktree.Commit("upstream: v2.0", &gogit.CommitOptions{
+		Author: &object.Signature{
+			Name: "Upstream", Email: "upstream@fedora.org",
+			When: time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC),
+		},
+	})
+	require.NoError(t, err)
+
+	// Working tree state after all overlays (latest content).
+	specFile, err = memFS.Create("package.spec")
+	require.NoError(t, err)
+
+	_, _ = specFile.Write([]byte("Name: package\nVersion: 2.0\nRelease: %autorelease\n# v2 overlay\n"))
+	require.NoError(t, specFile.Close())
+
+	changes := []sources.FingerprintChange{
+		{
+			CommitMetadata: sources.CommitMetadata{
+				Hash: "proj-aaa", Author: "Alice", AuthorEmail: "alice@example.com",
+				Timestamp: time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC).Unix(),
+				Message:   "Apply CVE patch for v1.0",
+			},
+			UpstreamCommit: upstream1.String(),
+		},
+		{
+			CommitMetadata: sources.CommitMetadata{
+				Hash: "proj-bbb", Author: "Bob", AuthorEmail: "bob@example.com",
+				Timestamp: time.Date(2024, 4, 1, 0, 0, 0, 0, time.UTC).Unix(),
+				Message:   "Bump release for mass rebuild",
+			},
+			UpstreamCommit: upstream1.String(), // still on v1.0.
+		},
+		{
+			CommitMetadata: sources.CommitMetadata{
+				Hash: "proj-ccc", Author: "Carol", AuthorEmail: "carol@example.com",
+				Timestamp: time.Date(2024, 8, 1, 0, 0, 0, 0, time.UTC).Unix(),
+				Message:   "Add config overlay for v2.0",
+			},
+			UpstreamCommit: upstream2.String(),
+		},
+	}
+
+	err = sources.CommitInterleavedHistory(repo, changes, upstream1.String())
+	require.NoError(t, err)
+
+	// Expected order (newest first):
+	//   us₃(Carol)  ← upstream₂  ← us₂(Bob)  ← us₁(Alice)  ← upstream₁
+	head, err := repo.Head()
+	require.NoError(t, err)
+
+	commitIter, err := repo.Log(&gogit.LogOptions{From: head.Hash()})
+	require.NoError(t, err)
+
+	var logCommits []*object.Commit
+
+	err = commitIter.ForEach(func(c *object.Commit) error {
+		logCommits = append(logCommits, c)
+
+		return nil
+	})
+	require.NoError(t, err)
+
+	require.Len(t, logCommits, 5, "2 upstream + 3 synthetic")
+
+	assert.Contains(t, logCommits[0].Message, "Add config overlay for v2.0")   // us₃ (top)
+	assert.Contains(t, logCommits[1].Message, "upstream: v2.0")                // replayed upstream₂
+	assert.Contains(t, logCommits[2].Message, "Bump release for mass rebuild") // us₂ (interleaved)
+	assert.Contains(t, logCommits[3].Message, "Apply CVE patch for v1.0")      // us₁ (interleaved)
+	assert.Contains(t, logCommits[4].Message, "upstream: v1.0")                // import-commit
+
+	assert.Equal(t, "Carol", logCommits[0].Author.Name)
+	assert.Equal(t, "Bob", logCommits[2].Author.Name)
+	assert.Equal(t, "Alice", logCommits[3].Author.Name)
+
+	// Verify overlay content reached the top synthetic commit.
+	tree, err := logCommits[0].Tree()
+	require.NoError(t, err)
+
+	entry, err := tree.File("package.spec")
+	require.NoError(t, err)
+
+	content, err := entry.Contents()
+	require.NoError(t, err)
+	assert.Contains(t, content, "# v2 overlay")
+	assert.Contains(t, content, "%autorelease")
+}
+
 func TestCommitInterleavedHistory_SingleCommit(t *testing.T) {
 	memFS := memfs.New()
 	storer := memory.NewStorage()

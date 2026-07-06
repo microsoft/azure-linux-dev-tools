@@ -117,7 +117,7 @@ CLI commands should return meaningful structured results. azldev has output form
 ## Quality Standards
 
 - Make minimal, focused changes to achieve the required functionality
-- Write or update tests for new or modified code
+- Write or update tests for new or modified code. When adding a new package or non-trivial logic, audit whether those tests actually catch bugs with mutation testing (`mage mutationDiff <ref>`) — see `.github/instructions/testing.instructions.md`
 - Ensure backward compatibility unless explicitly instructed otherwise
 - Organize imports according to Go best practices
 - Linting: Prefer fixing issues over `//nolint` comments. Use targeted `//nolint:<linter>` if absolutely required

@@ -273,6 +273,21 @@ type ComponentConfig struct {
 	// Overlays to apply to sources after they've been acquired. May mutate the spec as well as sources.
 	Overlays []ComponentOverlay `toml:"overlays,omitempty" json:"overlays,omitempty" table:"-" jsonschema:"title=Overlays,description=Overlays to apply to this component's spec and/or sources"`
 
+	// OverlayFiles, if set, lists path or glob patterns (relative to this component config file)
+	// matched against the filesystem after component config resolution to locate per-file overlay documents.
+	// Each matched file is parsed as an [OverlayFile]: one logical change consisting of a
+	// file-level `[metadata]` block plus an ordered list of `[[overlays]]`. The per-file
+	// metadata is stamped onto every overlay in the file. Matches are concatenated in the
+	// order patterns are declared; within a single pattern, matches are applied in
+	// filename (lexicographic) order, using the full path as a tie-breaker when
+	// filenames match. Duplicate matches are de-duplicated, preserving first
+	// occurrence. The resulting overlays are appended to [ComponentConfig.Overlays]
+	// after any inline overlays. A value set in a higher-priority config layer replaces
+	// lower-priority overlay-files values; an explicit empty list disables inherited
+	// overlay files. Excluded from the fingerprint because the value affects only where
+	// overlays are sourced from, not their content.
+	OverlayFiles []string `toml:"overlay-files,omitempty" json:"overlayFiles,omitempty" table:"-" validate:"dive,required" jsonschema:"title=Overlay files,description=Path or glob patterns (relative to the component config file or matched spec directory) matched against the filesystem to locate per-file overlay documents after component config resolution. Use an empty list to disable inherited overlay-file patterns" fingerprint:"-"`
+
 	// Configuration for building the component.
 	Build ComponentBuildConfig `toml:"build,omitempty" json:"build,omitempty" table:"-" jsonschema:"title=Build configuration,description=Configuration for building the component"`
 
@@ -304,9 +319,15 @@ var AllowedSourceFilesHashTypes = map[fileutils.HashType]bool{
 
 // Mutates the component config, updating it with overrides present in other.
 func (c *ComponentConfig) MergeUpdatesFrom(other *ComponentConfig) error {
+	otherOverlayFiles := slices.Clone(other.OverlayFiles)
+
 	err := mergo.Merge(c, other, mergo.WithOverride, mergo.WithAppendSlice)
 	if err != nil {
 		return fmt.Errorf("failed to merge project info:\n%w", err)
+	}
+
+	if other.OverlayFiles != nil {
+		c.OverlayFiles = otherOverlayFiles
 	}
 
 	return nil
@@ -383,6 +404,10 @@ func (c *ComponentConfig) WithAbsolutePaths(referenceDir string) *ComponentConfi
 		SourceFiles:      deep.MustCopy(c.SourceFiles),
 		Packages:         deep.MustCopy(c.Packages),
 		Publish:          deep.MustCopy(c.Publish),
+		// OverlayFiles is consumed after component config resolution; preserve it verbatim
+		// here so inherited patterns can be interpreted relative to the concrete component
+		// config file.
+		OverlayFiles: slices.Clone(c.OverlayFiles),
 	}
 
 	// Fix up paths.

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -129,7 +130,9 @@ func (r *Resolver) FindAllComponents() (components *ComponentSet, err error) {
 			var component Component
 
 			// Resolve the config for this group member.
-			component, err = r.getComponentFromNameAndSpecPath(groupMember.ComponentName, groupMember.SpecPath)
+			component, err = r.getComponentFromNameAndSpecPath(
+				groupMember.ComponentName, groupMember.SpecPath, []string{groupName},
+			)
 			if err != nil {
 				return components, fmt.Errorf("failed to enumerate components in group '%s':\n%w", groupName, err)
 			}
@@ -148,7 +151,9 @@ func (r *Resolver) FindAllComponents() (components *ComponentSet, err error) {
 		var updatedComponentConfig *projectconfig.ComponentConfig
 
 		// Apply defaults from the loaded distro config...
-		updatedComponentConfig, err = applyInheritedDefaultsToComponent(r.env, componentConfig)
+		updatedComponentConfig, err = applyInheritedDefaultsToComponent(
+			r.env, componentConfig, overlayFilesReferenceDir(componentConfig, ""), nil,
+		)
 		if err != nil {
 			return components, err
 		}
@@ -343,6 +348,48 @@ func componentGroupExcludesSpec(
 	return false, nil
 }
 
+func componentGroupMatchesSpecPath(
+	group *projectconfig.ComponentGroupConfig, specPath string,
+) (matches bool, err error) {
+	for _, pattern := range group.SpecPathPatterns {
+		matched, err := doublestar.PathMatch(pattern, specPath)
+		if err != nil {
+			return false, fmt.Errorf(
+				"failed to compare %#q against spec pattern %#q:\n%w", specPath, pattern, err)
+		}
+
+		if !matched {
+			continue
+		}
+
+		excludes, err := componentGroupExcludesSpec(group, specPath)
+		if err != nil {
+			return false, err
+		}
+
+		return !excludes, nil
+	}
+
+	return false, nil
+}
+
+func componentGroupNamesForSpecPath(env *azldev.Env, specPath string) ([]string, error) {
+	var groupNames []string
+
+	for groupName, group := range env.Config().ComponentGroups {
+		matches, err := componentGroupMatchesSpecPath(&group, specPath)
+		if err != nil {
+			return nil, err
+		}
+
+		if matches {
+			groupNames = append(groupNames, groupName)
+		}
+	}
+
+	return groupNames, nil
+}
+
 func (r *Resolver) addComponentsBySpecPathToSet(specPath string, components *ComponentSet) error {
 	var component Component
 
@@ -395,7 +442,9 @@ func (r *Resolver) addComponentsByGroupNameToSet(groupName string, components *C
 	for _, groupMember := range componentGroup.Components {
 		var component Component
 
-		component, err = r.getComponentFromNameAndSpecPath(groupMember.ComponentName, groupMember.SpecPath)
+		component, err = r.getComponentFromNameAndSpecPath(
+			groupMember.ComponentName, groupMember.SpecPath, []string{groupName},
+		)
 		if err != nil {
 			return fmt.Errorf(
 				"failed to enumerate components in group '%s':\n%w", groupName, err)
@@ -421,7 +470,12 @@ func (r *Resolver) getComponentForSpecPath(specPath string) (component Component
 		return component, fmt.Errorf("failed to verify spec '%s' exists:\n%w", specPath, statErr)
 	}
 
-	return r.getComponentFromNameAndSpecPath(name, specPath)
+	groupNames, err := componentGroupNamesForSpecPath(r.env, specPath)
+	if err != nil {
+		return component, err
+	}
+
+	return r.getComponentFromNameAndSpecPath(name, specPath, groupNames)
 }
 
 // Given a path to a .spec file, deduce the component's name.
@@ -438,7 +492,9 @@ func deduceComponentNameFromSpec(specPath string) string {
 }
 
 // Finds the named component in the provided environment; returns its configuration. Returns error if it can't be found.
-func (r *Resolver) getComponentFromNameAndSpecPath(name, specPath string) (component Component, err error) {
+func (r *Resolver) getComponentFromNameAndSpecPath(
+	name, specPath string, groupNames []string,
+) (component Component, err error) {
 	config := r.env.Config()
 	if config == nil {
 		return component, errors.New("no project config loaded")
@@ -459,7 +515,11 @@ func (r *Resolver) getComponentFromNameAndSpecPath(name, specPath string) (compo
 	var updatedComponentConfig *projectconfig.ComponentConfig
 
 	// Apply inherited defaults to the component.
-	updatedComponentConfig, err = applyInheritedDefaultsToComponent(r.env, foundComponentConfig)
+	overlayReferenceDir := overlayFilesReferenceDir(foundComponentConfig, specPath)
+
+	updatedComponentConfig, err = applyInheritedDefaultsToComponent(
+		r.env, foundComponentConfig, overlayReferenceDir, groupNames,
+	)
 	if err != nil {
 		return component, err
 	}
@@ -777,15 +837,27 @@ func (r *Resolver) warnOnLockDrift(resolved *ComponentSet) {
 }
 
 // Given an explicit component config, apply all inherited defaults.
+func overlayFilesReferenceDir(component projectconfig.ComponentConfig, specPath string) string {
+	if component.SourceConfigFile != nil {
+		return component.SourceConfigFile.Dir()
+	}
+
+	if specPath != "" {
+		return filepath.Dir(specPath)
+	}
+
+	return ""
+}
+
 func applyInheritedDefaultsToComponent(
-	env *azldev.Env, component projectconfig.ComponentConfig,
+	env *azldev.Env, component projectconfig.ComponentConfig, overlayFilesReferenceDir string, extraGroupNames []string,
 ) (result *projectconfig.ComponentConfig, err error) {
 	_, distroVer, err := env.Distro()
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve current distro:\n%w", err)
 	}
 
-	groupNames := env.Config().GroupsByComponent[component.Name]
+	groupNames := componentGroupNames(env, component.Name, extraGroupNames)
 
 	resolved, err := projectconfig.ResolveComponentConfig(
 		component,
@@ -798,7 +870,26 @@ func applyInheritedDefaultsToComponent(
 		return nil, fmt.Errorf("resolving config for component '%s':\n%w", component.Name, err)
 	}
 
+	resolved, err = projectconfig.ExpandResolvedOverlayFiles(
+		env.FS(), resolved, overlayFilesReferenceDir, env.PermissiveConfigParsing(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("resolving overlay files for component '%s':\n%w", component.Name, err)
+	}
+
 	return &resolved, nil
+}
+
+func componentGroupNames(env *azldev.Env, componentName string, extraGroupNames []string) []string {
+	groupNames := slices.Clone(env.Config().GroupsByComponent[componentName])
+
+	for _, groupName := range extraGroupNames {
+		if !slices.Contains(groupNames, groupName) {
+			groupNames = append(groupNames, groupName)
+		}
+	}
+
+	return groupNames
 }
 
 // validateLockFiles checks lock file consistency against the resolved component

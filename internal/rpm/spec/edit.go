@@ -520,7 +520,10 @@ func (s *Spec) SearchAndReplace(sectionName, packageName, regex, replacement str
 	)
 
 	// Compile the regex once.
-	compiledRegex := regexp.MustCompile(regex)
+	compiledRegex, err := regexp.Compile(regex)
+	if err != nil {
+		return fmt.Errorf("failed to compile regex %#q:\n%w", regex, err)
+	}
 
 	var updated bool
 

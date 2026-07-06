@@ -61,9 +61,154 @@ successfully makes a replacement to at least one matching file.
 | Replacement | `replacement` | Literal replacement text; capture group references like `$1` are **not** expanded. Omit or leave empty to delete matched text. | `spec-search-replace`, `file-search-replace`, `file-rename` |
 | Lines | `lines` | Array of text lines to insert | `spec-prepend-lines`, `spec-append-lines`, `file-prepend-lines` |
 | File | `file` | The name of the non-spec file to modify or add | `file-prepend-lines`, `file-search-replace`, `file-add`, `file-remove`, `file-rename`, `patch-add` (optional), `patch-remove` |
-| Source | `source` | Path to source file for `file-add` and `patch-add`; relative paths are relative to the config file | `file-add`, `patch-add` |
+| Source | `source` | Path to source file for `file-add` and `patch-add`; relative paths are relative to the config file that defines the overlay (the overlay file if loaded via [`overlay-files`](#per-file-overlay-format), otherwise the component config) | `file-add`, `patch-add` |
+| Metadata | `metadata` | Documentation table describing intent and provenance — see [Overlay Metadata](#overlay-metadata). Not allowed inside an overlay file loaded via `overlay-files` (the file-level `[metadata]` block applies to every overlay in the file). | All (optional) |
 
 > **Note:** For `file-rename`, the `replacement` field is a **filename only** (not a path). The file is renamed within its current directory.
+
+### Component-level fields for overlays
+
+In addition to per-overlay fields, the following fields are set directly on the component:
+
+| Field | TOML Key | Description |
+|-------|----------|-------------|
+| Overlay files | `overlay-files` | List of path or glob patterns matched against the filesystem after component config resolution to locate per-file overlay documents. Relative patterns are resolved from the concrete component's config file, or from the matched spec file's directory for spec-discovered components. Patterns support `**` (globstar). Matches are concatenated in declaration order; within a single pattern, matches are applied in filename (lexicographic) order, with full path as a tie-breaker for duplicate filenames. Glob patterns that match no files are ignored; literal paths must match a file. Duplicate matches across patterns are de-duplicated. See [Per-file overlay format](#per-file-overlay-format). |
+
+## Overlay Metadata
+
+Overlays can carry an optional `metadata` table that documents *why* the overlay exists and *when* it can be removed. Metadata is reviewed by humans and surfaced in tooling; it does **not** affect how the overlay is applied and is excluded from component fingerprints (so editing metadata never invalidates build caches).
+
+### `metadata` fields
+
+| Field | TOML Key | Description |
+|-------|----------|-------------|
+| Category | `category` | **Required.** Classification of the overlay's intent. See the table below. |
+| Commits | `commits` | List of upstream commit URLs (Fedora dist-git or upstream project) that this overlay backports or implements. Each entry must be an absolute http(s) URL. |
+| Bugs | `bugs` | List of bug-tracker references. Each entry is a table with a required `url`. See [Bug references](#bug-references). |
+| Upstreamable | `upstreamable` | Boolean indicating whether this change can be upstreamed: `true` or `false`. Omit the field when upstreamability has not yet been assessed. |
+
+### Categories
+
+| Category | When to use |
+|----------|-------------|
+| `backport-dist-git` | Fix backported from (or being upstreamed to) a dist-git or upstream project. Self-resolves when AZL bumps past it. Requires at least one entry in `commits`. |
+| `azl-pruning` | Removing content from a component for AZL: dependencies that are not shipped, unneeded features, subpackages, or files. |
+| `azl-compatibility` | Making a component work in the AZL build/runtime environment: toolchain and mock adjustments, and similar compatibility fixes that are not themselves backports. |
+| `azl-dep-missing-workaround` | Working around a runtime or build dependency that has not yet been imported into AZL (or is unavailable on a given target). Drop the overlay once the dependency lands. |
+| `azl-branding-policy` | Fedora→Azure Linux name/path changes; RHEL/enterprise convention alignment. |
+| `azl-disable-flaky-tests` | Skipping tests that fail intermittently or due to environmental flakiness rather than a real problem with the component. |
+| `azl-disable-unsupported-tests` | Skipping tests that cannot meaningfully run in AZL's build/runtime environment (e.g. tests that require network access, root, or hardware that is unavailable in mock). |
+| `azl-security-compliance` | FIPS or crypto-policy changes. |
+| `azl-release-management` | Release-tag and changelog mechanics. |
+| `azl-platform-adaptation` | Architecture-specific adjustments. |
+
+### Bug references
+
+The `bugs` field is a list of references to issue-tracker entries. Each entry is a table with a single required field:
+
+| Field | TOML Key | Description |
+|-------|----------|-------------|
+| URL | `url` | **Required.** HTTP(S) link to the bug entry. |
+
+Example:
+
+```toml
+[[components.mypackage.overlays.metadata.bugs]]
+url = "https://bugzilla.redhat.com/show_bug.cgi?id=2234567"
+
+[[components.mypackage.overlays.metadata.bugs]]
+url = "https://github.com/example/repo/issues/42"
+```
+
+The inline-table form is more compact for short lists:
+
+```toml
+bugs = [
+  { url = "https://bugzilla.redhat.com/show_bug.cgi?id=2234567" },
+  { url = "https://github.com/example/repo/issues/42" },
+]
+```
+
+### Inline metadata example
+
+TOML inline tables (`metadata = { ... }`) must fit on a single line. When the metadata has more than one or two fields, use a sub-table (`[components.<name>.overlays.metadata]`) so each field gets its own line:
+
+```toml
+[[components.xclock.overlays]]
+type = "spec-search-replace"
+description = "Pass --force to autoreconf"
+regex = "autoreconf -i"
+replacement = "autoreconf -fi"
+
+  [components.xclock.overlays.metadata]
+  category = "backport-dist-git"
+  commits = ["https://src.fedoraproject.org/rpms/xclock/c/1e407488"]
+```
+
+For short metadata, the single-line inline form is also valid:
+
+```toml
+[[components.xclock.overlays]]
+type = "spec-set-tag"
+tag = "Vendor"
+value = "Microsoft"
+metadata = { category = "azl-branding-policy" }
+```
+
+## Per-file overlay format
+
+When a single logical change (a CVE backport, a feature disablement, a Fedora cherry-pick…) needs **several overlays** that all share the same provenance, declaring them inline in the component config gets noisy and makes the boundary between unrelated changes hard to see. Use the per-file format instead.
+
+### Layout
+
+Set `overlay-files` on the component to one or more globs (relative to the component config) and drop one overlay file per logical change into a directory of your choosing. The conventional layout uses a sibling `overlays/` directory and a `*.overlay.toml` filename suffix, but neither is required — `overlay-files` is just a glob, so any layout you can describe with `**`/`*` patterns works.
+
+`overlay-files` can also be inherited from `default-component-config` at the project, distro, or component-group level. Inherited relative patterns are still resolved for each concrete component: from its component config file when it has one, or from the matched spec file's directory when it is discovered by a component group's `specs` pattern. This makes defaults useful for component-local discovery patterns such as `overlay-files = ["overlays/*.overlay.toml"]`. If a component sets `overlay-files`, that value replaces the inherited list; use `overlay-files = []` to disable inherited overlay files for a component, or include both patterns explicitly when you want to keep default discovery and add component-specific locations.
+
+```
+base/comps/mypackage/
+├── mypackage.comp.toml
+└── overlays/
+    ├── 0001-cve-2024-1234.overlay.toml
+    ├── 0002-disable-broken-tests.overlay.toml
+    └── 0003-azl-branding.overlay.toml
+```
+
+```toml
+# mypackage.comp.toml
+[components.mypackage]
+overlay-files = ["overlays/*.overlay.toml"]
+```
+
+Files are loaded in **filename (lexicographic) order** within each glob, using the full path as a tie-breaker when multiple matches have the same filename. Globs are concatenated in declaration order, so prefix each file with a numeric ordinal (`0001-`, `0002-`, …) to make the apply order obvious and stable. Files that don't match any of your globs are ignored, so you can keep `README.md` or other notes alongside without naming them out explicitly. A declared glob that matches no files contributes no overlays; a literal path without wildcard characters must match a file.
+
+Overlays loaded via `overlay-files` are **appended after** any inline overlays declared directly on the component.
+
+### File structure
+
+Each overlay file represents one logical change. It has:
+
+* exactly one top-level `[metadata]` table (uses the same fields documented in [Overlay Metadata](#overlay-metadata)); and
+* one or more `[[overlays]]` entries, applied in declaration order.
+
+Per-overlay `metadata` is **not allowed** inside an overlay file — the file-level `[metadata]` is the single source of truth and is stamped onto every overlay in the file. Relative `source` paths are resolved against the directory of the overlay file (not the component config).
+
+```toml
+# overlays/0001-cve-2024-1234.overlay.toml
+[metadata]
+category = "backport-dist-git"
+commits = ["https://src.fedoraproject.org/rpms/mypackage/c/abc123def456"]
+bugs = [{ url = "https://bugzilla.redhat.com/show_bug.cgi?id=12345" }]
+
+[[overlays]]
+type = "patch-add"
+source = "patches/CVE-2024-1234.patch"
+
+[[overlays]]
+type = "spec-append-lines"
+section = "%changelog"
+lines = ["- Fix CVE-2024-1234"]
+```
 
 ## Examples
 

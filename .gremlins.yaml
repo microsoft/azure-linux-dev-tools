@@ -1,0 +1,27 @@
+unleash:
+  output-statuses: "lc" # Only print live and not covered mutants, full output in .json
+  timeout-coefficient: 100 # In practice smaller coefficients were hitting timeouts
+
+mutants:
+  arithmetic-base:
+    enabled: true
+  conditionals-boundary:
+    enabled: true
+  conditionals-negation:
+    enabled: true
+  increment-decrement:
+    enabled: true
+  invert-assignments:
+    enabled: true
+  invert-bitwise:
+    enabled: true
+  invert-bwassign:
+    enabled: true
+  invert-negatives:
+    enabled: true
+  invert-logical:
+    enabled: true
+  invert-loopctrl:
+    enabled: true
+  remove-self-assignments:
+    enabled: true

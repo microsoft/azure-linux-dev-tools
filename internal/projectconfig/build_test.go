@@ -11,46 +11,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCheckConfig_Validate(t *testing.T) {
-	testCases := []struct {
-		name          string
-		config        projectconfig.CheckConfig
-		errorExpected bool
-		errorContains string
-	}{
-		{
-			name:          "empty config is valid",
-			config:        projectconfig.CheckConfig{},
-			errorExpected: false,
-		},
-		{
-			name: "skip false without reason is valid",
-			config: projectconfig.CheckConfig{
-				Skip: false,
-			},
-			errorExpected: false,
-		},
-		{
-			name: "skip true with reason is valid",
-			config: projectconfig.CheckConfig{
-				Skip:       true,
-				SkipReason: "Tests require network access",
-			},
-			errorExpected: false,
-		},
-		{
-			name: "skip true without reason is invalid",
-			config: projectconfig.CheckConfig{
-				Skip: true,
-			},
-			errorExpected: true,
-			errorContains: "skip_reason",
-		},
-	}
+// validateTestCase is a generic test case for validatable types.
+type validateTestCase struct {
+	name          string
+	validate      func() error
+	errorExpected bool
+	errorContains string
+}
+
+func runValidateTests(t *testing.T, testCases []validateTestCase) {
+	t.Helper()
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			err := testCase.config.Validate()
+			err := testCase.validate()
 
 			if testCase.errorExpected {
 				require.Error(t, err)
@@ -65,6 +39,94 @@ func TestCheckConfig_Validate(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
+
+func TestCheckConfig_Validate(t *testing.T) {
+	runValidateTests(t, []validateTestCase{
+		{
+			name:     "empty config is valid",
+			validate: func() error { return (&projectconfig.CheckConfig{}).Validate() },
+		},
+		{
+			name: "skip false without reason is valid",
+			validate: func() error {
+				return (&projectconfig.CheckConfig{Skip: false}).Validate()
+			},
+		},
+		{
+			name: "skip true with reason is valid",
+			validate: func() error {
+				return (&projectconfig.CheckConfig{
+					Skip: true, SkipReason: "Tests require network access",
+				}).Validate()
+			},
+		},
+		{
+			name: "skip true without reason is invalid",
+			validate: func() error {
+				return (&projectconfig.CheckConfig{Skip: true}).Validate()
+			},
+			errorExpected: true,
+			errorContains: "skip_reason",
+		},
+	})
+}
+
+func TestComponentBuildFailureConfig_Validate(t *testing.T) {
+	runValidateTests(t, []validateTestCase{
+		{
+			name:     "empty config is valid",
+			validate: func() error { return (&projectconfig.ComponentBuildFailureConfig{}).Validate() },
+		},
+		{
+			name: "expected false without reason is valid",
+			validate: func() error {
+				return (&projectconfig.ComponentBuildFailureConfig{Expected: false}).Validate()
+			},
+		},
+		{
+			name: "expected true with reason is valid",
+			validate: func() error {
+				return (&projectconfig.ComponentBuildFailureConfig{
+					Expected: true, ExpectedReason: "Known upstream build failure tracked in issue #123",
+				}).Validate()
+			},
+		},
+		{
+			name: "expected true without reason is invalid",
+			validate: func() error {
+				return (&projectconfig.ComponentBuildFailureConfig{Expected: true}).Validate()
+			},
+			errorExpected: true,
+			errorContains: "expected-reason",
+		},
+	})
+}
+
+func TestComponentBuildConfig_Validate_FailureConfig(t *testing.T) {
+	t.Run("expected failure without reason propagates error", func(t *testing.T) {
+		config := projectconfig.ComponentBuildConfig{
+			Failure: projectconfig.ComponentBuildFailureConfig{
+				Expected: true,
+			},
+		}
+
+		err := config.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "expected-reason")
+	})
+
+	t.Run("expected failure with reason is valid", func(t *testing.T) {
+		config := projectconfig.ComponentBuildConfig{
+			Failure: projectconfig.ComponentBuildFailureConfig{
+				Expected:       true,
+				ExpectedReason: "known issue",
+			},
+		}
+
+		err := config.Validate()
+		require.NoError(t, err)
+	})
 }
 
 func TestComponentBuildConfig_Validate(t *testing.T) {

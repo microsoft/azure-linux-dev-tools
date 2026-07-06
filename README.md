@@ -1,5 +1,8 @@
 # Azure Linux Dev Tools
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/microsoft/azure-linux-dev-tools.svg)](https://pkg.go.dev/github.com/microsoft/azure-linux-dev-tools)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+
 Azure Linux Dev Tools is a collection of utilities useful for development
 of the Azure Linux distro.
 
@@ -20,7 +23,7 @@ It supports:
 1. Install `golang` and other prerequisites via your system's package manager, e.g.:
 
    ```console
-   dnf install -y golang mock dnf-utils mock-rpmautospec
+   dnf install -y golang mock dnf-utils mock-rpmautospec kiwi
    ```
 
    Note: `mock-rpmautospec` plugin hooks `rpmautospec` into mock's build lifecycle. It pulls `rpmautospec` as a dependency which processes `%autorelease` and `%autochangelog` macros in spec files.
@@ -28,8 +31,11 @@ It supports:
 1. Install `azldev`:
 
     ```console
-    go install github.com/microsoft/azure-linux-dev-tools/cmd/azldev@main
+    go install github.com/microsoft/azure-linux-dev-tools/cmd/azldev@latest
     ```
+
+   To pin a specific release instead of tracking the latest, replace `@latest`
+   with a version tag, e.g. `@v0.1.0`.
 
 1. To ensure you can build using `mock` you must be a member of the `mock` group, e.g.:
 
@@ -62,10 +68,13 @@ Please see our [Contribution Guidelines](./CONTRIBUTING.md) for our project.
 
 For development setup and workflow, please consult our [Developer Guide](./docs/developer).
 
+## Changelog
+
+Notable changes for each release are recorded in the [changelog](./CHANGELOG.md).
+
 ## Getting Help
 
-Have questions, found a bug, or need a new feature? Open an issue in our [GitHub
-repository](https://github.com/microsoft/azure-linux-dev-tools/issues/new).
+Have questions, found a bug, or need a new feature? Open an issue in our [GitHub repository](https://github.com/microsoft/azure-linux-dev-tools/issues/new/choose). For guidance on how to file an issue, see [how to report issues](https://aka.ms/azurelinux-reportissues).
 
 For security issues, please see the [security policy](./SECURITY.md).
 
