@@ -91,6 +91,14 @@ func generateCustomSourceFile(
 		return err
 	}
 
+	// Package the output directory as a deterministic archive whose format is
+	// inferred from the filename extension (e.g., .tar.gz, .tar.xz).
+	comp, compErr := archive.DetectCompression(ref.Filename)
+	if compErr != nil {
+		return fmt.Errorf("cannot determine archive format for custom source %#q:\n%w",
+			ref.Filename, compErr)
+	}
+
 	defer cleanup()
 
 	// Clone the base runner so bind mounts added here don't persist to other calls.
@@ -103,14 +111,6 @@ func generateCustomSourceFile(
 
 	if err := execScriptInChroot(ctx, runner, ref); err != nil {
 		return err
-	}
-
-	// Package the output directory as a deterministic archive whose format is
-	// inferred from the filename extension (e.g., .tar.gz, .tar.xz).
-	comp, compErr := archive.DetectCompression(ref.Filename)
-	if compErr != nil {
-		return fmt.Errorf("cannot determine archive format for custom source %#q:\n%w",
-			ref.Filename, compErr)
 	}
 
 	// Ensure the destination directory exists. FetchFiles runs before FetchComponent,

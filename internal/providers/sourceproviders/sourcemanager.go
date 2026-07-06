@@ -363,8 +363,14 @@ func (m *sourceManager) FetchFiles(
 	return nil
 }
 
-// fetchSourceFile downloads a source file, trying the lookaside cache first and falling
-// back to the configured origin. When disable-origins is set, fallback is disabled.
+// fetchSourceFile acquires a single source file using the following priority order:
+//  1. Lookaside cache — if hash info is available, attempt a cached download first.
+//     This applies to all origin types, including 'custom', so a previously generated
+//     and cached archive avoids a full mock regeneration.
+//  2. File providers — handles origin types that require local generation (e.g. 'custom').
+//  3. Configured download origin — final fallback for 'download' origin types.
+//
+// When disable-origins is set, step 3 is skipped and only lookaside and file providers apply.
 func (m *sourceManager) fetchSourceFile(
 	ctx context.Context,
 	httpDownloader downloader.Downloader,
@@ -392,20 +398,10 @@ func (m *sourceManager) fetchSourceFile(
 		return nil
 	}
 
-	// Try each registered file provider. Providers return [ErrNotFound] to signal
-	// they don't handle this reference; any other error is fatal.
-	for _, provider := range m.fileProviders {
-		err := provider.GetFile(ctx, component, *fileRef, destDirPath)
-		if err == nil {
-			return nil
-		}
-
-		if !errors.Is(err, ErrNotFound) {
-			return fmt.Errorf("file provider failed for %#q:\n%w", fileRef.Filename, err)
-		}
-	}
-
-	// Phase 1: Try lookaside cache if hash info is available
+	// Try the lookaside cache first if hash info is available. This applies to
+	// all origin types, including 'custom' — if the generated archive is already
+	// cached in the lookaside (as it will be after the first run), we skip the
+	// expensive mock generation entirely.
 	if fileRef.Hash != "" && fileRef.HashType != "" {
 		lookasideErr := m.tryLookasideDownload(ctx, httpDownloader, component, fileRef, destPath)
 		if lookasideErr == nil {
@@ -417,7 +413,30 @@ func (m *sourceManager) fetchSourceFile(
 			"error", lookasideErr)
 	}
 
-	// Phase 2: Fall back to configured origin (not allowed when disable-origins is set)
+	// Try each registered file provider. Providers return [ErrNotFound] to signal
+	// they don't handle this reference; any other error is fatal.
+	for _, provider := range m.fileProviders {
+		err := provider.GetFile(ctx, component, *fileRef, destDirPath)
+		if err == nil {
+			// File providers are responsible for producing the file but not for
+			// hash validation. Validate here so all acquisition paths are covered.
+			if fileRef.Hash != "" && fileRef.HashType != "" {
+				hashErr := fileutils.ValidateFileHash(
+					m.dryRunnable, m.fs, fileRef.HashType, destPath, fileRef.Hash)
+				if hashErr != nil {
+					return fmt.Errorf("hash validation failed for %#q:\n%w", fileRef.Filename, hashErr)
+				}
+			}
+
+			return nil
+		}
+
+		if !errors.Is(err, ErrNotFound) {
+			return fmt.Errorf("file provider failed for %#q:\n%w", fileRef.Filename, err)
+		}
+	}
+
+	// Fall back to the configured origin (not allowed when disable-origins is set).
 	if m.disableOrigins {
 		return fmt.Errorf("source file %#q not found in lookaside cache and disable-origins is enabled in the distro config",
 			fileRef.Filename)
@@ -428,7 +447,7 @@ func (m *sourceManager) fetchSourceFile(
 			fileRef.Filename)
 	}
 
-	return m.fetchFromOrigin(ctx, httpDownloader, fileRef, destPath)
+	return m.fetchFromDownloadOrigin(ctx, httpDownloader, fileRef, destPath)
 }
 
 // tryLookasideDownload attempts to download a source file from the lookaside cache.
@@ -464,12 +483,12 @@ func (m *sourceManager) tryLookasideDownload(
 	return nil
 }
 
-// fetchFromOrigin acquires a source file using its configured origin.
+// fetchFromDownloadOrigin acquires a source file using its configured origin.
 // For [projectconfig.OriginTypeCustom], callers should have already dispatched
 // to a registered [FileSourceProvider] — reaching this function for a custom
 // origin means no provider was configured.
 // For [projectconfig.OriginTypeURI], the file is downloaded from the configured URI.
-func (m *sourceManager) fetchFromOrigin(
+func (m *sourceManager) fetchFromDownloadOrigin(
 	ctx context.Context,
 	httpDownloader downloader.Downloader,
 	fileRef *projectconfig.SourceFileReference,
