@@ -234,6 +234,14 @@ func createReflectableOptions(env *Env, format reflectable.Format) *reflectable.
 
 // Displays the results of a command to stdout in JSON format.
 func reportResultsAsJSON(env *Env, results interface{}) error {
+	// Mirror reportResultsViaReflectable: a nil/bool sentinel means "nothing
+	// to report" (e.g. a command that already rendered its own output and
+	// returns true to suppress the framework's). Without this guard such a
+	// value would marshal to a literal `true`/`false`/`null`.
+	if results == nil || results == true || results == false {
+		return nil
+	}
+
 	// Normalize a typed-nil slice/map to an empty one so it marshals as `[]`
 	// or `{}` rather than `null`. This keeps JSON output friendly for
 	// downstream pipelines (e.g., `jq '.[]'` and `jq 'keys'` work whether or
