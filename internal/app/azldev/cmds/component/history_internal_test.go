@@ -133,10 +133,13 @@ func TestCustomizationCollectorsCoverEveryFingerprintableField(t *testing.T) {
 		// their own Kind. Hash/HashType are deliberately NOT emitted as output:
 		// the file's *presence* is the customization signal, and a checksum-only
 		// change is still caught by toml-commits / fingerprint-changes.
+		// Script and MockPackages are emitted when set (custom-origin source files).
 		"SourceFileReference.Filename":        "source-files",
 		"SourceFileReference.Hash":            "not emitted (checksum change caught via toml-commits/fingerprint)",
 		"SourceFileReference.HashType":        "not emitted (ditto Hash)",
 		"SourceFileReference.ReplaceUpstream": "source-files.replace-upstream",
+		"SourceFileReference.Script":          "source-files.script",
+		"SourceFileReference.MockPackages":    "source-files.mock-packages",
 	}
 
 	actualFields := make(map[string]bool)
