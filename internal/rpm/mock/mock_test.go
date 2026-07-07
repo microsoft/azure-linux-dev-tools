@@ -203,6 +203,52 @@ func TestBuildRPM(t *testing.T) {
 	assert.Contains(t, mockCmd, fmt.Sprintf("--define %s %s", macroName, macroValue))
 }
 
+func TestBuildRPM_VerboseArgs(t *testing.T) {
+	t.Run("NonVerbose", func(t *testing.T) {
+		ctx := newTestCtxWithMockPrereqsPresent()
+		ctx.VerboseValue = false
+
+		mockCmd := captureBuildRPMCmd(t, ctx)
+
+		// Non-verbose runs should ask mock to be quiet and must not pass --verbose.
+		assert.Contains(t, mockCmd, "--quiet")
+		assert.NotContains(t, mockCmd, "--verbose")
+	})
+
+	t.Run("Verbose", func(t *testing.T) {
+		ctx := newTestCtxWithMockPrereqsPresent()
+		ctx.VerboseValue = true
+
+		mockCmd := captureBuildRPMCmd(t, ctx)
+
+		// Verbose runs should pass --verbose so mock streams its full output, and must not be quiet.
+		assert.Contains(t, mockCmd, "--verbose")
+		assert.NotContains(t, mockCmd, "--quiet")
+	})
+}
+
+// captureBuildRPMCmd runs a successful BuildRPM and returns the joined mock command line.
+func captureBuildRPMCmd(t *testing.T, ctx *testctx.TestCtx) string {
+	t.Helper()
+
+	var mockCmd string
+
+	ctx.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+		mockCmd = strings.Join(cmd.Args, " ")
+
+		require.NoError(t, fileutils.WriteFile(ctx.FS(), testRPMPath, []byte{}, fileperms.PrivateFile))
+
+		return nil
+	}
+
+	runner := mock.NewRunner(ctx, testMockConfigPath)
+
+	err := runner.BuildRPM(ctx, testSRPMPath, testOutputDirPath, mock.RPMBuildOptions{})
+	require.NoError(t, err)
+
+	return mockCmd
+}
+
 func TestBuildRPM_MockFails(t *testing.T) {
 	testError := errors.New("injected mock failure")
 
