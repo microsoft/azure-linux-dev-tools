@@ -714,6 +714,7 @@ func TestFindComponents_SpecDiscoveredComponentInheritsOverlayFilesFromDefaults(
 		[]byte(`
 [metadata]
 category = "azl-branding-policy"
+upstream-status = "inapplicable"
 
 [[overlays]]
 type  = "spec-set-tag"
@@ -757,6 +758,7 @@ func TestFindComponents_SpecPathFilterInheritsOverlayFilesFromGroupDefaults(t *t
 		[]byte(`
 [metadata]
 category = "azl-branding-policy"
+upstream-status = "inapplicable"
 
 [[overlays]]
 type  = "spec-set-tag"
