@@ -17,13 +17,14 @@ type appEventListener struct {
 	eventLevel  int
 	eventLogger *slog.Logger
 	quiet       bool
+	verbose     bool
 }
 
 // Ensure [appEventListener] implements [opctx.EventListener].
 var _ opctx.EventListener = &appEventListener{}
 
 // NewEventListener creates a new event listener for the environment.
-func NewEventListener(eventLogger *slog.Logger, quiet bool) (*appEventListener, error) {
+func NewEventListener(eventLogger *slog.Logger, quiet, verbose bool) (*appEventListener, error) {
 	if eventLogger == nil {
 		return nil, errors.New("event logger cannot be nil")
 	}
@@ -32,6 +33,7 @@ func NewEventListener(eventLogger *slog.Logger, quiet bool) (*appEventListener, 
 		eventLevel:  0,
 		eventLogger: eventLogger,
 		quiet:       quiet,
+		verbose:     verbose,
 	}, nil
 }
 
@@ -57,6 +59,7 @@ func (el *appEventListener) StartEvent(name string, args ...any) opctx.Event {
 		parentEventListener: el,
 		name:                name,
 		quiet:               el.quiet,
+		verbose:             el.verbose,
 	}
 }
 
