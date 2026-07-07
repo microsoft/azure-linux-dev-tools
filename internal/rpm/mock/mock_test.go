@@ -203,6 +203,52 @@ func TestBuildRPM(t *testing.T) {
 	assert.Contains(t, mockCmd, fmt.Sprintf("--define %s %s", macroName, macroValue))
 }
 
+func TestBuildRPM_VerboseArgs(t *testing.T) {
+	t.Run("NonVerbose", func(t *testing.T) {
+		ctx := newTestCtxWithMockPrereqsPresent()
+		ctx.VerboseValue = false
+
+		mockCmd := captureBuildRPMCmd(t, ctx)
+
+		// Non-verbose runs should ask mock to be quiet and must not pass --verbose.
+		assert.Contains(t, mockCmd, "--quiet")
+		assert.NotContains(t, mockCmd, "--verbose")
+	})
+
+	t.Run("Verbose", func(t *testing.T) {
+		ctx := newTestCtxWithMockPrereqsPresent()
+		ctx.VerboseValue = true
+
+		mockCmd := captureBuildRPMCmd(t, ctx)
+
+		// Verbose runs should pass --verbose so mock streams its full output, and must not be quiet.
+		assert.Contains(t, mockCmd, "--verbose")
+		assert.NotContains(t, mockCmd, "--quiet")
+	})
+}
+
+// captureBuildRPMCmd runs a successful BuildRPM and returns the joined mock command line.
+func captureBuildRPMCmd(t *testing.T, ctx *testctx.TestCtx) string {
+	t.Helper()
+
+	var mockCmd string
+
+	ctx.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+		mockCmd = strings.Join(cmd.Args, " ")
+
+		require.NoError(t, fileutils.WriteFile(ctx.FS(), testRPMPath, []byte{}, fileperms.PrivateFile))
+
+		return nil
+	}
+
+	runner := mock.NewRunner(ctx, testMockConfigPath)
+
+	err := runner.BuildRPM(ctx, testSRPMPath, testOutputDirPath, mock.RPMBuildOptions{})
+	require.NoError(t, err)
+
+	return mockCmd
+}
+
 func TestBuildRPM_MockFails(t *testing.T) {
 	testError := errors.New("injected mock failure")
 
@@ -221,7 +267,7 @@ func TestCmdInChroot_MockNotPresent(t *testing.T) {
 
 	runner := mock.NewRunner(ctx, testMockConfigPath)
 
-	_, err := runner.CmdInChroot(ctx, []string{"arg1", "arg2"}, true /*interactive*/, false /*pipeOutput*/)
+	_, err := runner.CmdInChroot(ctx, []string{"arg1", "arg2"}, true /*interactive*/)
 	require.Error(t, err)
 }
 
@@ -230,7 +276,7 @@ func TestCmdInChroot_Success(t *testing.T) {
 
 	runner := mock.NewRunner(ctx, testMockConfigPath)
 
-	cmd, err := runner.CmdInChroot(ctx, []string{"arg1", "arg2 with spaces"}, true /*interactive*/, false /*pipeOutput*/)
+	cmd, err := runner.CmdInChroot(ctx, []string{"arg1", "arg2 with spaces"}, true /*interactive*/)
 	require.NoError(t, err)
 	require.NotNil(t, cmd)
 
@@ -249,7 +295,7 @@ func TestCmdInChroot_BindMount(t *testing.T) {
 	runner.AddBindMount("/host-path", "/mock-path")
 	assert.Equal(t, map[string]string{"/host-path": "/mock-path"}, runner.BindMounts())
 
-	cmd, err := runner.CmdInChroot(ctx, []string{"arg"}, false /*interactive*/, false /*pipeOutput*/)
+	cmd, err := runner.CmdInChroot(ctx, []string{"arg"}, false /*interactive*/)
 	require.NoError(t, err)
 	require.NotNil(t, cmd)
 
@@ -264,7 +310,7 @@ func TestCmdInChroot_NoPreClean(t *testing.T) {
 	runner.WithNoPreClean()
 	assert.True(t, runner.HasNoPreClean())
 
-	cmd, err := runner.CmdInChroot(ctx, []string{"arg"}, false /*interactive*/, false /*pipeOutput*/)
+	cmd, err := runner.CmdInChroot(ctx, []string{"arg"}, false /*interactive*/)
 	require.NoError(t, err)
 	require.NotNil(t, cmd)
 
@@ -279,7 +325,7 @@ func TestCmdInChroot_EnableNetworking(t *testing.T) {
 	runner.EnableNetwork()
 	assert.True(t, runner.HasNetworkEnabled())
 
-	cmd, err := runner.CmdInChroot(ctx, []string{"arg"}, false /*interactive*/, false /*pipeOutput*/)
+	cmd, err := runner.CmdInChroot(ctx, []string{"arg"}, false /*interactive*/)
 	require.NoError(t, err)
 	require.NotNil(t, cmd)
 
@@ -294,7 +340,7 @@ func TestCmdInChroot_ConfigOpts(t *testing.T) {
 	runner.WithConfigOpts(map[string]string{"cleanup_on_success": "True", "cleanup_on_failure": "False"})
 	assert.Equal(t, map[string]string{"cleanup_on_success": "True", "cleanup_on_failure": "False"}, runner.ConfigOpts())
 
-	cmd, err := runner.CmdInChroot(ctx, []string{"arg"}, false /*interactive*/, false /*pipeOutput*/)
+	cmd, err := runner.CmdInChroot(ctx, []string{"arg"}, false /*interactive*/)
 	require.NoError(t, err)
 	require.NotNil(t, cmd)
 
@@ -311,7 +357,7 @@ func TestCmdInChroot_Unprivileged(t *testing.T) {
 	runner := mock.NewRunner(ctx, testMockConfigPath)
 	runner.WithUnprivileged()
 
-	cmd, err := runner.CmdInChroot(ctx, []string{"arg"}, false /*interactive*/, false /*pipeOutput*/)
+	cmd, err := runner.CmdInChroot(ctx, []string{"arg"}, false /*interactive*/)
 	require.NoError(t, err)
 	require.NotNil(t, cmd)
 

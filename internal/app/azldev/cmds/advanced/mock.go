@@ -184,7 +184,7 @@ func RunShell(env *azldev.Env, options *ShellOptions, extraArgs []string) error 
 	}
 
 	// Caller manually wires stdin/stdout/stderr via cmd.SetStdin/SetStdout/SetStderr.
-	cmd, err := runner.CmdInChroot(env, extraArgs, true /*interactive*/, false /*pipeOutput*/)
+	cmd, err := runner.CmdInChroot(env, extraArgs, true /*interactive*/)
 	if err != nil {
 		return fmt.Errorf("failed to create shell command: %w", err)
 	}

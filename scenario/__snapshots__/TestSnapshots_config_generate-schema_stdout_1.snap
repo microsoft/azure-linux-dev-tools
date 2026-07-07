@@ -733,6 +733,19 @@
           "examples": [
             "https://example.com/source.tar.gz"
           ]
+        },
+        "script": {
+          "type": "string",
+          "title": "Script",
+          "description": "Shell script filename (relative to the component spec directory) to run in mock to generate this source file. Required when origin type is 'custom'."
+        },
+        "mock-packages": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Mock packages",
+          "description": "RPM packages to install in the mock chroot before running the generation script. Only valid when origin type is 'custom'."
         }
       },
       "additionalProperties": false,
@@ -1200,19 +1213,6 @@
           "type": "string",
           "title": "Replace reason",
           "description": "Required when 'replace-upstream' is true. Human-readable explanation for the replacement."
-        },
-        "script": {
-          "type": "string",
-          "title": "Script",
-          "description": "Shell script filename (relative to the component spec directory) to run in mock to generate this source file. Required when origin type is 'custom'."
-        },
-        "mock-packages": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array",
-          "title": "Mock packages",
-          "description": "RPM packages to install in the mock chroot before running the generation script. Only valid when origin type is 'custom'."
         }
       },
       "additionalProperties": false,

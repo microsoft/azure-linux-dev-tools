@@ -236,7 +236,7 @@ func execScriptInChroot(
 
 	scriptChrootPath := filepath.Join(customGenScriptDir, ref.Origin.Script)
 
-	cmd, cmdErr := runner.CmdInChroot(ctx, []string{scriptChrootPath}, false /* interactive */, false /* pipeOutput */)
+	cmd, cmdErr := runner.CmdInChroot(ctx, []string{scriptChrootPath}, false /* interactive */)
 	if cmdErr != nil {
 		return fmt.Errorf("failed to create chroot command for generating %#q:\n%w",
 			ref.Filename, cmdErr)

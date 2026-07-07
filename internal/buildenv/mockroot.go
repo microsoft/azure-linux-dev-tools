@@ -82,7 +82,7 @@ func (r *MockRoot) CreateCmd(ctx context.Context, args []string, options RunOpti
 		mockRunner.AddBindMount(bindMount.PathInHost, bindMount.PathInBuildEnv)
 	}
 
-	cmd, err = mockRunner.CmdInChroot(ctx, args, options.Interactive, false /*pipeOutput: returned to caller*/)
+	cmd, err = mockRunner.CmdInChroot(ctx, args, options.Interactive)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create command to run in mock root:\n%w", err)
 	}
