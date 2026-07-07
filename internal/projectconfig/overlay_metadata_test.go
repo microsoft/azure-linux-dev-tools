@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
-	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -19,79 +18,127 @@ func TestOverlayMetadata_Validate(t *testing.T) {
 		errorContains string
 	}{
 		{
-			name: "backport-dist-git with commits is valid",
+			name: "upstream-backport with commits is valid",
 			metadata: projectconfig.OverlayMetadata{
-				Category: projectconfig.OverlayCategoryBackportDistGit,
-				Commits:  []string{"https://src.fedoraproject.org/rpms/xclock/c/abc123"},
+				Category: projectconfig.OverlayCategoryUpstreamBackport,
+				Commits: []projectconfig.URLRef{
+					{URL: "https://src.fedoraproject.org/rpms/xclock/c/abc123"},
+				},
+				UpstreamStatus: projectconfig.OverlayUpstreamStatusUpstreamed,
 			},
 		},
 		{
-			name: "backport-dist-git requires commits",
+			name: "upstream-backport requires commits",
 			metadata: projectconfig.OverlayMetadata{
-				Category: projectconfig.OverlayCategoryBackportDistGit,
+				Category:       projectconfig.OverlayCategoryUpstreamBackport,
+				UpstreamStatus: projectconfig.OverlayUpstreamStatusUpstreamed,
 			},
 			errorContains: "commits",
 		},
 		{
-			name: "backport-dist-git with bug refs valid",
+			name: "upstream-backport with bug refs valid",
 			metadata: projectconfig.OverlayMetadata{
-				Category: projectconfig.OverlayCategoryBackportDistGit,
-				Commits:  []string{"https://src.fedoraproject.org/rpms/xclock/c/abc123"},
-				Bugs: []projectconfig.BugRef{
+				Category: projectconfig.OverlayCategoryUpstreamBackport,
+				Commits: []projectconfig.URLRef{
+					{URL: "https://src.fedoraproject.org/rpms/xclock/c/abc123"},
+				},
+				Bugs: []projectconfig.URLRef{
 					{URL: "https://github.com/example/repo/issues/1"},
 				},
+				UpstreamStatus: projectconfig.OverlayUpstreamStatusUpstreamed,
 			},
 		},
 		{
-			name: "azl-branding-policy needs no extras",
+			name: "azl-branding-policy with inapplicable status is valid",
 			metadata: projectconfig.OverlayMetadata{
-				Category: projectconfig.OverlayCategoryAZLBrandingPolicy,
+				Category:       projectconfig.OverlayCategoryAZLBrandingPolicy,
+				UpstreamStatus: projectconfig.OverlayUpstreamStatusInapplicable,
 			},
 		},
 		{
-			name: "azl-dep-missing-workaround needs no extras",
+			name: "azl-dep-missing-workaround with unknown status is valid",
 			metadata: projectconfig.OverlayMetadata{
-				Category: projectconfig.OverlayCategoryAZLDepMissingWorkaround,
+				Category:       projectconfig.OverlayCategoryAZLDepMissingWorkaround,
+				UpstreamStatus: projectconfig.OverlayUpstreamStatusUnknown,
 			},
 		},
 		{
 			name: "azl-branding-policy may carry bugs and commits",
 			metadata: projectconfig.OverlayMetadata{
 				Category: projectconfig.OverlayCategoryAZLBrandingPolicy,
-				Bugs: []projectconfig.BugRef{
+				Bugs: []projectconfig.URLRef{
 					{URL: "https://bugzilla.redhat.com/show_bug.cgi?id=2234567"},
 					{URL: "https://github.com/example/repo/issues/2"},
 				},
-				Commits:      []string{"https://github.com/example/repo/commit/deadbeef"},
-				Upstreamable: lo.ToPtr(true),
+				Commits: []projectconfig.URLRef{
+					{URL: "https://github.com/example/repo/commit/deadbeef"},
+				},
+				UpstreamStatus: projectconfig.OverlayUpstreamStatusUpstreamable,
 			},
 		},
 		{
-			name: "upstreamable false is valid",
+			name: "upstream-status inapplicable is valid",
 			metadata: projectconfig.OverlayMetadata{
-				Category:     projectconfig.OverlayCategoryAZLCompatibility,
-				Upstreamable: lo.ToPtr(false),
+				Category:       projectconfig.OverlayCategoryAZLCompatibility,
+				UpstreamStatus: projectconfig.OverlayUpstreamStatusInapplicable,
 			},
+		},
+		{
+			name: "upstream-status needs-upstream-hook is valid",
+			metadata: projectconfig.OverlayMetadata{
+				Category:       projectconfig.OverlayCategoryAZLPruning,
+				UpstreamStatus: projectconfig.OverlayUpstreamStatusNeedsUpstreamHook,
+			},
+		},
+		{
+			name: "upstream-status upstreamed is valid",
+			metadata: projectconfig.OverlayMetadata{
+				Category: projectconfig.OverlayCategoryUpstreamBackport,
+				Commits: []projectconfig.URLRef{
+					{URL: "https://src.fedoraproject.org/rpms/xclock/c/abc123"},
+				},
+				UpstreamStatus: projectconfig.OverlayUpstreamStatusUpstreamed,
+			},
+		},
+		{
+			name: "unknown upstream-status is rejected",
+			metadata: projectconfig.OverlayMetadata{
+				Category:       projectconfig.OverlayCategoryAZLCompatibility,
+				UpstreamStatus: projectconfig.OverlayUpstreamStatus("bogus"),
+			},
+			errorContains: "unknown overlay upstream-status",
 		},
 		{
 			name: "missing category",
 			metadata: projectconfig.OverlayMetadata{
-				Commits: []string{"https://example.com/commit/abc"},
+				Commits: []projectconfig.URLRef{
+					{URL: "https://example.com/commit/abc"},
+				},
+				UpstreamStatus: projectconfig.OverlayUpstreamStatusUpstreamed,
 			},
 			errorContains: "category",
 		},
 		{
 			name: "unknown category",
 			metadata: projectconfig.OverlayMetadata{
-				Category: projectconfig.OverlayCategory("bogus"),
+				Category:       projectconfig.OverlayCategory("bogus"),
+				UpstreamStatus: projectconfig.OverlayUpstreamStatusUnknown,
 			},
 			errorContains: "unknown overlay category",
 		},
 		{
+			name: "missing upstream-status",
+			metadata: projectconfig.OverlayMetadata{
+				Category: projectconfig.OverlayCategoryAZLBrandingPolicy,
+			},
+			errorContains: "upstream-status",
+		},
+		{
 			name: "bug requires url",
 			metadata: projectconfig.OverlayMetadata{
-				Category: projectconfig.OverlayCategoryAZLCompatibility,
-				Bugs:     []projectconfig.BugRef{{}},
+				Category:       projectconfig.OverlayCategoryAZLCompatibility,
+				Bugs:           []projectconfig.URLRef{{}},
+				UpstreamStatus: projectconfig.OverlayUpstreamStatusInapplicable,
 			},
 			errorContains: "URL",
 		},
@@ -99,19 +146,63 @@ func TestOverlayMetadata_Validate(t *testing.T) {
 			name: "bug rejects non-http url",
 			metadata: projectconfig.OverlayMetadata{
 				Category: projectconfig.OverlayCategoryAZLCompatibility,
-				Bugs: []projectconfig.BugRef{
+				Bugs: []projectconfig.URLRef{
 					{URL: "ftp://example.com/bug/1"},
 				},
+				UpstreamStatus: projectconfig.OverlayUpstreamStatusInapplicable,
 			},
 			errorContains: "URL",
 		},
 		{
 			name: "commit url must be http",
 			metadata: projectconfig.OverlayMetadata{
-				Category: projectconfig.OverlayCategoryBackportDistGit,
-				Commits:  []string{"not-a-url"},
+				Category:       projectconfig.OverlayCategoryUpstreamBackport,
+				Commits:        []projectconfig.URLRef{{URL: "not-a-url"}},
+				UpstreamStatus: projectconfig.OverlayUpstreamStatusUpstreamed,
 			},
-			errorContains: "Commits",
+			errorContains: "URL",
+		},
+		{
+			name: "upstream-backport with explicit upstreamed status is valid",
+			metadata: projectconfig.OverlayMetadata{
+				Category: projectconfig.OverlayCategoryUpstreamBackport,
+				Commits: []projectconfig.URLRef{
+					{URL: "https://src.fedoraproject.org/rpms/xclock/c/abc123"},
+				},
+				UpstreamStatus: projectconfig.OverlayUpstreamStatusUpstreamed,
+			},
+		},
+		{
+			name: "upstream-backport with upstreamable status is valid",
+			metadata: projectconfig.OverlayMetadata{
+				Category: projectconfig.OverlayCategoryUpstreamBackport,
+				Commits: []projectconfig.URLRef{
+					{URL: "https://src.fedoraproject.org/rpms/xclock/c/abc123"},
+				},
+				UpstreamStatus: projectconfig.OverlayUpstreamStatusUpstreamable,
+			},
+		},
+		{
+			name: "upstream-backport with needs-upstream-hook status is contradictory",
+			metadata: projectconfig.OverlayMetadata{
+				Category: projectconfig.OverlayCategoryUpstreamBackport,
+				Commits: []projectconfig.URLRef{
+					{URL: "https://src.fedoraproject.org/rpms/xclock/c/abc123"},
+				},
+				UpstreamStatus: projectconfig.OverlayUpstreamStatusNeedsUpstreamHook,
+			},
+			errorContains: "contradictory",
+		},
+		{
+			name: "upstream-backport with inapplicable status is contradictory",
+			metadata: projectconfig.OverlayMetadata{
+				Category: projectconfig.OverlayCategoryUpstreamBackport,
+				Commits: []projectconfig.URLRef{
+					{URL: "https://src.fedoraproject.org/rpms/xclock/c/abc123"},
+				},
+				UpstreamStatus: projectconfig.OverlayUpstreamStatusInapplicable,
+			},
+			errorContains: "contradictory",
 		},
 	}
 
@@ -137,7 +228,8 @@ func TestComponentOverlay_Validate_Metadata(t *testing.T) {
 		Tag:   "Vendor",
 		Value: "Microsoft",
 		Metadata: &projectconfig.OverlayMetadata{
-			Category: projectconfig.OverlayCategoryAZLBrandingPolicy,
+			Category:       projectconfig.OverlayCategoryAZLBrandingPolicy,
+			UpstreamStatus: projectconfig.OverlayUpstreamStatusInapplicable,
 		},
 	}
 	require.NoError(t, overlay.Validate())

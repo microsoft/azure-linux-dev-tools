@@ -17,8 +17,9 @@ import (
 
 const validBackportOverlayFile = `
 [metadata]
-category = "backport-dist-git"
-commits = ["https://src.fedoraproject.org/rpms/ant/c/4ca7a3b"]
+category = "upstream-backport"
+upstream-status = "upstreamed"
+commits = [{ url = "https://src.fedoraproject.org/rpms/ant/c/4ca7a3b" }]
 
 [[overlays]]
 description = "Remove openjdk21 binding"
@@ -52,6 +53,7 @@ func TestLoadOverlayFiles_StampsMetadataAndPreservesOrder(t *testing.T) {
 		[]byte(`
 [metadata]
 category = "azl-branding-policy"
+upstream-status = "inapplicable"
 
 [[overlays]]
 type  = "spec-set-tag"
@@ -70,14 +72,14 @@ value = "Microsoft"
 	// 0001-* contributes first.
 	assert.Equal(t, ComponentOverlaySearchAndReplaceInSpec, loaded[0].Type)
 	require.NotNil(t, loaded[0].Metadata)
-	assert.Equal(t, OverlayCategoryBackportDistGit, loaded[0].Metadata.Category)
+	assert.Equal(t, OverlayCategoryUpstreamBackport, loaded[0].Metadata.Category)
 
 	assert.Equal(t, ComponentOverlayRemoveSubpackage, loaded[1].Type)
 	require.NotNil(t, loaded[1].Metadata)
-	assert.Equal(t, OverlayCategoryBackportDistGit, loaded[1].Metadata.Category)
+	assert.Equal(t, OverlayCategoryUpstreamBackport, loaded[1].Metadata.Category)
 
 	// Mutating one overlay's metadata must not affect another (each must own a copy).
-	loaded[0].Metadata.Commits = append(loaded[0].Metadata.Commits, "mutated")
+	loaded[0].Metadata.Commits = append(loaded[0].Metadata.Commits, URLRef{URL: "https://example.com/mutated"})
 	assert.Len(t, loaded[1].Metadata.Commits, 1, "each overlay must own its metadata copy")
 
 	// 0002-* comes second.
@@ -103,6 +105,7 @@ func TestLoadOverlayFiles_SortsMatchesByBasename(t *testing.T) {
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), relativeToFullPathFirstOverlay, []byte(`
 [metadata]
 category = "azl-branding-policy"
+upstream-status = "inapplicable"
 
 [[overlays]]
 type  = "spec-set-tag"
@@ -113,6 +116,7 @@ value = "second"
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), filenameFirstOverlay, []byte(`
 [metadata]
 category = "azl-branding-policy"
+upstream-status = "inapplicable"
 
 [[overlays]]
 type  = "spec-set-tag"
@@ -123,6 +127,7 @@ value = "first"
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), tiedBasenameFirstOverlay, []byte(`
 [metadata]
 category = "azl-branding-policy"
+upstream-status = "inapplicable"
 
 [[overlays]]
 type  = "spec-set-tag"
@@ -133,6 +138,7 @@ value = "third"
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), tiedBasenameSecondOverlay, []byte(`
 [metadata]
 category = "azl-branding-policy"
+upstream-status = "inapplicable"
 
 [[overlays]]
 type  = "spec-set-tag"
@@ -210,12 +216,13 @@ func TestLoadOverlayFiles_RejectsPerOverlayMetadata(t *testing.T) {
 		[]byte(`
 [metadata]
 category = "azl-compatibility"
+upstream-status = "inapplicable"
 
 [[overlays]]
 type = "spec-set-tag"
 tag = "Vendor"
 value = "Microsoft"
-metadata = { category = "azl-branding-policy" }
+metadata = { category = "azl-branding-policy", upstream-status = "inapplicable" }
 `), fileperms.PrivateFile))
 
 	_, err := loadOverlayFiles(ctx.FS(), "/project", []string{overlayGlob(overlayDir)}, false)
@@ -231,6 +238,7 @@ func TestLoadOverlayFiles_RejectsEmptyFile(t *testing.T) {
 		[]byte(`
 [metadata]
 category = "azl-compatibility"
+upstream-status = "inapplicable"
 `), fileperms.PrivateFile))
 
 	_, err := loadOverlayFiles(ctx.FS(), "/project", []string{overlayGlob(overlayDir)}, false)
@@ -246,7 +254,7 @@ func TestLoadOverlayFiles_RejectsInvalidMetadata(t *testing.T) {
 		[]byte(`
 [metadata]
 # Missing category.
-commits = ["abc"]
+commits = [{ url = "https://example.com/abc" }]
 
 [[overlays]]
 type = "spec-set-tag"
@@ -268,6 +276,7 @@ func TestLoadOverlayFiles_RejectsInvalidOverlay(t *testing.T) {
 		[]byte(`
 [metadata]
 category = "azl-branding-policy"
+upstream-status = "inapplicable"
 
 [[overlays]]
 type = "spec-set-tag"
@@ -294,7 +303,7 @@ func TestLoadOverlayFile_PermissiveTolerates_InvalidMetadata(t *testing.T) {
 		[]byte(`
 [metadata]
 # Missing category.
-commits = ["abc"]
+commits = [{ url = "https://example.com/abc" }]
 
 [[overlays]]
 type = "spec-set-tag"
@@ -318,8 +327,9 @@ func TestLoadOverlayFiles_ResolvesSourceRelativeToOverlayFile(t *testing.T) {
 		filepath.Join(overlayDir, "0001-patch.overlay.toml"),
 		[]byte(`
 [metadata]
-category = "backport-dist-git"
-commits = ["https://src.fedoraproject.org/rpms/foo/c/abc"]
+category = "upstream-backport"
+upstream-status = "upstreamed"
+commits = [{ url = "https://src.fedoraproject.org/rpms/foo/c/abc" }]
 
 [[overlays]]
 type   = "patch-add"
@@ -388,7 +398,8 @@ func TestExpandResolvedOverlayFiles_AppendsAfterInlineOverlays(t *testing.T) {
 				Tag:   "Vendor",
 				Value: "Microsoft",
 				Metadata: &OverlayMetadata{
-					Category: OverlayCategoryAZLBrandingPolicy,
+					Category:       OverlayCategoryAZLBrandingPolicy,
+					UpstreamStatus: OverlayUpstreamStatusInapplicable,
 				},
 			},
 		},
@@ -408,11 +419,11 @@ func TestExpandResolvedOverlayFiles_AppendsAfterInlineOverlays(t *testing.T) {
 	// metadata stamped onto each.
 	assert.Equal(t, ComponentOverlaySearchAndReplaceInSpec, expanded.Overlays[1].Type)
 	require.NotNil(t, expanded.Overlays[1].Metadata)
-	assert.Equal(t, OverlayCategoryBackportDistGit, expanded.Overlays[1].Metadata.Category)
+	assert.Equal(t, OverlayCategoryUpstreamBackport, expanded.Overlays[1].Metadata.Category)
 
 	assert.Equal(t, ComponentOverlayRemoveSubpackage, expanded.Overlays[2].Type)
 	require.NotNil(t, expanded.Overlays[2].Metadata)
-	assert.Equal(t, OverlayCategoryBackportDistGit, expanded.Overlays[2].Metadata.Category)
+	assert.Equal(t, OverlayCategoryUpstreamBackport, expanded.Overlays[2].Metadata.Category)
 }
 
 func TestExpandResolvedOverlayFiles_NoopWhenUnset(t *testing.T) {
@@ -445,7 +456,7 @@ func TestExpandResolvedOverlayFiles_AcceptsAbsoluteGlob(t *testing.T) {
 
 	require.Len(t, expanded.Overlays, 2, "absolute glob is not re-rooted under cfg.dir")
 	require.NotNil(t, expanded.Overlays[0].Metadata)
-	assert.Equal(t, OverlayCategoryBackportDistGit, expanded.Overlays[0].Metadata.Category)
+	assert.Equal(t, OverlayCategoryUpstreamBackport, expanded.Overlays[0].Metadata.Category)
 }
 
 func TestExpandResolvedOverlayFiles_RequiresReferenceDirForRelativePattern(t *testing.T) {
@@ -481,5 +492,5 @@ func TestExpandResolvedOverlayFiles_DefaultPatternUsesConcreteComponentConfigDir
 	require.Len(t, expanded.Overlays, 2)
 	assert.Empty(t, expanded.OverlayFiles)
 	require.NotNil(t, expanded.Overlays[0].Metadata)
-	assert.Equal(t, OverlayCategoryBackportDistGit, expanded.Overlays[0].Metadata.Category)
+	assert.Equal(t, OverlayCategoryUpstreamBackport, expanded.Overlays[0].Metadata.Category)
 }
