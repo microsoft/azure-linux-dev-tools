@@ -550,12 +550,8 @@ func (r *Runner) ensureMockPresentAndConfigured() error {
 	return nil
 }
 
-// CmdInChroot builds a wrapper command that will run the specified args inside a mock chroot.
-// The caller is responsible for configuring stdout/stderr on the returned command
-// (e.g. via [opctx.Cmd.RunAndGetOutput] or [opctx.Cmd.SetRealTimeStdoutListener]).
-func (r *Runner) CmdInChroot(
-	ctx context.Context, args []string, interactive bool,
-) (cmd opctx.Cmd, err error) {
+// Builds a wrapper command that will run the specified inside a mock chroot.
+func (r *Runner) CmdInChroot(ctx context.Context, args []string, interactive bool) (cmd opctx.Cmd, err error) {
 	// We're going to need to run mock, so make sure we can.
 	err = r.ensureMockPresentAndConfigured()
 	if err != nil {
@@ -578,9 +574,7 @@ func (r *Runner) CmdInChroot(
 		mockArgs = append(mockArgs, shellquote.Join(args...))
 	}
 
-	rawCmd := exec.CommandContext(ctx, MockBinary, mockArgs...)
-
-	cmd, err = r.cmdFactory.Command(rawCmd)
+	cmd, err = r.cmdFactory.Command(exec.CommandContext(ctx, MockBinary, mockArgs...))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create command to run in mock root:\n%w", err)
 	}

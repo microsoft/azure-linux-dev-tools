@@ -115,8 +115,6 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 	}
 
 	// Create source manager to handle all source fetching, both local and upstream.
-	// Custom source generation (origin type 'custom') is automatically enabled when
-	// the distro has a 'mock-config' configured — no per-command wiring required.
 	sourceManager, err = sourceproviders.NewSourceManager(env, distro)
 	if err != nil {
 		return fmt.Errorf("failed to create source manager:\n%w", err)

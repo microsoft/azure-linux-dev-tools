@@ -331,9 +331,7 @@ origin    = { type = "download", uri = "https://example.com/repo/.../shimx64.efi
 
 #### `"custom"` — generate via a mock script
 
-Use `origin.type = "custom"` when a source archive must be assembled or modified (e.g. stripping sensitive test fixtures from an upstream tarball). azldev runs a script inside a fresh mock chroot and packages the output as a deterministic archive.
-
-The script must write its output to `/azldev-gen/output/`. azldev bind-mounts the script read-only at `/azldev-gen/script/<name>` and the output directory read-write at `/azldev-gen/output/`, then packages the result. Network access is always enabled so scripts can download upstream tarballs. The mock config comes from the project's default distro — no extra config is needed beyond the existing `mock-config` setting.
+Use `origin.type = "custom"` when a source archive must be assembled or modified (e.g. stripping sensitive test fixtures from an upstream tarball). azldev runs the script inside a fresh mock chroot — the script **must write all output to `/azldev-gen/output/`**, which azldev packages into the archive named by `filename`. Network access is always enabled; the mock config comes from the project's default distro.
 
 The `script` and `mock-packages` fields are nested under `[origin]`:
 
@@ -349,10 +347,9 @@ On first use, omit `hash` and run `prep-sources --allow-no-hashes` to generate t
 filename  = "yara-4.5.4-azl-stripped.tar.gz"
 hash-type = "SHA512"
 hash      = "abc123..."               # from: prep-sources --allow-no-hashes
-[components.yara.source-files.origin]
-type          = "custom"
-script        = "gen-yara-stripped.sh"    # relative to the component's spec directory
-mock-packages = ["cmake"]                 # omit if not needed
+origin.type          = "custom"
+origin.script        = "gen-yara-stripped.sh"    # relative to the component's spec directory
+origin.mock-packages = ["cmake"]                 # omit if not needed
 ```
 
 To replace an existing upstream `sources` entry with the generated file, add `replace-upstream = true`:
