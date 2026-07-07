@@ -91,6 +91,8 @@ func generateCustomSourceFile(
 		return err
 	}
 
+	defer cleanup()
+
 	// Package the output directory as a deterministic archive whose format is
 	// inferred from the filename extension (e.g., .tar.gz, .tar.xz).
 	comp, compErr := archive.DetectCompression(ref.Filename)
@@ -98,8 +100,6 @@ func generateCustomSourceFile(
 		return fmt.Errorf("cannot determine archive format for custom source %#q:\n%w",
 			ref.Filename, compErr)
 	}
-
-	defer cleanup()
 
 	// Clone the base runner so bind mounts added here don't persist to other calls.
 	// Network access is always enabled — custom source scripts commonly need to
