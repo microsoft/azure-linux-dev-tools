@@ -83,15 +83,15 @@ Overlays can carry an optional `metadata` table that documents *why* the overlay
 | Field | TOML Key | Description |
 |-------|----------|-------------|
 | Category | `category` | **Required.** Classification of the overlay's intent. See the table below. |
-| Commits | `commits` | List of upstream commit URLs (Fedora dist-git or upstream project) that this overlay backports or implements. Each entry must be an absolute http(s) URL. |
-| Bugs | `bugs` | List of bug-tracker references. Each entry is a table with a required `url`. See [Bug references](#bug-references). |
-| Upstreamable | `upstreamable` | Boolean indicating whether this change can be upstreamed: `true` or `false`. Omit the field when upstreamability has not yet been assessed. |
+| Commits | `commits` | List of upstream commit references (Fedora dist-git or upstream project) that this overlay backports or implements. Each entry is a table with a required `url` (an absolute http(s) URL). See [URL references](#url-references). |
+| Bugs | `bugs` | List of bug-tracker references. Each entry is a table with a required `url`. See [URL references](#url-references). |
+| Upstream status | `upstream-status` | **Required.** Classifies the overlay's relationship to its upstream project. One of `upstreamed`, `upstreamable`, `needs-upstream-hook`, `inapplicable`, or `unknown`. Use `unknown` if the assessment has not been made yet — reviewers should push for a definite value before approving. See [Upstream status](#upstream-status). |
 
 ### Categories
 
 | Category | When to use |
 |----------|-------------|
-| `backport-dist-git` | Fix backported from (or being upstreamed to) a dist-git or upstream project. Self-resolves when AZL bumps past it. Requires at least one entry in `commits`. |
+| `upstream-backport` | Fix backported from an upstream source (Fedora dist-git or the component's OSS project) that AZL will inherit once it bumps past the fix. Self-resolves on version bump. Requires at least one entry in `commits` pointing to the upstream change. `upstream-status` must be `upstreamed` or `upstreamable` — any other value contradicts the category. See [Upstream status](#upstream-status). |
 | `azl-pruning` | Removing content from a component for AZL: dependencies that are not shipped, unneeded features, subpackages, or files. |
 | `azl-compatibility` | Making a component work in the AZL build/runtime environment: toolchain and mock adjustments, and similar compatibility fixes that are not themselves backports. |
 | `azl-dep-missing-workaround` | Working around a runtime or build dependency that has not yet been imported into AZL (or is unavailable on a given target). Drop the overlay once the dependency lands. |
@@ -102,13 +102,13 @@ Overlays can carry an optional `metadata` table that documents *why* the overlay
 | `azl-release-management` | Release-tag and changelog mechanics. |
 | `azl-platform-adaptation` | Architecture-specific adjustments. |
 
-### Bug references
+### URL references
 
-The `bugs` field is a list of references to issue-tracker entries. Each entry is a table with a single required field:
+The `commits` and `bugs` fields are lists of references to external resources. Each entry is a table with a single required field:
 
 | Field | TOML Key | Description |
 |-------|----------|-------------|
-| URL | `url` | **Required.** HTTP(S) link to the bug entry. |
+| URL | `url` | **Required.** HTTP(S) link to the referenced resource. |
 
 Example:
 
@@ -129,6 +129,42 @@ bugs = [
 ]
 ```
 
+### Upstream status
+
+`upstream-status` classifies the overlay's relationship to its upstream project. It answers "why are we carrying this?" and "what would it take to drop it?" Reviewers use it to decide whether to push back on a change or ask for an upstream link.
+
+| Value | Meaning |
+|-------|---------|
+| `upstreamed` | The change is already in Fedora / the upstream project. The overlay is carried only until AZL bumps past the fix. |
+| `upstreamable` | The change could be sent upstream as-is. Reviewers should ask the author to link the upstream PR. |
+| `needs-upstream-hook` | An AZL specialization that today requires invasive spec edits; upstream could add a `bcond`, `%if`, or config knob that would let us drop the overlay. Reviewers should ask whether the hook can be upstreamed instead of the change itself. |
+| `inapplicable` | A permanent AZL-only deviation. Reviewers should push back on why we have to fork upstream forever. |
+| `unknown` | The author has not yet assessed the overlay's upstream story. Reviewers should push for a definite status before approving. |
+
+`upstream-status` is required whenever `[metadata]` is present. On an `upstream-backport` overlay only `upstreamed` and `upstreamable` are allowed — any other value (`needs-upstream-hook`, `inapplicable`, `unknown`) is a validation error.
+
+#### `upstreamable` vs. `needs-upstream-hook`
+
+Both statuses mean "there is an upstream action available," but they differ in *what* would go upstream:
+
+- **`upstreamable`** — the patch we're carrying is itself upstream-shaped. Sending the same (or a close-to-identical) diff to Fedora / the upstream project would plausibly be accepted. The overlay contributor should open the upstream PR and link it, so we can drop this once it lands.
+- **`needs-upstream-hook`** — the change is AZL-specific (e.g. hard-coding `Vendor: Microsoft`, disabling a feature only we don't want, swapping a default path) and would *not* be accepted upstream as-is. But upstream could add a `bcond`, `%if`, or config knob so that it can be configured downstream without patching the spec.
+
+In short: `upstreamable` upstreams the change; `needs-upstream-hook` upstreams a mechanism that makes the change unnecessary.
+
+Example:
+
+```toml
+[[components.mypackage.overlays]]
+type = "spec-set-tag"
+tag = "Vendor"
+value = "Microsoft"
+
+  [components.mypackage.overlays.metadata]
+  category = "azl-branding-policy"
+  upstream-status = "inapplicable"
+```
+
 ### Inline metadata example
 
 TOML inline tables (`metadata = { ... }`) must fit on a single line. When the metadata has more than one or two fields, use a sub-table (`[components.<name>.overlays.metadata]`) so each field gets its own line:
@@ -141,8 +177,9 @@ regex = "autoreconf -i"
 replacement = "autoreconf -fi"
 
   [components.xclock.overlays.metadata]
-  category = "backport-dist-git"
-  commits = ["https://src.fedoraproject.org/rpms/xclock/c/1e407488"]
+  category = "upstream-backport"
+  upstream-status = "upstreamed"
+  commits = [{ url = "https://src.fedoraproject.org/rpms/xclock/c/1e407488" }]
 ```
 
 For short metadata, the single-line inline form is also valid:
@@ -152,7 +189,7 @@ For short metadata, the single-line inline form is also valid:
 type = "spec-set-tag"
 tag = "Vendor"
 value = "Microsoft"
-metadata = { category = "azl-branding-policy" }
+metadata = { category = "azl-branding-policy", upstream-status = "inapplicable" }
 ```
 
 ## Per-file overlay format
@@ -196,8 +233,9 @@ Per-overlay `metadata` is **not allowed** inside an overlay file — the file-le
 ```toml
 # overlays/0001-cve-2024-1234.overlay.toml
 [metadata]
-category = "backport-dist-git"
-commits = ["https://src.fedoraproject.org/rpms/mypackage/c/abc123def456"]
+category = "upstream-backport"
+upstream-status = "upstreamed"
+commits = [{ url = "https://src.fedoraproject.org/rpms/mypackage/c/abc123def456" }]
 bugs = [{ url = "https://bugzilla.redhat.com/show_bug.cgi?id=12345" }]
 
 [[overlays]]
