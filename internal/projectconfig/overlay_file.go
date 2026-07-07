@@ -56,6 +56,11 @@ type OverlayFile struct {
 // [OverlayFile], stamps the per-file metadata onto each overlay, appends the
 // resulting overlays after inline overlays, and clears [ComponentConfig.OverlayFiles]
 // so the returned config is not expanded twice.
+//
+// Entries containing [OverlayFilesComponentPlaceholder] have the placeholder
+// substituted with the component's own name before globbing; those entries are
+// inherited from a project-level default and become concrete per-component
+// globs here.
 func ExpandResolvedOverlayFiles(
 	fs opctx.FS, component ComponentConfig, referenceDir string, permissiveConfigParsing bool,
 ) (ComponentConfig, error) {
@@ -63,14 +68,19 @@ func ExpandResolvedOverlayFiles(
 		return component, nil
 	}
 
-	if referenceDir == "" && overlayFilesHasRelativePattern(component.OverlayFiles) {
+	expanded := make([]string, len(component.OverlayFiles))
+	for i, entry := range component.OverlayFiles {
+		expanded[i] = substituteOverlayFilesPlaceholder(entry, component.Name)
+	}
+
+	if referenceDir == "" && overlayFilesHasRelativePattern(expanded) {
 		return ComponentConfig{}, fmt.Errorf(
 			"component %#q has relative 'overlay-files' entries but no reference directory",
 			component.Name,
 		)
 	}
 
-	loaded, err := loadOverlayFiles(fs, referenceDir, component.OverlayFiles, permissiveConfigParsing)
+	loaded, err := loadOverlayFiles(fs, referenceDir, expanded, permissiveConfigParsing)
 	if err != nil {
 		return ComponentConfig{}, fmt.Errorf("component %#q overlay-files:\n%w", component.Name, err)
 	}

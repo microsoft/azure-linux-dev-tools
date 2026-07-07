@@ -111,6 +111,10 @@ func (f ConfigFile) Validate() error {
 		}
 	}
 
+	if err := f.validateOverlayFilesByScope(); err != nil {
+		return err
+	}
+
 	// Validate component group metadata.
 	if err := validateComponentGroupMetadata(f.ComponentGroups); err != nil {
 		return err
@@ -163,6 +167,12 @@ func validateComponentConfigs(
 	customScriptPathsResolved bool,
 ) error {
 	for componentName, component := range components {
+		if err := validateOverlayFilesEntries(
+			component.OverlayFiles, validateComponentOverlayFilesEntry,
+		); err != nil {
+			return fmt.Errorf("invalid 'overlay-files' for component %#q:\n%w", componentName, err)
+		}
+
 		for i, overlay := range component.Overlays {
 			err := overlay.Validate()
 			if err != nil {
@@ -510,6 +520,96 @@ func dedupTestRefSKUGroups(
 		desc := testRefDesc(scope, idx, kind, refValue, skuGroup)
 		if err := checkDuplicateTestRef(seen, testName, skuGroup, desc); err != nil {
 			return err
+		}
+	}
+
+	return nil
+}
+
+// validateOverlayFilesByScope enforces where 'overlay-files' may appear.
+//
+//   - Project scope (top-level 'default-component-config'): each entry must
+//     contain the '{component}' placeholder as a whole path segment; the
+//     placeholder drives pattern-based component discovery.
+//   - Component scope ('[components.X]'): plain globs; the '{component}'
+//     placeholder is forbidden (the name is already fixed).
+//   - Distro-version and component-group 'default-component-config':
+//     'overlay-files' is not allowed at all. Broad-scope defaults for this
+//     field silently displace project-level discovery and per-component
+//     overrides, so we require callers to place the list at project or
+//     component scope where the intent is unambiguous.
+func (f ConfigFile) validateOverlayFilesByScope() error {
+	if f.DefaultComponentConfig != nil {
+		if err := validateOverlayFilesEntries(
+			f.DefaultComponentConfig.OverlayFiles, validateProjectOverlayFilesEntry,
+		); err != nil {
+			return fmt.Errorf("invalid project 'default-component-config':\n%w", err)
+		}
+	}
+
+	for distroName, distro := range f.Distros {
+		for versionName, version := range distro.Versions {
+			if version.DefaultComponentConfig.OverlayFiles != nil {
+				return fmt.Errorf(
+					"invalid 'default-component-config' for distro %#q version %#q:\n"+
+						"%w: 'overlay-files' is only allowed on the project-level "+
+						"'default-component-config' (with '%s' patterns) or on individual "+
+						"'[components.X]' entries",
+					distroName, versionName,
+					ErrInvalidOverlayFilesEntry, OverlayFilesComponentPlaceholder,
+				)
+			}
+		}
+	}
+
+	for groupName, group := range f.ComponentGroups {
+		if group.DefaultComponentConfig.OverlayFiles != nil {
+			return fmt.Errorf(
+				"invalid 'default-component-config' for component group %#q:\n"+
+					"%w: 'overlay-files' is only allowed on the project-level "+
+					"'default-component-config' (with '%s' patterns) or on individual "+
+					"'[components.X]' entries",
+				groupName,
+				ErrInvalidOverlayFilesEntry, OverlayFilesComponentPlaceholder,
+			)
+		}
+	}
+
+	return nil
+}
+
+// overlayFilesValidator validates a single 'overlay-files' entry against
+// the placeholder rules of a particular config scope.
+type overlayFilesValidator func(entry string) error
+
+// validateProjectOverlayFilesEntry validates entries in the project-level
+// default-component-config. Every entry MUST contain the '{component}'
+// placeholder exactly once as a whole path segment — it's the discovery
+// mechanism.
+func validateProjectOverlayFilesEntry(entry string) error {
+	return validateOverlayFilesPlaceholder(entry)
+}
+
+// validateComponentOverlayFilesEntry validates entries in a '[components.X]'
+// table. Entries are plain globs; '{component}' is forbidden because the
+// component name is already fixed by the table key.
+func validateComponentOverlayFilesEntry(entry string) error {
+	if !hasOverlayFilesPlaceholder(entry) {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"%w: %q is only allowed in project-level 'default-component-config' entries; entry %#q",
+		ErrInvalidOverlayFilesEntry, OverlayFilesComponentPlaceholder, entry,
+	)
+}
+
+// validateOverlayFilesEntries runs validate against each entry in overlayFiles,
+// annotating the returned error with the offending index.
+func validateOverlayFilesEntries(overlayFiles []string, validate overlayFilesValidator) error {
+	for idx, entry := range overlayFiles {
+		if err := validate(entry); err != nil {
+			return fmt.Errorf("'overlay-files'[%d]: %w", idx, err)
 		}
 	}
 
