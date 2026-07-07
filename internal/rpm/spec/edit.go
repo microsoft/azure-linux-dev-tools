@@ -402,6 +402,24 @@ func (s *Spec) skipPastConditional(lineNum int, sectionEnd int) int {
 	return lineNum
 }
 
+// PrependLines prepends the given lines to the very top of the spec file. This is a
+// whole-file edit, distinct from section-targeted editing, which applies within a specific
+// section rather than to the raw file contents.
+func (s *Spec) PrependLines(lines []string) {
+	slog.Debug("Prepending lines to spec file", "lines", lines)
+
+	s.rawLines = append(append([]string{}, lines...), s.rawLines...)
+}
+
+// AppendLines appends the given lines at the very bottom of the spec file. This is a
+// whole-file edit, distinct from section-targeted editing, which applies within a specific
+// section rather than to the raw file contents.
+func (s *Spec) AppendLines(lines []string) {
+	slog.Debug("Appending lines to spec file", "lines", lines)
+
+	s.rawLines = append(s.rawLines, lines...)
+}
+
 // PrependLinesToSection prepends the given lines to the start of the specified section, placing
 // them just after the section header (or at the top of the file in the global section). An error
 // is returned if the identified section cannot be found in the spec.

@@ -116,7 +116,7 @@ func ApplySpecOverlayToFileInPlace(fs opctx.FS, overlay projectconfig.ComponentO
 // ApplySpecOverlay applies a spec-based overlay to an opened spec. An error is returned if a non-spec
 // overlay is provided.
 //
-//nolint:cyclop,funlen // This function's complexity is inflated by the big switch over overlay types.
+//nolint:cyclop,funlen,gocognit // This function's complexity is inflated by the big switch over overlay types.
 func ApplySpecOverlay(overlay projectconfig.ComponentOverlay, openedSpec *spec.Spec) error {
 	//nolint:exhaustive // We intentionally ignore non-spec overlay types.
 	switch overlay.Type {
@@ -146,14 +146,22 @@ func ApplySpecOverlay(overlay projectconfig.ComponentOverlay, openedSpec *spec.S
 			return fmt.Errorf("failed to remove tag %#q from spec:\n%w", overlay.Tag, err)
 		}
 	case projectconfig.ComponentOverlayPrependSpecLines:
-		err := openedSpec.PrependLinesToSection(overlay.SectionName, overlay.PackageName, overlay.Lines)
-		if err != nil {
-			return fmt.Errorf("failed to prepend lines to spec:\n%w", err)
+		if overlay.SectionName == "" {
+			openedSpec.PrependLines(overlay.Lines)
+		} else {
+			err := openedSpec.PrependLinesToSection(overlay.SectionName, overlay.PackageName, overlay.Lines)
+			if err != nil {
+				return fmt.Errorf("failed to prepend lines to spec:\n%w", err)
+			}
 		}
 	case projectconfig.ComponentOverlayAppendSpecLines:
-		err := openedSpec.AppendLinesToSection(overlay.SectionName, overlay.PackageName, overlay.Lines)
-		if err != nil {
-			return fmt.Errorf("failed to append lines to spec:\n%w", err)
+		if overlay.SectionName == "" {
+			openedSpec.AppendLines(overlay.Lines)
+		} else {
+			err := openedSpec.AppendLinesToSection(overlay.SectionName, overlay.PackageName, overlay.Lines)
+			if err != nil {
+				return fmt.Errorf("failed to append lines to spec:\n%w", err)
+			}
 		}
 	case projectconfig.ComponentOverlaySearchAndReplaceInSpec:
 		err := openedSpec.SearchAndReplace(
