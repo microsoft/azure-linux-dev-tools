@@ -347,7 +347,9 @@ func (m *sourceManager) FetchFiles(
 		// so no generation can happen. Surfacing the error here — before any network
 		// or disk work — gives a clearer diagnosis than the message produced deep in
 		// the fetch fallback path.
-		if fileRef.Origin.Type == projectconfig.OriginTypeCustom && len(m.fileProviders) == 0 {
+		if fileRef.Origin.Type == projectconfig.OriginTypeCustom &&
+			len(m.fileProviders) == 0 &&
+			(fileRef.Hash == "" || fileRef.HashType == "") {
 			return fmt.Errorf(
 				"source file %#q has 'custom' origin but no file provider is available; "+
 					"set 'mock-config' on the project distro version definition to enable custom source generation",

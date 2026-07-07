@@ -297,10 +297,11 @@ func TestSourceManager_FetchFiles_ExistingFile(t *testing.T) {
 
 func TestSourceManager_FetchFiles_Errors(t *testing.T) {
 	tests := []struct {
-		name           string
-		disableOrigins bool
-		sourceFiles    []projectconfig.SourceFileReference
-		expectedError  string
+		name            string
+		disableOrigins  bool
+		clearMockConfig bool
+		sourceFiles     []projectconfig.SourceFileReference
+		expectedError   string
 	}{
 		{
 			name:           "disable-origins rejects lookaside failure",
@@ -342,11 +343,43 @@ func TestSourceManager_FetchFiles_Errors(t *testing.T) {
 			}},
 			expectedError: "no URI configured",
 		},
+		{
+			// No hash → lookaside skipped; no mock-config → no file provider registered.
+			// The fast-fail in FetchFiles should surface a clear "mock-config" message.
+			name:            "custom origin no provider no hash",
+			clearMockConfig: true,
+			sourceFiles: []projectconfig.SourceFileReference{{
+				Filename: testSourceTarball,
+				Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeCustom},
+			}},
+			expectedError: "mock-config",
+		},
+		{
+			// Hash present → lookaside attempted then fails; no file provider registered.
+			// Falls through to fetchFromDownloadOrigin, which surfaces the "mock-config" message.
+			name:            "custom origin no provider has hash",
+			clearMockConfig: true,
+			sourceFiles: []projectconfig.SourceFileReference{{
+				Filename: testSourceTarball,
+				Hash:     "abc123",
+				HashType: "SHA256",
+				Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeCustom},
+			}},
+			expectedError: "mock-config",
+		},
 	}
 
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
 			env := testutils.NewTestEnv(t)
+
+			if testCase.clearMockConfig {
+				distro := env.Config.Distros["test-distro"]
+				ver := distro.Versions["1.0"]
+				ver.MockConfigPath = ""
+				distro.Versions["1.0"] = ver
+				env.Config.Distros["test-distro"] = distro
+			}
 
 			ctrl := gomock.NewController(t)
 			component := components_testutils.NewMockComponent(ctrl)

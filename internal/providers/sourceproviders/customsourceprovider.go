@@ -106,6 +106,7 @@ func generateCustomSourceFile(
 	// download upstream tarballs or toolchain artifacts.
 	runner := baseRunner.Clone()
 	runner.EnableNetwork()
+	runner.WithUnprivileged()
 	runner.AddBindMount(scriptTmpDir, customGenScriptDir)
 	runner.AddBindMount(genOutputTmpDir, customGenOutputDir)
 

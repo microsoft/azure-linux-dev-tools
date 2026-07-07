@@ -352,20 +352,6 @@ origin.script        = "gen-yara-stripped.sh"    # relative to the component's s
 origin.mock-packages = ["cmake"]                 # omit if not needed
 ```
 
-To replace an existing upstream `sources` entry with the generated file, add `replace-upstream = true`:
-
-```toml
-[[components.yara.source-files]]
-filename         = "yara-4.5.4.tar.gz"   # matches the upstream entry
-replace-upstream = true
-replace-reason   = "Strip malware samples from test corpus (CVE hygiene)"
-hash-type        = "SHA512"
-hash             = "abc123..."
-[components.yara.source-files.origin]
-type   = "custom"
-script = "gen-yara-stripped.sh"
-```
-
 ### Replacing an upstream `sources` entry
 
 A `source-files` entry whose `filename` collides with an upstream `sources` entry is an error by default. Set `replace-upstream = true` (with a non-empty `replace-reason`) to intentionally substitute it:
