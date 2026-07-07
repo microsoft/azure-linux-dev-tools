@@ -163,7 +163,9 @@ When a single logical change (a CVE backport, a feature disablement, a Fedora ch
 
 Set `overlay-files` on the component to one or more globs (relative to the component config) and drop one overlay file per logical change into a directory of your choosing. The conventional layout uses a sibling `overlays/` directory and a `*.overlay.toml` filename suffix, but neither is required — `overlay-files` is just a glob, so any layout you can describe with `**`/`*` patterns works.
 
-`overlay-files` can also be inherited from `default-component-config` at the project, distro, or component-group level. Inherited relative patterns are still resolved for each concrete component: from its component config file when it has one, or from the matched spec file's directory when it is discovered by a component group's `specs` pattern. This makes defaults useful for component-local discovery patterns such as `overlay-files = ["overlays/*.overlay.toml"]`. If a component sets `overlay-files`, that value replaces the inherited list; use `overlay-files = []` to disable inherited overlay files for a component, or include both patterns explicitly when you want to keep default discovery and add component-specific locations.
+`overlay-files` on `[components.X]` is a plain glob resolved relative to the component's config file. `overlay-files` can also be set on the project-level `default-component-config`, where **every entry must contain the `{component}` placeholder** (see [Discovering components by pattern](#discovering-components-by-pattern-component-in-overlay-files) below). A component that doesn't declare its own `overlay-files` inherits the project pattern with `{component}` substituted for its own name; use `overlay-files = []` at component scope to disable the inherited list, or set your own list to replace it wholesale.
+
+`overlay-files` is only settable at project scope (the top-level `default-component-config`) or at component scope (`[components.X]`). Setting it inside a distro-version or component-group `default-component-config` is rejected at load time — even an empty list (`overlay-files = []`).
 
 ```
 base/comps/mypackage/
@@ -209,6 +211,60 @@ type = "spec-append-lines"
 section = "%changelog"
 lines = ["- Fix CVE-2024-1234"]
 ```
+
+### Discovering components by pattern (`{component}` in `overlay-files`)
+
+For projects that keep each component's overlay files in a predictable per-component directory (e.g. `base/comps/<name>/overlays/*.overlay.toml`), you can skip declaring a one-line `[components.<name>]` table for every component. Set `overlay-files` on the **project-level** `default-component-config` to a pattern containing `{component}`, and every match becomes an implicit component.
+
+Project-scope `overlay-files` entries **must** contain `{component}` exactly once, as a whole path segment, and **must** have at least one more path segment after it (the placeholder names a component directory, not a file). Additional constraints enforced at load time:
+
+* Use `/` as the path separator (backslashes are rejected, even on Windows).
+* No glob metacharacters (`*`, `?`, `[`) before `{component}` — the prefix is a literal used to capture the component name.
+* The rest of the entry (after `{component}/`) must be a valid `doublestar` glob (validated with `doublestar.ValidatePattern`).
+* The captured segment must be a safe component name (no spaces, no path traversal, no absolute paths); matches with unsafe names are skipped with a `slog.Debug` entry.
+
+For each entry, `{component}` is expanded to `*` for globbing, and the captured path segment becomes the discovered component's name. The matched files are attached to that component (as if it had declared `overlay-files = [<matched paths>]` explicitly). Explicit components with no `overlay-files` of their own inherit the same pattern and re-expand it with their own name substituted for `{component}`.
+
+```toml
+# components.toml (project-level)
+[default-component-config]
+overlay-files = ["base/comps/{component}/overlays/*.overlay.toml"]
+```
+
+With the layout below, no per-component `[components.<name>]` table is needed — `openssl` and `curl` are discovered automatically, each carrying its overlay files.
+
+```
+base/comps/
+├── openssl/
+│   └── overlays/
+│       ├── 0001-cve-2024-1234.overlay.toml
+│       └── 0002-disable-fips-tests.overlay.toml
+└── curl/
+    └── overlays/
+        └── 0001-cve-2024-5678.overlay.toml
+```
+
+**Where `{component}` is allowed.** Only in **project-level** `default-component-config`. At every project-level `overlay-files` entry the placeholder is *required* — plain globs at that scope are rejected because they would apply the same files to every component in the project, which is almost never what you want. At component scope, `overlay-files` entries are plain globs relative to the declaring config file; `{component}` is rejected there. `overlay-files` cannot be set at all in distro-version or component-group `default-component-config` — those broad-scope defaults would silently displace project-level discovery.
+
+**Inheritance with `{component}`.** A project-level `overlay-files` entry containing `{component}` serves two purposes at once:
+
+1. **Discovery.** Every captured directory becomes an implicit component unless there is already an explicit `[components.<name>]` table with the same name.
+2. **Inheritance.** An explicitly-declared component that does not override `overlay-files` inherits the project entry and expands `{component}` with its own name at glob time.
+
+A component that sets its own `overlay-files = [...]` replaces the inherited value; the placeholder pattern no longer applies to that component. Setting `overlay-files = []` disables inheritance entirely for that component.
+
+**Same-scope collisions are a hard error.** If two project-scope `overlay-files` entries both produce the same component name, the resolver fails with a diagnostic listing both entries. Restrict one of the entries or rename one of the directories.
+
+**Shadowing.** An explicit `[components.<name>]` declaration supersedes pattern discovery for the same name. If that declaration also sets a non-empty `overlay-files` list (which replaces inheritance with a different set of files), `azldev` emits an `slog.Warn` naming the shadowed pattern so you can spot the genuine displacement. An explicit declaration that leaves `overlay-files` unset still inherits the project pattern, so the discovered files apply and no warning is emitted. An explicit empty list (`overlay-files = []`) is the documented off-switch for a component and is not treated as shadowing.
+
+**Limitation: explicit component-group members need a `[components.<name>]` table.** A component group can enumerate its members two ways: via a `specs` glob (spec files on disk) or via an explicit `components = ["<name>", ...]` list. Only the *explicit list* interacts with pattern discovery: every name in that list must have a matching `[components.<name>]` table in the project (validated at load time, error `ErrUndefinedComponent`). Even a one-liner is enough:
+
+```toml
+# base/comps/openssl/openssl.comp.toml
+[components.openssl]
+```
+
+Once the table exists, the component inherits the project-level `{component}` overlay pattern normally. Group members discovered via `specs` (not the explicit list) do **not** need a `.comp.toml` — the resolver synthesizes an empty config for them and inheritance still applies.
 
 ## Examples
 
