@@ -234,30 +234,30 @@ func validateReplaceUpstream(ref SourceFileReference, componentName string) erro
 //   - 'mock-packages' must be empty when 'origin.type' is not 'custom'.
 func validateCustomSourceRef(ref SourceFileReference, componentName string) error {
 	if ref.Origin.Type == OriginTypeCustom {
-		if ref.Script == "" {
+		if ref.Origin.Script == "" {
 			return fmt.Errorf(
 				"source file %#q in component %#q has 'custom' origin but no 'script'; "+
 					"a non-empty 'script' filename is required for 'custom' origin",
 				ref.Filename, componentName)
 		}
 
-		if err := fileutils.ValidateFilename(ref.Script); err != nil {
+		if err := fileutils.ValidateFilename(ref.Origin.Script); err != nil {
 			return fmt.Errorf(
 				"invalid 'script' value %#q for source file %#q in component %#q:\n%w",
-				ref.Script, ref.Filename, componentName, err)
+				ref.Origin.Script, ref.Filename, componentName, err)
 		}
 
 		return nil
 	}
 
-	if ref.Script != "" {
+	if ref.Origin.Script != "" {
 		return fmt.Errorf(
 			"source file %#q in component %#q has 'script' set but origin type is %#q; "+
 				"'script' is only valid when origin type is 'custom'",
 			ref.Filename, componentName, string(ref.Origin.Type))
 	}
 
-	if len(ref.MockPackages) > 0 {
+	if len(ref.Origin.MockPackages) > 0 {
 		return fmt.Errorf(
 			"source file %#q in component %#q has 'mock-packages' set but origin type is %#q; "+
 				"'mock-packages' is only valid when origin type is 'custom'",

@@ -310,8 +310,6 @@ The `[[components.<name>.source-files]]` array defines additional source files t
 | Hash | `hash` | string | Conditional | Expected hash. Required unless `--allow-no-hashes` is passed to `prep-sources` (which computes and prints the hash). |
 | Hash type | `hash-type` | string | Conditional | Hash algorithm (`"SHA256"`, `"SHA512"`). Required with `hash`; defaults to `"SHA512"` when auto-computed. |
 | Origin | `origin` | [Origin](#origin) | **Yes** | How to obtain the file |
-| Script | `script` | string | Conditional | Script filename (relative to the component's spec dir) to run in mock. **Required** for `origin.type = "custom"`; must be empty otherwise. |
-| Mock packages | `mock-packages` | array of string | No | Extra RPM packages to install in the mock chroot before the script runs. Only valid for `"custom"` origin. |
 | Replace upstream | `replace-upstream` | bool | No | Replace the same-named entry in the upstream `sources` file. The upstream entry must exist. Requires `replace-reason`. |
 | Replace reason | `replace-reason` | string | Conditional | Required when `replace-upstream = true`. Logged by `prep-sources` for auditability. |
 
@@ -337,16 +335,24 @@ Use `origin.type = "custom"` when a source archive must be assembled or modified
 
 The script must write its output to `/azldev-gen/output/`. azldev bind-mounts the script read-only at `/azldev-gen/script/<name>` and the output directory read-write at `/azldev-gen/output/`, then packages the result. Network access is always enabled so scripts can download upstream tarballs. The mock config comes from the project's default distro — no extra config is needed beyond the existing `mock-config` setting.
 
+The `script` and `mock-packages` fields are nested under `[origin]`:
+
+| Field | TOML Key | Type | Required | Description |
+|-------|----------|------|----------|-------------|
+| Script | `origin.script` | string | **Yes** | Script filename (relative to the component's spec dir) to run in mock. Required for `origin.type = "custom"`. |
+| Mock packages | `origin.mock-packages` | array of string | No | Extra RPM packages to install in the mock chroot before the script runs. |
+
 On first use, omit `hash` and run `prep-sources --allow-no-hashes` to generate the archive and print its hash, then copy it into the TOML.
 
 ```toml
 [[components.yara.source-files]]
-filename      = "yara-4.5.4-azl-stripped.tar.gz"
-origin        = { type = "custom" }
+filename  = "yara-4.5.4-azl-stripped.tar.gz"
+hash-type = "SHA512"
+hash      = "abc123..."               # from: prep-sources --allow-no-hashes
+[components.yara.source-files.origin]
+type          = "custom"
 script        = "gen-yara-stripped.sh"    # relative to the component's spec directory
 mock-packages = ["cmake"]                 # omit if not needed
-hash-type     = "SHA512"
-hash          = "abc123..."               # from: prep-sources --allow-no-hashes
 ```
 
 To replace an existing upstream `sources` entry with the generated file, add `replace-upstream = true`:
@@ -354,12 +360,13 @@ To replace an existing upstream `sources` entry with the generated file, add `re
 ```toml
 [[components.yara.source-files]]
 filename         = "yara-4.5.4.tar.gz"   # matches the upstream entry
-origin           = { type = "custom" }
-script           = "gen-yara-stripped.sh"
 replace-upstream = true
 replace-reason   = "Strip malware samples from test corpus (CVE hygiene)"
 hash-type        = "SHA512"
 hash             = "abc123..."
+[components.yara.source-files.origin]
+type   = "custom"
+script = "gen-yara-stripped.sh"
 ```
 
 ### Replacing an upstream `sources` entry

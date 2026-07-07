@@ -69,7 +69,7 @@ func generateCustomSourceFile(
 ) error {
 	slog.Info("Generating custom source file",
 		"filename", ref.Filename,
-		"script", ref.Script,
+		"script", ref.Origin.Script,
 		"component", component.GetName())
 
 	specDir, err := resolveComponentSpecDir(component)
@@ -79,14 +79,14 @@ func generateCustomSourceFile(
 	}
 
 	// Verify the generation script is present before spinning up a mock chroot.
-	scriptHostPath := filepath.Join(specDir, ref.Script)
+	scriptHostPath := filepath.Join(specDir, ref.Origin.Script)
 
 	if _, statErr := fs.Stat(scriptHostPath); statErr != nil {
 		return fmt.Errorf("generation script %#q not found at %#q:\n%w",
-			ref.Script, scriptHostPath, statErr)
+			ref.Origin.Script, scriptHostPath, statErr)
 	}
 
-	scriptTmpDir, genOutputTmpDir, cleanup, err := prepareStagingDirs(fs, scriptHostPath, ref.Script)
+	scriptTmpDir, genOutputTmpDir, cleanup, err := prepareStagingDirs(fs, scriptHostPath, ref.Origin.Script)
 	if err != nil {
 		return err
 	}
@@ -227,16 +227,16 @@ func execScriptInChroot(
 		}
 	}()
 
-	if len(ref.MockPackages) > 0 {
-		if installErr := runner.InstallPackages(ctx, ref.MockPackages); installErr != nil {
+	if len(ref.Origin.MockPackages) > 0 {
+		if installErr := runner.InstallPackages(ctx, ref.Origin.MockPackages); installErr != nil {
 			return fmt.Errorf("failed to install mock packages for generating %#q:\n%w",
 				ref.Filename, installErr)
 		}
 	}
 
-	scriptChrootPath := filepath.Join(customGenScriptDir, ref.Script)
+	scriptChrootPath := filepath.Join(customGenScriptDir, ref.Origin.Script)
 
-	cmd, cmdErr := runner.CmdInChroot(ctx, []string{scriptChrootPath}, false /* interactive */, true /* pipeOutput */)
+	cmd, cmdErr := runner.CmdInChroot(ctx, []string{scriptChrootPath}, false /* interactive */, false /* pipeOutput */)
 	if cmdErr != nil {
 		return fmt.Errorf("failed to create chroot command for generating %#q:\n%w",
 			ref.Filename, cmdErr)
@@ -244,7 +244,7 @@ func execScriptInChroot(
 
 	if runErr := cmd.Run(ctx); runErr != nil {
 		return fmt.Errorf("generation script %#q failed for source %#q:\n%w",
-			ref.Script, ref.Filename, runErr)
+			ref.Origin.Script, ref.Filename, runErr)
 	}
 
 	return nil

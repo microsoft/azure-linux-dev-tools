@@ -86,6 +86,7 @@ func TestCustomizationCollectorsCoverEveryFingerprintableField(t *testing.T) {
 		reflect.TypeFor[projectconfig.ReleaseConfig](),
 		reflect.TypeFor[projectconfig.ComponentRenderConfig](),
 		reflect.TypeFor[projectconfig.SourceFileReference](),
+		reflect.TypeFor[projectconfig.Origin](),
 	}
 
 	// Maps "StructName.FieldName" -> short note describing how the field
@@ -133,13 +134,18 @@ func TestCustomizationCollectorsCoverEveryFingerprintableField(t *testing.T) {
 		// their own Kind. Hash/HashType are deliberately NOT emitted as output:
 		// the file's *presence* is the customization signal, and a checksum-only
 		// change is still caught by toml-commits / fingerprint-changes.
-		// Script and MockPackages are emitted when set (custom-origin source files).
+		// Origin is walked as its own struct (see below); its Script and
+		// MockPackages fields are emitted when set (custom-origin source files).
 		"SourceFileReference.Filename":        "source-files",
 		"SourceFileReference.Hash":            "not emitted (checksum change caught via toml-commits/fingerprint)",
 		"SourceFileReference.HashType":        "not emitted (ditto Hash)",
 		"SourceFileReference.ReplaceUpstream": "source-files.replace-upstream",
-		"SourceFileReference.Script":          "source-files.script",
-		"SourceFileReference.MockPackages":    "source-files.mock-packages",
+		"SourceFileReference.Origin":          "delegates to Origin walk",
+
+		// Origin -- Script and MockPackages are fingerprint-relevant; Type and Uri
+		// are tagged fingerprint:"-" (download location, not build input).
+		"Origin.Script":       "source-files.script",
+		"Origin.MockPackages": "source-files.mock-packages",
 	}
 
 	actualFields := make(map[string]bool)

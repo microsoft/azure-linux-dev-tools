@@ -54,8 +54,10 @@ func TestCustomFileSourceProvider_GetFile_MissingScriptReturnsError(t *testing.T
 
 	ref := projectconfig.SourceFileReference{
 		Filename: "gen.tar.gz",
-		Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeCustom},
-		Script:   "gen.sh",
+		Origin: projectconfig.Origin{
+			Type:   projectconfig.OriginTypeCustom,
+			Script: "gen.sh",
+		},
 	}
 
 	err := provider.GetFile(context.Background(), comp, ref, "/output")

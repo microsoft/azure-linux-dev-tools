@@ -54,9 +54,32 @@ const (
 // When omitted from a source file reference, the file will be resolved via the lookaside cache.
 type Origin struct {
 	// Type indicates how the source file should be acquired.
-	Type OriginType `toml:"type" json:"type" jsonschema:"required,enum=download,enum=custom,title=Origin type,description=Type of origin for this source file"`
+	Type OriginType `toml:"type" json:"type" jsonschema:"required,enum=download,enum=custom,title=Origin type,description=Type of origin for this source file" fingerprint:"-"`
 	// Uri to download the source file from if origin type is 'download'. Ignored for other origin types.
-	Uri string `toml:"uri,omitempty" json:"uri,omitempty" jsonschema:"title=URI,description=URI to download the source file from if origin type is 'download',example=https://example.com/source.tar.gz"`
+	Uri string `toml:"uri,omitempty" json:"uri,omitempty" jsonschema:"title=URI,description=URI to download the source file from if origin type is 'download',example=https://example.com/source.tar.gz" fingerprint:"-"`
+
+	// Script is the filename of a shell script, relative to the component's spec directory,
+	// that is run inside a mock chroot to generate this source file.
+	// Required when [Origin.Type] is 'custom'; must be empty otherwise.
+	Script string `toml:"script,omitempty" json:"script,omitempty" jsonschema:"title=Script,description=Shell script filename (relative to the component spec directory) to run in mock to generate this source file. Required when origin type is 'custom'."`
+
+	// MockPackages is a list of RPM package names to install in the mock chroot before
+	// running [Origin.Script]. Only valid when [Origin.Type] is 'custom'.
+	MockPackages []string `toml:"mock-packages,omitempty" json:"mockPackages,omitempty" jsonschema:"title=Mock packages,description=RPM packages to install in the mock chroot before running the generation script. Only valid when origin type is 'custom'."`
+}
+
+// HashInclude implements the hashstructure [Includable] interface so that
+// [Origin.Script] and [Origin.MockPackages] are omitted from the component
+// fingerprint when they hold their zero values.
+func (o Origin) HashInclude(field string, _ any) (bool, error) {
+	switch field {
+	case "Script":
+		return o.Script != "", nil
+	case "MockPackages":
+		return len(o.MockPackages) > 0, nil
+	}
+
+	return true, nil
 }
 
 // SourceFileReference encapsulates a reference to a specific source file artifact.
@@ -74,7 +97,7 @@ type SourceFileReference struct {
 	HashType fileutils.HashType `toml:"hash-type,omitempty" json:"hashType,omitempty" jsonschema:"enum=SHA256,enum=SHA512,title=Hash type,description=Hash algorithm used for the hash value"`
 
 	// Origin for this source file. When omitted, the file is resolved via the lookaside cache.
-	Origin Origin `toml:"origin,omitempty" json:"origin,omitempty" fingerprint:"-"`
+	Origin Origin `toml:"origin,omitempty" json:"origin,omitempty"`
 
 	// ReplaceUpstream, when true, intentionally replaces an upstream entry with the same
 	// [SourceFileReference.Filename] in the dist-git 'sources' file. The matching upstream
@@ -87,27 +110,14 @@ type SourceFileReference struct {
 	// being replaced. Required when [SourceFileReference.ReplaceUpstream] is true; must be
 	// empty otherwise. Excluded from the fingerprint because it is documentation only.
 	ReplaceReason string `toml:"replace-reason,omitempty" json:"replaceReason,omitempty" jsonschema:"title=Replace reason,description=Required when 'replace-upstream' is true. Human-readable explanation for the replacement." fingerprint:"-"`
-
-	// Script is the filename of a shell script, relative to the component's spec directory,
-	// that is run inside a mock chroot to generate this source file.
-	// Required when [SourceFileReference.Origin.Type] is 'custom'; must be empty otherwise.
-	Script string `toml:"script,omitempty" json:"script,omitempty" jsonschema:"title=Script,description=Shell script filename (relative to the component spec directory) to run in mock to generate this source file. Required when origin type is 'custom'."`
-
-	// MockPackages is a list of RPM package names to install in the mock chroot before
-	// running [SourceFileReference.Script]. Only valid when [SourceFileReference.Origin.Type]
-	// is 'custom'.
-	MockPackages []string `toml:"mock-packages,omitempty" json:"mockPackages,omitempty" jsonschema:"title=Mock packages,description=RPM packages to install in the mock chroot before running the generation script. Only valid when origin type is 'custom'."`
 }
 
 // HashInclude implements the hashstructure [Includable] interface so that
-// [SourceFileReference.Script] and [SourceFileReference.MockPackages] are omitted
-// from the component fingerprint when they hold their zero values.
+// [SourceFileReference.Origin] is omitted from the component fingerprint when
+// neither [Origin.Script] nor [Origin.MockPackages] are set.
 func (r SourceFileReference) HashInclude(field string, _ any) (bool, error) {
-	switch field {
-	case "Script":
-		return r.Script != "", nil
-	case "MockPackages":
-		return len(r.MockPackages) > 0, nil
+	if field == "Origin" {
+		return r.Origin.Script != "" || len(r.Origin.MockPackages) > 0, nil
 	}
 
 	return true, nil

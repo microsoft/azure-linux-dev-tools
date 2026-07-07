@@ -462,8 +462,10 @@ func TestValidateCustomSourceRef_ValidCustomOrigin(t *testing.T) {
 				SourceFiles: []projectconfig.SourceFileReference{
 					{
 						Filename: "gen.tar.gz",
-						Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeCustom},
-						Script:   "gen.sh",
+						Origin: projectconfig.Origin{
+							Type:   projectconfig.OriginTypeCustom,
+							Script: "gen.sh",
+						},
 					},
 				},
 			},
@@ -500,8 +502,11 @@ func TestValidateCustomSourceRef_ScriptOnDownloadOrigin(t *testing.T) {
 				SourceFiles: []projectconfig.SourceFileReference{
 					{
 						Filename: "src.tar.gz",
-						Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/src.tar.gz"},
-						Script:   "gen.sh",
+						Origin: projectconfig.Origin{
+							Type:   projectconfig.OriginTypeURI,
+							Uri:    "https://example.com/src.tar.gz",
+							Script: "gen.sh",
+						},
 					},
 				},
 			},
@@ -519,9 +524,12 @@ func TestValidateCustomSourceRef_MockPackagesOnDownloadOrigin(t *testing.T) {
 			"comp": {
 				SourceFiles: []projectconfig.SourceFileReference{
 					{
-						Filename:     "src.tar.gz",
-						Origin:       projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/src.tar.gz"},
-						MockPackages: []string{"curl"},
+						Filename: "src.tar.gz",
+						Origin: projectconfig.Origin{
+							Type:         projectconfig.OriginTypeURI,
+							Uri:          "https://example.com/src.tar.gz",
+							MockPackages: []string{"curl"},
+						},
 					},
 				},
 			},
@@ -541,10 +549,10 @@ func TestValidateCustomSourceRef_UriOnCustomOrigin(t *testing.T) {
 					{
 						Filename: "gen.tar.gz",
 						Origin: projectconfig.Origin{
-							Type: projectconfig.OriginTypeCustom,
-							Uri:  "https://example.com/should-not-be-here",
+							Type:   projectconfig.OriginTypeCustom,
+							Uri:    "https://example.com/should-not-be-here",
+							Script: "gen.sh",
 						},
-						Script: "gen.sh",
 					},
 				},
 			},
@@ -563,8 +571,10 @@ func TestValidateCustomSourceRef_InvalidScriptFilename(t *testing.T) {
 				SourceFiles: []projectconfig.SourceFileReference{
 					{
 						Filename: "gen.tar.gz",
-						Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeCustom},
-						Script:   "../../escape.sh", // path traversal attempt
+						Origin: projectconfig.Origin{
+							Type:   projectconfig.OriginTypeCustom,
+							Script: "../../escape.sh", // path traversal attempt
+						},
 					},
 				},
 			},

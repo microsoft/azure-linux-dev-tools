@@ -223,14 +223,14 @@ func appendSourceFileItems(
 			})
 		}
 
-		if sourceFile.Script != "" {
+		if sourceFile.Origin.Script != "" {
 			items = append(items, CustomizationItem{
 				Kind:  "source-files.script",
-				Value: sourceFile.Script,
+				Value: sourceFile.Origin.Script,
 			})
 		}
 
-		for _, pkg := range sourceFile.MockPackages {
+		for _, pkg := range sourceFile.Origin.MockPackages {
 			items = append(items, CustomizationItem{
 				Kind:  "source-files.mock-packages",
 				Value: pkg,
