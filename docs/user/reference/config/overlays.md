@@ -52,16 +52,15 @@ successfully makes a replacement to at least one matching file.
 ### Archive Overlays
 
 A `file-remove` or `file-search-replace` overlay can modify files **inside** a source archive
-instead of loose files in the sources tree. This is detected from the `file` path: when its first
-segment is a source archive (e.g. `pkg-1.0.tar.gz`) followed by an inner path, the overlay is
-scoped to that archive and the remainder is matched against its contents. The archive is extracted,
+instead of loose files in the sources tree by setting the `archive` field to the archive name
+and the `file` field to a glob matched against the extracted archive contents. The archive is extracted,
 the matching files are modified with the same machinery as loose-file overlays, and the archive is
 repacked with its original compression format.
 
 ```
-file = "pkg-1.0.tar.gz/vendor/**"   # inside the archive (glob = vendor/**)
-file = "vendor/**"                  # loose files in the sources tree
-file = "old.tar.gz"                 # removes the archive file itself (bare name, no inner path)
+archive = "pkg-1.0.tar.gz"
+file = "vendor/**"                   # loose files in the sources tree (no archive field)
+file = "old.tar.gz"                  # removes the archive file itself (bare name, no archive field)
 ```
 
 > **Note:** Archive overlays are batched per archive — all overlays targeting the same archive

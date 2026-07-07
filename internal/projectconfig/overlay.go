@@ -26,12 +26,12 @@ type ComponentOverlay struct {
 
 	// For overlays that apply to non-spec files, indicates the filename. For overlays that can
 	// apply to multiple files, supports glob patterns (including globstar).
-	Filename string `toml:"file,omitempty" json:"file,omitempty" jsonschema:"title=Filename,description=The name of the non-spec file to which this overlay applies, or a glob pattern matching multiple files"`
+	Filename string `toml:"file,omitempty" json:"file,omitempty" jsonschema:"title=Filename,description=The name of the non-spec file to which this overlay applies. May be a glob pattern matching multiple files"`
 	// For archive-scoped overlays (file-remove and file-search-replace), the name of the source
 	// archive to extract, modify, and repack (e.g. "pkg-1.0.tar.gz"). When set, [ComponentOverlay.Filename]
 	// is interpreted as a glob relative to the archive's extraction root rather than a loose
 	// file in the sources tree.
-	Archive string `toml:"archive,omitempty" json:"archive,omitempty" jsonschema:"title=Archive,description=For archive-scoped overlays, the source archive to extract and repack (e.g. pkg-1.0.tar.gz). When set, the 'file' field is a glob relative to the archive's extraction root"`
+	Archive string `toml:"archive,omitempty" json:"archive,omitempty" jsonschema:"title=Archive,description=For archive-scoped overlays: the source archive to extract and repack (e.g. pkg-1.0.tar.gz). When set the 'file' field is a glob relative to the archive extraction root"`
 	// For overlays that apply to specs, indicates the name of the section to which it applies.
 	// Optional for spec-prepend-lines, spec-append-lines, and spec-search-replace: when omitted,
 	// the overlay targets the entire spec file (prepend at top, append at end, search-replace
@@ -292,30 +292,39 @@ func (c *ComponentOverlay) Validate() error {
 	return nil
 }
 
+func (c *ComponentOverlay) validateArchiveField(desc string) error {
+	if c.Archive == "" {
+		return nil
+	}
+
+	if !archive.IsArchiveName(c.Archive) {
+		return fmt.Errorf(
+			"overlay 'archive' field %#q is not a recognized archive name: %s",
+			c.Archive, desc,
+		)
+	}
+
+	if err := fileutils.ValidateFilename(c.Archive); err != nil {
+		return fmt.Errorf("unsafe overlay 'archive' field %#q: %s:\n%w", c.Archive, desc, err)
+	}
+
+	if !c.SupportsArchiveScope() {
+		return fmt.Errorf(
+			"overlay type %#q does not support archive-scoped file paths: %s",
+			c.Type, desc,
+		)
+	}
+
+	if c.Filename == "" {
+		return fmt.Errorf("overlay type %#q requires %#q field: %s", c.Type, "file", desc)
+	}
+
+	return nil
+}
+
 func (c *ComponentOverlay) validateRequiredFields(desc string) error {
-	// Validate the 'archive' field when present.
-	if c.Archive != "" {
-		if !archive.IsArchiveName(c.Archive) {
-			return fmt.Errorf(
-				"overlay 'archive' field %#q is not a recognized archive name: %s",
-				c.Archive, desc,
-			)
-		}
-
-		if err := fileutils.ValidateFilename(c.Archive); err != nil {
-			return fmt.Errorf("unsafe overlay 'archive' field %#q: %s:\n%w", c.Archive, desc, err)
-		}
-
-		if !c.SupportsArchiveScope() {
-			return fmt.Errorf(
-				"overlay type %#q does not support archive-scoped file paths: %s",
-				c.Type, desc,
-			)
-		}
-
-		if c.Filename == "" {
-			return fmt.Errorf("overlay type %#q requires %#q field: %s", c.Type, "file", desc)
-		}
+	if err := c.validateArchiveField(desc); err != nil {
+		return err
 	}
 
 	switch c.Type {

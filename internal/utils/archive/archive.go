@@ -146,6 +146,10 @@ func Extract(archivePath, destDir string, comp Compression, opts ...ExtractOptio
 		opt(&cfg)
 	}
 
+	if comp < CompressionNone || comp > CompressionZstd {
+		return fmt.Errorf("unsupported compression type %d", comp)
+	}
+
 	if err := os.MkdirAll(destDir, fileperms.PublicDir); err != nil {
 		return fmt.Errorf("creating destination %#q:\n%w", destDir, err)
 	}
