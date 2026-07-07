@@ -11,6 +11,11 @@
 // are not policed by [os.Root]; this package additionally rejects any symlink
 // whose target is non-local via [filepath.IsLocal].
 //
+// Only regular files, directories, and symlinks are extracted. Other entry
+// types (hardlinks, devices, FIFOs, etc.) are skipped by default, or cause a
+// failure when [WithErrorOnUnsupportedEntry] is set — callers that repack the
+// tree must set it so such entries aren't silently dropped.
+//
 // Archive creation is designed for reproducible builds: file ordering is
 // lexicographic, timestamps are pinned to Unix epoch, and owner/group metadata
 // is zeroed out. This matches the
@@ -20,6 +25,8 @@ package archive
 
 import (
 	"archive/tar"
+	"bufio"
+	"bytes"
 	"compress/gzip"
 	"errors"
 	"fmt"
@@ -50,6 +57,11 @@ const (
 	CompressionZstd
 )
 
+// compressionMagicLen is the number of leading bytes [sniffCompression] needs
+// to recognize every supported compressed format (xz has the longest, 6-byte,
+// signature).
+const compressionMagicLen = 6
+
 // maxEntryBytes caps the decompressed size of any single regular-file entry
 // extracted by [Extract]. This prevents a decompression-bomb archive from
 // filling the destination filesystem. 10 GiB is well above any reasonable
@@ -79,13 +91,65 @@ func DetectCompression(filename string) (Compression, error) {
 	}
 }
 
+// IsArchiveName reports whether filename has a recognized archive extension.
+// It is a convenience predicate over [DetectCompression] for classifying a path
+// as an archive without needing the specific compression type.
+func IsArchiveName(filename string) bool {
+	_, err := DetectCompression(filename)
+
+	return err == nil
+}
+
+// ExtractAuto is a convenience wrapper that infers the compression from
+// archivePath's extension via [DetectCompression] and then calls [Extract].
+// Most callers should prefer this over the explicit-compression [Extract],
+// which exists for cases where the compression cannot be derived from the
+// filename.
+func ExtractAuto(archivePath, destDir string, opts ...ExtractOption) error {
+	comp, err := DetectCompression(archivePath)
+	if err != nil {
+		return fmt.Errorf("detecting compression for %#q:\n%w", archivePath, err)
+	}
+
+	return Extract(archivePath, destDir, comp, opts...)
+}
+
+// ExtractOption configures the behavior of [Extract] and [ExtractAuto].
+type ExtractOption func(*extractConfig)
+
+// extractConfig holds the resolved options for an extraction.
+type extractConfig struct {
+	errorOnUnsupportedEntry bool
+}
+
+// WithErrorOnUnsupportedEntry makes [Extract] fail on tar entries it cannot
+// materialize (anything but a regular file, directory, or symlink). Without it
+// such entries are skipped; callers that repack the tree should set it so the
+// entries aren't silently dropped from the rebuilt archive.
+func WithErrorOnUnsupportedEntry() ExtractOption {
+	return func(c *extractConfig) {
+		c.errorOnUnsupportedEntry = true
+	}
+}
+
 // Extract reads a tar archive, decompresses it, and extracts all entries into
-// destDir. Supported entry types are regular files, directories, and symlinks;
-// other entry types are skipped. Entry paths are confined to destDir via
-// [os.Root]: any path that would escape destDir is rejected by the runtime.
-// Symlink targets are validated separately by this package — see the package
-// doc for details.
-func Extract(archivePath, destDir string, comp Compression) (err error) {
+// destDir. Entry paths are confined to destDir via [os.Root]: any path that
+// would escape destDir is rejected by the runtime. Symlink targets are
+// validated separately by this package — see the package doc for details.
+//
+// Only regular files, directories, and symlinks are supported. Other entry
+// types are skipped by default, or fail when [WithErrorOnUnsupportedEntry] is
+// set (required by callers that repack the tree).
+func Extract(archivePath, destDir string, comp Compression, opts ...ExtractOption) (err error) {
+	var cfg extractConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
+	if comp < CompressionNone || comp > CompressionZstd {
+		return fmt.Errorf("unsupported compression type %d", comp)
+	}
+
 	if err := os.MkdirAll(destDir, fileperms.PublicDir); err != nil {
 		return fmt.Errorf("creating destination %#q:\n%w", destDir, err)
 	}
@@ -102,7 +166,13 @@ func Extract(archivePath, destDir string, comp Compression) (err error) {
 	}
 	defer defers.HandleDeferError(file.Close, &err)
 
-	decompressed, closer, err := newDecompressor(file, comp)
+	// Prefer the actual compression detected from the leading magic bytes over
+	// the caller-supplied (extension-derived) value: upstream archives are
+	// sometimes mislabeled, e.g. an uncompressed tar published as ".txz".
+	bufReader := bufio.NewReader(file)
+	magic, _ := bufReader.Peek(compressionMagicLen)
+
+	decompressed, closer, err := newDecompressor(bufReader, sniffCompression(magic, comp))
 	if err != nil {
 		return err
 	}
@@ -123,10 +193,55 @@ func Extract(archivePath, destDir string, comp Compression) (err error) {
 			return fmt.Errorf("reading tar entry from %#q:\n%w", archivePath, readErr)
 		}
 
-		if err := extractEntry(root, header, tarReader); err != nil {
+		if err := extractEntry(root, header, tarReader, cfg); err != nil {
 			return fmt.Errorf("extracting %#q from %#q:\n%w", header.Name, archivePath, err)
 		}
 	}
+}
+
+// sniffCompression returns the compression format implied by the leading magic
+// bytes, falling back to fallback when no known signature matches (an
+// uncompressed tar carries no leading magic). All supported compressed formats
+// have a fixed-position header, so this is authoritative over the filename
+// extension.
+func sniffCompression(magic []byte, fallback Compression) Compression {
+	switch {
+	case bytes.HasPrefix(magic, []byte{0xFD, '7', 'z', 'X', 'Z', 0x00}):
+		return CompressionXZ
+	case bytes.HasPrefix(magic, []byte{0x1F, 0x8B}):
+		return CompressionGzip
+	case bytes.HasPrefix(magic, []byte{0x28, 0xB5, 0x2F, 0xFD}):
+		return CompressionZstd
+	case len(magic) == 0:
+		// Unreadable/empty peek: defer to the extension-derived hint.
+		return fallback
+	default:
+		// No compression signature: an uncompressed tar (whatever the
+		// extension claims). A real tar's "ustar" magic sits at byte 257.
+		return CompressionNone
+	}
+}
+
+// SniffCompressionFromFile determines an existing archive's compression by
+// inspecting its leading magic bytes — authoritative over the filename
+// extension.
+func SniffCompressionFromFile(archivePath string, fallback Compression) (comp Compression, err error) {
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return fallback, fmt.Errorf("opening %#q for compression sniffing:\n%w", archivePath, err)
+	}
+	defer defers.HandleDeferError(file.Close, &err)
+
+	magic := make([]byte, compressionMagicLen)
+
+	bytesRead, readErr := io.ReadFull(file, magic)
+	// Short files are fine — a tiny tar may be under compressionMagicLen bytes.
+	// Only a genuine read error (not EOF/short read) is fatal.
+	if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
+		return fallback, fmt.Errorf("reading %#q header:\n%w", archivePath, readErr)
+	}
+
+	return sniffCompression(magic[:bytesRead], fallback), nil
 }
 
 // newDecompressor wraps reader in the chosen decompressor. For
@@ -235,8 +350,12 @@ func deterministicEpoch() time.Time {
 	return time.Unix(0, 0).UTC()
 }
 
-func extractEntry(root *os.Root, header *tar.Header, tarReader io.Reader) error {
+func extractEntry(root *os.Root, header *tar.Header, tarReader io.Reader, cfg extractConfig) error {
 	name := header.Name
+
+	if header.Typeflag == tar.TypeXGlobalHeader || header.Typeflag == tar.TypeXHeader {
+		return nil
+	}
 
 	if header.Typeflag == tar.TypeDir {
 		if err := root.MkdirAll(name, fileperms.PublicDir); err != nil {
@@ -272,6 +391,14 @@ func extractEntry(root *os.Root, header *tar.Header, tarReader io.Reader) error 
 	case tar.TypeReg:
 		return extractRegularFile(root, header, tarReader)
 	default:
+		// Unsupported entry type (hardlink, device, FIFO, ...): fail when the
+		// caller is strict (repacking would drop it), otherwise skip and log.
+		if cfg.errorOnUnsupportedEntry {
+			return fmt.Errorf(
+				"tar entry %#q has unsupported type (typeflag %d); only regular files, directories, and symlinks are supported",
+				name, header.Typeflag)
+		}
+
 		slog.Debug("Skipping unsupported tar entry type", "name", name, "typeflag", header.Typeflag)
 
 		return nil
