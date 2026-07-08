@@ -2,8 +2,12 @@ FROM mcr.microsoft.com/azurelinux/base/core:3.0
 
 # Install required packages
 RUN tdnf -y update && \
-    tdnf -y install ca-certificates dnf dnf-utils which gh git golang gawk tar shadow-utils sudo tree bash-completion moby-engine moby-cli build-essential && \
+    tdnf -y install ca-certificates dnf dnf-utils which gh git golang gawk tar shadow-utils sudo tree bash-completion moby-engine moby-cli build-essential python3-pip nodejs && \
     tdnf clean all
+
+# Install ruff and pyright for Python linting/formatting/type-checking
+# (used by 'mage check python' / 'mage fix python'). pyright requires node (installed above).
+RUN pip3 install --no-cache-dir ruff pyright
 
 # Define the 'll' alias for all users
 RUN echo 'alias ll="ls -lah"' >> /etc/profile.d/aliases.sh && \

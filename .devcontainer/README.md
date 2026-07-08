@@ -9,6 +9,7 @@ The dev container uses the `azl_dev_3.0` image defined in `Dockerfile.AZL-3.0`. 
 - Go development tools,
 - Mage build system,
 - golangci-lint,
+- ruff and pyright (plus Node.js, required by pyright) for Python linting/formatting/type-checking,
 - required development dependencies for VS Code.
 
 ## Getting Started
@@ -47,6 +48,9 @@ The dev container automatically installs these VS Code extensions:
 - JSON Language Features - JSON editing support
 - markdownlint - Markdown linting
 - YAML Language Support - YAML editing support
+- Ruff (charliermarsh.ruff) - Python linting/formatting
+- Pylance (ms-python.vscode-pylance) - Python type checking
+- EditorConfig (editorconfig.editorconfig) - EditorConfig support
 
 ## Customization
 
