@@ -390,6 +390,10 @@ func validateSourceFiles(sourceFiles []SourceFileReference, componentName string
 			return err
 		}
 
+		if err := validateCustomSourceRef(ref, componentName); err != nil {
+			return err
+		}
+
 		if err := validateOrigin(ref.Origin, ref.Filename, componentName); err != nil {
 			return err
 		}
@@ -419,6 +423,46 @@ func validateReplaceUpstream(ref SourceFileReference, componentName string) erro
 			"source file %#q in component %#q has 'replace-reason' set but 'replace-upstream' is not true; "+
 				"'replace-reason' is only valid when 'replace-upstream = true'",
 			ref.Filename, componentName)
+	}
+
+	return nil
+}
+
+// validateCustomSourceRef enforces the pairing rules for the 'script' and 'mock-packages'
+// fields on a [SourceFileReference]:
+//   - 'script' is required when 'origin.type' is 'custom'.
+//   - 'script' must be empty when 'origin.type' is not 'custom'.
+//   - 'mock-packages' must be empty when 'origin.type' is not 'custom'.
+func validateCustomSourceRef(ref SourceFileReference, componentName string) error {
+	if ref.Origin.Type == OriginTypeCustom {
+		if ref.Origin.Script == "" {
+			return fmt.Errorf(
+				"source file %#q in component %#q has 'custom' origin but no 'script'; "+
+					"a non-empty 'script' filename is required for 'custom' origin",
+				ref.Filename, componentName)
+		}
+
+		if err := fileutils.ValidateFilename(ref.Origin.Script); err != nil {
+			return fmt.Errorf(
+				"invalid 'script' value %#q for source file %#q in component %#q:\n%w",
+				ref.Origin.Script, ref.Filename, componentName, err)
+		}
+
+		return nil
+	}
+
+	if ref.Origin.Script != "" {
+		return fmt.Errorf(
+			"source file %#q in component %#q has 'script' set but origin type is %#q; "+
+				"'script' is only valid when origin type is 'custom'",
+			ref.Filename, componentName, string(ref.Origin.Type))
+	}
+
+	if len(ref.Origin.MockPackages) > 0 {
+		return fmt.Errorf(
+			"source file %#q in component %#q has 'mock-packages' set but origin type is %#q; "+
+				"'mock-packages' is only valid when origin type is 'custom'",
+			ref.Filename, componentName, string(ref.Origin.Type))
 	}
 
 	return nil
@@ -456,6 +500,17 @@ func validateOrigin(origin Origin, filename string, componentName string) error 
 					"URI %#q is missing a scheme (e.g. 'https://')",
 				filename, componentName, origin.Uri)
 		}
+
+	case OriginTypeCustom:
+		// Script validation is handled by validateCustomSourceRef on SourceFileReference.
+		// Reject 'uri' since it is meaningless for custom-generated sources.
+		if origin.Uri != "" {
+			return fmt.Errorf(
+				"source file %#q in component %#q has 'uri' set but origin type is 'custom'; "+
+					"'uri' is only valid when origin type is 'download'",
+				filename, componentName)
+		}
+
 	default:
 		return fmt.Errorf(
 			"unsupported 'origin' type %#q for source file %#q, component %#q",
