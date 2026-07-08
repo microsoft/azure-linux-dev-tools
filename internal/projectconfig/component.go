@@ -48,13 +48,26 @@ const (
 	// shell script inside a mock chroot. The script is expected to populate a specific
 	// output directory; azldev then packages that directory into a deterministic archive.
 	OriginTypeCustom OriginType = "custom"
+
+	// OriginTypeOverlay indicates that the source file's hash was changed by archive overlays.
+	// No download occurs; the file is already present as a spec source. The 'hash' and 'hash-type'
+	// fields record the expected post-overlay hash, which is injected into the 'sources' file
+	// during render (skip-lookaside) and validated against the computed hash during 'prep-sources'.
+	OriginTypeOverlay OriginType = "overlay"
 )
+
+// IsFetched reports whether [SourceManager.FetchFiles] downloads this origin type to disk.
+// Returns false for [OriginTypeOverlay], which obtains its file via the upstream lookaside
+// extractor in [SourceManager.FetchComponent]. All other types return true.
+func (t OriginType) IsFetched() bool {
+	return t != OriginTypeOverlay
+}
 
 // Origin describes where a source file comes from and how to retrieve it.
 // When omitted from a source file reference, the file will be resolved via the lookaside cache.
 type Origin struct {
 	// Type indicates how the source file should be acquired.
-	Type OriginType `toml:"type" json:"type" jsonschema:"required,enum=download,enum=custom,title=Origin type,description=Type of origin for this source file" fingerprint:"-"`
+	Type OriginType `toml:"type" json:"type" jsonschema:"required,enum=download,enum=custom,enum=overlay,title=Origin type,description=Type of origin for this source file" fingerprint:"-"`
 	// Uri to download the source file from if origin type is 'download'. Ignored for other origin types.
 	Uri string `toml:"uri,omitempty" json:"uri,omitempty" jsonschema:"title=URI,description=URI to download the source file from if origin type is 'download',example=https://example.com/source.tar.gz" fingerprint:"-"`
 

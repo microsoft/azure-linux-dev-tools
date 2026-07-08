@@ -15,6 +15,88 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/rootfs"
 )
 
+// applyArchiveOverlays groups archive overlays by target archive and processes
+// them in order. Multiple overlays targeting the same archive are batched into
+// a single extract/modify/repack cycle. File removals inside the archive reuse
+// the same machinery as loose-file overlays ([applyNonSpecOverlay]).
+//
+// It returns the names of the archives that were actually repacked. In dry-run
+// mode no archive is repacked, so the returned slice is empty even when archive
+// overlays were present.
+func applyArchiveOverlays(
+	dryRunnable opctx.DryRunnable,
+	eventListener opctx.EventListener,
+	sourcesDirPath string,
+	overlays []projectconfig.ComponentOverlay,
+) ([]string, error) {
+	groups := groupOverlaysByArchive(overlays)
+
+	if len(groups) == 0 {
+		return nil, nil
+	}
+
+	operationCount := 0
+	for _, group := range groups {
+		operationCount += len(group.overlays)
+	}
+
+	event := eventListener.StartEvent("Applying archive overlays",
+		"archives", len(groups),
+		"operations", operationCount,
+	)
+	defer event.End()
+
+	var repacked []string
+
+	for _, group := range groups {
+		didRepack, err := processArchive(dryRunnable, sourcesDirPath, group.archive, group.overlays)
+		if err != nil {
+			return nil, fmt.Errorf("archive overlay failed for %#q:\n%w", group.archive, err)
+		}
+
+		if didRepack {
+			repacked = append(repacked, group.archive)
+		}
+	}
+
+	return repacked, nil
+}
+
+// archiveGroup holds overlays targeting the same archive, preserving order.
+type archiveGroup struct {
+	archive  string
+	overlays []projectconfig.ComponentOverlay
+}
+
+// groupOverlaysByArchive groups archive overlays by [projectconfig.ComponentOverlay.Archive],
+// preserving insertion order within each group and across groups.
+// Non-archive overlays are silently skipped.
+func groupOverlaysByArchive(overlays []projectconfig.ComponentOverlay) []archiveGroup {
+	orderMap := make(map[string]int)
+
+	var groups []archiveGroup
+
+	for _, overlay := range overlays {
+		if !overlay.ModifiesArchive() {
+			continue
+		}
+
+		archiveName := overlay.Archive
+
+		idx, exists := orderMap[archiveName]
+		if !exists {
+			idx = len(groups)
+			orderMap[archiveName] = idx
+
+			groups = append(groups, archiveGroup{archive: archiveName})
+		}
+
+		groups[idx].overlays = append(groups[idx].overlays, overlay)
+	}
+
+	return groups
+}
+
 // processArchive extracts an archive to a temp directory, applies all overlays,
 // and deterministically repacks it with the original compression, atomically
 // replacing the original via a temp file + rename. It returns true when the

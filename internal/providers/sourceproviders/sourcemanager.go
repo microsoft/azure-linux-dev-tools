@@ -389,6 +389,26 @@ func (m *sourceManager) fetchSourceFile(
 
 	destPath := filepath.Join(destDirPath, fileRef.Filename)
 
+	// Overlay-origin entries declare the post-overlay hash of an archive that is already
+	// present as a spec source. No download is needed; the hash is used only to update
+	// the 'sources' file during render and to validate the output of 'prep-sources'.
+	if fileRef.Origin.Type == projectconfig.OriginTypeOverlay {
+		return nil
+	}
+
+	sourceExists, err := fileutils.Exists(m.fs, destPath)
+	if err != nil {
+		return fmt.Errorf("failed to check existence of destination file %#q:\n%w", destPath, err)
+	}
+
+	if sourceExists {
+		slog.Debug("Source file already exists, skipping download",
+			"filename", fileRef.Filename,
+			"path", destPath)
+
+		return nil
+	}
+
 	// Try the lookaside cache first for non-custom files if hash info is available.
 	// Custom files are always regenerated so stale configured hashes are detected.
 	if m.trySourceFileLookaside(ctx, httpDownloader, component, fileRef, destPath) {
@@ -397,25 +417,13 @@ func (m *sourceManager) fetchSourceFile(
 
 	// Try each registered file provider. Providers return [ErrNotFound] to signal
 	// they don't handle this reference; any other error is fatal.
-	for _, provider := range m.fileProviders {
-		err := provider.GetFile(ctx, component, *fileRef, destDirPath)
-		if err == nil {
-			// File providers are responsible for producing the file but not for
-			// hash validation. Validate here so all acquisition paths are covered.
-			if fileRef.Hash != "" && fileRef.HashType != "" {
-				hashErr := fileutils.ValidateFileHash(
-					m.dryRunnable, m.fs, fileRef.HashType, destPath, fileRef.Hash)
-				if hashErr != nil {
-					return fmt.Errorf("hash validation failed for %#q:\n%w", fileRef.Filename, hashErr)
-				}
-			}
+	handled, err := m.tryFileProviders(ctx, component, fileRef, destDirPath, destPath)
+	if err != nil {
+		return err
+	}
 
-			return nil
-		}
-
-		if !errors.Is(err, ErrNotFound) {
-			return fmt.Errorf("file provider failed for %#q:\n%w", fileRef.Filename, err)
-		}
+	if handled {
+		return nil
 	}
 
 	// Fall back to the configured origin (not allowed when disable-origins is set).
@@ -456,6 +464,39 @@ func (m *sourceManager) trySourceFileLookaside(
 		"error", lookasideErr)
 
 	return false
+}
+
+// tryFileProviders attempts each registered file provider in turn. It returns
+// handled=true when a provider produced (and, when hashes are configured,
+// validated) the file. A provider signalling [ErrNotFound] is skipped; any other
+// provider error is fatal.
+func (m *sourceManager) tryFileProviders(
+	ctx context.Context,
+	component components.Component,
+	fileRef *projectconfig.SourceFileReference,
+	destDirPath, destPath string,
+) (handled bool, err error) {
+	for _, provider := range m.fileProviders {
+		provErr := provider.GetFile(ctx, component, *fileRef, destDirPath)
+		if provErr == nil {
+			// File providers are responsible for producing the file but not for
+			// hash validation. Validate here so all acquisition paths are covered.
+			if fileRef.Hash != "" && fileRef.HashType != "" {
+				if hashErr := fileutils.ValidateFileHash(
+					m.dryRunnable, m.fs, fileRef.HashType, destPath, fileRef.Hash); hashErr != nil {
+					return false, fmt.Errorf("hash validation failed for %#q:\n%w", fileRef.Filename, hashErr)
+				}
+			}
+
+			return true, nil
+		}
+
+		if !errors.Is(provErr, ErrNotFound) {
+			return false, fmt.Errorf("file provider failed for %#q:\n%w", fileRef.Filename, provErr)
+		}
+	}
+
+	return false, nil
 }
 
 // tryLookasideDownload attempts to download a source file from the lookaside cache.
@@ -527,6 +568,12 @@ func (m *sourceManager) fetchFromDownloadOrigin(
 		return fmt.Errorf(
 			"source file %#q has 'custom' origin but no provider handled it; "+
 				"ensure the distro has a 'mock-config' configured",
+			fileRef.Filename)
+
+	case projectconfig.OriginTypeOverlay:
+		// Overlay-origin files are skipped before reaching this point in fetchSourceFile.
+		// This case should never be reached.
+		return fmt.Errorf("internal error: download attempted for 'overlay'-origin source file %#q",
 			fileRef.Filename)
 
 	default:

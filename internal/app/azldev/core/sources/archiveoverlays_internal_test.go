@@ -19,6 +19,60 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestGroupOverlaysByArchive(t *testing.T) {
+	t.Run("groups overlays by archive name preserving order", func(t *testing.T) {
+		overlays := []projectconfig.ComponentOverlay{
+			{
+				Type:     projectconfig.ComponentOverlayRemoveFile,
+				Archive:  "pkg-1.0.tar.gz",
+				Filename: "unwanted.conf",
+			},
+			{
+				Type:     projectconfig.ComponentOverlayRemoveFile,
+				Archive:  "pkg-1.0.tar.gz",
+				Filename: "config.h",
+			},
+			{
+				Type:     projectconfig.ComponentOverlayRemoveFile,
+				Archive:  "other-2.0.tar.xz",
+				Filename: "docs/*.md",
+			},
+		}
+
+		groups := groupOverlaysByArchive(overlays)
+
+		require.Len(t, groups, 2)
+
+		assert.Equal(t, "pkg-1.0.tar.gz", groups[0].archive)
+		require.Len(t, groups[0].overlays, 2)
+		assert.Equal(t, "unwanted.conf", groups[0].overlays[0].Filename)
+		assert.Equal(t, "config.h", groups[0].overlays[1].Filename)
+
+		assert.Equal(t, "other-2.0.tar.xz", groups[1].archive)
+		require.Len(t, groups[1].overlays, 1)
+		assert.Equal(t, "docs/*.md", groups[1].overlays[0].Filename)
+	})
+
+	t.Run("skips overlays that are not archive-scoped", func(t *testing.T) {
+		overlays := []projectconfig.ComponentOverlay{
+			{Type: projectconfig.ComponentOverlaySetSpecTag, Tag: "Version", Value: "1.0"},
+			{Type: projectconfig.ComponentOverlayRemoveFile, Archive: "pkg.tar.gz", Filename: "f"},
+			// Plain (non-archive) file overlay: no archive field, so it must be skipped.
+			{Type: projectconfig.ComponentOverlayRemoveFile, Filename: "loose.txt"},
+			// Bare archive name with no archive field: a loose removal of the archive itself.
+			{Type: projectconfig.ComponentOverlayRemoveFile, Filename: "drop-me.tar.gz"},
+			{Type: projectconfig.ComponentOverlayAddFile, Filename: "new.txt", Source: "src"},
+		}
+
+		groups := groupOverlaysByArchive(overlays)
+
+		require.Len(t, groups, 1)
+		assert.Equal(t, "pkg.tar.gz", groups[0].archive)
+		require.Len(t, groups[0].overlays, 1)
+		assert.Equal(t, "f", groups[0].overlays[0].Filename)
+	})
+}
+
 // TestProcessArchive_DryRunDoesNotModifyArchive verifies that, in dry-run mode,
 // processArchive skips the extract/repack cycle entirely and leaves the original
 // archive on disk byte-for-byte unchanged (repacking would otherwise rewrite it).
