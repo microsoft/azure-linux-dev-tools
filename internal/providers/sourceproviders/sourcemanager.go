@@ -315,8 +315,9 @@ func (m *sourceManager) createFileProviders(env *azldev.Env) {
 	}
 
 	m.fileProviders = append(m.fileProviders, &customFileSourceProvider{
-		fs:     m.fs,
-		runner: mock.NewRunner(env, mockConfigPath),
+		fs:      m.fs,
+		runner:  mock.NewRunner(env, mockConfigPath),
+		verbose: env.Verbose(),
 	})
 
 	slog.Debug("Registered custom file source provider", "mockConfig", mockConfigPath)
@@ -686,7 +687,18 @@ func (m *sourceManager) downloadLookasideSources(
 
 	packageName := resolvePackageName(component)
 
-	err := m.lookasideDownloader.ExtractSourcesFromRepo(ctx, destDirPath, packageName, m.lookasideBaseURI, nil)
+	// Collect filenames from 'source-files' config so the lookaside extractor skips them.
+	// These files are managed by FetchFiles (custom generation or explicit download origins)
+	// and must not be overwritten by a same-named upstream lookaside entry. This mirrors
+	// the same skip-list built in [FedoraSourcesProviderImpl.GetComponent].
+	sourceFiles := component.GetConfig().SourceFiles
+
+	skipFilenames := make([]string, len(sourceFiles))
+	for i := range sourceFiles {
+		skipFilenames[i] = sourceFiles[i].Filename
+	}
+
+	err := m.lookasideDownloader.ExtractSourcesFromRepo(ctx, destDirPath, packageName, m.lookasideBaseURI, skipFilenames)
 	if err != nil {
 		return fmt.Errorf("failed to extract sources from lookaside cache:\n%w", err)
 	}

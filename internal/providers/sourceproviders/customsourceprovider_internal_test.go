@@ -123,3 +123,43 @@ func TestPrepareStagingDirs_MissingScriptReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "missing.sh")
 	assert.Nil(t, cleanup)
 }
+
+func TestStageInputFiles_FoundInDestDir(t *testing.T) {
+	memFS := afero.NewMemMapFs()
+
+	const fileContent = "upstream tarball data"
+
+	require.NoError(t, afero.WriteFile(memFS, "/output/upstream.tar.gz", []byte(fileContent), fileperms.PublicFile))
+
+	err := stageInputFiles(memFS, []string{"upstream.tar.gz"}, "/output", "/script", "gen.sh")
+	require.NoError(t, err)
+
+	data, readErr := afero.ReadFile(memFS, "/script/upstream.tar.gz")
+	require.NoError(t, readErr)
+	assert.Equal(t, fileContent, string(data))
+}
+
+func TestStageInputFiles_NotFoundReturnsError(t *testing.T) {
+	memFS := afero.NewMemMapFs()
+
+	// No files written — destDirPath is empty.
+	err := stageInputFiles(memFS, []string{"missing.tar.gz"}, "/output", "/script", "gen.sh")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing.tar.gz")
+	assert.Contains(t, err.Error(), "/output")
+}
+
+func TestStageInputFiles_ScriptNameConflictReturnsError(t *testing.T) {
+	memFS := afero.NewMemMapFs()
+
+	err := stageInputFiles(memFS, []string{"gen.sh"}, "/output", "/script", "gen.sh")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "conflicts")
+}
+
+func TestFormatCustomScriptOutput(t *testing.T) {
+	output := formatCustomScriptOutput("stdout line\n", "stderr line\n")
+
+	assert.Contains(t, output, "stdout:\nstdout line")
+	assert.Contains(t, output, "stderr:\nstderr line")
+}

@@ -142,10 +142,11 @@ func TestCustomizationCollectorsCoverEveryFingerprintableField(t *testing.T) {
 		"SourceFileReference.ReplaceUpstream": "source-files.replace-upstream",
 		"SourceFileReference.Origin":          "delegates to Origin walk",
 
-		// Origin -- Script and MockPackages are fingerprint-relevant; Type and Uri
+		// Origin -- Script, MockPackages, and Inputs are fingerprint-relevant; Type and Uri
 		// are tagged fingerprint:"-" (download location, not build input).
 		"Origin.Script":       "source-files.script",
 		"Origin.MockPackages": "source-files.mock-packages",
+		"Origin.Inputs":       "source-files.inputs",
 	}
 
 	actualFields := make(map[string]bool)

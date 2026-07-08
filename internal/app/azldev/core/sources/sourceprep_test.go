@@ -108,6 +108,8 @@ func TestPrepareSources_SourceManagerError(t *testing.T) {
 	expectedErr := errors.New("failed to fetch files")
 
 	component.EXPECT().GetName().AnyTimes().Return("test-component")
+	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{})
+	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).Return(nil)
 	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(expectedErr)
 
 	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx)
@@ -633,8 +635,11 @@ func TestDiffSources_FetchError(t *testing.T) {
 	require.NoError(t, fileutils.MkdirAll(ctx.FS(), baseDir))
 
 	component.EXPECT().GetName().AnyTimes().Return("test-component")
+	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{})
 
 	expectedErr := errors.New("network failure")
+
+	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, gomock.Any(), gomock.Any()).Return(nil)
 	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, gomock.Any()).Return(expectedErr)
 
 	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx)

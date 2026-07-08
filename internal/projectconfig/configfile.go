@@ -248,11 +248,13 @@ func validateReplaceUpstream(ref SourceFileReference, componentName string) erro
 	return nil
 }
 
-// validateCustomSourceRef enforces the pairing rules for the 'script' and 'mock-packages'
-// fields on a [SourceFileReference]:
+// validateCustomSourceRef enforces the pairing rules for the 'script', 'mock-packages',
+// and 'inputs' fields on a [SourceFileReference]:
 //   - 'script' is required when 'origin.type' is 'custom'.
 //   - 'script' must be empty when 'origin.type' is not 'custom'.
 //   - 'mock-packages' must be empty when 'origin.type' is not 'custom'.
+//   - 'inputs' must be empty when 'origin.type' is not 'custom'.
+//   - each 'inputs' entry must be a valid filename (no path separators).
 func validateCustomSourceRef(ref SourceFileReference, componentName string) error {
 	if ref.Origin.Type == OriginTypeCustom {
 		if ref.Origin.Script == "" {
@@ -266,6 +268,14 @@ func validateCustomSourceRef(ref SourceFileReference, componentName string) erro
 			return fmt.Errorf(
 				"invalid 'script' value %#q for source file %#q in component %#q:\n%w",
 				ref.Origin.Script, ref.Filename, componentName, err)
+		}
+
+		for _, input := range ref.Origin.Inputs {
+			if err := fileutils.ValidateFilename(input); err != nil {
+				return fmt.Errorf(
+					"invalid 'inputs' entry %#q for source file %#q in component %#q:\n%w",
+					input, ref.Filename, componentName, err)
+			}
 		}
 
 		return nil
@@ -282,6 +292,13 @@ func validateCustomSourceRef(ref SourceFileReference, componentName string) erro
 		return fmt.Errorf(
 			"source file %#q in component %#q has 'mock-packages' set but origin type is %#q; "+
 				"'mock-packages' is only valid when origin type is 'custom'",
+			ref.Filename, componentName, string(ref.Origin.Type))
+	}
+
+	if len(ref.Origin.Inputs) > 0 {
+		return fmt.Errorf(
+			"source file %#q in component %#q has 'inputs' set but origin type is %#q; "+
+				"'inputs' is only valid when origin type is 'custom'",
 			ref.Filename, componentName, string(ref.Origin.Type))
 	}
 
