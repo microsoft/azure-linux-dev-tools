@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/brunoga/deep"
+	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectgen"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
@@ -29,6 +30,11 @@ type dynamicTestProject struct {
 	// Maps relative file path to file contents (as bytes).
 	otherFiles map[string][]byte
 
+	// Maps component name to lock file content.
+	locks map[string]*lockfile.ComponentLock
+	// Maps lock relative file path to component name.
+	lockPaths map[string]string
+
 	// initGitRepo causes [Serialize] to initialize a git repo in the project directory
 	// and commit all files. Required for commands that use synthetic history (e.g., render).
 	initGitRepo bool
@@ -41,6 +47,8 @@ func NewDynamicTestProject(options ...DynamicTestProjectOption) *dynamicTestProj
 	project := &dynamicTestProject{
 		configFile: projectgen.GenerateBasicConfig("test-project"),
 		otherFiles: make(map[string][]byte),
+		locks:      make(map[string]*lockfile.ComponentLock),
+		lockPaths:  make(map[string]string),
 	}
 
 	// Make sure we have an empty component map so we can easily add to it later.
@@ -76,6 +84,11 @@ func (p *dynamicTestProject) Serialize(t *testing.T, projectDir string) {
 
 		// Write out the file.
 		require.NoError(t, os.WriteFile(destFilePath, fileContent, fileperms.PublicFile))
+	}
+
+	// Write out lock files before git initialization so [WithGitRepo] commits them.
+	for componentName, componentLock := range p.locks {
+		writeComponentLock(t, projectDir, componentName, componentLock)
 	}
 
 	// Initialize a git repo if requested.
@@ -123,6 +136,27 @@ func (p *dynamicTestProject) addComponent(componentConfig *projectconfig.Compone
 	p.configFile.Components[componentConfig.Name] = deep.MustCopy(*componentConfig)
 }
 
+func (p *dynamicTestProject) addLock(componentName string, componentLock *lockfile.ComponentLock) {
+	lockRelPath := lockRelativePath(componentName)
+	if _, exists := p.otherFiles[lockRelPath]; exists {
+		panic(fmt.Sprintf(
+			"AddLock: lock file for component %#q at path %#q already exists via AddFile",
+			componentName, lockRelPath,
+		))
+	}
+
+	cp := *componentLock
+	p.locks[componentName] = &cp
+	p.lockPaths[lockRelPath] = componentName
+}
+
+// AddLock adds (or updates) a lock file for the component in the project.
+func AddLock(componentName string, options ...LockOption) DynamicTestProjectOption {
+	return func(p *dynamicTestProject) {
+		p.addLock(componentName, NewLock(options...))
+	}
+}
+
 // AddFile adds an arbitrary file to the project at the specified relative path.
 // The path must be relative and must not escape the project directory.
 func AddFile(relativePath, content string) DynamicTestProjectOption {
@@ -132,8 +166,15 @@ func AddFile(relativePath, content string) DynamicTestProjectOption {
 		panic(fmt.Sprintf("AddFile: path %#q is invalid or escapes the project directory", relativePath))
 	}
 
-	return func(p *dynamicTestProject) {
-		p.otherFiles[cleaned] = []byte(content)
+	return func(project *dynamicTestProject) {
+		if componentName, exists := project.lockPaths[cleaned]; exists {
+			panic(fmt.Sprintf(
+				"AddFile: path %#q conflicts with AddLock for component %#q at path %#q",
+				relativePath, componentName, cleaned,
+			))
+		}
+
+		project.otherFiles[cleaned] = []byte(content)
 	}
 }
 
