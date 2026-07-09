@@ -124,7 +124,7 @@ and are emitted as empty arrays (never null) when there are no memberships.`,
 	// Help shells complete '--rpm-file' with .json paths.
 	_ = cmd.MarkFlagFilename("rpm-file", "json")
 
-	azldev.ExportAsMCPTool(cmd)
+	azldev.ExportAsReadOnlyMCPTool(cmd)
 
 	return cmd
 }

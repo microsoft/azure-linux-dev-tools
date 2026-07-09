@@ -19,11 +19,13 @@ import (
 	"github.com/samber/lo"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"go.szostok.io/version"
 )
 
-// Performs the file download requested by options.
+// RunMCPServer starts the azldev MCP server, advertising the exported commands as
+// tools over stdio until the context is canceled.
 func RunMCPServer(env *azldev.Env, cmd *cobra.Command) error {
-	srv := server.NewMCPServer(cmd.Short, "1.0.0",
+	srv := server.NewMCPServer(cmd.Root().Name(), version.Get().Version,
 		server.WithLogging(),
 		server.WithRecovery(),
 		server.WithResourceCapabilities(true, true),
@@ -46,6 +48,13 @@ func RunMCPServer(env *azldev.Env, cmd *cobra.Command) error {
 	slog.Info("Registered MCP tools", "count", toolCount)
 
 	stdioServer := server.NewStdioServer(srv)
+
+	// handleToolCall runs the shared cobra command tree and swaps the process-global
+	// os.Stdout to capture output, so two handlers must not run at once. mcp-go
+	// dispatches tool calls to a worker pool (default 5) -- an agent firing parallel
+	// skill/tool calls would hit it -- so pin the pool to a single worker and let calls
+	// serialize instead of corrupting each other's output.
+	server.WithWorkerPoolSize(1)(stdioServer)
 
 	slog.Info("Starting MCP server")
 
@@ -78,6 +87,12 @@ func addToolForCmd(env *azldev.Env, srv *server.MCPServer, leaf *cobra.Command) 
 	var toolOptions []mcp.ToolOption
 
 	toolOptions = append(toolOptions, mcp.WithDescription(toolDesc))
+
+	// Mirror our read-only annotation (set by [azldev.ExportAsReadOnlyMCPTool]) into the MCP tool
+	// schema so that clients can treat and auto-approve the tool as non-mutating.
+	if _, readOnly := leaf.Annotations[azldev.CmdAnnotationMCPReadOnly]; readOnly {
+		toolOptions = append(toolOptions, mcp.WithReadOnlyHintAnnotation(true))
+	}
 
 	flags := getAllFlagDefs(leaf)
 	for _, flag := range flags {
@@ -165,32 +180,59 @@ func handleToolCall(
 		slog.Info("Executing command", "args", fullArgs)
 		cmd.Root().SetArgs(fullArgs)
 
-		reader, writer, err := os.Pipe()
-		if err != nil {
-			return nil, fmt.Errorf("failed to create pipe for command output:\n%w", err)
+		// LIMITATION: the [azldev.Env] here is created once when the MCP server starts and is reused
+		// for every tool call. Per-call global flags parsed by this Execute (e.g. '--dry-run',
+		// '--project') update the App's flag fields but are NOT re-threaded into this reused Env, so
+		// env.DryRun() and the loaded config still reflect the server's startup values. As a result a
+		// mutating tool invoked with '--dry-run=true' would still write. Until the MCP rework gives
+		// each call its own Env, only expose commands that do not modify managed project state
+		// (specs, locks, config) on their own: read-only commands (marked with
+		// [azldev.ExportAsReadOnlyMCPTool]), or ones that write solely to a caller-provided output
+		// path, such as 'docs markdown' or 'component diff-sources --output-file'.
+		capturedText, execErr := captureStdout(func() error {
+			env.SetReportFile(os.Stdout) // os.Stdout is the capture pipe for the duration of this call
+
+			return cmd.Root().Execute()
+		})
+		if execErr != nil {
+			slog.Error("Error executing command", "error", execErr)
+
+			return mcp.NewToolResultText(execErr.Error()), nil
 		}
 
-		origStdout := os.Stdout
-		os.Stdout = writer
-
-		env.SetReportFile(writer)
-
-		err = cmd.Root().Execute()
-
-		os.Stdout = origStdout
-
-		if err != nil {
-			slog.Error("Error executing command", "error", err)
-
-			return mcp.NewToolResultText(err.Error()), nil
-		}
-
-		writer.Close()
-
-		capturedText, _ := io.ReadAll(reader)
-
-		return mcp.NewToolResultText(string(capturedText)), nil
+		return mcp.NewToolResultText(capturedText), nil
 	}
+}
+
+// captureStdout runs action with os.Stdout redirected to a pipe and returns everything
+// written to it. The pipe is drained by a concurrent goroutine so that output larger
+// than the OS pipe buffer (~64KB, e.g. 'config dump' on a large distro) does not block
+// the write and hang the caller. Not safe for concurrent use: it mutates the global
+// os.Stdout, so callers must serialize (the MCP server pins its worker pool to one).
+func captureStdout(action func() error) (string, error) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		return "", fmt.Errorf("failed to create pipe for command output:\n%w", err)
+	}
+
+	origStdout := os.Stdout
+	os.Stdout = writer
+
+	captured := make(chan []byte, 1)
+
+	go func() {
+		data, _ := io.ReadAll(reader)
+		captured <- data
+	}()
+
+	actionErr := action()
+
+	os.Stdout = origStdout
+	_ = writer.Close() // signal EOF so the drain goroutine finishes
+	output := <-captured
+	_ = reader.Close()
+
+	return string(output), actionErr
 }
 
 func getLeafCommands(cmd *cobra.Command) []*cobra.Command {
