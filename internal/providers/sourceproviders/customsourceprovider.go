@@ -80,6 +80,12 @@ func generateCustomSourceFile(
 		"script", ref.Origin.Script,
 		"component", component.GetName())
 
+	if dryRunnable.DryRun() {
+		slog.Info("Dry run; skipping custom source file generation", "filename", ref.Filename)
+
+		return nil
+	}
+
 	specDir, err := resolveComponentSpecDir(component)
 	if err != nil {
 		return fmt.Errorf("failed to resolve spec directory for component %#q:\n%w",
@@ -268,7 +274,7 @@ func execScriptInChroot(
 	// Use positional parameters so the script name is never re-parsed as shell code
 	// ($1=scriptDir, $2=scriptName; '--' sets $0 and keeps bash from consuming them).
 	cmd, cmdErr := runner.CmdInChroot(ctx, []string{
-		"bash", "-c", `cd "$1" && ./"$2"`, "--", customGenScriptDir, ref.Origin.Script,
+		"sh", "-c", `cd "$1" && ./"$2"`, "--", customGenScriptDir, ref.Origin.Script,
 	}, false /* interactive */)
 	if cmdErr != nil {
 		return fmt.Errorf("failed to create chroot command for generating %#q:\n%w",
@@ -289,8 +295,10 @@ func execScriptInChroot(
 	}
 
 	if runErr := cmd.Run(ctx); runErr != nil {
-		return fmt.Errorf("generation script %#q failed for source %#q:%s\n%w",
-			ref.Origin.Script, ref.Filename, formatCustomScriptOutput(stdout.String(), stderr.String()), runErr)
+		scriptOutput := formatCustomScriptOutput(stdout.String(), stderr.String())
+
+		return fmt.Errorf("generation script %#q failed for source %#q%s\n%w",
+			ref.Origin.Script, ref.Filename, scriptOutput, runErr)
 	}
 
 	return nil

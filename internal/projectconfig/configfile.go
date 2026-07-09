@@ -276,6 +276,12 @@ func validateCustomSourceRef(ref SourceFileReference, componentName string) erro
 					"invalid 'inputs' entry %#q for source file %#q in component %#q:\n%w",
 					input, ref.Filename, componentName, err)
 			}
+
+			if input == ref.Origin.Script {
+				return fmt.Errorf(
+					"'inputs' entry %#q for source file %#q in component %#q conflicts with 'script' filename",
+					input, ref.Filename, componentName)
+			}
 		}
 
 		return nil

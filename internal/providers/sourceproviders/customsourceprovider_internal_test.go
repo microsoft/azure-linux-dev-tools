@@ -19,9 +19,12 @@ import (
 )
 
 func TestCustomFileSourceProvider_GetFile_NonCustomOriginReturnsNotFound(t *testing.T) {
+	ctx := testctx.NewCtx()
+
 	provider := &customFileSourceProvider{
-		fs:     afero.NewMemMapFs(),
-		runner: nil, // never reached
+		dryRunnable: ctx,
+		fs:          ctx.FS(),
+		runner:      nil, // never reached
 	}
 
 	ctrl := gomock.NewController(t)
@@ -37,9 +40,12 @@ func TestCustomFileSourceProvider_GetFile_NonCustomOriginReturnsNotFound(t *test
 }
 
 func TestCustomFileSourceProvider_GetFile_MissingScriptReturnsError(t *testing.T) {
+	ctx := testctx.NewCtx()
+
 	provider := &customFileSourceProvider{
-		fs:     afero.NewMemMapFs(),
-		runner: nil, // never reached — script stat check fails first
+		dryRunnable: ctx,
+		fs:          ctx.FS(),
+		runner:      nil, // never reached — script stat check fails first
 	}
 
 	ctrl := gomock.NewController(t)
