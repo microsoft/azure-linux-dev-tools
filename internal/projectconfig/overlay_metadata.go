@@ -26,15 +26,17 @@ const (
 	OverlayCategoryAZLPruning OverlayCategory = "azl-pruning"
 	// OverlayCategoryAZLCompatibility makes a component work in the AZL build/runtime
 	// environment: toolchain and mock adjustments and similar compatibility fixes that
-	// are not themselves backports. See [OverlayCategoryAZLDepMissingWorkaround] for
-	// workarounds for dependencies that have not yet been imported into AZL.
+	// are not themselves backports.
 	OverlayCategoryAZLCompatibility OverlayCategory = "azl-compatibility"
-	// OverlayCategoryAZLDepMissingWorkaround works around a runtime or build dependency
-	// that has not yet been imported into AZL (or is unavailable on a given target). Drop
-	// the overlay once the dependency lands.
-	OverlayCategoryAZLDepMissingWorkaround OverlayCategory = "azl-dep-missing-workaround"
-	// OverlayCategoryAZLBrandingPolicy applies Fedora→AzureLinux name/path changes or
-	// RHEL/enterprise convention alignment.
+	// OverlayCategoryAZLTemporaryWorkaround marks overlays that are explicitly intended to be
+	// dropped once an upstream or environmental fix lands. This covers both overlays that
+	// work around a runtime or build dependency that has not yet been imported into AZL
+	// and any other transient workaround waiting on an external change.
+	OverlayCategoryAZLTemporaryWorkaround OverlayCategory = "azl-temp-workaround"
+	// OverlayCategoryAZLBrandingPolicy handles Fedora→Azure Linux identity differences:
+	// name/path/vendor conventions and fixes for specs that hard-code Fedora identity
+	// strings (e.g. `_vendor=redhat`, `redhat-linux` triples). Use `upstream-status` to
+	// distinguish permanent AZL choices from fallout that could be upstreamed.
 	OverlayCategoryAZLBrandingPolicy OverlayCategory = "azl-branding-policy"
 	// OverlayCategoryAZLDisableFlakyTests skips tests that fail intermittently or due to
 	// environmental flakiness rather than a real problem with the component,
@@ -59,7 +61,7 @@ var allOverlayCategories = []OverlayCategory{
 	OverlayCategoryUpstreamBackport,
 	OverlayCategoryAZLPruning,
 	OverlayCategoryAZLCompatibility,
-	OverlayCategoryAZLDepMissingWorkaround,
+	OverlayCategoryAZLTemporaryWorkaround,
 	OverlayCategoryAZLBrandingPolicy,
 	OverlayCategoryAZLDisableFlakyTests,
 	OverlayCategoryAZLDisableUnsupportedTests,
@@ -130,7 +132,7 @@ type URLRef struct {
 // are optional but constrained by category-specific rules (see [OverlayMetadata.Validate]).
 type OverlayMetadata struct {
 	// Category classifies the overlay's intent. Required.
-	Category OverlayCategory `toml:"category" json:"category" jsonschema:"required,enum=upstream-backport,enum=azl-pruning,enum=azl-compatibility,enum=azl-dep-missing-workaround,enum=azl-branding-policy,enum=azl-disable-flaky-tests,enum=azl-disable-unsupported-tests,enum=azl-security-compliance,enum=azl-release-management,enum=azl-platform-adaptation,title=Category,description=Classification of the overlay's intent"`
+	Category OverlayCategory `toml:"category" json:"category" jsonschema:"required,enum=upstream-backport,enum=azl-pruning,enum=azl-compatibility,enum=azl-temp-workaround,enum=azl-branding-policy,enum=azl-disable-flaky-tests,enum=azl-disable-unsupported-tests,enum=azl-security-compliance,enum=azl-release-management,enum=azl-platform-adaptation,title=Category,description=Classification of the overlay's intent"`
 
 	// Commits references upstream commits (typically Fedora dist-git or upstream-project
 	// commits) that this overlay backports or references. Each entry must carry an

@@ -56,9 +56,9 @@ func TestOverlayMetadata_Validate(t *testing.T) {
 			},
 		},
 		{
-			name: "azl-dep-missing-workaround with unknown status is valid",
+			name: "azl-temp-workaround with unknown status is valid",
 			metadata: projectconfig.OverlayMetadata{
-				Category:       projectconfig.OverlayCategoryAZLDepMissingWorkaround,
+				Category:       projectconfig.OverlayCategoryAZLTemporaryWorkaround,
 				UpstreamStatus: projectconfig.OverlayUpstreamStatusUnknown,
 			},
 		},
