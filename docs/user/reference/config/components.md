@@ -302,71 +302,71 @@ rpm-channel = "none"
 
 ## Source File References
 
-The `[[components.<name>.source-files]]` array defines additional source files that azldev should download before building. These are files not available in the dist-git repository or lookaside cache — typically binaries, pre-built artifacts, or files from custom hosting.
+The `[[components.<name>.source-files]]` array defines additional source files to fetch or generate before building — binaries, pre-built artifacts, or archives generated on-the-fly by a script.
 
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
-| Filename | `filename` | string | **Yes** | Name of the file as it will appear in the sources directory |
-| Hash | `hash` | string | Conditional | Expected hash of the downloaded file for integrity verification. Required for the `prep-sources` command unless `--allow-no-hashes` is used, in which case the hash is computed automatically from the downloaded file. |
-| Hash type | `hash-type` | string | Conditional | Hash algorithm used (examples: `"SHA256"`, `"SHA512"`). Required when `hash` is specified. When omitted alongside `hash` for the `prep-sources` command and `--allow-no-hashes` is used, defaults to `"SHA512"`. |
-| Origin | `origin` | [Origin](#origin) | **Yes** | Where to download the file from |
-| Replace upstream | `replace-upstream` | bool | No | When `true`, intentionally replaces an entry with the same `filename` in the upstream dist-git `sources` file. The matching upstream entry **must exist**, otherwise source preparation fails (this guards against stale configs and filename typos). When `false` (default) a filename collision with an upstream entry is also an error. Requires `replace-reason`. |
-| Replace reason | `replace-reason` | string | Conditional | Human-readable explanation for the replacement. **Required** when `replace-upstream = true`; **must be empty** otherwise. Captured in the `prep-sources` warning log so the override is auditable. |
+| Filename | `filename` | string | **Yes** | Name of the file in the sources directory |
+| Hash | `hash` | string | Conditional | Expected hash. Required unless `--allow-no-hashes` is passed to `prep-sources` (which computes and prints the hash). |
+| Hash type | `hash-type` | string | Conditional | Hash algorithm (`"SHA256"`, `"SHA512"`). Required with `hash`; defaults to `"SHA512"` when auto-computed. |
+| Origin | `origin` | [Origin](#origin) | **Yes** | How to obtain the file |
+| Replace upstream | `replace-upstream` | bool | No | Replace the same-named entry in the upstream `sources` file. The upstream entry must exist. Requires `replace-reason`. |
+| Replace reason | `replace-reason` | string | Conditional | Required when `replace-upstream = true`. Logged by `prep-sources` for auditability. |
 
 ### Origin
 
-The `origin` field specifies how to obtain the source file.
+Two origin types are supported.
 
-| Field | TOML Key | Type | Required | Description |
-|-------|----------|------|----------|-------------|
-| Type | `type` | string | **Yes** | Origin type. Currently only `"download"` is supported. |
-| URI | `uri` | string | No | URI to download the file from (required when type is `"download"`) |
+#### `"download"` — fetch from a URI
 
-### Example
+`origin = { type = "download", uri = "https://..." }`. The `uri` field is required.
 
 ```toml
 [[components.shim.source-files]]
-filename = "shimx64.efi"
-hash = "7741013d9a24ce554bf6a9df6b776a57b114055e..."
+filename  = "shimx64.efi"
+hash      = "7741013d9a24ce554bf6a9df6b776a57b114055e..."
 hash-type = "SHA512"
-origin = { type = "download", uri = "https://example.com/repo/pkgs/shim/shimx64.efi/sha512/.../shimx64.efi" }
+origin    = { type = "download", uri = "https://example.com/repo/.../shimx64.efi" }
+```
 
-[[components.shim.source-files]]
-filename = "shimaa64.efi"
-hash = "57aa116d1c91a9ec36ab8b46c9164ae19af192b..."
+#### `"custom"` — generate via a mock script
+
+Use `origin.type = "custom"` when a source archive must be assembled or modified (e.g. stripping sensitive test fixtures from an upstream tarball). azldev runs the script inside a fresh mock chroot — the script **must write all output to `/azldev-gen/output/`**, which azldev packages into the archive named by `filename`. Network access is always enabled; the mock config comes from the project's default distro.
+
+The `script` and `mock-packages` fields are nested under `[origin]`:
+
+| Field | TOML Key | Type | Required | Description |
+|-------|----------|------|----------|-------------|
+| Script | `origin.script` | string | **Yes** | Script filename (relative to the component's spec dir) to run in mock. Required for `origin.type = "custom"`. |
+| Mock packages | `origin.mock-packages` | array of string | No | Extra RPM packages to install in the mock chroot before the script runs. |
+
+On first use, omit `hash` and run `prep-sources --allow-no-hashes` to generate the archive and print its hash, then copy it into the TOML.
+
+```toml
+[[components.yara.source-files]]
+filename  = "yara-4.5.4-azl-stripped.tar.gz"
 hash-type = "SHA512"
-origin = { type = "download", uri = "https://example.com/repo/pkgs/shim/shimaa64.efi/sha512/.../shimaa64.efi" }
+hash      = "abc123..."               # from: prep-sources --allow-no-hashes
+origin.type          = "custom"
+origin.script        = "gen-yara-stripped.sh"    # relative to the component's spec directory
+origin.mock-packages = ["cmake"]                 # omit if not needed
 ```
 
 ### Replacing an upstream `sources` entry
 
-By default, declaring a `source-files` entry whose `filename` matches one already
-listed in the upstream dist-git `sources` file is an **error** — this protects
-against accidental shadowing of the upstream tarball.
-
-To intentionally substitute a different artifact for an upstream entry (e.g. to
-ship a locally-patched tarball), set `replace-upstream = true` together with a
-non-empty `replace-reason`:
+A `source-files` entry whose `filename` collides with an upstream `sources` entry is an error by default. Set `replace-upstream = true` (with a non-empty `replace-reason`) to intentionally substitute it:
 
 ```toml
 [[components.example.source-files]]
-filename = "example-1.0.tar.gz"          # same filename as the upstream 'sources' entry
-hash = "deadbeef..."
-hash-type = "SHA512"
-origin = { type = "download", uri = "https://internal.example.com/example-1.0-patched.tar.gz" }
+filename         = "example-1.0.tar.gz"
+hash             = "deadbeef..."
+hash-type        = "SHA512"
+origin           = { type = "download", uri = "https://internal.example.com/example-1.0-patched.tar.gz" }
 replace-upstream = true
-replace-reason = "patched to fix CVE-2026-0001 before upstream"
+replace-reason   = "patched to fix CVE-2026-0001 before upstream"
 ```
 
-When `prep-sources` runs:
-
-- The matching upstream entry is removed from the generated `sources` file and
-  the user-defined entry takes its place.
-- A `WARN`-level event is logged citing the `replace-reason`, both upstream and
-  new hashes, so the override is auditable.
-- If **no upstream entry** exists with that `filename`, `prep-sources` fails —
-  this is almost always a stale config or filename typo. Drop
-  `replace-upstream` (and `replace-reason`) if you intended a brand-new
+`prep-sources` removes the matching upstream entry, inserts the new one in its place, and logs a `WARN` with both hashes and the reason. If no upstream entry with that filename exists, `prep-sources` fails — this is almost always a stale config or filename typo. Drop `replace-upstream` if you intended a brand-new
   artifact instead.
 
 `replace-upstream` and `replace-reason` are per-entry switches, not a

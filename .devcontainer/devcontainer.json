@@ -4,18 +4,23 @@
     "dockerfile": "Dockerfile.AZL-3.0",
     "context": "."
   },
-  "runArgs": ["--privileged"],
+  "runArgs": [
+    "--privileged"
+  ],
   // Features to add to the dev container. More info: https://containers.dev/features.
   "features": {},
   // Configure tool-specific properties.
   "customizations": {
     "vscode": {
       "extensions": [
+        "charliermarsh.ruff",
         "davidanson.vscode-markdownlint",
+        "editorconfig.editorconfig",
         "github.copilot-chat",
         "github.copilot",
         "github.vscode-pull-request-github",
         "golang.go",
+        "ms-python.vscode-pylance",
         "ms-vscode.vscode-json",
         "redhat.vscode-yaml"
       ],

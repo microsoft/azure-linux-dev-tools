@@ -207,9 +207,9 @@ func appendPackageItems(
 }
 
 // appendSourceFileItems emits one item per declared source-file reference,
-// plus a distinct item for the high-signal ReplaceUpstream toggle (which
-// actively masks a same-named upstream source and would otherwise be hidden
-// behind the plain filename entry).
+// plus distinct items for high-signal toggles: the ReplaceUpstream flag (which
+// actively masks a same-named upstream source), the Script field (custom
+// generation script), and MockPackages (chroot deps for that script).
 func appendSourceFileItems(
 	items []CustomizationItem, sourceFiles []projectconfig.SourceFileReference,
 ) []CustomizationItem {
@@ -220,6 +220,20 @@ func appendSourceFileItems(
 			items = append(items, CustomizationItem{
 				Kind:  "source-files.replace-upstream",
 				Value: sourceFile.Filename,
+			})
+		}
+
+		if sourceFile.Origin.Script != "" {
+			items = append(items, CustomizationItem{
+				Kind:  "source-files.script",
+				Value: sourceFile.Origin.Script,
+			})
+		}
+
+		for _, pkg := range sourceFile.Origin.MockPackages {
+			items = append(items, CustomizationItem{
+				Kind:  "source-files.mock-packages",
+				Value: pkg,
 			})
 		}
 	}
