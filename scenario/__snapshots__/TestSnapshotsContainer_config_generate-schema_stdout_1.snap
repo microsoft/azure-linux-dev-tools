@@ -746,7 +746,7 @@
             "upstream-backport",
             "azl-pruning",
             "azl-compatibility",
-            "azl-dep-missing-workaround",
+            "azl-temp-workaround",
             "azl-branding-policy",
             "azl-disable-flaky-tests",
             "azl-disable-unsupported-tests",
