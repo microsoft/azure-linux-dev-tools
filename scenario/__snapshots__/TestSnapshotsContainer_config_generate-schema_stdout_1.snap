@@ -125,7 +125,7 @@
           },
           "type": "array",
           "title": "Overlay files",
-          "description": "Path or glob patterns (relative to the component config file or matched spec directory) matched against the filesystem to locate per-file overlay documents after component config resolution. Use an empty list to disable inherited overlay-file patterns"
+          "description": "Path or glob patterns matched against the filesystem to locate per-file overlay documents. Only settable at project scope (top-level 'default-component-config') or at component scope ('[components.X]'). At project scope every entry must contain the {component} placeholder as a whole path segment (drives discovery and per-component substitution). At component scope {component} is not allowed and entries are plain globs relative to the config file. Distro-version and component-group 'default-component-config' tables must not set this field. Use an empty list at component scope to disable inheritance."
         },
         "build": {
           "$ref": "#/$defs/ComponentBuildConfig",
