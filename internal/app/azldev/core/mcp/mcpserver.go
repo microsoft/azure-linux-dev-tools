@@ -225,14 +225,29 @@ func captureStdout(action func() error) (string, error) {
 		captured <- data
 	}()
 
+	cleanedUp := false
+	cleanup := func() string {
+		if cleanedUp {
+			return ""
+		}
+
+		cleanedUp = true
+		os.Stdout = origStdout
+		_ = writer.Close() // signal EOF so the drain goroutine finishes
+		output := <-captured
+		_ = reader.Close()
+
+		return string(output)
+	}
+
+	defer func() {
+		_ = cleanup()
+	}()
+
 	actionErr := action()
+	output := cleanup()
 
-	os.Stdout = origStdout
-	_ = writer.Close() // signal EOF so the drain goroutine finishes
-	output := <-captured
-	_ = reader.Close()
-
-	return string(output), actionErr
+	return output, actionErr
 }
 
 func getLeafCommands(cmd *cobra.Command) []*cobra.Command {

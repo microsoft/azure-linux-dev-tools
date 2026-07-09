@@ -61,3 +61,17 @@ func TestCaptureStdoutReturnsFnError(t *testing.T) {
 	assert.Contains(t, err.Error(), "boom")
 	assert.Equal(t, "partial", out)
 }
+
+func TestCaptureStdoutRestoresStdoutAfterPanic(t *testing.T) {
+	origStdout := os.Stdout
+
+	assert.PanicsWithValue(t, "boom", func() {
+		_, _ = captureStdout(func() error {
+			fmt.Fprint(os.Stdout, "partial")
+
+			panic("boom")
+		})
+	})
+
+	assert.Same(t, origStdout, os.Stdout)
+}
