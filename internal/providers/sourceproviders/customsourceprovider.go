@@ -34,9 +34,10 @@ const customGenOutputDir = "/azldev-gen/output"
 // [projectconfig.OriginTypeCustom]. It executes a user-supplied script inside a
 // fresh mock chroot and packages the output directory as a deterministic archive.
 type customFileSourceProvider struct {
-	fs      opctx.FS
-	runner  *mock.Runner
-	verbose bool
+	dryRunnable opctx.DryRunnable
+	fs          opctx.FS
+	runner      *mock.Runner
+	verbose     bool
 }
 
 var _ FileSourceProvider = (*customFileSourceProvider)(nil)
@@ -56,7 +57,7 @@ func (p *customFileSourceProvider) GetFile(
 
 	destPath := filepath.Join(destDirPath, ref.Filename)
 
-	return generateCustomSourceFile(ctx, p.fs, p.runner, p.verbose, component, &ref, destPath)
+	return generateCustomSourceFile(ctx, p.dryRunnable, p.fs, p.runner, p.verbose, component, &ref, destPath)
 }
 
 // generateCustomSourceFile runs a single [projectconfig.SourceFileReference] through a
@@ -66,6 +67,7 @@ func (p *customFileSourceProvider) GetFile(
 // is created for each call so bind mounts and package installs do not bleed across invocations.
 func generateCustomSourceFile(
 	ctx context.Context,
+	dryRunnable opctx.DryRunnable,
 	fs opctx.FS,
 	baseRunner *mock.Runner,
 	verbose bool,
@@ -105,7 +107,7 @@ func generateCustomSourceFile(
 
 	if len(ref.Origin.Inputs) > 0 {
 		if inputsErr := stageInputFiles(
-			fs, ref.Origin.Inputs, destDirPath, scriptTmpDir, ref.Origin.Script,
+			dryRunnable, fs, ref.Origin.Inputs, destDirPath, scriptTmpDir, ref.Origin.Script,
 		); inputsErr != nil {
 			return fmt.Errorf("failed to resolve inputs for custom source %#q:\n%w",
 				ref.Filename, inputsErr)
@@ -263,9 +265,11 @@ func execScriptInChroot(
 		}
 	}
 
-	scriptCommand := fmt.Sprintf("cd %s && ./%s", customGenScriptDir, ref.Origin.Script)
-
-	cmd, cmdErr := runner.CmdInChroot(ctx, []string{"bash", "-c", scriptCommand}, false /* interactive */)
+	// Use positional parameters so the script name is never re-parsed as shell code
+	// ($1=scriptDir, $2=scriptName; '--' sets $0 and keeps bash from consuming them).
+	cmd, cmdErr := runner.CmdInChroot(ctx, []string{
+		"bash", "-c", `cd "$1" && ./"$2"`, "--", customGenScriptDir, ref.Origin.Script,
+	}, false /* interactive */)
 	if cmdErr != nil {
 		return fmt.Errorf("failed to create chroot command for generating %#q:\n%w",
 			ref.Filename, cmdErr)
@@ -311,8 +315,17 @@ func formatCustomScriptOutput(stdout, stderr string) string {
 // All inputs must already be present in destDirPath, which contains the full set of upstream
 // source tarballs, sidecar files, and any earlier 'source-files' entries fetched by
 // [FetchComponent] and prior [FetchFiles] calls. If a filename is absent, an error is returned.
-func stageInputFiles(fs opctx.FS, inputs []string, destDirPath, scriptTmpDir, scriptName string) error {
+func stageInputFiles(
+	dryRunnable opctx.DryRunnable,
+	fs opctx.FS,
+	inputs []string,
+	destDirPath, scriptTmpDir, scriptName string,
+) error {
 	for _, filename := range inputs {
+		if err := fileutils.ValidateFilename(filename); err != nil {
+			return fmt.Errorf("invalid input filename %#q:\n%w", filename, err)
+		}
+
 		if filename == scriptName {
 			return fmt.Errorf("input file %#q conflicts with generation script filename", filename)
 		}
@@ -330,14 +343,12 @@ func stageInputFiles(fs opctx.FS, inputs []string, destDirPath, scriptTmpDir, sc
 				filename, destDirPath)
 		}
 
-		data, readErr := fileutils.ReadFile(fs, sourcePath)
-		if readErr != nil {
-			return fmt.Errorf("failed to read input file %#q:\n%w", filename, readErr)
-		}
-
 		stagedPath := filepath.Join(scriptTmpDir, filename)
 
-		if writeErr := fileutils.WriteFile(fs, stagedPath, data, fileperms.PublicFile); writeErr != nil {
+		if writeErr := fileutils.CopyFile(
+			dryRunnable, fs, sourcePath, stagedPath,
+			fileutils.CopyFileOptions{PreserveFileMode: true},
+		); writeErr != nil {
 			return fmt.Errorf("failed to stage input file %#q:\n%w", filename, writeErr)
 		}
 	}

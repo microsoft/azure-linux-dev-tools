@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components/components_testutils"
+	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/spf13/afero"
@@ -124,37 +125,53 @@ func TestPrepareStagingDirs_MissingScriptReturnsError(t *testing.T) {
 	assert.Nil(t, cleanup)
 }
 
-func TestStageInputFiles_FoundInDestDir(t *testing.T) {
-	memFS := afero.NewMemMapFs()
+func TestStageInputFiles_FoundInDestDirPreservesMode(t *testing.T) {
+	ctx := testctx.NewCtx()
+	memFS := ctx.FS()
 
 	const fileContent = "upstream tarball data"
 
-	require.NoError(t, afero.WriteFile(memFS, "/output/upstream.tar.gz", []byte(fileContent), fileperms.PublicFile))
+	require.NoError(t, afero.WriteFile(memFS, "/output/upstream.tar.gz", []byte(fileContent), fileperms.PublicExecutable))
 
-	err := stageInputFiles(memFS, []string{"upstream.tar.gz"}, "/output", "/script", "gen.sh")
+	err := stageInputFiles(ctx, memFS, []string{"upstream.tar.gz"}, "/output", "/script", "gen.sh")
 	require.NoError(t, err)
 
 	data, readErr := afero.ReadFile(memFS, "/script/upstream.tar.gz")
 	require.NoError(t, readErr)
 	assert.Equal(t, fileContent, string(data))
+
+	info, statErr := memFS.Stat("/script/upstream.tar.gz")
+	require.NoError(t, statErr)
+	assert.Equal(t, fileperms.PublicExecutable, info.Mode().Perm())
 }
 
 func TestStageInputFiles_NotFoundReturnsError(t *testing.T) {
-	memFS := afero.NewMemMapFs()
+	ctx := testctx.NewCtx()
+	memFS := ctx.FS()
 
 	// No files written — destDirPath is empty.
-	err := stageInputFiles(memFS, []string{"missing.tar.gz"}, "/output", "/script", "gen.sh")
+	err := stageInputFiles(ctx, memFS, []string{"missing.tar.gz"}, "/output", "/script", "gen.sh")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "missing.tar.gz")
 	assert.Contains(t, err.Error(), "/output")
 }
 
 func TestStageInputFiles_ScriptNameConflictReturnsError(t *testing.T) {
-	memFS := afero.NewMemMapFs()
+	ctx := testctx.NewCtx()
+	memFS := ctx.FS()
 
-	err := stageInputFiles(memFS, []string{"gen.sh"}, "/output", "/script", "gen.sh")
+	err := stageInputFiles(ctx, memFS, []string{"gen.sh"}, "/output", "/script", "gen.sh")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "conflicts")
+}
+
+func TestStageInputFiles_InvalidFilenameReturnsError(t *testing.T) {
+	ctx := testctx.NewCtx()
+	memFS := ctx.FS()
+
+	err := stageInputFiles(ctx, memFS, []string{"../escape.tar.gz"}, "/output", "/script", "gen.sh")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid input filename")
 }
 
 func TestFormatCustomScriptOutput(t *testing.T) {

@@ -315,9 +315,10 @@ func (m *sourceManager) createFileProviders(env *azldev.Env) {
 	}
 
 	m.fileProviders = append(m.fileProviders, &customFileSourceProvider{
-		fs:      m.fs,
-		runner:  mock.NewRunner(env, mockConfigPath),
-		verbose: env.Verbose(),
+		dryRunnable: m.dryRunnable,
+		fs:          m.fs,
+		runner:      mock.NewRunner(env, mockConfigPath),
+		verbose:     env.Verbose(),
 	})
 
 	slog.Debug("Registered custom file source provider", "mockConfig", mockConfigPath)
