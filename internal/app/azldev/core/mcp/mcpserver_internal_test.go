@@ -11,9 +11,36 @@ import (
 	"testing"
 	"time"
 
+	mcpapi "github.com/mark3labs/mcp-go/mcp"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestHandleToolCallMarksCommandError(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+	root := &cobra.Command{Use: "azldev"}
+	cmd := &cobra.Command{
+		Use: "fail",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return errors.New("boom")
+		},
+	}
+	root.AddCommand(cmd)
+
+	result, err := handleToolCall(testEnv.Env, cmd)(t.Context(), mcpapi.CallToolRequest{
+		Params: mcpapi.CallToolParams{Arguments: map[string]any{}},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.True(t, result.IsError)
+	require.Len(t, result.Content, 1)
+	text, ok := result.Content[0].(mcpapi.TextContent)
+	require.True(t, ok)
+	assert.Equal(t, "boom", text.Text)
+}
 
 // TestCaptureStdoutLargeOutput is a regression guard for a pipe deadlock: capturing
 // output larger than the OS pipe buffer (~64KB) must not block. A command such as

@@ -197,7 +197,10 @@ func handleToolCall(
 		if execErr != nil {
 			slog.Error("Error executing command", "error", execErr)
 
-			return mcp.NewToolResultText(execErr.Error()), nil
+			result := mcp.NewToolResultText(execErr.Error())
+			result.IsError = true
+
+			return result, nil
 		}
 
 		return mcp.NewToolResultText(capturedText), nil
