@@ -51,23 +51,22 @@ description = "`+testProjectDesc+`"
 `)
 
 	_, config, err := projectconfig.LoadProjectConfig(
-		ctx, ctx.FS(), ctx.OSEnv(), testProjectDir, true /*disableDefaultConfig*/, t.TempDir(), nil, false,
+		ctx.FS(), ctx.OSEnv(), testProjectDir, true /*disableDefaultConfig*/, t.TempDir(), nil, false,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, config)
 	assert.Equal(t, testProjectDesc, config.Project.Description)
 }
 
-func TestLoadProjectConfig_DryRunWithDefaultConfig(t *testing.T) {
+func TestLoadProjectConfig_WithDefaultConfig(t *testing.T) {
 	const tempDir = "/test/tmp"
 
 	ctx := newTestCtxWithXDGConfigHome()
-	ctx.DryRunValue = true
 	writeProjectConfig(t, ctx, "")
 	require.NoError(t, fileutils.MkdirAll(ctx.FS(), tempDir))
 
 	_, config, err := projectconfig.LoadProjectConfig(
-		ctx, ctx.FS(), ctx.OSEnv(), testProjectDir, false /*disableDefaultConfig*/, tempDir, nil, false,
+		ctx.FS(), ctx.OSEnv(), testProjectDir, false /*disableDefaultConfig*/, tempDir, nil, false,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, config)
@@ -94,7 +93,7 @@ output-dir = "/from/user/out"
 `), fileperms.PublicFile))
 
 	_, config, err := projectconfig.LoadProjectConfig(
-		ctx, ctx.FS(), ctx.OSEnv(), testProjectDir, true /*disableDefaultConfig*/, t.TempDir(), nil, false,
+		ctx.FS(), ctx.OSEnv(), testProjectDir, true /*disableDefaultConfig*/, t.TempDir(), nil, false,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, config)
@@ -135,7 +134,7 @@ description = "`+testUserDesc+`"
 `), fileperms.PublicFile))
 
 	_, config, err := projectconfig.LoadProjectConfig(
-		ctx, ctx.FS(), ctx.OSEnv(), testProjectDir, true /*disableDefaultConfig*/, t.TempDir(),
+		ctx.FS(), ctx.OSEnv(), testProjectDir, true /*disableDefaultConfig*/, t.TempDir(),
 		[]string{extraConfigPath}, false,
 	)
 	require.NoError(t, err)
@@ -166,7 +165,7 @@ description = "`+testUserDesc+`"
 `), fileperms.PublicFile))
 
 	_, config, err := projectconfig.LoadProjectConfig(
-		ctx, ctx.FS(), ctx.OSEnv(), testProjectDir, true /*disableDefaultConfig*/, t.TempDir(), nil, false,
+		ctx.FS(), ctx.OSEnv(), testProjectDir, true /*disableDefaultConfig*/, t.TempDir(), nil, false,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, config)

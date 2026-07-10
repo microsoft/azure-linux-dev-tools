@@ -18,7 +18,6 @@ import (
 // for cleaning it up -- but not until after it is done using the loaded configuration. The loaded
 // configuration may implicitly depend on the contents of the temporary directory.
 func LoadProjectConfig(
-	dryRunnable opctx.DryRunnable,
 	fs opctx.FS,
 	osEnv opctx.OSEnv,
 	referenceDir string,
