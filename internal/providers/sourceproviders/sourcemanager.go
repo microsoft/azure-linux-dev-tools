@@ -368,13 +368,13 @@ func (m *sourceManager) FetchFiles(
 }
 
 // fetchSourceFile acquires a single source file using the following priority order:
-//  1. Lookaside cache — if hash info is available, attempt a cached download first.
-//     This applies to all origin types, including 'custom', so a previously generated
-//     and cached archive avoids a full mock regeneration.
-//  2. File providers — handles origin types that require local generation (e.g. 'custom').
-//  3. Configured download origin — final fallback for 'download' origin types.
+//  1. Custom file provider — custom sources are always regenerated so their configured
+//     hashes validate the current script and inputs.
+//  2. Lookaside cache — non-custom files with hash info attempt a cached download first.
+//  3. File providers — handles other provider-supported origin types.
+//  4. Configured download origin — final fallback for 'download' origin types.
 //
-// When disable-origins is set, step 3 is skipped and only lookaside and file providers apply.
+// When disable-origins is set, step 4 is skipped and only lookaside and file providers apply.
 func (m *sourceManager) fetchSourceFile(
 	ctx context.Context,
 	httpDownloader downloader.Downloader,
@@ -389,32 +389,10 @@ func (m *sourceManager) fetchSourceFile(
 
 	destPath := filepath.Join(destDirPath, fileRef.Filename)
 
-	sourceExists, err := fileutils.Exists(m.fs, destPath)
-	if err != nil {
-		return fmt.Errorf("failed to check existence of destination file %#q:\n%w", destPath, err)
-	}
-
-	if sourceExists {
-		slog.Debug("Source file already exists, skipping download",
-			"filename", fileRef.Filename,
-			"path", destPath)
-
+	// Try the lookaside cache first for non-custom files if hash info is available.
+	// Custom files are always regenerated so stale configured hashes are detected.
+	if m.trySourceFileLookaside(ctx, httpDownloader, component, fileRef, destPath) {
 		return nil
-	}
-
-	// Try the lookaside cache first if hash info is available. This applies to
-	// all origin types, including 'custom' — if the generated archive is already
-	// cached in the lookaside (as it will be after the first run), we skip the
-	// expensive mock generation entirely.
-	if fileRef.Hash != "" && fileRef.HashType != "" {
-		lookasideErr := m.tryLookasideDownload(ctx, httpDownloader, component, fileRef, destPath)
-		if lookasideErr == nil {
-			return nil
-		}
-
-		slog.Debug("Lookaside cache download failed",
-			"filename", fileRef.Filename,
-			"error", lookasideErr)
 	}
 
 	// Try each registered file provider. Providers return [ErrNotFound] to signal
@@ -452,6 +430,32 @@ func (m *sourceManager) fetchSourceFile(
 	}
 
 	return m.fetchFromDownloadOrigin(ctx, httpDownloader, fileRef, destPath)
+}
+
+// trySourceFileLookaside attempts a cached download for non-custom files with hash information.
+// Custom files deliberately bypass lookaside so they are regenerated and validated each time.
+func (m *sourceManager) trySourceFileLookaside(
+	ctx context.Context,
+	httpDownloader downloader.Downloader,
+	component components.Component,
+	fileRef *projectconfig.SourceFileReference,
+	destPath string,
+) bool {
+	if fileRef.Origin.Type == projectconfig.OriginTypeCustom ||
+		fileRef.Hash == "" || fileRef.HashType == "" {
+		return false
+	}
+
+	lookasideErr := m.tryLookasideDownload(ctx, httpDownloader, component, fileRef, destPath)
+	if lookasideErr == nil {
+		return true
+	}
+
+	slog.Debug("Lookaside cache download failed",
+		"filename", fileRef.Filename,
+		"error", lookasideErr)
+
+	return false
 }
 
 // tryLookasideDownload attempts to download a source file from the lookaside cache.

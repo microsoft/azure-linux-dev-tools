@@ -255,6 +255,7 @@ func validateReplaceUpstream(ref SourceFileReference, componentName string) erro
 //   - 'mock-packages' must be empty when 'origin.type' is not 'custom'.
 //   - 'inputs' must be empty when 'origin.type' is not 'custom'.
 //   - each 'inputs' entry must be a valid filename (no path separators).
+//   - each 'inputs' entry must be unique.
 func validateCustomSourceRef(ref SourceFileReference, componentName string) error {
 	if ref.Origin.Type == OriginTypeCustom {
 		if ref.Origin.Script == "" {
@@ -270,18 +271,8 @@ func validateCustomSourceRef(ref SourceFileReference, componentName string) erro
 				ref.Origin.Script, ref.Filename, componentName, err)
 		}
 
-		for _, input := range ref.Origin.Inputs {
-			if err := fileutils.ValidateFilename(input); err != nil {
-				return fmt.Errorf(
-					"invalid 'inputs' entry %#q for source file %#q in component %#q:\n%w",
-					input, ref.Filename, componentName, err)
-			}
-
-			if input == ref.Origin.Script {
-				return fmt.Errorf(
-					"'inputs' entry %#q for source file %#q in component %#q conflicts with 'script' filename",
-					input, ref.Filename, componentName)
-			}
+		if err := validateCustomSourceInputs(ref, componentName); err != nil {
+			return err
 		}
 
 		return nil
@@ -306,6 +297,34 @@ func validateCustomSourceRef(ref SourceFileReference, componentName string) erro
 			"source file %#q in component %#q has 'inputs' set but origin type is %#q; "+
 				"'inputs' is only valid when origin type is 'custom'",
 			ref.Filename, componentName, string(ref.Origin.Type))
+	}
+
+	return nil
+}
+
+func validateCustomSourceInputs(ref SourceFileReference, componentName string) error {
+	seen := make(map[string]bool, len(ref.Origin.Inputs))
+
+	for _, input := range ref.Origin.Inputs {
+		if err := fileutils.ValidateFilename(input); err != nil {
+			return fmt.Errorf(
+				"invalid 'inputs' entry %#q for source file %#q in component %#q:\n%w",
+				input, ref.Filename, componentName, err)
+		}
+
+		if seen[input] {
+			return fmt.Errorf(
+				"duplicate 'inputs' entry %#q for source file %#q in component %#q; each input filename must be unique",
+				input, ref.Filename, componentName)
+		}
+
+		seen[input] = true
+
+		if input == ref.Origin.Script {
+			return fmt.Errorf(
+				"'inputs' entry %#q for source file %#q in component %#q conflicts with 'script' filename",
+				input, ref.Filename, componentName)
+		}
 	}
 
 	return nil

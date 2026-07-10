@@ -267,34 +267,6 @@ func TestSourceManager_FetchFiles_NoSourceFiles(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestSourceManager_FetchFiles_ExistingFile(t *testing.T) {
-	env := testutils.NewTestEnv(t)
-	ctrl := gomock.NewController(t)
-	component := components_testutils.NewMockComponent(ctrl)
-
-	require.NoError(t, env.TestFS.MkdirAll(testDestDir, fileperms.PrivateDir))
-
-	destPath := filepath.Join(testDestDir, testSourceTarball)
-	require.NoError(t, fileutils.WriteFile(env.TestFS, destPath, []byte("existing content"), fileperms.PrivateFile))
-
-	componentConfig := &projectconfig.ComponentConfig{
-		SourceFiles: []projectconfig.SourceFileReference{{
-			Filename: testSourceTarball,
-			Hash:     "abc123",
-			HashType: fileutils.HashTypeSHA256,
-		}},
-	}
-
-	component.EXPECT().GetName().AnyTimes().Return("test-component")
-	component.EXPECT().GetConfig().AnyTimes().Return(componentConfig)
-
-	sourceManager, err := sourceproviders.NewSourceManager(env.Env, testDefaultDistro())
-	require.NoError(t, err)
-
-	err = sourceManager.FetchFiles(t.Context(), component, testDestDir)
-	require.NoError(t, err)
-}
-
 func TestSourceManager_FetchFiles_Errors(t *testing.T) {
 	tests := []struct {
 		name            string
