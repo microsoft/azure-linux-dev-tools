@@ -43,7 +43,7 @@ func LoadProjectConfig(
 			return "", nil, fmt.Errorf("failed to create temp dir for default config files:\n%w", err)
 		}
 
-		defaultConfigFilePath, err := defaultconfigs.CopyTo(dryRunnable, fs, tempConfigDirPath)
+		defaultConfigFilePath, err := defaultconfigs.CopyTo(fs, tempConfigDirPath)
 		if err != nil {
 			return "", nil, fmt.Errorf("failed to copy default config files:\n%w", err)
 		}

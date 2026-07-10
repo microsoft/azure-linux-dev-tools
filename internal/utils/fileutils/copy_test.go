@@ -136,6 +136,21 @@ func TestCopyDirRecursive(t *testing.T) {
 		}
 	})
 
+	t.Run("DryRunDoesNotCopy", func(t *testing.T) {
+		ctx := testctx.NewCtx()
+		ctx.DryRunValue = true
+
+		sourceFilePath := filepath.Join(sourceDirPath, "file.txt")
+		require.NoError(t, fileutils.WriteFile(ctx.FS(), sourceFilePath, []byte(content1), fileperms.PrivateFile))
+
+		err := fileutils.CopyDirRecursive(ctx, ctx.FS(), sourceDirPath, destDirPath, fileutils.CopyDirOptions{})
+		require.NoError(t, err)
+
+		exists, err := fileutils.Exists(ctx.FS(), destDirPath)
+		require.NoError(t, err)
+		assert.False(t, exists)
+	})
+
 	t.Run("ConfirmDoesNotPreserveDirMode", func(t *testing.T) {
 		const (
 			extraDirPerms      = os.ModeSticky

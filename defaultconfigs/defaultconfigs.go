@@ -31,11 +31,10 @@ var content embed.FS
 // CopyTo recursively copies the contents of the [content] embedded filesystem to the specified
 // destination path in the provided filesystem. Returns the path to the root configuration file
 // to load from the copied directory.
-func CopyTo(dryRunnable opctx.DryRunnable, fs opctx.FS, destPath string) (rootConfigFilePath string, err error) {
+func CopyTo(fs opctx.FS, destPath string) (rootConfigFilePath string, err error) {
 	sourceFS := fileutils.WrapEmbedFS(&content)
 
 	err = fileutils.CopyDirRecursiveCrossFS(
-		dryRunnable,
 		sourceFS, embedfsRootDir,
 		fs, destPath,
 		fileutils.CopyDirOptions{},

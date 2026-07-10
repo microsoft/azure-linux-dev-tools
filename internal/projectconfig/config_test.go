@@ -58,6 +58,21 @@ description = "`+testProjectDesc+`"
 	assert.Equal(t, testProjectDesc, config.Project.Description)
 }
 
+func TestLoadProjectConfig_DryRunWithDefaultConfig(t *testing.T) {
+	const tempDir = "/test/tmp"
+
+	ctx := newTestCtxWithXDGConfigHome()
+	ctx.DryRunValue = true
+	writeProjectConfig(t, ctx, "")
+	require.NoError(t, fileutils.MkdirAll(ctx.FS(), tempDir))
+
+	_, config, err := projectconfig.LoadProjectConfig(
+		ctx, ctx.FS(), ctx.OSEnv(), testProjectDir, false /*disableDefaultConfig*/, tempDir, nil, false,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, config)
+}
+
 // TestLoadProjectConfig_UserConfigOverridesProject verifies that values defined in the
 // user-level config file override those defined by the project config file.
 func TestLoadProjectConfig_UserConfigOverridesProject(t *testing.T) {

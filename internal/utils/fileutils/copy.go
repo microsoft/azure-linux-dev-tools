@@ -30,21 +30,29 @@ func CopyFile(dryRunnable opctx.DryRunnable, fs opctx.FS, sourcePath, destPath s
 // Copies the contents of an existing file to a new file at the given destination path,
 // potentially across two [opctx.FS] filesystem instances. May preserve mode bits if
 // "options" says so but does *not* preserve ownership, timestamps, or other metadata.
-// *Does* follow symlinks. Is *not* enlightened to skip copying in dry-run mode.
+// *Does* follow symlinks. Is enlightened to skip copying in dry-run mode.
 func CopyFileCrossFS(
 	dryRunnable opctx.DryRunnable,
 	sourceFS opctx.FS, sourcePath string,
 	destFS opctx.FS, destPath string,
 	options CopyFileOptions,
 ) (err error) {
-	// Use a default read/write mode; umask will further restrict this as appropriate.
-	const defaultPerms = os.FileMode(0o666)
-
 	if dryRunnable.DryRun() {
 		slog.Info("Dry run; would copy file", "source", sourcePath, "dest", destPath)
 
 		return nil
 	}
+
+	return copyFileCrossFS(sourceFS, sourcePath, destFS, destPath, options)
+}
+
+func copyFileCrossFS(
+	sourceFS opctx.FS, sourcePath string,
+	destFS opctx.FS, destPath string,
+	options CopyFileOptions,
+) (err error) {
+	// Use a default read/write mode; umask will further restrict this as appropriate.
+	const defaultPerms = os.FileMode(0o666)
 
 	destFileMode := defaultPerms
 
@@ -127,26 +135,25 @@ func CopyDirRecursive(
 	sourceDirPath, destDirPath string,
 	options CopyDirOptions,
 ) (err error) {
-	return CopyDirRecursiveCrossFS(dryRunnable, fs, sourceDirPath, fs, destDirPath, options)
+	if dryRunnable.DryRun() {
+		slog.Info("Dry run; would recursively copy dir", "source", sourceDirPath, "dest", destDirPath)
+
+		return nil
+	}
+
+	return CopyDirRecursiveCrossFS(fs, sourceDirPath, fs, destDirPath, options)
 }
 
 // Recursively copies a directory, potentially across two [opctx.FS] filesystem instances. May preserve
 // mode bits if "options" says so but does *not* preserve ownership, timestamps, or other metadata.
 // *Does* follow symlinks. Is *not* enlightened to skip copying in dry-run mode.
 func CopyDirRecursiveCrossFS(
-	dryRunnable opctx.DryRunnable,
 	sourceFS opctx.FS, sourceDirPath string,
 	destFS opctx.FS, destDirPath string,
 	options CopyDirOptions,
 ) (err error) {
 	// Use a default read/write/execute mode; umask will further restrict this as appropriate.
 	const defaultDirPerms = os.FileMode(0o777)
-
-	if dryRunnable.DryRun() {
-		slog.Info("Dry run; would recursively copy dir", "source", sourceDirPath, "dest", destDirPath)
-
-		return nil
-	}
 
 	var fileInfo os.FileInfo
 
@@ -186,7 +193,7 @@ func CopyDirRecursiveCrossFS(
 		destPath := filepath.Join(destDirPath, entry.Name())
 
 		if entry.IsDir() {
-			err = CopyDirRecursiveCrossFS(dryRunnable, sourceFS, sourcePath, destFS, destPath, options)
+			err = CopyDirRecursiveCrossFS(sourceFS, sourcePath, destFS, destPath, options)
 			if err != nil {
 				return fmt.Errorf("failed to recursively copy dir '%s' to '%s':\n%w", sourcePath, destPath, err)
 			}
@@ -205,8 +212,7 @@ func CopyDirRecursiveCrossFS(
 			}
 		}
 
-		err = CopyFileCrossFS(
-			dryRunnable,
+		err = copyFileCrossFS(
 			sourceFS, sourcePath,
 			destFS, destPath,
 			options.CopyFileOptions,
