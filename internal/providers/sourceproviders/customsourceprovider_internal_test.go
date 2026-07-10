@@ -5,6 +5,7 @@ package sourceproviders
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -202,6 +203,22 @@ func TestStageInputFiles_NotFoundReturnsError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "missing.tar.gz")
 	assert.Contains(t, err.Error(), "/output")
+}
+
+func TestStageInputFiles_SymlinkRejected(t *testing.T) {
+	fileSystem := afero.NewOsFs()
+	dir := t.TempDir()
+	targetPath := filepath.Join(dir, "target.tar.gz")
+	inputPath := filepath.Join(dir, "input.tar.gz")
+
+	require.NoError(t, os.WriteFile(targetPath, []byte("input"), fileperms.PublicFile))
+	require.NoError(t, os.Symlink(targetPath, inputPath))
+
+	err := stageInputFiles(
+		testctx.NewCtx(), fileSystem, []string{"input.tar.gz"}, dir, filepath.Join(dir, "script"), "gen.sh")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "input.tar.gz")
+	assert.Contains(t, err.Error(), "symbolic link")
 }
 
 func TestStageInputFiles_ScriptNameConflictReturnsError(t *testing.T) {

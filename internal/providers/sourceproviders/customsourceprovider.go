@@ -19,6 +19,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/archive"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
+	"github.com/spf13/afero"
 )
 
 // customGenScriptDir is the path inside the mock chroot where the generation script
@@ -380,6 +381,17 @@ func stageInputFiles(
 		}
 
 		sourcePath := filepath.Join(destDirPath, filename)
+
+		if lstater, ok := fs.(afero.Lstater); ok {
+			fileInfo, lstatCalled, lstatErr := lstater.LstatIfPossible(sourcePath)
+			if lstatErr != nil {
+				return fmt.Errorf("failed to inspect input file %#q:\n%w", filename, lstatErr)
+			}
+
+			if lstatCalled && fileInfo.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("input file %#q must not be a symbolic link", filename)
+			}
+		}
 
 		exists, statErr := fileutils.Exists(fs, sourcePath)
 		if statErr != nil {
