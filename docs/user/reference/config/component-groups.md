@@ -15,14 +15,14 @@ Component groups organize related components together and let you apply shared d
 
 ## Metadata
 
-The optional `[component-groups.<name>.metadata]` table documents the group's intent and provenance. It shares exactly the same fields and validation rules as [overlay metadata](overlays.md): a required `category`, plus optional commit/bug links and an upstreamable assessment. It is documentation only — it does not affect how members are resolved or built.
+The optional `[component-groups.<name>.metadata]` table documents the group's intent and provenance. It shares exactly the same fields and validation rules as [overlay metadata](overlays.md): a required `category`, a required `upstream-status`, and optional commit/bug links. It is documentation only — it does not affect how members are resolved or built.
 
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
-| Category | `category` | enum | **Yes** | Classification of the group's intent (e.g. `backport-dist-git`, `azl-disable-flaky-tests`) |
-| Commits | `commits` | string array (URLs) | No | Upstream commit URLs this group references; required when `category = "backport-dist-git"` |
-| Bugs | `bugs` | array of `{ url = "..." }` tables | No | References to related issue-tracker entries; see [Bug references](overlays.md#bug-references) |
-| Upstreamable | `upstreamable` | boolean | No | Whether the group's change can be upstreamed (`true`/`false`); omit when not yet assessed |
+| Category | `category` | enum | **Yes** | Classification of the group's intent (e.g. `upstream-backport`, `azl-disable-flaky-tests`); see [Categories](overlays.md#categories) for the full list |
+| Upstream status | `upstream-status` | enum | **Yes** | Relationship to upstream (`upstreamed`, `upstreamable`, `needs-upstream-hook`, `inapplicable`, `unknown`); see [Upstream status](overlays.md#upstream-status). Must be `upstreamed` or `upstreamable` when `category = "upstream-backport"` |
+| Commits | `commits` | array of `{ url = "..." }` tables | Sometimes | Upstream commit references this group backports; required when `category = "upstream-backport"`. See [URL references](overlays.md#url-references) |
+| Bugs | `bugs` | array of `{ url = "..." }` tables | No | References to related issue-tracker entries; see [URL references](overlays.md#url-references) |
 
 ```toml
 [component-groups.check-skip-initial-failures]
@@ -31,7 +31,7 @@ components = ["bats", "dnf", "git"]
 
 [component-groups.check-skip-initial-failures.metadata]
 category = "azl-disable-flaky-tests"
-# upstreamable omitted: upstreamability for this group has not been assessed yet.
+upstream-status = "upstreamable"
 ```
 
 ## Component Membership

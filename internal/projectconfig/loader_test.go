@@ -491,10 +491,10 @@ func TestLoadAndResolveProjectConfig_ComponentGroupWithMetadata(t *testing.T) {
 specs = ["SPECS/**/*.spec"]
 
 [component-groups.core.metadata]
-category = "backport-dist-git"
-commits = ["https://example.com/commit/abc"]
+category = "upstream-backport"
+commits = [{ url = "https://example.com/commit/abc" }]
 bugs = [{ url = "https://example.com/bug/1" }]
-upstreamable = true
+upstream-status = "upstreamable"
 `
 
 	ctx := testctx.NewCtx()
@@ -506,11 +506,10 @@ upstreamable = true
 	if assert.Contains(t, config.ComponentGroups, "core") {
 		group := config.ComponentGroups["core"]
 		require.NotNil(t, group.Metadata)
-		assert.Equal(t, OverlayCategoryBackportDistGit, group.Metadata.Category)
-		assert.Equal(t, []string{"https://example.com/commit/abc"}, group.Metadata.Commits)
-		assert.Equal(t, []BugRef{{URL: "https://example.com/bug/1"}}, group.Metadata.Bugs)
-		require.NotNil(t, group.Metadata.Upstreamable)
-		assert.True(t, *group.Metadata.Upstreamable)
+		assert.Equal(t, OverlayCategoryUpstreamBackport, group.Metadata.Category)
+		assert.Equal(t, []URLRef{{URL: "https://example.com/commit/abc"}}, group.Metadata.Commits)
+		assert.Equal(t, []URLRef{{URL: "https://example.com/bug/1"}}, group.Metadata.Bugs)
+		assert.Equal(t, OverlayUpstreamStatusUpstreamable, group.Metadata.UpstreamStatus)
 	}
 }
 
