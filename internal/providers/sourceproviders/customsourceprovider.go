@@ -4,7 +4,6 @@
 package sourceproviders
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -29,6 +28,11 @@ const customGenScriptDir = "/azldev-gen/script"
 // customGenOutputDir is the path inside the mock chroot where the generation script
 // must write its output.
 const customGenOutputDir = "/azldev-gen/output"
+
+// maxCustomScriptOutputBytes limits the retained stdout and stderr from a custom
+// generation script. The tail is retained because failures are typically reported
+// near the end of command output.
+const maxCustomScriptOutputBytes = 64 * 1024
 
 // customFileSourceProvider implements [FileSourceProvider] for source files with
 // [projectconfig.OriginTypeCustom]. It executes a user-supplied script inside a
@@ -281,17 +285,15 @@ func execScriptInChroot(
 			ref.Filename, cmdErr)
 	}
 
-	var (
-		stdout bytes.Buffer
-		stderr bytes.Buffer
-	)
+	stdout := newOutputTail(maxCustomScriptOutputBytes)
+	stderr := newOutputTail(maxCustomScriptOutputBytes)
 
 	if verbose {
-		cmd.SetStdout(io.MultiWriter(os.Stdout, &stdout))
-		cmd.SetStderr(io.MultiWriter(os.Stderr, &stderr))
+		cmd.SetStdout(io.MultiWriter(os.Stdout, stdout))
+		cmd.SetStderr(io.MultiWriter(os.Stderr, stderr))
 	} else {
-		cmd.SetStdout(&stdout)
-		cmd.SetStderr(&stderr)
+		cmd.SetStdout(stdout)
+		cmd.SetStderr(stderr)
 	}
 
 	if runErr := cmd.Run(ctx); runErr != nil {
@@ -302,6 +304,45 @@ func execScriptInChroot(
 	}
 
 	return nil
+}
+
+// outputTail retains the last limit bytes written to it. It implements [io.Writer]
+// so command output can be captured without unbounded memory growth.
+type outputTail struct {
+	buf       []byte
+	limit     int
+	truncated bool
+}
+
+func newOutputTail(limit int) *outputTail {
+	return &outputTail{buf: make([]byte, 0, limit), limit: limit}
+}
+
+func (b *outputTail) Write(data []byte) (n int, err error) {
+	n = len(data)
+	if n >= b.limit {
+		b.truncated = b.truncated || n > b.limit || len(b.buf) > 0
+		b.buf = append(b.buf[:0], data[n-b.limit:]...)
+
+		return n, nil
+	}
+
+	if overflow := len(b.buf) + n - b.limit; overflow > 0 {
+		b.buf = append(b.buf[:0], b.buf[overflow:]...)
+		b.truncated = true
+	}
+
+	b.buf = append(b.buf, data...)
+
+	return n, nil
+}
+
+func (b *outputTail) String() string {
+	if b.truncated {
+		return fmt.Sprintf("[output truncated; showing last %d bytes]\n%s", b.limit, b.buf)
+	}
+
+	return string(b.buf)
 }
 
 func formatCustomScriptOutput(stdout, stderr string) string {

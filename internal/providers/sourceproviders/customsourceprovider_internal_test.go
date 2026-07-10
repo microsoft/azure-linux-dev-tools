@@ -39,6 +39,48 @@ func TestCustomFileSourceProvider_GetFile_NonCustomOriginReturnsNotFound(t *test
 	assert.ErrorIs(t, err, ErrNotFound)
 }
 
+func TestOutputTail(t *testing.T) {
+	tests := []struct {
+		name     string
+		limit    int
+		writes   []string
+		expected string
+	}{
+		{
+			name:     "retains complete output within limit",
+			limit:    5,
+			writes:   []string{"abc", "de"},
+			expected: "abcde",
+		},
+		{
+			name:     "retains tail after multiple writes",
+			limit:    5,
+			writes:   []string{"abc", "defg"},
+			expected: "[output truncated; showing last 5 bytes]\ncdefg",
+		},
+		{
+			name:     "retains tail of a single oversized write",
+			limit:    4,
+			writes:   []string{"abcdef"},
+			expected: "[output truncated; showing last 4 bytes]\ncdef",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			tail := newOutputTail(testCase.limit)
+
+			for _, write := range testCase.writes {
+				written, err := tail.Write([]byte(write))
+				require.NoError(t, err)
+				assert.Equal(t, len(write), written)
+			}
+
+			assert.Equal(t, testCase.expected, tail.String())
+		})
+	}
+}
+
 func TestCustomFileSourceProvider_GetFile_MissingScriptReturnsError(t *testing.T) {
 	ctx := testctx.NewCtx()
 
