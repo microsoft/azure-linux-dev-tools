@@ -147,6 +147,8 @@ func addToolForCmd(env *azldev.Env, srv *server.MCPServer, leaf *cobra.Command) 
 func handleToolCall(
 	env *azldev.Env, cmd *cobra.Command,
 ) func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	flagDefaults := captureFlagDefaults(getAllFlagDefs(cmd))
+
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		slog.Info("Invoking tool", "tool", cmd.Name(), "params", request.Params.Arguments)
 
@@ -161,6 +163,10 @@ func handleToolCall(
 					mcp.NewTextContent("Invalid arguments provided to tool: " + cmd.Name()),
 				},
 			}, nil
+		}
+
+		if err := restoreFlagDefaults(flagDefaults, args); err != nil {
+			return nil, fmt.Errorf("failed to reset command flags:\n%w", err)
 		}
 
 		for key, val := range args {
@@ -197,7 +203,14 @@ func handleToolCall(
 		if execErr != nil {
 			slog.Error("Error executing command", "error", execErr)
 
-			result := mcp.NewToolResultText(execErr.Error())
+			errorText := capturedText
+			if errorText != "" && !strings.HasSuffix(errorText, "\n") {
+				errorText += "\n"
+			}
+
+			errorText += execErr.Error()
+
+			result := mcp.NewToolResultText(errorText)
 			result.IsError = true
 
 			return result, nil
@@ -205,6 +218,66 @@ func handleToolCall(
 
 		return mcp.NewToolResultText(capturedText), nil
 	}
+}
+
+type flagDefault struct {
+	flag        *pflag.Flag
+	value       string
+	sliceValues []string
+	changed     bool
+}
+
+func (value flagDefault) restore(supplied bool) error {
+	if sliceValue, ok := value.flag.Value.(pflag.SliceValue); ok {
+		sliceValues := value.sliceValues
+		if supplied {
+			sliceValues = nil
+		}
+
+		if err := sliceValue.Replace(sliceValues); err != nil {
+			return fmt.Errorf("failed to restore slice value:\n%w", err)
+		}
+
+		return nil
+	}
+
+	if err := value.flag.Value.Set(value.value); err != nil {
+		return fmt.Errorf("failed to restore value:\n%w", err)
+	}
+
+	return nil
+}
+
+func captureFlagDefaults(flags []*pflag.Flag) []flagDefault {
+	defaults := make([]flagDefault, 0, len(flags))
+
+	for _, flag := range flags {
+		value := flagDefault{
+			flag:    flag,
+			value:   flag.Value.String(),
+			changed: flag.Changed,
+		}
+		if sliceValue, ok := flag.Value.(pflag.SliceValue); ok {
+			value.sliceValues = append([]string(nil), sliceValue.GetSlice()...)
+		}
+
+		defaults = append(defaults, value)
+	}
+
+	return defaults
+}
+
+func restoreFlagDefaults(defaults []flagDefault, args map[string]any) error {
+	for _, value := range defaults {
+		_, supplied := args[value.flag.Name]
+		if err := value.restore(supplied); err != nil {
+			return fmt.Errorf("failed to reset flag %#q:\n%w", value.flag.Name, err)
+		}
+
+		value.flag.Changed = value.changed
+	}
+
+	return nil
 }
 
 // captureStdout runs action with os.Stdout redirected to a pipe and returns everything

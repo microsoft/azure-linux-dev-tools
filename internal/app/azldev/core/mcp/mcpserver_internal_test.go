@@ -24,6 +24,8 @@ func TestHandleToolCallMarksCommandError(t *testing.T) {
 	cmd := &cobra.Command{
 		Use: "fail",
 		RunE: func(_ *cobra.Command, _ []string) error {
+			fmt.Fprint(os.Stdout, "partial")
+
 			return errors.New("boom")
 		},
 	}
@@ -39,7 +41,62 @@ func TestHandleToolCallMarksCommandError(t *testing.T) {
 	require.Len(t, result.Content, 1)
 	text, ok := result.Content[0].(mcpapi.TextContent)
 	require.True(t, ok)
-	assert.Equal(t, "boom", text.Text)
+	assert.Equal(t, "partial\nboom", text.Text)
+}
+
+func TestHandleToolCallResetsCommandFlags(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+	root := &cobra.Command{Use: "azldev"}
+
+	var (
+		value string
+		items []string
+	)
+
+	cmd := &cobra.Command{
+		Use: "show",
+		RunE: func(command *cobra.Command, _ []string) error {
+			fmt.Fprintf(os.Stdout, "%s:%t|%s:%t",
+				value, command.Flags().Changed("value"),
+				strings.Join(items, ","), command.Flags().Changed("item"))
+
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&value, "value", "default", "value to print")
+	cmd.Flags().StringArrayVar(&items, "item", []string{"base"}, "item to print")
+	root.AddCommand(cmd)
+	handler := handleToolCall(testEnv.Env, cmd)
+
+	first, err := handler(t.Context(), mcpapi.CallToolRequest{
+		Params: mcpapi.CallToolParams{Arguments: map[string]any{
+			"value": "first",
+			"item":  "one",
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, first.Content, 1)
+	firstText, isText := first.Content[0].(mcpapi.TextContent)
+	require.True(t, isText)
+	assert.Equal(t, "first:true|one:true", firstText.Text)
+
+	second, err := handler(t.Context(), mcpapi.CallToolRequest{
+		Params: mcpapi.CallToolParams{Arguments: map[string]any{}},
+	})
+	require.NoError(t, err)
+	require.Len(t, second.Content, 1)
+	secondText, isText := second.Content[0].(mcpapi.TextContent)
+	require.True(t, isText)
+	assert.Equal(t, "default:false|base:false", secondText.Text)
+
+	third, err := handler(t.Context(), mcpapi.CallToolRequest{
+		Params: mcpapi.CallToolParams{Arguments: map[string]any{"item": "two"}},
+	})
+	require.NoError(t, err)
+	require.Len(t, third.Content, 1)
+	thirdText, isText := third.Content[0].(mcpapi.TextContent)
+	require.True(t, isText)
+	assert.Equal(t, "default:false|two:true", thirdText.Text)
 }
 
 // TestCaptureStdoutLargeOutput is a regression guard for a pipe deadlock: capturing
