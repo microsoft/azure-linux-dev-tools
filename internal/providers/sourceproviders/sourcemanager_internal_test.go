@@ -51,11 +51,21 @@ func TestFetchSourceFile_ConfiguredSourceReplacesExistingFile(t *testing.T) {
 		origin      projectconfig.Origin
 		useProvider bool
 		downloadURL string
+		hash        string
+		expectError string
 	}{
 		{
 			name:        "custom source is always regenerated",
 			origin:      projectconfig.Origin{Type: projectconfig.OriginTypeCustom},
 			useProvider: true,
+			hash:        emptyHash,
+		},
+		{
+			name:        "custom source with wrong hash fails validation",
+			origin:      projectconfig.Origin{Type: projectconfig.OriginTypeCustom},
+			useProvider: true,
+			hash:        "0000000000000000000000000000000000000000000000000000000000000000",
+			expectError: "hash validation failed",
 		},
 		{
 			name: "download source replaces upstream file",
@@ -65,6 +75,7 @@ func TestFetchSourceFile_ConfiguredSourceReplacesExistingFile(t *testing.T) {
 			},
 			downloadURL: "https://example.com/test-component/source.tar.gz/sha256/" +
 				emptyHash + "/source.tar.gz",
+			hash: emptyHash,
 		},
 	}
 
@@ -107,15 +118,23 @@ func TestFetchSourceFile_ConfiguredSourceReplacesExistingFile(t *testing.T) {
 
 			ref := &projectconfig.SourceFileReference{
 				Filename:        filename,
-				Hash:            emptyHash,
+				Hash:            testCase.hash,
 				HashType:        fileutils.HashTypeSHA256,
 				Origin:          testCase.origin,
 				ReplaceUpstream: true,
 				ReplaceReason:   "use configured replacement",
 			}
 
-			require.NoError(t, manager.fetchSourceFile(t.Context(), httpDownloader, component, ref, destDir))
+			err := manager.fetchSourceFile(t.Context(), httpDownloader, component, ref, destDir)
 			assert.Equal(t, testCase.useProvider, provider.called)
+
+			if testCase.expectError != "" {
+				require.ErrorContains(t, err, testCase.expectError)
+
+				return
+			}
+
+			require.NoError(t, err)
 
 			content, err := fileutils.ReadFile(ctx.FS(), filepath.Join(destDir, filename))
 			require.NoError(t, err)
