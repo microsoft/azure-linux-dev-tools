@@ -6,6 +6,7 @@
 - [Add a Component](./how-to/add-component.md) — import or create a new package
 - [Build a Component](./how-to/build-component.md) — build RPMs from component definitions
 - [Build an Image](./how-to/build-image.md) — build and boot Azure Linux images
+- [Set Up AI Coding Agents](./how-to/set-up-ai-agents.md) — emit agent skill and instruction files
 
 ## Explanation
 
@@ -29,4 +30,3 @@
 ### CLI Commands
 
 Auto-generated from `azldev --help`. See [reference/cli/](./reference/cli/azldev.md) for per-command documentation.
-
