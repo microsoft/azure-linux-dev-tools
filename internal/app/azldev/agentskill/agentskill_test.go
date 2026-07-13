@@ -140,6 +140,15 @@ func fileByPath(t *testing.T, files []agentskill.EmittedFile, relPath string) ag
 	return agentskill.EmittedFile{}
 }
 
+func mockSkill(t *testing.T) agentskill.Skill {
+	t.Helper()
+
+	skill, err := agentskill.FindSkill("azldev-mock")
+	require.NoError(t, err)
+
+	return skill
+}
+
 // instructionByName returns the registered instruction with the given name.
 func instructionByName(t *testing.T, name string) agentskill.Instruction {
 	t.Helper()
@@ -184,11 +193,14 @@ func TestSkillsRegistry(t *testing.T) {
 	}
 
 	assert.Contains(t, names, agentskill.SkillName)
+	assert.Contains(t, names, "azldev-mock")
 	assert.Contains(t, names, "azldev-update-component")
 	assert.Contains(t, names, "azldev-remove-component")
 	assert.Contains(t, names, "azldev-overlays")
 	assert.Contains(t, names, "azldev-comp-toml")
 	assert.Contains(t, names, "azldev-add-component")
+	assert.Contains(t, names, "azldev-build-component")
+	assert.Contains(t, names, "azldev-image")
 }
 
 func TestRegistryAccessorsReturnCopies(t *testing.T) {
@@ -238,6 +250,11 @@ func TestFilesWrapper(t *testing.T) {
 	// The wrapper points at the read-only MCP tool and omits the full skill body.
 	assert.Contains(t, skill, agentskill.ShowSkillToolName)
 	assert.NotContains(t, skill, "Golden rules")
+
+	// The mock wrapper also points at the tool but is not the full body.
+	mockWrapper := fileByPath(t, files, layout.SkillFile(mockSkill(t))).Content
+	assert.Contains(t, mockWrapper, agentskill.ShowSkillToolName)
+	assert.NotContains(t, mockWrapper, "Never install built RPMs")
 
 	// The azldev instruction wrapper applies to azldev.toml and points at the azldev skill by
 	// name (never the CLI/MCP tool, which may be unavailable in --full installs).
@@ -296,6 +313,7 @@ func TestFilesFull(t *testing.T) {
 
 	// In full mode each on-disk SKILL.md inlines the complete skill document.
 	assert.Contains(t, fileByPath(t, files, layout.SkillFile(primarySkill(t))).Content, "overlay system")
+	assert.Contains(t, fileByPath(t, files, layout.SkillFile(mockSkill(t))).Content, "azldev adv mock shell")
 }
 
 func TestFilesGitHubLayout(t *testing.T) {
@@ -310,6 +328,9 @@ func TestFilesGitHubLayout(t *testing.T) {
 	// The github layout places skills under .github/skills with their plain (namespaced) names.
 	azldevSkill := fileByPath(t, files, ".github/skills/azldev/SKILL.md")
 	assert.Contains(t, azldevSkill.Content, "name: azldev")
+
+	mockFile := fileByPath(t, files, ".github/skills/azldev-mock/SKILL.md")
+	assert.Contains(t, mockFile.Content, "name: azldev-mock")
 }
 
 // schemaEnum extracts values from an authoritative jsonschema enum tag.

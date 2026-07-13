@@ -70,6 +70,15 @@ var skills = []Skill{
 		bodyTemplate: "azldev.md.tmpl",
 	},
 	{
+		Name: "azldev-mock",
+		Description: "Read this before testing or inspecting a built RPM; do not drive mock by hand from " +
+			"memory. Explains how to test and inspect built packages in a mock chroot with 'azldev adv " +
+			"mock shell', covering non-interactive (heredoc) and interactive chroot workflows, the " +
+			"-p/--add-package flag, and resetting stale chroot state. Triggers include test package, mock " +
+			"shell, inspect rpm, smoke test, chroot, verify build output.",
+		bodyTemplate: "mock.md.tmpl",
+	},
+	{
 		Name: "azldev-update-component",
 		Description: "Read this before finalizing a component change, changing source resolution, or " +
 			"touching a lock file; lock edits are easy to get wrong. Explains how to refresh azldev " +
@@ -116,6 +125,24 @@ var skills = []Skill{
 			"diff-sources, and build. Triggers include add component, new package, import package, create " +
 			"comp.toml, new component.",
 		bodyTemplate: "add-component.md.tmpl",
+	},
+	{
+		Name: "azldev-build-component",
+		Description: "Read this before building a component or diagnosing a build failure; do not guess " +
+			"build flags or the inner loop. Explains how to build, iterate on, and debug an azldev " +
+			"component, covering comp build flags (local-repo, preserve-buildenv), the render/build/test " +
+			"inner loop, diff-sources, and disabling a failing %check via check.skip. Triggers include " +
+			"build component, build failed, build error, inner loop, preserve buildenv, local repo, disable " +
+			"check.",
+		bodyTemplate: "build-component.md.tmpl",
+	},
+	{
+		Name: "azldev-image",
+		Description: "Read this before building, booting, or configuring an azldev image. Explains the " +
+			"azldev image commands (list, build, boot, test, customize) and the [images.<name>] config " +
+			"(kiwi definition, capabilities, tests, publish); the kiwi XML format itself is upstream KIWI " +
+			"NG. Triggers include image build, image boot, kiwi, container image, VM image, images.toml.",
+		bodyTemplate: "image.md.tmpl",
 	},
 }
 
