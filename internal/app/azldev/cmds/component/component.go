@@ -33,4 +33,5 @@ components defined in the project configuration.`,
 	queryOnAppInit(app, cmd)
 	renderOnAppInit(app, cmd)
 	updateOnAppInit(app, cmd)
+	metadataOnAppInit(app, cmd)
 }

@@ -248,6 +248,10 @@ section = "%changelog"
 lines = ["- Fix CVE-2024-1234"]
 ```
 
+### Inspecting overlay metadata
+
+Use `azldev component metadata` to list documentation metadata for one or more components. By default it lists metadata from both sources — component overlays and the component groups each component belongs to — tagging each row with its `source`, and shows only entries that carry a `[metadata]` block. Pass `--overlays` or `--groups` to restrict to one source. The command is read-only and supports `--category` and `--upstream-status` filters; output is available as a table (default) or JSON (`-O json`).
+
 ## Examples
 
 ### Adding a Build Dependency
