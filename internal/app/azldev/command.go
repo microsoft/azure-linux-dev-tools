@@ -36,6 +36,15 @@ var ErrInvalidUsage = errors.New("invalid usage")
 // should be enabled in MCP server mode. The value associated with the key is ignored.
 const CmdAnnotationMCPEnabled = "azldev.mcp.enabled"
 
+// CmdAnnotationMCPReadOnly is the [cobra.Command] annotation key used to indicate that a command,
+// when exposed as an MCP tool, is read-only (does not mutate any state). MCP clients may use this
+// hint to auto-approve the tool. The value associated with the key is ignored.
+const CmdAnnotationMCPReadOnly = "azldev.mcp.readonly"
+
+// cmdMCPAnnotationValue is the placeholder value stored for MCP command annotations; only the
+// presence of the key matters.
+const cmdMCPAnnotationValue = "true"
+
 type (
 	cobraRunFuncType = func(command *cobra.Command, args []string) error
 
@@ -147,18 +156,39 @@ func GetEnvFromCommand(cmd *cobra.Command) (*Env, error) {
 }
 
 // ExportAsMCPTool updates the provided command (and all descendant commands),
-// opting it into being advertised as a tool in MCP server mode.
+// opting it into being advertised as a tool in MCP server mode. Use it for commands
+// that can write, but only ever to a caller-provided output path (e.g. 'docs markdown',
+// 'component diff-sources --output-file'); use [ExportAsReadOnlyMCPTool] for commands
+// that never modify their environment so clients can auto-approve them.
 func ExportAsMCPTool(cmd *cobra.Command) {
 	if cmd.Annotations == nil {
 		cmd.Annotations = make(map[string]string)
 	}
 
 	// The value doesn't matter.
-	cmd.Annotations[CmdAnnotationMCPEnabled] = "true"
+	cmd.Annotations[CmdAnnotationMCPEnabled] = cmdMCPAnnotationValue
 
 	// If the command has subcommands, then recursively opt them in as well.
 	for _, subCmd := range cmd.Commands() {
 		ExportAsMCPTool(subCmd)
+	}
+}
+
+// ExportAsReadOnlyMCPTool is like [ExportAsMCPTool], but additionally marks the command (and all
+// descendant commands) as read-only -- it does not modify its environment -- so that MCP clients
+// can advertise and auto-approve them as non-mutating tools.
+func ExportAsReadOnlyMCPTool(cmd *cobra.Command) {
+	if cmd.Annotations == nil {
+		cmd.Annotations = make(map[string]string)
+	}
+
+	// The values don't matter.
+	cmd.Annotations[CmdAnnotationMCPEnabled] = cmdMCPAnnotationValue
+	cmd.Annotations[CmdAnnotationMCPReadOnly] = cmdMCPAnnotationValue
+
+	// If the command has subcommands, then recursively opt them in as well.
+	for _, subCmd := range cmd.Commands() {
+		ExportAsReadOnlyMCPTool(subCmd)
 	}
 }
 

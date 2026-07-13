@@ -131,7 +131,7 @@ hand-picking entries to document.`,
 	// History is read-only; the lock validation flag is meaningless here.
 	_ = cmd.Flags().MarkHidden("skip-lock-validation")
 
-	azldev.ExportAsMCPTool(cmd)
+	azldev.ExportAsReadOnlyMCPTool(cmd)
 
 	return cmd
 }

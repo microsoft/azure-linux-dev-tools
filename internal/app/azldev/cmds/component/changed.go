@@ -94,7 +94,7 @@ detected via lock file presence in the compared refs when using -a.`,
 	// it inspects historical locks at arbitrary refs.
 	_ = cmd.Flags().MarkHidden("skip-lock-validation")
 
-	azldev.ExportAsMCPTool(cmd)
+	azldev.ExportAsReadOnlyMCPTool(cmd)
 
 	return cmd
 }
