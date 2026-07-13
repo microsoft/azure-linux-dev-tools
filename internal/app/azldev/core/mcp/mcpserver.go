@@ -196,6 +196,9 @@ func handleToolCall(
 		// [azldev.ExportAsReadOnlyMCPTool]), or ones that write solely to a caller-provided output
 		// path, such as 'docs markdown' or 'component diff-sources --output-file'.
 		capturedText, execErr := captureStdout(func() error {
+			reportFile := env.ReportFile()
+			defer env.SetReportFile(reportFile)
+
 			env.SetReportFile(os.Stdout) // os.Stdout is the capture pipe for the duration of this call
 
 			return cmd.Root().Execute()

@@ -4,6 +4,7 @@
 package mcp
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -42,6 +43,65 @@ func TestHandleToolCallMarksCommandError(t *testing.T) {
 	text, ok := result.Content[0].(mcpapi.TextContent)
 	require.True(t, ok)
 	assert.Equal(t, "partial\nboom", text.Text)
+}
+
+func TestHandleToolCallRestoresReportFile(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+	reportOutput := &bytes.Buffer{}
+	testEnv.Env.SetReportFile(reportOutput)
+
+	root := &cobra.Command{Use: "azldev"}
+	cmd := &cobra.Command{
+		Use: "report",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			fmt.Fprint(testEnv.Env.ReportFile(), "captured")
+
+			return nil
+		},
+	}
+	root.AddCommand(cmd)
+
+	result, err := handleToolCall(testEnv.Env, cmd)(t.Context(), mcpapi.CallToolRequest{
+		Params: mcpapi.CallToolParams{Arguments: map[string]any{}},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Len(t, result.Content, 1)
+	text, ok := result.Content[0].(mcpapi.TextContent)
+	require.True(t, ok)
+	assert.Equal(t, "captured", text.Text)
+	assert.Same(t, reportOutput, testEnv.Env.ReportFile())
+	_, writeErr := fmt.Fprint(testEnv.Env.ReportFile(), "later")
+	require.NoError(t, writeErr)
+	assert.Equal(t, "later", reportOutput.String())
+}
+
+func TestHandleToolCallRestoresReportFileAfterPanic(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+	reportOutput := &bytes.Buffer{}
+	testEnv.Env.SetReportFile(reportOutput)
+
+	root := &cobra.Command{Use: "azldev"}
+	cmd := &cobra.Command{
+		Use: "panic",
+		Run: func(_ *cobra.Command, _ []string) {
+			panic("boom")
+		},
+	}
+	root.AddCommand(cmd)
+	handler := handleToolCall(testEnv.Env, cmd)
+
+	assert.PanicsWithValue(t, "boom", func() {
+		_, _ = handler(t.Context(), mcpapi.CallToolRequest{
+			Params: mcpapi.CallToolParams{Arguments: map[string]any{}},
+		})
+	})
+
+	assert.Same(t, reportOutput, testEnv.Env.ReportFile())
+	_, writeErr := fmt.Fprint(testEnv.Env.ReportFile(), "later")
+	require.NoError(t, writeErr)
+	assert.Equal(t, "later", reportOutput.String())
 }
 
 func TestHandleToolCallResetsCommandFlags(t *testing.T) {
