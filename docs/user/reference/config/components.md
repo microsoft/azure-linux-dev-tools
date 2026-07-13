@@ -352,12 +352,15 @@ origin    = { type = "download", uri = "https://example.com/repo/.../shimx64.efi
 
 Use `origin.type = "custom"` when a source archive must be assembled or modified (e.g. stripping sensitive test fixtures from an upstream tarball). azldev runs the script inside a fresh mock chroot — the script **must write all output to `/azldev-gen/output/`**, which azldev packages into the archive named by `filename`. Network access is always enabled; the mock config comes from the project's default distro.
 
-The `script` and `mock-packages` fields are nested under `[origin]`:
+Custom sources are regenerated on every source preparation rather than restored from lookaside. The generated archive is validated against its configured hash, so changes to the script or its inputs fail with a hash mismatch until the hash is intentionally refreshed.
+
+The `script`, `mock-packages`, and `inputs` fields are nested under `[origin]`:
 
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
 | Script | `origin.script` | string | **Yes** | Script filename (relative to the component's spec dir) to run in mock. Required for `origin.type = "custom"`. |
 | Mock packages | `origin.mock-packages` | array of string | No | Extra RPM packages to install in the mock chroot before the script runs. |
+| Inputs | `origin.inputs` | array of string | No | Unique filenames to make available in the mock chroot before the script runs. Each file must already be present in the fetched source output directory — upstream source tarballs, sidecar files (patches, scripts), and any earlier `source-files` entries are all placed there by the upstream fetch before custom scripts run. |
 
 On first use, omit `hash` and run `prep-sources --allow-no-hashes` to generate the archive and print its hash, then copy it into the TOML.
 
@@ -369,7 +372,10 @@ hash      = "abc123..."               # from: prep-sources --allow-no-hashes
 origin.type          = "custom"
 origin.script        = "gen-yara-stripped.sh"    # relative to the component's spec directory
 origin.mock-packages = ["cmake"]                 # omit if not needed
+origin.inputs        = ["yara-4.5.4.tar.gz"]     # available to the script as ./yara-4.5.4.tar.gz
 ```
+
+> **Note:** Upstream source tarballs are automatically available as inputs before running custom generation scripts. There is no need to re-declare an upstream file in `source-files` to use it as an input.
 
 ### Replacing an upstream `sources` entry
 

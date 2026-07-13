@@ -859,3 +859,95 @@ func TestValidateCustomSourceRef_InvalidScriptFilename(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "script")
 }
+
+func TestValidateCustomSourceRef_ValidInputs(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"comp": {
+				SourceFiles: []projectconfig.SourceFileReference{
+					{
+						Filename: "gen.tar.gz",
+						Origin: projectconfig.Origin{
+							Type:   projectconfig.OriginTypeCustom,
+							Script: "gen.sh",
+							Inputs: []string{"upstream.tar.gz", "fix.patch"},
+						},
+					},
+				},
+			},
+		},
+	}
+	assert.NoError(t, file.Validate())
+}
+
+func TestValidateCustomSourceRef_DuplicateInputs(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"comp": {
+				SourceFiles: []projectconfig.SourceFileReference{
+					{
+						Filename: "gen.tar.gz",
+						Origin: projectconfig.Origin{
+							Type:   projectconfig.OriginTypeCustom,
+							Script: "gen.sh",
+							Inputs: []string{"upstream.tar.gz", "upstream.tar.gz"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err := file.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "duplicate 'inputs' entry")
+	assert.Contains(t, err.Error(), "upstream.tar.gz")
+	assert.Contains(t, err.Error(), "gen.tar.gz")
+	assert.Contains(t, err.Error(), "comp")
+}
+
+func TestValidateCustomSourceRef_InputsOnDownloadOrigin(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"comp": {
+				SourceFiles: []projectconfig.SourceFileReference{
+					{
+						Filename: "src.tar.gz",
+						Origin: projectconfig.Origin{
+							Type:   projectconfig.OriginTypeURI,
+							Uri:    "https://example.com/src.tar.gz",
+							Inputs: []string{"other.tar.gz"},
+						},
+					},
+				},
+			},
+		},
+	}
+	err := file.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "'inputs'")
+	assert.Contains(t, err.Error(), "custom")
+}
+
+func TestValidateCustomSourceRef_InvalidInputFilename(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Components: map[string]projectconfig.ComponentConfig{
+			"comp": {
+				SourceFiles: []projectconfig.SourceFileReference{
+					{
+						Filename: "gen.tar.gz",
+						Origin: projectconfig.Origin{
+							Type:   projectconfig.OriginTypeCustom,
+							Script: "gen.sh",
+							Inputs: []string{"../escape.tar.gz"}, // path traversal attempt
+						},
+					},
+				},
+			},
+		},
+	}
+	err := file.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "'inputs'")
+	assert.Contains(t, err.Error(), "escape.tar.gz")
+}
