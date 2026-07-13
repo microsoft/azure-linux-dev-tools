@@ -735,6 +735,14 @@
           "type": "array",
           "title": "Mock packages",
           "description": "RPM packages to install in the mock chroot before running the generation script. Only valid when origin type is 'custom'."
+        },
+        "inputs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Inputs",
+          "description": "Source-output filenames to make available next to the generation script before it runs. Only valid when origin type is 'custom'."
         }
       },
       "additionalProperties": false,

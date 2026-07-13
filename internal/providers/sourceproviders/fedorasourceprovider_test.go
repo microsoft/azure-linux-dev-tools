@@ -220,7 +220,7 @@ func TestGetComponentFromGit(t *testing.T) {
 		assert.Equal(t, "tarball content", string(tarballContent))
 	})
 
-	t.Run("existing file in destination skips lookaside download", func(t *testing.T) {
+	t.Run("configured replacement skips upstream lookaside download", func(t *testing.T) {
 		ctrl := gomock.NewController(t)
 
 		httpDownloader, err := downloader.NewHTTPDownloader(
@@ -288,26 +288,23 @@ func TestGetComponentFromGit(t *testing.T) {
 		mockComponent.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
 			Name: testPackageName,
 			SourceFiles: []projectconfig.SourceFileReference{
-				{Filename: testFileName},
+				{
+					Filename:        testFileName,
+					ReplaceUpstream: true,
+					ReplaceReason:   "use configured replacement",
+				},
 			},
 		})
 
-		// Pre-populate destination with the file — simulating a prior FetchFiles download
-		err = fileutils.MkdirAll(env.FS(), testDestDir)
-		require.NoError(t, err)
-
-		preExistingContent := []byte("azure-linux-signed-binary")
-		err = fileutils.WriteFile(env.FS(), testDestDir+"/"+testFileName, preExistingContent, fileperms.PublicFile)
-		require.NoError(t, err)
-
-		// Should succeed — the file is in skipFilenames so the 404 lookaside download is skipped
+		// The upstream hash would return 404 from the test server. Success proves the
+		// configured filename suppressed that upstream lookaside download.
 		err = provider.GetComponent(context.Background(), mockComponent, testDestDir)
 		require.NoError(t, err)
 
-		// Verify the pre-existing file was preserved (not overwritten by git repo version)
-		content, err := fileutils.ReadFile(env.FS(), testDestDir+"/"+testFileName)
+		// The skipped upstream lookaside artifact was not materialized.
+		exists, err := fileutils.Exists(env.FS(), testDestDir+"/"+testFileName)
 		require.NoError(t, err)
-		assert.Equal(t, preExistingContent, content)
+		assert.False(t, exists)
 	})
 
 	t.Run("successful extraction without lookaside sources", func(t *testing.T) {

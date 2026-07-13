@@ -215,17 +215,6 @@ func NewPreparer(
 func (p *sourcePreparerImpl) PrepareSources(
 	ctx context.Context, component components.Component, outputDir string, applyOverlays bool,
 ) error {
-	// Use the source manager to fetch source files (archives, patches, etc.)
-	// Skip this step when skipLookaside is set — source tarballs are not needed
-	// for rendering and are the most expensive download.
-	if !p.skipLookaside {
-		err := p.sourceManager.FetchFiles(ctx, component, outputDir)
-		if err != nil {
-			return fmt.Errorf("failed to fetch source files for component %#q:\n%w",
-				component.GetName(), err)
-		}
-	}
-
 	// Preserve the upstream .git directory only when dist-git creation is
 	// requested via --with-git. This is required so that overlay commits can be
 	// appended on top of the upstream commit log during synthetic history generation.
@@ -238,11 +227,19 @@ func (p *sourcePreparerImpl) PrepareSources(
 		fetchOpts = append(fetchOpts, sourceproviders.WithSkipLookaside())
 	}
 
-	// Use the source manager to fetch the component (spec file and sidecar files).
+	// Fetch the component first (spec, sidecar files, and upstream source tarballs).
 	err := p.sourceManager.FetchComponent(ctx, component, outputDir, fetchOpts...)
 	if err != nil {
 		return fmt.Errorf("failed to fetch sources for component %#q:\n%w",
 			component.GetName(), err)
+	}
+
+	// Fetch custom and downloaded source files.
+	if !p.skipLookaside {
+		if err := p.sourceManager.FetchFiles(ctx, component, outputDir); err != nil {
+			return fmt.Errorf("failed to fetch source files for component %#q:\n%w",
+				component.GetName(), err)
+		}
 	}
 
 	if applyOverlays {

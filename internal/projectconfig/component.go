@@ -66,17 +66,24 @@ type Origin struct {
 	// MockPackages is a list of RPM package names to install in the mock chroot before
 	// running [Origin.Script]. Only valid when [Origin.Type] is 'custom'.
 	MockPackages []string `toml:"mock-packages,omitempty" json:"mockPackages,omitempty" jsonschema:"title=Mock packages,description=RPM packages to install in the mock chroot before running the generation script. Only valid when origin type is 'custom'."`
+
+	// Inputs is a list of source-output filenames to copy next to [Origin.Script]
+	// before it runs. Each entry must be a plain filename. Only valid when
+	// [Origin.Type] is 'custom'.
+	Inputs []string `toml:"inputs,omitempty" json:"inputs,omitempty" jsonschema:"title=Inputs,description=Source-output filenames to make available next to the generation script before it runs. Only valid when origin type is 'custom'."`
 }
 
 // HashInclude implements the hashstructure [Includable] interface so that
-// [Origin.Script] and [Origin.MockPackages] are omitted from the component
-// fingerprint when they hold their zero values.
+// [Origin.Script], [Origin.MockPackages], and [Origin.Inputs] are omitted from
+// the component fingerprint when they hold their zero values.
 func (o Origin) HashInclude(field string, _ any) (bool, error) {
 	switch field {
 	case "Script":
 		return o.Script != "", nil
 	case "MockPackages":
 		return len(o.MockPackages) > 0, nil
+	case "Inputs":
+		return len(o.Inputs) > 0, nil
 	}
 
 	return true, nil
@@ -114,10 +121,10 @@ type SourceFileReference struct {
 
 // HashInclude implements the hashstructure [Includable] interface so that
 // [SourceFileReference.Origin] is omitted from the component fingerprint when
-// neither [Origin.Script] nor [Origin.MockPackages] are set.
+// none of [Origin.Script], [Origin.MockPackages], or [Origin.Inputs] are set.
 func (r SourceFileReference) HashInclude(field string, _ any) (bool, error) {
 	if field == "Origin" {
-		return r.Origin.Script != "" || len(r.Origin.MockPackages) > 0, nil
+		return r.Origin.Script != "" || len(r.Origin.MockPackages) > 0 || len(r.Origin.Inputs) > 0, nil
 	}
 
 	return true, nil

@@ -236,6 +236,13 @@ func appendSourceFileItems(
 				Value: pkg,
 			})
 		}
+
+		for _, input := range sourceFile.Origin.Inputs {
+			items = append(items, CustomizationItem{
+				Kind:  "source-files.inputs",
+				Value: input,
+			})
+		}
 	}
 
 	return items

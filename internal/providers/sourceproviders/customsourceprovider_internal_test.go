@@ -5,10 +5,12 @@ package sourceproviders
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components/components_testutils"
+	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/spf13/afero"
@@ -18,9 +20,12 @@ import (
 )
 
 func TestCustomFileSourceProvider_GetFile_NonCustomOriginReturnsNotFound(t *testing.T) {
+	ctx := testctx.NewCtx()
+
 	provider := &customFileSourceProvider{
-		fs:     afero.NewMemMapFs(),
-		runner: nil, // never reached
+		dryRunnable: ctx,
+		fs:          ctx.FS(),
+		runner:      nil, // never reached
 	}
 
 	ctrl := gomock.NewController(t)
@@ -35,10 +40,55 @@ func TestCustomFileSourceProvider_GetFile_NonCustomOriginReturnsNotFound(t *test
 	assert.ErrorIs(t, err, ErrNotFound)
 }
 
+func TestOutputTail(t *testing.T) {
+	tests := []struct {
+		name     string
+		limit    int
+		writes   []string
+		expected string
+	}{
+		{
+			name:     "retains complete output within limit",
+			limit:    5,
+			writes:   []string{"abc", "de"},
+			expected: "abcde",
+		},
+		{
+			name:     "retains tail after multiple writes",
+			limit:    5,
+			writes:   []string{"abc", "defg"},
+			expected: "[output truncated; showing last 5 bytes]\ncdefg",
+		},
+		{
+			name:     "retains tail of a single oversized write",
+			limit:    4,
+			writes:   []string{"abcdef"},
+			expected: "[output truncated; showing last 4 bytes]\ncdef",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			tail := newOutputTail(testCase.limit)
+
+			for _, write := range testCase.writes {
+				written, err := tail.Write([]byte(write))
+				require.NoError(t, err)
+				assert.Equal(t, len(write), written)
+			}
+
+			assert.Equal(t, testCase.expected, tail.String())
+		})
+	}
+}
+
 func TestCustomFileSourceProvider_GetFile_MissingScriptReturnsError(t *testing.T) {
+	ctx := testctx.NewCtx()
+
 	provider := &customFileSourceProvider{
-		fs:     afero.NewMemMapFs(),
-		runner: nil, // never reached — script stat check fails first
+		dryRunnable: ctx,
+		fs:          ctx.FS(),
+		runner:      nil, // never reached — script stat check fails first
 	}
 
 	ctrl := gomock.NewController(t)
@@ -122,4 +172,76 @@ func TestPrepareStagingDirs_MissingScriptReturnsError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "missing.sh")
 	assert.Nil(t, cleanup)
+}
+
+func TestStageInputFiles_FoundInDestDirPreservesMode(t *testing.T) {
+	ctx := testctx.NewCtx()
+	memFS := ctx.FS()
+
+	const fileContent = "upstream tarball data"
+
+	require.NoError(t, afero.WriteFile(memFS, "/output/upstream.tar.gz", []byte(fileContent), fileperms.PublicExecutable))
+
+	err := stageInputFiles(ctx, memFS, []string{"upstream.tar.gz"}, "/output", "/script", "gen.sh")
+	require.NoError(t, err)
+
+	data, readErr := afero.ReadFile(memFS, "/script/upstream.tar.gz")
+	require.NoError(t, readErr)
+	assert.Equal(t, fileContent, string(data))
+
+	info, statErr := memFS.Stat("/script/upstream.tar.gz")
+	require.NoError(t, statErr)
+	assert.Equal(t, fileperms.PublicExecutable, info.Mode().Perm())
+}
+
+func TestStageInputFiles_NotFoundReturnsError(t *testing.T) {
+	ctx := testctx.NewCtx()
+	memFS := ctx.FS()
+
+	// No files written — destDirPath is empty.
+	err := stageInputFiles(ctx, memFS, []string{"missing.tar.gz"}, "/output", "/script", "gen.sh")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing.tar.gz")
+	assert.Contains(t, err.Error(), "/output")
+}
+
+func TestStageInputFiles_SymlinkRejected(t *testing.T) {
+	fileSystem := afero.NewOsFs()
+	dir := t.TempDir()
+	targetPath := filepath.Join(dir, "target.tar.gz")
+	inputPath := filepath.Join(dir, "input.tar.gz")
+
+	require.NoError(t, os.WriteFile(targetPath, []byte("input"), fileperms.PublicFile))
+	require.NoError(t, os.Symlink(targetPath, inputPath))
+
+	err := stageInputFiles(
+		testctx.NewCtx(), fileSystem, []string{"input.tar.gz"}, dir, filepath.Join(dir, "script"), "gen.sh")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "input.tar.gz")
+	assert.Contains(t, err.Error(), "symbolic link")
+}
+
+func TestStageInputFiles_ScriptNameConflictReturnsError(t *testing.T) {
+	ctx := testctx.NewCtx()
+	memFS := ctx.FS()
+
+	err := stageInputFiles(ctx, memFS, []string{"gen.sh"}, "/output", "/script", "gen.sh")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "conflicts")
+}
+
+func TestStageInputFiles_InvalidFilenameReturnsError(t *testing.T) {
+	ctx := testctx.NewCtx()
+	memFS := ctx.FS()
+
+	err := stageInputFiles(ctx, memFS, []string{"../escape.tar.gz"}, "/output", "/script", "gen.sh")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid input filename")
+}
+
+func TestFormatCustomScriptOutput(t *testing.T) {
+	output := formatCustomScriptOutput("stdout line\n", "stderr line\n")
+
+	assert.Contains(t, output, "stdout:\nstdout line")
+	assert.Contains(t, output, "stderr:\nstderr line")
 }

@@ -6,8 +6,11 @@ package sourceproviders
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
@@ -16,6 +19,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/archive"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
+	"github.com/spf13/afero"
 )
 
 // customGenScriptDir is the path inside the mock chroot where the generation script
@@ -26,12 +30,19 @@ const customGenScriptDir = "/azldev-gen/script"
 // must write its output.
 const customGenOutputDir = "/azldev-gen/output"
 
+// maxCustomScriptOutputBytes limits the retained stdout and stderr from a custom
+// generation script. The tail is retained because failures are typically reported
+// near the end of command output.
+const maxCustomScriptOutputBytes = 64 * 1024
+
 // customFileSourceProvider implements [FileSourceProvider] for source files with
 // [projectconfig.OriginTypeCustom]. It executes a user-supplied script inside a
 // fresh mock chroot and packages the output directory as a deterministic archive.
 type customFileSourceProvider struct {
-	fs     opctx.FS
-	runner *mock.Runner
+	dryRunnable opctx.DryRunnable
+	fs          opctx.FS
+	runner      *mock.Runner
+	verbose     bool
 }
 
 var _ FileSourceProvider = (*customFileSourceProvider)(nil)
@@ -51,7 +62,7 @@ func (p *customFileSourceProvider) GetFile(
 
 	destPath := filepath.Join(destDirPath, ref.Filename)
 
-	return generateCustomSourceFile(ctx, p.fs, p.runner, component, &ref, destPath)
+	return generateCustomSourceFile(ctx, p.dryRunnable, p.fs, p.runner, p.verbose, component, &ref, destPath)
 }
 
 // generateCustomSourceFile runs a single [projectconfig.SourceFileReference] through a
@@ -61,8 +72,10 @@ func (p *customFileSourceProvider) GetFile(
 // is created for each call so bind mounts and package installs do not bleed across invocations.
 func generateCustomSourceFile(
 	ctx context.Context,
+	dryRunnable opctx.DryRunnable,
 	fs opctx.FS,
 	baseRunner *mock.Runner,
+	verbose bool,
 	component components.Component,
 	ref *projectconfig.SourceFileReference,
 	destPath string,
@@ -71,6 +84,12 @@ func generateCustomSourceFile(
 		"filename", ref.Filename,
 		"script", ref.Origin.Script,
 		"component", component.GetName())
+
+	if dryRunnable.DryRun() {
+		slog.Info("Dry run; skipping custom source file generation", "filename", ref.Filename)
+
+		return nil
+	}
 
 	specDir, err := resolveComponentSpecDir(component)
 	if err != nil {
@@ -93,6 +112,19 @@ func generateCustomSourceFile(
 
 	defer cleanup()
 
+	// Stage declared input files next to the script so script authors can refer to
+	// them by filename without knowing azldev's internal mount paths.
+	destDirPath := filepath.Dir(destPath)
+
+	if len(ref.Origin.Inputs) > 0 {
+		if inputsErr := stageInputFiles(
+			dryRunnable, fs, ref.Origin.Inputs, destDirPath, scriptTmpDir, ref.Origin.Script,
+		); inputsErr != nil {
+			return fmt.Errorf("failed to resolve inputs for custom source %#q:\n%w",
+				ref.Filename, inputsErr)
+		}
+	}
+
 	// Package the output directory as a deterministic archive whose format is
 	// inferred from the filename extension (e.g., .tar.gz, .tar.xz).
 	comp, compErr := archive.DetectCompression(ref.Filename)
@@ -104,18 +136,13 @@ func generateCustomSourceFile(
 	// Clone the base runner so bind mounts added here don't persist to other calls.
 	// Network access is always enabled — custom source scripts commonly need to
 	// download upstream tarballs or toolchain artifacts.
-	runner := baseRunner.Clone()
-	runner.EnableNetwork()
-	runner.WithUnprivileged()
-	runner.AddBindMount(scriptTmpDir, customGenScriptDir)
-	runner.AddBindMount(genOutputTmpDir, customGenOutputDir)
+	runner := buildCustomRunner(baseRunner, scriptTmpDir, genOutputTmpDir)
 
-	if err := execScriptInChroot(ctx, runner, ref); err != nil {
+	if err := execScriptInChroot(ctx, runner, verbose, ref); err != nil {
 		return err
 	}
 
-	// Ensure the destination directory exists. FetchFiles runs before FetchComponent,
-	// so the output directory may not have been created yet when this is called.
+	// Ensure the destination directory exists before writing the archive.
 	if mkdirErr := fileutils.MkdirAll(fs, filepath.Dir(destPath)); mkdirErr != nil {
 		return fmt.Errorf("failed to create destination directory for %#q:\n%w",
 			ref.Filename, mkdirErr)
@@ -207,11 +234,25 @@ func prepareStagingDirs(
 	return scriptDir, outputDir, cleanup, nil
 }
 
+// buildCustomRunner returns a clone of baseRunner configured with the standard bind mounts
+// for custom source generation. Network access is always enabled; the unprivileged flag is
+// set so the script runs as the 'mockbuild' user rather than root.
+func buildCustomRunner(baseRunner *mock.Runner, scriptTmpDir, genOutputTmpDir string) *mock.Runner {
+	runner := baseRunner.Clone()
+	runner.EnableNetwork()
+	runner.WithUnprivileged()
+	runner.AddBindMount(scriptTmpDir, customGenScriptDir)
+	runner.AddBindMount(genOutputTmpDir, customGenOutputDir)
+
+	return runner
+}
+
 // execScriptInChroot initialises a fresh mock root, optionally installs extra packages,
 // runs the generation script, and scrubs the root on return.
 func execScriptInChroot(
 	ctx context.Context,
 	runner *mock.Runner,
+	verbose bool,
 	ref *projectconfig.SourceFileReference,
 ) error {
 	if initErr := runner.InitRoot(ctx); initErr != nil {
@@ -235,17 +276,142 @@ func execScriptInChroot(
 		}
 	}
 
-	scriptChrootPath := filepath.Join(customGenScriptDir, ref.Origin.Script)
-
-	cmd, cmdErr := runner.CmdInChroot(ctx, []string{scriptChrootPath}, false /* interactive */)
+	// Use positional parameters so the script name is never re-parsed as shell code
+	// ($1=scriptDir, $2=scriptName; '--' sets $0 and keeps bash from consuming them).
+	cmd, cmdErr := runner.CmdInChroot(ctx, []string{
+		"sh", "-c", `cd "$1" && ./"$2"`, "--", customGenScriptDir, ref.Origin.Script,
+	}, false /* interactive */)
 	if cmdErr != nil {
 		return fmt.Errorf("failed to create chroot command for generating %#q:\n%w",
 			ref.Filename, cmdErr)
 	}
 
+	stdout := newOutputTail(maxCustomScriptOutputBytes)
+	stderr := newOutputTail(maxCustomScriptOutputBytes)
+
+	if verbose {
+		cmd.SetStdout(io.MultiWriter(os.Stdout, stdout))
+		cmd.SetStderr(io.MultiWriter(os.Stderr, stderr))
+	} else {
+		cmd.SetStdout(stdout)
+		cmd.SetStderr(stderr)
+	}
+
 	if runErr := cmd.Run(ctx); runErr != nil {
-		return fmt.Errorf("generation script %#q failed for source %#q:\n%w",
-			ref.Origin.Script, ref.Filename, runErr)
+		scriptOutput := formatCustomScriptOutput(stdout.String(), stderr.String())
+
+		return fmt.Errorf("generation script %#q failed for source %#q%s\n%w",
+			ref.Origin.Script, ref.Filename, scriptOutput, runErr)
+	}
+
+	return nil
+}
+
+// outputTail retains the last limit bytes written to it. It implements [io.Writer]
+// so command output can be captured without unbounded memory growth.
+type outputTail struct {
+	buf       []byte
+	limit     int
+	truncated bool
+}
+
+func newOutputTail(limit int) *outputTail {
+	return &outputTail{buf: make([]byte, 0, limit), limit: limit}
+}
+
+func (b *outputTail) Write(data []byte) (n int, err error) {
+	n = len(data)
+	if n >= b.limit {
+		b.truncated = b.truncated || n > b.limit || len(b.buf) > 0
+		b.buf = append(b.buf[:0], data[n-b.limit:]...)
+
+		return n, nil
+	}
+
+	if overflow := len(b.buf) + n - b.limit; overflow > 0 {
+		b.buf = append(b.buf[:0], b.buf[overflow:]...)
+		b.truncated = true
+	}
+
+	b.buf = append(b.buf, data...)
+
+	return n, nil
+}
+
+func (b *outputTail) String() string {
+	if b.truncated {
+		return fmt.Sprintf("[output truncated; showing last %d bytes]\n%s", b.limit, b.buf)
+	}
+
+	return string(b.buf)
+}
+
+func formatCustomScriptOutput(stdout, stderr string) string {
+	var output strings.Builder
+
+	if stdout != "" {
+		fmt.Fprintf(&output, "\nstdout:\n%s", stdout)
+	}
+
+	if stderr != "" {
+		fmt.Fprintf(&output, "\nstderr:\n%s", stderr)
+	}
+
+	return output.String()
+}
+
+// stageInputFiles copies the files listed in inputs next to the generation script.
+//
+// All inputs must already be present in destDirPath, which contains the full set of upstream
+// source tarballs, sidecar files, and any earlier 'source-files' entries fetched by
+// [FetchComponent] and prior [FetchFiles] calls. If a filename is absent, an error is returned.
+func stageInputFiles(
+	dryRunnable opctx.DryRunnable,
+	fs opctx.FS,
+	inputs []string,
+	destDirPath, scriptTmpDir, scriptName string,
+) error {
+	for _, filename := range inputs {
+		if err := fileutils.ValidateFilename(filename); err != nil {
+			return fmt.Errorf("invalid input filename %#q:\n%w", filename, err)
+		}
+
+		if filename == scriptName {
+			return fmt.Errorf("input file %#q conflicts with generation script filename", filename)
+		}
+
+		sourcePath := filepath.Join(destDirPath, filename)
+
+		if lstater, ok := fs.(afero.Lstater); ok {
+			fileInfo, lstatCalled, lstatErr := lstater.LstatIfPossible(sourcePath)
+			if lstatErr != nil {
+				return fmt.Errorf("failed to inspect input file %#q:\n%w", filename, lstatErr)
+			}
+
+			if lstatCalled && fileInfo.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("input file %#q must not be a symbolic link", filename)
+			}
+		}
+
+		exists, statErr := fileutils.Exists(fs, sourcePath)
+		if statErr != nil {
+			return fmt.Errorf("failed to stat input file %#q:\n%w", filename, statErr)
+		}
+
+		if !exists {
+			return fmt.Errorf(
+				"input file %#q not found in output directory %#q",
+				filename, destDirPath)
+		}
+
+		stagedPath := filepath.Join(scriptTmpDir, filename)
+
+		if writeErr := fileutils.CopyFile(
+			dryRunnable, fs, sourcePath, stagedPath,
+			fileutils.CopyFileOptions{PreserveFileMode: true},
+		); writeErr != nil {
+			return fmt.Errorf("failed to stage input file %#q:\n%w", filename, writeErr)
+		}
 	}
 
 	return nil
