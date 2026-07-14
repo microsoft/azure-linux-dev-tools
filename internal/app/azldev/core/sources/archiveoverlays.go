@@ -132,15 +132,12 @@ func repackArchiveAtomic(archivePath, archiveName, workDir string) (err error) {
 
 	tmpPath := tmpFile.Name()
 
-	// Close the handle immediately; CreateDeterministicArchive reopens the path.
+	// Close the handle immediately; CreateDeterministicArchive truncates and
+	// reopens this uniquely-created path.
 	if closeErr := tmpFile.Close(); closeErr != nil {
 		_ = os.Remove(tmpPath)
 
 		return fmt.Errorf("closing temp archive %#q:\n%w", tmpPath, closeErr)
-	}
-
-	if removeErr := os.Remove(tmpPath); removeErr != nil && !os.IsNotExist(removeErr) {
-		return fmt.Errorf("removing temp archive placeholder %#q:\n%w", tmpPath, removeErr)
 	}
 
 	// Clean up the temp file unless it was successfully renamed over the original.

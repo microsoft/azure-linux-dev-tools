@@ -368,6 +368,10 @@ func extractEntry(root *os.Root, header *tar.Header, tarReader io.Reader, cfg ex
 		// is restored after all entries have been extracted, so a restrictive mode
 		// cannot prevent later child entries from being materialized.
 		directoryName := filepath.Clean(name)
+		if directoryName == "." {
+			return nil
+		}
+
 		directoryMode := os.FileMode(header.Mode) & os.ModePerm //nolint:gosec // mask tar mode to permission bits
 
 		if err := root.MkdirAll(directoryName, fileperms.PublicDir); err != nil {
