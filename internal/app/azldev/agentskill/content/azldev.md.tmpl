@@ -7,7 +7,8 @@ description: {{ .Description }}
 
 azldev builds a Linux distribution from TOML configuration. It imports RPM specs
 from an upstream distro and customizes them with an overlay system — no spec
-forking. Components render to RPMs; images assemble RPMs into bootable artifacts.
+forking. Components render to specs and sidecar build inputs, then build into RPMs;
+images assemble RPMs into bootable artifacts.
 
 ## Orient yourself
 
@@ -19,8 +20,9 @@ forking. Components render to RPMs; images assemble RPMs into bootable artifacts
 
 ## Core concepts
 
-- **Component** — a unit of packaging that renders to one or more RPMs. Its spec
-  source is upstream (default), a pinned upstream distro/version, or a local spec.
+- **Component** — a unit of packaging that renders to a spec and sidecar build inputs,
+  then builds into one or more RPMs. Its spec source is upstream (default), a pinned
+  upstream distro/version, or a local spec.
 - **Overlay** — a semantic patch applied to a spec or source file at render time, so
   you customize upstream without forking it.
 - **Distro** — a named build target (`*.distro.toml`) with upstream URIs, release
