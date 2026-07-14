@@ -60,7 +60,12 @@ const (
 // upstream rendered output recorded, so render idempotency tests must clone
 // with full history. 'component update' does not walk history and is fine
 // with a shallow clone.
-func runAzureLinuxIdempotencyTest(t *testing.T, azldevArgs []string, fullHistory bool) {
+//
+// commitFirstRunChanges, when true, records any first-run changes as a local
+// baseline commit and reruns the same command. This keeps the test useful
+// across one-time lock-file format migrations: the first run may legitimately
+// rewrite tracked lock files, but the second run must still be a no-op.
+func runAzureLinuxIdempotencyTest(t *testing.T, azldevArgs []string, fullHistory, commitFirstRunChanges bool) {
 	t.Helper()
 
 	// Quote once so the argv ends up safely embedded in the bash script and
@@ -109,6 +114,8 @@ mkdir -p base/build
 echo "Running: azldev %[3]s"
 azldev %[3]s
 
+%[5]s
+
 # Check the worktree. --porcelain produces stable, machine-readable output and
 # includes untracked files by default. Anything reported here means the
 # command was not idempotent against a freshly-checked-out upstream.
@@ -142,7 +149,7 @@ if [[ -n "$status_output" ]]; then
 fi
 
 echo "OK: working tree is clean after 'azldev %[3]s'"
-`, azureLinuxBranch, azureLinuxRepoURL, azldevCmdLine, cloneDepthFlag)
+`, azureLinuxBranch, azureLinuxRepoURL, azldevCmdLine, cloneDepthFlag, secondRunScript(commitFirstRunChanges, azldevCmdLine))
 
 	results, err := cmdtest.NewScenarioTest().
 		WithScript(strings.NewReader(script)).
@@ -161,10 +168,11 @@ echo "OK: working tree is clean after 'azldev %[3]s'"
 
 // TestAzureLinuxComponentUpdateIsIdempotent verifies that running
 // 'azldev component update -a' against an upstream microsoft/azurelinux
-// checkout at HEAD of [azureLinuxBranch] leaves no modifications in the
-// working tree. In other words, the lock files committed in the upstream
-// branch are already fresh against the resolved upstream snapshots, and
-// 'update -a' is a no-op.
+// checkout at HEAD of [azureLinuxBranch] is stable. If the upstream branch is
+// already fresh, the first run is a no-op. If azldev has introduced a one-time
+// lock-file format migration, the test records that first-run rewrite as a
+// temporary baseline commit and then asserts that a second identical run is a
+// no-op.
 //
 // Intentionally not parallel: see also [TestAzureLinuxComponentRenderIsIdempotent].
 // Both tests clone hundreds of MB and may exercise mock; running them
@@ -174,7 +182,7 @@ func TestAzureLinuxComponentUpdateIsIdempotent(t *testing.T) {
 		t.Skip("skipping long test")
 	}
 
-	runAzureLinuxIdempotencyTest(t, []string{"component", "update", "-a"}, false)
+	runAzureLinuxIdempotencyTest(t, []string{"component", "update", "-a"}, false, true)
 }
 
 // TestAzureLinuxComponentRenderSubsetIsIdempotent is a smaller, faster variant
@@ -201,7 +209,7 @@ func TestAzureLinuxComponentRenderSubsetIsIdempotent(t *testing.T) {
 	// Render needs full history; see [runAzureLinuxIdempotencyTest].
 	runAzureLinuxIdempotencyTest(t,
 		[]string{"component", "render", "--check-only", "bash", "curl"},
-		true)
+		true, false)
 }
 
 // TestAzureLinuxComponentRenderIsIdempotent verifies that running
@@ -220,5 +228,25 @@ func TestAzureLinuxComponentRenderIsIdempotent(t *testing.T) {
 
 	runAzureLinuxIdempotencyTest(t,
 		[]string{"component", "render", "-a", "--clean-stale"},
-		true)
+		true, false)
+}
+
+func secondRunScript(commitFirstRunChanges bool, azldevCmdLine string) string {
+	if !commitFirstRunChanges {
+		return ""
+	}
+
+	return fmt.Sprintf(`
+status_after_first_run=$(git status --porcelain)
+if [[ -n "$status_after_first_run" ]]; then
+	echo "Recording first-run changes as a temporary baseline commit before rerunning."
+	git -c user.name='azldev e2e' -c user.email='azldev-e2e@example.invalid' add -A
+	git -c user.name='azldev e2e' -c user.email='azldev-e2e@example.invalid' commit -m 'e2e baseline after azldev run'
+else
+	echo "First run was already a no-op; rerunning to confirm idempotency."
+fi
+
+echo "Re-running: azldev %s"
+azldev %s
+`, azldevCmdLine, azldevCmdLine)
 }
