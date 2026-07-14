@@ -5,7 +5,6 @@ package projectconfig_test
 
 import (
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
@@ -114,31 +113,17 @@ func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
 
 			tag := field.Tag.Get("fingerprint")
 
-			// hashstructure tags are `name,option,...`; the name part decides
-			// inclusion ("-" excludes, anything else includes) and the options
-			// tune how an included field is hashed.
-			name, options, _ := strings.Cut(tag, ",")
-
-			switch name {
+			switch tag {
 			case "":
-				// Empty name — included by default (the safe default). The only
-				// option we permit is `omitempty`, which makes hashstructure skip
-				// the field when it holds its zero value (so an unset field never
-				// perturbs the hash) while still hashing it when set. Reject any
-				// other option as a likely typo.
-				if options != "" && options != "omitempty" {
-					assert.Failf(t, "invalid fingerprint tag",
-						"field %q has unrecognised fingerprint tag option %q — "+
-							"only `omitempty` is supported on included fields", key, options)
-				}
+				// Empty tag — included by default (the safe default).
 			case "-":
 				actualExclusions[key] = true
 			default:
-				// hashstructure only recognises "" (include) and "-" (exclude)
-				// for the name part. Any other value is silently treated as
-				// included, which is almost certainly a typo.
+				// hashstructure only recognises "" (include) and "-" (exclude).
+				// Any other value or option is silently ignored, which is almost
+				// certainly a typo.
 				assert.Failf(t, "invalid fingerprint tag",
-					"field %q has unrecognised fingerprint tag value %q — "+
+					"field %q has unsupported fingerprint tag %q — "+
 						"only `fingerprint:\"-\"` (exclude) is valid; "+
 						"remove the tag to include the field", key, tag)
 			}

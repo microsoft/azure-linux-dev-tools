@@ -59,8 +59,7 @@ repacked with its original compression format.
 
 ```
 archive = "pkg-1.0.tar.gz"
-file = "vendor/**"                   # loose files in the sources tree (no archive field)
-file = "old.tar.gz"                  # removes the archive file itself (bare name, no archive field)
+file = "vendor/**"                   # files inside the archive
 ```
 
 > **Note:** Archive overlays are batched per archive — all overlays targeting the same archive
@@ -72,7 +71,7 @@ file = "old.tar.gz"                  # removes the archive file itself (bare nam
 > **Supported entry types:** Only regular files, directories, and symlinks are supported inside an archive overlay's target. If the archive contains an entry that cannot be repacked safely (a hardlink, device node, FIFO, etc.), the overlay fails with an error rather than silently dropping the entry from the repacked archive.
 
 | `file-remove` (archive-scoped) | Removes file(s) matching a glob pattern from inside an archive | `archive`, `file` |
- | `file-search-replace` (archive-scoped) | Regex-based search and replace on file(s) inside an archive | `archive`, `file`, `regex` |
+| `file-search-replace` (archive-scoped) | Regex-based search and replace on file(s) inside an archive | `archive`, `file`, `regex` |
 ## Field Reference
 
 | Field | TOML Key | Description | Used By |

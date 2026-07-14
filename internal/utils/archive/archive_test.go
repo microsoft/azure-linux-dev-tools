@@ -172,7 +172,10 @@ func createTestTarGz(t *testing.T, path string, entries []testTarEntry) {
 
 		switch entry.typeflag {
 		case tar.TypeDir:
-			header.Mode = 0o755
+			header.Mode = entry.mode
+			if header.Mode == 0 {
+				header.Mode = 0o755
+			}
 		case tar.TypeReg:
 			header.Mode = 0o644
 			header.Size = int64(len(entry.content))
@@ -200,6 +203,7 @@ type testTarEntry struct {
 	typeflag byte
 	content  string
 	linkname string
+	mode     int64
 }
 
 func TestRoundTrip_AllCompressions(t *testing.T) {
@@ -243,6 +247,74 @@ func TestRoundTrip_AllCompressions(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, data1, data2, "deterministic archive should produce identical output")
 		})
+	}
+}
+
+func TestExtractAndRepack_PreservesExplicitDirectoryPermissions(t *testing.T) {
+	tmpDir := t.TempDir()
+	extractDir := filepath.Join(tmpDir, "extracted")
+	archivePath := filepath.Join(tmpDir, "source.tar.gz")
+	repackedPath := filepath.Join(tmpDir, "repacked.tar.gz")
+
+	directories := map[string]os.FileMode{
+		"private":  0o700,
+		"readonly": 0o555,
+		"group":    0o775,
+	}
+
+	createTestTarGz(t, archivePath, []testTarEntry{
+		{name: "private/", typeflag: tar.TypeDir, mode: 0o700},
+		{name: "readonly/", typeflag: tar.TypeDir, mode: 0o555},
+		{name: "group/", typeflag: tar.TypeDir, mode: 0o775},
+		{name: "private/file.txt", typeflag: tar.TypeReg, content: "private"},
+		{name: "readonly/file.txt", typeflag: tar.TypeReg, content: "readonly"},
+		{name: "group/file.txt", typeflag: tar.TypeReg, content: "group"},
+	})
+	require.NoError(t, archive.Extract(archivePath, extractDir, archive.CompressionGzip))
+	t.Cleanup(func() {
+		for name := range directories {
+			_ = os.Chmod(filepath.Join(extractDir, name), 0o700)
+		}
+	})
+
+	for name, wantMode := range directories {
+		info, err := os.Stat(filepath.Join(extractDir, name))
+		require.NoError(t, err)
+		assert.Equal(t, wantMode, info.Mode().Perm(), "extracted directory %#q mode", name)
+		assert.FileExists(t, filepath.Join(extractDir, name, "file.txt"),
+			"extraction must write child files before restoring directory %#q mode", name)
+	}
+
+	require.NoError(t, archive.CreateDeterministicArchive(repackedPath, extractDir, archive.CompressionGzip))
+
+	repackedFile, err := os.Open(repackedPath)
+	require.NoError(t, err)
+
+	defer repackedFile.Close()
+
+	gzipReader, err := gzip.NewReader(repackedFile)
+	require.NoError(t, err)
+
+	defer gzipReader.Close()
+
+	tarReader := tar.NewReader(gzipReader)
+	archivedModes := make(map[string]os.FileMode)
+
+	for {
+		header, readErr := tarReader.Next()
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+
+		require.NoError(t, readErr)
+
+		if header.Typeflag == tar.TypeDir {
+			archivedModes[header.Name] = header.FileInfo().Mode().Perm()
+		}
+	}
+
+	for name, wantMode := range directories {
+		assert.Equal(t, wantMode, archivedModes[name+"/"], "repacked directory %#q mode", name)
 	}
 }
 

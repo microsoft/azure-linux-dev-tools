@@ -37,8 +37,10 @@ func processArchive(
 
 	// The [archive] package operates exclusively through OS primitives ([os.Root],
 	// os.*), so extraction must use a genuine on-disk path regardless of the injected
-	// FS implementation (which may be in-memory or otherwise non-OS-backed).
-	workDir, err := os.MkdirTemp(sourcesDirPath, ".archive-overlay-")
+	// FS implementation (which may be in-memory or otherwise non-OS-backed). Keep
+	// that directory outside the sources tree: a process crash could otherwise leave
+	// it behind for subsequent loose-file overlay globs to match.
+	workDir, err := os.MkdirTemp("", "azldev-archive-overlay-")
 	if err != nil {
 		return false, fmt.Errorf("creating temp directory:\n%w", err)
 	}
@@ -105,6 +107,13 @@ func processArchive(
 // over archivePath would truncate it first, leaving the workspace unrecoverable
 // without refetching if the repack then failed.
 func repackArchiveAtomic(archivePath, archiveName, workDir string) (err error) {
+	archiveInfo, err := os.Stat(archivePath)
+	if err != nil {
+		return fmt.Errorf("stating original archive %#q:\n%w", archiveName, err)
+	}
+
+	originalPerm := archiveInfo.Mode().Perm()
+
 	// Fall back to the extension only if the archive is empty (nothing to sniff).
 	extComp, err := archive.DetectCompression(archiveName)
 	if err != nil {
@@ -147,6 +156,10 @@ func repackArchiveAtomic(archivePath, archiveName, workDir string) (err error) {
 
 	if err := archive.CreateDeterministicArchive(tmpPath, workDir, comp); err != nil {
 		return fmt.Errorf("repacking archive:\n%w", err)
+	}
+
+	if err := os.Chmod(tmpPath, originalPerm); err != nil {
+		return fmt.Errorf("restoring permissions on repacked archive %#q:\n%w", archiveName, err)
 	}
 
 	if err := os.Rename(tmpPath, archivePath); err != nil {

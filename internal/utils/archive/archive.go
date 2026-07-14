@@ -34,6 +34,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -120,6 +121,7 @@ type ExtractOption func(*extractConfig)
 // extractConfig holds the resolved options for an extraction.
 type extractConfig struct {
 	errorOnUnsupportedEntry bool
+	directoryModes          map[string]os.FileMode
 }
 
 // WithErrorOnUnsupportedEntry makes [Extract] fail on tar entries it cannot
@@ -141,7 +143,7 @@ func WithErrorOnUnsupportedEntry() ExtractOption {
 // types are skipped by default, or fail when [WithErrorOnUnsupportedEntry] is
 // set (required by callers that repack the tree).
 func Extract(archivePath, destDir string, comp Compression, opts ...ExtractOption) (err error) {
-	var cfg extractConfig
+	cfg := extractConfig{directoryModes: make(map[string]os.FileMode)}
 	for _, opt := range opts {
 		opt(&cfg)
 	}
@@ -186,6 +188,10 @@ func Extract(archivePath, destDir string, comp Compression, opts ...ExtractOptio
 	for {
 		header, readErr := tarReader.Next()
 		if errors.Is(readErr, io.EOF) {
+			if err := restoreDirectoryModes(root, cfg.directoryModes); err != nil {
+				return fmt.Errorf("restoring extracted directory permissions:\n%w", err)
+			}
+
 			return nil
 		}
 
@@ -358,9 +364,17 @@ func extractEntry(root *os.Root, header *tar.Header, tarReader io.Reader, cfg ex
 	}
 
 	if header.Typeflag == tar.TypeDir {
-		if err := root.MkdirAll(name, fileperms.PublicDir); err != nil {
+		// Create the directory with a traversable temporary mode. Its archived mode
+		// is restored after all entries have been extracted, so a restrictive mode
+		// cannot prevent later child entries from being materialized.
+		directoryName := filepath.Clean(name)
+		directoryMode := os.FileMode(header.Mode) & os.ModePerm //nolint:gosec // mask tar mode to permission bits
+
+		if err := root.MkdirAll(directoryName, fileperms.PublicDir); err != nil {
 			return fmt.Errorf("creating directory %#q:\n%w", name, err)
 		}
+
+		cfg.directoryModes[directoryName] = directoryMode
 
 		return nil
 	}
@@ -403,6 +417,28 @@ func extractEntry(root *os.Root, header *tar.Header, tarReader io.Reader, cfg ex
 
 		return nil
 	}
+}
+
+// restoreDirectoryModes applies archive directory modes after all content has
+// been extracted. Deepest paths are restored first so a restrictive parent mode
+// cannot prevent reaching an explicit child directory.
+func restoreDirectoryModes(root *os.Root, directoryModes map[string]os.FileMode) error {
+	paths := make([]string, 0, len(directoryModes))
+	for path := range directoryModes {
+		paths = append(paths, path)
+	}
+
+	sort.Slice(paths, func(i, j int) bool {
+		return len(paths[i]) > len(paths[j])
+	})
+
+	for _, path := range paths {
+		if err := root.Chmod(path, directoryModes[path]); err != nil {
+			return fmt.Errorf("setting permissions on directory %#q:\n%w", path, err)
+		}
+	}
+
+	return nil
 }
 
 func extractRegularFile(root *os.Root, header *tar.Header, src io.Reader) (err error) {

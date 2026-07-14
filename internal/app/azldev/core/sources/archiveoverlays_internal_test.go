@@ -402,55 +402,39 @@ func TestProcessArchive_PreservesMislabeledFormatOnRepack(t *testing.T) {
 		"repack must preserve the original (sniffed) format, keeping the misleading extension")
 }
 
-// TestProcessArchive_RepackedArchiveHasNormalPermissions is a regression test:
-// the repack writes to an os.CreateTemp placeholder (mode 0600) before renaming
-// it over the original. Because CreateDeterministicArchive only truncates an
-// existing file, reusing that placeholder would leave the repacked archive at
-// 0600. processArchive removes the placeholder first so the archive is recreated
-// with normal permissions; assert it does not regress to 0600.
-func TestProcessArchive_RepackedArchiveHasNormalPermissions(t *testing.T) {
-	ctx := testctx.NewCtx()
-	sourcesDir := t.TempDir()
+// TestProcessArchive_RepackedArchivePreservesPermissions verifies that atomic
+// replacement keeps the input archive's permission bits rather than inheriting
+// the temporary file's mode.
+func TestProcessArchive_RepackedArchivePreservesPermissions(t *testing.T) {
+	for _, originalPerm := range []os.FileMode{0o600, 0o640, 0o644} {
+		t.Run(originalPerm.String(), func(t *testing.T) {
+			ctx := testctx.NewCtx()
+			sourcesDir := t.TempDir()
 
-	const archiveName = "pkg.tar.gz"
+			const archiveName = "pkg.tar.gz"
 
-	archivePath := filepath.Join(sourcesDir, archiveName)
+			archivePath := filepath.Join(sourcesDir, archiveName)
 
-	staging := t.TempDir()
-	stageFiles(t, staging, map[string]string{
-		"pkg-1.0/remove-me.txt": "junk",
-		"pkg-1.0/keep.txt":      "keep",
-	})
-	require.NoError(t, archive.CreateDeterministicArchive(archivePath, staging, archive.CompressionGzip))
-	// Seed the original archive at the restrictive 0600 so the test would fail if
-	// the repack inherited the original's (or the temp placeholder's) mode instead
-	// of recreating the file with normal permissions.
-	require.NoError(t, os.Chmod(archivePath, 0o600))
+			staging := t.TempDir()
+			stageFiles(t, staging, map[string]string{
+				"pkg-1.0/remove-me.txt": "junk",
+				"pkg-1.0/keep.txt":      "keep",
+			})
+			require.NoError(t, archive.CreateDeterministicArchive(archivePath, staging, archive.CompressionGzip))
+			require.NoError(t, os.Chmod(archivePath, originalPerm))
 
-	overlays := []projectconfig.ComponentOverlay{
-		{Type: projectconfig.ComponentOverlayRemoveFile, Filename: "remove-me.txt"},
+			overlays := []projectconfig.ComponentOverlay{
+				{Type: projectconfig.ComponentOverlayRemoveFile, Filename: "remove-me.txt"},
+			}
+
+			repacked, err := processArchive(ctx, sourcesDir, archiveName, overlays)
+			require.NoError(t, err)
+			require.True(t, repacked)
+
+			info, err := os.Stat(archivePath)
+			require.NoError(t, err)
+			assert.Equal(t, originalPerm, info.Mode().Perm(),
+				"repacked archive must preserve the original permission bits")
+		})
 	}
-
-	repacked, err := processArchive(ctx, sourcesDir, archiveName, overlays)
-	require.NoError(t, err)
-	require.True(t, repacked)
-
-	// Compare against a freshly os.Create'd file in the same dir: that is exactly
-	// the mode a normal (non-placeholder) create yields under this umask. This is
-	// umask-independent and proves the archive was recreated rather than inheriting
-	// the 0600 placeholder.
-	refPath := filepath.Join(sourcesDir, "reference")
-	refFile, err := os.Create(refPath)
-	require.NoError(t, err)
-	require.NoError(t, refFile.Close())
-
-	refInfo, err := os.Stat(refPath)
-	require.NoError(t, err)
-
-	info, err := os.Stat(archivePath)
-	require.NoError(t, err)
-	assert.Equal(t, refInfo.Mode().Perm(), info.Mode().Perm(),
-		"repacked archive must have normal create permissions, not the 0600 temp-file mode")
-	assert.NotEqual(t, os.FileMode(0o600), info.Mode().Perm(),
-		"repacked archive must not inherit the 0600 temp-file permissions")
 }
