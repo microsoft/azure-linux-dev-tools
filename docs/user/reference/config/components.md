@@ -197,6 +197,49 @@ The `undefines` field removes macros that would otherwise be defined:
 undefines = ["fedora"]
 ```
 
+### Upstream Provenance Macros
+
+For upstream components (spec type `upstream`), `azldev component update` captures the Name / Epoch / Version / Release tags from the upstream spec at the resolved commit and stores them in the component's lock file (`locks/<name>.lock`). At build time these values are exposed as RPM macros so downstream specs can reference the upstream identity without hardcoding it or shelling out to `rpmspec`.
+
+| Macro | Source | Notes |
+|-------|--------|-------|
+| `%azl_upstream_name` | Upstream spec `Name:` tag | Set only when captured; not defined otherwise. |
+| `%azl_upstream_epoch` | Upstream spec `Epoch:` tag | Empty for specs without an Epoch. |
+| `%azl_upstream_version` | Upstream spec `Version:` tag | Captured verbatim. |
+| `%azl_upstream_release` | Upstream spec `Release:` tag | **Captured raw** — any macros in the value (notably `%{?dist}`) are preserved verbatim and will be re-expanded using the *current* build's macros. See the caveat below. |
+
+For local components (spec type `local`), these macros are populated from the on-disk spec on every update.
+
+**Typical use case — an SBAT line that must reflect upstream provenance:**
+
+The upstream `grub2.spec` ships a placeholder that Fedora's build tooling substitutes with the package's own version-release:
+
+```rpmspec
+# Upstream form (@@VERSION_RELEASE@@ is rewritten to <version>-<release> at build time):
+grub.rh,2,Red Hat,grub2,@@VERSION_RELEASE@@,mailto:secalert@redhat.com
+```
+
+Left untouched, the substitution uses azl's `%{version}-%{release}` (e.g. `2.12-44.azl4`), which loses the upstream Red Hat provenance. Use an overlay to rewrite the placeholder in terms of the captured upstream macros so the `grub.rh` line reflects the Fedora build the spec came from (e.g. `2.12-42.fc43`):
+
+```toml
+[[components.grub2.overlays]]
+type        = "spec-search-replace"
+description = "Point grub.rh SBAT line at upstream Fedora provenance"
+regex       = "grub\\.rh,2,Red Hat,grub2,@@VERSION_RELEASE@@,mailto:secalert@redhat\\.com"
+replacement = "grub.rh,2,Red Hat,grub2,%{azl_upstream_version}-%{azl_upstream_release},mailto:secalert@redhat.com"
+```
+
+The `grub.azurelinux` line (added by an azl-specific overlay) continues to use `%{version}-%{release}` so it reflects the azl package identity.
+
+**Caveat — `%{?dist}` expansion:** if the upstream `Release:` tag contains `%{?dist}`, the raw value stored in the lock file will contain that literal token. When the downstream spec is built, `%{?dist}` will expand using the *building distro's* `%dist` macro (e.g., `.azl4`), not the upstream one (`.fc43`). If you need the fully-expanded upstream release, override `azl_upstream_release` in `build.defines` with the pre-substituted value:
+
+```toml
+[components.grub2.build]
+defines = { azl_upstream_release = "42.fc43" }
+```
+
+The user-provided `defines` entry always wins over the captured lock value.
+
 ### Check Configuration
 
 The `check` field controls the `%check` section of the spec (the package's test suite).

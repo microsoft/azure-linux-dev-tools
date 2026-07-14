@@ -904,11 +904,14 @@ func (p *sourcePreparerImpl) resolveSourceHash(
 }
 
 // writeMacrosFile writes a macros file containing the resolved macros for a component.
-// This includes with/without flags converted to macro format, and any explicit defines.
-// If the build configuration produces no macros, no file is written and an empty path is
-// returned. Otherwise, the path to the written macros file is returned.
+// This includes with/without flags converted to macro format, and any explicit defines,
+// plus %azl_upstream_* macros populated from the component's lock file (when available).
+// If no macros are produced, no file is written and an empty path is returned.
+// Otherwise, the path to the written macros file is returned.
 func (p *sourcePreparerImpl) writeMacrosFile(component components.Component, outputDir string) (string, error) {
-	contents := GenerateMacrosFileContents(component.GetConfig().Build)
+	config := component.GetConfig()
+
+	contents := generateMacrosFileContentsForComponent(config)
 	if contents == "" {
 		return "", nil
 	}
@@ -921,6 +924,49 @@ func (p *sourcePreparerImpl) writeMacrosFile(component components.Component, out
 	}
 
 	return macrosFilePath, nil
+}
+
+// generateMacrosFileContentsForComponent extends [GenerateMacrosFileContents] with
+// upstream provenance macros populated from [projectconfig.ComponentConfig.Locked].
+// Upstream macros are inserted BEFORE any user-provided defines so that a component
+// author can still override an %azl_upstream_* value from build.defines if needed.
+func generateMacrosFileContentsForComponent(config *projectconfig.ComponentConfig) string {
+	macros := buildMacrosMap(config.Build)
+	addUpstreamProvenanceMacros(macros, config.Locked)
+
+	return renderMacrosFile(macros)
+}
+
+// addUpstreamProvenanceMacros injects %azl_upstream_name / _epoch / _version /
+// _release into the given macros map from the component's lock data. Empty
+// fields are skipped so components with unparseable upstream specs don't get
+// blank macros. Existing entries in macros (i.e., user-provided defines that
+// happen to share the name) win — this function only adds; it doesn't overwrite.
+func addUpstreamProvenanceMacros(
+	macros map[string]string, locked *projectconfig.ComponentLockData,
+) {
+	if locked == nil {
+		return
+	}
+
+	values := map[string]string{
+		"azl_upstream_name":    locked.UpstreamName,
+		"azl_upstream_epoch":   locked.UpstreamEpoch,
+		"azl_upstream_version": locked.UpstreamVersion,
+		"azl_upstream_release": locked.UpstreamRelease,
+	}
+
+	for name, value := range values {
+		if value == "" {
+			continue
+		}
+
+		if _, exists := macros[name]; exists {
+			continue
+		}
+
+		macros[name] = value
+	}
 }
 
 // GenerateMacrosFileContents generates the contents of an RPM macros file from the given
@@ -948,6 +994,13 @@ func (p *sourcePreparerImpl) writeMacrosFile(component components.Component, out
 // If no macros remain after processing (empty config, or all macros removed via
 // undefines), an empty string is returned to signal that no macros file is needed.
 func GenerateMacrosFileContents(buildConfig projectconfig.ComponentBuildConfig) string {
+	return renderMacrosFile(buildMacrosMap(buildConfig))
+}
+
+// buildMacrosMap converts the build config's with/without/defines/undefines
+// fields into a resolved macro map. It does NOT include upstream provenance
+// macros — that is layered in on top by [addUpstreamProvenanceMacros].
+func buildMacrosMap(buildConfig projectconfig.ComponentBuildConfig) map[string]string {
 	// Build a unified map of all macros. Later definitions override earlier ones.
 	// Processing order: with flags -> without flags -> explicit defines.
 	macros := make(map[string]string)
@@ -973,6 +1026,12 @@ func GenerateMacrosFileContents(buildConfig projectconfig.ComponentBuildConfig) 
 		delete(macros, undef)
 	}
 
+	return macros
+}
+
+// renderMacrosFile serializes a fully-resolved macro map to RPM macros file
+// syntax. Returns "" (no file needed) when the map is empty.
+func renderMacrosFile(macros map[string]string) string {
 	if len(macros) == 0 {
 		return ""
 	}
