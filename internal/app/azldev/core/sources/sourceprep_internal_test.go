@@ -281,3 +281,66 @@ func TestComputeCurrentFingerprint(t *testing.T) {
 	assert.NotEqual(t, fp1, fpDiffCommit, "different upstream commit should change fingerprint")
 	assert.NotEqual(t, fp1, fpDiffBump, "different manual bump should change fingerprint")
 }
+
+// TestGenerateMacrosFileContentsForComponent_UpstreamProvenance verifies that
+// values captured in the lock file are exposed as %azl_upstream_* macros.
+func TestGenerateMacrosFileContentsForComponent_UpstreamProvenance(t *testing.T) {
+	config := &projectconfig.ComponentConfig{
+		Locked: &projectconfig.ComponentLockData{
+			UpstreamVersion: "2.12",
+			UpstreamRelease: "42%{?dist}",
+		},
+	}
+
+	contents := generateMacrosFileContentsForComponent(config)
+	require.NotEmpty(t, contents, "upstream provenance alone should produce a macros file")
+
+	// Values must appear verbatim; %{?dist} is stored raw and not expanded.
+	assert.Contains(t, contents, "%azl_upstream_version 2.12")
+	assert.Contains(t, contents, "%azl_upstream_release 42%{?dist}")
+}
+
+// TestGenerateMacrosFileContentsForComponent_EmptyUpstreamFieldsSkipped verifies
+// that empty NEVR fields are not emitted so downstream specs don't see blank macros.
+func TestGenerateMacrosFileContentsForComponent_EmptyUpstreamFieldsSkipped(t *testing.T) {
+	config := &projectconfig.ComponentConfig{
+		Locked: &projectconfig.ComponentLockData{
+			// Only Version is populated; the rest are empty.
+			UpstreamVersion: "2.12",
+		},
+	}
+
+	contents := generateMacrosFileContentsForComponent(config)
+	require.NotEmpty(t, contents)
+
+	assert.Contains(t, contents, "%azl_upstream_version 2.12")
+	assert.NotContains(t, contents, "%azl_upstream_release")
+}
+
+// TestGenerateMacrosFileContentsForComponent_UserDefineOverrides verifies that
+// a component-level build.defines entry with the same name as an upstream macro
+// wins. This lets a component override captured provenance when needed (e.g.,
+// to hardcode a substituted dist form).
+func TestGenerateMacrosFileContentsForComponent_UserDefineOverrides(t *testing.T) {
+	config := &projectconfig.ComponentConfig{
+		Build: projectconfig.ComponentBuildConfig{
+			Defines: map[string]string{
+				"azl_upstream_release": "42.fc43",
+			},
+		},
+		Locked: &projectconfig.ComponentLockData{
+			UpstreamRelease: "42%{?dist}",
+		},
+	}
+
+	contents := generateMacrosFileContentsForComponent(config)
+	assert.Contains(t, contents, "%azl_upstream_release 42.fc43",
+		"user-provided defines must win over captured provenance")
+	assert.NotContains(t, contents, "42%{?dist}")
+}
+
+// TestGenerateMacrosFileContentsForComponent_NoLockedNoBuild returns empty.
+func TestGenerateMacrosFileContentsForComponent_NoLockedNoBuild(t *testing.T) {
+	config := &projectconfig.ComponentConfig{}
+	assert.Empty(t, generateMacrosFileContentsForComponent(config))
+}
