@@ -141,11 +141,35 @@ type UpdateResult struct {
 	// Used as SourceIdentity input for fingerprint computation.
 	sourceIdentity string `json:"-" table:"-"`
 
+	// upstreamVersion / upstreamRelease carry the Version/Release values
+	// captured from the upstream spec at the resolved commit. Empty when the
+	// provider could not parse the spec. Written to the lock file so downstream
+	// specs can reference upstream provenance via the %azl_upstream_* macros.
+	upstreamVersion string `json:"-" table:"-"`
+	upstreamRelease string `json:"-" table:"-"`
+
 	// upToDate is set by the freshness check (Case 1) when both the input
 	// fingerprint and resolution hash match the lock. Components marked
 	// upToDate are skipped by [saveComponentLocks] — no re-fingerprinting
 	// or lock rewrite is needed.
 	upToDate bool `json:"-" table:"-"`
+}
+
+// setUpstreamProvenanceFromLock copies the captured NEVR provenance from an
+// existing lock into the result. Used by the fast paths that reuse a locked
+// commit without re-resolving, so the values survive into the rewritten lock.
+func (r *UpdateResult) setUpstreamProvenanceFromLock(locked *projectconfig.ComponentLockData) {
+	r.upstreamVersion = locked.UpstreamVersion
+	r.upstreamRelease = locked.UpstreamRelease
+}
+
+// hasLockedUpstreamVersionRelease reports whether an upstream lock already has
+// the provenance fields required by the build macros used for SBAT versioning.
+// Older lock files predate these fields; those must take the resolver path so
+// update can backfill the captured upstream Version/Release without requiring a
+// separate manual rebase.
+func hasLockedUpstreamVersionRelease(locked *projectconfig.ComponentLockData) bool {
+	return locked != nil && locked.UpstreamVersion != "" && locked.UpstreamRelease != ""
 }
 
 // UpdateComponents resolves source identities for all selected components and
@@ -388,6 +412,13 @@ func updateComponentLock(env *azldev.Env, store *lockfile.Store, result *UpdateR
 	}
 
 	lock.UpstreamCommit = result.UpstreamCommit
+
+	// Update captured upstream provenance. These are always overwritten
+	// (even with empty strings) so a source-type transition or a spec-
+	// parse regression on a subsequent update doesn't leave stale values
+	// hanging around in the lock file.
+	lock.UpstreamVersion = result.upstreamVersion
+	lock.UpstreamRelease = result.upstreamRelease
 
 	// Clear upstream-only fields for local components so a source-type
 	// transition (upstream → local) doesn't leave stale data in the lock.
@@ -763,10 +794,12 @@ func classifyForResolution(
 		locked := comp.GetConfig().Locked
 		isUpstream := comp.GetConfig().Spec.SourceType == projectconfig.SpecSourceTypeUpstream
 
-		if isUpstream && locked != nil && locked.Freshness == projectconfig.FreshnessCurrent {
+		if isUpstream && locked != nil && locked.Freshness == projectconfig.FreshnessCurrent &&
+			hasLockedUpstreamVersionRelease(locked) {
 			// Case 1: fully up-to-date — skip.
 			results[idx].UpstreamCommit = locked.UpstreamCommit
 			results[idx].sourceIdentity = comp.GetConfig().EffectiveUpstreamCommit()
+			results[idx].setUpstreamProvenanceFromLock(locked)
 			results[idx].upToDate = true
 			syncCompleted++
 
@@ -774,12 +807,13 @@ func classifyForResolution(
 		}
 
 		if isUpstream && locked != nil && locked.Freshness == projectconfig.FreshnessStale &&
-			!locked.ResolutionStale && locked.UpstreamCommit != "" {
+			!locked.ResolutionStale && locked.UpstreamCommit != "" && hasLockedUpstreamVersionRelease(locked) {
 			// Case 2: build inputs changed but resolution inputs unchanged.
 			// Reuse the locked commit — re-resolving would yield the same hash.
 			results[idx].UpstreamCommit = locked.UpstreamCommit
 			results[idx].PreviousCommit = locked.UpstreamCommit
 			results[idx].sourceIdentity = comp.GetConfig().EffectiveUpstreamCommit()
+			results[idx].setUpstreamProvenanceFromLock(locked)
 			results[idx].config = comp.GetConfig()
 			syncCompleted++
 
@@ -819,13 +853,15 @@ func resolveAndRecordIdentity(
 		return
 	}
 
-	result.sourceIdentity = identity
+	result.sourceIdentity = identity.Identity
+	result.upstreamVersion = identity.Version
+	result.upstreamRelease = identity.Release
 	result.config = comp.GetConfig()
 
 	// For upstream components, the identity IS the commit hash.
 	// For local components, UpstreamCommit stays empty.
 	if comp.GetConfig().Spec.SourceType == projectconfig.SpecSourceTypeUpstream {
-		result.UpstreamCommit = identity
+		result.UpstreamCommit = identity.Identity
 	}
 
 	// Check existing lock to determine if the component changed.
@@ -868,25 +904,29 @@ func resolveOneSourceIdentity(
 	ctx context.Context,
 	env *azldev.Env,
 	comp components.Component,
-) (string, error) {
+) (sourceproviders.SourceIdentity, error) {
 	componentName := comp.GetName()
 
 	distro, err := sourceproviders.ResolveDistro(env, comp)
 	if err != nil {
-		return "", fmt.Errorf("resolving distro for %#q:\n%w", componentName, err)
+		return sourceproviders.SourceIdentity{}, fmt.Errorf("resolving distro for %#q:\n%w", componentName, err)
 	}
 
 	sourceManager, err := sourceproviders.NewSourceManager(env, distro)
 	if err != nil {
-		return "", fmt.Errorf("creating source manager for %#q:\n%w", componentName, err)
+		return sourceproviders.SourceIdentity{}, fmt.Errorf("creating source manager for %#q:\n%w", componentName, err)
 	}
 
 	identity, err := sourceManager.ResolveSourceIdentity(ctx, comp)
 	if err != nil {
-		return "", fmt.Errorf("resolving identity for %#q:\n%w", componentName, err)
+		return sourceproviders.SourceIdentity{}, fmt.Errorf("resolving identity for %#q:\n%w", componentName, err)
 	}
 
-	slog.Debug("Resolved source identity", "component", componentName, "identity", identity)
+	slog.Debug("Resolved source identity", "component", componentName,
+		"identity", identity.Identity,
+		"upstreamName", identity.Name,
+		"upstreamVersion", identity.Version,
+		"upstreamRelease", identity.Release)
 
 	return identity, nil
 }

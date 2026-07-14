@@ -80,17 +80,21 @@ func (r *RPMContentsProviderImpl) GetComponent(
 // ResolveIdentity implements [SourceIdentityProvider] by downloading the source RPM
 // and computing its SHA256 hash. This is a heavyweight operation since it requires a full
 // RPM download.
+//
+// The EVR metadata on the returned [SourceIdentity] is left empty because
+// extracting NEVR from the SRPM would require an additional decode step and
+// no consumer currently depends on it for this provider.
 func (r *RPMContentsProviderImpl) ResolveIdentity(
 	ctx context.Context,
 	component components.Component,
-) (identity string, err error) {
+) (result SourceIdentity, err error) {
 	if component.GetName() == "" {
-		return "", errors.New("component name cannot be empty")
+		return SourceIdentity{}, errors.New("component name cannot be empty")
 	}
 
 	rpmReader, err := r.rpmProvider.GetRPM(ctx, component.GetName(), nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to get RPM for identity of component %#q:\n%w",
+		return SourceIdentity{}, fmt.Errorf("failed to get RPM for identity of component %#q:\n%w",
 			component.GetName(), err)
 	}
 
@@ -99,9 +103,11 @@ func (r *RPMContentsProviderImpl) ResolveIdentity(
 	hasher := sha256.New()
 
 	if _, err := io.Copy(hasher, rpmReader); err != nil {
-		return "", fmt.Errorf("failed to hash RPM for component %#q:\n%w",
+		return SourceIdentity{}, fmt.Errorf("failed to hash RPM for component %#q:\n%w",
 			component.GetName(), err)
 	}
 
-	return "sha256:" + hex.EncodeToString(hasher.Sum(nil)), nil
+	return SourceIdentity{
+		Identity: "sha256:" + hex.EncodeToString(hasher.Sum(nil)),
+	}, nil
 }

@@ -188,6 +188,58 @@ func TestSaveComponentLocks_SkipsUpToDate(t *testing.T) {
 	assert.False(t, exists, "upToDate component should not get a lock file")
 }
 
+func TestClassifyForResolution_BackfillsMissingUpstreamProvenance(t *testing.T) {
+	tests := []struct {
+		name      string
+		freshness projectconfig.FreshnessStatus
+	}{
+		{name: "fresh lock", freshness: projectconfig.FreshnessCurrent},
+		{name: "build-input-only stale lock", freshness: projectconfig.FreshnessStale},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := baseConfig("curl")
+			config.Locked = &projectconfig.ComponentLockData{
+				UpstreamCommit:  "locked-commit",
+				Freshness:       tt.freshness,
+				ResolutionStale: false,
+			}
+
+			results := make([]UpdateResult, 1)
+			parallel, syncCompleted := classifyForResolution(
+				[]components.Component{newMockComp(t, "curl", config)}, results,
+			)
+
+			require.Len(t, parallel, 1)
+			assert.Zero(t, syncCompleted)
+			assert.False(t, results[0].upToDate,
+				"locks without upstream version/release must re-resolve to backfill provenance")
+		})
+	}
+}
+
+func TestClassifyForResolution_ReusesLockWithUpstreamProvenance(t *testing.T) {
+	config := baseConfig("curl")
+	config.Locked = &projectconfig.ComponentLockData{
+		UpstreamCommit:  "locked-commit",
+		UpstreamVersion: "8.7.0",
+		UpstreamRelease: "3%{?dist}",
+		Freshness:       projectconfig.FreshnessCurrent,
+	}
+
+	results := make([]UpdateResult, 1)
+	parallel, syncCompleted := classifyForResolution(
+		[]components.Component{newMockComp(t, "curl", config)}, results,
+	)
+
+	assert.Empty(t, parallel)
+	assert.EqualValues(t, 1, syncCompleted)
+	assert.True(t, results[0].upToDate)
+	assert.Equal(t, "8.7.0", results[0].upstreamVersion)
+	assert.Equal(t, "3%{?dist}", results[0].upstreamRelease)
+}
+
 func TestSaveComponentLocks_PreservesManualBump(t *testing.T) {
 	env := testutils.NewTestEnv(t)
 	store := newTestStore(t, env)

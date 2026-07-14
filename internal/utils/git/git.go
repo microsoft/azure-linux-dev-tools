@@ -27,6 +27,11 @@ type GitProvider interface {
 	GetCommitHashBeforeDate(ctx context.Context, repoDir string, dateTime time.Time) (string, error)
 	// GetCurrentCommit returns the current commit hash of the repository at the given directory, regardless of the date.
 	GetCurrentCommit(ctx context.Context, repoDir string) (string, error)
+	// ShowFile returns the contents of the file at path in the tree of commit.
+	// This is the equivalent of 'git -C repoDir show commit:path'. Works even on
+	// blobless clones (--filter=blob:none): the requested blob will be fetched
+	// on demand.
+	ShowFile(ctx context.Context, repoDir, commit, path string) (string, error)
 }
 
 type GitProviderImpl struct {
@@ -187,6 +192,43 @@ func (g *GitProviderImpl) GetCommitHashBeforeDate(
 func (g *GitProviderImpl) GetCurrentCommit(ctx context.Context, repoDir string) (string, error) {
 	// Pass zero time to get the current commit
 	return g.GetCommitHashBeforeDate(ctx, repoDir, time.Time{})
+}
+
+// ShowFile returns the contents of the file at path in the tree of commit.
+// This is the equivalent of 'git -C repoDir show commit:path'. On a blobless
+// clone the blob will be fetched on demand.
+func (g *GitProviderImpl) ShowFile(
+	ctx context.Context, repoDir, commit, path string,
+) (string, error) {
+	if repoDir == "" {
+		return "", errors.New("repository directory cannot be empty")
+	}
+
+	if commit == "" {
+		return "", errors.New("commit cannot be empty")
+	}
+
+	if path == "" {
+		return "", errors.New("path cannot be empty")
+	}
+
+	var stderr bytes.Buffer
+
+	cmd := exec.CommandContext(ctx, "git", "-C", repoDir, "show", commit+":"+path)
+	cmd.Stderr = &stderr
+
+	wrappedCmd, err := g.cmdFactory.Command(cmd)
+	if err != nil {
+		return "", fmt.Errorf("failed to create git command:\n%w", err)
+	}
+
+	output, err := wrappedCmd.RunAndGetOutput(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to read %#q at %#q in repo %#q:\n%s\n%w",
+			path, commit, repoDir, stderr.String(), err)
+	}
+
+	return output, nil
 }
 
 // resolveCloneOptions collects all [GitOptions] into a [cloneOptions] struct.

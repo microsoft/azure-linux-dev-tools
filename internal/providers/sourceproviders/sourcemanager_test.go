@@ -436,7 +436,11 @@ func TestSourceManager_ResolveSourceIdentity_LocalSuccess(t *testing.T) {
 
 	identity, err := sourceManager.ResolveSourceIdentity(t.Context(), component)
 	require.NoError(t, err)
-	assert.Contains(t, identity, "sha256:")
+	assert.Contains(t, identity.Identity, "sha256:")
+	assert.Empty(t, identity.Name,
+		"local components have no upstream provenance")
+	assert.Empty(t, identity.Version,
+		"local components have no upstream provenance")
 }
 
 func TestSourceManager_ResolveSourceIdentity_UpstreamNoProviders(t *testing.T) {

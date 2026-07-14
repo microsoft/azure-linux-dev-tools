@@ -63,6 +63,20 @@ type ComponentLock struct {
 	//   - Hash matches → resolution inputs unchanged, reuse locked commit
 	//   - Hash differs → resolution inputs changed, re-resolve required
 	ResolutionInputHash string `toml:"resolution-input-hash,omitempty"`
+
+	// UpstreamVersion is the package Version: tag from the upstream spec at
+	// UpstreamCommit. Exposed via the %azl_upstream_version macro.
+	// Empty for local and SRPM components, or when the upstream spec could not
+	// be parsed.
+	UpstreamVersion string `toml:"upstream-version,omitempty"`
+
+	// UpstreamRelease is the raw Release: tag from the upstream spec at
+	// UpstreamCommit. Exposed via the %azl_upstream_release macro.
+	// The value is stored verbatim and may contain unexpanded macros (notably
+	// %{?dist}). Callers that need a fully expanded form should handle macro
+	// substitution themselves. Empty for local and SRPM components, or when the
+	// upstream spec could not be parsed.
+	UpstreamRelease string `toml:"upstream-release,omitempty"`
 }
 
 // New creates a new empty component lock with the current format version.

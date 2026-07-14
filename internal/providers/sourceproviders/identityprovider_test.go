@@ -121,11 +121,16 @@ func TestFedoraProvider_ResolveIdentity(t *testing.T) {
 		mockGitProvider.EXPECT().
 			GetCurrentCommit(gomock.Any(), gomock.Any()).
 			Return(expectedCommit, nil)
+		// Best-effort EVR fetch — return an error to exercise graceful
+		// degradation without asserting on the resulting empty fields.
+		mockGitProvider.EXPECT().
+			ShowFile(gomock.Any(), gomock.Any(), expectedCommit, testPackageName+".spec").
+			Return("", errors.New("blob unavailable"))
 
 		comp := newMockComp(ctrl, testPackageName)
 		identity, resolveErr := provider.ResolveIdentity(t.Context(), comp)
 		require.NoError(t, resolveErr)
-		assert.Equal(t, expectedCommit, identity)
+		assert.Equal(t, expectedCommit, identity.Identity)
 	})
 
 	t.Run("returns error on clone failure", func(t *testing.T) {
@@ -139,7 +144,7 @@ func TestFedoraProvider_ResolveIdentity(t *testing.T) {
 		assert.Contains(t, resolveErr.Error(), testPackageName)
 	})
 
-	t.Run("returns pinned commit without network call", func(t *testing.T) {
+	t.Run("returns pinned commit and captures EVR", func(t *testing.T) {
 		pinnedCommit := "deadbeef12345678"
 		comp := newMockCompWithConfig(ctrl, testPackageName, &projectconfig.ComponentConfig{
 			Name: testPackageName,
@@ -149,10 +154,38 @@ func TestFedoraProvider_ResolveIdentity(t *testing.T) {
 			},
 		})
 
-		// No LsRemoteHead expectation — the pinned commit should be returned directly.
+		mockGitProvider.EXPECT().
+			Clone(gomock.Any(), repoURL, gomock.Any(), gomock.Any()).
+			Return(nil)
+		mockGitProvider.EXPECT().
+			ShowFile(gomock.Any(), gomock.Any(), pinnedCommit, testPackageName+".spec").
+			Return("Name: test-package\nVersion: 2.12\nRelease: 42%{?dist}\n", nil)
+
 		identity, resolveErr := provider.ResolveIdentity(t.Context(), comp)
 		require.NoError(t, resolveErr)
-		assert.Equal(t, pinnedCommit, identity)
+		assert.Equal(t, pinnedCommit, identity.Identity)
+		assert.Equal(t, "2.12", identity.Version)
+		assert.Equal(t, "42%{?dist}", identity.Release)
+	})
+
+	t.Run("pinned commit fails on clone failure", func(t *testing.T) {
+		comp := newMockCompWithConfig(ctrl, testPackageName, &projectconfig.ComponentConfig{
+			Name: testPackageName,
+			Spec: projectconfig.SpecSource{
+				SourceType:     projectconfig.SpecSourceTypeUpstream,
+				UpstreamCommit: "deadbeef12345678",
+			},
+		})
+
+		// The clone is required even for a pinned commit so the upstream spec
+		// can be read for provenance; a clone failure is fatal.
+		mockGitProvider.EXPECT().
+			Clone(gomock.Any(), repoURL, gomock.Any(), gomock.Any()).
+			Return(errors.New("network error"))
+
+		_, resolveErr := provider.ResolveIdentity(t.Context(), comp)
+		require.Error(t, resolveErr)
+		assert.Contains(t, resolveErr.Error(), testPackageName)
 	})
 }
 
@@ -184,11 +217,20 @@ func TestFedoraProvider_ResolveIdentity_Snapshot(t *testing.T) {
 		mockGitProvider.EXPECT().
 			GetCommitHashBeforeDate(gomock.Any(), gomock.Any(), snapshotTime).
 			Return(expectedCommit, nil)
+		// Best-effort EVR fetch. Return a real spec here so we can verify the
+		// populated NEVR fields flow through.
+		mockGitProvider.EXPECT().
+			ShowFile(gomock.Any(), gomock.Any(), expectedCommit, testPackageName+".spec").
+			Return("Name: test-package\nVersion: 2.12\nRelease: 42%{?dist}\n", nil)
 
 		comp := newMockComp(ctrl, testPackageName)
 		identity, resolveErr := provider.ResolveIdentity(t.Context(), comp)
 		require.NoError(t, resolveErr)
-		assert.Equal(t, expectedCommit, identity)
+		assert.Equal(t, expectedCommit, identity.Identity)
+		assert.Equal(t, "test-package", identity.Name)
+		assert.Equal(t, "2.12", identity.Version)
+		assert.Equal(t, "42%{?dist}", identity.Release,
+			"Release is captured raw; %{?dist} is not expanded")
 	})
 
 	t.Run("pinned commit takes priority over snapshot", func(t *testing.T) {
@@ -201,10 +243,18 @@ func TestFedoraProvider_ResolveIdentity_Snapshot(t *testing.T) {
 			},
 		})
 
-		// No Clone/Deepen/GetCommitHashBeforeDate expectations — pinned commit is returned directly.
+		mockGitProvider.EXPECT().
+			Clone(gomock.Any(), repoURL, gomock.Any(), gomock.Any()).
+			Return(nil)
+		mockGitProvider.EXPECT().
+			ShowFile(gomock.Any(), gomock.Any(), pinnedCommit, testPackageName+".spec").
+			Return("Name: test-package\nVersion: 2.12\nRelease: 42%{?dist}\n", nil)
+
 		identity, resolveErr := provider.ResolveIdentity(t.Context(), comp)
 		require.NoError(t, resolveErr)
-		assert.Equal(t, pinnedCommit, identity)
+		assert.Equal(t, pinnedCommit, identity.Identity)
+		assert.Equal(t, "2.12", identity.Version)
+		assert.Equal(t, "42%{?dist}", identity.Release)
 	})
 }
 
@@ -227,7 +277,9 @@ func TestRPMProvider_ResolveIdentity(t *testing.T) {
 		comp := newMockComp(ctrl, "test-pkg")
 		identity, resolveErr := provider.ResolveIdentity(t.Context(), comp)
 		require.NoError(t, resolveErr)
-		assert.Equal(t, "sha256:"+sha256Hex(rpmContent), identity)
+		assert.Equal(t, "sha256:"+sha256Hex(rpmContent), identity.Identity)
+		assert.Empty(t, identity.Name,
+			"RPM provider does not eagerly parse NEVR from the SRPM")
 	})
 
 	t.Run("returns error on RPM download failure", func(t *testing.T) {
@@ -337,10 +389,14 @@ func TestFedoraProvider_ResolveIdentity_IgnoresLockedData(t *testing.T) {
 	mockGitProvider.EXPECT().
 		GetCurrentCommit(gomock.Any(), gomock.Any()).
 		Return(headCommit, nil)
+	// Best-effort EVR fetch — no assertion on the (empty) EVR fields.
+	mockGitProvider.EXPECT().
+		ShowFile(gomock.Any(), gomock.Any(), headCommit, testPackageName+".spec").
+		Return("", errors.New("blob unavailable"))
 
 	identity, resolveErr := provider.ResolveIdentity(t.Context(), comp)
 	require.NoError(t, resolveErr)
-	assert.Equal(t, headCommit, identity,
+	assert.Equal(t, headCommit, identity.Identity,
 		"should resolve from upstream, ignoring locked data")
 }
 
@@ -372,9 +428,17 @@ func TestFedoraProvider_ResolveIdentity_UsesConfigPin(t *testing.T) {
 		},
 	})
 
-	// No clone expected — pinned commit returned directly.
+	mockGitProvider.EXPECT().
+		Clone(gomock.Any(), repoURL, gomock.Any(), gomock.Any()).
+		Return(nil)
+	mockGitProvider.EXPECT().
+		ShowFile(gomock.Any(), gomock.Any(), "config-pinned-commit", testPackageName+".spec").
+		Return("Name: test-package\nVersion: 2.12\nRelease: 42%{?dist}\n", nil)
+
 	identity, resolveErr := provider.ResolveIdentity(t.Context(), comp)
 	require.NoError(t, resolveErr)
-	assert.Equal(t, "config-pinned-commit", identity,
+	assert.Equal(t, "config-pinned-commit", identity.Identity,
 		"config pin should be used for identity calculation")
+	assert.Equal(t, "2.12", identity.Version)
+	assert.Equal(t, "42%{?dist}", identity.Release)
 }

@@ -113,6 +113,8 @@ func TestSaveAndLoad(t *testing.T) {
 	original.ImportCommit = "0000111122223333444455556666777788889999"
 	original.ManualBump = 2
 	original.InputFingerprint = "sha256:abcdef1234567890"
+	original.UpstreamVersion = "8.7.0"
+	original.UpstreamRelease = "3%{?dist}"
 
 	require.NoError(t, original.Save(memFS, lockPath))
 
@@ -124,6 +126,9 @@ func TestSaveAndLoad(t *testing.T) {
 	assert.Equal(t, "0000111122223333444455556666777788889999", loaded.ImportCommit)
 	assert.Equal(t, 2, loaded.ManualBump)
 	assert.Equal(t, "sha256:abcdef1234567890", loaded.InputFingerprint)
+	assert.Equal(t, "8.7.0", loaded.UpstreamVersion)
+	assert.Equal(t, "3%{?dist}", loaded.UpstreamRelease,
+		"upstream release is stored raw; %{?dist} must survive the roundtrip verbatim")
 }
 
 func TestSaveCreatesDirectory(t *testing.T) {

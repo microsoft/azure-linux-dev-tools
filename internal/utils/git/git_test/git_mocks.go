@@ -108,3 +108,18 @@ func (mr *MockGitProviderMockRecorder) GetCurrentCommit(ctx, repoDir any) *gomoc
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetCurrentCommit", reflect.TypeOf((*MockGitProvider)(nil).GetCurrentCommit), ctx, repoDir)
 }
+
+// ShowFile mocks base method.
+func (m *MockGitProvider) ShowFile(ctx context.Context, repoDir, commit, path string) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ShowFile", ctx, repoDir, commit, path)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ShowFile indicates an expected call of ShowFile.
+func (mr *MockGitProviderMockRecorder) ShowFile(ctx, repoDir, commit, path any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ShowFile", reflect.TypeOf((*MockGitProvider)(nil).ShowFile), ctx, repoDir, commit, path)
+}
