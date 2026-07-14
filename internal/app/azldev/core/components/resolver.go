@@ -615,6 +615,10 @@ func (r *Resolver) populateFromLock(config *projectconfig.ComponentConfig) {
 		ManualBump:          lock.ManualBump,
 		InputFingerprint:    lock.InputFingerprint,
 		ResolutionInputHash: lock.ResolutionInputHash,
+		UpstreamName:        lock.UpstreamName,
+		UpstreamEpoch:       lock.UpstreamEpoch,
+		UpstreamVersion:     lock.UpstreamVersion,
+		UpstreamRelease:     lock.UpstreamRelease,
 	}
 
 	if r.CheckFreshness {

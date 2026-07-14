@@ -76,10 +76,10 @@ func (mr *MockSourceManagerMockRecorder) FetchFiles(ctx, component, destDirPath 
 }
 
 // ResolveSourceIdentity mocks base method.
-func (m *MockSourceManager) ResolveSourceIdentity(ctx context.Context, component components.Component) (string, error) {
+func (m *MockSourceManager) ResolveSourceIdentity(ctx context.Context, component components.Component) (sourceproviders.SourceIdentity, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ResolveSourceIdentity", ctx, component)
-	ret0, _ := ret[0].(string)
+	ret0, _ := ret[0].(sourceproviders.SourceIdentity)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

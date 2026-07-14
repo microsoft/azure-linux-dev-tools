@@ -285,6 +285,22 @@ type ComponentLockData struct {
 	// distro ref, pin, upstream name). Used to determine if the locked commit
 	// needs re-resolution.
 	ResolutionInputHash string `json:"resolutionInputHash,omitempty"`
+	// UpstreamName is the package Name: tag captured from the upstream spec
+	// at the locked commit. Exposed to the build via the %azl_upstream_name
+	// macro. Empty for local components or when parsing failed.
+	UpstreamName string `json:"upstreamName,omitempty"`
+	// UpstreamEpoch is the package Epoch: tag captured from the upstream spec
+	// at the locked commit. Exposed via the %azl_upstream_epoch macro. Empty
+	// when the upstream spec has no Epoch tag.
+	UpstreamEpoch string `json:"upstreamEpoch,omitempty"`
+	// UpstreamVersion is the package Version: tag captured from the upstream
+	// spec at the locked commit. Exposed via the %azl_upstream_version macro.
+	UpstreamVersion string `json:"upstreamVersion,omitempty"`
+	// UpstreamRelease is the raw Release: tag captured from the upstream spec
+	// at the locked commit. Exposed via the %azl_upstream_release macro. The
+	// value is stored verbatim and may contain unexpanded macros such as
+	// %{?dist}.
+	UpstreamRelease string `json:"upstreamRelease,omitempty"`
 	// Freshness indicates whether the component's config matches its lock.
 	// Runtime-only — computed by the resolver when freshness checking is enabled.
 	Freshness FreshnessStatus `json:"-"`

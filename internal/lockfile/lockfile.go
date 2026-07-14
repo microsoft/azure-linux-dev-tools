@@ -63,6 +63,31 @@ type ComponentLock struct {
 	//   - Hash matches → resolution inputs unchanged, reuse locked commit
 	//   - Hash differs → resolution inputs changed, re-resolve required
 	ResolutionInputHash string `toml:"resolution-input-hash,omitempty"`
+
+	// UpstreamName is the package Name: tag from the upstream spec at
+	// UpstreamCommit. Captured at update time so downstream specs can
+	// reference upstream provenance via the %azl_upstream_name macro
+	// without re-parsing the upstream spec at build time.
+	// Empty for local components or when upstream parsing fails.
+	UpstreamName string `toml:"upstream-name,omitempty"`
+
+	// UpstreamEpoch is the package Epoch: tag from the upstream spec at
+	// UpstreamCommit. Exposed via the %azl_upstream_epoch macro.
+	// Empty if the upstream spec has no Epoch tag or on parse failure.
+	UpstreamEpoch string `toml:"upstream-epoch,omitempty"`
+
+	// UpstreamVersion is the package Version: tag from the upstream spec at
+	// UpstreamCommit. Exposed via the %azl_upstream_version macro.
+	// Empty for local components or when upstream parsing fails.
+	UpstreamVersion string `toml:"upstream-version,omitempty"`
+
+	// UpstreamRelease is the raw Release: tag from the upstream spec at
+	// UpstreamCommit. Exposed via the %azl_upstream_release macro.
+	// The value is stored verbatim from the upstream spec and may contain
+	// unexpanded macros (notably %{?dist}). Callers that need a fully
+	// expanded form should handle macro substitution themselves.
+	// Empty for local components or when upstream parsing fails.
+	UpstreamRelease string `toml:"upstream-release,omitempty"`
 }
 
 // New creates a new empty component lock with the current format version.

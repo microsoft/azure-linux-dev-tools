@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
@@ -253,15 +254,22 @@ func (g *FedoraSourcesProviderImpl) checkoutTargetCommit(
 // callers that want the cached locked commit should read
 // [projectconfig.ComponentLockData.UpstreamCommit] directly.
 //
-// When [projectconfig.SpecSource.UpstreamCommit] is pinned, returns that commit
-// directly without contacting upstream. Otherwise, clones the dist-git repo to
-// resolve the commit via snapshot time or branch HEAD.
+// In all cases the dist-git repo is cloned (metadata-only). For pinned commits
+// (see [projectconfig.SpecSource.UpstreamCommit]) the pinned hash is used as the
+// identity directly; for snapshot/HEAD cases the commit is resolved from the
+// clone. A clone failure is fatal in every case — the clone is required both to
+// resolve the commit and to read the upstream spec for provenance.
+//
+// After the commit is resolved, this method makes a best-effort attempt to parse
+// the upstream spec's Name/Epoch/Version/Release tags and populate the
+// corresponding fields on [SourceIdentity]. Spec read/parse failures are logged
+// at debug and treated as non-fatal — the identity itself is still returned.
 func (g *FedoraSourcesProviderImpl) ResolveIdentity(
 	ctx context.Context,
 	component components.Component,
-) (string, error) {
+) (SourceIdentity, error) {
 	if component.GetName() == "" {
-		return "", errors.New("component name cannot be empty")
+		return SourceIdentity{}, errors.New("component name cannot be empty")
 	}
 
 	upstreamName := component.GetConfig().Spec.UpstreamName
@@ -271,35 +279,103 @@ func (g *FedoraSourcesProviderImpl) ResolveIdentity(
 
 	gitRepoURL, err := fedorasource.BuildDistGitURL(g.distroGitBaseURI, upstreamName)
 	if err != nil {
-		return "", fmt.Errorf("failed to build dist-git URL for %#q:\n%w", upstreamName, err)
+		return SourceIdentity{}, fmt.Errorf("failed to build dist-git URL for %#q:\n%w", upstreamName, err)
 	}
 
-	return g.resolveCommit(ctx, gitRepoURL, upstreamName, component.GetConfig().Spec.UpstreamCommit)
+	commitHash, repoDir, cleanup, err := g.resolveCommit(
+		ctx, gitRepoURL, upstreamName, component.GetConfig().Spec.UpstreamCommit,
+	)
+	if cleanup != nil {
+		defer cleanup()
+	}
+
+	if err != nil {
+		return SourceIdentity{}, err
+	}
+
+	result := SourceIdentity{Identity: commitHash}
+
+	// Best-effort NEVR capture from the resolved upstream spec, read out of the
+	// clone that resolveCommit produced.
+	result.SpecEVR = g.captureUpstreamEVR(ctx, repoDir, commitHash, upstreamName, component.GetName())
+
+	return result, nil
+}
+
+// captureUpstreamEVR is a best-effort read of the upstream spec's NEVR tags at
+// the resolved commit. It reads the spec via 'git show' (which works on blobless
+// clones by fetching the blob on demand) and parses tag values. All errors are
+// logged at debug and swallowed — on any failure the zero [SpecEVR] is returned.
+func (g *FedoraSourcesProviderImpl) captureUpstreamEVR(
+	ctx context.Context,
+	repoDir, commitHash, upstreamName, componentName string,
+) SpecEVR {
+	specPath := upstreamName + ".spec"
+
+	contents, err := g.gitProvider.ShowFile(ctx, repoDir, commitHash, specPath)
+	if err != nil {
+		slog.Debug("Skipping upstream EVR capture: cannot read spec at commit",
+			"component", componentName, "commit", commitHash,
+			"spec", specPath, "error", err)
+
+		return SpecEVR{}
+	}
+
+	evr, parseErr := ParseSpecEVR(strings.NewReader(contents))
+	if parseErr != nil {
+		slog.Debug("Skipping upstream EVR capture: cannot parse spec",
+			"component", componentName, "commit", commitHash,
+			"spec", specPath, "error", parseErr)
+
+		return SpecEVR{}
+	}
+
+	return evr
 }
 
 // resolveCommit determines the effective commit via [resolveEffectiveCommitHash].
-// For pinned commits (case 1), it returns immediately without cloning. For snapshot
-// and HEAD cases, it performs a metadata-only clone to resolve the commit hash.
+// A metadata-only clone is always performed: for snapshot and HEAD cases it is
+// needed to resolve the commit, and for pinned commits it is needed so the
+// upstream spec can be read for provenance capture. It returns the temp clone
+// directory plus a cleanup function that the caller must invoke (typically via
+// defer) to remove that directory. The cleanup function is nil-safe and non-nil
+// whenever a temp directory was created.
 func (g *FedoraSourcesProviderImpl) resolveCommit(
 	ctx context.Context, gitRepoURL string, upstreamName string, upstreamCommit string,
-) (string, error) {
-	// Case 1: Explicit upstream commit hash specified per-component
-	if upstreamCommit != "" {
-		return g.resolveEffectiveCommitHash(ctx, "", upstreamCommit, slog.LevelDebug)
+) (commitHash string, repoDir string, cleanup func(), err error) {
+	tempDir, cleanup, err := g.cloneForIdentity(ctx, gitRepoURL, upstreamName)
+	if err != nil {
+		return "", tempDir, cleanup, err
 	}
 
-	// Cases 2 & 3: need a metadata-only clone to resolve snapshot or HEAD commit.
+	// A pinned upstreamCommit is returned as-is by resolveEffectiveCommitHash;
+	// snapshot/HEAD cases resolve the commit from the clone.
+	commitHash, err = g.resolveEffectiveCommitHash(ctx, tempDir, upstreamCommit, slog.LevelDebug)
+	if err != nil {
+		return "", tempDir, cleanup, fmt.Errorf("resolving commit for %#q:\n%w", upstreamName, err)
+	}
+
+	return commitHash, tempDir, cleanup, nil
+}
+
+// cloneForIdentity creates a temporary metadata-only clone used for source
+// identity resolution and best-effort provenance capture. The returned cleanup
+// function removes the temporary clone and should be deferred by the caller when
+// non-nil.
+func (g *FedoraSourcesProviderImpl) cloneForIdentity(
+	ctx context.Context, gitRepoURL string, upstreamName string,
+) (repoDir string, cleanup func(), err error) {
 	tempDir, err := fileutils.MkdirTempInTempDir(g.fs, "azldev-identity-snapshot-")
 	if err != nil {
-		return "", fmt.Errorf("creating temp directory for snapshot clone:\n%w", err)
+		return "", nil, fmt.Errorf("creating temp directory for snapshot clone:\n%w", err)
 	}
 
-	defer func() {
+	cleanup = func() {
 		if removeErr := g.fs.RemoveAll(tempDir); removeErr != nil {
 			slog.Debug("Failed to clean up snapshot clone temp directory",
 				"path", tempDir, "error", removeErr)
 		}
-	}()
+	}
 
 	// Clone a single branch to resolve the snapshot commit. We use a full
 	// (non-shallow) clone because not all git servers support --shallow-since
@@ -315,15 +391,10 @@ func (g *FedoraSourcesProviderImpl) resolveCommit(
 		)
 	})
 	if err != nil {
-		return "", fmt.Errorf("partial clone for identity of %#q:\n%w", upstreamName, err)
+		return tempDir, cleanup, fmt.Errorf("partial clone for identity of %#q:\n%w", upstreamName, err)
 	}
 
-	commitHash, err := g.resolveEffectiveCommitHash(ctx, tempDir, "", slog.LevelDebug)
-	if err != nil {
-		return "", fmt.Errorf("resolving commit for %#q:\n%w", upstreamName, err)
-	}
-
-	return commitHash, nil
+	return tempDir, cleanup, nil
 }
 
 // resolveEffectiveCommitHash is the single source of truth for which commit a

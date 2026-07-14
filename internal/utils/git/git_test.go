@@ -232,6 +232,35 @@ func TestCloneWithMetadataOnly(t *testing.T) {
 	assert.DirExists(t, filepath.Join(destDir, testGitDir))
 	// --no-checkout means the working tree file should NOT be present.
 	assert.NoFileExists(t, filepath.Join(destDir, testRepoReadmeFile))
+
+	// ShowFile must still be able to read the blob on demand from the
+	// blobless clone. Use HEAD as a stable reference across upstream
+	// branch state changes.
+	contents, showErr := provider.ShowFile(t.Context(), destDir, "HEAD", testRepoReadmeFile)
+	require.NoError(t, showErr)
+	assert.NotEmpty(t, contents)
+}
+
+func TestShowFileValidation(t *testing.T) {
+	ctrl := gomock.NewController(t)
+
+	provider, err := git.NewGitProviderImpl(
+		opctx_test.NewMockEventListener(ctrl),
+		opctx_test.NewMockCmdFactory(ctrl),
+	)
+	require.NoError(t, err)
+
+	_, err = provider.ShowFile(context.Background(), "", "HEAD", "README")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "repository directory cannot be empty")
+
+	_, err = provider.ShowFile(context.Background(), "/repo", "", "README")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "commit cannot be empty")
+
+	_, err = provider.ShowFile(context.Background(), "/repo", "HEAD", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "path cannot be empty")
 }
 
 func TestGetCommitHashBeforeDate_FirstParentOnly(t *testing.T) {

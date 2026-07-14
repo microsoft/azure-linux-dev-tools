@@ -67,6 +67,10 @@ func setupMockGitWithCounter(env *testutils.TestEnv, commitHash string) *atomic.
 			return commitHash, nil
 		}
 
+		if strings.Contains(strings.Join(cmd.Args, " "), " show ") {
+			return "Name: curl\nVersion: 8.7.0\nRelease: 3%{?dist}\n", nil
+		}
+
 		return "", nil
 	}
 

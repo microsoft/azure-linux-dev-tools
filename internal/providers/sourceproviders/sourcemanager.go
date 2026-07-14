@@ -56,12 +56,38 @@ type FileSourceProvider interface {
 // Consumers should treat the returned string as opaque; it is only meaningful for equality
 // comparison between two runs.
 type SourceIdentityProvider interface {
-	// ResolveIdentity returns a deterministic identity string for the component's source.
+	// ResolveIdentity returns a deterministic identity string for the component's source, plus
+	// any package-level metadata that the provider was able to capture cheaply.
 	// Returns an error if the identity cannot be determined (e.g., network failure for upstream sources).
-	// Upstream components must return the resolved commit hash from the dist-git provider, local components
-	// must return a content hash of the spec directory (must be stable, but exact format and algorithm
-	// are up to the provider).
-	ResolveIdentity(ctx context.Context, component components.Component) (string, error)
+	// Upstream components must return the resolved commit hash in [SourceIdentity.Identity]; local
+	// components must return a content hash of the spec directory.
+	//
+	// EVR fields ([SourceIdentity.Name], .Epoch, .Version, .Release) are best-effort:
+	// providers should populate them when the upstream metadata is available without incurring
+	// significant additional cost, but a provider may return empty strings for these fields
+	// when parsing fails or the source type does not carry an rpm spec at this stage
+	// (e.g., a raw SRPM download).
+	ResolveIdentity(ctx context.Context, component components.Component) (SourceIdentity, error)
+}
+
+// SourceIdentity is the return value of [SourceIdentityProvider.ResolveIdentity].
+// It bundles the opaque source identity string with package-level metadata parsed
+// from the upstream spec at the resolved point. The metadata fields are captured
+// so that downstream tooling (in particular the component lock file) can propagate
+// upstream provenance without re-parsing spec files at build time.
+type SourceIdentity struct {
+	// Identity is the deterministic identity string for the component's source.
+	// For upstream dist-git components this is the resolved commit hash; for
+	// local components it is a content hash of the spec directory; for SRPM-based
+	// components it is a hash of the downloaded RPM. Always populated on success.
+	Identity string
+
+	// SpecEVR carries the Name/Epoch/Version/Release tags captured from the
+	// upstream (or local) spec at the resolved point. Its fields are promoted,
+	// so callers can read them as SourceIdentity.Name, .Version, etc. All
+	// fields are best-effort and may be empty when the provider could not or
+	// did not parse a spec (e.g., the SRPM provider does not eagerly extract them).
+	SpecEVR
 }
 
 // FetchComponentOptions holds optional parameters for component fetching operations.
@@ -138,10 +164,14 @@ type SourceManager interface {
 		opts ...FetchComponentOption,
 	) error
 
-	// ResolveSourceIdentity returns a deterministic identity string for the component's source.
-	// For local components, this is a content hash of the spec directory.
-	// For upstream components, this is the resolved commit hash from the dist-git provider.
-	ResolveSourceIdentity(ctx context.Context, component components.Component) (string, error)
+	// ResolveSourceIdentity returns a deterministic identity string for the component's source
+	// plus any package-level metadata (Name, Epoch, Version, Release) that a provider could
+	// cheaply capture. For local components the identity is a content hash of the spec directory;
+	// for upstream components it is the resolved commit hash from the dist-git provider.
+	//
+	// The EVR fields are best-effort — see [SourceIdentityProvider.ResolveIdentity] — and may be
+	// empty even on success.
+	ResolveSourceIdentity(ctx context.Context, component components.Component) (SourceIdentity, error)
 }
 
 // ResolvedDistro holds the fully resolved distro configuration for a component.
@@ -606,9 +636,9 @@ func (m *sourceManager) FetchComponent(
 
 func (m *sourceManager) ResolveSourceIdentity(
 	ctx context.Context, component components.Component,
-) (string, error) {
+) (SourceIdentity, error) {
 	if component.GetName() == "" {
-		return "", errors.New("component name is empty")
+		return SourceIdentity{}, errors.New("component name is empty")
 	}
 
 	sourceType := component.GetConfig().Spec.SourceType
@@ -617,24 +647,41 @@ func (m *sourceManager) ResolveSourceIdentity(
 	case projectconfig.SpecSourceTypeLocal, projectconfig.SpecSourceTypeUnspecified:
 		specPath := component.GetConfig().Spec.Path
 		if specPath == "" {
-			return "", fmt.Errorf("component %#q has no spec path configured", component.GetName())
+			return SourceIdentity{}, fmt.Errorf("component %#q has no spec path configured", component.GetName())
 		}
 
-		return ResolveLocalSourceIdentity(m.fs, filepath.Dir(specPath))
+		identity, err := ResolveLocalSourceIdentity(m.fs, filepath.Dir(specPath))
+		if err != nil {
+			return SourceIdentity{}, err
+		}
+
+		result := SourceIdentity{Identity: identity}
+
+		// Best-effort NEVR extraction from the local spec. Failures here are
+		// non-fatal: the caller can still use the identity, and downstream macros
+		// simply won't be populated.
+		if evr, evrErr := ParseSpecEVRFromFile(m.fs, specPath); evrErr == nil {
+			result.SpecEVR = evr
+		} else {
+			slog.Debug("Skipping upstream EVR capture for local component",
+				"component", component.GetName(), "error", evrErr)
+		}
+
+		return result, nil
 
 	case projectconfig.SpecSourceTypeUpstream:
 		return m.resolveUpstreamSourceIdentity(ctx, component)
 	}
 
-	return "", fmt.Errorf("no identity provider for source type %#q on component %#q",
+	return SourceIdentity{}, fmt.Errorf("no identity provider for source type %#q on component %#q",
 		sourceType, component.GetName())
 }
 
 func (m *sourceManager) resolveUpstreamSourceIdentity(
 	ctx context.Context, component components.Component,
-) (string, error) {
+) (SourceIdentity, error) {
 	if len(m.upstreamComponentProviders) == 0 {
-		return "", fmt.Errorf("no upstream providers configured for component %#q",
+		return SourceIdentity{}, fmt.Errorf("no upstream providers configured for component %#q",
 			component.GetName())
 	}
 
@@ -649,7 +696,7 @@ func (m *sourceManager) resolveUpstreamSourceIdentity(
 		lastError = err
 	}
 
-	return "", fmt.Errorf("failed to resolve source identity for upstream component %#q:\n%w",
+	return SourceIdentity{}, fmt.Errorf("failed to resolve source identity for upstream component %#q:\n%w",
 		component.GetName(), lastError)
 }
 

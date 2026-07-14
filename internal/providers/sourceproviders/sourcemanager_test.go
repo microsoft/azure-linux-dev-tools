@@ -436,7 +436,11 @@ func TestSourceManager_ResolveSourceIdentity_LocalSuccess(t *testing.T) {
 
 	identity, err := sourceManager.ResolveSourceIdentity(t.Context(), component)
 	require.NoError(t, err)
-	assert.Contains(t, identity, "sha256:")
+	assert.Contains(t, identity.Identity, "sha256:")
+	assert.Equal(t, "test", identity.Name,
+		"local provider should populate Name from the on-disk spec")
+	assert.Equal(t, "1.0", identity.Version,
+		"local provider should populate Version from the on-disk spec")
 }
 
 func TestSourceManager_ResolveSourceIdentity_UpstreamNoProviders(t *testing.T) {
