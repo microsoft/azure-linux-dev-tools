@@ -527,6 +527,7 @@ func prepareComponentSources(
 		sources.WithGitRepo(env, env.LockReader(), distro.Version.ReleaseVer),
 		sources.WithDirtyDetection(),
 		sources.WithSkipLookaside(),
+		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)),
 	}
 
 	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, preparerOpts...)

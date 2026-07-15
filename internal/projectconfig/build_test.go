@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/mitchellh/hashstructure/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -190,4 +191,44 @@ func TestComponentBuildConfig_Validate(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
+
+// TestComponentBuildConfig_HashInclude verifies the fingerprint override:
+// EmitUpstreamProvenance is included only when true (so enabling it is the only
+// thing that perturbs a component's hash), while all other fields are always
+// included.
+func TestComponentBuildConfig_HashInclude(t *testing.T) {
+	disabled := projectconfig.ComponentBuildConfig{}
+	enabled := projectconfig.ComponentBuildConfig{EmitUpstreamProvenance: true}
+
+	include, err := disabled.HashInclude("EmitUpstreamProvenance", nil)
+	require.NoError(t, err)
+	assert.False(t, include, "a false flag is omitted so it does not perturb the fingerprint")
+
+	include, err = enabled.HashInclude("EmitUpstreamProvenance", nil)
+	require.NoError(t, err)
+	assert.True(t, include, "a true flag is included so enabling it changes the fingerprint")
+
+	include, err = disabled.HashInclude("With", nil)
+	require.NoError(t, err)
+	assert.True(t, include, "unrelated fields are always included")
+}
+
+// TestComponentBuildConfig_ProvenanceFingerprint confirms that enabling
+// provenance changes the hashstructure fingerprint, so an opted-in component
+// rebuilds while others are unaffected.
+func TestComponentBuildConfig_ProvenanceFingerprint(t *testing.T) {
+	hash := func(c projectconfig.ComponentBuildConfig) uint64 {
+		h, err := hashstructure.Hash(c, hashstructure.FormatV2, &hashstructure.HashOptions{TagName: "fingerprint"})
+		require.NoError(t, err)
+
+		return h
+	}
+
+	disabled := projectconfig.ComponentBuildConfig{With: []string{"feature"}}
+	enabled := disabled
+	enabled.EmitUpstreamProvenance = true
+
+	assert.NotEqual(t, hash(disabled), hash(enabled),
+		"enabling provenance changes the fingerprint so the component rebuilds")
 }

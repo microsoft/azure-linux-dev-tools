@@ -259,6 +259,9 @@ func BuildComponent(
 		)
 	}
 
+	preparerOpts = append(preparerOpts,
+		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)))
+
 	sourcePreparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, preparerOpts...)
 	if err != nil {
 		return ComponentBuildResults{},
