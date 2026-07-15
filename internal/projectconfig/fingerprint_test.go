@@ -115,15 +115,15 @@ func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
 
 			switch tag {
 			case "":
-				// Empty tag — included by default (the safe default).
+				// No tag — included by default (the safe default).
 			case "-":
 				actualExclusions[key] = true
 			default:
 				// hashstructure only recognises "" (include) and "-" (exclude).
-				// Any other value or option is silently ignored, which is almost
-				// certainly a typo.
+				// Any other value is silently treated as included, which is
+				// almost certainly a typo.
 				assert.Failf(t, "invalid fingerprint tag",
-					"field %q has unsupported fingerprint tag %q — "+
+					"field %q has unrecognised fingerprint tag value %q — "+
 						"only `fingerprint:\"-\"` (exclude) is valid; "+
 						"remove the tag to include the field", key, tag)
 			}

@@ -63,8 +63,8 @@ file = "vendor/**"                   # files inside the archive
 ```
 
 > **Note:** Archive overlays are batched per archive — all overlays targeting the same archive
-> share a single extract/modify/repack cycle — and the `sources` file is rehashed afterward to
-> reflect the repacked archive. They are processed independently of spec and loose-file overlays.
+> share a single extract/modify/repack cycle. When wired into the source-preparation pipeline, the `sources` file
+> should be rehashed afterward to reflect the repacked archive; they are processed independently of spec and loose-file overlays.
 
 > **Extraction root:** The inner path is interpreted relative to the archive's extraction root: if the archive unpacks to a single top-level directory (the conventional `%{name}-%{version}` layout) that directory is the root; otherwise the archive root is used.
 
