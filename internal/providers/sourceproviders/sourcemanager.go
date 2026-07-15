@@ -396,19 +396,6 @@ func (m *sourceManager) fetchSourceFile(
 		return nil
 	}
 
-	sourceExists, err := fileutils.Exists(m.fs, destPath)
-	if err != nil {
-		return fmt.Errorf("failed to check existence of destination file %#q:\n%w", destPath, err)
-	}
-
-	if sourceExists {
-		slog.Debug("Source file already exists, skipping download",
-			"filename", fileRef.Filename,
-			"path", destPath)
-
-		return nil
-	}
-
 	// Try the lookaside cache first for non-custom files if hash info is available.
 	// Custom files are always regenerated so stale configured hashes are detected.
 	if m.trySourceFileLookaside(ctx, httpDownloader, component, fileRef, destPath) {

@@ -132,6 +132,29 @@ type SourceFileReference struct {
 	ReplaceReason string `toml:"replace-reason,omitempty" json:"replaceReason,omitempty" jsonschema:"title=Replace reason,description=Required when 'replace-upstream' is true. Human-readable explanation for the replacement." fingerprint:"-"`
 }
 
+// ValidateArchiveOverlayOrigins verifies that each archive modified by an
+// archive-scoped overlay has a matching overlay-origin source file. The origin
+// records the expected post-overlay hash used to protect render output from drift.
+func ValidateArchiveOverlayOrigins(component ComponentConfig) error {
+	overlayOrigins := make(map[string]bool, len(component.SourceFiles))
+	for _, sourceFile := range component.SourceFiles {
+		if sourceFile.Origin.Type == OriginTypeOverlay {
+			overlayOrigins[sourceFile.Filename] = true
+		}
+	}
+
+	for _, overlay := range component.Overlays {
+		if overlay.ModifiesArchive() && !overlayOrigins[overlay.Archive] {
+			return fmt.Errorf(
+				"archive overlay for %#q requires a matching 'source-files' entry with 'origin.type = overlay'",
+				overlay.Archive,
+			)
+		}
+	}
+
+	return nil
+}
+
 // HashInclude implements the hashstructure [Includable] interface so that
 // [SourceFileReference.Origin] is omitted from the component fingerprint when
 // none of [Origin.Script], [Origin.MockPackages], or [Origin.Inputs] are set.

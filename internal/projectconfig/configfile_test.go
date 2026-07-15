@@ -115,6 +115,59 @@ func TestProjectConfigFileValidation_EmptySourceFiles(t *testing.T) {
 	assert.NoError(t, file.Validate())
 }
 
+func TestProjectConfigFileValidation_ArchiveOverlayRequiresOverlayOrigin(t *testing.T) {
+	archiveOverlay := projectconfig.ComponentOverlay{
+		Type:     projectconfig.ComponentOverlayRemoveFile,
+		Archive:  "source.tar.gz",
+		Filename: "vendor/**",
+	}
+	overlayOrigin := projectconfig.SourceFileReference{
+		Filename:        "source.tar.gz",
+		Hash:            "abc123",
+		HashType:        fileutils.HashTypeSHA256,
+		Origin:          projectconfig.Origin{Type: projectconfig.OriginTypeOverlay},
+		ReplaceUpstream: true,
+		ReplaceReason:   "Remove vendored files",
+	}
+
+	tests := []struct {
+		name        string
+		overlays    []projectconfig.ComponentOverlay
+		sourceFiles []projectconfig.SourceFileReference
+		wantErr     bool
+	}{
+		{name: "no archive overlay"},
+		{name: "missing overlay origin", overlays: []projectconfig.ComponentOverlay{archiveOverlay}, wantErr: true},
+		{
+			name:        "one origin supports multiple overlays for the archive",
+			overlays:    []projectconfig.ComponentOverlay{archiveOverlay, archiveOverlay},
+			sourceFiles: []projectconfig.SourceFileReference{overlayOrigin},
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			file := projectconfig.ConfigFile{Components: map[string]projectconfig.ComponentConfig{
+				"test-component": {
+					Overlays:    testCase.overlays,
+					SourceFiles: testCase.sourceFiles,
+				},
+			}}
+
+			err := file.Validate()
+			if testCase.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "source.tar.gz")
+				assert.Contains(t, err.Error(), "origin.type = overlay")
+
+				return
+			}
+
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestProjectConfigFileValidation_MD5HashTypeDisallowed(t *testing.T) {
 	file := projectconfig.ConfigFile{
 		Components: map[string]projectconfig.ComponentConfig{

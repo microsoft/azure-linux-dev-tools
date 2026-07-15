@@ -66,6 +66,10 @@ file = "vendor/**"                   # files inside the archive
 > share a single extract/modify/repack cycle. When wired into the source-preparation pipeline, the `sources` file
 > should be rehashed afterward to reflect the repacked archive; they are processed independently of spec and loose-file overlays.
 
+> **Required drift protection:** Every archive targeted by an archive overlay must have one matching
+> `source-files` entry with `origin.type = "overlay"`. The entry records the expected post-overlay
+> hash; one entry can cover multiple overlays for the same archive. See [Components](components.md#recording-the-post-overlay-hash-for-archive-overlays).
+
 > **Extraction root:** The inner path is interpreted relative to the archive's extraction root: if the archive unpacks to a single top-level directory (the conventional `%{name}-%{version}` layout) that directory is the root; otherwise the archive root is used.
 
 > **Supported entry types:** Only regular files, directories, and symlinks are supported inside an archive overlay's target. If the archive contains an entry that cannot be repacked safely (a hardlink, device node, FIFO, etc.), the overlay fails with an error rather than silently dropping the entry from the repacked archive.
