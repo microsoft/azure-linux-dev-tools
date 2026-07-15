@@ -8,6 +8,7 @@ import (
 	"embed"
 	"fmt"
 	"path"
+	"slices"
 	"text/template"
 )
 
@@ -47,7 +48,6 @@ type Skill struct {
 	Name string
 
 	// Description is the discovery text placed in the skill's front matter.
-	// NOTE: avoid a colon followed by a space; that sequence is ambiguous in YAML.
 	Description string
 
 	// bodyTemplate is the embedded template name rendered as the full skill body.
@@ -73,7 +73,7 @@ var skills = []Skill{
 
 // Skills returns the registered skills in emission order.
 func Skills() []Skill {
-	return skills
+	return slices.Clone(skills)
 }
 
 // FindSkill returns the registered skill with the given name.
@@ -115,7 +115,6 @@ type Instruction struct {
 	ApplyTo string
 
 	// Description is the front-matter description.
-	// NOTE: avoid a colon followed by a space; that sequence is ambiguous in YAML.
 	Description string
 
 	// Title is the body heading.
@@ -151,7 +150,12 @@ var instructions = []Instruction{
 
 // Instructions returns the registered instruction files in emission order.
 func Instructions() []Instruction {
-	return instructions
+	result := slices.Clone(instructions)
+	for i := range result {
+		result[i].Skills = slices.Clone(result[i].Skills)
+	}
+
+	return result
 }
 
 // Layout controls where emitted skill files are written in a target repository.

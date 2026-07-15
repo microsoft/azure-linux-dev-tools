@@ -1,6 +1,6 @@
 ---
-description: {{ .Description }}
-applyTo: "{{ .ApplyTo }}"
+description: {{ printf "%q" .Description }}
+applyTo: {{ printf "%q" .ApplyTo }}
 ---
 
 # {{ .Title }}

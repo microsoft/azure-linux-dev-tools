@@ -66,6 +66,7 @@ func TestSkillDocument(t *testing.T) {
 
 	assert.Equal(t, agentskill.SkillName, fields["name"])
 	assert.NotEmpty(t, fields["description"])
+	assert.Contains(t, doc, `description: "`)
 
 	// The full document substitutes the dynamic version stamp and the generated command list.
 	assert.Contains(t, doc, "1.2.3-test")
@@ -147,6 +148,34 @@ func TestSkillsRegistry(t *testing.T) {
 	assert.Contains(t, names, agentskill.SkillName)
 }
 
+func TestRegistryAccessorsReturnCopies(t *testing.T) {
+	const mutated = "mutated"
+
+	skills := agentskill.Skills()
+	require.NotEmpty(t, skills)
+	originalSkillName := skills[0].Name
+	skills[0].Name = mutated
+	actualSkillName := agentskill.Skills()[0].Name
+	skills[0].Name = originalSkillName
+	assert.Equal(t, originalSkillName, actualSkillName)
+
+	instructions := agentskill.Instructions()
+	require.NotEmpty(t, instructions)
+	require.NotEmpty(t, instructions[0].Skills)
+	originalInstructionName := instructions[0].Name
+	originalPointerSkill := instructions[0].Skills[0].Skill
+	instructions[0].Name = mutated
+	instructions[0].Skills[0].Skill = mutated
+	actualInstructions := agentskill.Instructions()
+	actualInstructionName := actualInstructions[0].Name
+	actualPointerSkill := actualInstructions[0].Skills[0].Skill
+	instructions[0].Name = originalInstructionName
+	instructions[0].Skills[0].Skill = originalPointerSkill
+
+	assert.Equal(t, originalInstructionName, actualInstructionName)
+	assert.Equal(t, originalPointerSkill, actualPointerSkill)
+}
+
 func TestFilesWrapper(t *testing.T) {
 	layout := agentskill.DefaultLayout()
 
@@ -162,6 +191,7 @@ func TestFilesWrapper(t *testing.T) {
 
 	skill := fileByPath(t, files, layout.SkillFile(primarySkill(t))).Content
 	assert.Contains(t, skill, "name: "+agentskill.SkillName)
+	assert.Contains(t, skill, `description: "`)
 	// The wrapper points at the read-only MCP tool and omits the full skill body.
 	assert.Contains(t, skill, agentskill.ShowSkillToolName)
 	assert.NotContains(t, skill, "Golden rules")
@@ -170,6 +200,7 @@ func TestFilesWrapper(t *testing.T) {
 	// name (never the CLI/MCP tool, which may be unavailable in --full installs).
 	azldevInstruction := instructionByName(t, "azldev")
 	instructions := fileByPath(t, files, agentskill.InstructionFile(azldevInstruction)).Content
+	assert.Contains(t, instructions, `description: "`)
 	assert.Contains(t, instructions, `applyTo: "`+agentskill.ConfigGlob+`"`)
 	assert.Contains(t, instructions, "`"+agentskill.SkillName+"`")
 	assert.NotContains(t, instructions, agentskill.ShowSkillToolName)

@@ -36,8 +36,7 @@ and how dynamic values are substituted — read the package doc in
 3. Write the description inline in the registry entry. The description is the **load gate**
    (an agent decides whether to open the skill from it), so **lead with a directive** —
    "Read this before <action>; do not <do it> from memory." — then what the skill covers,
-   then a `Triggers include ...` keyword list. **Avoid a colon-space (`: `) in
-   descriptions** — it is ambiguous in YAML front matter.
+   then a `Triggers include ...` keyword list.
 4. Add a content test in
    [agentskill_test.go](../../internal/app/azldev/agentskill/agentskill_test.go) (assert the
    front-matter `name` and a distinctive, validated phrase). `TestSkillFrontmatterInvariants`
@@ -50,9 +49,9 @@ and how dynamic values are substituted — read the package doc in
    rendered against `Params` at emit time.
 2. `Skills` is a list of `SkillPointer` — name each skill with a short purpose ("to add or change
    overlays").
-3.  A little hand-written prose here is fine, if it helps direct agents to the right skill. Keep it short, and avoid
+3. A little hand-written prose here is fine, if it helps direct agents to the right skill. Keep it short, and avoid
    repeating the skill content.
-3. Keep the count-based tests happy: `Files()` emits one file per skill plus one per instruction.
+4. Keep the count-based tests happy: `Files()` emits one file per skill plus one per instruction.
 
 ## Content accuracy is the hard part
 
