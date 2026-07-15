@@ -13,6 +13,12 @@ import (
 	orderedmap "github.com/pb33f/ordered-map/v2"
 )
 
+// ResolvedTest is a concrete test definition resolved from a direct [tests.X]
+// reference or from expansion of a [test-groups.X] reference.
+type ResolvedTest struct {
+	Name       string
+	Definition TestDefinition
+}
 // TestKind indicates what kind of behavior a test exercises.
 type TestKind string
 
@@ -70,6 +76,20 @@ type TestDefinition struct {
 	Pytest map[string]any `toml:"pytest,omitempty" json:"pytest,omitempty" jsonschema:"title=Pytest config,description=pytest-specific configuration"`
 }
 
+// WithAbsolutePaths returns a copy of the test definition with any relative
+// paths in framework-specific subtables converted to absolute paths.
+func (t TestDefinition) WithAbsolutePaths(referenceDir string) TestDefinition {
+	result := t
+	result.Lisa = cloneStringAnyMap(t.Lisa)
+	result.Tmt = cloneStringAnyMap(t.Tmt)
+	result.Pytest = cloneStringAnyMap(t.Pytest)
+
+	if workingDir, ok := result.Pytest["working-dir"].(string); ok {
+		result.Pytest["working-dir"] = makeAbsolute(referenceDir, workingDir)
+	}
+
+	return result
+}
 // TestGroup is a [test-groups.X] declaration: a named bundle of test references that
 // images or components can target via a single name.
 type TestGroup struct {
@@ -100,6 +120,98 @@ type ComponentTestsConfig struct {
 	Tests []TestRef `toml:"tests,omitempty" json:"tests,omitempty" jsonschema:"title=Tests,description=Per-component test or test-group references"`
 }
 
+// ResolveTestRefs expands a list of [TestRef] entries into concrete tests.
+func (cfg *ProjectConfig) ResolveTestRefs(refs []TestRef) ([]ResolvedTest, error) {
+	resolved := make([]ResolvedTest, 0, len(refs))
+
+	for _, ref := range refs {
+		switch {
+		case ref.Name != "":
+			testDef, ok := cfg.Tests[ref.Name]
+			if !ok {
+				return nil, fmt.Errorf("%w: %#q", ErrUndefinedTest, ref.Name)
+			}
+
+			resolved = append(resolved, ResolvedTest{Name: ref.Name, Definition: testDef})
+
+		case ref.Group != "":
+			group, ok := cfg.TestGroups[ref.Group]
+			if !ok {
+				return nil, fmt.Errorf("%w: %#q", ErrUndefinedTestGroup, ref.Group)
+			}
+
+			for _, groupRef := range group.Tests {
+				if groupRef.Group != "" {
+					return nil, fmt.Errorf("%w: %#q", ErrNestedTestGroupReference, ref.Group)
+				}
+
+				testDef, ok := cfg.Tests[groupRef.Name]
+				if !ok {
+					return nil, fmt.Errorf("%w: %#q", ErrUndefinedTest, groupRef.Name)
+				}
+
+				resolved = append(resolved, ResolvedTest{Name: groupRef.Name, Definition: testDef})
+			}
+		}
+	}
+
+	return resolved, nil
+}
+
+// ResolveTestSelectors resolves user-provided selectors, where each selector may
+// reference either a concrete test or a test group.
+func (cfg *ProjectConfig) ResolveTestSelectors(selectors []string) ([]ResolvedTest, error) {
+	refs := make([]TestRef, 0, len(selectors))
+
+	for _, selector := range selectors {
+		_, isTest := cfg.Tests[selector]
+		_, isGroup := cfg.TestGroups[selector]
+
+		switch {
+		case isTest && isGroup:
+			return nil, fmt.Errorf("ambiguous test selector %#q matches both [tests] and [test-groups]", selector)
+		case isTest:
+			refs = append(refs, TestRef{Name: selector})
+		case isGroup:
+			refs = append(refs, TestRef{Group: selector})
+		default:
+			return nil, fmt.Errorf("unknown test selector %#q", selector)
+		}
+	}
+
+	return cfg.ResolveTestRefs(refs)
+}
+
+// ResolveImageTests expands the new-style test refs associated with an image.
+func (cfg *ProjectConfig) ResolveImageTests(image *ImageConfig) ([]ResolvedTest, error) {
+	if image == nil || image.Tests == nil {
+		return nil, nil
+	}
+
+	return cfg.ResolveTestRefs(image.Tests.Tests)
+}
+
+// ResolveComponentTests expands the new-style test refs associated with a component.
+func (cfg *ProjectConfig) ResolveComponentTests(component *ComponentConfig) ([]ResolvedTest, error) {
+	if component == nil || component.Tests == nil {
+		return nil, nil
+	}
+
+	return cfg.ResolveTestRefs(component.Tests.Tests)
+}
+
+func cloneStringAnyMap(input map[string]any) map[string]any {
+	if input == nil {
+		return nil
+	}
+
+	result := make(map[string]any, len(input))
+	for key, value := range input {
+		result[key] = value
+	}
+
+	return result
+}
 // Validate checks that exactly one framework subtable is set and it matches Type.
 func (t TestDefinition) Validate(testName string) error {
 	if t.Type == "" {

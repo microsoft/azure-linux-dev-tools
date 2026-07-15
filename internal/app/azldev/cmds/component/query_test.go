@@ -80,3 +80,92 @@ func TestQueryComponents_OneComponent(t *testing.T) {
 	result := results[0]
 	assert.Equal(t, testComponentName, result.Name)
 }
+
+func TestQueryComponents_ResolvesComponentTests(t *testing.T) {
+	const (
+		testComponentName = "test-component"
+		testSpecPath      = "/path/to/spec"
+	)
+
+	testEnv := testutils.NewTestEnv(t)
+	testEnv.Config.Components[testComponentName] = projectconfig.ComponentConfig{
+		Name: testComponentName,
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeLocal,
+			Path:       testSpecPath,
+		},
+		Tests: &projectconfig.ComponentTestsConfig{
+			Tests: []projectconfig.TestRef{{Group: "runtime"}},
+		},
+	}
+	testEnv.Config.Tests = map[string]projectconfig.TestDefinition{
+		"runtime-a": {Type: "pytest", Pytest: map[string]any{"test-paths": []string{"tests/a.py"}}},
+		"runtime-b": {Type: "pytest", Pytest: map[string]any{"test-paths": []string{"tests/b.py"}}},
+	}
+	testEnv.Config.TestGroups = map[string]projectconfig.TestGroup{
+		"runtime": {Tests: []projectconfig.TestRef{{Name: "runtime-a"}, {Name: "runtime-b"}}},
+	}
+
+	// Pretend mock is present.
+	testEnv.CmdFactory.RegisterCommandInSearchPath(mock.MockBinary)
+
+	// Mock the rpmspec command to return valid output.
+	testEnv.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+		return "name=test-component\nepoch=0\nversion=1.0.0\nrelease=1.azl4\n", nil
+	}
+
+	options := component.QueryComponentsOptions{
+		ComponentFilter: components.ComponentFilter{
+			ComponentNamePatterns: []string{testComponentName},
+		},
+	}
+
+	err := fileutils.WriteFile(testEnv.FS(), testSpecPath, []byte("test spec content"), fileperms.PublicFile)
+	require.NoError(t, err)
+
+	results, err := component.QueryComponents(testEnv.Env, &options)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, []string{"runtime-a", "runtime-b"}, results[0].ResolvedTests)
+}
+
+func TestQueryComponents_InvalidComponentTestRef(t *testing.T) {
+	const (
+		testComponentName = "test-component"
+		testSpecPath      = "/path/to/spec"
+	)
+
+	testEnv := testutils.NewTestEnv(t)
+	testEnv.Config.Components[testComponentName] = projectconfig.ComponentConfig{
+		Name: testComponentName,
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeLocal,
+			Path:       testSpecPath,
+		},
+		Tests: &projectconfig.ComponentTestsConfig{
+			Tests: []projectconfig.TestRef{{Name: "missing-test"}},
+		},
+	}
+
+	// Pretend mock is present.
+	testEnv.CmdFactory.RegisterCommandInSearchPath(mock.MockBinary)
+
+	// Mock the rpmspec command to return valid output.
+	testEnv.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+		return "name=test-component\nepoch=0\nversion=1.0.0\nrelease=1.azl4\n", nil
+	}
+
+	options := component.QueryComponentsOptions{
+		ComponentFilter: components.ComponentFilter{
+			ComponentNamePatterns: []string{testComponentName},
+		},
+	}
+
+	err := fileutils.WriteFile(testEnv.FS(), testSpecPath, []byte("test spec content"), fileperms.PublicFile)
+	require.NoError(t, err)
+
+	_, err = component.QueryComponents(testEnv.Env, &options)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "failed to resolve tests for component")
+	assert.ErrorContains(t, err, "missing-test")
+}

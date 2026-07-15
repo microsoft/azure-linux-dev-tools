@@ -47,6 +47,12 @@ type ProjectConfig struct {
 	// Definitions of test suites.
 	TestSuites map[string]TestSuiteConfig `toml:"test-suites,omitempty" json:"testSuites,omitempty" jsonschema:"title=Test Suites,description=Mapping of test suite names to configurations"`
 
+	// Definitions of individual tests.
+	Tests map[string]TestDefinition `toml:"tests,omitempty" json:"tests,omitempty" jsonschema:"title=Tests,description=Mapping of test names to configurations"`
+
+	// Definitions of named test groups.
+	TestGroups map[string]TestGroup `toml:"test-groups,omitempty" json:"testGroups,omitempty" jsonschema:"title=Test Groups,description=Mapping of test group names to configurations"`
+
 	// Root config file path; not serialized.
 	RootConfigFilePath string `toml:"-" json:"-"`
 	// Map from component names to groups they belong to; not serialized.
@@ -65,6 +71,8 @@ func NewProjectConfig() ProjectConfig {
 		GroupsByComponent: make(map[string][]string),
 		PackageGroups:     make(map[string]PackageGroupConfig),
 		TestSuites:        make(map[string]TestSuiteConfig),
+		Tests:             make(map[string]TestDefinition),
+		TestGroups:        make(map[string]TestGroup),
 	}
 }
 
@@ -84,6 +92,10 @@ func (cfg *ProjectConfig) Validate() error {
 	}
 
 	if err := validateImageTestReferences(cfg.Images, cfg.TestSuites); err != nil {
+		return err
+	}
+
+	if err := validateNewTestReferences(cfg.Tests, cfg.TestGroups, cfg.Components, cfg.Images); err != nil {
 		return err
 	}
 

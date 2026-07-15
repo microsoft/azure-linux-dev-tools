@@ -45,6 +45,8 @@ func loadAndResolveProjectConfig(
 		GroupsByComponent: make(map[string][]string),
 		PackageGroups:     make(map[string]PackageGroupConfig),
 		TestSuites:        make(map[string]TestSuiteConfig),
+		Tests:             make(map[string]TestDefinition),
+		TestGroups:        make(map[string]TestGroup),
 	}
 
 	for _, configFilePath := range configFilePaths {
@@ -143,6 +145,14 @@ func mergeConfigFile(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
 	}
 
 	if err := mergeTestSuites(resolvedCfg, loadedCfg); err != nil {
+		return err
+	}
+
+	if err := mergeTests(resolvedCfg, loadedCfg); err != nil {
+		return err
+	}
+
+	if err := mergeTestGroups(resolvedCfg, loadedCfg); err != nil {
 		return err
 	}
 
@@ -314,6 +324,34 @@ func mergeTestSuites(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
 		suite.SourceConfigFile = loadedCfg
 
 		resolvedCfg.TestSuites[suiteName] = *(suite.WithAbsolutePaths(loadedCfg.dir))
+	}
+
+	return nil
+}
+
+// mergeTests merges individual test definitions from a loaded config file into the
+// resolved config. Duplicate test names are not allowed.
+func mergeTests(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
+	for testName, testDef := range loadedCfg.Tests {
+		if _, ok := resolvedCfg.Tests[testName]; ok {
+			return fmt.Errorf("%w: test %#q", ErrDuplicateTestSuites, testName)
+		}
+
+		resolvedCfg.Tests[testName] = testDef.WithAbsolutePaths(loadedCfg.dir)
+	}
+
+	return nil
+}
+
+// mergeTestGroups merges named test groups from a loaded config file into the
+// resolved config. Duplicate group names are not allowed.
+func mergeTestGroups(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
+	for groupName, group := range loadedCfg.TestGroups {
+		if _, ok := resolvedCfg.TestGroups[groupName]; ok {
+			return fmt.Errorf("%w: test group %#q", ErrDuplicateTestSuites, groupName)
+		}
+
+		resolvedCfg.TestGroups[groupName] = group
 	}
 
 	return nil

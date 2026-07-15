@@ -56,6 +56,10 @@ slower than 'list' but more informative.`,
 // componentDetails encapsulates detailed information about a component.
 type componentDetails struct {
 	specs.ComponentSpecDetails
+
+	// ResolvedTests lists concrete test names after expanding any component
+	// tests.tests refs and test-groups.
+	ResolvedTests []string `json:"resolvedTests,omitempty" table:"-"`
 }
 
 // Queries env for component details, in accordance with options. Returns the found components.
@@ -72,6 +76,7 @@ func QueryComponents(
 	}
 
 	allDetails := make([]*componentDetails, 0, comps.Len())
+	cfg := env.Config()
 
 	for _, comp := range comps.Components() {
 		spec := comp.GetSpec()
@@ -83,6 +88,18 @@ func QueryComponents(
 
 		details := &componentDetails{
 			ComponentSpecDetails: *specInfo,
+		}
+
+		if cfg != nil {
+			resolvedTests, err := cfg.ResolveComponentTests(comp.GetConfig())
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve tests for component %q:\n%w", comp.GetName(), err)
+			}
+
+			details.ResolvedTests = make([]string, 0, len(resolvedTests))
+			for _, resolvedTest := range resolvedTests {
+				details.ResolvedTests = append(details.ResolvedTests, resolvedTest.Name)
+			}
 		}
 
 		allDetails = append(allDetails, details)

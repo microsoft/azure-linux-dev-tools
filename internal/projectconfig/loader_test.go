@@ -122,6 +122,41 @@ key = "value"
 	assert.Equal(t, "/project/artifacts/logs", config.Project.LogDir)
 }
 
+func TestLoadAndResolveProjectConfig_TestReferencesResolvedAcrossIncludedFiles(t *testing.T) {
+	testFiles := []struct {
+		path     string
+		contents string
+	}{
+		{testConfigPath, `
+includes = ["components.toml", "tests.toml"]
+`},
+		{"/project/components.toml", `
+[components.bash]
+tests.tests = [{ name = "bash-fedora-shell" }]
+`},
+		{"/project/tests.toml", `
+[tests.bash-fedora-shell]
+type = "tmt"
+kind = "functional"
+
+[tests.bash-fedora-shell.tmt]
+plan = "/plans/shell"
+`},
+	}
+
+	ctx := testctx.NewCtx()
+	for _, testFile := range testFiles {
+		require.NoError(t, fileutils.MkdirAll(ctx.FS(), filepath.Dir(testFile.path)))
+		require.NoError(t, fileutils.WriteFile(ctx.FS(), testFile.path, []byte(testFile.contents), fileperms.PrivateFile))
+	}
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.NoError(t, err)
+	require.Contains(t, config.Components, "bash")
+	require.Contains(t, config.Tests, "bash-fedora-shell")
+	assert.Equal(t, TestKindFunctional, config.Tests["bash-fedora-shell"].Kind)
+}
+
 func TestLoadAndResolveProjectConfig_PermissiveParsing_IgnoresValidationError(t *testing.T) {
 	// This config is structurally valid TOML but fails semantic validation: the
 	// component group references a component that is not defined.

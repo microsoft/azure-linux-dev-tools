@@ -157,103 +157,99 @@ func TestProjectConfigFileValidation_LisaSelectionUnsupportedCriteriaKey(t *test
 	assert.Contains(t, err.Error(), "unsupported selector")
 }
 
-func TestProjectConfigFileValidation_UndefinedTestReferenceInGroup(t *testing.T) {
-	file := projectconfig.ConfigFile{
-		TestGroups: map[string]projectconfig.TestGroup{
+func TestProjectConfigValidation_UndefinedTestReferenceInGroup(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.TestGroups = map[string]projectconfig.TestGroup{
 			"bvt": {
 				Tests: []projectconfig.TestRef{{Name: "does-not-exist"}},
 			},
-		},
 	}
 
-	err := file.Validate()
+	err := cfg.Validate()
 	require.Error(t, err)
 	require.ErrorIs(t, err, projectconfig.ErrUndefinedTest)
 	assert.Contains(t, err.Error(), "does-not-exist")
 }
 
-func TestProjectConfigFileValidation_UndefinedTestGroupReferenceInComponent(t *testing.T) {
-	file := projectconfig.ConfigFile{
-		Components: map[string]projectconfig.ComponentConfig{
+func TestProjectConfigValidation_UndefinedTestGroupReferenceInComponent(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.Components = map[string]projectconfig.ComponentConfig{
 			"openssl": {
 				Tests: &projectconfig.ComponentTestsConfig{
 					Tests: []projectconfig.TestRef{{Group: "missing-group"}},
 				},
 			},
-		},
 	}
 
-	err := file.Validate()
+	err := cfg.Validate()
 	require.Error(t, err)
 	require.ErrorIs(t, err, projectconfig.ErrUndefinedTestGroup)
 	assert.Contains(t, err.Error(), "missing-group")
 }
 
-func TestProjectConfigFileValidation_InvalidTestReferenceShapeInImage(t *testing.T) {
-	file := projectconfig.ConfigFile{
-		Images: map[string]projectconfig.ImageConfig{
+func TestProjectConfigValidation_InvalidTestReferenceShapeInImage(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.Images = map[string]projectconfig.ImageConfig{
 			"base": {
 				Tests: &projectconfig.ImageTestsConfig{
 					Tests: []projectconfig.TestRef{{Name: "smoke", Group: "bvt"}},
 				},
 			},
-		},
-		Tests: map[string]projectconfig.TestDefinition{
+	}
+	cfg.Tests = map[string]projectconfig.TestDefinition{
 			"smoke": {
 				Type:   "pytest",
 				Pytest: map[string]any{"working-dir": "tests"},
 			},
-		},
-		TestGroups: map[string]projectconfig.TestGroup{
+	}
+	cfg.TestGroups = map[string]projectconfig.TestGroup{
 			"bvt": {Tests: []projectconfig.TestRef{{Name: "smoke"}}},
-		},
 	}
 
-	err := file.Validate()
+	err := cfg.Validate()
 	require.Error(t, err)
 	require.ErrorIs(t, err, projectconfig.ErrInvalidTestRef)
 	assert.Contains(t, err.Error(), "exactly one")
 }
 
-func TestProjectConfigFileValidation_DuplicateTestReferenceInGroup(t *testing.T) {
-	file := projectconfig.ConfigFile{
-		Tests: map[string]projectconfig.TestDefinition{
+func TestProjectConfigValidation_DuplicateTestReferenceInGroup(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.Tests = map[string]projectconfig.TestDefinition{
 			"smoke": {
 				Type:   "pytest",
 				Pytest: map[string]any{"working-dir": "tests"},
 			},
-		},
-		TestGroups: map[string]projectconfig.TestGroup{
+	}
+	cfg.TestGroups = map[string]projectconfig.TestGroup{
 			"bvt": {
 				Tests: []projectconfig.TestRef{
 					{Name: "smoke"},
 					{Name: "smoke"},
 				},
 			},
-		},
 	}
 
-	err := file.Validate()
+	err := cfg.Validate()
 	require.Error(t, err)
 	require.ErrorIs(t, err, projectconfig.ErrDuplicateTestRef)
 	assert.Contains(t, err.Error(), "duplicates")
 	assert.Contains(t, err.Error(), "smoke")
 }
 
-func TestProjectConfigFileValidation_DuplicateTestGroupReferenceInImage(t *testing.T) {
-	file := projectconfig.ConfigFile{
-		Tests: map[string]projectconfig.TestDefinition{
+func TestProjectConfigValidation_DuplicateTestGroupReferenceInImage(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.Tests = map[string]projectconfig.TestDefinition{
 			"smoke": {
 				Type:   "pytest",
 				Pytest: map[string]any{"working-dir": "tests"},
 			},
-		},
-		TestGroups: map[string]projectconfig.TestGroup{
+	}
+	cfg.TestGroups = map[string]projectconfig.TestGroup{
 			"bvt": {
 				Tests: []projectconfig.TestRef{{Name: "smoke"}},
 			},
-		},
-		Images: map[string]projectconfig.ImageConfig{
+	}
+	cfg.Images = map[string]projectconfig.ImageConfig{
 			"base": {
 				Tests: &projectconfig.ImageTestsConfig{
 					Tests: []projectconfig.TestRef{
@@ -262,34 +258,86 @@ func TestProjectConfigFileValidation_DuplicateTestGroupReferenceInImage(t *testi
 					},
 				},
 			},
-		},
 	}
 
-	err := file.Validate()
+	err := cfg.Validate()
 	require.Error(t, err)
 	require.ErrorIs(t, err, projectconfig.ErrDuplicateTestRef)
 	assert.Contains(t, err.Error(), "duplicates")
 	assert.Contains(t, err.Error(), "bvt")
 }
 
-func TestProjectConfigFileValidation_NestedTestGroupReferenceNotAllowed(t *testing.T) {
-	file := projectconfig.ConfigFile{
-		Tests: map[string]projectconfig.TestDefinition{
+func TestProjectConfigValidation_NestedTestGroupReferenceNotAllowed(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.Tests = map[string]projectconfig.TestDefinition{
 			"smoke": {
 				Type:   "pytest",
 				Pytest: map[string]any{"working-dir": "tests"},
 			},
-		},
-		TestGroups: map[string]projectconfig.TestGroup{
+	}
+	cfg.TestGroups = map[string]projectconfig.TestGroup{
 			"a": {Tests: []projectconfig.TestRef{{Group: "b"}}},
 			"b": {Tests: []projectconfig.TestRef{{Name: "smoke"}}},
-		},
 	}
 
-	err := file.Validate()
+	err := cfg.Validate()
 	require.Error(t, err)
 	require.ErrorIs(t, err, projectconfig.ErrNestedTestGroupReference)
 	assert.Contains(t, err.Error(), "is not allowed in [test-groups]")
+}
+
+func TestProjectConfigResolveImageTests_ExpandsGroups(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.Tests = map[string]projectconfig.TestDefinition{
+		"static-image-checks": {Type: "pytest", Pytest: map[string]any{"working-dir": "tests"}},
+		"functional_core":    {Type: "lisa", Lisa: map[string]any{"criteria": map[string]any{"priority": []any{1}}}},
+		"lisa_perf":          {Type: "lisa", Lisa: map[string]any{"criteria": map[string]any{"area": "network", "category": "performance"}}},
+	}
+	cfg.TestGroups = map[string]projectconfig.TestGroup{
+		"vm-base-functional": {Tests: []projectconfig.TestRef{{Name: "functional_core"}}},
+		"vm-base-performance": {Tests: []projectconfig.TestRef{{Name: "lisa_perf"}}},
+	}
+
+	imageCfg := &projectconfig.ImageConfig{
+		Tests: &projectconfig.ImageTestsConfig{
+			Tests: []projectconfig.TestRef{
+				{Name: "static-image-checks"},
+				{Group: "vm-base-functional"},
+				{Group: "vm-base-performance"},
+			},
+		},
+	}
+
+	resolved, err := cfg.ResolveImageTests(imageCfg)
+	require.NoError(t, err)
+	require.Len(t, resolved, 3)
+	assert.Equal(t, []string{"static-image-checks", "functional_core", "lisa_perf"}, []string{
+		resolved[0].Name,
+		resolved[1].Name,
+		resolved[2].Name,
+	})
+}
+
+func TestProjectConfigResolveComponentTests_ExpandsGroups(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.Tests = map[string]projectconfig.TestDefinition{
+		"bash-fedora-shell": {Type: "tmt", Tmt: map[string]any{"plan": "/plans/shell"}},
+	}
+	cfg.TestGroups = map[string]projectconfig.TestGroup{
+		"shell-tests": {Tests: []projectconfig.TestRef{{Name: "bash-fedora-shell"}}},
+	}
+
+	componentCfg := &projectconfig.ComponentConfig{
+		Tests: &projectconfig.ComponentTestsConfig{
+			Tests: []projectconfig.TestRef{{Group: "shell-tests"}},
+		},
+	}
+
+	resolved, err := cfg.ResolveComponentTests(componentCfg)
+	require.NoError(t, err)
+	require.Len(t, resolved, 1)
+	assert.Equal(t, "bash-fedora-shell", resolved[0].Name)
+	assert.Equal(t, "tmt", resolved[0].Definition.Type)
 }
 
 func TestProjectConfigFileValidation_DefaultProjectInfo(t *testing.T) {

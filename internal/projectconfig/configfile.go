@@ -150,10 +150,6 @@ func (f ConfigFile) Validate() error {
 		return err
 	}
 
-	if err := validateNewTestReferences(f); err != nil {
-		return err
-	}
-
 	return nil
 }
 
@@ -202,32 +198,32 @@ func validateComponentGroupMetadata(groups map[string]ComponentGroupConfig) erro
 	return nil
 }
 
-func validateNewTestReferences(cfgFile ConfigFile) error {
-	for groupName, group := range cfgFile.TestGroups {
+func validateNewTestReferences(tests map[string]TestDefinition, groups map[string]TestGroup, components map[string]ComponentConfig, images map[string]ImageConfig) error {
+	for groupName, group := range groups {
 		scope := fmt.Sprintf("test-group %#q tests", groupName)
-		if err := validateTestGroupMembers(scope, group.Tests, cfgFile.Tests); err != nil {
+		if err := validateTestGroupMembers(scope, group.Tests, tests); err != nil {
 			return err
 		}
 	}
 
-	for componentName, component := range cfgFile.Components {
+	for componentName, component := range components {
 		if component.Tests == nil {
 			continue
 		}
 
 		scope := fmt.Sprintf("component %#q tests.tests", componentName)
-		if err := validateTestRefList(scope, component.Tests.Tests, cfgFile.Tests, cfgFile.TestGroups); err != nil {
+		if err := validateTestRefList(scope, component.Tests.Tests, tests, groups); err != nil {
 			return err
 		}
 	}
 
-	for imageName, image := range cfgFile.Images {
+	for imageName, image := range images {
 		if image.Tests == nil {
 			continue
 		}
 
 		scope := fmt.Sprintf("image %#q tests.tests", imageName)
-		if err := validateTestRefList(scope, image.Tests.Tests, cfgFile.Tests, cfgFile.TestGroups); err != nil {
+		if err := validateTestRefList(scope, image.Tests.Tests, tests, groups); err != nil {
 			return err
 		}
 	}
@@ -371,7 +367,6 @@ func validateTestRefList(
 
 	return nil
 }
-
 // validateSourceFiles checks 'source-files' configuration for a component:
 //   - All filenames must be unique.
 //   - Hash type must be a supported algorithm when specified.
