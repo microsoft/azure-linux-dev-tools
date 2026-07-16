@@ -66,7 +66,6 @@ func TestSkillDocument(t *testing.T) {
 
 	assert.Equal(t, agentskill.SkillName, fields["name"])
 	assert.NotEmpty(t, fields["description"])
-	assert.Contains(t, doc, `description: "`)
 
 	// The full document substitutes the dynamic version stamp and the generated command list.
 	assert.Contains(t, doc, "1.2.3-test")
@@ -87,6 +86,7 @@ func TestSkillFrontmatterInvariants(t *testing.T) {
 		t.Run(skill.Name, func(t *testing.T) {
 			doc, err := agentskill.SkillDocument(skill.Name, testParams())
 			require.NoError(t, err)
+				assert.Contains(t, doc, `description: "`, "skill description must be quoted YAML")
 
 			fields := parseFrontmatter(t, doc)
 
