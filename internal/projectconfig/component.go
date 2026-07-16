@@ -64,7 +64,7 @@ func (t OriginType) IsFetched() bool {
 }
 
 // Origin describes where a source file comes from and how to retrieve it.
-// When omitted from a source file reference, the file will be resolved via the lookaside cache.
+// An origin is required for every 'source-files' entry.
 type Origin struct {
 	// Type indicates how the source file should be acquired.
 	Type OriginType `toml:"type" json:"type" jsonschema:"required,enum=download,enum=custom,enum=overlay,title=Origin type,description=Type of origin for this source file" fingerprint:"-"`
@@ -146,7 +146,8 @@ func ValidateArchiveOverlayOrigins(component ComponentConfig) error {
 	for _, overlay := range component.Overlays {
 		if overlay.ModifiesArchive() && !overlayOrigins[overlay.Archive] {
 			return fmt.Errorf(
-				"archive overlay for %#q requires a matching 'source-files' entry with 'origin.type = overlay'",
+				"archive overlay for %#q requires a matching 'source-files' entry with 'origin.type = overlay'; "+
+					"add the entry to the component TOML, then run 'prepare-sources --allow-no-hashes' to bootstrap its hash",
 				overlay.Archive,
 			)
 		}
