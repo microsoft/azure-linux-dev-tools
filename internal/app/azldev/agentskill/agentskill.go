@@ -258,6 +258,10 @@ func renderSkill(templateName string, skill Skill, params Params) (string, error
 }
 
 func renderInstruction(inst Instruction, params Params) (string, error) {
+	if err := validateInstruction(inst); err != nil {
+		return "", err
+	}
+
 	applyTo, err := renderInline("applyTo", inst.ApplyTo, params)
 	if err != nil {
 		return "", fmt.Errorf("failed to render applyTo for instruction %#q:\n%w", inst.Name, err)
@@ -280,6 +284,21 @@ func renderInstruction(inst Instruction, params Params) (string, error) {
 	}
 
 	return buf.String(), nil
+}
+
+func validateInstruction(inst Instruction) error {
+	if len(inst.Skills) == 0 {
+		return fmt.Errorf("instruction %#q must reference at least one skill", inst.Name)
+	}
+
+	for _, pointer := range inst.Skills {
+		if _, err := FindSkill(pointer.Skill); err != nil {
+			return fmt.Errorf("instruction %#q references unknown skill %#q:\n%w",
+				inst.Name, pointer.Skill, err)
+		}
+	}
+
+	return nil
 }
 
 // renderInline renders a short, trusted template string (such as an instruction's applyTo
