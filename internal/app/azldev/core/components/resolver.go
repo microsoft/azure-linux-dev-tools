@@ -877,10 +877,6 @@ func applyInheritedDefaultsToComponent(
 		return nil, fmt.Errorf("resolving overlay files for component '%s':\n%w", component.Name, err)
 	}
 
-	if err := projectconfig.ValidateArchiveOverlayOrigins(resolved); err != nil {
-		return nil, fmt.Errorf("validating archive overlays for component '%s':\n%w", component.Name, err)
-	}
-
 	return &resolved, nil
 }
 

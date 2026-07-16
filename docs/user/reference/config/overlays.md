@@ -68,7 +68,9 @@ file = "vendor/**"                   # files inside the archive
 
 > **Required drift protection:** Every archive targeted by an archive overlay must have one matching
 > `source-files` entry with `origin.type = "overlay"`. The entry records the expected post-overlay
-> hash; one entry can cover multiple overlays for the same archive. See [Components](components.md#recording-the-post-overlay-hash-for-archive-overlays).
+> hash; one entry can cover multiple overlays for the same archive. While bootstrapping a new
+> overlay, `prep-sources --allow-no-hashes` skips this association check and permits an origin
+> entry to omit its hash. See [Components](components.md#recording-the-post-overlay-hash-for-archive-overlays).
 
 > **Extraction root:** The inner path is interpreted relative to the archive's extraction root: if the archive unpacks to a single top-level directory (the conventional `%{name}-%{version}` layout) that directory is the root; otherwise the archive root is used.
 

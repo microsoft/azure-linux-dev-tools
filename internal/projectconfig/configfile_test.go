@@ -115,6 +115,21 @@ func TestProjectConfigFileValidation_EmptySourceFiles(t *testing.T) {
 	assert.NoError(t, file.Validate())
 }
 
+func TestProjectConfigFileValidation_OverlayOriginMayOmitHash(t *testing.T) {
+	file := projectconfig.ConfigFile{Components: map[string]projectconfig.ComponentConfig{
+		"test-component": {
+			SourceFiles: []projectconfig.SourceFileReference{{
+				Filename:        "source.tar.gz",
+				Origin:          projectconfig.Origin{Type: projectconfig.OriginTypeOverlay},
+				ReplaceUpstream: true,
+				ReplaceReason:   "Record an archive overlay hash",
+			}},
+		},
+	}}
+
+	assert.NoError(t, file.Validate())
+}
+
 func TestProjectConfigFileValidation_MD5HashTypeDisallowed(t *testing.T) {
 	file := projectconfig.ConfigFile{
 		Components: map[string]projectconfig.ComponentConfig{

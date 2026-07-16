@@ -230,24 +230,10 @@ func validateSourceFiles(sourceFiles []SourceFileReference, componentName string
 }
 
 // validateOverlayOriginRef enforces additional constraints on [SourceFileReference] entries
-// with [OriginTypeOverlay]: 'hash', 'hash-type', and 'replace-upstream = true' are all required.
-// These entries record the post-overlay hash of an archive that is already present as a spec
-// source, so a download is never performed and the hash cannot be computed on the fly.
+// with [OriginTypeOverlay]. 'replace-upstream = true' is required because the archive is
+// already present as a spec source. Hashes may be omitted while bootstrapping an archive
+// overlay with '--allow-no-hashes'; source preparation computes the post-overlay hash.
 func validateOverlayOriginRef(ref SourceFileReference, componentName string) error {
-	if ref.Hash == "" {
-		return fmt.Errorf(
-			"source file %#q in component %#q has 'origin.type = overlay' but no 'hash'; "+
-				"'hash' is required to record the expected post-overlay archive hash",
-			ref.Filename, componentName)
-	}
-
-	if ref.HashType == "" {
-		return fmt.Errorf(
-			"source file %#q in component %#q has 'origin.type = overlay' but no 'hash-type'; "+
-				"'hash-type' is required when 'hash' is provided",
-			ref.Filename, componentName)
-	}
-
 	if !ref.ReplaceUpstream {
 		return fmt.Errorf(
 			"source file %#q in component %#q has 'origin.type = overlay' but 'replace-upstream' is not true; "+

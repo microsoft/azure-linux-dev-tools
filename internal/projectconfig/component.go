@@ -51,8 +51,8 @@ const (
 
 	// OriginTypeOverlay indicates that the source file's hash was changed by archive overlays.
 	// No download occurs; the file is already present as a spec source. The 'hash' and 'hash-type'
-	// fields record the expected post-overlay hash, which is injected into the 'sources' file
-	// during render (skip-lookaside) and validated against the computed hash during 'prep-sources'.
+	// fields record the expected post-overlay hash, or can be omitted temporarily with
+	// '--allow-no-hashes' while source preparation computes the initial value.
 	OriginTypeOverlay OriginType = "overlay"
 )
 

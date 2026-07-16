@@ -215,7 +215,7 @@ func TestPrepareSources_RemoveFileGlob_Archive(t *testing.T) {
 				},
 			)
 
-			preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx)
+			preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx, sources.WithAllowNoHashes())
 			require.NoError(t, err)
 
 			err = preparer.PrepareSources(ctx, component, outputDir, true /*applyOverlays*/)
@@ -341,7 +341,7 @@ func TestPrepareSources_SearchReplaceInArchiveRehashesEntry(t *testing.T) {
 		},
 	)
 
-	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx)
+	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx, sources.WithAllowNoHashes())
 	require.NoError(t, err)
 
 	require.NoError(t, preparer.PrepareSources(ctx, component, outputDir, true /*applyOverlays*/))
@@ -422,7 +422,10 @@ func TestPrepareSources_SkipSourcesSkipsArchiveOverlays(t *testing.T) {
 		},
 	)
 
-	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx, sources.WithSkipLookaside())
+	preparer, err := sources.NewPreparer(
+		sourceManager, ctx.FS(), ctx, ctx,
+		sources.WithSkipLookaside(), sources.WithAllowNoHashes(),
+	)
 	require.NoError(t, err)
 
 	require.NoError(t, preparer.PrepareSources(ctx, component, outputDir, true /*applyOverlays*/))

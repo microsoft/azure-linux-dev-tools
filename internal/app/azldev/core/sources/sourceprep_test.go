@@ -172,7 +172,9 @@ func TestPrepareSources_ArchiveOverlayRehashesSourcesEntry(t *testing.T) {
 		},
 	)
 
-	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx)
+	// '--allow-no-hashes' permits bootstrapping an archive overlay before its
+	// overlay-origin source-file entry and post-overlay hash are configured.
+	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx, sources.WithAllowNoHashes())
 	require.NoError(t, err)
 
 	err = preparer.PrepareSources(ctx, component, outputDir, true /*applyOverlays*/)
@@ -208,6 +210,28 @@ func TestPrepareSources_ArchiveOverlayRehashesSourcesEntry(t *testing.T) {
 	assert.Equal(t, fileutils.HashTypeSHA256, entry.HashType, "original hash type must be preserved")
 	assert.Equal(t, repackedHash, entry.Hash, "'sources' entry must record the repacked archive's hash")
 	assert.NotEqual(t, originalHash, entry.Hash, "'sources' entry hash must have been updated")
+}
+
+func TestPrepareSources_ArchiveOverlayRequiresOverlayOrigin(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+	sourceManager := sourceproviders_test.NewMockSourceManager(ctrl)
+	ctx := testctx.NewCtx()
+
+	component.EXPECT().GetName().AnyTimes().Return("test-component")
+	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
+		Overlays: []projectconfig.ComponentOverlay{{
+			Type:     projectconfig.ComponentOverlayRemoveFile,
+			Archive:  "source.tar.gz",
+			Filename: "vendor/**",
+		}},
+	})
+
+	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx)
+	require.NoError(t, err)
+
+	err = preparer.PrepareSources(ctx, component, testOutputDir, true)
+	require.ErrorContains(t, err, "origin.type = overlay")
 }
 
 // TestPrepareSources_ArchiveOverlayMissingSourcesEntryErrors verifies that when an
@@ -264,7 +288,7 @@ func TestPrepareSources_ArchiveOverlayMissingSourcesEntryErrors(t *testing.T) {
 		},
 	)
 
-	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx)
+	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx, sources.WithAllowNoHashes())
 	require.NoError(t, err)
 
 	err = preparer.PrepareSources(ctx, component, outputDir, true /*applyOverlays*/)

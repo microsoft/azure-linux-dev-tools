@@ -215,6 +215,12 @@ func NewPreparer(
 func (p *sourcePreparerImpl) PrepareSources(
 	ctx context.Context, component components.Component, outputDir string, applyOverlays bool,
 ) error {
+	if applyOverlays && !p.allowNoHashes {
+		if err := projectconfig.ValidateArchiveOverlayOrigins(*component.GetConfig()); err != nil {
+			return fmt.Errorf("invalid archive overlays for component %#q:\n%w", component.GetName(), err)
+		}
+	}
+
 	// Preserve the upstream .git directory only when dist-git creation is
 	// requested via --with-git. This is required so that overlay commits can be
 	// appended on top of the upstream commit log during synthetic history generation.

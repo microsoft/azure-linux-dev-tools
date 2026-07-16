@@ -360,7 +360,7 @@ origin.inputs        = ["yara-4.5.4.tar.gz"]     # available to the script as ./
 
 #### `"overlay"` — record a post-overlay hash
 
-- **`hash` and `hash-type` are required** for `"overlay"` entries — the hash cannot be computed at render time because sources are not downloaded.
+- **`hash` and `hash-type` are required** for normal use. To bootstrap a new archive overlay, omit both and run `prep-sources --allow-no-hashes` once; it computes the post-overlay hash for you.
 - **`replace-upstream = true` is required** — the archive already exists in the upstream `sources` file, and this entry replaces its hash with the post-overlay value.
 - During `prep-sources` (full run), azldev verifies that the hash it computed after repacking the archive matches the stated `hash`. A mismatch means the config is stale and must be updated.
 - During `render --check-only`, the stated hash is injected directly without downloading or repacking, allowing the check to pass deterministically.
@@ -384,7 +384,7 @@ replace-reason = "Upstream source tarball contains test fixtures flagged as malw
 **Workflow:**
 
 1. Add the archive overlay(s) in the component's `[[overlays]]` array.
-2. Run `prep-sources` once — this repacks the archive and prints the computed hash in the error message.
+2. Run `prep-sources --allow-no-hashes` once — this repacks the archive and writes the computed hash to the output `sources` file.
 3. Paste the computed `hash` and `hash-type` into the `source-files` entry above.
 4. Run `prep-sources` again to confirm the hash matches, then commit.
 
