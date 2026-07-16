@@ -86,7 +86,7 @@ func TestSkillFrontmatterInvariants(t *testing.T) {
 		t.Run(skill.Name, func(t *testing.T) {
 			doc, err := agentskill.SkillDocument(skill.Name, testParams())
 			require.NoError(t, err)
-				assert.Contains(t, doc, `description: "`, "skill description must be quoted YAML")
+			assert.Contains(t, doc, `description: "`, "skill description must be quoted YAML")
 
 			fields := parseFrontmatter(t, doc)
 
