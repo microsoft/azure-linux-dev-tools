@@ -141,7 +141,6 @@ func (g *FedoraSourcesProviderImpl) GetComponent(
 	}
 
 	// Collect filenames from source-files config so the lookaside extractor can skip them.
-	// Collect filenames from source-files config so the lookaside extractor can skip them.
 	// [SourceManager.FetchFiles] acquires the configured versions after component fetching.
 	// Only files that FetchFiles actually downloads belong in this list — origin types that
 	// do not perform their own download (e.g. 'overlay') must be left out so the upstream

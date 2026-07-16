@@ -127,10 +127,6 @@ func (f ConfigFile) Validate() error {
 			return err
 		}
 
-		if err := ValidateArchiveOverlayOrigins(component); err != nil {
-			return fmt.Errorf("invalid archive overlays for component %#q:\n%w", componentName, err)
-		}
-
 		if component.Spec.UpstreamDistro.Snapshot != "" {
 			return fmt.Errorf(
 				"component %#q has a per-component 'snapshot' on 'upstream-distro'; "+
