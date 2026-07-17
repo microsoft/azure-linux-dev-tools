@@ -70,6 +70,7 @@ func TestLoadProjectConfig_WithDefaultConfig(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.NotNil(t, config)
+	assert.Equal(t, "azurelinux@microsoft.com", config.Project.DefaultAuthorEmail)
 }
 
 // TestLoadProjectConfig_UserConfigOverridesProject verifies that values defined in the
