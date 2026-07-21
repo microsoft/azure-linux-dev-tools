@@ -5,6 +5,7 @@ package sources
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	gogit "github.com/go-git/go-git/v5"
@@ -13,6 +14,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/format/index"
 	"github.com/go-git/go-git/v5/storage/memory"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/spf13/afero"
@@ -280,4 +282,97 @@ func TestComputeCurrentFingerprint(t *testing.T) {
 	assert.NotEqual(t, fp1, fpDiffRelease, "different releaseVer should change fingerprint")
 	assert.NotEqual(t, fp1, fpDiffCommit, "different upstream commit should change fingerprint")
 	assert.NotEqual(t, fp1, fpDiffBump, "different manual bump should change fingerprint")
+}
+
+func TestRehashModifiedEntriesValidatesOverlayHash(t *testing.T) {
+	const (
+		outputDir   = "/output"
+		archiveName = "pkg.tar.gz"
+	)
+
+	memFS := afero.NewMemMapFs()
+	require.NoError(t, fileutils.MkdirAll(memFS, outputDir))
+	require.NoError(t, fileutils.WriteFile(
+		memFS, filepath.Join(outputDir, archiveName), []byte("repacked"), fileperms.PublicFile))
+	expectedHash, err := fileutils.ComputeFileHash(
+		memFS, fileutils.HashTypeSHA512, filepath.Join(outputDir, archiveName))
+	require.NoError(t, err)
+
+	for _, test := range []struct {
+		name    string
+		hash    string
+		wantErr bool
+	}{
+		{name: "configured result matches", hash: strings.ToUpper(expectedHash)},
+		{name: "stale hash fails", hash: "stale", wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			lines := []fedorasource.SourcesFileLine{{Entry: &fedorasource.SourcesFileEntry{
+				Filename: archiveName, HashType: fileutils.HashTypeSHA512,
+			}}}
+			refs := []projectconfig.SourceFileReference{{
+				Filename: archiveName, HashType: fileutils.HashTypeSHA512, Hash: test.hash,
+				Origin: projectconfig.Origin{Type: projectconfig.OriginTypeOverlay},
+			}}
+
+			preparer := &sourcePreparerImpl{fs: memFS}
+
+			err := preparer.rehashModifiedEntries(lines, refs, outputDir, []string{archiveName})
+			if test.wantErr {
+				require.ErrorContains(t, err, "does not match")
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, fileutils.HashTypeSHA512, lines[0].Entry.HashType)
+			assert.Equal(t, expectedHash, lines[0].Entry.Hash)
+		})
+	}
+}
+
+func TestRehashModifiedEntriesMaterializesBootstrapHashOnlyWhenAllowed(t *testing.T) {
+	const (
+		outputDir   = "/output"
+		archiveName = "pkg.tar.gz"
+	)
+
+	memFS := afero.NewMemMapFs()
+	require.NoError(t, fileutils.MkdirAll(memFS, outputDir))
+	require.NoError(t, fileutils.WriteFile(
+		memFS, filepath.Join(outputDir, archiveName), []byte("repacked"), fileperms.PublicFile))
+
+	for _, test := range []struct {
+		name          string
+		allowNoHashes bool
+		wantHash      bool
+	}{
+		{name: "disabled"},
+		{name: "enabled", allowNoHashes: true, wantHash: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			lines := []fedorasource.SourcesFileLine{{Entry: &fedorasource.SourcesFileEntry{
+				Filename: archiveName, HashType: fileutils.HashTypeSHA512,
+			}}}
+			refs := []projectconfig.SourceFileReference{{
+				Filename: archiveName, HashType: fileutils.HashTypeSHA512,
+				Origin: projectconfig.Origin{Type: projectconfig.OriginTypeOverlay},
+			}}
+
+			preparer := &sourcePreparerImpl{fs: memFS, allowNoHashes: test.allowNoHashes}
+			require.NoError(t, preparer.rehashModifiedEntries(lines, refs, outputDir, []string{archiveName}))
+			assert.Equal(t, test.wantHash, refs[0].Hash != "")
+		})
+	}
+}
+
+func TestPostOverlayHashType(t *testing.T) {
+	assert.Equal(t, fileutils.HashTypeMD5,
+		postOverlayHashType(fileutils.HashTypeMD5, "", false, true))
+	assert.Equal(t, fileutils.HashTypeSHA512,
+		postOverlayHashType(fileutils.HashTypeMD5, "", true, true))
+	assert.Equal(t, fileutils.HashTypeSHA512,
+		postOverlayHashType(fileutils.HashTypeSHA512, fileutils.HashTypeSHA512, true, false))
+	assert.Equal(t, fileutils.HashTypeSHA256,
+		postOverlayHashType(fileutils.HashTypeSHA512, fileutils.HashTypeSHA256, true, true))
 }

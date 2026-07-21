@@ -132,24 +132,53 @@ type SourceFileReference struct {
 	ReplaceReason string `toml:"replace-reason,omitempty" json:"replaceReason,omitempty" jsonschema:"title=Replace reason,description=Required when 'replace-upstream' is true. Human-readable explanation for the replacement." fingerprint:"-"`
 }
 
-// ValidateArchiveOverlayOrigins verifies that each archive modified by an
-// archive-scoped overlay has a matching overlay-origin source file. The origin
-// records the expected post-overlay hash used to protect render output from drift.
-func ValidateArchiveOverlayOrigins(component ComponentConfig) error {
-	overlayOrigins := make(map[string]bool, len(component.SourceFiles))
-	for _, sourceFile := range component.SourceFiles {
+// ValidateArchiveOverlays validates archive/origin associations and prevents
+// loose-file overlays from also modifying an archive that will be repacked.
+// allowMissingOrigins supports '--allow-no-hashes' bootstrapping; orphaned
+// overlay origins are always invalid.
+func (c *ComponentConfig) ValidateArchiveOverlays(allowMissingOrigins bool) error {
+	modifiedArchives := make(map[string]bool, len(c.Overlays))
+	for _, overlay := range c.Overlays {
+		if overlay.ModifiesArchive() {
+			modifiedArchives[overlay.Archive] = true
+		}
+	}
+
+	overlayOrigins := make(map[string]bool, len(c.SourceFiles))
+	for _, sourceFile := range c.SourceFiles {
+		if sourceFile.Origin.Type == OriginTypeOverlay && !modifiedArchives[sourceFile.Filename] {
+			return fmt.Errorf(
+				"'source-files' entry for %#q has 'origin.type = overlay', but no archive-scoped overlay modifies that archive; "+
+					"add a matching archive overlay or remove the stale 'source-files' entry",
+				sourceFile.Filename,
+			)
+		}
+
 		if sourceFile.Origin.Type == OriginTypeOverlay {
 			overlayOrigins[sourceFile.Filename] = true
 		}
 	}
 
-	for _, overlay := range component.Overlays {
-		if overlay.ModifiesArchive() && !overlayOrigins[overlay.Archive] {
+	for archiveName := range modifiedArchives {
+		if !allowMissingOrigins && !overlayOrigins[archiveName] {
 			return fmt.Errorf(
 				"archive overlay for %#q requires a matching 'source-files' entry with 'origin.type = overlay'; "+
 					"add the entry to the component TOML, then run 'prepare-sources --allow-no-hashes' to bootstrap its hash",
-				overlay.Archive,
-			)
+				archiveName)
+		}
+
+		for _, overlay := range c.Overlays {
+			matches, err := overlay.TargetsLooseFile(archiveName)
+			if err != nil {
+				return err
+			}
+
+			if matches {
+				return fmt.Errorf(
+					"loose-file %#q overlay targets archive %#q, which is also modified by an archive-scoped overlay; "+
+						"an archive and its contents cannot be modified through both overlay scopes",
+					overlay.Type, archiveName)
+			}
 		}
 	}
 

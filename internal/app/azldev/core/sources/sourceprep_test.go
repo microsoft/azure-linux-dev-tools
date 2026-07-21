@@ -105,7 +105,8 @@ func TestPrepareSources_Success(t *testing.T) {
 // of the key correctness behavior introduced with archive overlays: when an
 // archive-scoped overlay mutates an archive's contents, the matching 'sources'
 // entry must be re-hashed in place so the recorded digest reflects the repacked
-// archive (while keeping the original hash *type*).
+// archive using the overlay-origin entry's configured hash type, independently
+// of the upstream entry's hash type.
 //
 // This runs against the host filesystem with a real temp dir because archive
 // overlays extract/repack through the [archive] package, which uses OS
@@ -136,13 +137,12 @@ func TestPrepareSources_ArchiveOverlayRehashesSourcesEntry(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(pkgRoot, "remove-me.txt"), []byte("delete me"), fileperms.PrivateFile))
 	require.NoError(t, archive.CreateDeterministicArchive(archivePath, stagingDir, archive.CompressionGzip))
 
-	// Record the original hash of the archive and seed a 'sources' file with it.
-	// Use SHA256 (not the SHA512 default) so the test also proves the hash *type*
-	// is preserved rather than coincidentally matching a default.
-	originalHash, err := fileutils.ComputeFileHash(ctx.FS(), fileutils.HashTypeSHA256, archivePath)
+	// Seed a legacy upstream MD5 entry. The upstream algorithm verifies the
+	// original download only; the repacked result must use the configured SHA-512.
+	originalHash, err := fileutils.ComputeFileHash(ctx.FS(), fileutils.HashTypeMD5, archivePath)
 	require.NoError(t, err)
 
-	originalEntry := fedorasource.FormatSourcesEntry(archiveName, fileutils.HashTypeSHA256, originalHash)
+	originalEntry := fedorasource.FormatSourcesEntry(archiveName, fileutils.HashTypeMD5, originalHash)
 	require.NoError(t, fileutils.WriteFile(
 		ctx.FS(), sourcesPath, []byte(originalEntry+"\n"), fileperms.PublicFile))
 
@@ -157,6 +157,15 @@ func TestPrepareSources_ArchiveOverlayRehashesSourcesEntry(t *testing.T) {
 				Type:     projectconfig.ComponentOverlayRemoveFile,
 				Archive:  archiveName,
 				Filename: "remove-me.txt",
+			},
+		},
+		SourceFiles: []projectconfig.SourceFileReference{
+			{
+				Filename:        archiveName,
+				HashType:        fileutils.HashTypeSHA512,
+				Origin:          projectconfig.Origin{Type: projectconfig.OriginTypeOverlay},
+				ReplaceUpstream: true,
+				ReplaceReason:   "record the post-overlay archive",
 			},
 		},
 	})
@@ -183,55 +192,45 @@ func TestPrepareSources_ArchiveOverlayRehashesSourcesEntry(t *testing.T) {
 	// The overlay must have actually mutated the archive on disk.
 	assert.FileExists(t, specPath)
 
-	repackedHash, err := fileutils.ComputeFileHash(ctx.FS(), fileutils.HashTypeSHA256, archivePath)
+	repackedHash, err := fileutils.ComputeFileHash(ctx.FS(), fileutils.HashTypeSHA512, archivePath)
 	require.NoError(t, err)
 	require.NotEqual(t, originalHash, repackedHash,
 		"precondition: removing a file from the archive should change its hash")
 
-	// The 'sources' entry must have been rewritten to the repacked archive's hash,
-	// preserving the original SHA256 hash type.
+	// The 'sources' entry must use the configured post-overlay algorithm, not the
+	// legacy algorithm from the upstream entry.
 	sourcesContent, err := fileutils.ReadFile(ctx.FS(), sourcesPath)
 	require.NoError(t, err)
 
-	parsedLines, err := fedorasource.ReadSourcesFile(string(sourcesContent))
-	require.NoError(t, err)
-
-	var entry *fedorasource.SourcesFileEntry
-
-	for i := range parsedLines {
-		if parsedLines[i].Entry != nil && parsedLines[i].Entry.Filename == archiveName {
-			entry = parsedLines[i].Entry
-
-			break
-		}
-	}
-
+	entry := findSourcesEntry(t, string(sourcesContent), archiveName)
 	require.NotNil(t, entry, "rewritten 'sources' file should still contain an entry for %q", archiveName)
-	assert.Equal(t, fileutils.HashTypeSHA256, entry.HashType, "original hash type must be preserved")
+	assert.Equal(t, fileutils.HashTypeSHA512, entry.HashType, "configured post-overlay hash type must be used")
 	assert.Equal(t, repackedHash, entry.Hash, "'sources' entry must record the repacked archive's hash")
 	assert.NotEqual(t, originalHash, entry.Hash, "'sources' entry hash must have been updated")
 }
 
-func TestPrepareSources_ArchiveOverlayRequiresOverlayOrigin(t *testing.T) {
+func TestPrepareSources_ArchiveOverlayAssociationValidation(t *testing.T) {
+	const archiveName = "source.tar.gz"
+
 	ctrl := gomock.NewController(t)
 	component := components_testutils.NewMockComponent(ctrl)
 	sourceManager := sourceproviders_test.NewMockSourceManager(ctrl)
 	ctx := testctx.NewCtx()
 
 	component.EXPECT().GetName().AnyTimes().Return("test-component")
-	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
-		Overlays: []projectconfig.ComponentOverlay{{
-			Type:     projectconfig.ComponentOverlayRemoveFile,
-			Archive:  "source.tar.gz",
-			Filename: "vendor/**",
+	component.EXPECT().GetConfig().Return(&projectconfig.ComponentConfig{
+		SourceFiles: []projectconfig.SourceFileReference{{
+			Filename: archiveName,
+			Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeOverlay},
 		}},
 	})
 
-	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx)
+	preparer, err := sources.NewPreparer(
+		sourceManager, ctx.FS(), ctx, ctx, sources.WithAllowNoHashes())
 	require.NoError(t, err)
-
-	err = preparer.PrepareSources(ctx, component, testOutputDir, true)
-	require.ErrorContains(t, err, "origin.type = overlay")
+	require.ErrorContains(t,
+		preparer.PrepareSources(ctx, component, testOutputDir, true),
+		"no archive-scoped overlay modifies that archive")
 }
 
 // TestPrepareSources_ArchiveOverlayMissingSourcesEntryErrors verifies that when an

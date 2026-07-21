@@ -363,7 +363,7 @@ origin.inputs        = ["yara-4.5.4.tar.gz"]     # available to the script as ./
 - **`hash` and `hash-type` are required** for normal use. To bootstrap a new archive overlay, omit both and run `prep-sources --allow-no-hashes` once; it computes the post-overlay hash for you.
 - **`replace-upstream = true` is required** — the archive already exists in the upstream `sources` file, and this entry replaces its hash with the post-overlay value.
 - During `prep-sources` (full run), azldev verifies that the hash it computed after repacking the archive matches the stated `hash`. A mismatch means the config is stale and must be updated.
-- During `render --check-only`, the stated hash is injected directly without downloading or repacking, allowing the check to pass deterministically.
+- The post-overlay archive is hashed using the configured `hash-type`, regardless of the algorithm used by the upstream `sources` entry. The archive's actual compression format is preserved when repacking, even when it does not match the filename extension.
 
 See [Recording the post-overlay hash for archive overlays](#recording-the-post-overlay-hash-for-archive-overlays) below for the full workflow.
 
@@ -387,8 +387,6 @@ replace-reason = "Upstream source tarball contains test fixtures flagged as malw
 2. Run `prep-sources --allow-no-hashes` once — this repacks the archive and writes the computed hash to the output `sources` file.
 3. Paste the computed `hash` and `hash-type` into the `source-files` entry above.
 4. Run `prep-sources` again to confirm the hash matches, then commit.
-
-After that, `render --check-only` will pass deterministically without downloading or repacking the archive.
 
 `replace-upstream = true` and `replace-reason` are required because the archive is already in the upstream `sources` file. The entry replaces its hash with the post-overlay value, regardless of how many overlays target that archive.
 

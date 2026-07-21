@@ -215,9 +215,9 @@ func NewPreparer(
 func (p *sourcePreparerImpl) PrepareSources(
 	ctx context.Context, component components.Component, outputDir string, applyOverlays bool,
 ) error {
-	if applyOverlays && !p.allowNoHashes {
-		if err := projectconfig.ValidateArchiveOverlayOrigins(*component.GetConfig()); err != nil {
-			return fmt.Errorf("invalid archive overlays for component %#q:\n%w", component.GetName(), err)
+	if applyOverlays {
+		if err := p.validateArchiveOverlayConfig(component); err != nil {
+			return err
 		}
 	}
 
@@ -248,13 +248,16 @@ func (p *sourcePreparerImpl) PrepareSources(
 		}
 	}
 
+	fingerprintConfig := component.GetConfig()
+
 	if applyOverlays {
 		repackedArchives, err := p.applyOverlaysToSources(component, outputDir)
 		if err != nil {
 			return err
 		}
 
-		if err := p.updateSourcesFile(component, outputDir, repackedArchives); err != nil {
+		fingerprintConfig, err = p.updateSourcesFile(component, outputDir, repackedArchives)
+		if err != nil {
 			return fmt.Errorf("failed to update 'sources' file for component %#q:\n%w",
 				component.GetName(), err)
 		}
@@ -266,10 +269,19 @@ func (p *sourcePreparerImpl) PrepareSources(
 
 	// Record the changes as synthetic git history when dist-git creation is enabled.
 	if p.withGitRepo {
-		if err := p.trySyntheticHistory(ctx, component, outputDir); err != nil {
+		if err := p.trySyntheticHistory(ctx, component, fingerprintConfig, outputDir); err != nil {
 			return fmt.Errorf("failed to generate synthetic history for component %#q:\n%w",
 				component.GetName(), err)
 		}
+	}
+
+	return nil
+}
+
+func (p *sourcePreparerImpl) validateArchiveOverlayConfig(component components.Component) error {
+	config := component.GetConfig()
+	if err := config.ValidateArchiveOverlays(p.allowNoHashes); err != nil {
+		return fmt.Errorf("invalid archive overlays for component %#q:\n%w", component.GetName(), err)
 	}
 
 	return nil
@@ -446,6 +458,7 @@ func initSourcesRepo(sourcesDirPath string) (*gogit.Repository, error) {
 func (p *sourcePreparerImpl) trySyntheticHistory(
 	ctx context.Context,
 	component components.Component,
+	fingerprintConfig *projectconfig.ComponentConfig,
 	sourcesDirPath string,
 ) error {
 	config := component.GetConfig()
@@ -459,7 +472,7 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 	if p.dirtyDetection {
 		var fpErr error
 
-		currentFingerprint, fpErr = computeCurrentFingerprint(p.fs, config, p.releaseVer)
+		currentFingerprint, fpErr = computeCurrentFingerprint(p.fs, fingerprintConfig, p.releaseVer)
 		if fpErr != nil {
 			return fmt.Errorf("dirty detection failed for component %#q:\n%w", componentName, fpErr)
 		}
@@ -682,48 +695,40 @@ func (p *sourcePreparerImpl) DiffSources(
 // that isn't there, which almost certainly indicates a stale config or filename typo.
 func (p *sourcePreparerImpl) updateSourcesFile(
 	component components.Component, outputDir string, modifiedArchives []string,
-) error {
+) (*projectconfig.ComponentConfig, error) {
 	config := component.GetConfig()
-	sourceFiles := config.SourceFiles
+	sourceFiles := slices.Clone(config.SourceFiles)
 
 	// modifiedArchives lists the archives that archive overlays actually repacked
 	// during this run; their 'sources' digests must be refreshed. The list is empty
 	// when no archive overlays ran, in dry-run mode, or when source downloads were
 	// skipped, so rehashing is correctly avoided in those cases.
 	if len(sourceFiles) == 0 && len(modifiedArchives) == 0 {
-		return nil
+		return config, nil
 	}
 
 	sourcesFilePath := filepath.Join(outputDir, fedorasource.SourcesFileName)
 
 	existingContent, err := p.readSourcesFileIfExists(sourcesFilePath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Parse once, then rehash modified archives and merge source-files entries
 	// on the parsed representation — single parse, single write.
 	existingLines, err := fedorasource.ReadSourcesFile(existingContent)
 	if err != nil {
-		return fmt.Errorf("failed to parse 'sources' file %#q:\n%w", sourcesFilePath, err)
+		return nil, fmt.Errorf("failed to parse 'sources' file %#q:\n%w", sourcesFilePath, err)
 	}
 
-	// Rehash archives that were modified by archive overlays in-place.
-	if err := p.rehashModifiedEntries(existingLines, outputDir, modifiedArchives); err != nil {
-		return err
-	}
-
-	// In full prep-sources mode, cross-check any 'overlay'-origin source-file entries against
-	// the hashes that were just computed so stale stated hashes are caught immediately.
-	if !p.skipLookaside {
-		if err := validateOverlayResultHashes(existingLines, sourceFiles, modifiedArchives, component.GetName()); err != nil {
-			return err
-		}
+	// Rehash and validate archives modified by archive overlays.
+	if err := p.rehashModifiedEntries(existingLines, sourceFiles, outputDir, modifiedArchives); err != nil {
+		return nil, err
 	}
 
 	mergedLines, err := p.buildSourceEntries(sourceFiles, existingLines, component.GetName(), outputDir)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	newContent := strings.Join(mergedLines, "\n") + "\n"
@@ -734,21 +739,36 @@ func (p *sourcePreparerImpl) updateSourcesFile(
 		[]byte(newContent),
 		fileperms.PublicFile,
 	); err != nil {
-		return fmt.Errorf("failed to write 'sources' file %#q:\n%w", sourcesFilePath, err)
+		return nil, fmt.Errorf("failed to write 'sources' file %#q:\n%w", sourcesFilePath, err)
 	}
 
-	return nil
+	effectiveConfig := *config
+	effectiveConfig.SourceFiles = sourceFiles
+
+	return &effectiveConfig, nil
 }
 
 // rehashModifiedEntries updates the Raw and Entry fields of parsed 'sources' lines
-// for archives that were modified by archive overlays. The hash is recomputed using
-// the same hash type as the original entry. It returns an error if any modified
-// archive has no matching 'sources' entry, since that would leave a stale digest.
+// for archives that were modified by archive overlays. Overlay-origin entries are
+// rehashed using their configured post-overlay hash type, which may differ from the
+// upstream entry's hash type. During hash bootstrapping, an omitted type defaults to
+// SHA-512. It returns an error if any modified archive has no matching 'sources'
+// entry, since that would leave a stale digest.
 func (p *sourcePreparerImpl) rehashModifiedEntries(
-	lines []fedorasource.SourcesFileLine, outputDir string, modifiedArchives []string,
+	lines []fedorasource.SourcesFileLine,
+	sourceFiles []projectconfig.SourceFileReference,
+	outputDir string,
+	modifiedArchives []string,
 ) error {
 	if len(modifiedArchives) == 0 {
 		return nil
+	}
+
+	overlayOrigins := make(map[string]projectconfig.SourceFileReference, len(sourceFiles))
+	for _, ref := range sourceFiles {
+		if ref.Origin.Type == projectconfig.OriginTypeOverlay {
+			overlayOrigins[ref.Filename] = ref
+		}
 	}
 
 	// Track which archives we actually rehashed so we can detect any that were
@@ -769,34 +789,42 @@ func (p *sourcePreparerImpl) rehashModifiedEntries(
 		}
 
 		archivePath := filepath.Join(outputDir, line.Entry.Filename)
+		oldHashType := line.Entry.HashType
+		ref, hasOverlayOrigin := overlayOrigins[line.Entry.Filename]
+		newHashType := postOverlayHashType(oldHashType, ref.HashType, hasOverlayOrigin, p.allowNoHashes)
 
-		newHash, err := fileutils.ComputeFileHash(p.fs, line.Entry.HashType, archivePath)
+		newHash, err := fileutils.ComputeFileHash(p.fs, newHashType, archivePath)
 		if err != nil {
 			return fmt.Errorf("rehashing modified archive %#q:\n%w", line.Entry.Filename, err)
 		}
 
+		if ref.Hash != "" && !strings.EqualFold(newHash, ref.Hash) {
+			return fmt.Errorf(
+				"archive %#q 'source-files' hash does not match the hash computed after applying overlays; "+
+					"update the 'hash' field:\n  stated:   %s %s\n  computed: %s %s",
+				line.Entry.Filename, ref.HashType, ref.Hash, newHashType, newHash)
+		}
+
 		slog.Debug("Rehashed modified archive in 'sources' file",
 			"archive", line.Entry.Filename,
-			"hashType", line.Entry.HashType,
+			"oldHashType", oldHashType,
+			"newHashType", newHashType,
 			"oldHash", line.Entry.Hash,
 			"newHash", newHash,
 		)
 
-		lines[idx].Raw = fedorasource.FormatSourcesEntry(line.Entry.Filename, line.Entry.HashType, newHash)
+		lines[idx].Raw = fedorasource.FormatSourcesEntry(line.Entry.Filename, newHashType, newHash)
+		lines[idx].Entry.HashType = newHashType
 		lines[idx].Entry.Hash = newHash
+
+		if p.allowNoHashes && hasOverlayOrigin && ref.Hash == "" {
+			setBootstrapSourceHash(sourceFiles, line.Entry.Filename, newHashType, newHash)
+		}
+
 		rehashed[line.Entry.Filename] = true
 	}
 
-	// Any archive that an overlay repacked but that has no 'sources' entry would
-	// silently keep a stale digest. Surface this as an error identifying the
-	// missing filenames rather than producing an inconsistent 'sources' file.
-	var missing []string
-
-	for name, done := range rehashed {
-		if !done {
-			missing = append(missing, name)
-		}
-	}
+	missing := missingRehashedArchives(rehashed)
 
 	if len(missing) > 0 {
 		slices.Sort(missing)
@@ -809,61 +837,48 @@ func (p *sourcePreparerImpl) rehashModifiedEntries(
 	return nil
 }
 
-// validateOverlayResultHashes cross-checks [projectconfig.OriginTypeOverlay] source-file entries
-// against the post-overlay hashes that [rehashModifiedEntries] just computed in existingLines.
-// A mismatch means the stated hash in the config is stale and must be updated.
-// It is a no-op when no archives were repacked in this run.
-func validateOverlayResultHashes(
-	lines []fedorasource.SourcesFileLine,
+func missingRehashedArchives(rehashed map[string]bool) []string {
+	var missing []string
+
+	for name, done := range rehashed {
+		if !done {
+			missing = append(missing, name)
+		}
+	}
+
+	return missing
+}
+
+func setBootstrapSourceHash(
 	sourceFiles []projectconfig.SourceFileReference,
-	modifiedArchives []string,
-	componentName string,
-) error {
-	if len(modifiedArchives) == 0 {
-		return nil
-	}
+	filename string,
+	hashType fileutils.HashType,
+	hash string,
+) {
+	for sourceIndex := range sourceFiles {
+		if sourceFiles[sourceIndex].Origin.Type == projectconfig.OriginTypeOverlay &&
+			sourceFiles[sourceIndex].Filename == filename {
+			sourceFiles[sourceIndex].Hash = hash
+			sourceFiles[sourceIndex].HashType = hashType
 
-	// Only validate archives that were actually repacked in this run.
-	repacked := make(map[string]bool, len(modifiedArchives))
-	for _, name := range modifiedArchives {
-		repacked[name] = true
-	}
-
-	// Build a filename → computed (post-overlay) entry map from the updated lines.
-	computedByName := make(map[string]fedorasource.SourcesFileEntry, len(lines))
-	for _, line := range lines {
-		if line.Entry != nil {
-			computedByName[line.Entry.Filename] = *line.Entry
+			return
 		}
 	}
+}
 
-	for _, ref := range sourceFiles {
-		if ref.Origin.Type != projectconfig.OriginTypeOverlay {
-			continue
-		}
-
-		if !repacked[ref.Filename] {
-			continue
-		}
-
-		computed, ok := computedByName[ref.Filename]
-		if !ok {
-			// Missing upstream entry will be reported by processSourceRef.
-			continue
-		}
-
-		if computed.HashType != ref.HashType || computed.Hash != ref.Hash {
-			return fmt.Errorf(
-				"component %#q: archive %#q 'source-files' hash does not match the hash computed "+
-					"after applying overlays; update the 'hash' and 'hash-type' fields in the "+
-					"'source-files' entry:\n  stated:   %s %s\n  computed: %s %s",
-				componentName, ref.Filename,
-				ref.HashType, ref.Hash,
-				computed.HashType, computed.Hash)
-		}
+func postOverlayHashType(
+	upstream, configured fileutils.HashType,
+	hasOverlayOrigin, allowNoHashes bool,
+) fileutils.HashType {
+	if !hasOverlayOrigin {
+		return upstream
 	}
 
-	return nil
+	if configured == "" && allowNoHashes {
+		return fileutils.HashTypeSHA512
+	}
+
+	return configured
 }
 
 // readSourcesFileIfExists reads the 'sources' file content if it exists, returning empty string if not.
@@ -916,14 +931,17 @@ func (p *sourcePreparerImpl) buildSourceEntries(
 	replacementByName := make(map[string]string, len(sourceFiles))
 	appendLines := make([]string, 0, len(sourceFiles))
 
-	for _, ref := range sourceFiles {
-		formatted, isReplacement, err := p.processSourceRef(ref, existingByName, componentName, outputDir)
+	for index := range sourceFiles {
+		formatted, isReplacement, resolvedRef, err := p.processSourceRef(
+			sourceFiles[index], existingByName, componentName, outputDir)
 		if err != nil {
 			return nil, err
 		}
 
+		sourceFiles[index] = resolvedRef
+
 		if isReplacement {
-			replacementByName[ref.Filename] = formatted
+			replacementByName[resolvedRef.Filename] = formatted
 		} else {
 			appendLines = append(appendLines, formatted)
 		}
@@ -980,9 +998,9 @@ func (p *sourcePreparerImpl) processSourceRef(
 	existingByName map[string]fedorasource.SourcesFileEntry,
 	componentName string,
 	outputDir string,
-) (formatted string, isReplacement bool, err error) {
+) (formatted string, isReplacement bool, resolvedRef projectconfig.SourceFileReference, err error) {
 	if err := fileutils.ValidateFilename(ref.Filename); err != nil {
-		return "", false, fmt.Errorf(
+		return "", false, ref, fmt.Errorf(
 			"invalid filename %#q in 'source-files' configuration:\n%w", ref.Filename, err)
 	}
 
@@ -990,7 +1008,7 @@ func (p *sourcePreparerImpl) processSourceRef(
 
 	switch {
 	case hasUpstream && !ref.ReplaceUpstream:
-		return "", false, fmt.Errorf(
+		return "", false, ref, fmt.Errorf(
 			"source file %#q in 'source-files' configuration conflicts with an existing entry "+
 				"in the 'sources' file; to intentionally replace the upstream entry, set "+
 				"'replace-upstream = true' (with a non-empty 'replace-reason') on the "+
@@ -998,7 +1016,7 @@ func (p *sourcePreparerImpl) processSourceRef(
 			ref.Filename)
 
 	case !hasUpstream && ref.ReplaceUpstream:
-		return "", false, fmt.Errorf(
+		return "", false, ref, fmt.Errorf(
 			"source file %#q in 'source-files' configuration has 'replace-upstream = true' "+
 				"but no entry with that filename exists in the upstream 'sources' file; "+
 				"remove 'replace-upstream' or correct the filename to match the upstream entry",
@@ -1007,8 +1025,11 @@ func (p *sourcePreparerImpl) processSourceRef(
 
 	hash, hashType, err := p.resolveSourceHash(ref, componentName, outputDir)
 	if err != nil {
-		return "", false, err
+		return "", false, ref, err
 	}
+
+	ref.Hash = hash
+	ref.HashType = hashType
 
 	formatted = fedorasource.FormatSourcesEntry(ref.Filename, hashType, hash)
 
@@ -1022,7 +1043,7 @@ func (p *sourcePreparerImpl) processSourceRef(
 			"newHash", hash,
 			"reason", ref.ReplaceReason)
 
-		return formatted, true, nil
+		return formatted, true, ref, nil
 	}
 
 	slog.Debug("New 'sources' file entry",
@@ -1031,7 +1052,7 @@ func (p *sourcePreparerImpl) processSourceRef(
 		"hashType", hashType,
 		"hash", hash)
 
-	return formatted, false, nil
+	return formatted, false, ref, nil
 }
 
 // resolveSourceHash returns the hash and hash type for a source file reference.

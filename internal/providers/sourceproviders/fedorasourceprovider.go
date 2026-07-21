@@ -145,15 +145,7 @@ func (g *FedoraSourcesProviderImpl) GetComponent(
 	// Only files that FetchFiles actually downloads belong in this list — origin types that
 	// do not perform their own download (e.g. 'overlay') must be left out so the upstream
 	// lookaside extractor still fetches the original archive for archive overlays to work on.
-	sourceFiles := component.GetConfig().SourceFiles
-
-	var skipFileNames []string
-
-	for _, sf := range sourceFiles {
-		if sf.Origin.Type.IsFetched() {
-			skipFileNames = append(skipFileNames, sf.Filename)
-		}
-	}
+	skipFileNames := fetchedSourceFilenames(component.GetConfig().SourceFiles)
 
 	// Process the cloned repo: checkout target commit, extract sources, copy to destination.
 	return g.processClonedRepo(ctx, effectiveCommit,

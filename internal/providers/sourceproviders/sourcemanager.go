@@ -615,6 +615,21 @@ func resolvePackageName(component components.Component) string {
 	return component.GetName()
 }
 
+// fetchedSourceFilenames returns filenames acquired by [SourceManager.FetchFiles].
+// Overlay-origin entries are excluded because component lookaside extraction must
+// fetch their original upstream archives before overlays can repack them.
+func fetchedSourceFilenames(sourceFiles []projectconfig.SourceFileReference) []string {
+	var filenames []string
+
+	for _, sourceFile := range sourceFiles {
+		if sourceFile.Origin.Type.IsFetched() {
+			filenames = append(filenames, sourceFile.Filename)
+		}
+	}
+
+	return filenames
+}
+
 func (m *sourceManager) FetchComponent(
 	ctx context.Context, component components.Component, destDirPath string, opts ...FetchComponentOption,
 ) error {
@@ -726,16 +741,12 @@ func (m *sourceManager) downloadLookasideSources(
 
 	packageName := resolvePackageName(component)
 
-	// Collect filenames from 'source-files' config so the lookaside extractor skips them.
-	// These files are managed by FetchFiles (custom generation or explicit download origins)
-	// and must not be overwritten by a same-named upstream lookaside entry. This mirrors
-	// the same skip-list built in [FedoraSourcesProviderImpl.GetComponent].
-	sourceFiles := component.GetConfig().SourceFiles
-
-	skipFilenames := make([]string, len(sourceFiles))
-	for i := range sourceFiles {
-		skipFilenames[i] = sourceFiles[i].Filename
-	}
+	// Collect filenames from 'source-files' config that [SourceManager.FetchFiles]
+	// acquires, so the lookaside extractor does not overwrite them. Overlay-origin
+	// files are not fetched by FetchFiles, so they must remain available from
+	// lookaside for archive overlays. This mirrors the same skip-list built in
+	// [FedoraSourcesProviderImpl.GetComponent].
+	skipFilenames := fetchedSourceFilenames(component.GetConfig().SourceFiles)
 
 	err := m.lookasideDownloader.ExtractSourcesFromRepo(ctx, destDirPath, packageName, m.lookasideBaseURI, skipFilenames)
 	if err != nil {

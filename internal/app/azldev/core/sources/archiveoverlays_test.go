@@ -411,6 +411,14 @@ func TestPrepareSources_SkipSourcesSkipsArchiveOverlays(t *testing.T) {
 		Overlays: []projectconfig.ComponentOverlay{
 			{Type: projectconfig.ComponentOverlayRemoveFile, Archive: archiveName, Filename: "remove-me.txt"},
 		},
+		SourceFiles: []projectconfig.SourceFileReference{{
+			Filename:        archiveName,
+			Hash:            originalHash,
+			HashType:        fileutils.HashTypeSHA256,
+			Origin:          projectconfig.Origin{Type: projectconfig.OriginTypeOverlay},
+			ReplaceUpstream: true,
+			ReplaceReason:   "record post-overlay hash",
+		}},
 	})
 
 	// With --skip-sources, FetchFiles must NOT be called (no EXPECT for it);
@@ -424,7 +432,7 @@ func TestPrepareSources_SkipSourcesSkipsArchiveOverlays(t *testing.T) {
 
 	preparer, err := sources.NewPreparer(
 		sourceManager, ctx.FS(), ctx, ctx,
-		sources.WithSkipLookaside(), sources.WithAllowNoHashes(),
+		sources.WithSkipLookaside(),
 	)
 	require.NoError(t, err)
 

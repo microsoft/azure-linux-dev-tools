@@ -191,6 +191,10 @@ func TestGetComponentFromGit(t *testing.T) {
 		mockComponent.EXPECT().GetName().AnyTimes().Return(testPackageName)
 		mockComponent.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
 			Name: testPackageName,
+			SourceFiles: []projectconfig.SourceFileReference{{
+				Filename: testFileName,
+				Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeOverlay},
+			}},
 		})
 
 		// Execute the method under test

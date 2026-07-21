@@ -2,7 +2,7 @@
 
 Overlays are semantic patches that modify RPM spec files and other source files during component processing. They allow you to make targeted changes to upstream specs without maintaining full forks.
 
-Overlays are defined within a component's configuration in your TOML config file and are applied in the order they appear. Each overlay specifies a type and the parameters needed to perform its modification.
+Overlays are defined within a component's configuration in your TOML config file. Overlays targeting the same scope are applied in declaration order. Archive overlays are batched and applied before spec and loose-file overlays; because these scopes normally modify different files, this does not change their result.
 
 > **Note:** Overlays are applied in sequence and modifications are non-atomic. If an overlay fails mid-way, previously applied changes remain. Work on copies if atomicity is required.
 
@@ -64,13 +64,16 @@ file = "vendor/**"                   # files inside the archive
 
 > **Note:** Archive overlays are batched per archive — all overlays targeting the same archive
 > share a single extract/modify/repack cycle. When wired into the source-preparation pipeline, the `sources` file
-> should be rehashed afterward to reflect the repacked archive; they are processed independently of spec and loose-file overlays.
+> is rehashed afterward to reflect the repacked archive. A loose-file overlay cannot target an archive that is also modified by an archive-scoped overlay; azldev rejects that ambiguous combination rather than allowing a later loose-file operation to discard or corrupt the repacked archive.
 
 > **Required drift protection:** Every archive targeted by an archive overlay must have one matching
 > `source-files` entry with `origin.type = "overlay"`. The entry records the expected post-overlay
-> hash; one entry can cover multiple overlays for the same archive. While bootstrapping a new
-> overlay, `prep-sources --allow-no-hashes` skips this association check and permits an origin
-> entry to omit its hash. See [Components](components.md#recording-the-post-overlay-hash-for-archive-overlays).
+> hash; one entry can cover multiple overlays for the same archive. Conversely, every
+> `origin.type = "overlay"` entry must have a matching archive overlay; stale entries are rejected.
+> While bootstrapping a new overlay, `prep-sources --allow-no-hashes` permits the archive overlay
+> to temporarily omit its origin entry, or permits the matching origin entry to omit its hash.
+> An origin entry without a matching archive overlay is always rejected. See
+> [Components](components.md#recording-the-post-overlay-hash-for-archive-overlays).
 
 > **Extraction root:** The inner path is interpreted relative to the archive's extraction root: if the archive unpacks to a single top-level directory (the conventional `%{name}-%{version}` layout) that directory is the root; otherwise the archive root is used.
 
