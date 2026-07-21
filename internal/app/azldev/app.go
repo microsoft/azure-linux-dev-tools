@@ -571,7 +571,7 @@ func (a *App) shouldDisableColor() bool {
 }
 
 func (a *App) createStdioLogHandler() slog.Handler {
-	stdioHandler := tint.NewHandler(os.Stderr, &tint.Options{
+	stdioHandler := tint.NewTextHandler(os.Stderr, &tint.Options{
 		Level:      a.getLogLevel(),
 		TimeFormat: time.TimeOnly,
 		NoColor:    a.shouldDisableColor(),
