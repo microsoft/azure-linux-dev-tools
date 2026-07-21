@@ -791,18 +791,11 @@ func (p *sourcePreparerImpl) rehashModifiedEntries(
 		archivePath := filepath.Join(outputDir, line.Entry.Filename)
 		oldHashType := line.Entry.HashType
 		ref, hasOverlayOrigin := overlayOrigins[line.Entry.Filename]
-		newHashType := postOverlayHashType(oldHashType, ref.HashType, hasOverlayOrigin, p.allowNoHashes)
 
-		newHash, err := fileutils.ComputeFileHash(p.fs, newHashType, archivePath)
+		newHashType, newHash, err := p.computePostOverlayHash(
+			line.Entry.Filename, archivePath, oldHashType, ref, hasOverlayOrigin)
 		if err != nil {
-			return fmt.Errorf("rehashing modified archive %#q:\n%w", line.Entry.Filename, err)
-		}
-
-		if ref.Hash != "" && !strings.EqualFold(newHash, ref.Hash) {
-			return fmt.Errorf(
-				"archive %#q 'source-files' hash does not match the hash computed after applying overlays; "+
-					"update the 'hash' field:\n  stated:   %s %s\n  computed: %s %s",
-				line.Entry.Filename, ref.HashType, ref.Hash, newHashType, newHash)
+			return err
 		}
 
 		slog.Debug("Rehashed modified archive in 'sources' file",
@@ -835,6 +828,34 @@ func (p *sourcePreparerImpl) rehashModifiedEntries(
 	}
 
 	return nil
+}
+
+func (p *sourcePreparerImpl) computePostOverlayHash(
+	filename, archivePath string,
+	upstreamHashType fileutils.HashType,
+	ref projectconfig.SourceFileReference,
+	hasOverlayOrigin bool,
+) (hashType fileutils.HashType, hash string, err error) {
+	hashType = postOverlayHashType(upstreamHashType, ref.HashType, hasOverlayOrigin, p.allowNoHashes)
+	if hashType == "" {
+		return "", "", fmt.Errorf(
+			"archive %#q has 'origin.type = overlay' but no 'hash-type'; set 'hash-type' or run "+
+				"with '--allow-no-hashes' to bootstrap", filename)
+	}
+
+	hash, err = fileutils.ComputeFileHash(p.fs, hashType, archivePath)
+	if err != nil {
+		return "", "", fmt.Errorf("rehashing modified archive %#q:\n%w", filename, err)
+	}
+
+	if ref.Hash != "" && !strings.EqualFold(hash, ref.Hash) {
+		return "", "", fmt.Errorf(
+			"archive %#q 'source-files' hash does not match the hash computed after applying overlays; "+
+				"update the 'hash' field:\n  stated:   %s %s\n  computed: %s %s",
+			filename, ref.HashType, ref.Hash, hashType, hash)
+	}
+
+	return hashType, hash, nil
 }
 
 func missingRehashedArchives(rehashed map[string]bool) []string {
