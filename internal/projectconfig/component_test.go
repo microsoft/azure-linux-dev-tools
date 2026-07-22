@@ -487,6 +487,31 @@ func TestResolveComponentConfig(t *testing.T) {
 		assert.Empty(t, resolved.OverlayFiles)
 	})
 
+	t.Run("group archive overlay combines with component origin", func(t *testing.T) {
+		groups := map[string]projectconfig.ComponentGroupConfig{
+			"archive-overlays": {
+				DefaultComponentConfig: projectconfig.ComponentConfig{
+					Overlays: []projectconfig.ComponentOverlay{{
+						Type:     projectconfig.ComponentOverlayRemoveFile,
+						Archive:  "shared-source.tar.gz",
+						Filename: "vendor/**",
+					}},
+				},
+			},
+		}
+		component := projectconfig.ComponentConfig{Name: "curl", SourceFiles: []projectconfig.SourceFileReference{{
+			Filename:        "shared-source.tar.gz",
+			Origin:          projectconfig.Origin{Type: projectconfig.OriginTypeOverlay},
+			ReplaceUpstream: true,
+		}}}
+
+		resolved, err := projectconfig.ResolveComponentConfig(
+			component, projectconfig.ComponentConfig{}, projectconfig.ComponentConfig{}, groups, []string{"archive-overlays"},
+		)
+		require.NoError(t, err)
+		require.NoError(t, resolved.ValidateArchiveOverlays(false))
+	})
+
 	t.Run("missing group errors", func(t *testing.T) {
 		comp := projectconfig.ComponentConfig{Name: "curl"}
 
