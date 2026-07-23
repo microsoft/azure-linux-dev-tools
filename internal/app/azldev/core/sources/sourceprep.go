@@ -111,6 +111,17 @@ func WithSkipLookaside() PreparerOption {
 	}
 }
 
+// WithUpstreamProvenance returns a [PreparerOption] that enables emission of
+// the %fedora_upstream_version and %fedora_upstream_release macros for Fedora
+// upstream components. distTag is the resolved %{?dist} expansion (e.g.
+// ".fc43", as produced by [FedoraDistTag]) used to expand the pristine Release
+// tag. Pass "" (e.g. for non-Fedora upstreams) to disable the macros.
+func WithUpstreamProvenance(distTag string) PreparerOption {
+	return func(p *sourcePreparerImpl) {
+		p.upstreamDistTag = distTag
+	}
+}
+
 // WithAllowNoHashes returns a [PreparerOption] that allows source file
 // references to omit their [projectconfig.SourceFileReference.Hash] value.
 // When set, any source file that lacks a hash will have its hash computed
@@ -163,6 +174,12 @@ type sourcePreparerImpl struct {
 	// releaseVer is the per-component resolved distro release version, not the
 	// project default. Set via [WithGitRepo].
 	releaseVer string
+
+	// upstreamDistTag is the resolved %{?dist} expansion (e.g. ".fc43") used to
+	// expand a Fedora upstream component's pristine Release tag when emitting
+	// the %fedora_upstream_* macros. Empty disables provenance macros. Set via
+	// [WithUpstreamProvenance].
+	upstreamDistTag string
 }
 
 // NewPreparer creates a new [SourcePreparer] instance. All positional arguments
@@ -1145,7 +1162,13 @@ func (p *sourcePreparerImpl) resolveSourceHash(
 // If the build configuration produces no macros, no file is written and an empty path is
 // returned. Otherwise, the path to the written macros file is returned.
 func (p *sourcePreparerImpl) writeMacrosFile(component components.Component, outputDir string) (string, error) {
-	contents := GenerateMacrosFileContents(component.GetConfig().Build)
+	macros := buildMacrosMap(component.GetConfig().Build)
+
+	// Layer Fedora upstream provenance macros on top, reading the pristine
+	// upstream spec that is already on disk (before overlays are applied).
+	p.addUpstreamProvenanceMacros(macros, component, outputDir)
+
+	contents := renderMacrosFile(macros)
 	if contents == "" {
 		return "", nil
 	}
@@ -1185,8 +1208,15 @@ func (p *sourcePreparerImpl) writeMacrosFile(component components.Component, out
 // If no macros remain after processing (empty config, or all macros removed via
 // undefines), an empty string is returned to signal that no macros file is needed.
 func GenerateMacrosFileContents(buildConfig projectconfig.ComponentBuildConfig) string {
-	// Build a unified map of all macros. Later definitions override earlier ones.
-	// Processing order: with flags -> without flags -> explicit defines.
+	return renderMacrosFile(buildMacrosMap(buildConfig))
+}
+
+// buildMacrosMap converts a build configuration's with/without/defines/undefines
+// into a unified macro name->value map. Later definitions override earlier ones;
+// processing order is: with flags -> without flags -> explicit defines ->
+// undefines. Upstream provenance macros are layered on separately by
+// [sourcePreparerImpl.addUpstreamProvenanceMacros].
+func buildMacrosMap(buildConfig projectconfig.ComponentBuildConfig) map[string]string {
 	macros := make(map[string]string)
 
 	// Convert 'with' flags to macros: FLAG -> _with_FLAG = 1
@@ -1210,6 +1240,14 @@ func GenerateMacrosFileContents(buildConfig projectconfig.ComponentBuildConfig) 
 		delete(macros, undef)
 	}
 
+	return macros
+}
+
+// renderMacrosFile serializes a fully-resolved macro map to RPM macros-file
+// format (%name value), sorted alphabetically for deterministic output and
+// prefixed with the standard auto-generated header. Returns "" when the map is
+// empty, signaling that no macros file is needed.
+func renderMacrosFile(macros map[string]string) string {
 	if len(macros) == 0 {
 		return ""
 	}

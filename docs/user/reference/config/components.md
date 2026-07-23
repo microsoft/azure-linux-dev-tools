@@ -159,6 +159,7 @@ The `[components.<name>.build]` section controls build-time options for a compon
 | Without options | `without` | string array | No | Build conditionals to disable (`--without <option>` passed to rpmbuild) |
 | Macro definitions | `defines` | map of string to string | No | RPM macro definitions (`--define '<name> <value>'` passed to rpmbuild) |
 | Undefined macros | `undefines` | string array | No | RPM macro names to undefine (`--undefine '<name>'` passed to rpmbuild) |
+| Emit upstream provenance | `emit-upstream-provenance` | boolean | No | Inject `%fedora_upstream_version`/`%fedora_upstream_release` macros for Fedora upstream components (defaults to `false`) |
 | Check config | `check` | [CheckConfig](#check-configuration) | No | Configuration for the `%check` section of the spec |
 | Failure config | `failure` | [FailureConfig](#failure-configuration) | No | Configuration and policy regarding build failures |
 | Build hints | `hints` | [BuildHints](#build-hints) | No | Non-essential hints for how or when to build the component |
@@ -196,6 +197,40 @@ The `undefines` field removes macros that would otherwise be defined:
 [components.mypackage.build]
 undefines = ["fedora"]
 ```
+
+### Upstream Provenance Macros
+
+For components sourced from a Fedora upstream (`spec.type = "upstream"` with a Fedora `upstream-distro`), azldev can inject two macros into the component's build so the spec can record where it was derived from (useful for SBAT and similar provenance metadata). This is **opt-in** — enable it with `emit-upstream-provenance`:
+
+```toml
+[components.grub2.build]
+emit-upstream-provenance = true
+```
+
+| Macro | Description |
+|-------|-------------|
+| `%fedora_upstream_version` | The `Version` tag from the pristine upstream Fedora spec |
+| `%fedora_upstream_release` | The `Release` tag from the pristine upstream Fedora spec, with `%{?dist}` expanded to the Fedora dist tag (e.g. `.fc43`) |
+
+The values are read from the upstream spec **before** any azldev overlays are applied, so they reflect the true upstream Name-Version-Release, not the Azure Linux–modified spec. The macros are derived fresh at render/build time from the pinned upstream commit and emitted into the component's generated macros file (loaded via `%{load:...}`).
+
+Example: for a component pinned to Fedora 43's `grub2-2.12-5.fc43`, the spec can reference:
+
+```spec
+%sbat_generate_metadata ... derived from grub2 %{fedora_upstream_version}-%{fedora_upstream_release}
+```
+
+which expands to `grub2 2.12-5.fc43`.
+
+Notes:
+
+- The flag has no effect on local or SRPM components (they have no upstream provenance) or on non-Fedora upstreams; for those it is silently ignored.
+- If a component defines a macro of the same name via `build.defines`, the user-defined value wins — the injected value does not overwrite it.
+
+Limitations:
+
+- Tag values are read as plain text, not evaluated by rpm. Only `%{?dist}` is expanded. A literal tag like `Version: 2.12` is captured as-is, but a tag built from other macros like `Version: %{majorver}.%{minorver}` is captured with those macros unexpanded.
+- Listing `fedora_upstream_version` or `fedora_upstream_release` in `build.undefines` does **not** suppress the injected macros — they are layered on after `undefines` is applied. To disable them, set `emit-upstream-provenance = false` (or omit it) instead.
 
 ### Check Configuration
 

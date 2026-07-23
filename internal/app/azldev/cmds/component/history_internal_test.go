@@ -104,11 +104,12 @@ func TestCustomizationCollectorsCoverEveryFingerprintableField(t *testing.T) {
 		"ComponentConfig.Packages":    "appendPackageItems (opaque unit per package override)",
 
 		// ComponentBuildConfig.
-		"ComponentBuildConfig.With":      "build.with",
-		"ComponentBuildConfig.Without":   "build.without",
-		"ComponentBuildConfig.Defines":   "build.defines",
-		"ComponentBuildConfig.Undefines": "build.undefines",
-		"ComponentBuildConfig.Check":     "delegates to CheckConfig walk",
+		"ComponentBuildConfig.With":                   "build.with",
+		"ComponentBuildConfig.Without":                "build.without",
+		"ComponentBuildConfig.Defines":                "build.defines",
+		"ComponentBuildConfig.Undefines":              "build.undefines",
+		"ComponentBuildConfig.EmitUpstreamProvenance": "build.emit-upstream-provenance",
+		"ComponentBuildConfig.Check":                  "delegates to CheckConfig walk",
 
 		// CheckConfig.
 		"CheckConfig.Skip": "build.check.skip",
@@ -197,11 +198,12 @@ func TestCollectCustomizationsEmitsEveryKind(t *testing.T) {
 			{Type: projectconfig.ComponentOverlayAddSpecTag, Tag: "Release", Value: "1"},
 		},
 		Build: projectconfig.ComponentBuildConfig{
-			With:      []string{"feature"},
-			Without:   []string{"docs"},
-			Defines:   map[string]string{"macro": "value"},
-			Undefines: []string{"othermacro"},
-			Check:     projectconfig.CheckConfig{Skip: true, SkipReason: "flaky"},
+			With:                   []string{"feature"},
+			Without:                []string{"docs"},
+			Defines:                map[string]string{"macro": "value"},
+			Undefines:              []string{"othermacro"},
+			Check:                  projectconfig.CheckConfig{Skip: true, SkipReason: "flaky"},
+			EmitUpstreamProvenance: true,
 		},
 		Spec: projectconfig.SpecSource{
 			SourceType:     projectconfig.SpecSourceTypeUpstream,
@@ -228,6 +230,7 @@ func TestCollectCustomizationsEmitsEveryKind(t *testing.T) {
 		"build.defines",
 		"build.undefines",
 		"build.check.skip",
+		"build.emit-upstream-provenance",
 		"spec.source-type",
 		"spec.upstream-commit",
 		"spec.upstream-name",
