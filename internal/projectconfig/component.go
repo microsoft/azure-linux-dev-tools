@@ -48,13 +48,26 @@ const (
 	// shell script inside a mock chroot. The script is expected to populate a specific
 	// output directory; azldev then packages that directory into a deterministic archive.
 	OriginTypeCustom OriginType = "custom"
+
+	// OriginTypeOverlay indicates that the source file's hash was changed by archive overlays.
+	// No download occurs; the file is already present as a spec source. The 'hash' and 'hash-type'
+	// fields record the expected post-overlay hash, or can be omitted temporarily with
+	// '--allow-no-hashes' while source preparation computes the initial value.
+	OriginTypeOverlay OriginType = "overlay"
 )
 
+// IsFetched reports whether [SourceManager.FetchFiles] downloads this origin type to disk.
+// Returns false for [OriginTypeOverlay], which obtains its file via the upstream lookaside
+// extractor in [SourceManager.FetchComponent]. All other types return true.
+func (t OriginType) IsFetched() bool {
+	return t != OriginTypeOverlay
+}
+
 // Origin describes where a source file comes from and how to retrieve it.
-// When omitted from a source file reference, the file will be resolved via the lookaside cache.
+// An origin is required for every 'source-files' entry.
 type Origin struct {
 	// Type indicates how the source file should be acquired.
-	Type OriginType `toml:"type" json:"type" jsonschema:"required,enum=download,enum=custom,title=Origin type,description=Type of origin for this source file" fingerprint:"-"`
+	Type OriginType `toml:"type" json:"type" jsonschema:"required,enum=download,enum=custom,enum=overlay,title=Origin type,description=Type of origin for this source file" fingerprint:"-"`
 	// Uri to download the source file from if origin type is 'download'. Ignored for other origin types.
 	Uri string `toml:"uri,omitempty" json:"uri,omitempty" jsonschema:"title=URI,description=URI to download the source file from if origin type is 'download',example=https://example.com/source.tar.gz" fingerprint:"-"`
 
@@ -117,6 +130,59 @@ type SourceFileReference struct {
 	// being replaced. Required when [SourceFileReference.ReplaceUpstream] is true; must be
 	// empty otherwise. Excluded from the fingerprint because it is documentation only.
 	ReplaceReason string `toml:"replace-reason,omitempty" json:"replaceReason,omitempty" jsonschema:"title=Replace reason,description=Required when 'replace-upstream' is true. Human-readable explanation for the replacement." fingerprint:"-"`
+}
+
+// ValidateArchiveOverlays validates archive/origin associations and prevents
+// loose-file overlays from also modifying an archive that will be repacked.
+// allowMissingOrigins supports '--allow-no-hashes' bootstrapping; orphaned
+// overlay origins are always invalid.
+func (c *ComponentConfig) ValidateArchiveOverlays(allowMissingOrigins bool) error {
+	modifiedArchives := make(map[string]bool, len(c.Overlays))
+	for _, overlay := range c.Overlays {
+		if overlay.ModifiesArchive() {
+			modifiedArchives[overlay.Archive] = true
+		}
+	}
+
+	overlayOrigins := make(map[string]bool, len(c.SourceFiles))
+	for _, sourceFile := range c.SourceFiles {
+		if sourceFile.Origin.Type == OriginTypeOverlay && !modifiedArchives[sourceFile.Filename] {
+			return fmt.Errorf(
+				"'source-files' entry for %#q has 'origin.type = overlay', but no archive-scoped overlay modifies that archive; "+
+					"add a matching archive overlay or remove the stale 'source-files' entry",
+				sourceFile.Filename,
+			)
+		}
+
+		if sourceFile.Origin.Type == OriginTypeOverlay {
+			overlayOrigins[sourceFile.Filename] = true
+		}
+	}
+
+	for archiveName := range modifiedArchives {
+		if !allowMissingOrigins && !overlayOrigins[archiveName] {
+			return fmt.Errorf(
+				"archive overlay for %#q requires a matching 'source-files' entry with 'origin.type = overlay'; "+
+					"add the entry to the component TOML, then run 'prepare-sources --allow-no-hashes' to bootstrap its hash",
+				archiveName)
+		}
+
+		for _, overlay := range c.Overlays {
+			matches, err := overlay.TargetsLooseFile(archiveName)
+			if err != nil {
+				return err
+			}
+
+			if matches {
+				return fmt.Errorf(
+					"loose-file %#q overlay targets archive %#q, which is also modified by an archive-scoped overlay; "+
+						"an archive and its contents cannot be modified through both overlay scopes",
+					overlay.Type, archiveName)
+			}
+		}
+	}
+
+	return nil
 }
 
 // HashInclude implements the hashstructure [Includable] interface so that

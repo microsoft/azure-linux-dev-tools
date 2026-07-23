@@ -177,6 +177,7 @@ func validateComponentGroupMetadata(groups map[string]ComponentGroupConfig) erro
 //   - Hash value without a hash type is not allowed.
 //   - Origin must be present and valid for each source file.
 //   - 'replace-upstream' and 'replace-reason' must be set together.
+//   - [OriginTypeOverlay] entries additionally require 'hash', 'hash-type', and 'replace-upstream = true'.
 func validateSourceFiles(sourceFiles []SourceFileReference, componentName string) error {
 	seen := make(map[string]bool, len(sourceFiles))
 
@@ -217,6 +218,27 @@ func validateSourceFiles(sourceFiles []SourceFileReference, componentName string
 		if err := validateOrigin(ref.Origin, ref.Filename, componentName); err != nil {
 			return err
 		}
+
+		if ref.Origin.Type == OriginTypeOverlay {
+			if err := validateOverlayOriginRef(ref, componentName); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// validateOverlayOriginRef enforces additional constraints on [SourceFileReference] entries
+// with [OriginTypeOverlay]. 'replace-upstream = true' is required because the archive is
+// already present as a spec source. Hashes may be omitted while bootstrapping an archive
+// overlay with '--allow-no-hashes'; source preparation computes the post-overlay hash.
+func validateOverlayOriginRef(ref SourceFileReference, componentName string) error {
+	if !ref.ReplaceUpstream {
+		return fmt.Errorf(
+			"source file %#q in component %#q has 'origin.type = overlay' but 'replace-upstream' is not true; "+
+				"'replace-upstream = true' is required because the archive already exists in the upstream 'sources' file",
+			ref.Filename, componentName)
 	}
 
 	return nil
@@ -332,6 +354,7 @@ func validateCustomSourceInputs(ref SourceFileReference, componentName string) e
 
 // validateOrigin checks that a source file [Origin] is present and valid for its type.
 // For [OriginTypeURI] ('download'), the [Origin.Uri] field must be a valid URI with a scheme.
+// For [OriginTypeOverlay] ('overlay'), no URI is used; the archive is already on disk.
 func validateOrigin(origin Origin, filename string, componentName string) error {
 	if origin.Type == "" {
 		return fmt.Errorf(
@@ -373,6 +396,13 @@ func validateOrigin(origin Origin, filename string, componentName string) error 
 				filename, componentName)
 		}
 
+	case OriginTypeOverlay:
+		if origin.Uri != "" {
+			return fmt.Errorf(
+				"unexpected 'uri' for source file %#q, component %#q; "+
+					"'uri' must not be set when 'origin' type is 'overlay'",
+				filename, componentName)
+		}
 	default:
 		return fmt.Errorf(
 			"unsupported 'origin' type %#q for source file %#q, component %#q",

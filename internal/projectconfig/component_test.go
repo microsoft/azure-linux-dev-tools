@@ -213,13 +213,115 @@ func TestMergeComponentUpdates_OverlayFilesEmptyOverride(t *testing.T) {
 }
 
 func TestMergeComponentUpdates_OverlayFilesInheritWhenUnset(t *testing.T) {
-	base := projectconfig.ComponentConfig{
-		OverlayFiles: []string{"overlays/*.overlay.toml"},
-	}
+	base := projectconfig.ComponentConfig{OverlayFiles: []string{"overlays/*.overlay.toml"}}
 
 	err := base.MergeUpdatesFrom(&projectconfig.ComponentConfig{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"overlays/*.overlay.toml"}, base.OverlayFiles)
+}
+
+func TestValidateArchiveOverlayOrigins(t *testing.T) {
+	const archiveName = "pkg.tar.gz"
+
+	archiveOverlay := projectconfig.ComponentOverlay{
+		Type: projectconfig.ComponentOverlayRemoveFile, Archive: archiveName, Filename: "vendor/**",
+	}
+	config := func(withArchive bool, origin projectconfig.OriginType,
+		extra projectconfig.ComponentOverlay,
+	) projectconfig.ComponentConfig {
+		var result projectconfig.ComponentConfig
+		if withArchive {
+			result.Overlays = append(result.Overlays, archiveOverlay)
+		}
+
+		if extra.Type != "" {
+			result.Overlays = append(result.Overlays, extra)
+		}
+
+		if origin != "" {
+			result.SourceFiles = append(result.SourceFiles, projectconfig.SourceFileReference{
+				Filename: archiveName, Origin: projectconfig.Origin{Type: origin},
+			})
+		}
+
+		return result
+	}
+
+	tests := []struct {
+		name         string
+		config       projectconfig.ComponentConfig
+		allowMissing bool
+		wantErr      string
+	}{
+		{name: "matching", config: config(true, projectconfig.OriginTypeOverlay, projectconfig.ComponentOverlay{})},
+		{
+			name: "missing origin", config: config(true, "", projectconfig.ComponentOverlay{}),
+			wantErr: "requires a matching 'source-files' entry",
+		},
+		{name: "bootstrap", config: config(true, "", projectconfig.ComponentOverlay{}), allowMissing: true},
+		{
+			name: "orphaned origin", config: config(false, projectconfig.OriginTypeOverlay, projectconfig.ComponentOverlay{}),
+			allowMissing: true, wantErr: "no archive-scoped overlay",
+		},
+		{
+			name: "custom origin", config: config(true, projectconfig.OriginTypeCustom, projectconfig.ComponentOverlay{}),
+			wantErr: "requires a matching 'source-files' entry",
+		},
+		{
+			name: "download origin", config: config(true, projectconfig.OriginTypeURI, projectconfig.ComponentOverlay{}),
+			wantErr: "requires a matching 'source-files' entry",
+		},
+		{
+			name: "exact target", config: config(true, projectconfig.OriginTypeOverlay,
+				projectconfig.ComponentOverlay{Type: projectconfig.ComponentOverlayRemoveFile, Filename: archiveName}),
+			wantErr: "both overlay scopes",
+		},
+		{
+			name: "glob target", config: config(true, projectconfig.OriginTypeOverlay,
+				projectconfig.ComponentOverlay{Type: projectconfig.ComponentOverlayRemoveFile, Filename: "*.tar.gz"}),
+			wantErr: "both overlay scopes",
+		},
+		{
+			name: "search", config: config(true, projectconfig.OriginTypeOverlay,
+				projectconfig.ComponentOverlay{Type: projectconfig.ComponentOverlaySearchAndReplaceInFile, Filename: archiveName}),
+			wantErr: "both overlay scopes",
+		},
+		{
+			name: "prepend", config: config(true, projectconfig.OriginTypeOverlay,
+				projectconfig.ComponentOverlay{Type: projectconfig.ComponentOverlayPrependLinesToFile, Filename: archiveName}),
+			wantErr: "both overlay scopes",
+		},
+		{name: "add", config: config(true, projectconfig.OriginTypeOverlay,
+			projectconfig.ComponentOverlay{
+				Type:     projectconfig.ComponentOverlayAddFile,
+				Filename: archiveName, Source: "/replacement",
+			}), wantErr: "both overlay scopes"},
+		{name: "rename from", config: config(true, projectconfig.OriginTypeOverlay,
+			projectconfig.ComponentOverlay{
+				Type:     projectconfig.ComponentOverlayRenameFile,
+				Filename: archiveName, Replacement: "renamed.tar.gz",
+			}), wantErr: "both overlay scopes"},
+		{name: "rename to", config: config(true, projectconfig.OriginTypeOverlay,
+			projectconfig.ComponentOverlay{
+				Type:     projectconfig.ComponentOverlayRenameFile,
+				Filename: "other.tar.gz", Replacement: archiveName,
+			}), wantErr: "both overlay scopes"},
+		{name: "unrelated", config: config(true, projectconfig.OriginTypeOverlay,
+			projectconfig.ComponentOverlay{Type: projectconfig.ComponentOverlayRemoveFile, Filename: "notes.txt"})},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.config.ValidateArchiveOverlays(test.allowMissing)
+			if test.wantErr != "" {
+				require.ErrorContains(t, err, test.wantErr)
+
+				return
+			}
+
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestAllowedSourceFilesHashTypes_MatchesJSONSchemaEnum(t *testing.T) {
@@ -383,6 +485,31 @@ func TestResolveComponentConfig(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, resolved.OverlayFiles)
 		assert.Empty(t, resolved.OverlayFiles)
+	})
+
+	t.Run("group archive overlay combines with component origin", func(t *testing.T) {
+		groups := map[string]projectconfig.ComponentGroupConfig{
+			"archive-overlays": {
+				DefaultComponentConfig: projectconfig.ComponentConfig{
+					Overlays: []projectconfig.ComponentOverlay{{
+						Type:     projectconfig.ComponentOverlayRemoveFile,
+						Archive:  "shared-source.tar.gz",
+						Filename: "vendor/**",
+					}},
+				},
+			},
+		}
+		component := projectconfig.ComponentConfig{Name: "curl", SourceFiles: []projectconfig.SourceFileReference{{
+			Filename:        "shared-source.tar.gz",
+			Origin:          projectconfig.Origin{Type: projectconfig.OriginTypeOverlay},
+			ReplaceUpstream: true,
+		}}}
+
+		resolved, err := projectconfig.ResolveComponentConfig(
+			component, projectconfig.ComponentConfig{}, projectconfig.ComponentConfig{}, groups, []string{"archive-overlays"},
+		)
+		require.NoError(t, err)
+		require.NoError(t, resolved.ValidateArchiveOverlays(false))
 	})
 
 	t.Run("missing group errors", func(t *testing.T) {

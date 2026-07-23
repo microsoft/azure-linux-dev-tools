@@ -13,6 +13,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource/fedorasource_test"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/downloader/downloader_test"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
@@ -141,4 +142,39 @@ func TestFetchSourceFile_ConfiguredSourceReplacesExistingFile(t *testing.T) {
 			assert.Empty(t, content)
 		})
 	}
+}
+
+func TestFetchedSourceFilenames(t *testing.T) {
+	refs := []projectconfig.SourceFileReference{
+		{Filename: "download.tar.gz", Origin: projectconfig.Origin{Type: projectconfig.OriginTypeURI}},
+		{Filename: "custom.tar.gz", Origin: projectconfig.Origin{Type: projectconfig.OriginTypeCustom}},
+		{Filename: "overlay.tar.gz", Origin: projectconfig.Origin{Type: projectconfig.OriginTypeOverlay}},
+	}
+
+	assert.Equal(t, []string{"download.tar.gz", "custom.tar.gz"}, fetchedSourceFilenames(refs))
+}
+
+func TestDownloadLookasideSourcesKeepsOverlayOriginArchive(t *testing.T) {
+	const (
+		archiveName = "overlay.tar.gz"
+		destDir     = "/output"
+		baseURI     = "https://example.com/lookaside"
+	)
+
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+	downloader := fedorasource_test.NewMockFedoraSourceDownloader(ctrl)
+
+	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
+		SourceFiles: []projectconfig.SourceFileReference{{
+			Filename: archiveName,
+			Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeOverlay},
+		}},
+	})
+	component.EXPECT().GetName().Return("component")
+	downloader.EXPECT().ExtractSourcesFromRepo(
+		gomock.Any(), destDir, "component", baseURI, []string(nil)).Return(nil)
+
+	manager := &sourceManager{lookasideDownloader: downloader, lookasideBaseURI: baseURI}
+	require.NoError(t, manager.downloadLookasideSources(t.Context(), component, destDir))
 }

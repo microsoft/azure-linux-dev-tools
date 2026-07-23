@@ -196,6 +196,30 @@ func (c *ComponentOverlay) ModifiesLooseFiles() bool {
 		c.Type == ComponentOverlayRemovePatch
 }
 
+// TargetsLooseFile reports whether a loose-file overlay can modify filename.
+func (c *ComponentOverlay) TargetsLooseFile(filename string) (bool, error) {
+	if !c.ModifiesLooseFiles() {
+		return false, nil
+	}
+
+	//nolint:exhaustive // Only types with special destination semantics are listed.
+	switch c.Type {
+	case ComponentOverlayAddFile, ComponentOverlayAddPatch:
+		return c.EffectiveSourceName() == filename, nil
+	case ComponentOverlayRenameFile:
+		if c.Replacement == filename {
+			return true, nil
+		}
+	}
+
+	matches, err := doublestar.PathMatch(c.Filename, filename)
+	if err != nil {
+		return false, fmt.Errorf("matching overlay file pattern %#q:\n%w", c.Filename, err)
+	}
+
+	return matches, nil
+}
+
 // HashInclude implements the hashstructure Includable interface so the
 // [ComponentOverlay.Archive] field is omitted from the component fingerprint while it holds
 // its default (empty) value. A defaulted Archive therefore reproduces the pre-existing fingerprint

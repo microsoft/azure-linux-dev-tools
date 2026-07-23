@@ -315,7 +315,7 @@ The `[[components.<name>.source-files]]` array defines additional source files t
 
 ### Origin
 
-Two origin types are supported.
+Three origin types are supported.
 
 #### `"download"` — fetch from a URI
 
@@ -356,7 +356,39 @@ origin.mock-packages = ["cmake"]                 # omit if not needed
 origin.inputs        = ["yara-4.5.4.tar.gz"]     # available to the script as ./yara-4.5.4.tar.gz
 ```
 
-> **Note:** Upstream source tarballs are automatically available as inputs before running custom generation scripts. There is no need to re-declare an upstream file in `source-files` to use it as an input.
+**Note:** Upstream source tarballs are automatically available as inputs before running custom generation scripts. There is no need to re-declare an upstream file in `source-files` to use it as an input.
+
+#### `"overlay"` — record a post-overlay hash
+
+- **`hash` and `hash-type` are required** for normal use. To bootstrap a new archive overlay, omit both and run `prep-sources --allow-no-hashes` once; it computes the post-overlay hash for you.
+- **`replace-upstream = true` is required** — the archive already exists in the upstream `sources` file, and this entry replaces its hash with the post-overlay value.
+- During `prep-sources` (full run), azldev verifies that the hash it computed after repacking the archive matches the stated `hash`. A mismatch means the config is stale and must be updated.
+- The post-overlay archive is hashed using the configured `hash-type`, regardless of the algorithm used by the upstream `sources` entry. The archive's actual compression format is preserved when repacking, even when it does not match the filename extension.
+
+See [Recording the post-overlay hash for archive overlays](#recording-the-post-overlay-hash-for-archive-overlays) below for the full workflow.
+
+### Recording the post-overlay hash for archive overlays
+
+When you apply archive overlays (e.g. removing vendored files from a tarball) using `file-remove` or `file-search-replace` with an archive-scoped path, the repacked archive has a different hash than the original. Use a `source-files` entry with `origin.type = "overlay"` to record the expected post-overlay hash:
+
+```toml
+[[components.apache-commons-compress.source-files]]
+filename = "commons-compress-1.27.1-src.tar.gz"
+hash = "c7a2cef26959e687ad19b96b5ba8393d7514095e13bf0f29bd41e6b3c3cb2260d8ff23283ff3d5fd137b2522b843e7f0f50ab46bcf0f66df5383674f35f223ab"
+hash-type = "SHA512"
+origin = { type = "overlay" }
+replace-upstream = true
+replace-reason = "Upstream source tarball contains test fixtures flagged as malware by the AZL RPM signing pipeline. These files are not needed at runtime and are removed to allow SRPM publication."
+```
+
+**Workflow:**
+
+1. Add the archive overlay(s) in the component's `[[overlays]]` array.
+2. Run `prep-sources --allow-no-hashes` once — this repacks the archive and writes the computed hash to the output `sources` file.
+3. Paste the computed `hash` and `hash-type` into the `source-files` entry above.
+4. Run `prep-sources` again to confirm the hash matches, then commit.
+
+`replace-upstream = true` and `replace-reason` are required because the archive is already in the upstream `sources` file. The entry replaces its hash with the post-overlay value, regardless of how many overlays target that archive.
 
 ### Replacing an upstream `sources` entry
 

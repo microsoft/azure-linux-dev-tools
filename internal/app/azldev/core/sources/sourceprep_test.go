@@ -5,6 +5,7 @@ package sources_test
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/sourceproviders_test"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/archive"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/stretchr/testify/assert"
@@ -97,6 +99,201 @@ func TestPrepareSources_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(specContents), "%{load:%{_sourcedir}/"+macrosFileName+"}")
 	assert.NotContains(t, string(specContents), "Source9999")
+}
+
+// TestPrepareSources_ArchiveOverlayRehashesSourcesEntry is an end-to-end check
+// of the key correctness behavior introduced with archive overlays: when an
+// archive-scoped overlay mutates an archive's contents, the matching 'sources'
+// entry must be re-hashed in place so the recorded digest reflects the repacked
+// archive using the overlay-origin entry's configured hash type, independently
+// of the upstream entry's hash type.
+//
+// This runs against the host filesystem with a real temp dir because archive
+// overlays extract/repack through the [archive] package, which uses OS
+// primitives ([os.Root], os.*) and therefore requires genuine on-disk paths —
+// an in-memory FS would not be visible to extraction/repacking. This mirrors
+// the existing archive internal tests, which likewise use t.TempDir().
+func TestPrepareSources_ArchiveOverlayRehashesSourcesEntry(t *testing.T) {
+	const (
+		componentName = "test-component"
+		archiveName   = "pkg-1.0.tar.gz"
+	)
+
+	// Host FS + real temp dir: archive extraction/repacking happens on disk.
+	ctx := testctx.NewCtx(testctx.WithHostFS())
+	outputDir := t.TempDir()
+
+	archivePath := filepath.Join(outputDir, archiveName)
+	specPath := filepath.Join(outputDir, componentName+".spec")
+	sourcesPath := filepath.Join(outputDir, fedorasource.SourcesFileName)
+
+	// Build a deterministic archive whose single top-level directory follows the
+	// conventional "%{name}-%{version}/" layout, containing a file we will remove
+	// and one we will keep.
+	stagingDir := t.TempDir()
+	pkgRoot := filepath.Join(stagingDir, "pkg-1.0")
+	require.NoError(t, os.MkdirAll(pkgRoot, fileperms.PublicDir))
+	require.NoError(t, os.WriteFile(filepath.Join(pkgRoot, "keep.txt"), []byte("keep me"), fileperms.PrivateFile))
+	require.NoError(t, os.WriteFile(filepath.Join(pkgRoot, "remove-me.txt"), []byte("delete me"), fileperms.PrivateFile))
+	require.NoError(t, archive.CreateDeterministicArchive(archivePath, stagingDir, archive.CompressionGzip))
+
+	// Seed a legacy upstream MD5 entry. The upstream algorithm verifies the
+	// original download only; the repacked result must use the configured SHA-512.
+	originalHash, err := fileutils.ComputeFileHash(ctx.FS(), fileutils.HashTypeMD5, archivePath)
+	require.NoError(t, err)
+
+	originalEntry := fedorasource.FormatSourcesEntry(archiveName, fileutils.HashTypeMD5, originalHash)
+	require.NoError(t, fileutils.WriteFile(
+		ctx.FS(), sourcesPath, []byte(originalEntry+"\n"), fileperms.PublicFile))
+
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+	sourceManager := sourceproviders_test.NewMockSourceManager(ctrl)
+
+	component.EXPECT().GetName().AnyTimes().Return(componentName)
+	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
+		Overlays: []projectconfig.ComponentOverlay{
+			{
+				Type:     projectconfig.ComponentOverlayRemoveFile,
+				Archive:  archiveName,
+				Filename: "remove-me.txt",
+			},
+		},
+		SourceFiles: []projectconfig.SourceFileReference{
+			{
+				Filename:        archiveName,
+				HashType:        fileutils.HashTypeSHA512,
+				Origin:          projectconfig.Origin{Type: projectconfig.OriginTypeOverlay},
+				ReplaceUpstream: true,
+				ReplaceReason:   "record the post-overlay archive",
+			},
+		},
+	})
+
+	// The archive and 'sources' file already exist on disk; the source manager
+	// only needs to provide the spec file (FetchFiles is a no-op download).
+	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, outputDir).Return(nil)
+	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, outputDir, gomock.Any()).DoAndReturn(
+		func(_ interface{}, _ interface{}, dir string, _ ...sourceproviders.FetchComponentOption) error {
+			return fileutils.WriteFile(
+				ctx.FS(), filepath.Join(dir, componentName+".spec"),
+				[]byte("# test spec"), fileperms.PublicFile)
+		},
+	)
+
+	// '--allow-no-hashes' permits bootstrapping an archive overlay before its
+	// overlay-origin source-file entry and post-overlay hash are configured.
+	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx, sources.WithAllowNoHashes())
+	require.NoError(t, err)
+
+	err = preparer.PrepareSources(ctx, component, outputDir, true /*applyOverlays*/)
+	require.NoError(t, err)
+
+	// The overlay must have actually mutated the archive on disk.
+	assert.FileExists(t, specPath)
+
+	repackedHash, err := fileutils.ComputeFileHash(ctx.FS(), fileutils.HashTypeSHA512, archivePath)
+	require.NoError(t, err)
+	require.NotEqual(t, originalHash, repackedHash,
+		"precondition: removing a file from the archive should change its hash")
+
+	// The 'sources' entry must use the configured post-overlay algorithm, not the
+	// legacy algorithm from the upstream entry.
+	sourcesContent, err := fileutils.ReadFile(ctx.FS(), sourcesPath)
+	require.NoError(t, err)
+
+	entry := findSourcesEntry(t, string(sourcesContent), archiveName)
+	require.NotNil(t, entry, "rewritten 'sources' file should still contain an entry for %q", archiveName)
+	assert.Equal(t, fileutils.HashTypeSHA512, entry.HashType, "configured post-overlay hash type must be used")
+	assert.Equal(t, repackedHash, entry.Hash, "'sources' entry must record the repacked archive's hash")
+	assert.NotEqual(t, originalHash, entry.Hash, "'sources' entry hash must have been updated")
+}
+
+func TestPrepareSources_ArchiveOverlayAssociationValidation(t *testing.T) {
+	const archiveName = "source.tar.gz"
+
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+	sourceManager := sourceproviders_test.NewMockSourceManager(ctrl)
+	ctx := testctx.NewCtx()
+
+	component.EXPECT().GetName().AnyTimes().Return("test-component")
+	component.EXPECT().GetConfig().Return(&projectconfig.ComponentConfig{
+		SourceFiles: []projectconfig.SourceFileReference{{
+			Filename: archiveName,
+			Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeOverlay},
+		}},
+	})
+
+	preparer, err := sources.NewPreparer(
+		sourceManager, ctx.FS(), ctx, ctx, sources.WithAllowNoHashes())
+	require.NoError(t, err)
+	require.ErrorContains(t,
+		preparer.PrepareSources(ctx, component, testOutputDir, true),
+		"no archive-scoped overlay modifies that archive")
+}
+
+// TestPrepareSources_ArchiveOverlayMissingSourcesEntryErrors verifies that when an
+// archive-scoped overlay repacks an archive that has no matching 'sources' entry,
+// preparation fails instead of silently leaving a stale (or absent) digest.
+func TestPrepareSources_ArchiveOverlayMissingSourcesEntryErrors(t *testing.T) {
+	const (
+		componentName = "test-component"
+		archiveName   = "pkg-1.0.tar.gz"
+	)
+
+	// Host FS + real temp dir: archive extraction/repacking happens on disk.
+	ctx := testctx.NewCtx(testctx.WithHostFS())
+	outputDir := t.TempDir()
+
+	archivePath := filepath.Join(outputDir, archiveName)
+	sourcesPath := filepath.Join(outputDir, fedorasource.SourcesFileName)
+
+	// Build a deterministic archive with a file to remove, but deliberately seed a
+	// 'sources' file that has NO entry for this archive.
+	stagingDir := t.TempDir()
+	pkgRoot := filepath.Join(stagingDir, "pkg-1.0")
+	require.NoError(t, os.MkdirAll(pkgRoot, fileperms.PublicDir))
+	require.NoError(t, os.WriteFile(filepath.Join(pkgRoot, "remove-me.txt"), []byte("delete me"), fileperms.PrivateFile))
+	require.NoError(t, archive.CreateDeterministicArchive(archivePath, stagingDir, archive.CompressionGzip))
+
+	// 'sources' file references some unrelated file, not the archive being modified.
+	require.NoError(t, fileutils.WriteFile(
+		ctx.FS(), sourcesPath,
+		[]byte("SHA256 (unrelated.tar.gz) = 0000000000000000000000000000000000000000000000000000000000000000\n"),
+		fileperms.PublicFile))
+
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+	sourceManager := sourceproviders_test.NewMockSourceManager(ctrl)
+
+	component.EXPECT().GetName().AnyTimes().Return(componentName)
+	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
+		Overlays: []projectconfig.ComponentOverlay{
+			{
+				Type:     projectconfig.ComponentOverlayRemoveFile,
+				Archive:  archiveName,
+				Filename: "remove-me.txt",
+			},
+		},
+	})
+
+	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, outputDir).Return(nil)
+	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, outputDir, gomock.Any()).DoAndReturn(
+		func(_ interface{}, _ interface{}, dir string, _ ...sourceproviders.FetchComponentOption) error {
+			return fileutils.WriteFile(
+				ctx.FS(), filepath.Join(dir, componentName+".spec"),
+				[]byte("# test spec"), fileperms.PublicFile)
+		},
+	)
+
+	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx, sources.WithAllowNoHashes())
+	require.NoError(t, err)
+
+	err = preparer.PrepareSources(ctx, component, outputDir, true /*applyOverlays*/)
+	require.Error(t, err, "preparing sources should fail when a modified archive has no 'sources' entry")
+	assert.Contains(t, err.Error(), archiveName,
+		"error should identify the archive missing from the 'sources' file")
 }
 
 func TestPrepareSources_SourceManagerError(t *testing.T) {
@@ -859,7 +1056,7 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 			existingSourcesContent: "SHA512 (dup.tar.gz) = aaaa1111\nSHA512 (dup.tar.gz) = bbbb2222\n",
 			expectError:            true,
 			errorContains: []string{
-				"failed to parse existing 'sources' file",
+				"failed to parse 'sources' file",
 				"duplicate filename",
 				"dup.tar.gz",
 			},
