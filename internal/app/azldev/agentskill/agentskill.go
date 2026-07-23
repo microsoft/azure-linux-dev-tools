@@ -69,6 +69,81 @@ var skills = []Skill{
 			"component, distro config.",
 		bodyTemplate: "azldev.md.tmpl",
 	},
+	{
+		Name: "azldev-mock",
+		Description: "Read this before testing or inspecting a built RPM; do not drive mock by hand from " +
+			"memory. Explains how to test and inspect built packages in a mock chroot with 'azldev adv " +
+			"mock shell', covering non-interactive (heredoc) and interactive chroot workflows, the " +
+			"-p/--add-package flag, and resetting stale chroot state. Triggers include test package, mock " +
+			"shell, inspect rpm, smoke test, chroot, verify build output.",
+		bodyTemplate: "mock.md.tmpl",
+	},
+	{
+		Name: "azldev-update-component",
+		Description: "Read this before finalizing a component change, changing source resolution, or " +
+			"touching a lock file; lock edits are easy to get wrong. Explains how to refresh azldev " +
+			"component lock files with 'azldev comp update', covering when to run update versus render, the " +
+			"update/render/commit/re-render/amend workflow, and per-component versus -a refresh. Triggers " +
+			"include comp update, refresh lock, bump pin, change snapshot, upstream distro, lock drift, " +
+			"version bump, finalize component.",
+		bodyTemplate: "update-component.md.tmpl",
+	},
+	{
+		Name: "azldev-remove-component",
+		Description: "Read this before deleting or dropping a component; there is no azldev remove " +
+			"command, so doing it wrong leaves dangling state. Explains the manual removal workflow for " +
+			"deleting component metadata, cleaning references, and validating any related output-affecting " +
+			"changes. Triggers include remove component, delete package, drop " +
+			"component, prune dependency.",
+		bodyTemplate: "remove-component.md.tmpl",
+	},
+	{
+		Name: "azldev-overlays",
+		Description: "Read this before adding, changing, or diagnosing any overlay; never edit a spec or " +
+			"rendered file from memory. Explains how to modify a component's RPM spec or loose source files " +
+			"with azldev overlays (semantic patches applied at render time) instead of forking the spec, " +
+			"covering overlay types, the render-and-inspect loop, common failures, pitfalls, and metadata. " +
+			"Triggers include overlay, overlay failed, no match, spec-add-tag, spec-remove-tag, patch-add, " +
+			"fix spec, backport, disable test, prune subpackage, edit spec.",
+		bodyTemplate: "overlays.md.tmpl",
+	},
+	{
+		Name: "azldev-comp-toml",
+		Description: "Read this before authoring, editing, or reviewing a *.comp.toml file; do not work " +
+			"from memory. Explains the azldev component definition format and review workflow, covering " +
+			"component structure, spec sources, build config, release calculation, render options, file " +
+			"organization, overlay hygiene, stale files, disabled tests, and testing verification. " +
+			"Triggers include comp.toml, component config, review component, component hygiene, spec " +
+			"source, upstream-distro, build defines, release calculation, includes.",
+		bodyTemplate: "comp-toml.md.tmpl",
+	},
+	{
+		Name: "azldev-add-component",
+		Description: "Read this before adding or importing a component; follow the workflow instead of " +
+			"guessing. Explains how to add a new component to an azldev distro, covering inspecting the " +
+			"upstream spec, the inline-versus-dedicated-file decision, and validating with render, " +
+			"diff-sources, and build. Triggers include add component, new package, import package, create " +
+			"comp.toml, new component.",
+		bodyTemplate: "add-component.md.tmpl",
+	},
+	{
+		Name: "azldev-build-component",
+		Description: "Read this before building a component or diagnosing a build failure; do not guess " +
+			"build flags or the inner loop. Explains how to build, iterate on, and debug an azldev " +
+			"component, covering comp build flags (local-repo, preserve-buildenv), the render/build/test " +
+			"inner loop, diff-sources, and disabling a failing %check via check.skip. Triggers include " +
+			"build component, build failed, build error, inner loop, preserve buildenv, local repo, disable " +
+			"check.",
+		bodyTemplate: "build-component.md.tmpl",
+	},
+	{
+		Name: "azldev-image",
+		Description: "Read this before building, booting, or configuring an azldev image. Explains the " +
+			"azldev image commands (list, build, boot, test, customize) and the [images.<name>] config " +
+			"(kiwi definition, capabilities, tests, publish); the kiwi XML format itself is upstream KIWI " +
+			"NG. Triggers include image build, image boot, kiwi, container image, VM image, images.toml.",
+		bodyTemplate: "image.md.tmpl",
+	},
 }
 
 // Skills returns the registered skills in emission order.
@@ -144,6 +219,40 @@ var instructions = []Instruction{
 		Intro: "This repository is an azldev distro project; its top-level configuration lives in `azldev.toml`.",
 		Skills: []SkillPointer{
 			{Skill: SkillName, Purpose: "for how to use the azldev CLI"},
+		},
+	},
+	{
+		Name:    "comp-toml",
+		ApplyTo: "**/*.comp.toml,**/components.toml",
+		Description: "These are azldev component definition files (*.comp.toml). Before editing " +
+			"or reviewing one, load " +
+			"the azldev-comp-toml skill (and azldev-overlays for spec changes); do not hand-write " +
+			"component config from memory. Triggers include comp.toml, component config, spec source, " +
+			"build defines, release calculation, overlays, review component.",
+		Title: "Component definition files (`*.comp.toml`)",
+		Intro: "These files define a distro's components — each one's spec source and how azldev customizes it.",
+		Skills: []SkillPointer{
+			{Skill: "azldev-comp-toml", Purpose: "for the component TOML format and review checklist"},
+			{Skill: "azldev-add-component", Purpose: "to add a new component"},
+			{Skill: "azldev-overlays", Purpose: "to add or change overlays"},
+			{Skill: "azldev-update-component", Purpose: "to refresh a component's lock"},
+			{Skill: "azldev-remove-component", Purpose: "to remove a component"},
+		},
+	},
+	{
+		Name:    "rendered-specs",
+		ApplyTo: "{{ .RenderedSpecsDir }}/**/*",
+		Description: "Rendered component files produced by 'azldev comp render'. They are build inputs and " +
+			"must not be hand-edited. Before changing one, load the azldev-overlays or azldev-comp-toml " +
+			"skill, edit the source, and re-render. Read this when viewing or tempted to edit generated " +
+			"output.",
+		Title: "Rendered component files",
+		Intro: "These files are generated by `azldev comp render` and are build inputs; do not edit them " +
+			"directly — change the component's `.comp.toml`, overlays, or source files and re-render.",
+		Skills: []SkillPointer{
+			{Skill: "azldev-comp-toml", Purpose: "for the component TOML format"},
+			{Skill: "azldev-overlays", Purpose: "to change generated output via overlays"},
+			{Skill: "azldev-update-component", Purpose: "to refresh and finalize a component"},
 		},
 	},
 }
