@@ -18,7 +18,7 @@
 Before submitting, ensure your changes pass all checks:
 
 ```bash
-mage all  # Comprehensive validation (will also invoke scenario tests, which will be slow)
+mage all  # Default Go validation (also invokes slow scenario tests)
 ```
 
 For faster iteration during development:
@@ -26,7 +26,7 @@ For faster iteration during development:
 ```bash
 mage build     # Rebuild the tool
 mage unit      # Fast unit tests
-mage check all # Code quality checks
+mage check all # All quality checks, including optional Python checks
 mage fix all   # Auto-fix issues
 ```
 

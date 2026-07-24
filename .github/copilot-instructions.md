@@ -23,7 +23,8 @@ The `azldev-mage-builder` MCP server can run build commands without requesting p
 
 **ALWAYS start with `mage fix all`** when fixing linter issues - it automatically handles most formatting and simple fixes. Only manually fix the remaining issues that the auto-fixer cannot handle (both check and fix may take > 30 seconds the first time they run).
 
-Run `mage all` to verify changes pass all checks, this runs the scenario tests so it will be SLOW.
+Run `mage all` to verify Go changes and scenario tests. Run `mage check all` as well when
+changing Python or to include the optional Python lint and type checks.
 
 Project structure: `cmd/` (entry points), `internal/` (business logic), `magefiles/` (build config).
 

@@ -20,6 +20,7 @@ import (
 // Meta targets for the checks and fixes.
 const (
 	TargetAll      = "all"
+	TargetDefault  = "default"
 	TargetMod      = "mod"
 	TargetLint     = "lint"
 	TargetStatic   = "static"
@@ -37,7 +38,7 @@ var (
 	ErrTypeCheck     = errors.New("type check failed")
 )
 
-// Check one of: [all, mod, lint, static, licenses, python].
+// Check one of: [all, default, mod, lint, static, licenses, python].
 // BASH-COMPLETION: This is scanned by the bash completion script, keep it in sync with the script.
 func Check(target string) error {
 	mg.SerialDeps(magesrc.Generate)
@@ -46,7 +47,9 @@ func Check(target string) error {
 
 	switch target {
 	case TargetAll:
-		mg.SerialDeps(modCheck, lintCheck, static, licenseCheck, pythonCheck)
+		mg.SerialDeps(defaultCheck, pythonCheck)
+	case TargetDefault:
+		mg.SerialDeps(defaultCheck)
 	case TargetMod:
 		mg.SerialDeps(modCheck)
 	case TargetLint:
@@ -59,10 +62,24 @@ func Check(target string) error {
 		mg.SerialDeps(pythonCheck)
 	default:
 		return fmt.Errorf("%w: unknown check target '%s'. Available targets: %v",
-			ErrCheck, target, []string{TargetAll, TargetMod, TargetLint, TargetStatic, TargetLicenses, TargetPython})
+			ErrCheck, target, []string{
+				TargetAll,
+				TargetDefault,
+				TargetMod,
+				TargetLint,
+				TargetStatic,
+				TargetLicenses,
+				TargetPython,
+			})
 	}
 
 	mageutil.MagePrintln(mageutil.MsgSuccess, "Done checking.")
+
+	return nil
+}
+
+func defaultCheck() error {
+	mg.SerialDeps(modCheck, lintCheck, static, licenseCheck)
 
 	return nil
 }

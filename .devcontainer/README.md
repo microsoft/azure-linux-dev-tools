@@ -9,7 +9,7 @@ The dev container uses the `azl_dev_3.0` image defined in `Dockerfile.AZL-3.0`. 
 - Go development tools,
 - Mage build system,
 - golangci-lint,
-- ruff and pyright (plus Node.js, required by pyright) for Python linting/formatting/type-checking,
+- ruff and pyright from the repository's pinned [`requirements-lint.txt`](../requirements-lint.txt) for Python linting/formatting/type-checking,
 - required development dependencies for VS Code.
 
 ## Getting Started

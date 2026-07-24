@@ -59,6 +59,8 @@ Go binary).
   Run `mage check python` to lint and `mage fix python` to auto-format and apply fixes.
 - **Type checking**: All Python must pass `pyright` (config: [`pyrightconfig.json`](../../../pyrightconfig.json)).
   This is also run by `mage check python`.
+- **Tool installation**: Install the pinned versions from [`requirements-lint.txt`](../../../requirements-lint.txt)
+  in the virtual environment described in [Getting Started](../how-to/get-started.md#prerequisites).
 - Both checks are part of `mage check all`.
 
 ## Logging Guidelines
