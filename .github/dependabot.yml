@@ -36,6 +36,19 @@ updates:
         update-types:
           - "major"
 
+  # Python lint tools
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      dependabot-pip-python-tools:
+        applies-to: version-updates
+        patterns:
+          - "*"
+
   # Tools go.mod files
   - package-ecosystem: "gomod"
     directories:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) Microsoft Corporation.
+# Copyright (c) 2026 Microsoft Corporation.
 # Licensed under the MIT License.
 
 r"""Run rpmautospec and spectool for each component inside a mock chroot.

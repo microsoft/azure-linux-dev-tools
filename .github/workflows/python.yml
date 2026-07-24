@@ -28,8 +28,7 @@ jobs:
           persist-credentials: false
       - name: Get go tools
         uses: ./.github/getgotools
-      - name: Install ruff and pyright
-        # ubuntu-latest ships Python and Node.js; pyright requires Node.
-        run: pip install ruff pyright
+      - name: Install Python lint tools
+        run: pip install -r requirements-lint.txt
       - name: Run mage check python
         run: mage -v check python

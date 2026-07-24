@@ -2,7 +2,7 @@
   "name": "AZL Dev 3.0",
   "build": {
     "dockerfile": "Dockerfile.AZL-3.0",
-    "context": "."
+    "context": ".."
   },
   "runArgs": [
     "--privileged"

@@ -2,12 +2,12 @@ FROM mcr.microsoft.com/azurelinux/base/core:3.0
 
 # Install required packages
 RUN tdnf -y update && \
-    tdnf -y install ca-certificates dnf dnf-utils which gh git golang gawk tar shadow-utils sudo tree bash-completion moby-engine moby-cli build-essential python3-pip nodejs && \
+    tdnf -y install ca-certificates dnf dnf-utils which gh git golang gawk tar shadow-utils sudo tree bash-completion moby-engine moby-cli build-essential python3-pip && \
     tdnf clean all
 
-# Install ruff and pyright for Python linting/formatting/type-checking
-# (used by 'mage check python' / 'mage fix python'). pyright requires node (installed above).
-RUN pip3 install --no-cache-dir ruff pyright
+# Install the pinned Python lint tools.
+COPY requirements-lint.txt /tmp/requirements-lint.txt
+RUN pip3 install --no-cache-dir -r /tmp/requirements-lint.txt
 
 # Define the 'll' alias for all users
 RUN echo 'alias ll="ls -lah"' >> /etc/profile.d/aliases.sh && \
@@ -22,10 +22,10 @@ RUN useradd -m azldev && \
     usermod -aG docker azldev
 
 # Copy Docker daemon configuration
-COPY daemon.json /etc/docker/daemon.json
+COPY .devcontainer/daemon.json /etc/docker/daemon.json
 
 # Copy Docker start script
-COPY start-docker.sh /usr/local/bin/start-docker.sh
+COPY .devcontainer/start-docker.sh /usr/local/bin/start-docker.sh
 
 USER azldev
 
