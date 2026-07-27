@@ -260,6 +260,13 @@ func buildInterleavedSequence(
 // commit (import-commit) is kept as-is; subsequent upstream commits are
 // recreated with updated parents. Synthetic commits are empty except for the
 // very last one, which carries the overlay tree.
+//
+// Commit timestamps are clamped forward so the replayed history is monotonic
+// non-decreasing in time (see [clampWhenForward]). Interleaving can place a
+// synthetic downstream commit (wall-clock later) before an upstream release
+// commit (wall-clock earlier); without clamping, rpmautospec would render a
+// %changelog whose entries are not date-descending, which rpmbuild rejects with
+// "%changelog not in descending chronological order".
 func replayInterleavedHistory(
 	repo *gogit.Repository,
 	sequence []interleavedEntry,
@@ -270,6 +277,7 @@ func replayInterleavedHistory(
 	var (
 		lastHash     plumbing.Hash
 		lastTreeHash plumbing.Hash
+		lastWhen     time.Time
 		syntheticIdx int
 	)
 
@@ -277,18 +285,20 @@ func replayInterleavedHistory(
 		if idx == 0 && entry.upstreamCommit != nil {
 			lastHash = entry.upstreamCommit.Hash
 			lastTreeHash = entry.upstreamCommit.TreeHash
+			lastWhen = laterTime(entry.upstreamCommit.Author.When, entry.upstreamCommit.Committer.When)
 
 			continue
 		}
 
 		if entry.upstreamCommit != nil {
-			hash, err := replayUpstreamCommit(repo, entry.upstreamCommit, lastHash)
+			hash, when, err := replayUpstreamCommit(repo, entry.upstreamCommit, lastHash, lastWhen)
 			if err != nil {
 				return err
 			}
 
 			lastHash = hash
 			lastTreeHash = entry.upstreamCommit.TreeHash
+			lastWhen = when
 
 			continue
 		}
@@ -302,14 +312,15 @@ func replayInterleavedHistory(
 			treeHash = overlayTreeHash
 		}
 
-		hash, err := createSyntheticCommit(repo, entry.syntheticChange, treeHash, lastHash,
-			syntheticIdx, syntheticCount)
+		hash, when, err := createSyntheticCommit(repo, entry.syntheticChange, treeHash, lastHash,
+			syntheticIdx, syntheticCount, lastWhen)
 		if err != nil {
 			return err
 		}
 
 		lastHash = hash
 		lastTreeHash = treeHash
+		lastWhen = when
 	}
 
 	if err := updateHead(repo, lastHash); err != nil {
@@ -326,39 +337,54 @@ func replayInterleavedHistory(
 // replayUpstreamCommit recreates an upstream commit with a new parent, preserving
 // tree content, author, committer, and message. Merge commits (multiple parents)
 // are linearized by replaying them as single-parent commits — the tree hash is
-// preserved so the merged content is retained.
+// preserved so the merged content is retained. The author and committer
+// timestamps are clamped forward to minWhen so the replayed history stays
+// monotonic in time; the later of the two resulting timestamps is returned so
+// the caller can advance its running minimum.
 func replayUpstreamCommit(
 	repo *gogit.Repository,
 	commit *object.Commit,
 	parentHash plumbing.Hash,
-) (plumbing.Hash, error) {
+	minWhen time.Time,
+) (plumbing.Hash, time.Time, error) {
 	if len(commit.ParentHashes) > 1 {
 		slog.Debug("Linearizing merge commit in upstream history",
 			"commit", commit.Hash,
 			"parentCount", len(commit.ParentHashes))
 	}
 
+	author := clampWhenForward(commit.Author, minWhen)
+	committer := clampWhenForward(commit.Committer, minWhen)
+
 	hash, err := createCommitObject(repo, commit.TreeHash, parentHash,
-		commit.Author, commit.Committer, commit.Message)
+		author, committer, commit.Message)
 	if err != nil {
-		return plumbing.ZeroHash, fmt.Errorf("failed to replay upstream commit:\n%w", err)
+		return plumbing.ZeroHash, time.Time{}, fmt.Errorf("failed to replay upstream commit:\n%w", err)
 	}
 
-	return hash, nil
+	return hash, laterTime(author.When, committer.When), nil
 }
 
 // createSyntheticCommit creates a synthetic commit from a [FingerprintChange],
-// logging progress information.
+// logging progress information. The commit timestamp is clamped forward to
+// minWhen so the replayed history stays monotonic in time; the resulting
+// timestamp is returned so the caller can advance its running minimum.
 func createSyntheticCommit(
 	repo *gogit.Repository,
 	change *FingerprintChange,
 	treeHash, parentHash plumbing.Hash,
 	syntheticIdx, syntheticCount int,
-) (plumbing.Hash, error) {
+	minWhen time.Time,
+) (plumbing.Hash, time.Time, error) {
+	when := unixToTime(change.Timestamp)
+	if when.Before(minWhen) {
+		when = minWhen
+	}
+
 	author := object.Signature{
 		Name:  change.Author,
 		Email: change.AuthorEmail,
-		When:  unixToTime(change.Timestamp),
+		When:  when,
 	}
 
 	message := fmt.Sprintf("%s\n\nProject commit: %s", change.Message, change.Hash)
@@ -373,10 +399,31 @@ func createSyntheticCommit(
 
 	hash, err := createCommitObject(repo, treeHash, parentHash, author, author, message)
 	if err != nil {
-		return plumbing.ZeroHash, fmt.Errorf("failed to create synthetic commit %d:\n%w", syntheticIdx, err)
+		return plumbing.ZeroHash, time.Time{}, fmt.Errorf("failed to create synthetic commit %d:\n%w", syntheticIdx, err)
 	}
 
-	return hash, nil
+	return hash, when, nil
+}
+
+// laterTime returns the later of two timestamps.
+func laterTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+
+	return b
+}
+
+// clampWhenForward returns a copy of sig whose [object.Signature.When] is no
+// earlier than minWhen. It is used to enforce a monotonic non-decreasing
+// timeline across the replayed interleaved history so that the rpmautospec
+// generated %changelog is in descending chronological order.
+func clampWhenForward(sig object.Signature, minWhen time.Time) object.Signature {
+	if sig.When.Before(minWhen) {
+		sig.When = minWhen
+	}
+
+	return sig
 }
 
 // countSyntheticEntries returns the number of synthetic entries in the sequence.

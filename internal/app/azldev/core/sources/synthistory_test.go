@@ -231,6 +231,170 @@ func TestCommitInterleavedHistory_Interleaved(t *testing.T) {
 	assert.Contains(t, logCommits[3].Message, "upstream: v1.0") // import-commit (kept)
 }
 
+func TestCommitInterleavedHistory_ClampsInvertedTimestamps(t *testing.T) {
+	// A synthetic change referencing an older upstream commit can carry a
+	// wall-clock timestamp that is LATER than a subsequent upstream release
+	// commit (e.g. a downstream infra commit lands after upstream cut a new
+	// release, then the component is pinned back to that older-dated release).
+	// Interleaving places the synthetic before the newer-versioned/older-dated
+	// upstream commit, which would produce a non-monotonic timeline and, in
+	// turn, an rpmautospec %changelog that is not in descending chronological
+	// order (rpmbuild rejects that). The replay must clamp timestamps forward so
+	// the resulting history is monotonic non-decreasing.
+	memFS := memfs.New()
+	storer := memory.NewStorage()
+
+	repo, err := gogit.Init(storer, memFS)
+	require.NoError(t, err)
+
+	worktree, err := repo.Worktree()
+	require.NoError(t, err)
+
+	// Upstream commit 1 (v1.0), Jan 2024.
+	file1, err := memFS.Create("package.spec")
+	require.NoError(t, err)
+
+	_, err = file1.Write([]byte("Name: package\nVersion: 1.0\n"))
+	require.NoError(t, err)
+	require.NoError(t, file1.Close())
+
+	_, err = worktree.Add("package.spec")
+	require.NoError(t, err)
+
+	upstream1, err := worktree.Commit("upstream: v1.0", &gogit.CommitOptions{
+		Author: &object.Signature{
+			Name:  "Upstream",
+			Email: "upstream@fedora.org",
+			When:  time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+		},
+	})
+	require.NoError(t, err)
+
+	// Upstream commit 2 (v2.0) released Apr 14 2026 — EARLIER in wall-clock
+	// time than the synthetic change for v1.0 below. Give it a committer date
+	// distinct from (and later than) its author date — but still earlier than
+	// the inverting synthetic — so the test detects removal of EITHER the author
+	// or the committer clamp. rpmautospec keys the %changelog date off the
+	// committer timestamp (pkg_history.py uses commit.commit_time), so the
+	// committer assertion below is the one that mirrors real build behavior.
+	upstream2AuthorWhen := time.Date(2026, 4, 14, 0, 0, 0, 0, time.UTC)
+	upstream2CommitterWhen := time.Date(2026, 4, 15, 0, 0, 0, 0, time.UTC)
+
+	file2, err := memFS.Create("package.spec")
+	require.NoError(t, err)
+
+	_, err = file2.Write([]byte("Name: package\nVersion: 2.0\n"))
+	require.NoError(t, err)
+	require.NoError(t, file2.Close())
+
+	_, err = worktree.Add("package.spec")
+	require.NoError(t, err)
+
+	upstream2, err := worktree.Commit("upstream: v2.0", &gogit.CommitOptions{
+		Author: &object.Signature{
+			Name:  "Upstream",
+			Email: "upstream@fedora.org",
+			When:  upstream2AuthorWhen,
+		},
+		Committer: &object.Signature{
+			Name:  "Upstream",
+			Email: "upstream@fedora.org",
+			When:  upstream2CommitterWhen,
+		},
+	})
+	require.NoError(t, err)
+
+	// Simulate overlay modification in working tree.
+	specFile, err := memFS.Create("package.spec")
+	require.NoError(t, err)
+
+	_, err = specFile.Write([]byte("Name: package\nVersion: 2.0\n# overlays\n"))
+	require.NoError(t, err)
+	require.NoError(t, specFile.Close())
+
+	// Synthetic change for v1.0 dated Apr 30 2026 — AFTER upstream2's Apr 14
+	// release date. This is the inversion the clamp must fix.
+	invertedWhen := time.Date(2026, 4, 30, 0, 0, 0, 0, time.UTC)
+
+	changes := []sources.FingerprintChange{
+		{
+			CommitMetadata: sources.CommitMetadata{
+				Hash:        "proj-aaa",
+				Author:      "Alice",
+				AuthorEmail: "alice@example.com",
+				Timestamp:   invertedWhen.Unix(),
+				Message:     "Infra change while pinned to v1.0",
+			},
+			UpstreamCommit: upstream1.String(), // references older upstream.
+		},
+		{
+			CommitMetadata: sources.CommitMetadata{
+				Hash:        "proj-bbb",
+				Author:      "Bob",
+				AuthorEmail: "bob@example.com",
+				Timestamp:   time.Date(2026, 7, 24, 0, 0, 0, 0, time.UTC).Unix(),
+				Message:     "Pin to v2.0",
+			},
+			UpstreamCommit: upstream2.String(), // references latest upstream.
+		},
+	}
+
+	err = sources.CommitInterleavedHistory(repo, changes, upstream1.String())
+	require.NoError(t, err)
+
+	head, err := repo.Head()
+	require.NoError(t, err)
+
+	commitIter, err := repo.Log(&gogit.LogOptions{From: head.Hash()})
+	require.NoError(t, err)
+
+	var logCommits []*object.Commit
+
+	err = commitIter.ForEach(func(c *object.Commit) error {
+		logCommits = append(logCommits, c)
+
+		return nil
+	})
+	require.NoError(t, err)
+
+	require.Len(t, logCommits, 4, "should have 2 upstream + 2 synthetic commits")
+
+	// Order (newest first) is preserved by version, not wall-clock.
+	assert.Contains(t, logCommits[0].Message, "Pin to v2.0")    // top synthetic
+	assert.Contains(t, logCommits[1].Message, "upstream: v2.0") // replayed upstream 2
+	assert.Contains(t, logCommits[2].Message, "Infra change while pinned to v1.0")
+	assert.Contains(t, logCommits[3].Message, "upstream: v1.0") // import-commit (kept)
+
+	// The replayed upstream v2.0 commit (author Apr 14 / committer Apr 15) must
+	// have BOTH timestamps clamped forward to the preceding synthetic's Apr 30
+	// date so the timeline is not inverted. The committer clamp is what actually
+	// fixes the rendered %changelog (rpmautospec uses committer time); the author
+	// clamp keeps the commit object internally consistent.
+	assert.True(t, logCommits[1].Committer.When.Equal(invertedWhen),
+		"upstream v2.0 committer timestamp should be clamped forward to %v, got %v",
+		invertedWhen, logCommits[1].Committer.When)
+	assert.True(t, logCommits[1].Author.When.Equal(invertedWhen),
+		"upstream v2.0 author timestamp should be clamped forward to %v, got %v",
+		invertedWhen, logCommits[1].Author.When)
+
+	// The whole timeline must be monotonic non-decreasing (oldest → newest),
+	// i.e. non-increasing when read newest-first. Assert on BOTH the committer
+	// timeline (the one rpmautospec renders) and the author timeline.
+	for idx := range len(logCommits) - 1 {
+		newerCommitter := logCommits[idx].Committer.When
+		olderCommitter := logCommits[idx+1].Committer.When
+		assert.Falsef(t, newerCommitter.Before(olderCommitter),
+			"committer timeline inverted: commit %d (%v) is earlier than older commit %d (%v)",
+			idx, newerCommitter, idx+1, olderCommitter)
+
+		newerAuthor := logCommits[idx].Author.When
+		olderAuthor := logCommits[idx+1].Author.When
+		assert.Falsef(t, newerAuthor.Before(olderAuthor),
+			"author timeline inverted: commit %d (%v) is earlier than older commit %d (%v)",
+			idx, newerAuthor, idx+1, olderAuthor)
+	}
+}
+
 func TestCommitInterleavedHistory_MultipleCyclesAutoreleaseLifecycle(t *testing.T) {
 	// Simulates a realistic autorelease/autochangelog lifecycle:
 	//   upstream₁ → us₁(overlay) → us₂(manual-bump) → upstream₂ → us₃(overlay)
