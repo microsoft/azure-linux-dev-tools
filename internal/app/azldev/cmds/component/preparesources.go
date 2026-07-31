@@ -161,6 +161,9 @@ func buildPreparerOptions(
 		)
 	}
 
+	opts = append(opts,
+		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)))
+
 	if options.AllowNoHashes {
 		opts = append(opts, sources.WithAllowNoHashes())
 	}

@@ -31,6 +31,11 @@ func (c *CheckConfig) Validate() error {
 
 // Encapsulates configuration for building a component. Configuration for how to acquire
 // or prepare the sources for a component are out of scope.
+//
+// HashInclude must be a value receiver because hashstructure's Includable interface is
+// invoked on the hashed value; Validate uses a pointer receiver by convention.
+//
+//nolint:recvcheck // value + pointer receivers are intentional (see doc comment above).
 type ComponentBuildConfig struct {
 	// Which features should be enabled via `with` options to the builder.
 	With []string `toml:"with,omitempty" json:"with,omitempty" jsonschema:"title=With options,description='with' options to pass to the builder."`
@@ -40,12 +45,29 @@ type ComponentBuildConfig struct {
 	Defines map[string]string `toml:"defines,omitempty" json:"defines,omitempty" jsonschema:"title=Macro definitions,description=Macro definitions to pass to the builder."`
 	// Undefine macros that would otherwise be defined by the component configuration.
 	Undefines []string `toml:"undefines,omitempty" json:"undefines,omitempty" jsonschema:"title=Undefined macros,description=Macro names to undefine when passing to the builder."`
+	// EmitUpstreamProvenance, when true, injects %fedora_upstream_version and
+	// %fedora_upstream_release macros (derived from the pristine upstream Fedora
+	// spec) into the component's generated macros file. Only effective for Fedora
+	// upstream components. Opt-in because the macros are only useful to specs that
+	// reference them (e.g. grub2's SBAT metadata).
+	EmitUpstreamProvenance bool `toml:"emit-upstream-provenance,omitempty" json:"emitUpstreamProvenance,omitempty" jsonschema:"title=Emit upstream provenance macros,description=Inject %fedora_upstream_version/release macros derived from the pristine upstream Fedora spec (Fedora upstream components only)."`
 	// Check section configuration.
 	Check CheckConfig `toml:"check,omitempty" json:"check,omitempty" jsonschema:"title=Check configuration,description=Configuration for the %check section"`
 	// Failure configuration and policy for this component's build.
 	Failure ComponentBuildFailureConfig `toml:"failure,omitempty" json:"failure,omitempty" jsonschema:"title=Build failure configuration,description=Configuration and policy regarding build failures for this component." fingerprint:"-"`
 	// Hints for how or when to build the component; must not be required for correctness of builds.
 	Hints ComponentBuildHints `toml:"hints,omitempty" json:"hints,omitempty" jsonschema:"title=Build hints,description=Non-essential hints for how or when to build the component." fingerprint:"-"`
+}
+
+// HashInclude implements the hashstructure [Includable] interface so that
+// [ComponentBuildConfig.EmitUpstreamProvenance] is omitted from the component
+// fingerprint when false or not set.
+func (c ComponentBuildConfig) HashInclude(field string, _ any) (bool, error) {
+	if field == "EmitUpstreamProvenance" {
+		return c.EmitUpstreamProvenance, nil
+	}
+
+	return true, nil
 }
 
 // ComponentBuildFailureConfig encapsulates configuration and policy regarding a component's

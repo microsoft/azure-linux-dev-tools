@@ -53,6 +53,11 @@
           "title": "Undefined macros",
           "description": "Macro names to undefine when passing to the builder."
         },
+        "emit-upstream-provenance": {
+          "type": "boolean",
+          "title": "Emit upstream provenance macros",
+          "description": "Inject %fedora_upstream_version/release macros derived from the pristine upstream Fedora spec (Fedora upstream components only)."
+        },
         "check": {
           "$ref": "#/$defs/CheckConfig",
           "title": "Check configuration",

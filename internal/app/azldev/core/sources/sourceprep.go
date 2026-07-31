@@ -111,6 +111,30 @@ func WithSkipLookaside() PreparerOption {
 	}
 }
 
+// WithUpstreamProvenance returns a [PreparerOption] that enables emission of
+// the %fedora_upstream_version and %fedora_upstream_release macros for Fedora
+// upstream components. distTag is the resolved %{?dist} expansion (e.g.
+// ".fc43", as produced by [FedoraDistTag]) used to expand the pristine Release
+// tag. Pass "" (e.g. for non-Fedora upstreams) to disable the macros.
+func WithUpstreamProvenance(distTag string) PreparerOption {
+	return func(p *sourcePreparerImpl) {
+		p.upstreamDistTag = distTag
+	}
+}
+
+// WithMockProcessor returns a [PreparerOption] that supplies the mock chroot
+// used to resolve an rpmautospec %autorelease when emitting
+// %fedora_upstream_release. Without it, upstream components whose Release uses
+// %autorelease get no release macro (best-effort). Running rpmautospec inside
+// mock keeps it out of azldev's host dependencies. A nil processor is ignored.
+func WithMockProcessor(mp *MockProcessor) PreparerOption {
+	return func(p *sourcePreparerImpl) {
+		if mp != nil {
+			p.autoreleaseResolver = mp
+		}
+	}
+}
+
 // WithAllowNoHashes returns a [PreparerOption] that allows source file
 // references to omit their [projectconfig.SourceFileReference.Hash] value.
 // When set, any source file that lacks a hash will have its hash computed
@@ -163,6 +187,18 @@ type sourcePreparerImpl struct {
 	// releaseVer is the per-component resolved distro release version, not the
 	// project default. Set via [WithGitRepo].
 	releaseVer string
+
+	// upstreamDistTag is the resolved %{?dist} expansion (e.g. ".fc43") used to
+	// expand a Fedora upstream component's pristine Release tag when emitting
+	// the %fedora_upstream_* macros. Empty disables provenance macros. Set via
+	// [WithUpstreamProvenance].
+	upstreamDistTag string
+
+	// autoreleaseResolver runs rpmautospec inside a mock chroot to resolve an
+	// %autorelease Release into a concrete Fedora release number for
+	// %fedora_upstream_release. Nil disables autorelease resolution (the release
+	// macro is skipped for such specs). Set via [WithMockProcessor].
+	autoreleaseResolver autoreleaseResolver
 }
 
 // NewPreparer creates a new [SourcePreparer] instance. All positional arguments
@@ -251,7 +287,7 @@ func (p *sourcePreparerImpl) PrepareSources(
 	fingerprintConfig := component.GetConfig()
 
 	if applyOverlays {
-		repackedArchives, err := p.applyOverlaysToSources(component, outputDir)
+		repackedArchives, err := p.applyOverlaysToSources(ctx, component, outputDir)
 		if err != nil {
 			return err
 		}
@@ -292,11 +328,11 @@ func (p *sourcePreparerImpl) validateArchiveOverlayConfig(component components.C
 // (empty in dry-run mode or when no archive overlays ran), so the caller can
 // rehash exactly those entries in the 'sources' file.
 func (p *sourcePreparerImpl) applyOverlaysToSources(
-	component components.Component, outputDir string,
+	ctx context.Context, component components.Component, outputDir string,
 ) ([]string, error) {
 	var macrosFileName string
 
-	macrosFilePath, err := p.writeMacrosFile(component, outputDir)
+	macrosFilePath, err := p.writeMacrosFile(ctx, component, outputDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to write macros file for component %#q:\n%w",
 			component.GetName(), err)
@@ -664,7 +700,7 @@ func (p *sourcePreparerImpl) DiffSources(
 	// Apply overlays in-place to the copied directory only. The repacked-archive
 	// list is unused here: DiffSources diffs the trees directly and does not
 	// rewrite a 'sources' file.
-	if _, err := p.applyOverlaysToSources(component, overlaidDir); err != nil {
+	if _, err := p.applyOverlaysToSources(ctx, component, overlaidDir); err != nil {
 		return nil, fmt.Errorf("failed to apply overlays for component %#q:\n%w", component.GetName(), err)
 	}
 
@@ -1144,8 +1180,16 @@ func (p *sourcePreparerImpl) resolveSourceHash(
 // This includes with/without flags converted to macro format, and any explicit defines.
 // If the build configuration produces no macros, no file is written and an empty path is
 // returned. Otherwise, the path to the written macros file is returned.
-func (p *sourcePreparerImpl) writeMacrosFile(component components.Component, outputDir string) (string, error) {
-	contents := GenerateMacrosFileContents(component.GetConfig().Build)
+func (p *sourcePreparerImpl) writeMacrosFile(
+	ctx context.Context, component components.Component, outputDir string,
+) (string, error) {
+	macros := buildMacrosMap(component.GetConfig().Build)
+
+	// Layer Fedora upstream provenance macros on top, reading the pristine
+	// upstream spec that is already on disk (before overlays are applied).
+	p.addUpstreamProvenanceMacros(ctx, macros, component, outputDir)
+
+	contents := renderMacrosFile(macros)
 	if contents == "" {
 		return "", nil
 	}
@@ -1185,8 +1229,15 @@ func (p *sourcePreparerImpl) writeMacrosFile(component components.Component, out
 // If no macros remain after processing (empty config, or all macros removed via
 // undefines), an empty string is returned to signal that no macros file is needed.
 func GenerateMacrosFileContents(buildConfig projectconfig.ComponentBuildConfig) string {
-	// Build a unified map of all macros. Later definitions override earlier ones.
-	// Processing order: with flags -> without flags -> explicit defines.
+	return renderMacrosFile(buildMacrosMap(buildConfig))
+}
+
+// buildMacrosMap converts a build configuration's with/without/defines/undefines
+// into a unified macro name->value map. Later definitions override earlier ones;
+// processing order is: with flags -> without flags -> explicit defines ->
+// undefines. Upstream provenance macros are layered on separately by
+// [sourcePreparerImpl.addUpstreamProvenanceMacros].
+func buildMacrosMap(buildConfig projectconfig.ComponentBuildConfig) map[string]string {
 	macros := make(map[string]string)
 
 	// Convert 'with' flags to macros: FLAG -> _with_FLAG = 1
@@ -1210,6 +1261,14 @@ func GenerateMacrosFileContents(buildConfig projectconfig.ComponentBuildConfig) 
 		delete(macros, undef)
 	}
 
+	return macros
+}
+
+// renderMacrosFile serializes a fully-resolved macro map to RPM macros-file
+// format (%name value), sorted alphabetically for deterministic output and
+// prefixed with the standard auto-generated header. Returns "" when the map is
+// empty, signaling that no macros file is needed.
+func renderMacrosFile(macros map[string]string) string {
 	if len(macros) == 0 {
 		return ""
 	}

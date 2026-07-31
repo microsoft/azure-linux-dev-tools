@@ -116,6 +116,13 @@ func appendBuildItems(
 		items = append(items, CustomizationItem{Kind: "build.undefines", Value: macro})
 	}
 
+	if build.EmitUpstreamProvenance {
+		items = append(items, CustomizationItem{
+			Kind:  "build.emit-upstream-provenance",
+			Value: strconv.FormatBool(true),
+		})
+	}
+
 	if build.Check.Skip {
 		items = append(items, CustomizationItem{
 			Kind:        "build.check.skip",
