@@ -5,10 +5,15 @@ package component
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/specs"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/workdir"
+	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	"github.com/spf13/cobra"
 )
 
@@ -58,6 +63,15 @@ type componentDetails struct {
 	specs.ComponentSpecDetails
 }
 
+type queryComponent struct {
+	components.Component
+	config projectconfig.ComponentConfig
+}
+
+func (c *queryComponent) GetConfig() *projectconfig.ComponentConfig {
+	return &c.config
+}
+
 // Queries env for component details, in accordance with options. Returns the found components.
 func QueryComponents(
 	env *azldev.Env, options *QueryComponentsOptions,
@@ -74,9 +88,7 @@ func QueryComponents(
 	allDetails := make([]*componentDetails, 0, comps.Len())
 
 	for _, comp := range comps.Components() {
-		spec := comp.GetSpec()
-
-		specInfo, err := spec.Parse()
+		specInfo, err := parseComponentSpec(env, comp)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse spec for component %q:\n%w", comp.GetName(), err)
 		}
@@ -89,4 +101,55 @@ func QueryComponents(
 	}
 
 	return allDetails, nil
+}
+
+func parseComponentSpec(env *azldev.Env, comp components.Component) (*specs.ComponentSpecDetails, error) {
+	if comp.GetConfig().Spec.SourceType == projectconfig.SpecSourceTypeLocal {
+		return comp.GetSpec().Parse()
+	}
+
+	componentForPrep := comp
+	if comp.GetConfig().Spec.SourceType == projectconfig.SpecSourceTypeUnspecified {
+		normalizedConfig := *comp.GetConfig()
+		normalizedConfig.Spec.SourceType = projectconfig.SpecSourceTypeUpstream
+		componentForPrep = &queryComponent{
+			Component: comp,
+			config:    normalizedConfig,
+		}
+	}
+
+	distro, err := sourceproviders.ResolveDistro(env, componentForPrep)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve distro for component %q:\n%w", comp.GetName(), err)
+	}
+
+	sourceManager, err := sourceproviders.NewSourceManager(env, distro)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create source manager:\n%w", err)
+	}
+
+	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, sources.WithSkipLookaside())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create source preparer:\n%w", err)
+	}
+
+	workDirFactory, err := workdir.NewFactory(env.FS(), env.WorkDir(), env.ConstructionTime())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create work dir factory:\n%w", err)
+	}
+
+	preparedSourcesDir, err := workDirFactory.Create(comp.GetName(), "query-spec")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create work dir for component %#q:\n%w", comp.GetName(), err)
+	}
+
+	if err := preparer.PrepareSources(env, componentForPrep, preparedSourcesDir, true /* applyOverlays */); err != nil {
+		return nil, fmt.Errorf("failed to prepare sources for component %#q:\n%w", comp.GetName(), err)
+	}
+
+	preparedConfig := *componentForPrep.GetConfig()
+	preparedConfig.Spec.SourceType = projectconfig.SpecSourceTypeLocal
+	preparedConfig.Spec.Path = filepath.Join(preparedSourcesDir, comp.GetName()+".spec")
+
+	return specs.NewSpec(env, preparedConfig).Parse()
 }
