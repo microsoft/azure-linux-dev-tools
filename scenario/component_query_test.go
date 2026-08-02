@@ -31,6 +31,7 @@ func TestQueryingAComponent(t *testing.T) {
 	// Create a simple project with the spec, using test default configs for distro and mock configurations.
 	project := projecttest.NewDynamicTestProject(
 		projecttest.AddSpec(spec),
+		projecttest.AddLock(spec.GetName(), projecttest.WithLockInputFingerprint("sha256:"+spec.GetName()+"-v1")),
 		projecttest.UseTestDefaultConfigs(),
 	)
 

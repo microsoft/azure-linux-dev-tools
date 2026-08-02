@@ -32,6 +32,10 @@ func localComponentConfig(name string, overlays ...projectconfig.ComponentOverla
 	}
 }
 
+func localComponentLock(name string) projecttest.DynamicTestProjectOption {
+	return projecttest.AddLock(name, projecttest.WithLockInputFingerprint("sha256:"+name+"-v1"))
+}
+
 func TestRenderSimpleLocalSpec(t *testing.T) {
 	t.Parallel()
 
@@ -49,6 +53,7 @@ func TestRenderSimpleLocalSpec(t *testing.T) {
 	project := projecttest.NewDynamicTestProject(
 		projecttest.AddSpec(spec),
 		projecttest.AddComponent(localComponentConfig("test-render")),
+		localComponentLock("test-render"),
 		projecttest.UseTestDefaultConfigs(),
 		projecttest.WithGitRepo(),
 	)
@@ -99,6 +104,7 @@ func TestRenderWithConfiguredOutputDir(t *testing.T) {
 	project := projecttest.NewDynamicTestProject(
 		projecttest.AddSpec(spec),
 		projecttest.AddComponent(localComponentConfig("config-test")),
+		localComponentLock("config-test"),
 		projecttest.UseTestDefaultConfigs(),
 		projecttest.WithGitRepo(),
 		// Set rendered-specs-dir in project config instead of using -o.
@@ -149,6 +155,7 @@ func TestRenderWithOverlayApplied(t *testing.T) {
 				Value:       "test-overlay-dep",
 			},
 		)),
+		localComponentLock("test-overlay"),
 		projecttest.UseTestDefaultConfigs(),
 		projecttest.WithGitRepo(),
 	)
@@ -205,6 +212,7 @@ func TestRenderWithPatchSidecar(t *testing.T) {
 				Source:      "patches/fix-stuff.patch",
 			},
 		)),
+		localComponentLock("test-patch"),
 		projecttest.AddFile("patches/fix-stuff.patch", patchContent),
 		projecttest.UseTestDefaultConfigs(),
 		projecttest.WithGitRepo(),
@@ -251,6 +259,7 @@ func TestRenderStaleCleanup(t *testing.T) {
 	project := projecttest.NewDynamicTestProject(
 		projecttest.AddSpec(spec),
 		projecttest.AddComponent(localComponentConfig("keep-me")),
+		localComponentLock("keep-me"),
 		projecttest.UseTestDefaultConfigs(),
 		projecttest.WithGitRepo(),
 		projecttest.AddFile("SPECS/s/stale-component/RENDER_FAILED", "Rendering failed.\n"),
@@ -297,6 +306,7 @@ func TestRenderRefusesOverwriteWithoutForce(t *testing.T) {
 	project := projecttest.NewDynamicTestProject(
 		projecttest.AddSpec(spec),
 		projecttest.AddComponent(localComponentConfig("no-clobber")),
+		localComponentLock("no-clobber"),
 		projecttest.UseTestDefaultConfigs(),
 		projecttest.WithGitRepo(),
 		projecttest.AddFile("SPECS/n/no-clobber/existing-file.txt", "do not delete me\n"),
@@ -371,6 +381,7 @@ License:        MIT
 
 	project := projecttest.NewDynamicTestProject(
 		projecttest.AddComponent(localComponentConfig("golang-example")),
+		localComponentLock("golang-example"),
 		// Write the custom spec content directly via AddFile since AddSpec's
 		// TestSpec renderer doesn't support %gometa.
 		projecttest.AddFile("specs/golang-example/golang-example.spec", goSpecContent),
@@ -438,6 +449,8 @@ func TestRenderMultipleComponentsParallel(t *testing.T) {
 		projecttest.AddSpec(specB),
 		projecttest.AddComponent(localComponentConfig("comp-alpha")),
 		projecttest.AddComponent(localComponentConfig("comp-beta")),
+		localComponentLock("comp-alpha"),
+		localComponentLock("comp-beta"),
 		projecttest.UseTestDefaultConfigs(),
 		projecttest.WithGitRepo(),
 	)
@@ -502,9 +515,11 @@ func TestRenderBrokenSpecWithGoodSpec(t *testing.T) {
 	project := projecttest.NewDynamicTestProject(
 		projecttest.AddSpec(goodSpec),
 		projecttest.AddComponent(localComponentConfig("good-pkg")),
+		localComponentLock("good-pkg"),
 		// Add a broken spec as a raw file — not valid RPM spec syntax.
 		projecttest.AddFile("specs/broken-pkg/broken-pkg.spec", "this is not a valid spec file\n"),
 		projecttest.AddComponent(localComponentConfig("broken-pkg")),
+		localComponentLock("broken-pkg"),
 		projecttest.UseTestDefaultConfigs(),
 		projecttest.WithGitRepo(),
 	)
@@ -569,13 +584,6 @@ func TestRenderLocalSpecWithSyntheticHistory(t *testing.T) {
 		projecttest.WithBuildArch(projecttest.NoArch),
 	)
 
-	// Pre-baked lock file with a stale fingerprint. The overlay in the
-	// component config changes the runtime fingerprint, so dirty detection
-	// will fire and add a synthetic commit.
-	const lockFileContent = `version = 1
-input-fingerprint = "pre-baked-for-test"
-`
-
 	project := projecttest.NewDynamicTestProject(
 		projecttest.AddSpec(spec),
 		projecttest.AddComponent(localComponentConfig("synth-local",
@@ -587,7 +595,7 @@ input-fingerprint = "pre-baked-for-test"
 			},
 		)),
 		projecttest.UseTestDefaultConfigs(),
-		projecttest.AddFile("locks/synth-local.lock", lockFileContent),
+		projecttest.AddLock("synth-local", projecttest.WithLockInputFingerprint("pre-baked-for-test")),
 		projecttest.WithGitRepo(),
 	)
 

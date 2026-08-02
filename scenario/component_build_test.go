@@ -33,6 +33,7 @@ func TestBuildingLocalComponent(t *testing.T) {
 	spec := projecttest.NewSpec(projecttest.WithBuildArch(projecttest.NoArch))
 	project := projecttest.NewDynamicTestProject(
 		projecttest.AddSpec(spec),
+		projecttest.AddLock(spec.GetName(), projecttest.WithLockInputFingerprint("sha256:"+spec.GetName()+"-v1")),
 		projecttest.UseTestDefaultConfigs(),
 		projecttest.WithGitRepo(),
 	)
