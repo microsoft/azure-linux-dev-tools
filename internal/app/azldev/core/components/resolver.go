@@ -4,6 +4,7 @@
 package components
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -17,6 +18,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/fingerprint"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/parmap"
 )
 
 // Well-known errors.
@@ -42,6 +44,11 @@ type Resolver struct {
 	// Only 'component update' enables this — it uses the freshness status to
 	// decide which components need re-resolution and which can be skipped.
 	CheckFreshness bool
+	// SkipLockPopulation skips reading lock files and attaching lock data to
+	// resolved components. When true, component Locked fields remain nil.
+	// Set this when the resolver's lock mode requires skipping population
+	// (e.g., when called from a command with LockModeSkipBoth).
+	SkipLockPopulation bool
 }
 
 // NewResolver constructs a new [Resolver] for the given environment.
@@ -53,11 +60,20 @@ func NewResolver(env *azldev.Env) *Resolver {
 
 // Given a component filter, finds all components defined in the environment that match the filter.
 func (r *Resolver) FindComponents(filter *ComponentFilter) (components *ComponentSet, err error) {
-	// The filter's SkipLockValidation field is the primary control. When
-	// created via AddComponentFilterOptionsToCommand, its default is false
-	// (validation on). Commands that write locks (update) or are read-only
-	// (list) explicitly set it to true.
-	skipValidation := filter.SkipLockValidation
+	// Determine whether to skip lock validation based on the filter's LockMode.
+	skipValidation := filter.LockMode != LockModeValidateAndPopulate
+	// Also check the resolver's SkipLockPopulation field (set programmatically by callers)
+	skipPopulation := filter.LockMode == LockModeSkipBoth || r.SkipLockPopulation
+
+	// Temporarily set r.SkipLockPopulation during this resolution to ensure
+	// FindAllComponents and other methods respect the skip requirement.
+	oldSkipLockPopulation := r.SkipLockPopulation
+	if skipPopulation {
+		r.SkipLockPopulation = true
+	}
+	defer func() {
+		r.SkipLockPopulation = oldSkipLockPopulation
+	}()
 
 	// For usability's sake, detect if the caller/user forgot to specify *any* criteria.
 	if filter.HasNoCriteria() {
@@ -73,7 +89,13 @@ func (r *Resolver) FindComponents(filter *ComponentFilter) (components *Componen
 			return allComps, findErr
 		}
 
-		r.warnOnLockDrift(allComps)
+		if !skipPopulation {
+			r.populateLocksParallel(allComps)
+		}
+
+		if !r.SuppressLockWarnings {
+			r.warnOnLockDrift(allComps)
+		}
 
 		return allComps, r.validateLockFiles(allComps, true, skipValidation)
 	}
@@ -102,6 +124,10 @@ func (r *Resolver) FindComponents(filter *ComponentFilter) (components *Componen
 		if err != nil {
 			return components, err
 		}
+	}
+
+	if !skipPopulation {
+		r.populateLocksParallel(components)
 	}
 
 	r.warnOnLockDrift(components)
@@ -165,6 +191,10 @@ func (r *Resolver) FindAllComponents() (components *ComponentSet, err error) {
 		}
 
 		components.Add(comp)
+	}
+
+	if !r.SkipLockPopulation {
+		r.populateLocksParallel(components)
 	}
 
 	return components, nil
@@ -557,15 +587,21 @@ func (r *Resolver) createComponentFromConfig(componentConfig *projectconfig.Comp
 		componentConfig.Release.Calculation = projectconfig.ReleaseCalculationAuto
 	}
 
-	// Populate locked state onto the component config. This makes lock data
-	// available to all downstream consumers (render, build, prepare-sources,
-	// diff-sources) without each needing lock-file awareness.
-	r.populateFromLock(componentConfig)
-
 	return &resolvedComponent{
 		env:    r.env,
 		config: *componentConfig,
 	}, nil
+}
+
+func (r *Resolver) populateLocksParallel(set *ComponentSet) {
+	comps := set.Components()
+
+	_ = parmap.Map(r.env, r.env.IOBoundConcurrency(), comps, nil,
+		func(_ context.Context, c Component) error {
+			r.populateFromLock(c.GetConfig())
+
+			return nil
+		})
 }
 
 // populateFromLock reads lock file data and attaches it to the component config

@@ -39,7 +39,6 @@ azldev component prepare-sources [flags]
       --force                         delete and recreate the output directory if it already exists
   -h, --help                          help for prepare-sources
   -o, --output-dir string             output directory
-      --skip-lock-validation          skip lock file consistency checks
       --skip-overlays                 skip applying overlays to prepared sources
       --skip-sources                  skip downloading fetched sources when preparing the package (useful to extract dist-git metadata when source files are not needed)
   -s, --spec-path stringArray         Spec path
