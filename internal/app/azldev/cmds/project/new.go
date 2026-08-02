@@ -33,7 +33,7 @@ file. The path must not already contain a project.`,
 		Args: cobra.ExactArgs(1),
 		RunE: azldev.RunFuncWithoutRequiredConfigWithExtraArgs(
 			func(env *azldev.Env, args []string) (results interface{}, err error) {
-				return true, projectgen.CreateNewProject(env.FS(), args[0], options)
+				return nil, projectgen.CreateNewProject(env.FS(), args[0], options)
 			}),
 	}
 

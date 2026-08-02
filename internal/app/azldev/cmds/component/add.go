@@ -43,7 +43,7 @@ the same name already exists, the command returns an error.`,
   # Add multiple components at once
   azldev component add curl wget bash`,
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
-			return true, AddComponentsToConfig(env.FS(), env.Config(), options, args)
+			return nil, AddComponentsToConfig(env.FS(), env.Config(), options, args)
 		}),
 		ValidArgsFunction: components.GenerateComponentNameCompletions,
 	}

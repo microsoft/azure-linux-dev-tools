@@ -45,7 +45,7 @@ components defined in the project configuration.
 * [azldev component history](azldev_component_history.md)	 - Report per-component change activity and customization detail
 * [azldev component list](azldev_component_list.md)	 - List components in this project
 * [azldev component prepare-sources](azldev_component_prepare-sources.md)	 - Prepare buildable sources for components
-* [azldev component query](azldev_component_query.md)	 - Query info for components in this project
+* [azldev component query](azldev_component_query.md)	 - Query info from locally rendered component specs
 * [azldev component render](azldev_component_render.md)	 - Render post-overlay specs and sidecar files to a checked-in directory
 * [azldev component update](azldev_component_update.md)	 - Resolve and lock source identities for components
 

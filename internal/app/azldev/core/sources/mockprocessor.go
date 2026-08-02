@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -29,18 +30,22 @@ var renderProcessScript []byte
 // first use and supports batch processing of multiple components in a single
 // mock invocation.
 type MockProcessor struct {
-	mu          sync.Mutex
-	runner      *mock.Runner
-	initialized bool
-	initErr     error
+	mu               sync.Mutex
+	runner           *mock.Runner
+	requiredPackages []string
+	initialized      bool
+	initErr          error
 }
 
 // NewMockProcessor creates a new processor that will lazily initialize
 // a mock chroot using the given config path. The runner is created eagerly
-// but the chroot is only initialized on first use.
-func NewMockProcessor(ctx opctx.Ctx, mockConfigPath string) *MockProcessor {
+// but the chroot is only initialized on first use. requiredPackages are
+// installed inside the chroot on first use; pass nil/empty to skip the
+// install step (rely on whatever the buildroot ships by default).
+func NewMockProcessor(ctx opctx.Ctx, mockConfigPath string, requiredPackages []string) *MockProcessor {
 	return &MockProcessor{
-		runner: mock.NewRunner(ctx, mockConfigPath),
+		runner:           mock.NewRunner(ctx, mockConfigPath),
+		requiredPackages: append([]string(nil), requiredPackages...),
 	}
 }
 
@@ -99,7 +104,7 @@ func (p *MockProcessor) initOnce(ctx context.Context) error {
 		return p.initErr
 	}
 
-	slog.Info("Initializing mock chroot for rendering")
+	slog.Info("Initializing mock chroot")
 
 	p.runner.EnableNetwork()
 
@@ -110,21 +115,18 @@ func (p *MockProcessor) initOnce(ctx context.Context) error {
 		return p.initErr
 	}
 
-	// Install rpmautospec (macro expansion), rpmdevtools (spectool), and git
-	// (required for rpmautospec to read commit history).
-	// python3-click is required by rpmautospec but not declared as an RPM dependency.
-	// Ecosystem macro packages (go-srpm-macros, etc.) are already present via
-	// @buildsys-build → azurelinux-rpm-config.
-	if err := p.runner.InstallPackages(ctx, []string{"rpmautospec", "rpmdevtools", "git", "python3-click"}); err != nil {
-		p.initErr = fmt.Errorf("failed to install packages in mock chroot:\n%w", err)
-		p.initialized = true
+	if len(p.requiredPackages) > 0 {
+		if err := p.runner.InstallPackages(ctx, p.requiredPackages); err != nil {
+			p.initErr = fmt.Errorf("failed to install packages in mock chroot:\n%w", err)
+			p.initialized = true
 
-		return p.initErr
+			return p.initErr
+		}
 	}
 
 	p.initialized = true
 
-	slog.Info("Mock chroot ready for rendering")
+	slog.Info("Mock chroot ready")
 
 	return nil
 }
@@ -141,9 +143,6 @@ func (p *MockProcessor) BatchProcess(
 	ctx context.Context, events opctx.EventListener,
 	stagingDir string, inputs []ComponentInput, fs opctx.FS, maxWorkers int,
 ) ([]ComponentMockResult, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	if len(inputs) == 0 {
 		return nil, nil
 	}
@@ -152,37 +151,125 @@ func (p *MockProcessor) BatchProcess(
 		return nil, err
 	}
 
-	if err := p.initOnce(ctx); err != nil {
-		return nil, err
+	jsonInputs := make([]componentInputJSON, len(inputs))
+	for idx, input := range inputs {
+		jsonInputs[idx] = componentInputJSON(input)
+	}
+
+	inputsBytes, err := json.Marshal(jsonInputs)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling inputs:\n%w", err)
 	}
 
 	slog.Info("Batch processing components in mock chroot", "count", len(inputs))
 
-	// Write the Python script and inputs manifest to the staging directory.
-	scriptPath := filepath.Join(stagingDir, "render_process.py")
-	if err := fileutils.WriteFile(fs, scriptPath, renderProcessScript, fileperms.PublicExecutable); err != nil {
-		return nil, fmt.Errorf("writing render script:\n%w", err)
-	}
+	const chrootStagingPath = "/tmp/render"
 
-	if err := writeInputsManifest(fs, stagingDir, inputs); err != nil {
+	workers := strconv.Itoa(max(1, maxWorkers)) // 1x CPU; mock work is CPU-bound
+
+	rawResults, err := p.runBatchScript(ctx, events, runBatchScriptOptions{
+		Mounts:          []batchBindMount{{Host: stagingDir, InChroot: chrootStagingPath}},
+		ScratchHost:     stagingDir,
+		ScratchInChroot: chrootStagingPath,
+		ScriptName:      "render_process.py",
+		ScriptBytes:     renderProcessScript,
+		InputsJSON:      inputsBytes,
+		ResultsName:     "results.json",
+		ScriptArgs:      []string{chrootStagingPath, workers},
+		ProgressLabel:   "Processing specs in mock chroot",
+		ProgressTotal:   int64(len(inputs)),
+		FS:              fs,
+	})
+	if err != nil {
 		return nil, err
 	}
 
-	// Clone the runner and add a single bind mount for the staging directory.
+	return parseBatchJSON(string(rawResults), inputs)
+}
+
+// batchBindMount describes one host-to-chroot bind mount used by runBatchScript.
+type batchBindMount struct {
+	Host     string
+	InChroot string
+}
+
+// runBatchScriptOptions parameterizes a single batch-script invocation.
+type runBatchScriptOptions struct {
+	// Mounts is the full set of host-to-chroot bind mounts to add to the runner.
+	// The scratch dir must be reachable via one of these mounts (typically the
+	// first entry), so the script can locate its inputs and write results.
+	Mounts []batchBindMount
+	// ScratchHost is the host-side directory where the script, inputs manifest,
+	// and results file are read and written.
+	ScratchHost string
+	// ScratchInChroot is the in-chroot path that maps to ScratchHost.
+	ScratchInChroot string
+	// ScriptName is the basename used when writing the embedded Python script
+	// into ScratchHost (e.g. "render_process.py").
+	ScriptName  string
+	ScriptBytes []byte
+	// InputsJSON is the JSON-encoded inputs manifest, written as
+	// <ScratchHost>/inputs.json.
+	InputsJSON []byte
+	// ResultsName is the basename of the results file the script is expected
+	// to write into ScratchHost (e.g. "results.json").
+	ResultsName string
+	// ScriptArgs is appended to the python3 invocation after the script path.
+	ScriptArgs []string
+	// ProgressLabel labels the progress event surfaced to the user.
+	ProgressLabel string
+	// ProgressTotal is the total used for progress reporting from PROGRESS lines.
+	ProgressTotal int64
+	FS            opctx.FS
+}
+
+// runBatchScript executes a batched, parallelizable Python helper inside the
+// shared mock chroot. It owns the lock + lazy init, writes the script and
+// inputs into the host-side scratch dir, runs the script (which is expected to
+// emit "PROGRESS <i>/<total> <name>" lines and write a results file), and
+// returns the raw results bytes.
+//
+// This is the shared scaffolding for BatchProcess (rendering) and
+// BatchQuerySpecs (querying). Per-operation concerns (input/result shape,
+// embedded script, result parsing) live in the callers.
+//
+
+func (p *MockProcessor) runBatchScript(
+	ctx context.Context, events opctx.EventListener, opts runBatchScriptOptions,
+) ([]byte, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if err := p.initOnce(ctx); err != nil {
+		return nil, err
+	}
+
+	// Write the Python script and inputs manifest to the scratch directory.
+	scriptHostPath := filepath.Join(opts.ScratchHost, opts.ScriptName)
+	if err := fileutils.WriteFile(opts.FS, scriptHostPath, opts.ScriptBytes, fileperms.PublicExecutable); err != nil {
+		return nil, fmt.Errorf("writing script %#q:\n%w", opts.ScriptName, err)
+	}
+
+	inputsHostPath := filepath.Join(opts.ScratchHost, "inputs.json")
+	if err := fileutils.WriteFile(opts.FS, inputsHostPath, opts.InputsJSON, fileperms.PublicFile); err != nil {
+		return nil, fmt.Errorf("writing inputs manifest:\n%w", err)
+	}
+
+	// Clone the runner and add the requested bind mounts.
 	// WithUnprivileged drops to the mockbuild user for chroot commands,
 	// matching how mock builds run and avoiding root-owned files in the
-	// bind-mounted staging directory. This is safe because mock defaults
+	// bind-mounted scratch directory. This is safe because mock defaults
 	// chrootuid to os.getuid() — the mockbuild user inside the chroot has
 	// the same UID as the host user, so bind-mounted files remain writable.
 	runner := p.runner.Clone()
 	runner.WithUnprivileged()
 
-	const chrootStagingPath = "/tmp/render"
-	runner.AddBindMount(stagingDir, chrootStagingPath)
+	for _, mount := range opts.Mounts {
+		runner.AddBindMount(mount.Host, mount.InChroot)
+	}
 
-	chrootScript := filepath.Join(chrootStagingPath, "render_process.py")
-	workers := strconv.Itoa(max(1, maxWorkers)) // 1x CPU; mock work is CPU-bound
-	args := []string{"python3", chrootScript, chrootStagingPath, workers}
+	scriptInChroot := path.Join(opts.ScratchInChroot, opts.ScriptName)
+	args := append([]string{"python3", scriptInChroot}, opts.ScriptArgs...)
 
 	cmd, err := runner.CmdInChroot(ctx, args, false)
 	if err != nil {
@@ -193,19 +280,17 @@ func (p *MockProcessor) BatchProcess(
 	// The script prints "PROGRESS <completed>/<total> <name>" to stderr, but
 	// mock --chroot merges the inner command's stderr into stdout, so we
 	// listen on stdout.
-	mockProgress := events.StartEvent("Processing specs in mock chroot", "count", len(inputs))
-	mockProgress.SetLongRunning("Processing specs in mock chroot")
+	progress := events.StartEvent(opts.ProgressLabel, "count", opts.ProgressTotal)
+	progress.SetLongRunning(opts.ProgressLabel)
 
-	defer mockProgress.End()
-
-	total := int64(len(inputs))
+	defer progress.End()
 
 	if listenerErr := cmd.SetRealTimeStdoutListener(func(_ context.Context, line string) {
 		// Parse "PROGRESS <i>/<total> <name>" lines.
 		if after, found := strings.CutPrefix(line, "PROGRESS "); found {
 			if slashIdx := strings.Index(after, "/"); slashIdx > 0 {
 				if completed, parseErr := strconv.ParseInt(after[:slashIdx], 10, 64); parseErr == nil {
-					mockProgress.SetProgress(completed, total)
+					progress.SetProgress(completed, opts.ProgressTotal)
 				}
 			}
 		}
@@ -222,14 +307,14 @@ func (p *MockProcessor) BatchProcess(
 	// Read results from the file written by the Python script.
 	// Using a file avoids bufio.Scanner token size limits that would truncate
 	// large JSON payloads when capturing stdout (e.g., 7k components ≈ 560KB).
-	resultsPath := filepath.Join(stagingDir, "results.json")
+	resultsHostPath := filepath.Join(opts.ScratchHost, opts.ResultsName)
 
-	resultsData, readErr := fileutils.ReadFile(fs, resultsPath)
+	resultsData, readErr := fileutils.ReadFile(opts.FS, resultsHostPath)
 	if readErr != nil {
-		return nil, fmt.Errorf("reading batch results from %#q:\n%w", resultsPath, readErr)
+		return nil, fmt.Errorf("reading batch results from %#q:\n%w", resultsHostPath, readErr)
 	}
 
-	return parseBatchJSON(string(resultsData), inputs)
+	return resultsData, nil
 }
 
 // componentInputJSON is the JSON-serializable form written to inputs.json.
@@ -282,27 +367,6 @@ func parseBatchJSON(stdout string, inputs []ComponentInput) ([]ComponentMockResu
 	}
 
 	return results, nil
-}
-
-// writeInputsManifest writes the inputs.json manifest to the staging directory
-// so it can be read by the Python script inside the mock chroot.
-func writeInputsManifest(fs opctx.FS, stagingDir string, inputs []ComponentInput) error {
-	jsonInputs := make([]componentInputJSON, len(inputs))
-	for idx, input := range inputs {
-		jsonInputs[idx] = componentInputJSON(input)
-	}
-
-	data, err := json.Marshal(jsonInputs)
-	if err != nil {
-		return fmt.Errorf("marshaling inputs:\n%w", err)
-	}
-
-	inputsPath := filepath.Join(stagingDir, "inputs.json")
-	if err := fileutils.WriteFile(fs, inputsPath, data, fileperms.PublicFile); err != nil {
-		return fmt.Errorf("writing inputs manifest:\n%w", err)
-	}
-
-	return nil
 }
 
 // Destroy cleans up the mock chroot. Should be called when rendering is complete.

@@ -105,3 +105,30 @@ func ValidateFilename(filename string) error {
 
 	return nil
 }
+
+// ValidateRelPath ensures a path is safe to join onto a trusted base directory.
+// It rejects absolute paths, non-canonical forms, traversal segments, and any
+// segment that would fail [ValidateFilename]. The path must use '/' as the
+// separator (the canonical form for paths that cross platform boundaries such
+// as chroot bind mounts and JSON payloads).
+func ValidateRelPath(path string) error {
+	if path == "" {
+		return errors.New("path cannot be empty")
+	}
+
+	if filepath.IsAbs(path) || strings.HasPrefix(path, "/") {
+		return fmt.Errorf("path %#q must be relative", path)
+	}
+
+	if filepath.ToSlash(filepath.Clean(path)) != path {
+		return fmt.Errorf("path %#q must be in canonical form", path)
+	}
+
+	for _, segment := range strings.Split(path, "/") {
+		if err := ValidateFilename(segment); err != nil {
+			return fmt.Errorf("path %#q has invalid segment:\n%w", path, err)
+		}
+	}
+
+	return nil
+}

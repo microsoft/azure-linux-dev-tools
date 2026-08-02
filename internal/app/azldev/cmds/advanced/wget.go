@@ -36,7 +36,7 @@ configuration. It is primarily used internally but can be invoked directly.`,
 		Example: `  # Download a file
   azldev advanced wget --uri https://example.com/file.tar.gz -o ./file.tar.gz`,
 		RunE: azldev.RunFuncWithoutRequiredConfig(func(env *azldev.Env) (results interface{}, err error) {
-			return true, Download(env, options)
+			return nil, Download(env, options)
 		}),
 	}
 
