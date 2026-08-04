@@ -20,21 +20,21 @@ require (
 	github.com/creachadair/tomledit v0.0.29
 	github.com/fatih/color v1.19.0
 	github.com/gkampitakis/go-snaps v0.5.23
-	github.com/go-git/go-billy/v5 v5.9.0
+	github.com/go-git/go-billy/v5 v5.9.1
 	github.com/go-git/go-git/v5 v5.19.1
 	github.com/go-playground/validator/v10 v10.30.3
 	github.com/google/renameio v1.0.1
 	github.com/google/uuid v1.6.0
 	github.com/h2non/gock v1.2.0
 	github.com/invopop/jsonschema v0.14.0
-	github.com/jedib0t/go-pretty/v6 v6.8.2
+	github.com/jedib0t/go-pretty/v6 v6.8.3
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51
-	github.com/klauspost/compress v1.19.0
+	github.com/klauspost/compress v1.19.1
 	github.com/knqyf263/go-rpm-version v0.0.0-20240918084003-2afd7dc6a38f
-	github.com/lmittmann/tint v1.1.3
+	github.com/lmittmann/tint v1.2.0
 	github.com/magefile/mage v1.17.2
-	github.com/mark3labs/mcp-go v0.55.1
-	github.com/mattn/go-isatty v0.0.22
+	github.com/mark3labs/mcp-go v0.57.0
+	github.com/mattn/go-isatty v0.0.24
 	github.com/mitchellh/hashstructure/v2 v2.0.2
 	github.com/moby/moby/api v1.55.0
 	github.com/muesli/termenv v0.16.0
@@ -51,7 +51,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.43.0
 	github.com/thejerf/slogassert v0.3.4
-	github.com/ulikunitz/xz v0.5.15
+	github.com/ulikunitz/xz v0.5.16
 	go.szostok.io/version v1.2.0
 	go.uber.org/mock v0.6.0
 	golang.org/x/sync v0.22.0
@@ -161,10 +161,10 @@ require (
 	go.opentelemetry.io/otel/trace v1.42.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
-	golang.org/x/crypto v0.52.0 // indirect
-	golang.org/x/net v0.55.0 // indirect
-	golang.org/x/term v0.43.0 // indirect
-	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/crypto v0.53.0 // indirect
+	golang.org/x/net v0.56.0 // indirect
+	golang.org/x/term v0.44.0 // indirect
+	golang.org/x/text v0.39.0 // indirect
 	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 )
