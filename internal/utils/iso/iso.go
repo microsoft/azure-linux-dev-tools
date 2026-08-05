@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	// GenisoimageBinary is the name of the genisoimage executable.
-	GenisoimageBinary = "genisoimage"
+	// XorrisoBinary is the name of the xorriso executable.
+	XorrisoBinary = "xorriso"
 )
 
 // Runner encapsulates options and dependencies for creating ISO images.
@@ -53,6 +53,7 @@ type CreateISOOptions struct {
 // CreateISO creates an ISO image from the specified input files.
 func (r *Runner) CreateISO(ctx context.Context, options CreateISOOptions) error {
 	args := []string{
+		"-as", "mkisofs",
 		"-output", options.OutputPath,
 		"-volid", options.VolumeID,
 	}
@@ -67,11 +68,11 @@ func (r *Runner) CreateISO(ctx context.Context, options CreateISOOptions) error 
 
 	args = append(args, options.InputFiles...)
 
-	isoCmd := exec.CommandContext(ctx, GenisoimageBinary, args...)
+	isoCmd := exec.CommandContext(ctx, XorrisoBinary, args...)
 
 	cmd, err := r.cmdFactory.Command(isoCmd)
 	if err != nil {
-		return fmt.Errorf("failed to create genisoimage command:\n%w", err)
+		return fmt.Errorf("failed to create xorriso command:\n%w", err)
 	}
 
 	description := options.Description
@@ -87,13 +88,13 @@ func (r *Runner) CreateISO(ctx context.Context, options CreateISOOptions) error 
 	return nil
 }
 
-// CheckPrerequisites verifies that genisoimage is available.
+// CheckPrerequisites verifies that xorriso is available.
 func CheckPrerequisites(ctx opctx.Ctx) error {
-	if err := prereqs.RequireExecutable(ctx, GenisoimageBinary, &prereqs.PackagePrereq{
-		AzureLinuxPackages: []string{"cdrkit"},
-		FedoraPackages:     []string{"genisoimage"},
+	if err := prereqs.RequireExecutable(ctx, XorrisoBinary, &prereqs.PackagePrereq{
+		AzureLinuxPackages: []string{"xorriso"},
+		FedoraPackages:     []string{"xorriso"},
 	}); err != nil {
-		return fmt.Errorf("genisoimage prerequisite check failed:\n%w", err)
+		return fmt.Errorf("xorriso prerequisite check failed:\n%w", err)
 	}
 
 	return nil

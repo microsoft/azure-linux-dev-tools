@@ -30,7 +30,7 @@ must support serial console interaction.
 
 Requirements:
   - qemu-system-x86_64/qemu-system-aarch64 (QEMU emulator)
-  - genisoimage (only when cloud-init credentials are provided)
+  - xorriso (only when cloud-init credentials are provided)
   - qemu-img (only when creating an empty disk for '--iso')
   - sudo (for running QEMU with KVM)
   - OVMF firmware (for UEFI boot)
