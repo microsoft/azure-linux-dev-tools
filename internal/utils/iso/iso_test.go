@@ -49,7 +49,8 @@ func TestCreateISO(t *testing.T) {
 				InputFiles: []string{"/input/file1", "/input/file2"},
 			},
 			wantArgs: []string{
-				iso.GenisoimageBinary,
+				iso.XorrisoBinary,
+				"-as", "mkisofs",
 				"-output", "/output/test.iso",
 				"-volid", "MYVOLUME",
 				"/input/file1", "/input/file2",
@@ -65,7 +66,8 @@ func TestCreateISO(t *testing.T) {
 				UseJoliet:  true,
 			},
 			wantArgs: []string{
-				iso.GenisoimageBinary,
+				iso.XorrisoBinary,
+				"-as", "mkisofs",
 				"-output", "/output/test.iso",
 				"-volid", "MYVOLUME",
 				"-joliet",
@@ -82,7 +84,8 @@ func TestCreateISO(t *testing.T) {
 				UseRockRidge: true,
 			},
 			wantArgs: []string{
-				iso.GenisoimageBinary,
+				iso.XorrisoBinary,
+				"-as", "mkisofs",
 				"-output", "/output/test.iso",
 				"-volid", "MYVOLUME",
 				"-rock",
@@ -100,7 +103,8 @@ func TestCreateISO(t *testing.T) {
 				UseRockRidge: true,
 			},
 			wantArgs: []string{
-				iso.GenisoimageBinary,
+				iso.XorrisoBinary,
+				"-as", "mkisofs",
 				"-output", "/output/test.iso",
 				"-volid", "MYVOLUME",
 				"-joliet",
@@ -118,7 +122,8 @@ func TestCreateISO(t *testing.T) {
 				Description: "Creating cloud-init ISO",
 			},
 			wantArgs: []string{
-				iso.GenisoimageBinary,
+				iso.XorrisoBinary,
+				"-as", "mkisofs",
 				"-output", "/output/test.iso",
 				"-volid", "MYVOLUME",
 				"/input/file1",
@@ -132,7 +137,7 @@ func TestCreateISO(t *testing.T) {
 				VolumeID:   "MYVOLUME",
 				InputFiles: []string{"/input/file1"},
 			},
-			runErr:         errors.New("genisoimage failed"),
+			runErr:         errors.New("xorriso failed"),
 			wantErr:        true,
 			wantErrContain: "failed to create ISO image",
 		},
@@ -231,11 +236,11 @@ func TestCreateISO_MultipleInputFiles(t *testing.T) {
 func TestCheckPrerequisites(t *testing.T) {
 	t.Parallel()
 
-	t.Run("genisoimage available", func(t *testing.T) {
+	t.Run("xorriso available", func(t *testing.T) {
 		t.Parallel()
 
 		ctx := testctx.NewCtx()
-		ctx.CmdFactory.RegisterCommandInSearchPath(iso.GenisoimageBinary)
+		ctx.CmdFactory.RegisterCommandInSearchPath(iso.XorrisoBinary)
 		ctx.DryRunValue = true
 
 		err := iso.CheckPrerequisites(ctx)
@@ -243,7 +248,7 @@ func TestCheckPrerequisites(t *testing.T) {
 		require.NoError(t, err)
 	})
 
-	t.Run("genisoimage not available and prompts disallowed", func(t *testing.T) {
+	t.Run("xorriso not available and prompts disallowed", func(t *testing.T) {
 		t.Parallel()
 
 		ctx := testctx.NewCtx()
@@ -254,10 +259,10 @@ func TestCheckPrerequisites(t *testing.T) {
 		err := iso.CheckPrerequisites(ctx)
 
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "genisoimage prerequisite check failed")
+		assert.Contains(t, err.Error(), "xorriso prerequisite check failed")
 	})
 
-	t.Run("genisoimage not available with auto-install on azurelinux", func(t *testing.T) {
+	t.Run("xorriso not available with auto-install on azurelinux", func(t *testing.T) {
 		t.Parallel()
 
 		ctx := testctx.NewCtx()
@@ -272,23 +277,23 @@ func TestCheckPrerequisites(t *testing.T) {
 		// Mock the install command
 		ctx.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
 			args := strings.Join(cmd.Args, " ")
-			assert.Contains(t, args, "cdrkit",
-				"install command should include cdrkit package")
+			assert.Contains(t, args, "xorriso",
+				"install command should include xorriso package")
 
 			return nil
 		}
 
 		err = iso.CheckPrerequisites(ctx)
-		// Note: Still errors because genisoimage won't be in path after mock install
+		// Note: Still errors because xorriso won't be in path after mock install
 		require.Error(t, err)
 	})
 }
 
-func TestGenisoimageBinaryConstant(t *testing.T) {
+func TestXorrisoBinaryConstant(t *testing.T) {
 	t.Parallel()
 
 	// Verify the binary constant matches expected value
-	assert.Equal(t, "genisoimage", iso.GenisoimageBinary)
+	assert.Equal(t, "xorriso", iso.XorrisoBinary)
 }
 
 // indexOf returns the index of the first occurrence of value in slice, or -1 if not found.
