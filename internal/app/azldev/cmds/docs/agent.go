@@ -402,7 +402,7 @@ func resolveShowSkill(requested string) (name string, list []string, err error) 
 	}
 
 	if _, findErr := agentskill.FindSkill(requested); findErr != nil {
-		return "", nil, fmt.Errorf("unknown skill %q; choose one of: %s",
+		return "", nil, fmt.Errorf("unknown skill %#q; choose one of: %s",
 			requested, strings.Join(names, ", "))
 	}
 
