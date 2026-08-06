@@ -21,4 +21,5 @@ command tree, suitable for inclusion in the user guide.`,
 
 	app.AddTopLevelCommand(cmd)
 	mdOnAppInit(app, cmd)
+	agentOnAppInit(app, cmd)
 }
