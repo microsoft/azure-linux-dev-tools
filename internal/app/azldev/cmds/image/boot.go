@@ -171,7 +171,7 @@ must support serial console interaction.
 
 Requirements:
   - qemu-system-x86_64/qemu-system-aarch64 (QEMU emulator)
-  - genisoimage (only when cloud-init credentials are provided)
+  - xorriso (only when cloud-init credentials are provided)
   - qemu-img (only when creating an empty disk for '--iso')
   - sudo (for running QEMU with KVM)
   - OVMF firmware (for UEFI boot)`
@@ -770,7 +770,7 @@ func ResolveImageByName(env *azldev.Env, imageName string) (*projectconfig.Image
 	)
 }
 
-func checkBootPrerequisites(env *azldev.Env, arch string, needQEMUImg, needGenisoimage bool) error {
+func checkBootPrerequisites(env *azldev.Env, arch string, needQEMUImg, needXorriso bool) error {
 	if err := qemu.CheckPrerequisites(env, arch); err != nil {
 		return fmt.Errorf("checking QEMU prerequisites:\n%w", err)
 	}
@@ -781,9 +781,9 @@ func checkBootPrerequisites(env *azldev.Env, arch string, needQEMUImg, needGenis
 		}
 	}
 
-	if needGenisoimage {
+	if needXorriso {
 		if err := iso.CheckPrerequisites(env); err != nil {
-			return fmt.Errorf("checking genisoimage prerequisites:\n%w", err)
+			return fmt.Errorf("checking xorriso prerequisites:\n%w", err)
 		}
 	}
 
