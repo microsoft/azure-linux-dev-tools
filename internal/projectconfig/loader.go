@@ -19,8 +19,6 @@ import (
 )
 
 var (
-	// ErrDuplicateComponents is returned when duplicate conflicting component definitions are found.
-	ErrDuplicateComponents = errors.New("duplicate component")
 	// ErrDuplicateComponentGroups is returned when duplicate conflicting component group definitions are found.
 	ErrDuplicateComponentGroups = errors.New("duplicate component group")
 	// ErrDuplicateImages is returned when duplicate conflicting image definitions are found.
@@ -214,18 +212,31 @@ func mergeComponentGroups(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) err
 }
 
 // mergeComponents merges component definitions from a loaded config file into
-// the resolved config. Duplicate component names are not allowed.
+// the resolved config. Components support additive merging: if a component
+// already exists, its fields are updated from the new definition.
 func mergeComponents(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
 	for componentName, component := range loadedCfg.Components {
-		if _, ok := resolvedCfg.Components[componentName]; ok {
-			return fmt.Errorf("%w: %s", ErrDuplicateComponents, componentName)
-		}
-
 		// Fill out fields not explicitly serialized.
 		component.Name = componentName
 		component.SourceConfigFile = loadedCfg
 
-		resolvedCfg.Components[componentName] = *(component.WithAbsolutePaths(loadedCfg.dir))
+		resolved := component.WithAbsolutePaths(loadedCfg.dir)
+		for i := range resolved.OverlayFiles {
+			resolved.OverlayFiles[i] = makeAbsolute(loadedCfg.dir, resolved.OverlayFiles[i])
+		}
+
+		if existing, ok := resolvedCfg.Components[componentName]; ok {
+			err := existing.MergeUpdatesFrom(resolved)
+			if err != nil {
+				return fmt.Errorf("failed to merge component %#q:\n%w", componentName, err)
+			}
+
+			// Preserve the latest source config file reference.
+			existing.SourceConfigFile = loadedCfg
+			resolvedCfg.Components[componentName] = existing
+		} else {
+			resolvedCfg.Components[componentName] = *resolved
+		}
 	}
 
 	return nil
