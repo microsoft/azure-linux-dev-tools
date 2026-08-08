@@ -385,6 +385,111 @@
      "destructiveHint": true,
      "idempotentHint": false,
      "openWorldHint": true,
+     "readOnlyHint": false
+    },
+    "description": "List documentation metadata for components' overlays and groups",
+    "inputSchema": {
+     "properties": {
+      "accept-all": {
+       "default": false,
+       "description": "accept all prompts",
+       "type": "boolean"
+      },
+      "all-components": {
+       "default": false,
+       "description": "Include all components",
+       "type": "boolean"
+      },
+      "category": {
+       "default": "",
+       "description": "only include entries whose metadata declares this category",
+       "type": "string"
+      },
+      "color": {
+       "description": "output colorization mode {always, auto, never}",
+       "type": "string"
+      },
+      "component": {
+       "description": "Component name pattern",
+       "type": "string"
+      },
+      "component-group": {
+       "description": "Component group name",
+       "type": "string"
+      },
+      "config-file": {
+       "description": "additional TOML config file(s) to merge (may be repeated)",
+       "type": "string"
+      },
+      "dry-run": {
+       "default": false,
+       "description": "dry run only (do not take action)",
+       "type": "boolean"
+      },
+      "groups": {
+       "default": false,
+       "description": "list component-group metadata (default lists both overlays and groups)",
+       "type": "boolean"
+      },
+      "network-retries": {
+       "default": 3,
+       "description": "maximum number of attempts for network operations (minimum 1)",
+       "type": "number"
+      },
+      "no-default-config": {
+       "default": false,
+       "description": "disable default configuration",
+       "type": "boolean"
+      },
+      "output-format": {
+       "description": "output format {csv, json, markdown, table}",
+       "type": "string"
+      },
+      "overlays": {
+       "default": false,
+       "description": "list overlay metadata (default lists both overlays and groups)",
+       "type": "boolean"
+      },
+      "permissive-config": {
+       "default": false,
+       "description": "do not fail on unknown fields in TOML config files",
+       "type": "boolean"
+      },
+      "project": {
+       "default": "",
+       "description": "path to Azure Linux project",
+       "type": "string"
+      },
+      "quiet": {
+       "default": false,
+       "description": "only enable minimal output",
+       "type": "boolean"
+      },
+      "spec-path": {
+       "description": "Spec path",
+       "type": "string"
+      },
+      "upstream-status": {
+       "default": "",
+       "description": "only include entries whose metadata declares this upstream status ('upstreamed', 'upstreamable', 'needs-upstream-hook', 'inapplicable', or 'unknown')",
+       "type": "string"
+      },
+      "verbose": {
+       "default": false,
+       "description": "enable verbose output",
+       "type": "boolean"
+      }
+     },
+     "required": [],
+     "type": "object"
+    },
+    "name": "component-metadata"
+   },
+   {
+    "annotations": {
+     "destructiveHint": true,
+     "idempotentHint": false,
+     "openWorldHint": true,
      "readOnlyHint": true
     },
     "description": "Dump the current configuration",
