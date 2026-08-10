@@ -72,6 +72,14 @@ For development setup and workflow, please consult our [Developer Guide](./docs/
 
 Notable changes for each release are recorded in the [changelog](./CHANGELOG.md).
 
+When preparing a release:
+
+* Match the wording and formatting of existing entries, including inline code
+  for commands and identifiers.
+* End each new entry with links to its pull requests, such as
+  [#123](https://github.com/microsoft/azure-linux-dev-tools/pull/123).
+* Leave entries for earlier releases unchanged.
+
 ## Getting Help
 
 Have questions, found a bug, or need a new feature? Open an issue in our [GitHub repository](https://github.com/microsoft/azure-linux-dev-tools/issues/new/choose). For guidance on how to file an issue, see [how to report issues](https://aka.ms/azurelinux-reportissues).

@@ -13,20 +13,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Agent skills and docs integration.** Add agent skill rendering core, add
   component/build/runtime skills, and expose skills through the docs agent.
-  (#287, #295, #305)
+  ([#287](https://github.com/microsoft/azure-linux-dev-tools/pull/287),
+  [#295](https://github.com/microsoft/azure-linux-dev-tools/pull/295),
+  [#305](https://github.com/microsoft/azure-linux-dev-tools/pull/305))
 - **Archive overlay pipeline support.** Wire archive overlays into prep-sources
-  with post-overlay hash tracking. (#276)
+  with post-overlay hash tracking.
+  ([#276](https://github.com/microsoft/azure-linux-dev-tools/pull/276))
 - **Local image test execution.** Run LISA test suites locally via `azldev
-  image test`. (#292)
+  image test`.
+  ([#292](https://github.com/microsoft/azure-linux-dev-tools/pull/292))
 - **RPM provenance macros.** Add opt-in `%fedora_upstream_*` provenance
-  macros. (#290)
+  macros. ([#290](https://github.com/microsoft/azure-linux-dev-tools/pull/290))
 
 ### Fixed
 
 - **Dry-run defaults extraction.** Extract embedded defaults during dry runs.
-  (#278)
+  ([#278](https://github.com/microsoft/azure-linux-dev-tools/pull/278))
 - **Deterministic archive directory copy.** Ensure archive dir is copied
-  deterministically. (#301)
+  deterministically.
+  ([#301](https://github.com/microsoft/azure-linux-dev-tools/pull/301))
 
 ## [0.2.0] - 2026-07-15
 
