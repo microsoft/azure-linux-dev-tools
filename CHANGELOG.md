@@ -7,6 +7,22 @@ All notable changes to `azldev` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-08-10
+
+### Added
+
+- Add agent skill rendering core (#287)
+- Wire archive overlays into prep-sources with post-overlay hash tracking (#276)
+- Run LISA test suites locally via 'image test'
+- Add opt-in %fedora_upstream_* provenance macros
+- Add component, build, runtime skills (#295)
+- Expose skills through docs agent (#305)
+
+### Fixed
+
+- Extract embedded defaults during dry runs (#278)
+- Ensure archive dir is copied deterministically (#301)
+
 ## [0.2.0] - 2026-07-15
 
 ### Added
