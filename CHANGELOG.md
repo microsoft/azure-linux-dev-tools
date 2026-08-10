@@ -13,8 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Add agent skill rendering core (#287)
 - Wire archive overlays into prep-sources with post-overlay hash tracking (#276)
-- Run LISA test suites locally via 'image test'
-- Add opt-in %fedora_upstream_* provenance macros
+- Run LISA test suites locally via `azldev image test`
+- Add opt-in `%fedora_upstream_*` provenance macros
 - Add component, build, runtime skills (#295)
 - Expose skills through docs agent (#305)
 
