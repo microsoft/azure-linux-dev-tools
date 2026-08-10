@@ -11,17 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Add agent skill rendering core (#287)
-- Wire archive overlays into prep-sources with post-overlay hash tracking (#276)
-- Run LISA test suites locally via `azldev image test`
-- Add opt-in `%fedora_upstream_*` provenance macros
-- Add component, build, runtime skills (#295)
-- Expose skills through docs agent (#305)
+- **Agent skills and docs integration.** Add agent skill rendering core, add
+  component/build/runtime skills, and expose skills through the docs agent.
+  (#287, #295, #305)
+- **Archive overlay pipeline support.** Wire archive overlays into prep-sources
+  with post-overlay hash tracking. (#276)
+- **Local image test execution.** Run LISA test suites locally via `azldev
+  image test`.
+- **RPM provenance macros.** Add opt-in `%fedora_upstream_*` provenance
+  macros.
 
 ### Fixed
 
-- Extract embedded defaults during dry runs (#278)
-- Ensure archive dir is copied deterministically (#301)
+- **Dry-run defaults extraction.** Extract embedded defaults during dry runs.
+  (#278)
+- **Deterministic archive directory copy.** Ensure archive dir is copied
+  deterministically. (#301)
 
 ## [0.2.0] - 2026-07-15
 
