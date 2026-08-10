@@ -17,9 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Archive overlay pipeline support.** Wire archive overlays into prep-sources
   with post-overlay hash tracking. (#276)
 - **Local image test execution.** Run LISA test suites locally via `azldev
-  image test`.
+  image test`. (#292)
 - **RPM provenance macros.** Add opt-in `%fedora_upstream_*` provenance
-  macros.
+  macros. (#290)
 
 ### Fixed
 
