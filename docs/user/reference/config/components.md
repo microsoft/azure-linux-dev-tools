@@ -106,6 +106,7 @@ The `[components.<name>.release]` section controls how azldev manages the Releas
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
 | Calculation | `calculation` | string | No | One of `"auto"` (default), `"autorelease"`, `"static"`, or `"manual"` |
+| Counter | `counter` | table | No | Declares the physical release counter to increment when the Release tag is non-standard. `source` is one of `"release-tag"` or `"spec-macro"` |
 
 ### Calculation Modes
 
@@ -113,7 +114,7 @@ The `[components.<name>.release]` section controls how azldev manages the Releas
 |------|----------|
 | `auto` | Auto-detects from the spec's Release tag value. If `%autorelease` is found, rpmautospec handles it. If a static integer is found, optionally followed by `%{?dist}` or `%{dist}`, it is bumped by the synthetic commit count. |
 | `autorelease` | Explicitly declares the spec uses `%autorelease`. Skips all Release manipulation. Use this for specs with conditional `%autorelease`/`%else` fallbacks that confuse auto-detection. |
-| `static` | Explicitly declares the spec uses a static integer release. Bumps it by the synthetic commit count only when the Release tag is an integer, optionally followed by `%{?dist}` or `%{dist}`. Non-integer or other non-standard Release values (for example, `%{pkg_release}`) require `manual` or an overlay. |
+| `static` | Explicitly declares the spec uses a static integer release. Bumps it by the synthetic commit count only when the Release tag is an integer, optionally followed by `%{?dist}` or `%{dist}`. Configure `counter` for other Release shapes. |
 | `manual` | Skips all automatic Release manipulation. Use for components that manage their own release numbering (e.g. kernel). |
 
 Most components use `auto` (the default) and need no release configuration. Examples:
@@ -127,6 +128,117 @@ calculation = "autorelease"
 [components.kernel.release]
 calculation = "manual"
 ```
+
+### Counter
+
+Use `[components.<name>.release.counter]` when the Release tag contains a
+counter that azldev cannot safely infer. A counter declares its exact physical
+location; azldev never guesses which digit to change. `manual` and
+`autorelease` clear an inherited counter. A component cannot declare a counter
+while inheriting either mode: config resolution fails instead of
+silently disabling release changes.
+
+For a counter in the main package's `Release:` tag, use `source = "release-tag"`
+with a full-value regular expression. The expression must have exactly one
+capturing group. Config validation checks the group count; rendered-spec
+validation requires its match to be digits in exactly one main-package
+`Release:` tag, and only that span is incremented. Leading-zero width is
+preserved.
+
+For dotted tags, capture the **rightmost release counter field**, not the
+upstream major field. For example, `18.1%{?dist}` uses
+`^[0-9]+\.([0-9]+)(?:%\{\??dist\})?$`, so a rebuild becomes `18.2` and a
+future upstream `19.0` still resolves correctly.
+
+Matching the literal `Release:` text is not enough — the capture must also be a
+span that actually renders and can be safely rewritten. Validation rejects three
+placements that would otherwise produce a no-op or corrupt rebuild:
+
+- **Inside an undefined conditional.** In
+  `Release: %{?prerelease:0.}%{baserelease}%{?dist}`, capturing the `0` is
+  rejected when nothing defines `prerelease`: the captured text never renders,
+  so the rebuild would publish an identical NEVRA. A macro counts as defined
+  when a `%global`/`%define` in the spec declares it, when the component's
+  `<name>.azl.macros` file defines it, or when the build environment supplies
+  it. The build environment supplies the distribution macros `dist`, `fedora`
+  and `rhel`, plus the macros derived from this component's own `build.with`,
+  `build.without` and `build.defines` (minus `build.undefines`), which reach
+  `rpmbuild` as `--with` / `--without` / `-D` flags. So a capture inside
+  `%{?dist:...}` is accepted, and so is one inside `%{?_without_debug:...}`
+  for a component configured with `build.without = ["debug"]`.
+- **Inside a macro name.** In
+  `Release: %{patch_level}.git%{?shortcommit0}%{?dist}.2`, capturing the `0` of
+  `shortcommit0` is rejected: bumping it would reference the undefined
+  `%{?shortcommit1}` and silently delete the commit hash.
+- **On a pre-release leading zero.** In `Release: 0.git%{shortcommit0}%{?dist}.2`,
+  capturing the leading `0` is rejected: `0.` marks a Fedora pre-release, and
+  incrementing it would sort above the final release. Capture the field after
+  the `0.` instead.
+
+For the first two, the fix is usually to point the counter at a bare-integer
+`%global`/`%define` with `source = "spec-macro"`. These checks run during
+`component check --evr` and again at render time, so a bad counter
+fails fast instead of silently producing no release change.
+
+```toml
+[components.example.release]
+calculation = "static"
+
+[components.example.release.counter]
+source = "release-tag"
+regex = '^0\.([0-9]+)(?:\.git.*)$'
+```
+
+For a macro-driven release, point at the physical bare-integer definition.
+The named `%global` or `%define` must appear exactly once after overlays, and
+its body must be only an integer. Main-package `Release:` tags must reference
+that macro directly or through an unambiguous macro chain, so azldev cannot
+increment a dead definition after upstream drift.
+
+```toml
+[components.nss.release]
+calculation = "static"
+
+[components.nss.release.counter]
+source = "spec-macro"
+directive = "global"
+name = "baserelease"
+```
+
+When a component leaves `manual` calculation, its full lock history replays as
+release increments on the next render. The jump is one-time and always upward,
+so the EVR stays monotonic; it simply skips ahead by the number of recorded
+fingerprint changes. Run `component update` before the first render after
+changing `calculation` or adding a counter.
+
+Local components are re-hashed on every `component update` instead of using the
+upstream lock-freshness shortcut, because they have no resolved upstream commit
+to reuse. Their local source changes therefore participate in dirty detection
+and synthetic release bumps on the next render.
+
+When migrating existing components, retain a nearby `# Upstream Release: ...`
+comment that records the raw post-overlay tag before synthetic-history
+incrementing. It is an audit aid for upstream drift, so do not rewrite it to
+the generated rendered Release value.
+
+After rendering, verify that every counter still resolves and that bumping it
+actually raises the evaluated EVR:
+
+```bash
+azldev component check --evr -a
+```
+
+This check reads the current rendered spec tree, not the upstream source spec.
+Run it after `component render`; it detects counter drift once rendering has
+materialized the upstream Release or macro shape. It evaluates each spec twice
+in a mock chroot — once as rendered and once with the counter incremented — so
+it needs a working mock configuration. Add `--from <ref>` to also compare the
+rendered specs at two git refs and fail a component whose content changed
+without an SRPM EVR increase.
+
+In CI, the GitHub rendered-spec workflow runs the check after re-rendering its
+workspace, while the ADO workflow's `render --check-only` leaves its workspace
+unchanged and checks the committed rendered specs.
 
 ## Render Configuration
 
