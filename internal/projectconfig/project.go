@@ -75,6 +75,10 @@ func (cfg *ProjectConfig) Validate() error {
 		return fmt.Errorf("config error:\n%w", err)
 	}
 
+	if err := validateProjectReleaseConfigs(cfg); err != nil {
+		return err
+	}
+
 	if err := validateComponentGroupMembership(cfg.ComponentGroups, cfg.Components); err != nil {
 		return err
 	}
@@ -108,6 +112,30 @@ func (cfg *ProjectConfig) Validate() error {
 
 	if err := validateDistroVersionInputs(cfg.Distros, &cfg.Resources, effectiveRepos); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func validateProjectReleaseConfigs(cfg *ProjectConfig) error {
+	if err := validateDistroReleaseConfigs(cfg.Distros); err != nil {
+		return err
+	}
+
+	if err := cfg.DefaultComponentConfig.Release.Validate(); err != nil {
+		return fmt.Errorf("invalid default component release config:\n%w", err)
+	}
+
+	for groupName, group := range cfg.ComponentGroups {
+		if err := group.DefaultComponentConfig.Release.Validate(); err != nil {
+			return fmt.Errorf("invalid release config for component group %#q:\n%w", groupName, err)
+		}
+	}
+
+	for componentName, component := range cfg.Components {
+		if err := component.Release.Validate(); err != nil {
+			return fmt.Errorf("invalid release config for component %#q:\n%w", componentName, err)
+		}
 	}
 
 	return nil

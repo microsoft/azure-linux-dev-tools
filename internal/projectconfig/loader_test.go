@@ -57,6 +57,27 @@ func TestLoadAndResolveProjectConfig_BadSchema_PermissiveParsing(t *testing.T) {
 	assert.NotNil(t, config)
 }
 
+func TestLoadAndResolveProjectConfig_InvalidDistroDefaultReleaseCounter(t *testing.T) {
+	const configContents = `
+[distros.test]
+
+[distros.test.versions."1"]
+release-ver = "1"
+
+[distros.test.versions."1".default-component-config.release.counter]
+source = "release-tag"
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.Error(t, err)
+	assert.Nil(t, config)
+	assert.Contains(t, err.Error(), "distro `test` version `1` default component config")
+	assert.Contains(t, err.Error(), "'regex' is required")
+}
+
 func TestLoadAndResolveProjectConfig_PermissiveParsing_PreservesKnownFields(t *testing.T) {
 	const configContents = `
 [project]

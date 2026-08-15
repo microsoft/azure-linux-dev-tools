@@ -6,6 +6,7 @@ package projectconfig
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -288,10 +289,128 @@ const (
 	ReleaseCalculationManual ReleaseCalculation = "manual"
 )
 
+// ReleaseCounterSource identifies where azldev increments a component's release counter.
+type ReleaseCounterSource string
+
+const (
+	// ReleaseCounterSourceReleaseTag increments a captured integer in the main package's Release tag.
+	ReleaseCounterSourceReleaseTag ReleaseCounterSource = "release-tag"
+
+	// ReleaseCounterSourceSpecMacro increments a bare integer %global or %define macro.
+	ReleaseCounterSourceSpecMacro ReleaseCounterSource = "spec-macro"
+)
+
+// ReleaseCounter declares the physical location of a component's release counter.
+// Exactly one source-specific configuration shape is valid for each [ReleaseCounterSource].
+type ReleaseCounter struct {
+	// Source identifies whether the counter is in the main package Release tag or a spec macro.
+	Source ReleaseCounterSource `toml:"source" json:"source" validate:"required,oneof=release-tag spec-macro" jsonschema:"required,enum=release-tag,enum=spec-macro,title=Counter source,description=Physical location of the release counter"`
+
+	// Regex is a full-value regular expression for a main-package Release tag. It must have exactly
+	// one capturing group; rendered-spec validation requires that capture to match the integer to increment.
+	Regex string `toml:"regex,omitempty" json:"regex,omitempty" jsonschema:"title=Release tag regex,description=Full-value regular expression with exactly one capturing group. Its rendered match must be a decimal integer. Required when source is release-tag"`
+
+	// Directive is the macro directive that defines Name. Valid values are global and define.
+	Directive string `toml:"directive,omitempty" json:"directive,omitempty" jsonschema:"enum=global,enum=define,title=Macro directive,description=Macro directive that defines the counter. Required when source is spec-macro"`
+
+	// Name is the name of the macro that contains the bare integer counter.
+	Name string `toml:"name,omitempty" json:"name,omitempty" jsonschema:"title=Macro name,description=Name of the bare-integer macro counter. Required when source is spec-macro"`
+}
+
+// Validate validates the source-specific [ReleaseCounter] configuration.
+func (c ReleaseCounter) Validate() error {
+	switch c.Source {
+	case ReleaseCounterSourceReleaseTag:
+		return c.validateReleaseTag()
+	case ReleaseCounterSourceSpecMacro:
+		return c.validateSpecMacro()
+	default:
+		return fmt.Errorf("unknown release counter source %#q", c.Source)
+	}
+}
+
+func (c ReleaseCounter) validateReleaseTag() error {
+	if c.Regex == "" {
+		return errors.New("'regex' is required when 'source' is 'release-tag'")
+	}
+
+	if c.Directive != "" || c.Name != "" {
+		return errors.New("'directive' and 'name' are only valid when 'source' is 'spec-macro'")
+	}
+
+	compiled, err := regexp.Compile(c.Regex)
+	if err != nil {
+		return fmt.Errorf("compiling release counter regex %#q:\n%w", c.Regex, err)
+	}
+
+	if compiled.NumSubexp() != 1 {
+		return fmt.Errorf("release counter regex %#q must contain exactly one capturing group", c.Regex)
+	}
+
+	return nil
+}
+
+func (c ReleaseCounter) validateSpecMacro() error {
+	if c.Regex != "" {
+		return errors.New("'regex' is only valid when 'source' is 'release-tag'")
+	}
+
+	if c.Directive != "global" && c.Directive != "define" {
+		return fmt.Errorf("'directive' must be 'global' or 'define', got %#q", c.Directive)
+	}
+
+	if c.Name == "" {
+		return errors.New("'name' is required when 'source' is 'spec-macro'")
+	}
+
+	return nil
+}
+
 // ReleaseConfig holds release-related configuration for a component.
 type ReleaseConfig struct {
 	// Calculation controls how the Release tag is managed during rendering.
 	Calculation ReleaseCalculation `toml:"calculation,omitempty" json:"calculation,omitempty" validate:"omitempty,oneof=auto autorelease static manual" jsonschema:"enum=auto,enum=autorelease,enum=static,enum=manual,default=auto,title=Release calculation,description=Controls how the Release tag is managed during rendering. Empty or omitted means auto."`
+
+	// Counter optionally declares the physical counter to increment. A configured counter replaces
+	// an inherited counter as a whole; it is cleared when calculation is manual or autorelease.
+	Counter *ReleaseCounter `toml:"counter,omitempty" json:"counter,omitempty" jsonschema:"title=Release counter,description=Physical location of the release counter to increment. Replaces an inherited counter atomically and is cleared by manual or autorelease calculation."`
+}
+
+// HashInclude implements [hashstructure.Includable] so that an unconfigured counter is
+// omitted from the fingerprint entirely rather than contributing a nil-valued field.
+//
+// hashstructure folds every included field into the struct hash even when it holds a zero
+// value, so simply declaring Counter would have churned the fingerprint of every component
+// that never sets one — a distro-wide synthetic release bump. Skipping the field restores
+// the exact pre-counter encoding, while a configured counter still hashes normally and so
+// any change to its source, regex, directive, or name changes the fingerprint.
+func (r ReleaseConfig) HashInclude(field string, _ any) (bool, error) {
+	if field == "Counter" {
+		return r.Counter != nil, nil
+	}
+
+	return true, nil
+}
+
+// Validate validates the release configuration beyond its field-level schema constraints.
+func (r ReleaseConfig) Validate() error {
+	if r.Calculation == ReleaseCalculationManual || r.Calculation == ReleaseCalculationAutorelease {
+		if r.Counter != nil {
+			return fmt.Errorf("'counter' cannot be configured when 'calculation' is %#q", r.Calculation)
+		}
+
+		return nil
+	}
+
+	if r.Counter == nil {
+		return nil
+	}
+
+	if err := r.Counter.Validate(); err != nil {
+		return fmt.Errorf("invalid 'counter':\n%w", err)
+	}
+
+	return nil
 }
 
 // FreshnessStatus indicates whether a component's current config matches
@@ -436,7 +555,20 @@ var AllowedSourceFilesHashTypes = map[fileutils.HashType]bool{
 
 // Mutates the component config, updating it with overrides present in other.
 func (c *ComponentConfig) MergeUpdatesFrom(other *ComponentConfig) error {
+	if releaseConfigIntentConflicts(c.Release, other.Release) {
+		effectiveCalculation := c.Release.Calculation
+		if other.Release.Calculation != "" {
+			effectiveCalculation = other.Release.Calculation
+		}
+
+		return fmt.Errorf(
+			"cannot apply explicit 'release.counter' because effective inherited "+
+				"'release.calculation' is %#q; set 'release.calculation' to 'auto' or 'static' in the same config layer",
+			effectiveCalculation)
+	}
+
 	otherOverlayFiles := slices.Clone(other.OverlayFiles)
+	otherReleaseCounter := deep.MustCopy(other.Release.Counter)
 
 	err := mergo.Merge(c, other, mergo.WithOverride, mergo.WithAppendSlice)
 	if err != nil {
@@ -447,7 +579,28 @@ func (c *ComponentConfig) MergeUpdatesFrom(other *ComponentConfig) error {
 		c.OverlayFiles = otherOverlayFiles
 	}
 
+	if other.Release.Counter != nil {
+		c.Release.Counter = otherReleaseCounter
+	}
+
+	if c.Release.Calculation == ReleaseCalculationManual || c.Release.Calculation == ReleaseCalculationAutorelease {
+		c.Release.Counter = nil
+	}
+
 	return nil
+}
+
+func releaseConfigIntentConflicts(inherited ReleaseConfig, updates ReleaseConfig) bool {
+	if updates.Counter == nil {
+		return false
+	}
+
+	effectiveCalculation := inherited.Calculation
+	if updates.Calculation != "" {
+		effectiveCalculation = updates.Calculation
+	}
+
+	return effectiveCalculation == ReleaseCalculationManual || effectiveCalculation == ReleaseCalculationAutorelease
 }
 
 // EffectiveUpstreamCommit returns the commit to use for upstream operations.
@@ -514,7 +667,7 @@ func (c *ComponentConfig) WithAbsolutePaths(referenceDir string) *ComponentConfi
 		SourceConfigFile: c.SourceConfigFile,
 		RenderedSpecDir:  c.RenderedSpecDir,
 		Locked:           deep.MustCopy(c.Locked),
-		Release:          c.Release,
+		Release:          deep.MustCopy(c.Release),
 		Spec:             deep.MustCopy(c.Spec),
 		Build:            deep.MustCopy(c.Build),
 		Render:           c.Render,
