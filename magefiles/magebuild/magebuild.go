@@ -133,6 +133,12 @@ func Unit() error {
 
 	mg.SerialDeps(magesrc.Generate)
 
+	if err := sh.RunV(
+		"python3", "-B", "-m", "unittest", "discover", "-s", "internal/rpm/evr", "-p", "process_test.py",
+	); err != nil {
+		return mageutil.PrintAndReturnError("Python unit test failed.", ErrUnit, err)
+	}
+
 	output, err := sh.Output(mg.GoCmd(), "test", "./...")
 	if err != nil {
 		// Show the test output when tests fail so users can see which tests failed

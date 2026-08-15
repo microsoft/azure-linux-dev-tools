@@ -120,6 +120,12 @@ func (q *SpecQuerier) composeRpmspecCmdline(specPath string) (result []string) {
 		result = append(result, "-D", fmt.Sprintf("%s %s", key, value))
 	}
 
+	// Match source preparation's macro precedence: undefines are applied after
+	// with/without flags and explicit defines.
+	for _, name := range q.buildOptions.Undefines {
+		result = append(result, "--undefine", name)
+	}
+
 	result = append(result, specPath)
 
 	return result

@@ -11,4 +11,6 @@ type BuildOptions struct {
 	Without []string
 	// Custom macro defines.
 	Defines map[string]string
+	// Macro names to undefine after applying with, without, and defines.
+	Undefines []string
 }
