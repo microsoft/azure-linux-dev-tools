@@ -1062,10 +1062,143 @@
           "title": "Release calculation",
           "description": "Controls how the Release tag is managed during rendering. Empty or omitted means auto.",
           "default": "auto"
+        },
+        "counter": {
+          "$ref": "#/$defs/ReleaseCounter",
+          "title": "Release counter",
+          "description": "Physical location of the release counter to increment. Replaces an inherited counter atomically and is cleared by manual or autorelease calculation."
         }
       },
       "additionalProperties": false,
       "type": "object"
+    },
+    "ReleaseCounter": {
+      "oneOf": [
+        {
+          "if": {
+            "properties": {
+              "source": {
+                "const": "release-tag"
+              }
+            },
+            "required": [
+              "source"
+            ]
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "directive"
+                  ]
+                },
+                {
+                  "required": [
+                    "name"
+                  ]
+                }
+              ]
+            },
+            "required": [
+              "regex"
+            ]
+          },
+          "else": false
+        },
+        {
+          "if": {
+            "properties": {
+              "source": {
+                "const": "spec-macro"
+              }
+            },
+            "required": [
+              "source"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "regex"
+              ]
+            },
+            "required": [
+              "directive",
+              "name"
+            ]
+          },
+          "else": false
+        },
+        {
+          "if": {
+            "properties": {
+              "source": {
+                "const": "macros-file"
+              }
+            },
+            "required": [
+              "source"
+            ]
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "regex"
+                  ]
+                },
+                {
+                  "required": [
+                    "directive"
+                  ]
+                }
+              ]
+            },
+            "required": [
+              "name"
+            ]
+          },
+          "else": false
+        }
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": [
+            "release-tag",
+            "spec-macro",
+            "macros-file"
+          ],
+          "title": "Counter source",
+          "description": "Physical location of the release counter"
+        },
+        "regex": {
+          "type": "string",
+          "title": "Release tag regex",
+          "description": "Full-value regular expression with exactly one capturing group. Its rendered match must be a decimal integer. Required when source is release-tag"
+        },
+        "directive": {
+          "type": "string",
+          "enum": [
+            "global",
+            "define"
+          ],
+          "title": "Macro directive",
+          "description": "Macro directive that defines the counter. Required when source is spec-macro"
+        },
+        "name": {
+          "type": "string",
+          "title": "Macro name",
+          "description": "Name of the bare-integer macro counter. Required when source is spec-macro or macros-file"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "source"
+      ]
     },
     "ResourcesConfig": {
       "properties": {

@@ -222,3 +222,82 @@ func TestAzureLinuxComponentRenderIsIdempotent(t *testing.T) {
 		[]string{"component", "render", "-a", "--clean-stale"},
 		true)
 }
+
+// TestAzureLinuxComponentCheckEVREvaluatesReleaseMacros checks the two real
+// release forms that require rpmspec to run in the target mock chroot:
+// nss resolves Release through %global macro indirection, while 389-ds-base's
+// checked-in rendered spec contains a frozen %autorelease result. The test
+// changes only unreferenced rendered sidecars, so the directory-tree gate must
+// identify the change and fail with equal, concrete SRPM EVRs.
+//
+// This test intentionally depends on the upstream branch retaining those two
+// release forms. If it begins failing, first inspect the resolved upstream
+// commit and rendered specs: a changed nss macro or 389-ds-base Release form is
+// upstream drift, while the documented shapes with unresolved EVRs indicate an
+// azldev regression.
+func TestAzureLinuxComponentCheckEVREvaluatesReleaseMacros(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping long test")
+	}
+
+	script := fmt.Sprintf(`
+set -euo pipefail
+
+git clone --depth=1 --single-branch --branch=%[1]s %[2]s azurelinux
+cd azurelinux
+mkdir -p base/build
+
+git config user.email test@example.com
+git config user.name "EVR gate test"
+baseline=$(git rev-parse HEAD)
+
+# These tracked sidecars affect the rendered-directory tree hash but leave
+# both Release expressions untouched. The gate must therefore evaluate both
+# sides, see equal EVRs, and report needs-attention.
+printf 'EVR gate fixture\n' > specs/n/nss/.evr-gate-fixture
+printf 'EVR gate fixture\n' > specs/3/389-ds-base/.evr-gate-fixture
+git add specs/n/nss/.evr-gate-fixture specs/3/389-ds-base/.evr-gate-fixture
+git -c commit.gpgsign=false commit -m "test: change EVR gate sidecars"
+
+set +e
+azldev component check --evr --from "$baseline" --to HEAD \
+  -p nss -p 389-ds-base -q -O json > evr-report.json
+check_exit=$?
+set -e
+
+if [[ "$check_exit" -eq 0 ]]; then
+	printf 'expected component check --evr to fail for changed sidecars\n' >&2
+	exit 1
+fi
+
+python3 - evr-report.json <<'PY'
+import json
+import sys
+
+with open(sys.argv[1]) as report_file:
+    report = json.load(report_file)
+
+rows = {row["component"]: row for row in report["components"]}
+for component in ("nss", "389-ds-base"):
+    row = rows[component]
+    srpm = row["srpm"]
+    assert row["status"] == "needs-attention", row
+    assert srpm["evrCmp"] == "eq", row
+    assert srpm["oldEvr"] == srpm["newEvr"], row
+    assert "%%{" not in srpm["oldEvr"], row
+    assert "%%autorelease" not in srpm["oldEvr"], row
+PY
+`, azureLinuxBranch, azureLinuxRepoURL)
+
+	results, err := cmdtest.NewScenarioTest().
+		WithScript(strings.NewReader(script)).
+		InContainer().
+		WithPrivilege().
+		WithNetwork().
+		Run(t)
+	require.NoError(t, err)
+
+	t.Logf("Standard output:\n%s", results.Stdout)
+	t.Logf("Standard error:\n%s", results.Stderr)
+	results.AssertZeroExitCode(t)
+}

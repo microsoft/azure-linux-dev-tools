@@ -22,6 +22,9 @@ accidentally removing lock files for components not included in the filter.
 The --bump flag updates matching lock files to increment the manual-rebuild
 counter, triggering a new release. Useful for mass-rebuild scenarios (e.g.,
 toolchain bug, static library update). Orphan pruning is skipped under --bump.
+Components with 'release.calculation = "manual"' are reported as skipped because
+their EVR will not change. The command exits non-zero after updating their locks
+unless --allow-manual is passed.
 
 The --check-only flag runs the full pipeline but does NOT write lock files or
 prune orphans. The command exits 0 when nothing would change and exits 1 when
@@ -47,6 +50,9 @@ azldev component update [flags]
   # Bump rebuild counter for a component (triggers new release)
   azldev component update --bump curl
 
+	# Update a manual-release lock without treating it as an EVR bump
+	azldev component update --bump --allow-manual kernel
+
   # CI gate: exit 0 if locks are fresh, 1 if anything would change
   azldev component update -a --check-only -q
 ```
@@ -55,6 +61,7 @@ azldev component update [flags]
 
 ```
   -a, --all-components                Include all components
+      --allow-manual                  allow --bump to complete for manual-release components even though their EVR will not change
       --bump                          increment the manual-rebuild counter to trigger a new release
       --check-only                    resolve identities and recompute fingerprints but do not write lock files or prune orphans. Exits 0 when nothing would change and 1 when any component is stale (or, with --all-components, when any orphan lock would be pruned). Intended for CI gates. Cannot be combined with --bump
   -p, --component stringArray         Component name pattern

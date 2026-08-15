@@ -25,6 +25,7 @@ components defined in the project configuration.`,
 	app.AddTopLevelCommand(cmd)
 	addOnAppInit(app, cmd)
 	buildOnAppInit(app, cmd)
+	checkOnAppInit(app, cmd)
 	changedOnAppInit(app, cmd)
 	diffSourcesOnAppInit(app, cmd)
 	historyOnAppInit(app, cmd)

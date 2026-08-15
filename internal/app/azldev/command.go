@@ -208,6 +208,13 @@ func reportResults(env *Env, results interface{}) error {
 	}
 }
 
+// ReportResults displays command results using the environment's selected
+// output format. Commands that need to emit structured output before returning
+// a non-zero gate error can use this instead of the normal RunFunc wrapper.
+func ReportResults(env *Env, results interface{}) error {
+	return reportResults(env, results)
+}
+
 func reportResultsViaReflectable(env *Env, results interface{}, format reflectable.Format) (err error) {
 	// Don't bother formatting well-known simple values that aren't meaningful to humans.
 	if results == nil || results == true || results == false {
