@@ -145,7 +145,7 @@ hand-picking entries to document.`,
 //
 //	build.with, build.without, build.defines, build.undefines,
 //	build.check.skip, spec.source-type, spec.upstream-commit,
-//	spec.upstream-name, spec.upstream-distro, release.calculation,
+//	spec.upstream-name, spec.upstream-distro, release.calculation, release.counter,
 //	render.skip-file-filter, packages, source-files,
 //	source-files.replace-upstream
 //

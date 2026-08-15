@@ -177,18 +177,30 @@ func appendSpecItems(
 	return items
 }
 
-// appendReleaseItems flags non-default release-calculation modes.
+// appendReleaseItems flags non-default release calculation and configured counters.
 func appendReleaseItems(
 	items []CustomizationItem, release projectconfig.ReleaseConfig,
 ) []CustomizationItem {
-	if release.Calculation == "" || release.Calculation == projectconfig.ReleaseCalculationAuto {
+	if release.Calculation != "" && release.Calculation != projectconfig.ReleaseCalculationAuto {
+		items = append(items, CustomizationItem{
+			Kind:  "release.calculation",
+			Value: string(release.Calculation),
+		})
+	}
+
+	if release.Counter == nil {
 		return items
 	}
 
-	return append(items, CustomizationItem{
-		Kind:  "release.calculation",
-		Value: string(release.Calculation),
-	})
+	counterValue := string(release.Counter.Source)
+	switch release.Counter.Source {
+	case projectconfig.ReleaseCounterSourceReleaseTag:
+		counterValue = release.Counter.Regex
+	case projectconfig.ReleaseCounterSourceSpecMacro:
+		counterValue = fmt.Sprintf("%%%s %s", release.Counter.Directive, release.Counter.Name)
+	}
+
+	return append(items, CustomizationItem{Kind: "release.counter", Value: counterValue})
 }
 
 // appendPackageItems emits one item per binary package override.

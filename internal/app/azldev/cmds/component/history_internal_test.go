@@ -84,6 +84,7 @@ func TestCustomizationCollectorsCoverEveryFingerprintableField(t *testing.T) {
 		reflect.TypeFor[projectconfig.SpecSource](),
 		reflect.TypeFor[projectconfig.DistroReference](),
 		reflect.TypeFor[projectconfig.ReleaseConfig](),
+		reflect.TypeFor[projectconfig.ReleaseCounter](),
 		reflect.TypeFor[projectconfig.ComponentRenderConfig](),
 		reflect.TypeFor[projectconfig.SourceFileReference](),
 		reflect.TypeFor[projectconfig.Origin](),
@@ -127,6 +128,13 @@ func TestCustomizationCollectorsCoverEveryFingerprintableField(t *testing.T) {
 
 		// ReleaseConfig.
 		"ReleaseConfig.Calculation": "release.calculation (only when non-auto)",
+		"ReleaseConfig.Counter":     "delegates to ReleaseCounter walk",
+
+		// ReleaseCounter.
+		"ReleaseCounter.Source":    "release.counter",
+		"ReleaseCounter.Regex":     "release.counter",
+		"ReleaseCounter.Directive": "release.counter",
+		"ReleaseCounter.Name":      "release.counter",
 
 		// ComponentRenderConfig.
 		"ComponentRenderConfig.SkipFileFilter": "render.skip-file-filter",
@@ -213,6 +221,11 @@ func TestCollectCustomizationsEmitsEveryKind(t *testing.T) {
 		},
 		Release: projectconfig.ReleaseConfig{
 			Calculation: projectconfig.ReleaseCalculationAutorelease,
+			Counter: &projectconfig.ReleaseCounter{
+				Source:    projectconfig.ReleaseCounterSourceSpecMacro,
+				Directive: "global",
+				Name:      "baserelease",
+			},
 		},
 		Render: projectconfig.ComponentRenderConfig{SkipFileFilter: true},
 		Packages: map[string]projectconfig.PackageConfig{
@@ -236,6 +249,7 @@ func TestCollectCustomizationsEmitsEveryKind(t *testing.T) {
 		"spec.upstream-name",
 		"spec.upstream-distro",
 		"release.calculation",
+		"release.counter",
 		"render.skip-file-filter",
 		"packages",
 		"source-files",

@@ -4,6 +4,7 @@
 package component_test
 
 import (
+	"bytes"
 	"os/exec"
 	"strings"
 	"testing"
@@ -37,6 +38,45 @@ func TestNewUpdateCmd_Flags(t *testing.T) {
 
 	componentFlag := cmd.Flags().Lookup("component")
 	require.NotNil(t, componentFlag, "component flag should be registered")
+
+	allowManualFlag := cmd.Flags().Lookup("allow-manual")
+	require.NotNil(t, allowManualFlag, "allow-manual flag should be registered")
+}
+
+func TestUpdateCmd_ManualReleaseReportsSkippedJSON(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	env.Config.Components["manual-pkg"] = projectconfig.ComponentConfig{
+		Name: "manual-pkg",
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeUpstream,
+		},
+		Release: projectconfig.ReleaseConfig{Calculation: projectconfig.ReleaseCalculationManual},
+	}
+
+	lock := lockfile.New()
+	lock.UpstreamCommit = "abc123"
+	env.WriteLock(t, "manual-pkg", lock)
+
+	env.Env.SetDefaultReportFormat(azldev.ReportFormatJSON)
+
+	var output bytes.Buffer
+	env.Env.SetReportFile(&output)
+
+	cmd := componentcmds.NewUpdateCmd()
+	cmd.SetArgs([]string{"--bump", "manual-pkg"})
+
+	err := cmd.ExecuteContext(env.Env)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "manual-pkg")
+	assert.JSONEq(t, `[
+  {
+    "component": "manual-pkg",
+    "upstreamCommit": "abc123",
+    "changed": false,
+    "skipped": true,
+    "skipReason": "manual release calculation; bump will not change the EVR"
+  }
+]`, output.String())
 }
 
 func TestUpdateCmd_NoComponents(t *testing.T) {

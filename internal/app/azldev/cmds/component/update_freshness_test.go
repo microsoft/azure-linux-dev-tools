@@ -14,6 +14,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -146,6 +147,33 @@ func TestFreshness_NothingChanged_SkipsNetwork(t *testing.T) {
 	assert.Equal(t, fpBefore, lock.InputFingerprint, "fingerprint should be unchanged")
 	assert.Equal(t, resHashBefore, lock.ResolutionInputHash, "resolution hash should be unchanged")
 	assert.Equal(t, commit, lock.UpstreamCommit, "commit should be unchanged")
+}
+
+func TestFreshness_AddingReleaseCounterRefreshesLockWithoutReresolving(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	const commit = "aabbccdd11223344"
+
+	gitCalls := setupMockGitWithCounter(env, commit)
+	addUpstreamComponent(env, testComponentName)
+	setDistroSnapshot(env, "2025-01-01T00:00:00Z")
+	initialUpdate(t, env)
+
+	config := env.Config.Components[testComponentName]
+	config.Release.Calculation = projectconfig.ReleaseCalculationStatic
+	config.Release.Counter = &projectconfig.ReleaseCounter{
+		Source: projectconfig.ReleaseCounterSourceReleaseTag,
+		Regex:  `^([0-9]+)$`,
+	}
+	env.Config.Components[testComponentName] = config
+
+	gitCalls.Store(0)
+
+	results, updateErr := componentcmds.UpdateComponents(env.Env, allComponentsFilter())
+	require.NoError(t, updateErr)
+	assert.Equal(t, int32(0), gitCalls.Load(), "counter adoption must reuse the locked upstream commit")
+	require.Len(t, results, 1)
+	assert.True(t, results[0].Changed, "counter adoption changes the fingerprint")
 }
 
 // setDistroSnapshot updates the test distro version's default-component-config
@@ -378,6 +406,41 @@ func TestFreshness_LocalComponent_ReUpdateSucceeds(t *testing.T) {
 			assert.False(t, r.Changed, "unchanged local component should not be marked changed")
 		}
 	}
+}
+
+// TestFreshness_LocalComponent_SourceEditUpdatesLock verifies the intended
+// local-source behavior: update re-hashes local spec directories rather than
+// applying the upstream freshness shortcut, so source edits refresh the lock.
+func TestFreshness_LocalComponent_SourceEditUpdatesLock(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	setupMockGitWithCounter(env, "doesnt-matter")
+	addLocalComponent(env, "local-pkg")
+	require.NoError(t, fileutils.MkdirAll(env.TestFS, testLockDir))
+
+	_, err := componentcmds.UpdateComponents(env.Env, allComponentsFilter())
+	require.NoError(t, err)
+
+	lockPath, err := lockfile.LockPath(testLockDir, "local-pkg")
+	require.NoError(t, err)
+	before, err := lockfile.Load(env.TestFS, lockPath)
+	require.NoError(t, err)
+
+	require.NoError(t, fileutils.WriteFile(
+		env.TestFS,
+		"/project/specs/local-pkg/local-pkg.spec",
+		[]byte("Name: local-pkg\nSummary: changed\n"),
+		fileperms.PublicFile,
+	))
+
+	results, err := componentcmds.UpdateComponents(env.Env, allComponentsFilter())
+	require.NoError(t, err)
+
+	after, err := lockfile.Load(env.TestFS, lockPath)
+	require.NoError(t, err)
+	assert.NotEqual(t, before.InputFingerprint, after.InputFingerprint)
+	require.Len(t, results, 1)
+	assert.True(t, results[0].Changed)
 }
 
 // TestFreshness_LocalComponent_LegacyLock_ReUpdateSucceeds reproduces the exact

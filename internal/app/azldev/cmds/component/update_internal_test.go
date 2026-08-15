@@ -6,6 +6,7 @@ package component
 import (
 	"testing"
 
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components/components_testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
@@ -13,6 +14,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -293,6 +295,64 @@ func TestBumpComponents_SequentialBumps(t *testing.T) {
 	lock2 := readLock(t, store, "curl")
 	assert.Equal(t, 2, lock2.ManualBump)
 	assert.NotEqual(t, fp1, lock2.InputFingerprint, "second bump should produce different fingerprint")
+}
+
+func TestBumpComponents_ManualReleaseIsSkipped(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	store := newTestStore(t, env)
+
+	lock := lockfile.New()
+	lock.UpstreamCommit = testCommitHash
+	require.NoError(t, store.Save("manual-pkg", lock))
+
+	config := baseConfig("manual-pkg")
+	config.Release.Calculation = projectconfig.ReleaseCalculationManual
+	comp := newMockComp(t, "manual-pkg", config)
+
+	results, err := bumpComponents(env.Env, store, []components.Component{comp}, &UpdateComponentOptions{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "manual-pkg")
+	require.Len(t, results, 1)
+	assert.False(t, results[0].Changed)
+	assert.True(t, results[0].Skipped)
+	assert.Contains(t, results[0].SkipReason, "manual release calculation")
+
+	bumped := readLock(t, store, "manual-pkg")
+	assert.Equal(t, 1, bumped.ManualBump, "the lock must still be updated")
+	assert.NotEmpty(t, bumped.InputFingerprint)
+}
+
+func TestBumpComponents_ManualReleaseCanBeAllowed(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	store := newTestStore(t, env)
+
+	lock := lockfile.New()
+	lock.UpstreamCommit = testCommitHash
+	require.NoError(t, store.Save("manual-pkg", lock))
+
+	config := baseConfig("manual-pkg")
+	config.Release.Calculation = projectconfig.ReleaseCalculationManual
+	comp := newMockComp(t, "manual-pkg", config)
+
+	results, err := bumpComponents(
+		env.Env, store, []components.Component{comp}, &UpdateComponentOptions{AllowManual: true},
+	)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.False(t, results[0].Changed)
+	assert.True(t, results[0].Skipped)
+	assert.Equal(t, 1, readLock(t, store, "manual-pkg").ManualBump)
+}
+
+func TestRunUpdateCmdInvalidUsageRestoresUsage(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	cmd := &cobra.Command{SilenceUsage: true}
+	cmd.SetContext(env.Env)
+
+	err := runUpdateCmd(&UpdateComponentOptions{Bump: true, CheckOnly: true})(cmd, nil)
+
+	require.ErrorIs(t, err, azldev.ErrInvalidUsage)
+	assert.False(t, cmd.SilenceUsage)
 }
 
 // Bumping a local component with no lock file should error (same as upstream).

@@ -333,6 +333,101 @@ func TestComputeIdentity_ManualBumpChange(t *testing.T) {
 	assert.NotEqual(t, fp1, fp2, "different manual bump count must produce different fingerprints")
 }
 
+func TestComputeIdentity_ReleaseCounterChange(t *testing.T) {
+	ctx := newTestFS(t, map[string]string{
+		"/specs/test.spec": "Name: testpkg\nVersion: 1.0",
+	})
+
+	withoutCounter := baseComponent()
+	withCounter := baseComponent()
+	withCounter.Release.Counter = &projectconfig.ReleaseCounter{
+		Source: projectconfig.ReleaseCounterSourceReleaseTag,
+		Regex:  `^([0-9]+)%\{\?dist\}$`,
+	}
+
+	fpWithoutCounter := computeFingerprint(t, ctx, withoutCounter, testReleaseVer, 0)
+	fpWithCounter := computeFingerprint(t, ctx, withCounter, testReleaseVer, 0)
+
+	assert.NotEqual(t, fpWithoutCounter, fpWithCounter,
+		"release counter configuration must change the fingerprint")
+}
+
+func TestComputeIdentity_ReleaseCounterFieldChange(t *testing.T) {
+	ctx := newTestFS(t, map[string]string{
+		"/specs/test.spec": "Name: testpkg\nVersion: 1.0",
+	})
+
+	counters := map[string]projectconfig.ReleaseCounter{
+		"release-tag": {
+			Source: projectconfig.ReleaseCounterSourceReleaseTag,
+			Regex:  `^([0-9]+)%\{\?dist\}$`,
+		},
+		"release-tag other regex": {
+			Source: projectconfig.ReleaseCounterSourceReleaseTag,
+			Regex:  `^0\.([0-9]+)%\{\?dist\}$`,
+		},
+		"spec-macro global": {
+			Source:    projectconfig.ReleaseCounterSourceSpecMacro,
+			Directive: "global",
+			Name:      "baserelease",
+		},
+		"spec-macro define": {
+			Source:    projectconfig.ReleaseCounterSourceSpecMacro,
+			Directive: "define",
+			Name:      "baserelease",
+		},
+		"spec-macro other name": {
+			Source:    projectconfig.ReleaseCounterSourceSpecMacro,
+			Directive: "global",
+			Name:      "rel",
+		},
+	}
+
+	seen := make(map[string]string, len(counters))
+
+	for name, counter := range counters {
+		comp := baseComponent()
+		comp.Release.Counter = &counter
+
+		fingerprintValue := computeFingerprint(t, ctx, comp, testReleaseVer, 0)
+
+		if previous, duplicate := seen[fingerprintValue]; duplicate {
+			t.Errorf("counter %q and %q must not share a fingerprint", name, previous)
+		}
+
+		seen[fingerprintValue] = name
+	}
+}
+
+// TestComputeIdentity_GoldenFingerprint pins the fingerprint of a fixed, minimal
+// component config.
+//
+// hashstructure folds every included struct field into the hash even when it holds a
+// zero value, so merely *adding* an optional field to any fingerprinted struct silently
+// rewrites the fingerprint of every component in every consuming distro — which forces a
+// synthetic release bump for the whole distro on the next render. This test makes that
+// class of change fail loudly.
+//
+// Coverage is limited to types this fixture actually reaches by value. hashstructure does
+// not descend into a nil pointer or an empty slice, so adding a field to a type only
+// reachable that way (for example [projectconfig.ReleaseCounter] behind a nil
+// ReleaseConfig.Counter, or [projectconfig.ComponentOverlay] in an empty Overlays slice)
+// leaves this fingerprint unchanged and will NOT be caught here.
+//
+// If this test fails, do NOT blindly update the constant. Either exclude the new field
+// from the zero-value encoding (see [projectconfig.ReleaseConfig.HashInclude]) so existing
+// fingerprints are preserved, or deliberately accept a distro-wide rebuild and update the
+// value here in the same change.
+func TestComputeIdentity_GoldenFingerprint(t *testing.T) {
+	const goldenFingerprint = "sha256:28bfb4c26fe473e737c2145b1e270541aa8526299b379e4e1288d75965626f51"
+
+	ctx := newTestFS(t, map[string]string{
+		"/specs/test.spec": "Name: testpkg\nVersion: 1.0",
+	})
+
+	assert.Equal(t, goldenFingerprint, computeFingerprint(t, ctx, baseComponent(), testReleaseVer, 0))
+}
+
 func TestComputeIdentity_UpstreamCommitChange(t *testing.T) {
 	ctx := newTestFS(t, nil)
 

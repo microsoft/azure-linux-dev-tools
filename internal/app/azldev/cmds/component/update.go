@@ -27,6 +27,10 @@ type UpdateComponentOptions struct {
 	// Bump increments the manual-rebuild counter on matched components'
 	// lock files. Used for mass-rebuild scenarios.
 	Bump bool
+	// AllowManual permits --bump to complete when a component uses manual
+	// release calculation. The lock is still updated, but that update cannot
+	// change the component's EVR.
+	AllowManual bool
 	// CheckOnly runs the full update pipeline (resolve identities,
 	// recompute fingerprints) but does not write lock files or prune
 	// orphans. Returns a non-nil error when any component would be
@@ -67,6 +71,9 @@ accidentally removing lock files for components not included in the filter.
 The --bump flag updates matching lock files to increment the manual-rebuild
 counter, triggering a new release. Useful for mass-rebuild scenarios (e.g.,
 toolchain bug, static library update). Orphan pruning is skipped under --bump.
+Components with 'release.calculation = "manual"' are reported as skipped because
+their EVR will not change. The command exits non-zero after updating their locks
+unless --allow-manual is passed.
 
 The --check-only flag runs the full pipeline but does NOT write lock files or
 prune orphans. The command exits 0 when nothing would change and exits 1 when
@@ -84,15 +91,12 @@ Cannot be combined with --bump.`,
   # Bump rebuild counter for a component (triggers new release)
   azldev component update --bump curl
 
+	# Update a manual-release lock without treating it as an EVR bump
+	azldev component update --bump --allow-manual kernel
+
   # CI gate: exit 0 if locks are fresh, 1 if anything would change
   azldev component update -a --check-only -q`,
-		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
-			options.ComponentFilter.ComponentNamePatterns = append(
-				args, options.ComponentFilter.ComponentNamePatterns...,
-			)
-
-			return UpdateComponents(env, options)
-		}),
+		RunE:              runUpdateCmd(options),
 		ValidArgsFunction: components.GenerateComponentNameCompletions,
 	}
 
@@ -100,6 +104,8 @@ Cannot be combined with --bump.`,
 
 	cmd.Flags().BoolVar(&options.Bump, "bump", false,
 		"increment the manual-rebuild counter to trigger a new release")
+	cmd.Flags().BoolVar(&options.AllowManual, "allow-manual", false,
+		"allow --bump to complete for manual-release components even though their EVR will not change")
 	cmd.Flags().BoolVar(&options.CheckOnly, "check-only", false,
 		"resolve identities and recompute fingerprints but do not write lock files "+
 			"or prune orphans. Exits 0 when nothing would change and 1 when any "+
@@ -118,6 +124,63 @@ Cannot be combined with --bump.`,
 	_ = cmd.Flags().MarkHidden("skip-lock-validation")
 
 	return cmd
+}
+
+func runUpdateCmd(options *UpdateComponentOptions) func(*cobra.Command, []string) error {
+	return func(cmd *cobra.Command, args []string) error {
+		cmd.SilenceUsage = true
+
+		env, err := azldev.GetEnvFromCommand(cmd)
+		if err != nil {
+			return fmt.Errorf("getting command environment:\n%w", err)
+		}
+
+		if env.Config() == nil || env.ProjectDir() == "" {
+			env.AddFixSuggestion(
+				"Please either use the -C option to specify a path to the root directory " +
+					"of your Azure Linux project/repo, or else run this tool from within a directory " +
+					"tree that contains an 'azldev.toml' file at its root. " +
+					"Most commands will not function correctly without a valid configuration.",
+			)
+
+			return errors.New("a valid project and configuration are required to execute this command")
+		}
+
+		options.ComponentFilter.ComponentNamePatterns = append(args, options.ComponentFilter.ComponentNamePatterns...)
+
+		results, updateErr := UpdateComponents(env, options)
+		if updateErr != nil {
+			if errors.Is(updateErr, azldev.ErrInvalidUsage) {
+				cmd.SilenceUsage = false
+			}
+
+			if !hasSkippedUpdateResult(results) {
+				return updateErr
+			}
+
+			if reportErr := azldev.ReportResults(env, results); reportErr != nil {
+				return fmt.Errorf("reporting update results:\n%w", reportErr)
+			}
+
+			return updateErr
+		}
+
+		if reportErr := azldev.ReportResults(env, results); reportErr != nil {
+			return fmt.Errorf("reporting update results:\n%w", reportErr)
+		}
+
+		return nil
+	}
+}
+
+func hasSkippedUpdateResult(results []UpdateResult) bool {
+	for _, result := range results {
+		if result.Skipped {
+			return true
+		}
+	}
+
+	return false
 }
 
 // UpdateResult is the per-component output for the update command.
@@ -192,13 +255,14 @@ func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]Updat
 	// have been removed.
 	if options.Bump {
 		results, bumpErr := bumpComponents(env, store, comps, options)
-		if bumpErr != nil {
-			return results, bumpErr
-		}
-
 		logUpdateSummary(results)
 
-		return filterDisplayResults(results), nil
+		display := filterDisplayResults(results)
+		if bumpErr != nil {
+			return display, bumpErr
+		}
+
+		return display, nil
 	}
 
 	results := resolveSourceIdentitiesParallel(env, comps, store)
@@ -436,11 +500,10 @@ func updateComponentLock(env *azldev.Env, store *lockfile.Store, result *UpdateR
 	}
 
 	lock.InputFingerprint = identity.Fingerprint
-
 	// Update resolution input hash for upstream components.
 	resHashChanged := updateResolutionHash(env, result.config, lock)
 
-	// Write if either hash changed. ResolutionInputHash updates are silent
+	// Write if the fingerprint or resolution hash changed. ResolutionInputHash updates are silent
 	// (don't set Changed) since they don't affect build outputs.
 	if !result.Changed && !resHashChanged {
 		return false, nil
@@ -493,6 +556,7 @@ func bumpComponents(
 ) ([]UpdateResult, error) {
 	results := make([]UpdateResult, 0, len(comps))
 	saved := make([]string, 0, len(comps))
+	manualReleaseComponents := make([]string, 0)
 
 	for _, comp := range comps {
 		// Check for cancellation (Ctrl+C) between components.
@@ -504,74 +568,121 @@ func bumpComponents(
 			return results, fmt.Errorf("bump cancelled; %d of %d components bumped", len(saved), len(comps))
 		}
 
-		name := comp.GetName()
-
-		// Require an existing lock file - bump only makes sense for
-		// components that have already been updated at least once.
-		// Use Get (not GetOrNew) so missing locks produce a clear error
-		// instead of silently creating an empty lock.
-		lock, lockErr := store.Get(name)
-		if lockErr != nil {
-			if options.ComponentFilter.IncludeAllComponents {
-				env.AddFixSuggestion("run 'azldev component update -a' first to populate lock files")
-			} else {
-				env.AddFixSuggestion(fmt.Sprintf("run 'azldev component update -p %s' first", name))
-			}
-
-			return results, fmt.Errorf("cannot bump %#q:\n%w", name, lockErr)
-		}
-
-		lock.ManualBump++
-
-		slog.Info("Bumping component", "component", name, "manualBump", lock.ManualBump)
-
-		// Resolve per-component distro for ReleaseVer, matching the
-		// per-component resolution used by render/build/prepare-sources.
-		releaseVer, distroErr := resolveReleaseVer(env, comp.GetConfig())
-		if distroErr != nil {
-			return results, fmt.Errorf("resolving distro for %#q:\n%w", name, distroErr)
-		}
-
-		// Determine source identity for fingerprint recomputation.
-		srcIdentity, identityErr := resolveLockedSourceIdentity(env, comp, lock)
-		if identityErr != nil {
-			return results, identityErr
-		}
-
-		// Recompute fingerprint with the new ManualBump.
-		identity, fpErr := fingerprint.ComputeIdentity(
-			env.FS(),
-			*comp.GetConfig(),
-			releaseVer,
-			fingerprint.IdentityOptions{
-				ManualBump:     lock.ManualBump,
-				SourceIdentity: srcIdentity,
-			},
-		)
-		if fpErr != nil {
-			return results, fmt.Errorf("computing fingerprint for %#q:\n%w", name, fpErr)
-		}
-
-		lock.InputFingerprint = identity.Fingerprint
-
-		if saveErr := store.Save(name, lock); saveErr != nil {
+		result, err := bumpComponent(env, store, comp, options.ComponentFilter.IncludeAllComponents)
+		if err != nil {
 			if len(saved) > 0 {
 				slog.Info("Lock files bumped before failure", "components", saved)
 			}
 
-			return results, fmt.Errorf("saving lock for %#q:\n%w", name, saveErr)
+			return results, err
 		}
 
-		saved = append(saved, name)
+		saved = append(saved, result.Component)
+		if result.Skipped {
+			manualReleaseComponents = append(manualReleaseComponents, result.Component)
+		}
 
-		results = append(results, UpdateResult{
-			Component:      name,
-			UpstreamCommit: lock.UpstreamCommit,
-			Changed:        true,
-		})
+		results = append(results, result)
+	}
+
+	if len(manualReleaseComponents) > 0 && !options.AllowManual {
+		env.AddFixSuggestion(
+			"review the manual-release backlog and either update the component's release calculation " +
+				"or rerun with '--allow-manual' after intentionally accepting that its EVR will not change",
+		)
+
+		return results, fmt.Errorf(
+			"%d manual-release component(s) were skipped because --bump will not change their EVR: %s; "+
+				"rerun with '--allow-manual' to accept this",
+			len(manualReleaseComponents), strings.Join(manualReleaseComponents, ", "))
 	}
 
 	return results, nil
+}
+
+func bumpComponent(
+	env *azldev.Env,
+	store *lockfile.Store,
+	comp components.Component,
+	includeAllComponents bool,
+) (UpdateResult, error) {
+	name := comp.GetName()
+
+	lock, err := loadLockForBump(env, store, name, includeAllComponents)
+	if err != nil {
+		return UpdateResult{}, err
+	}
+
+	lock.ManualBump++
+	slog.Info("Bumping component", "component", name, "manualBump", lock.ManualBump)
+
+	if err := updateBumpFingerprint(env, comp, lock); err != nil {
+		return UpdateResult{}, err
+	}
+
+	if err := store.Save(name, lock); err != nil {
+		return UpdateResult{}, fmt.Errorf("saving lock for %#q:\n%w", name, err)
+	}
+
+	return newBumpResult(name, lock.UpstreamCommit, comp.GetConfig()), nil
+}
+
+func loadLockForBump(
+	env *azldev.Env,
+	store *lockfile.Store,
+	componentName string,
+	includeAllComponents bool,
+) (*lockfile.ComponentLock, error) {
+	lock, err := store.Get(componentName)
+	if err == nil {
+		return lock, nil
+	}
+
+	if includeAllComponents {
+		env.AddFixSuggestion("run 'azldev component update -a' first to populate lock files")
+	} else {
+		env.AddFixSuggestion(fmt.Sprintf("run 'azldev component update -p %s' first", componentName))
+	}
+
+	return nil, fmt.Errorf("cannot bump %#q:\n%w", componentName, err)
+}
+
+func updateBumpFingerprint(env *azldev.Env, comp components.Component, lock *lockfile.ComponentLock) error {
+	releaseVer, err := resolveReleaseVer(env, comp.GetConfig())
+	if err != nil {
+		return fmt.Errorf("resolving distro for %#q:\n%w", comp.GetName(), err)
+	}
+
+	sourceIdentity, err := resolveLockedSourceIdentity(env, comp, lock)
+	if err != nil {
+		return err
+	}
+
+	identity, err := fingerprint.ComputeIdentity(
+		env.FS(), *comp.GetConfig(), releaseVer,
+		fingerprint.IdentityOptions{ManualBump: lock.ManualBump, SourceIdentity: sourceIdentity},
+	)
+	if err != nil {
+		return fmt.Errorf("computing fingerprint for %#q:\n%w", comp.GetName(), err)
+	}
+
+	lock.InputFingerprint = identity.Fingerprint
+
+	return nil
+}
+
+func newBumpResult(componentName, upstreamCommit string, config *projectconfig.ComponentConfig) UpdateResult {
+	result := UpdateResult{
+		Component:      componentName,
+		UpstreamCommit: upstreamCommit,
+		Changed:        config.Release.Calculation != projectconfig.ReleaseCalculationManual,
+	}
+	if !result.Changed {
+		result.Skipped = true
+		result.SkipReason = "manual release calculation; bump will not change the EVR"
+	}
+
+	return result
 }
 
 // resolveLockedSourceIdentity returns the source identity to use when
@@ -773,8 +884,8 @@ func classifyForResolution(
 			continue
 		}
 
-		if isUpstream && locked != nil && locked.Freshness == projectconfig.FreshnessStale &&
-			!locked.ResolutionStale && locked.UpstreamCommit != "" {
+		if isUpstream && locked != nil && !locked.ResolutionStale && locked.UpstreamCommit != "" &&
+			locked.Freshness == projectconfig.FreshnessStale {
 			// Case 2: build inputs changed but resolution inputs unchanged.
 			// Reuse the locked commit — re-resolving would yield the same hash.
 			results[idx].UpstreamCommit = locked.UpstreamCommit
