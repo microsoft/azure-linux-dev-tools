@@ -531,7 +531,7 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 
 	// Adjust the Release tag before staging changes. See [tryBumpStaticRelease]
 	// for the handling of %autorelease, static integers, and non-standard values.
-	if err := p.tryBumpStaticRelease(component, sourcesDirPath, len(changes)); err != nil {
+	if err := p.applyReleaseCounterBump(component, sourcesDirPath, len(changes)); err != nil {
 		return fmt.Errorf("failed to apply release bump:\n%w", err)
 	}
 
@@ -570,11 +570,24 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 	return nil
 }
 
+func (p *sourcePreparerImpl) applyReleaseCounterBump(
+	component components.Component,
+	sourcesDirPath string,
+	commitCount int,
+) error {
+	if commitCount == 0 {
+		return nil
+	}
+
+	return p.tryBumpStaticRelease(component, sourcesDirPath, commitCount)
+}
+
 // computeCurrentFingerprint computes the current input fingerprint for a
-// component from its resolved config. Returns ("", nil) for local components
-// or when the source identity cannot be determined — dirty detection is
-// silently skipped for these. Returns a non-nil error when the fingerprint
-// computation itself fails.
+// component from its resolved config. Upstream components use their resolved
+// commit; local components hash their containing spec directory, so local source
+// edits participate in dirty detection and synthetic release bumps. Returns ("", nil)
+// when the source identity cannot be determined. Returns a non-nil error when
+// fingerprint or local-source identity computation fails.
 func computeCurrentFingerprint(
 	fs opctx.FS,
 	config *projectconfig.ComponentConfig,
@@ -584,7 +597,23 @@ func computeCurrentFingerprint(
 		return "", nil
 	}
 
-	sourceIdentity := config.EffectiveUpstreamCommit()
+	var sourceIdentity string
+
+	if config.Spec.SourceType == projectconfig.SpecSourceTypeLocal {
+		if config.Spec.Path == "" {
+			return "", fmt.Errorf("local component %#q has no spec path", config.Name)
+		}
+
+		localIdentity, err := sourceproviders.ResolveLocalSourceIdentity(fs, filepath.Dir(config.Spec.Path))
+		if err != nil {
+			return "", fmt.Errorf("resolving local source identity for component %#q:\n%w", config.Name, err)
+		}
+
+		sourceIdentity = localIdentity
+	} else {
+		sourceIdentity = config.EffectiveUpstreamCommit()
+	}
+
 	if sourceIdentity == "" {
 		return "", nil
 	}

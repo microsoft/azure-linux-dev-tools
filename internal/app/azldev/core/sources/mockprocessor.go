@@ -368,13 +368,8 @@ func writeInputsManifest(fs opctx.FS, stagingDir string, inputs []ComponentInput
 		jsonInputs[idx] = componentInputJSON(input)
 	}
 
-	data, err := json.Marshal(jsonInputs)
-	if err != nil {
-		return fmt.Errorf("marshaling inputs:\n%w", err)
-	}
-
 	inputsPath := filepath.Join(stagingDir, "inputs.json")
-	if err := fileutils.WriteFile(fs, inputsPath, data, fileperms.PublicFile); err != nil {
+	if err := fileutils.WriteJSONFile(fs, inputsPath, jsonInputs); err != nil {
 		return fmt.Errorf("writing inputs manifest:\n%w", err)
 	}
 

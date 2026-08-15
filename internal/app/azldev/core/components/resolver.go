@@ -642,8 +642,10 @@ func (r *Resolver) computeFreshnessStatus(config *projectconfig.ComponentConfig)
 	}
 
 	// Freshness optimization only applies to upstream components. Local
-	// components resolve via filesystem hashing (cheap), and their empty
-	// UpstreamCommit can't serve as source identity for fingerprint checks.
+	// components deliberately receive no freshness verdict: update re-hashes
+	// their source directory every time so local edits refresh the lock and
+	// participate in synthetic release history. Their empty UpstreamCommit
+	// cannot serve as the upstream source identity used by this shortcut.
 	if config.Spec.SourceType != projectconfig.SpecSourceTypeUpstream {
 		return
 	}

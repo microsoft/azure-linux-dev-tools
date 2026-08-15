@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
@@ -29,7 +28,7 @@ var autoreleasePattern = regexp.MustCompile(`%(\{[?]?autorelease($|[}\s])|autore
 // dist macro (e.g. "5%{?dist}" or "5%{dist}"). Any other suffix — dotted
 // segments, unknown macros, etc. — is rejected so the component must use
 // 'release.calculation = "manual"'.
-var staticReleasePattern = regexp.MustCompile(`^(\d+)(%\{\??dist\})?$`)
+var staticReleasePattern = regexp.MustCompile(`^(\d+)(?:%\{\??dist\})?$`)
 
 // GetReleaseTagValue reads the Release tag value from the spec file at specPath.
 // It returns the raw value string as written in the spec (e.g. "1%{?dist}" or "%autorelease").
@@ -72,23 +71,22 @@ func ReleaseUsesAutorelease(releaseValue string) bool {
 	return autoreleasePattern.MatchString(releaseValue)
 }
 
-// BumpStaticRelease increments the leading integer in a static Release tag value
+// bumpStaticRelease increments the leading integer in a static Release tag value
 // by the given commit count.
-func BumpStaticRelease(releaseValue string, commitCount int) (string, error) {
+func bumpStaticRelease(releaseValue string, commitCount int) (string, error) {
 	matches := staticReleasePattern.FindStringSubmatch(releaseValue)
 	if matches == nil {
 		return "", fmt.Errorf("release value %#q does not start with an integer", releaseValue)
 	}
 
-	currentRelease, err := strconv.Atoi(matches[1])
+	newCounter, err := incrementDecimalInteger(matches[1], commitCount)
 	if err != nil {
-		return "", fmt.Errorf("failed to parse release number from %#q:\n%w", releaseValue, err)
+		return "", fmt.Errorf("failed to bump release number from %#q:\n%w", releaseValue, err)
 	}
 
-	newRelease := currentRelease + commitCount
-	suffix := matches[2]
+	suffix := releaseValue[len(matches[1]):]
 
-	return fmt.Sprintf("%d%s", newRelease, suffix), nil
+	return newCounter + suffix, nil
 }
 
 // tryBumpStaticRelease manages the Release tag based on the component's release
@@ -96,15 +94,16 @@ func BumpStaticRelease(releaseValue string, commitCount int) (string, error) {
 //
 //   - "manual":      no-op — component manages its own release numbering.
 //   - "autorelease": no-op — rpmautospec resolves the release from git history.
-//   - "static":      always bumps the static integer release by commitCount.
+//   - "static":      always bumps the configured or default release counter.
 //   - "auto":        auto-detects from the spec's Release tag value; skips if
-//     %autorelease is found, otherwise bumps the static integer.
+//     %autorelease is found, otherwise bumps the default release counter.
 func (p *sourcePreparerImpl) tryBumpStaticRelease(
 	component components.Component,
 	sourcesDirPath string,
 	commitCount int,
 ) error {
-	calc := component.GetConfig().Release.Calculation
+	release := component.GetConfig().Release
+	calc := release.Calculation
 
 	switch calc {
 	case projectconfig.ReleaseCalculationManual:
@@ -120,9 +119,17 @@ func (p *sourcePreparerImpl) tryBumpStaticRelease(
 		return nil
 
 	case projectconfig.ReleaseCalculationStatic:
+		if release.Counter != nil {
+			return p.applyReleaseCounter(component, sourcesDirPath, commitCount, *release.Counter)
+		}
+
 		return p.readAndBumpRelease(component, sourcesDirPath, commitCount, true)
 
 	case projectconfig.ReleaseCalculationAuto:
+		if release.Counter != nil {
+			return p.applyReleaseCounter(component, sourcesDirPath, commitCount, *release.Counter)
+		}
+
 		return p.readAndBumpRelease(component, sourcesDirPath, commitCount, false)
 
 	default:
@@ -166,31 +173,46 @@ func (p *sourcePreparerImpl) readAndBumpRelease(
 		return nil
 	}
 
-	newRelease, err := BumpStaticRelease(releaseValue, commitCount)
-	if err != nil {
+	if _, bumpErr := bumpStaticRelease(releaseValue, commitCount); bumpErr != nil {
 		return fmt.Errorf(
 			"component %#q has a non-standard Release tag value %#q that cannot be auto-bumped; "+
-				"set 'release.calculation = \"manual\"' in the component configuration "+
-				"and add a \"spec-set-tag\" overlay for the Release tag if needed:\n%w",
-			component.GetName(), releaseValue, err)
+				"configure 'release.counter' to identify the counter, or set 'release.calculation = \"manual\"' "+
+				"only when the component manages its own release numbering:\n%w",
+			component.GetName(), releaseValue, bumpErr)
 	}
 
-	slog.Info("Bumping static release",
-		"component", component.GetName(),
-		"oldRelease", releaseValue,
-		"newRelease", newRelease,
-		"commitCount", commitCount)
-
-	overlay := projectconfig.ComponentOverlay{
-		Type:  projectconfig.ComponentOverlayUpdateSpecTag,
-		Tag:   "Release",
-		Value: newRelease,
+	if err := p.applyReleaseCounter(component, sourcesDirPath, commitCount, DefaultReleaseCounter()); err != nil {
+		return err
 	}
 
-	if err := ApplySpecOverlayToFileInPlace(p.fs, overlay, specPath); err != nil {
-		return fmt.Errorf("failed to apply release bump overlay for component %#q:\n%w",
+	return nil
+}
+
+func (p *sourcePreparerImpl) applyReleaseCounter(
+	component components.Component,
+	sourcesDirPath string,
+	commitCount int,
+	counter projectconfig.ReleaseCounter,
+) error {
+	specPath, err := p.resolveSpecPath(component, sourcesDirPath)
+	if err != nil {
+		return err
+	}
+
+	change, err := applyReleaseCounterToFileInPlace(
+		p.fs, counter, specPath, component.GetConfig().Build, commitCount)
+	if err != nil {
+		return fmt.Errorf(
+			"applying release counter for component %#q:\n%w",
 			component.GetName(), err)
 	}
+
+	slog.Info("Bumping release counter",
+		"component", component.GetName(),
+		"source", counter.Source,
+		"oldCounter", change.OldValue,
+		"newCounter", change.NewValue,
+		"commitCount", commitCount)
 
 	return nil
 }

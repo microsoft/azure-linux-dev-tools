@@ -94,9 +94,10 @@ func (s *componentSpec) Parse() (specInfo *ComponentSpecDetails, err error) {
 	// Extract the build options from the component; we'll need to honor them even in rpmspec
 	// in order to get the correct spec information.
 	buildOptions := rpm.BuildOptions{
-		With:    s.componentConfig.Build.With,
-		Without: s.componentConfig.Build.Without,
-		Defines: s.componentConfig.Build.Defines,
+		With:      s.componentConfig.Build.With,
+		Without:   s.componentConfig.Build.Without,
+		Defines:   s.componentConfig.Build.Defines,
+		Undefines: s.componentConfig.Build.Undefines,
 	}
 
 	// Create the spec querier and query it!

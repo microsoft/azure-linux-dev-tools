@@ -169,6 +169,8 @@ func TestRemoveSubmoduleEntries_PreservesNormalEntriesWithMixedModes(t *testing.
 
 func TestComputeCurrentFingerprint(t *testing.T) {
 	memFS := afero.NewMemMapFs()
+	require.NoError(t, fileutils.MkdirAll(memFS, "/specs"))
+	require.NoError(t, fileutils.WriteFile(memFS, "/specs/test.spec", []byte("Name: test\n"), fileperms.PublicFile))
 
 	lockedConfig := func(commit string, manualBump int) *projectconfig.ComponentConfig {
 		return &projectconfig.ComponentConfig{
@@ -204,6 +206,16 @@ func TestComputeCurrentFingerprint(t *testing.T) {
 				Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeUpstream},
 			},
 			wantEmpty: true,
+		},
+		{
+			name: "local spec produces fingerprint",
+			config: &projectconfig.ComponentConfig{
+				Name: "test",
+				Spec: projectconfig.SpecSource{
+					SourceType: projectconfig.SpecSourceTypeLocal,
+					Path:       "/specs/test.spec",
+				},
+			},
 		},
 		{
 			name:   "locked upstream commit produces fingerprint",
