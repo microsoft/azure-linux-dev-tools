@@ -43,7 +43,7 @@ editors or linters that support JSON Schema validation of TOML files.`,
 		},
 	}
 
-	azldev.ExportAsMCPTool(cmd)
+	azldev.ExportAsReadOnlyMCPTool(cmd)
 
 	return cmd
 }

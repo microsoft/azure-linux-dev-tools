@@ -12,6 +12,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// validTestSHA is a 40-character hex string for use in tests.
+const validTestSHA = "abcdef0123456789abcdef0123456789abcdef01"
+
+// validLisaConfig returns a valid [projectconfig.LisaConfig] for use in tests.
+func validLisaConfig() *projectconfig.LisaConfig {
+	return &projectconfig.LisaConfig{
+		Framework: projectconfig.GitSourceConfig{
+			GitURL: "https://github.com/microsoft/lisa.git",
+			Ref:    validTestSHA,
+		},
+		TestCases: []string{"verify_cpu_count", "verify_grub"},
+	}
+}
+
 func TestImageCapabilities_EnabledNames(t *testing.T) {
 	t.Run("all enabled", func(t *testing.T) {
 		caps := projectconfig.ImageCapabilities{
@@ -170,6 +184,15 @@ func TestTestSuiteConfig_Validate(t *testing.T) {
 		assert.NoError(t, testConfig.Validate())
 	})
 
+	t.Run("valid lisa config", func(t *testing.T) {
+		testConfig := projectconfig.TestSuiteConfig{
+			Name: "integration",
+			Type: projectconfig.TestTypeLisa,
+			Lisa: validLisaConfig(),
+		}
+		assert.NoError(t, testConfig.Validate())
+	})
+
 	t.Run("pytest missing subtable", func(t *testing.T) {
 		testConfig := projectconfig.TestSuiteConfig{
 			Name: "smoke",
@@ -181,37 +204,77 @@ func TestTestSuiteConfig_Validate(t *testing.T) {
 		assert.Contains(t, err.Error(), "[pytest]")
 	})
 
-	t.Run("valid lisa type", func(t *testing.T) {
+	t.Run("pytest with lisa subtable", func(t *testing.T) {
 		testConfig := projectconfig.TestSuiteConfig{
-			Name: "vm-tests",
-			Type: projectconfig.TestTypeLisa,
+			Name:   "smoke",
+			Type:   projectconfig.TestTypePytest,
+			Pytest: &projectconfig.PytestConfig{},
+			Lisa:   validLisaConfig(),
 		}
-		assert.NoError(t, testConfig.Validate())
-	})
-
-	t.Run("valid lisa type with description", func(t *testing.T) {
-		testConfig := projectconfig.TestSuiteConfig{
-			Name:        "vm-tests",
-			Description: "VM integration tests using LISA",
-			Type:        projectconfig.TestTypeLisa,
-		}
-		assert.NoError(t, testConfig.Validate())
-	})
-
-	t.Run("lisa rejects pytest subtable", func(t *testing.T) {
-		testConfig := projectconfig.TestSuiteConfig{
-			Name: "vm-tests",
-			Type: projectconfig.TestTypeLisa,
-			Pytest: &projectconfig.PytestConfig{
-				WorkingDir: "tests",
-			},
-		}
-
 		err := testConfig.Validate()
 		require.Error(t, err)
 		require.ErrorIs(t, err, projectconfig.ErrMismatchedTestSubtable)
-		assert.Contains(t, err.Error(), "vm-tests")
-		assert.Contains(t, err.Error(), string(projectconfig.TestTypeLisa))
+	})
+
+	t.Run("lisa missing subtable is valid (optional)", func(t *testing.T) {
+		testConfig := projectconfig.TestSuiteConfig{
+			Name: "integration",
+			Type: projectconfig.TestTypeLisa,
+		}
+		assert.NoError(t, testConfig.Validate())
+	})
+
+	t.Run("lisa missing framework git-url", func(t *testing.T) {
+		cfg := validLisaConfig()
+		cfg.Framework.GitURL = ""
+		testConfig := projectconfig.TestSuiteConfig{
+			Name: "integration",
+			Type: projectconfig.TestTypeLisa,
+			Lisa: cfg,
+		}
+		err := testConfig.Validate()
+		require.Error(t, err)
+		require.ErrorIs(t, err, projectconfig.ErrMissingTestField)
+		assert.Contains(t, err.Error(), "git-url")
+	})
+
+	t.Run("lisa invalid framework ref", func(t *testing.T) {
+		cfg := validLisaConfig()
+		cfg.Framework.Ref = "not-a-sha"
+		testConfig := projectconfig.TestSuiteConfig{
+			Name: "integration",
+			Type: projectconfig.TestTypeLisa,
+			Lisa: cfg,
+		}
+		err := testConfig.Validate()
+		require.Error(t, err)
+		require.ErrorIs(t, err, projectconfig.ErrInvalidGitRef)
+	})
+
+	t.Run("lisa missing test-cases", func(t *testing.T) {
+		cfg := validLisaConfig()
+		cfg.TestCases = nil
+		testConfig := projectconfig.TestSuiteConfig{
+			Name: "integration",
+			Type: projectconfig.TestTypeLisa,
+			Lisa: cfg,
+		}
+		err := testConfig.Validate()
+		require.Error(t, err)
+		require.ErrorIs(t, err, projectconfig.ErrMissingTestField)
+		assert.Contains(t, err.Error(), "test-cases")
+	})
+
+	t.Run("lisa with pytest subtable", func(t *testing.T) {
+		testConfig := projectconfig.TestSuiteConfig{
+			Name:   "integration",
+			Type:   projectconfig.TestTypeLisa,
+			Lisa:   validLisaConfig(),
+			Pytest: &projectconfig.PytestConfig{},
+		}
+		err := testConfig.Validate()
+		require.Error(t, err)
+		require.ErrorIs(t, err, projectconfig.ErrMismatchedTestSubtable)
 	})
 
 	t.Run("unknown test type", func(t *testing.T) {

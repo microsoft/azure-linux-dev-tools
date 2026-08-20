@@ -141,13 +141,11 @@ func (g *FedoraSourcesProviderImpl) GetComponent(
 	}
 
 	// Collect filenames from source-files config so the lookaside extractor can skip them.
-	// These files were already fetched by FetchFiles and take precedence over upstream versions.
-	sourceFiles := component.GetConfig().SourceFiles
-
-	skipFileNames := make([]string, len(sourceFiles))
-	for i := range sourceFiles {
-		skipFileNames[i] = sourceFiles[i].Filename
-	}
+	// [SourceManager.FetchFiles] acquires the configured versions after component fetching.
+	// Only files that FetchFiles actually downloads belong in this list — origin types that
+	// do not perform their own download (e.g. 'overlay') must be left out so the upstream
+	// lookaside extractor still fetches the original archive for archive overlays to work on.
+	skipFileNames := fetchedSourceFilenames(component.GetConfig().SourceFiles)
 
 	// Process the cloned repo: checkout target commit, extract sources, copy to destination.
 	return g.processClonedRepo(ctx, effectiveCommit,
@@ -178,7 +176,8 @@ func (g *FedoraSourcesProviderImpl) processClonedRepo(
 	}
 
 	// Extract sources from repo (downloads lookaside files into the temp dir).
-	// Files in skipFilenames are not downloaded — they were already fetched by FetchFiles.
+	// Files in skipFilenames are not downloaded because [SourceManager.FetchFiles]
+	// provides the configured versions after component fetching.
 	// Skip this step entirely when SkipLookaside is set (e.g., during rendering).
 	if !opts.SkipLookaside {
 		err := g.downloader.ExtractSourcesFromRepo(
@@ -195,7 +194,6 @@ func (g *FedoraSourcesProviderImpl) processClonedRepo(
 	}
 
 	// Copy files from temp dir to destination, skipping files that already exist.
-	// This preserves any files downloaded by FetchFiles, giving them precedence.
 	copyOptions := fileutils.CopyDirOptions{
 		CopyFileOptions: fileutils.CopyFileOptions{
 			PreserveFileMode: true,

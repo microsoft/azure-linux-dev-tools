@@ -1,0 +1,14 @@
+# Pin for the git-cliff CLI used by `mage changelog` (and installed by CI).
+#
+# This crate is never compiled into azldev. It exists only so the git-cliff
+# version is pinned in a manifest that Dependabot (cargo ecosystem) and security
+# scanners can read and bump -- unlike a version hardcoded in Go. The `mage
+# changelog` target reads this version for its install hint, and CI installs it.
+[package]
+name = "azldev-git-cliff-pin"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+git-cliff = "=2.13.1"

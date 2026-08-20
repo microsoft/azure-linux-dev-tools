@@ -195,10 +195,13 @@ func BuildComponents(
 		return nil, fmt.Errorf("failed to create work dir factory:\n%w", err)
 	}
 
+	mockProcessor := createBuildMockProcessor(env)
+	defer destroyMockProcessor(env, mockProcessor)
+
 	results := make([]ComponentBuildResults, 0, components.Len())
 
 	for _, component := range components.Components() {
-		componentResults, buildErr := BuildComponent(env, component, workDirFactory, options)
+		componentResults, buildErr := buildComponent(env, component, workDirFactory, mockProcessor, options)
 		if buildErr != nil {
 			buildErr = fmt.Errorf("failed to build %q:\n%w", component.GetName(), buildErr)
 		}
@@ -218,6 +221,19 @@ func BuildComponent(
 	env *azldev.Env,
 	component components.Component,
 	workDirFactory *workdir.Factory,
+	options *ComponentBuildOptions,
+) (ComponentBuildResults, error) {
+	mockProcessor := createBuildMockProcessor(env)
+	defer destroyMockProcessor(env, mockProcessor)
+
+	return buildComponent(env, component, workDirFactory, mockProcessor, options)
+}
+
+func buildComponent(
+	env *azldev.Env,
+	component components.Component,
+	workDirFactory *workdir.Factory,
+	mockProcessor *sources.MockProcessor,
 	options *ComponentBuildOptions,
 ) (results ComponentBuildResults, err error) {
 	// Resolve the effective distro for this component before creating the source manager.
@@ -258,6 +274,11 @@ func BuildComponent(
 			sources.WithDirtyDetection(),
 		)
 	}
+
+	preparerOpts = append(preparerOpts,
+		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)))
+
+	preparerOpts = append(preparerOpts, sources.WithMockProcessor(mockProcessor))
 
 	sourcePreparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, preparerOpts...)
 	if err != nil {

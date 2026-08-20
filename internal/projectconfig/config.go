@@ -18,7 +18,6 @@ import (
 // for cleaning it up -- but not until after it is done using the loaded configuration. The loaded
 // configuration may implicitly depend on the contents of the temporary directory.
 func LoadProjectConfig(
-	dryRunnable opctx.DryRunnable,
 	fs opctx.FS,
 	osEnv opctx.OSEnv,
 	referenceDir string,
@@ -43,7 +42,7 @@ func LoadProjectConfig(
 			return "", nil, fmt.Errorf("failed to create temp dir for default config files:\n%w", err)
 		}
 
-		defaultConfigFilePath, err := defaultconfigs.CopyTo(dryRunnable, fs, tempConfigDirPath)
+		defaultConfigFilePath, err := defaultconfigs.CopyTo(fs, tempConfigDirPath)
 		if err != nil {
 			return "", nil, fmt.Errorf("failed to copy default config files:\n%w", err)
 		}

@@ -30,6 +30,10 @@ go.work.sum
 # env file
 .env
 
+# python venv
+venv/
+.venv/
+
 # From https://github.com/github/gitignore/blob/main/Global/Archives.gitignore
 
 # It's better to unpack these files and commit the raw source because

@@ -230,3 +230,13 @@ New component subcommands (`internal/app/azldev/cmds/component/`) require:
 - **Bypassing `CmdFactory`** with raw `exec.Command` → test spawns real process
 - **Updating snapshots blindly** to make a test pass → masks real bugs
 - **Non-deterministic output** in snapshots (timestamps, abs paths) → normalize first
+
+## Archive Overlay Regression Coverage
+
+Changes to archive overlay preparation should retain tests for these independent edge cases:
+
+- An upstream entry using a different or legacy hash algorithm (for example MD5) is downloaded with that algorithm, then the repacked result is hashed with the TOML-configured SHA-256/SHA-512 algorithm.
+- An archive whose extension does not match its actual compression is repacked using its content-detected compression.
+- Overlay-origin files are not included in lookaside skip lists, while fetched custom/download origins are.
+- Archive-overlay and overlay-origin associations are rejected when missing in either direction (except the documented `--allow-no-hashes` bootstrap relaxation).
+- Loose-file overlays cannot remove, replace, rename onto, or glob-match an archive that is also modified by an archive-scoped overlay.

@@ -16,6 +16,8 @@ import (
 	//mage:import
 	"github.com/microsoft/azure-linux-dev-tools/magefiles/magecheckfix"
 	//mage:import
+	_ "github.com/microsoft/azure-linux-dev-tools/magefiles/magerelease"
+	//mage:import
 	_ "github.com/microsoft/azure-linux-dev-tools/magefiles/magemutation"
 	//mage:import
 	"github.com/microsoft/azure-linux-dev-tools/magefiles/magescenario"
@@ -46,8 +48,8 @@ func init() {
 	}
 }
 
-// All runs the tests, builds the code, and checks for any issues.
+// All runs the tests, builds the code, and runs the default checks.
 func All() error {
-	mg.SerialDeps(magebuild.Build, magebuild.Unit, mg.F(magecheckfix.Check, magecheckfix.TargetAll), magescenario.Scenario, magebuild.Docs)
+	mg.SerialDeps(magebuild.Build, magebuild.Unit, mg.F(magecheckfix.Check, magecheckfix.TargetDefault), magescenario.Scenario, magebuild.Docs)
 	return nil
 }

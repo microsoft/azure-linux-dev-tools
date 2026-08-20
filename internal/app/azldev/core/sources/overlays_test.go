@@ -38,6 +38,7 @@ func applyOverlayToSpecContents(
 	return outputBuffer.String(), nil
 }
 
+//nolint:maintidx // Test table complexity scales with the number of overlay types.
 func TestApplySpecOverlay(t *testing.T) {
 	testCases := []struct {
 		name          string
@@ -257,6 +258,58 @@ line1
 			errorExpected: true,
 		},
 		{
+			name: "prepend lines to entire spec (no section)",
+			overlay: projectconfig.ComponentOverlay{
+				Type:  projectconfig.ComponentOverlayPrependSpecLines,
+				Lines: []string{"# top of file"},
+			},
+			spec: `Name: name
+
+%description
+text
+
+%changelog
+* Mon Jan 01 2024 User <user@example.com> - 1.0-1
+- Initial release
+`,
+			result: `# top of file
+Name: name
+
+%description
+text
+
+%changelog
+* Mon Jan 01 2024 User <user@example.com> - 1.0-1
+- Initial release
+`,
+		},
+		{
+			name: "append lines to entire spec (no section)",
+			overlay: projectconfig.ComponentOverlay{
+				Type:  projectconfig.ComponentOverlayAppendSpecLines,
+				Lines: []string{"# end of file"},
+			},
+			spec: `Name: name
+
+%description
+text
+
+%changelog
+* Mon Jan 01 2024 User <user@example.com> - 1.0-1
+- Initial release
+`,
+			result: `Name: name
+
+%description
+text
+
+%changelog
+* Mon Jan 01 2024 User <user@example.com> - 1.0-1
+- Initial release
+# end of file
+`,
+		},
+		{
 			name: "search and replace",
 			overlay: projectconfig.ComponentOverlay{
 				Type:        projectconfig.ComponentOverlaySearchAndReplaceInSpec,
@@ -295,6 +348,34 @@ line1
 %changelog
 `,
 			errorExpected: true,
+		},
+		{
+			name: "search and replace across entire spec (no section)",
+			overlay: projectconfig.ComponentOverlay{
+				Type:        projectconfig.ComponentOverlaySearchAndReplaceInSpec,
+				Regex:       `oldname`,
+				Replacement: "newname",
+			},
+			spec: `Name: oldname
+
+%description
+oldname package
+
+%build
+./configure --prefix=/opt/oldname
+
+%changelog
+`,
+			result: `Name: newname
+
+%description
+newname package
+
+%build
+./configure --prefix=/opt/newname
+
+%changelog
+`,
 		},
 	}
 

@@ -53,7 +53,7 @@ Component name patterns support glob syntax (*, ?, []).`,
 		ValidArgsFunction: components.GenerateComponentNameCompletions,
 	}
 
-	azldev.ExportAsMCPTool(cmd)
+	azldev.ExportAsReadOnlyMCPTool(cmd)
 
 	components.AddComponentFilterOptionsToCommand(cmd, &options.ComponentFilter)
 

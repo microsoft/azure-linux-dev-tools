@@ -12,6 +12,23 @@
   go install github.com/magefile/mage@latest
   ```
 
+- **Python and pip** *(only if you touch Python code)* - The repository pins
+   the `ruff` linter/formatter and `pyright` type checker in
+   [`requirements-lint.txt`](../../../requirements-lint.txt). They are used by `mage check python`
+   and `mage fix python`. Create and activate a virtual environment before installing the tools:
+
+  ```bash
+  # On Azure Linux
+   tdnf install -y python3-pip
+
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements-lint.txt
+  ```
+
+   Activate `.venv` in each shell before running `mage check python`, `mage fix python`,
+   or `mage check all`. The dev container installs the pinned tools for you.
+
 ## Initial Setup
 
 1. Fork the repository (strongly recommended for all contributors)

@@ -93,7 +93,7 @@ If no patterns are provided, all images are listed.`,
 		ValidArgsFunction: generateImageNameCompletions,
 	}
 
-	azldev.ExportAsMCPTool(cmd)
+	azldev.ExportAsReadOnlyMCPTool(cmd)
 
 	return cmd
 }

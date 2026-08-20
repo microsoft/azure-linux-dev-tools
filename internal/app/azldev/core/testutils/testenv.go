@@ -98,7 +98,7 @@ func setUpEventListener(t *testing.T, testEnv *TestEnv) {
 
 	testLogHandler := slogassert.New(t, slog.LevelDebug, nil)
 	testEventLogger := slog.New(testLogHandler)
-	testEventListener, err := azldev.NewEventListener(testEventLogger, false)
+	testEventListener, err := azldev.NewEventListener(testEventLogger, false, false)
 	require.NoError(t, err)
 
 	testEnv.EventListener = testEventListener

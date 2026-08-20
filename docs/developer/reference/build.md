@@ -2,9 +2,12 @@
 
 All code in this repo is written in `golang`. The `golang` package is required to build and run the tools.
 
-The build system uses mage, which can be installed with `go install github.com/magefile/mage@latest`. Alternatively, a zero-install approach is available through `go run magefile.go` or `./magefile.go`, which automatically downloads the required dependencies without manual installation. All additional build tools are managed automatically by go, and no manual tool installation is required.
+The build system uses mage, which can be installed with `go install github.com/magefile/mage@latest`. Alternatively, a zero-install approach is available through `go run magefile.go` or `./magefile.go`, which automatically downloads the required dependencies without manual installation. Go build tools are managed automatically by go.
 
-All other tooling dependencies are handled by `go tool`, which will automatically get the required tools when using `mage`. See [the tools section](../../../tools/README.md) for more information.
+
+All core tooling dependencies are handled by `go tool`, which will automatically get the required tools when using `mage`. See [the tools section](../../../tools/README.md) for more information.
+
+Optional Python lint tools are pinned in [`requirements-lint.txt`](../../../requirements-lint.txt). Before using a Mage target that runs Python checks, follow the virtual environment setup in [Getting Started](../how-to/get-started.md#prerequisites) so that `ruff` and `pyright` are on your `PATH`.
 
 This repo contains configs for the `golangci-lint` linter. It is installed as part of the [VSCode go extension](https://marketplace.visualstudio.com/items?itemName=golang.go). It's also optionally available as a [binary release](https://golangci-lint.run/docs/welcome/install/local/#binaries).
 
@@ -13,7 +16,7 @@ This repo contains configs for the `golangci-lint` linter. It is installed as pa
 | Command | Description | When to Use |
 |---------|-------------|-------------|
 | `mage -l` | List all available targets | To see all options |
-| `mage all` | Full build, test, and check pipeline | Before submitting PR |
+| `mage all` | Build, test, default checks, and scenario pipeline | Before submitting PR |
 | `mage build` | Build Go binaries | After code changes |
 | `mage install` | Build Go binaries and install | Outer-loop testing |
 | `mage unit` | Run unit tests | After writing tests |
@@ -21,7 +24,8 @@ This repo contains configs for the `golangci-lint` linter. It is installed as pa
 | `mage scenarioUpdate` | Update test snapshots | When test expectations change |
 | `mage mutation <path>` | Run mutation testing on a package; writes `out/mutation-report.json` | To assess test quality of a package |
 | `mage mutationDiff <ref>` | Run mutation testing on lines changed vs a git ref | To check test quality of a branch's changes |
-| `mage check all` | Run all quality checks | Before committing |
+| `mage check default` | Run default Go checks (lint, static analysis, license) | Before committing |
+| `mage check all` | Run all quality checks, including Python | Before committing or after Python changes |
 | `mage fix all` | Auto-fix code issues | When linting fails |
 | `mage generate` | Run `go generate ./...` (mockgen, stringer, etc.) | Seldom needed directly; runs automatically with build/test |
 | `mage docs` | Build binary + regenerate CLI docs and JSON schema | After changing config structs or CLI commands |

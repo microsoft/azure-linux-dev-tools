@@ -55,3 +55,16 @@ func TestEvent_QuietModeSkipsLongRunningAndProgressRendering(t *testing.T) {
 	assert.False(t, testEvent.initializedProgressBar)
 	assert.Zero(t, testEvent.lastReportedCompletionRatio)
 }
+
+func TestEvent_VerboseModeSkipsLongRunningSpinner(t *testing.T) {
+	testEvent := &event{
+		verbose: true,
+	}
+
+	stderrOutput := captureStderr(t, func() {
+		testEvent.SetLongRunning("working")
+	})
+
+	assert.Empty(t, stderrOutput)
+	assert.Nil(t, testEvent.spinner)
+}

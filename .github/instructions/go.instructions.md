@@ -137,3 +137,13 @@ Components can override the project-default distro via `Spec.UpstreamDistro`. Th
 - **`env.Distro()`** — safe when all components share the same distro (e.g., iterating over results in `saveComponentLocks`). Breaks if components override the distro.
 - **`sourceproviders.ResolveDistro(env, comp)`** — use when you need the full distro context for a specific component (snapshot time, dist-git branch, lookaside URI). This is what `resolveOneSourceIdentity` uses to create the source manager.
 - **Per-component release version** — when computing fingerprints per-component, resolve the distro per-component to get the correct `ReleaseVer`. Using the project-default release version is wrong when component-level distro overrides exist.
+
+## Archive Overlay Invariants
+
+When working on archive overlays or `origin.type = "overlay"`, preserve these rules:
+
+- Overlay-origin entries are declarations of a post-overlay hash, not separately fetched files. `SourceManager.FetchFiles` must skip them, while component lookaside extraction must still fetch the original upstream archive. Build lookaside skip lists with `OriginType.IsFetched()`.
+- Validate associations in both directions: each archive modified by an archive-scoped overlay needs one matching overlay-origin `source-files` entry, and each overlay-origin entry must target an archive that is actually modified. During `--allow-no-hashes` bootstrapping, a modified archive may temporarily omit its origin entry, but an orphaned origin entry is never valid.
+- Use the upstream `sources` hash algorithm only to fetch and verify the original archive. After repacking, compute and validate the digest with the TOML entry's configured `hash-type` (SHA-256 or SHA-512); the two algorithms need not match.
+- Preserve the archive's actual compression detected from its contents, even when its filename extension claims a different format. Do not “fix” a mislabeled archive during repacking.
+- Archive overlays are batched per archive and run before spec and loose-file overlays. Preserve declaration order within each scope. Reject a loose-file overlay that can modify, remove, replace, or rename an archive also targeted by an archive-scoped overlay; otherwise it can silently discard the repacked result.

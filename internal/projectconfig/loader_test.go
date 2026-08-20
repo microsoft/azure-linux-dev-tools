@@ -311,7 +311,7 @@ log-dir = "artifacts/logs"
 	assert.Equal(t, "/project/subdir/artifacts/logs", config.Project.LogDir)
 }
 
-func TestLoadAndResolveProjectConfig_DuplicateComponents(t *testing.T) {
+func TestLoadAndResolveProjectConfig_MergeComponents(t *testing.T) {
 	testFiles := []struct {
 		path     string
 		contents string
@@ -320,9 +320,15 @@ func TestLoadAndResolveProjectConfig_DuplicateComponents(t *testing.T) {
 includes = ["include.toml"]
 
 [components.abc]
+[components.abc.spec]
+type = "upstream"
+upstream-commit = "aaa1111"
 `},
 		{"/project/include.toml", `
 [components.abc]
+[components.abc.spec]
+type = "upstream"
+upstream-commit = "bbb2222"
 `},
 	}
 
@@ -334,8 +340,11 @@ includes = ["include.toml"]
 		require.NoError(t, fileutils.WriteFile(ctx.FS(), testFile.path, []byte(testFile.contents), fileperms.PrivateFile))
 	}
 
-	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testFiles[0].path)
-	require.ErrorIs(t, err, ErrDuplicateComponents)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testFiles[0].path)
+	require.NoError(t, err)
+
+	// The included file is loaded after the parent, so its values override.
+	assert.Equal(t, "bbb2222", config.Components["abc"].Spec.UpstreamCommit)
 }
 
 func TestLoadAndResolveProjectConfig_DuplicateComponentGroups(t *testing.T) {
@@ -429,15 +438,21 @@ dist-git-branch = "TenPointZero"
 	assert.Len(t, config.Distros, 1)
 }
 
-func TestLoadAndResolveProjectConfig_DuplicateComponentsAcrossFiles(t *testing.T) {
-	// Two separate config files both defining the same component should error.
-	// Unlike distros, components do not support merging across config files.
+func TestLoadAndResolveProjectConfig_MergeComponentsAcrossFiles(t *testing.T) {
+	// Two separate config files both defining the same component should merge.
+	// Later files' non-empty fields override earlier files' fields.
 	const configContents1 = `
 [components.foo]
+[components.foo.spec]
+type = "upstream"
+upstream-commit = "aaa1111"
 `
 
 	const configContents2 = `
 [components.foo]
+[components.foo.spec]
+type = "upstream"
+upstream-commit = "bbb2222"
 `
 
 	configPath1 := testConfigPath
@@ -447,8 +462,183 @@ func TestLoadAndResolveProjectConfig_DuplicateComponentsAcrossFiles(t *testing.T
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath1, []byte(configContents1), fileperms.PrivateFile))
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath2, []byte(configContents2), fileperms.PrivateFile))
 
-	_, err := loadAndResolveProjectConfig(ctx.FS(), false, configPath1, configPath2)
-	require.ErrorIs(t, err, ErrDuplicateComponents)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, configPath1, configPath2)
+	require.NoError(t, err)
+
+	// The second file's upstream-commit should override the first.
+	assert.Equal(t, "bbb2222", config.Components["foo"].Spec.UpstreamCommit)
+}
+
+func TestLoadAndResolveProjectConfig_MergeComponentsPreservesEarlierFields(t *testing.T) {
+	// When the later file only sets some fields, earlier fields should be preserved.
+	const configContents1 = `
+[components.curl]
+[components.curl.spec]
+type = "upstream"
+upstream-commit = "abc1234"
+
+[components.curl.build]
+with = ["ssl"]
+
+[components.curl.release]
+calculation = "auto"
+`
+
+	// Second file only overrides upstream-commit; build and release should survive.
+	const configContents2 = `
+[components.curl]
+[components.curl.spec]
+type = "upstream"
+upstream-commit = "def5678"
+`
+
+	configPath1 := testConfigPath
+	configPath2 := filepath.Join("/project", "extra.toml")
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath1, []byte(configContents1), fileperms.PrivateFile))
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath2, []byte(configContents2), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, configPath1, configPath2)
+	require.NoError(t, err)
+
+	comp := config.Components["curl"]
+
+	// Overridden field should use the later value.
+	assert.Equal(t, "def5678", comp.Spec.UpstreamCommit)
+
+	// Fields not set in the later file should be preserved from the earlier file.
+	assert.Equal(t, []string{"ssl"}, comp.Build.With)
+	assert.Equal(t, ReleaseCalculationAuto, comp.Release.Calculation)
+}
+
+func TestLoadAndResolveProjectConfig_MergeComponentsSourceConfigFile(t *testing.T) {
+	// SourceConfigFile should point to the last file that contributed to the component.
+	testFiles := []struct {
+		path     string
+		contents string
+	}{
+		{testConfigPath, `
+includes = ["sub/include.toml"]
+
+[components.abc]
+[components.abc.spec]
+type = "upstream"
+upstream-commit = "aaa1111"
+`},
+		{"/project/sub/include.toml", `
+[components.abc]
+[components.abc.spec]
+type = "upstream"
+upstream-commit = "bbb2222"
+`},
+	}
+
+	ctx := testctx.NewCtx()
+
+	for _, testFile := range testFiles {
+		require.NoError(t, fileutils.MkdirAll(ctx.FS(), filepath.Dir(testFile.path)))
+		require.NoError(t, fileutils.WriteFile(ctx.FS(), testFile.path, []byte(testFile.contents), fileperms.PrivateFile))
+	}
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testFiles[0].path)
+	require.NoError(t, err)
+
+	comp := config.Components["abc"]
+	require.NotNil(t, comp.SourceConfigFile)
+
+	// SourceConfigFile should reference the last file that contributed.
+	assert.Equal(t, "/project/sub", comp.SourceConfigFile.dir)
+}
+
+func TestLoadAndResolveProjectConfig_MergeComponentsMultipleComponents(t *testing.T) {
+	// When two files define different components, both should be present.
+	// When they also share a component, that component should be merged.
+	const configContents1 = `
+[components.alpha]
+[components.alpha.spec]
+type = "upstream"
+upstream-commit = "aaa1111"
+
+[components.beta]
+[components.beta.spec]
+type = "upstream"
+upstream-commit = "bbb2222"
+`
+
+	const configContents2 = `
+[components.alpha]
+[components.alpha.spec]
+type = "upstream"
+upstream-commit = "ccc3333"
+
+[components.gamma]
+[components.gamma.spec]
+type = "upstream"
+`
+
+	configPath1 := testConfigPath
+	configPath2 := filepath.Join("/project", "extra.toml")
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath1, []byte(configContents1), fileperms.PrivateFile))
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath2, []byte(configContents2), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, configPath1, configPath2)
+	require.NoError(t, err)
+
+	// All three components should be present.
+	assert.Len(t, config.Components, 3)
+	assert.Contains(t, config.Components, "alpha")
+	assert.Contains(t, config.Components, "beta")
+	assert.Contains(t, config.Components, "gamma")
+
+	// alpha should have the merged (overridden) commit.
+	assert.Equal(t, "ccc3333", config.Components["alpha"].Spec.UpstreamCommit)
+
+	// beta should be unchanged.
+	assert.Equal(t, "bbb2222", config.Components["beta"].Spec.UpstreamCommit)
+}
+
+func TestLoadAndResolveProjectConfig_MergeComponentsOverlaysAppended(t *testing.T) {
+	// Overlays are slice fields — MergeUpdatesFrom with mergo.WithAppendSlice
+	// should append later overlays to earlier ones.
+	const configContents1 = `
+[components.pkg]
+[components.pkg.spec]
+type = "upstream"
+
+[[components.pkg.overlays]]
+type = "spec-add-tag"
+tag = "BuildRequires"
+value = "openssl-devel"
+`
+
+	const configContents2 = `
+[components.pkg]
+
+[[components.pkg.overlays]]
+type = "spec-add-tag"
+tag = "Requires"
+value = "libcurl"
+`
+
+	configPath1 := testConfigPath
+	configPath2 := filepath.Join("/project", "extra.toml")
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath1, []byte(configContents1), fileperms.PrivateFile))
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath2, []byte(configContents2), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, configPath1, configPath2)
+	require.NoError(t, err)
+
+	comp := config.Components["pkg"]
+
+	// Both overlays should be present (appended, not replaced).
+	require.Len(t, comp.Overlays, 2)
+	assert.Equal(t, "BuildRequires", comp.Overlays[0].Tag)
+	assert.Equal(t, "Requires", comp.Overlays[1].Tag)
 }
 
 func TestLoadAndResolveProjectConfig_ComponentGroupWithMembers(t *testing.T) {
@@ -483,6 +673,51 @@ specs = ["SPECS/**/*.spec"]
 	assert.Contains(t, config.GroupsByComponent, "bar")
 	assert.Equal(t, []string{"core"}, config.GroupsByComponent["foo"])
 	assert.Equal(t, []string{"core"}, config.GroupsByComponent["bar"])
+}
+
+func TestLoadAndResolveProjectConfig_ComponentGroupWithMetadata(t *testing.T) {
+	const configContents = `
+[component-groups.core]
+specs = ["SPECS/**/*.spec"]
+
+[component-groups.core.metadata]
+category = "upstream-backport"
+commits = [{ url = "https://example.com/commit/abc" }]
+bugs = [{ url = "https://example.com/bug/1" }]
+upstream-status = "upstreamable"
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.NoError(t, err)
+
+	if assert.Contains(t, config.ComponentGroups, "core") {
+		group := config.ComponentGroups["core"]
+		require.NotNil(t, group.Metadata)
+		assert.Equal(t, OverlayCategoryUpstreamBackport, group.Metadata.Category)
+		assert.Equal(t, []URLRef{{URL: "https://example.com/commit/abc"}}, group.Metadata.Commits)
+		assert.Equal(t, []URLRef{{URL: "https://example.com/bug/1"}}, group.Metadata.Bugs)
+		assert.Equal(t, OverlayUpstreamStatusUpstreamable, group.Metadata.UpstreamStatus)
+	}
+}
+
+func TestLoadAndResolveProjectConfig_ComponentGroupMetadataMissingCategory(t *testing.T) {
+	const configContents = `
+[component-groups.core]
+specs = ["SPECS/**/*.spec"]
+
+[component-groups.core.metadata]
+bugs = [{ url = "https://example.com/bug/1" }]
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.Error(t, err)
+	assert.Nil(t, config)
 }
 
 func TestLoadAndResolveProjectConfig_GroupsByComponent_MultipleGroups(t *testing.T) {
@@ -837,6 +1072,18 @@ description = "Smoke tests for images"
 working-dir = "tests"
 test-paths = ["cases/test_*.py"]
 extra-args = ["--image-path", "{image-path}"]
+
+[test-suites.integration]
+type = "lisa"
+description = "LISA integration tests"
+
+[test-suites.integration.lisa]
+test-cases = ["verify_cpu_count", "verify_grub"]
+extra-args = ["-v", "qcow2:{image-path}"]
+
+[test-suites.integration.lisa.framework]
+git-url = "https://github.com/microsoft/lisa.git"
+ref = "abcdef0123456789abcdef0123456789abcdef01"
 `
 
 	configDir := filepath.Dir(testConfigPath)
@@ -847,7 +1094,7 @@ extra-args = ["--image-path", "{image-path}"]
 	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
 	require.NoError(t, err)
 
-	require.Len(t, config.TestSuites, 1)
+	require.Len(t, config.TestSuites, 2)
 
 	// Check pytest test.
 	if assert.Contains(t, config.TestSuites, "smoke") {
@@ -859,6 +1106,19 @@ extra-args = ["--image-path", "{image-path}"]
 		assert.Equal(t, filepath.Join(configDir, "tests"), smokeTest.Pytest.WorkingDir)
 		assert.Equal(t, []string{"cases/test_*.py"}, smokeTest.Pytest.TestPaths)
 		assert.Equal(t, []string{"--image-path", "{image-path}"}, smokeTest.Pytest.ExtraArgs)
+	}
+
+	// Check LISA test.
+	if assert.Contains(t, config.TestSuites, "integration") {
+		lisaTest := config.TestSuites["integration"]
+		assert.Equal(t, "integration", lisaTest.Name)
+		assert.Equal(t, TestTypeLisa, lisaTest.Type)
+		assert.Equal(t, "LISA integration tests", lisaTest.Description)
+		require.NotNil(t, lisaTest.Lisa)
+		assert.Equal(t, "https://github.com/microsoft/lisa.git", lisaTest.Lisa.Framework.GitURL)
+		assert.Equal(t, "abcdef0123456789abcdef0123456789abcdef01", lisaTest.Lisa.Framework.Ref)
+		assert.Equal(t, []string{"verify_cpu_count", "verify_grub"}, lisaTest.Lisa.TestCases)
+		assert.Equal(t, []string{"-v", "qcow2:{image-path}"}, lisaTest.Lisa.ExtraArgs)
 	}
 }
 

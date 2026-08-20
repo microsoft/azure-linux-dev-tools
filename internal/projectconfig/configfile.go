@@ -97,6 +97,11 @@ func (f ConfigFile) Validate() error {
 		}
 	}
 
+	// Validate component group metadata.
+	if err := validateComponentGroupMetadata(f.ComponentGroups); err != nil {
+		return err
+	}
+
 	// Per-component snapshot timestamps are not allowed. Components inherit
 	// the snapshot from the distro/group default-component-config or the
 	// project's default-distro. Per-component snapshots would create
@@ -150,12 +155,29 @@ func (f ConfigFile) Validate() error {
 	return nil
 }
 
+// validateComponentGroupMetadata validates the optional documentation metadata declared
+// on each component group.
+func validateComponentGroupMetadata(groups map[string]ComponentGroupConfig) error {
+	for groupName, group := range groups {
+		if group.Metadata == nil {
+			continue
+		}
+
+		if err := group.Metadata.Validate(); err != nil {
+			return fmt.Errorf("invalid metadata on component group %#q:\n%w", groupName, err)
+		}
+	}
+
+	return nil
+}
+
 // validateSourceFiles checks 'source-files' configuration for a component:
 //   - All filenames must be unique.
 //   - Hash type must be a supported algorithm when specified.
 //   - Hash value without a hash type is not allowed.
 //   - Origin must be present and valid for each source file.
 //   - 'replace-upstream' and 'replace-reason' must be set together.
+//   - [OriginTypeOverlay] entries additionally require 'hash', 'hash-type', and 'replace-upstream = true'.
 func validateSourceFiles(sourceFiles []SourceFileReference, componentName string) error {
 	seen := make(map[string]bool, len(sourceFiles))
 
@@ -189,9 +211,34 @@ func validateSourceFiles(sourceFiles []SourceFileReference, componentName string
 			return err
 		}
 
+		if err := validateCustomSourceRef(ref, componentName); err != nil {
+			return err
+		}
+
 		if err := validateOrigin(ref.Origin, ref.Filename, componentName); err != nil {
 			return err
 		}
+
+		if ref.Origin.Type == OriginTypeOverlay {
+			if err := validateOverlayOriginRef(ref, componentName); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// validateOverlayOriginRef enforces additional constraints on [SourceFileReference] entries
+// with [OriginTypeOverlay]. 'replace-upstream = true' is required because the archive is
+// already present as a spec source. Hashes may be omitted while bootstrapping an archive
+// overlay with '--allow-no-hashes'; source preparation computes the post-overlay hash.
+func validateOverlayOriginRef(ref SourceFileReference, componentName string) error {
+	if !ref.ReplaceUpstream {
+		return fmt.Errorf(
+			"source file %#q in component %#q has 'origin.type = overlay' but 'replace-upstream' is not true; "+
+				"'replace-upstream = true' is required because the archive already exists in the upstream 'sources' file",
+			ref.Filename, componentName)
 	}
 
 	return nil
@@ -223,8 +270,91 @@ func validateReplaceUpstream(ref SourceFileReference, componentName string) erro
 	return nil
 }
 
+// validateCustomSourceRef enforces the pairing rules for the 'script', 'mock-packages',
+// and 'inputs' fields on a [SourceFileReference]:
+//   - 'script' is required when 'origin.type' is 'custom'.
+//   - 'script' must be empty when 'origin.type' is not 'custom'.
+//   - 'mock-packages' must be empty when 'origin.type' is not 'custom'.
+//   - 'inputs' must be empty when 'origin.type' is not 'custom'.
+//   - each 'inputs' entry must be a valid filename (no path separators).
+//   - each 'inputs' entry must be unique.
+func validateCustomSourceRef(ref SourceFileReference, componentName string) error {
+	if ref.Origin.Type == OriginTypeCustom {
+		if ref.Origin.Script == "" {
+			return fmt.Errorf(
+				"source file %#q in component %#q has 'custom' origin but no 'script'; "+
+					"a non-empty 'script' filename is required for 'custom' origin",
+				ref.Filename, componentName)
+		}
+
+		if err := fileutils.ValidateFilename(ref.Origin.Script); err != nil {
+			return fmt.Errorf(
+				"invalid 'script' value %#q for source file %#q in component %#q:\n%w",
+				ref.Origin.Script, ref.Filename, componentName, err)
+		}
+
+		if err := validateCustomSourceInputs(ref, componentName); err != nil {
+			return err
+		}
+
+		return nil
+	}
+
+	if ref.Origin.Script != "" {
+		return fmt.Errorf(
+			"source file %#q in component %#q has 'script' set but origin type is %#q; "+
+				"'script' is only valid when origin type is 'custom'",
+			ref.Filename, componentName, string(ref.Origin.Type))
+	}
+
+	if len(ref.Origin.MockPackages) > 0 {
+		return fmt.Errorf(
+			"source file %#q in component %#q has 'mock-packages' set but origin type is %#q; "+
+				"'mock-packages' is only valid when origin type is 'custom'",
+			ref.Filename, componentName, string(ref.Origin.Type))
+	}
+
+	if len(ref.Origin.Inputs) > 0 {
+		return fmt.Errorf(
+			"source file %#q in component %#q has 'inputs' set but origin type is %#q; "+
+				"'inputs' is only valid when origin type is 'custom'",
+			ref.Filename, componentName, string(ref.Origin.Type))
+	}
+
+	return nil
+}
+
+func validateCustomSourceInputs(ref SourceFileReference, componentName string) error {
+	seen := make(map[string]bool, len(ref.Origin.Inputs))
+
+	for _, input := range ref.Origin.Inputs {
+		if err := fileutils.ValidateFilename(input); err != nil {
+			return fmt.Errorf(
+				"invalid 'inputs' entry %#q for source file %#q in component %#q:\n%w",
+				input, ref.Filename, componentName, err)
+		}
+
+		if seen[input] {
+			return fmt.Errorf(
+				"duplicate 'inputs' entry %#q for source file %#q in component %#q; each input filename must be unique",
+				input, ref.Filename, componentName)
+		}
+
+		seen[input] = true
+
+		if input == ref.Origin.Script {
+			return fmt.Errorf(
+				"'inputs' entry %#q for source file %#q in component %#q conflicts with 'script' filename",
+				input, ref.Filename, componentName)
+		}
+	}
+
+	return nil
+}
+
 // validateOrigin checks that a source file [Origin] is present and valid for its type.
 // For [OriginTypeURI] ('download'), the [Origin.Uri] field must be a valid URI with a scheme.
+// For [OriginTypeOverlay] ('overlay'), no URI is used; the archive is already on disk.
 func validateOrigin(origin Origin, filename string, componentName string) error {
 	if origin.Type == "" {
 		return fmt.Errorf(
@@ -254,6 +384,24 @@ func validateOrigin(origin Origin, filename string, componentName string) error 
 				"invalid 'uri' for source file %#q, component %#q; "+
 					"URI %#q is missing a scheme (e.g. 'https://')",
 				filename, componentName, origin.Uri)
+		}
+
+	case OriginTypeCustom:
+		// Script validation is handled by validateCustomSourceRef on SourceFileReference.
+		// Reject 'uri' since it is meaningless for custom-generated sources.
+		if origin.Uri != "" {
+			return fmt.Errorf(
+				"source file %#q in component %#q has 'uri' set but origin type is 'custom'; "+
+					"'uri' is only valid when origin type is 'download'",
+				filename, componentName)
+		}
+
+	case OriginTypeOverlay:
+		if origin.Uri != "" {
+			return fmt.Errorf(
+				"unexpected 'uri' for source file %#q, component %#q; "+
+					"'uri' must not be set when 'origin' type is 'overlay'",
+				filename, componentName)
 		}
 	default:
 		return fmt.Errorf(

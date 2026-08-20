@@ -31,21 +31,11 @@ var ErrOverlayFilePerOverlayMetadata = errors.New(
 // and would otherwise silently contribute nothing.
 var ErrOverlayFileEmpty = errors.New("overlay file declares no overlays")
 
-// ErrOverlayFilesNoMatches is returned when one of a component's
-// [ComponentConfig.OverlayFiles] glob patterns matches no files on disk. A configured
-// glob that matches nothing is almost always a misconfiguration (wrong path or
-// missing files) and is surfaced as an error rather than silently contributing
-// nothing.
+// ErrOverlayFilesNoMatches is returned when a literal [ComponentConfig.OverlayFiles]
+// path matches no files on disk. Glob patterns may intentionally match no files when
+// inherited across many components, but a literal path with no match is almost always
+// a typo.
 var ErrOverlayFilesNoMatches = errors.New("overlay-files pattern matched no files")
-
-// ErrOverlayFilesInDefaultConfig is returned when `overlay-files` is set on a
-// default component config. Overlay file globs are resolved per concrete component
-// before default configs are merged in, so a value set on a default would be
-// silently ignored. Until overlay-files is wired through the default-merge path,
-// declaring it on a default config is rejected.
-var ErrOverlayFilesInDefaultConfig = errors.New(
-	"overlay-files is not supported on default-component-config; set it on individual components",
-)
 
 // OverlayFile is the on-disk representation of a single overlay document. Each file
 // represents one logical change: the file-level [OverlayFile.Metadata] is applied
@@ -61,62 +51,45 @@ type OverlayFile struct {
 	Overlays []ComponentOverlay `toml:"overlays"`
 }
 
-// applyOverlayFiles resolves each component's [ComponentConfig.OverlayFiles] glob
-// patterns (when set), parses every matched file as an [OverlayFile] in deterministic
-// order, stamps the per-file metadata onto each overlay, and appends the resulting
-// overlays to the component's [ComponentConfig.Overlays] slice. Inline overlays
-// declared directly on the component come first; file-sourced overlays are appended
-// after them.
-//
-// Called from [loadProjectConfigFile] after TOML decode but before [ConfigFile.Validate],
-// so all per-overlay validation rules apply uniformly regardless of declaration site.
-func applyOverlayFiles(fs opctx.FS, cfg *ConfigFile, permissiveConfigParsing bool) error {
-	if err := rejectOverlayFilesInDefaults(cfg); err != nil {
-		return err
+// ExpandResolvedOverlayFiles resolves a component's post-resolution
+// [ComponentConfig.OverlayFiles] glob patterns, parses every matched file as an
+// [OverlayFile], stamps the per-file metadata onto each overlay, appends the
+// resulting overlays after inline overlays, and clears [ComponentConfig.OverlayFiles]
+// so the returned config is not expanded twice.
+func ExpandResolvedOverlayFiles(
+	fs opctx.FS, component ComponentConfig, referenceDir string, permissiveConfigParsing bool,
+) (ComponentConfig, error) {
+	if len(component.OverlayFiles) == 0 {
+		return component, nil
 	}
 
-	for componentName, component := range cfg.Components {
-		if len(component.OverlayFiles) == 0 {
-			continue
-		}
-
-		loaded, err := loadOverlayFiles(fs, cfg.dir, component.OverlayFiles, permissiveConfigParsing)
-		if err != nil {
-			return fmt.Errorf("component %#q overlay-files:\n%w", componentName, err)
-		}
-
-		component.Overlays = append(component.Overlays, loaded...)
-		cfg.Components[componentName] = component
+	if referenceDir == "" && overlayFilesHasRelativePattern(component.OverlayFiles) {
+		return ComponentConfig{}, fmt.Errorf(
+			"component %#q has relative 'overlay-files' entries but no reference directory",
+			component.Name,
+		)
 	}
 
-	return nil
+	loaded, err := loadOverlayFiles(fs, referenceDir, component.OverlayFiles, permissiveConfigParsing)
+	if err != nil {
+		return ComponentConfig{}, fmt.Errorf("component %#q overlay-files:\n%w", component.Name, err)
+	}
+
+	component.Overlays = append(component.Overlays, loaded...)
+	// Clear the glob list after expansion so later resolver paths do not append the same overlays again.
+	component.OverlayFiles = nil
+
+	return component, nil
 }
 
-// rejectOverlayFilesInDefaults returns [ErrOverlayFilesInDefaultConfig] if any default
-// component config in cfg sets `overlay-files`. Overlay file globs are resolved per
-// concrete component (see [applyOverlayFiles]) before default configs are merged, so a
-// value declared on a default would be silently dropped. This stopgap surfaces the
-// misconfiguration until overlay-files is plumbed through the default-merge path.
-func rejectOverlayFilesInDefaults(cfg *ConfigFile) error {
-	if cfg.DefaultComponentConfig != nil && len(cfg.DefaultComponentConfig.OverlayFiles) > 0 {
-		return fmt.Errorf("%w (project-level default-component-config)", ErrOverlayFilesInDefaultConfig)
-	}
-
-	for name, group := range cfg.ComponentGroups {
-		if len(group.DefaultComponentConfig.OverlayFiles) > 0 {
-			return fmt.Errorf("%w (component-group %#q)", ErrOverlayFilesInDefaultConfig, name)
+func overlayFilesHasRelativePattern(patterns []string) bool {
+	for _, pattern := range patterns {
+		if !filepath.IsAbs(pattern) {
+			return true
 		}
 	}
 
-	for name, distro := range cfg.Distros {
-		for version, versionDef := range distro.Versions {
-			if len(versionDef.DefaultComponentConfig.OverlayFiles) > 0 {
-				return fmt.Errorf("%w (distro %#q version %#q)", ErrOverlayFilesInDefaultConfig, name, version)
-			}
-		}
-	}
-
-	return nil
+	return false
 }
 
 // loadOverlayFiles resolves each glob pattern (relative to referenceDir if not
@@ -127,8 +100,8 @@ func rejectOverlayFilesInDefaults(cfg *ConfigFile) error {
 // Matches are concatenated in the order patterns are declared; within a single
 // pattern, matches are applied in filename (lexicographic) order, using the full
 // path as a tie-breaker when filenames match. Duplicate matches across patterns
-// are de-duplicated, preserving first occurrence. Each pattern is required to
-// match at least one file.
+// are de-duplicated, preserving first occurrence. Glob patterns that match no
+// files contribute no overlays; literal paths must match a file.
 func loadOverlayFiles(
 	fs opctx.FS, referenceDir string, patterns []string, permissiveConfigParsing bool,
 ) ([]ComponentOverlay, error) {
@@ -146,17 +119,16 @@ func loadOverlayFiles(
 		matches, err := fileutils.Glob(
 			fs, absPattern,
 			doublestar.WithFailOnIOErrors(),
-			doublestar.WithFailOnPatternNotExist(),
 			doublestar.WithFilesOnly(),
 		)
 
 		switch {
-		case errors.Is(err, doublestar.ErrPatternNotExist):
-			return nil, fmt.Errorf("%w: %q", ErrOverlayFilesNoMatches, pattern)
 		case err != nil:
 			return nil, fmt.Errorf("failed to scan for overlay files matching %q:\n%w", pattern, err)
-		case len(matches) == 0:
+		case len(matches) == 0 && !containsPattern(pattern):
 			return nil, fmt.Errorf("%w: %q", ErrOverlayFilesNoMatches, pattern)
+		case len(matches) == 0:
+			continue
 		}
 
 		slices.SortFunc(matches, func(left, right string) int {
@@ -246,7 +218,11 @@ func loadOverlayFile(
 		}
 
 		overlay.Metadata = stampedMetadata.clone()
+
 		overlay.Source = makeAbsolute(overlayDir, overlay.Source)
+		if err := overlay.Validate(); err != nil {
+			return nil, fmt.Errorf("invalid overlay %d in overlay file %q:\n%w", idx+1, overlayPath, err)
+		}
 	}
 
 	return ofile.Overlays, nil

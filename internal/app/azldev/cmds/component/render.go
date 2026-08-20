@@ -179,7 +179,7 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 			"mock config required for rendering; ensure the project has a valid distro with mock config")
 	}
 
-	defer mockProcessor.Destroy(env)
+	defer destroyMockProcessor(env, mockProcessor)
 
 	// Create a shared staging directory. Each component gets a subdirectory
 	// named by component name, enabling a single bind mount for the batch
@@ -204,7 +204,7 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 	results := make([]*RenderResult, len(componentList))
 
 	// ── Phase 1: Parallel source preparation ──
-	prepared := parallelPrepare(env, componentList, stagingDir, options.OutputDir, results)
+	prepared := parallelPrepare(env, mockProcessor, componentList, stagingDir, options.OutputDir, results)
 
 	// ── Phase 2: Batch mock processing ──
 	mockResultMap := batchMockProcess(env, mockProcessor, stagingDir, prepared)
@@ -387,6 +387,7 @@ type prepResult struct {
 // prepared slice for phase 2 / phase 3.
 func parallelPrepare(
 	env *azldev.Env,
+	mockProcessor *sources.MockProcessor,
 	comps []components.Component,
 	stagingDir string,
 	outputDir string,
@@ -408,7 +409,8 @@ func parallelPrepare(
 		func(_ context.Context, comp components.Component) prepResult {
 			// workerEnv (captured) is the effective context for this call chain;
 			// the parmap-supplied ctx is identical and unused here.
-			return prepareOneComponent(workerEnv, comp, stagingDir, outputDir) //nolint:contextcheck // env carries the ctx
+			//nolint:contextcheck // env carries the ctx
+			return prepareOneComponent(workerEnv, mockProcessor, comp, stagingDir, outputDir)
 		},
 	)
 
@@ -451,6 +453,7 @@ func parallelPrepare(
 // (including ctx cancellation mid-flight) surface as [renderStatusError] here.
 func prepareOneComponent(
 	env *azldev.Env,
+	mockProcessor *sources.MockProcessor,
 	comp components.Component,
 	stagingDir string,
 	outputDir string,
@@ -468,7 +471,7 @@ func prepareOneComponent(
 		}}
 	}
 
-	prep, err := prepareComponentSources(env, comp, stagingDir)
+	prep, err := prepareComponentSources(env, mockProcessor, comp, stagingDir)
 	if err != nil {
 		slog.Error("Failed to prepare component sources",
 			"component", componentName, "error", err)
@@ -491,6 +494,7 @@ func prepareOneComponent(
 // into a subdirectory of stagingDir.
 func prepareComponentSources(
 	env *azldev.Env,
+	mockProcessor *sources.MockProcessor,
 	comp components.Component,
 	stagingDir string,
 ) (*preparedComponent, error) {
@@ -527,6 +531,8 @@ func prepareComponentSources(
 		sources.WithGitRepo(env, env.LockReader(), distro.Version.ReleaseVer),
 		sources.WithDirtyDetection(),
 		sources.WithSkipLookaside(),
+		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)),
+		sources.WithMockProcessor(mockProcessor),
 	}
 
 	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, preparerOpts...)
@@ -1124,28 +1130,6 @@ func writeFailureMarkers(
 
 		writeRenderErrorMarker(fileSystem, result.OutputDir)
 	}
-}
-
-// createMockProcessor creates a [sources.MockProcessor] using the project's
-// mock config. Returns nil if the mock config is not available (e.g., no project
-// config loaded, or no mock config path configured).
-func createMockProcessor(env *azldev.Env) *sources.MockProcessor {
-	_, distroVerDef, err := env.Distro()
-	if err != nil {
-		slog.Info("Mock processor unavailable; could not resolve distro", "error", err)
-
-		return nil
-	}
-
-	if distroVerDef.MockConfigPath == "" {
-		slog.Info("Mock processor unavailable; no mock config path configured")
-
-		return nil
-	}
-
-	slog.Info("Mock processor available", "mockConfig", distroVerDef.MockConfigPath)
-
-	return sources.NewMockProcessor(env, distroVerDef.MockConfigPath)
 }
 
 // validateCleanStaleOptions enforces the constraints around --clean-stale.

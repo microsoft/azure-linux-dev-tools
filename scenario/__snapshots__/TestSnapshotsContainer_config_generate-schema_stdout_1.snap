@@ -3,22 +3,6 @@
   "$id": "https://github.com/microsoft/azure-linux-dev-tools/internal/projectconfig/config-file",
   "$ref": "#/$defs/ConfigFile",
   "$defs": {
-    "BugRef": {
-      "properties": {
-        "url": {
-          "type": "string",
-          "pattern": "^https?://",
-          "format": "uri",
-          "title": "URL",
-          "description": "HTTP(S) link to the bug entry"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "url"
-      ]
-    },
     "CheckConfig": {
       "properties": {
         "skip": {
@@ -68,6 +52,11 @@
           "type": "array",
           "title": "Undefined macros",
           "description": "Macro names to undefine when passing to the builder."
+        },
+        "emit-upstream-provenance": {
+          "type": "boolean",
+          "title": "Emit upstream provenance macros",
+          "description": "Inject %fedora_upstream_version/release macros derived from the pristine upstream Fedora spec (Fedora upstream components only)."
         },
         "check": {
           "$ref": "#/$defs/CheckConfig",
@@ -141,7 +130,7 @@
           },
           "type": "array",
           "title": "Overlay files",
-          "description": "Glob patterns (relative to the component config file) matched against the filesystem to locate per-file overlay documents at load time"
+          "description": "Path or glob patterns (relative to the component config file or matched spec directory) matched against the filesystem to locate per-file overlay documents after component config resolution. Use an empty list to disable inherited overlay-file patterns"
         },
         "build": {
           "$ref": "#/$defs/ComponentBuildConfig",
@@ -184,6 +173,11 @@
           "type": "string",
           "title": "Description",
           "description": "Description of this component group"
+        },
+        "metadata": {
+          "$ref": "#/$defs/OverlayMetadata",
+          "title": "Metadata",
+          "description": "Optional documentation metadata for this component group"
         },
         "components": {
           "items": {
@@ -258,17 +252,22 @@
         "file": {
           "type": "string",
           "title": "Filename",
-          "description": "The name of the non-spec file to which this overlay applies"
+          "description": "The name of the non-spec file to which this overlay applies. May be a glob pattern matching multiple files"
+        },
+        "archive": {
+          "type": "string",
+          "title": "Archive",
+          "description": "For archive-scoped overlays: the source archive to extract and repack (e.g. pkg-1.0.tar.gz). When set the 'file' field is a glob relative to the archive extraction root"
         },
         "section": {
           "type": "string",
           "title": "Section name",
-          "description": "The name of the section to which this overlay applies"
+          "description": "The name of the section to which this overlay applies. Optional for spec-prepend-lines/spec-append-lines/spec-search-replace; when omitted these overlays target the entire spec file."
         },
         "package": {
           "type": "string",
           "title": "Package name",
-          "description": "The name of the sub-package to which this overlay applies"
+          "description": "The name of the sub-package to which this overlay applies. Cannot be combined with an omitted section on overlays that support whole-file targeting."
         },
         "tag": {
           "type": "string",
@@ -598,6 +597,26 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "GitSourceConfig": {
+      "properties": {
+        "git-url": {
+          "type": "string",
+          "title": "Git URL",
+          "description": "URL of the git repository"
+        },
+        "ref": {
+          "type": "string",
+          "title": "Ref",
+          "description": "Commit SHA to check out (full hex hash)"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "git-url",
+        "ref"
+      ]
+    },
     "ImageCapabilities": {
       "properties": {
         "machine-bootable": {
@@ -715,12 +734,61 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "LisaConfig": {
+      "properties": {
+        "framework": {
+          "$ref": "#/$defs/GitSourceConfig",
+          "title": "Framework",
+          "description": "Git source for the LISA framework"
+        },
+        "test-cases": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Test cases",
+          "description": "LISA test case names to run; combined into a generated runbook's criteria"
+        },
+        "pip-pre-install": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Pip pre-install",
+          "description": "Pip packages to install before the framework (for overriding version pins)"
+        },
+        "pip-extras": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Pip extras",
+          "description": "Pip extras to install from the LISA framework package"
+        },
+        "extra-args": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Extra arguments",
+          "description": "Additional arguments passed to LISA. Supports {image-path} {image-name} {capabilities} placeholders."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "framework",
+        "test-cases"
+      ]
+    },
     "Origin": {
       "properties": {
         "type": {
           "type": "string",
           "enum": [
-            "download"
+            "download",
+            "custom",
+            "overlay"
           ],
           "title": "Origin type",
           "description": "Type of origin for this source file"
@@ -732,6 +800,27 @@
           "examples": [
             "https://example.com/source.tar.gz"
           ]
+        },
+        "script": {
+          "type": "string",
+          "title": "Script",
+          "description": "Shell script filename (relative to the component spec directory) to run in mock to generate this source file. Required when origin type is 'custom'."
+        },
+        "mock-packages": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Mock packages",
+          "description": "RPM packages to install in the mock chroot before running the generation script. Only valid when origin type is 'custom'."
+        },
+        "inputs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Inputs",
+          "description": "Source-output filenames to make available next to the generation script before it runs. Only valid when origin type is 'custom'."
         }
       },
       "additionalProperties": false,
@@ -745,10 +834,10 @@
         "category": {
           "type": "string",
           "enum": [
-            "backport-dist-git",
+            "upstream-backport",
             "azl-pruning",
             "azl-compatibility",
-            "azl-dep-missing-workaround",
+            "azl-temp-workaround",
             "azl-branding-policy",
             "azl-disable-flaky-tests",
             "azl-disable-unsupported-tests",
@@ -761,30 +850,38 @@
         },
         "commits": {
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/URLRef"
           },
           "type": "array",
           "title": "Commits",
-          "description": "URLs of upstream commits this overlay backports or references"
+          "description": "Upstream commits this overlay backports or references"
         },
         "bugs": {
           "items": {
-            "$ref": "#/$defs/BugRef"
+            "$ref": "#/$defs/URLRef"
           },
           "type": "array",
           "title": "Bug references",
           "description": "References to issue-tracker entries related to this overlay"
         },
-        "upstreamable": {
-          "type": "boolean",
-          "title": "Upstreamable",
-          "description": "Whether this overlay's change can be upstreamed; omit if not yet assessed"
+        "upstream-status": {
+          "type": "string",
+          "enum": [
+            "upstreamed",
+            "upstreamable",
+            "needs-upstream-hook",
+            "inapplicable",
+            "unknown"
+          ],
+          "title": "Upstream status",
+          "description": "Classifies the overlay's relationship to its upstream project"
         }
       },
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "category"
+        "category",
+        "upstream-status"
       ]
     },
     "PackageConfig": {
@@ -1308,6 +1405,11 @@
           "$ref": "#/$defs/PytestConfig",
           "title": "Pytest config",
           "description": "Pytest-specific configuration (required when type is pytest)"
+        },
+        "lisa": {
+          "$ref": "#/$defs/LisaConfig",
+          "title": "LISA config",
+          "description": "LISA-specific configuration used to generate and run a LISA runbook (optional)"
         }
       },
       "additionalProperties": false,
@@ -1340,6 +1442,22 @@
       },
       "additionalProperties": false,
       "type": "object"
+    },
+    "URLRef": {
+      "properties": {
+        "url": {
+          "type": "string",
+          "pattern": "^https?://",
+          "format": "uri",
+          "title": "URL",
+          "description": "HTTP(S) link to the referenced resource"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "url"
+      ]
     }
   },
   "$comment": "This schema was auto-generated by: azldev config generate-schema"

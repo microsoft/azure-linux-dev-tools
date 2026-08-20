@@ -15,6 +15,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource"
+	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/mock"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/downloader"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/git"
@@ -26,14 +27,26 @@ import (
 // Provider is an abstract interface implemented by a source provider.
 type Provider interface{}
 
+// ErrNotFound is returned by a [FileSourceProvider] when it does not handle the
+// given file reference. The source manager tries the next registered provider on
+// this error, eventually falling back to lookaside cache and configured origins.
+var ErrNotFound = errors.New("file not handled by this provider")
+
 // FileSourceProvider is an abstract interface implemented by a source provider that can retrieve individual
 // source files.
 type FileSourceProvider interface {
 	Provider
 
-	// GetFiles retrieves the specified source files and places them in the provided directory. If a file
-	// is not known to (or handled by) the providers, the error will be (or will wrap) ErrNotFound.
-	GetFiles(ctx context.Context, fileRefs []projectconfig.SourceFileReference, destDirPath string) error
+	// GetFile retrieves a single source file and places it in destDirPath.
+	// Implementations must return [ErrNotFound] (or an error wrapping it) when the
+	// provider does not handle the given file reference, so the manager can try the
+	// next registered provider before falling back to lookaside and configured origins.
+	GetFile(
+		ctx context.Context,
+		component components.Component,
+		fileRef projectconfig.SourceFileReference,
+		destDirPath string,
+	) error
 }
 
 // SourceIdentityProvider resolves a reproducible identity string for a component's source.
@@ -232,6 +245,13 @@ func NewSourceManager(env *azldev.Env, distro ResolvedDistro) (SourceManager, er
 	// Create component providers
 	manager.createComponentProviders(distro)
 
+	// Automatically register the custom file source provider when the distro has
+	// a mock config path. This makes 'custom' origin source files available to all
+	// commands (build, prep-sources, diff-sources, etc.) without any per-command
+	// wiring. The provider only spins up a mock chroot when GetFile is actually
+	// called for a custom-origin file, so registering it upfront is cheap.
+	manager.createFileProviders(env)
+
 	// Ensure at least one provider was created successfully
 	if len(manager.upstreamComponentProviders) == 0 &&
 		len(manager.fileProviders) == 0 {
@@ -260,6 +280,50 @@ func (m *sourceManager) createComponentProviders(distro ResolvedDistro) {
 	slog.Debug("Registered Fedora component provider")
 }
 
+// createFileProviders registers [FileSourceProvider] implementations based on the
+// project's default distro configuration. This follows the same pattern as the
+// render and build commands, which both use [azldev.Env.Distro] (the project-level
+// default) rather than the per-component resolved distro for mock operations.
+// Currently this registers a [customFileSourceProvider] when the project distro
+// has a 'mock-config' path configured, enabling 'custom' origin source files for
+// all commands without per-command wiring.
+//
+// Failures are logged and the provider is skipped, matching the tolerant
+// registration pattern used by [createComponentProviders].
+func (m *sourceManager) createFileProviders(env *azldev.Env) {
+	_, distroVerDef, err := env.Distro()
+	if err != nil {
+		slog.Debug("Cannot resolve project distro; 'custom' origin source generation will be unavailable",
+			"error", err)
+
+		return
+	}
+
+	mockConfigPath := distroVerDef.MockConfigPath
+	if mockConfigPath == "" {
+		slog.Debug("No 'mock-config' set on the project distro version; 'custom' origin source generation is unavailable")
+
+		return
+	}
+
+	if _, statErr := env.FS().Stat(mockConfigPath); statErr != nil {
+		slog.Warn("Mock config not accessible; 'custom' origin source generation will be unavailable",
+			"path", mockConfigPath,
+			"error", statErr)
+
+		return
+	}
+
+	m.fileProviders = append(m.fileProviders, &customFileSourceProvider{
+		dryRunnable: m.dryRunnable,
+		fs:          m.fs,
+		runner:      mock.NewRunner(env, mockConfigPath),
+		verbose:     env.Verbose(),
+	})
+
+	slog.Debug("Registered custom file source provider", "mockConfig", mockConfigPath)
+}
+
 func (m *sourceManager) FetchFiles(
 	ctx context.Context,
 	component components.Component,
@@ -280,6 +344,20 @@ func (m *sourceManager) FetchFiles(
 	for i := range sourceFiles {
 		fileRef := &sourceFiles[i]
 
+		// Fail fast when a 'custom' origin source file has no registered provider.
+		// This means the distro has no 'mock-config' set (or the file was inaccessible),
+		// so no generation can happen. Surfacing the error here — before any network
+		// or disk work — gives a clearer diagnosis than the message produced deep in
+		// the fetch fallback path.
+		if fileRef.Origin.Type == projectconfig.OriginTypeCustom &&
+			len(m.fileProviders) == 0 &&
+			(fileRef.Hash == "" || fileRef.HashType == "") {
+			return fmt.Errorf(
+				"source file %#q has 'custom' origin but no file provider is available; "+
+					"set 'mock-config' on the project distro version definition to enable custom source generation",
+				fileRef.Filename)
+		}
+
 		err := m.fetchSourceFile(ctx, httpDownloader, component, fileRef, destDirPath)
 		if err != nil {
 			return fmt.Errorf("failed to fetch source file %#q:\n%w", fileRef.Filename, err)
@@ -289,8 +367,14 @@ func (m *sourceManager) FetchFiles(
 	return nil
 }
 
-// fetchSourceFile downloads a source file, trying the lookaside cache first and falling
-// back to the configured origin. When disable-origins is set, fallback is disabled.
+// fetchSourceFile acquires a single source file using the following priority order:
+//  1. Custom file provider — custom sources are always regenerated so their configured
+//     hashes validate the current script and inputs.
+//  2. Lookaside cache — non-custom files with hash info attempt a cached download first.
+//  3. File providers — handles other provider-supported origin types.
+//  4. Configured download origin — final fallback for 'download' origin types.
+//
+// When disable-origins is set, step 4 is skipped and only lookaside and file providers apply.
 func (m *sourceManager) fetchSourceFile(
 	ctx context.Context,
 	httpDownloader downloader.Downloader,
@@ -305,32 +389,31 @@ func (m *sourceManager) fetchSourceFile(
 
 	destPath := filepath.Join(destDirPath, fileRef.Filename)
 
-	sourceExists, err := fileutils.Exists(m.fs, destPath)
-	if err != nil {
-		return fmt.Errorf("failed to check existence of destination file %#q:\n%w", destPath, err)
-	}
-
-	if sourceExists {
-		slog.Debug("Source file already exists, skipping download",
-			"filename", fileRef.Filename,
-			"path", destPath)
-
+	// Overlay-origin entries declare the post-overlay hash of an archive that is already
+	// present as a spec source. No download is needed; the hash is used only to update
+	// the 'sources' file during render and to validate the output of 'prep-sources'.
+	if fileRef.Origin.Type == projectconfig.OriginTypeOverlay {
 		return nil
 	}
 
-	// Phase 1: Try lookaside cache if hash info is available
-	if fileRef.Hash != "" && fileRef.HashType != "" {
-		lookasideErr := m.tryLookasideDownload(ctx, httpDownloader, component, fileRef, destPath)
-		if lookasideErr == nil {
-			return nil
-		}
-
-		slog.Debug("Lookaside cache download failed",
-			"filename", fileRef.Filename,
-			"error", lookasideErr)
+	// Try the lookaside cache first for non-custom files if hash info is available.
+	// Custom files are always regenerated so stale configured hashes are detected.
+	if m.trySourceFileLookaside(ctx, httpDownloader, component, fileRef, destPath) {
+		return nil
 	}
 
-	// Phase 2: Fall back to configured origin (not allowed when disable-origins is set)
+	// Try each registered file provider. Providers return [ErrNotFound] to signal
+	// they don't handle this reference; any other error is fatal.
+	handled, err := m.tryFileProviders(ctx, component, fileRef, destDirPath, destPath)
+	if err != nil {
+		return err
+	}
+
+	if handled {
+		return nil
+	}
+
+	// Fall back to the configured origin (not allowed when disable-origins is set).
 	if m.disableOrigins {
 		return fmt.Errorf("source file %#q not found in lookaside cache and disable-origins is enabled in the distro config",
 			fileRef.Filename)
@@ -341,7 +424,66 @@ func (m *sourceManager) fetchSourceFile(
 			fileRef.Filename)
 	}
 
-	return m.downloadFromOrigin(ctx, httpDownloader, fileRef, destPath)
+	return m.fetchFromDownloadOrigin(ctx, httpDownloader, fileRef, destPath)
+}
+
+// trySourceFileLookaside attempts a cached download for non-custom files with hash information.
+// Custom files deliberately bypass lookaside so they are regenerated and validated each time.
+func (m *sourceManager) trySourceFileLookaside(
+	ctx context.Context,
+	httpDownloader downloader.Downloader,
+	component components.Component,
+	fileRef *projectconfig.SourceFileReference,
+	destPath string,
+) bool {
+	if fileRef.Origin.Type == projectconfig.OriginTypeCustom ||
+		fileRef.Hash == "" || fileRef.HashType == "" {
+		return false
+	}
+
+	lookasideErr := m.tryLookasideDownload(ctx, httpDownloader, component, fileRef, destPath)
+	if lookasideErr == nil {
+		return true
+	}
+
+	slog.Debug("Lookaside cache download failed",
+		"filename", fileRef.Filename,
+		"error", lookasideErr)
+
+	return false
+}
+
+// tryFileProviders attempts each registered file provider in turn. It returns
+// handled=true when a provider produced (and, when hashes are configured,
+// validated) the file. A provider signalling [ErrNotFound] is skipped; any other
+// provider error is fatal.
+func (m *sourceManager) tryFileProviders(
+	ctx context.Context,
+	component components.Component,
+	fileRef *projectconfig.SourceFileReference,
+	destDirPath, destPath string,
+) (handled bool, err error) {
+	for _, provider := range m.fileProviders {
+		provErr := provider.GetFile(ctx, component, *fileRef, destDirPath)
+		if provErr == nil {
+			// File providers are responsible for producing the file but not for
+			// hash validation. Validate here so all acquisition paths are covered.
+			if fileRef.Hash != "" && fileRef.HashType != "" {
+				if hashErr := fileutils.ValidateFileHash(
+					m.dryRunnable, m.fs, fileRef.HashType, destPath, fileRef.Hash); hashErr != nil {
+					return false, fmt.Errorf("hash validation failed for %#q:\n%w", fileRef.Filename, hashErr)
+				}
+			}
+
+			return true, nil
+		}
+
+		if !errors.Is(provErr, ErrNotFound) {
+			return false, fmt.Errorf("file provider failed for %#q:\n%w", fileRef.Filename, provErr)
+		}
+	}
+
+	return false, nil
 }
 
 // tryLookasideDownload attempts to download a source file from the lookaside cache.
@@ -377,8 +519,12 @@ func (m *sourceManager) tryLookasideDownload(
 	return nil
 }
 
-// downloadFromOrigin downloads a source file using its configured origin.
-func (m *sourceManager) downloadFromOrigin(
+// fetchFromDownloadOrigin acquires a source file using its configured origin.
+// For [projectconfig.OriginTypeCustom], callers should have already dispatched
+// to a registered [FileSourceProvider] — reaching this function for a custom
+// origin means no provider was configured.
+// For [projectconfig.OriginTypeURI], the file is downloaded from the configured URI.
+func (m *sourceManager) fetchFromDownloadOrigin(
 	ctx context.Context,
 	httpDownloader downloader.Downloader,
 	fileRef *projectconfig.SourceFileReference,
@@ -402,6 +548,20 @@ func (m *sourceManager) downloadFromOrigin(
 		}
 
 		return nil
+
+	case projectconfig.OriginTypeCustom:
+		// The file provider dispatch in fetchSourceFile should have handled this.
+		// Reaching here means no [FileSourceProvider] was registered for 'custom' origin.
+		return fmt.Errorf(
+			"source file %#q has 'custom' origin but no provider handled it; "+
+				"ensure the distro has a 'mock-config' configured",
+			fileRef.Filename)
+
+	case projectconfig.OriginTypeOverlay:
+		// Overlay-origin files are skipped before reaching this point in fetchSourceFile.
+		// This case should never be reached.
+		return fmt.Errorf("internal error: download attempted for 'overlay'-origin source file %#q",
+			fileRef.Filename)
 
 	default:
 		return fmt.Errorf("unsupported origin type %#q for source file %#q",
@@ -453,6 +613,21 @@ func resolvePackageName(component components.Component) string {
 	}
 
 	return component.GetName()
+}
+
+// fetchedSourceFilenames returns filenames acquired by [SourceManager.FetchFiles].
+// Overlay-origin entries are excluded because component lookaside extraction must
+// fetch their original upstream archives before overlays can repack them.
+func fetchedSourceFilenames(sourceFiles []projectconfig.SourceFileReference) []string {
+	var filenames []string
+
+	for _, sourceFile := range sourceFiles {
+		if sourceFile.Origin.Type.IsFetched() {
+			filenames = append(filenames, sourceFile.Filename)
+		}
+	}
+
+	return filenames
 }
 
 func (m *sourceManager) FetchComponent(
@@ -566,7 +741,14 @@ func (m *sourceManager) downloadLookasideSources(
 
 	packageName := resolvePackageName(component)
 
-	err := m.lookasideDownloader.ExtractSourcesFromRepo(ctx, destDirPath, packageName, m.lookasideBaseURI, nil)
+	// Collect filenames from 'source-files' config that [SourceManager.FetchFiles]
+	// acquires, so the lookaside extractor does not overwrite them. Overlay-origin
+	// files are not fetched by FetchFiles, so they must remain available from
+	// lookaside for archive overlays. This mirrors the same skip-list built in
+	// [FedoraSourcesProviderImpl.GetComponent].
+	skipFilenames := fetchedSourceFilenames(component.GetConfig().SourceFiles)
+
+	err := m.lookasideDownloader.ExtractSourcesFromRepo(ctx, destDirPath, packageName, m.lookasideBaseURI, skipFilenames)
 	if err != nil {
 		return fmt.Errorf("failed to extract sources from lookaside cache:\n%w", err)
 	}

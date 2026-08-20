@@ -11,23 +11,36 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/brunoga/deep"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/archive"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 )
 
 // ComponentOverlay represents an overlay that may be applied to a component's spec and/or its sources.
+//
+//nolint:recvcheck // HashInclude needs a value receiver for hashstructure; all other methods use pointer receivers.
 type ComponentOverlay struct {
 	// The type of overlay to apply.
-	Type ComponentOverlayType `toml:"type" json:"type" validate:"required" jsonschema:"enum=spec-add-tag,enum=spec-insert-tag,enum=spec-set-tag,enum=spec-update-tag,enum=spec-remove-tag,enum=spec-prepend-lines,enum=spec-append-lines,enum=spec-search-replace,enum=spec-remove-section,enum=spec-remove-subpackage,enum=patch-add,enum=patch-remove,enum=file-prepend-lines,enum=file-search-replace,enum=file-add,enum=file-remove,enum=file-rename,title=Overlay type,description=The type of overlay to apply"`
+	Type ComponentOverlayType `toml:"type" json:"type" validate:"required" jsonschema:"enum=spec-add-tag,enum=spec-insert-tag,enum=spec-set-tag,enum=spec-update-tag,enum=spec-remove-tag,enum=spec-prepend-lines,enum=spec-prepend-all-lines,enum=spec-append-lines,enum=spec-search-replace,enum=spec-remove-section,enum=spec-remove-subpackage,enum=patch-add,enum=patch-remove,enum=file-prepend-lines,enum=file-search-replace,enum=file-add,enum=file-remove,enum=file-rename,title=Overlay type,description=The type of overlay to apply"`
 	// Human readable description of overlay; primarily present to document the need for the change.
 	Description string `toml:"description,omitempty" json:"description,omitempty" jsonschema:"title=Description,description=Human readable description of overlay" fingerprint:"-"`
 
 	// For overlays that apply to non-spec files, indicates the filename. For overlays that can
 	// apply to multiple files, supports glob patterns (including globstar).
-	Filename string `toml:"file,omitempty" json:"file,omitempty" jsonschema:"title=Filename,description=The name of the non-spec file to which this overlay applies, or a glob pattern matching multiple files"`
+	Filename string `toml:"file,omitempty" json:"file,omitempty" jsonschema:"title=Filename,description=The name of the non-spec file to which this overlay applies. May be a glob pattern matching multiple files"`
+	// For archive-scoped overlays (file-remove and file-search-replace), the name of the source
+	// archive to extract, modify, and repack (e.g. "pkg-1.0.tar.gz"). When set, [ComponentOverlay.Filename]
+	// is interpreted as a glob relative to the archive's extraction root rather than a loose
+	// file in the sources tree.
+	Archive string `toml:"archive,omitempty" json:"archive,omitempty" jsonschema:"title=Archive,description=For archive-scoped overlays: the source archive to extract and repack (e.g. pkg-1.0.tar.gz). When set the 'file' field is a glob relative to the archive extraction root"`
 	// For overlays that apply to specs, indicates the name of the section to which it applies.
-	SectionName string `toml:"section,omitempty" json:"section,omitempty" jsonschema:"title=Section name,description=The name of the section to which this overlay applies"`
+	// Optional for spec-prepend-lines, spec-append-lines, and spec-search-replace: when omitted,
+	// the overlay targets the entire spec file (prepend at top, append at end, search-replace
+	// across all sections).
+	SectionName string `toml:"section,omitempty" json:"section,omitempty" jsonschema:"title=Section name,description=The name of the section to which this overlay applies. Optional for spec-prepend-lines/spec-append-lines/spec-search-replace; when omitted these overlays target the entire spec file."`
 	// For overlays that apply to specs, indicates the name of the sub-package to which it applies.
-	PackageName string `toml:"package,omitempty" json:"package,omitempty" jsonschema:"title=Package name,description=The name of the sub-package to which this overlay applies"`
+	// A sub-package is always a sub-qualifier of a section, so this field cannot be combined
+	// with an omitted SectionName on overlays that support whole-file targeting.
+	PackageName string `toml:"package,omitempty" json:"package,omitempty" jsonschema:"title=Package name,description=The name of the sub-package to which this overlay applies. Cannot be combined with an omitted section on overlays that support whole-file targeting."`
 	// For overlays that apply to spec tags, indicates the name of the tag.
 	Tag string `toml:"tag,omitempty" json:"tag,omitempty" jsonschema:"title=Tag,description=For overlays that apply to spec tags, indicates the name of the tag"`
 	// For overlays that apply to values in specs, an exact string value to match.
@@ -127,10 +140,54 @@ func (c *ComponentOverlay) ModifiesSpec() bool {
 		c.Type == ComponentOverlayRemovePatch
 }
 
-// ModifiesNonSpecFiles returns true if the overlay modifies non-spec files. This includes
-// hybrid overlays that modify both spec and source files (e.g., patch overlays), since
-// those also require non-spec modifications.
-func (c *ComponentOverlay) ModifiesNonSpecFiles() bool {
+// ArchiveTarget returns the archive name and the inner-archive glob when the overlay
+// is archive-scoped (i.e. [ComponentOverlay.Archive] is non-empty and
+// [ComponentOverlay.Filename] provides the inner path).
+//
+// Returns ok=false when [ComponentOverlay.Archive] is empty, indicating a loose-file
+// overlay whose [ComponentOverlay.Filename] refers to files in the sources tree directly.
+func (c *ComponentOverlay) ArchiveTarget() (archiveName, innerPath string, ok bool) {
+	if c.Archive == "" || c.Filename == "" {
+		return "", "", false
+	}
+
+	return c.Archive, c.Filename, true
+}
+
+// SupportsArchiveScope reports whether the overlay type can target files inside a source
+// archive via an archive-scoped [ComponentOverlay.Filename] (see [ComponentOverlay.ArchiveTarget]).
+// Only file-remove and file-search-replace extract and repack archives; all other types treat
+// the path as loose files in the sources tree.
+func (c *ComponentOverlay) SupportsArchiveScope() bool {
+	return c.Type == ComponentOverlayRemoveFile || c.Type == ComponentOverlaySearchAndReplaceInFile
+}
+
+// ModifiesArchive returns true if the overlay modifies files inside a source archive.
+// These overlays require extraction and repacking of the archive. Only file-remove and
+// file-search-replace support archive scoping (see [ComponentOverlay.SupportsArchiveScope]),
+// and only when their [ComponentOverlay.Filename] is an archive-scoped path
+// (see [ComponentOverlay.ArchiveTarget]).
+func (c *ComponentOverlay) ModifiesArchive() bool {
+	if !c.SupportsArchiveScope() {
+		return false
+	}
+
+	_, _, ok := c.ArchiveTarget()
+
+	return ok
+}
+
+// ModifiesLooseFiles returns true if the overlay modifies loose files in the
+// sources tree (as opposed to the spec or files inside an archive). This includes
+// hybrid overlays that modify both the spec and loose source files (e.g., patch
+// overlays), since those also require loose-file modifications. Archive-scoped
+// overlays (see [ModifiesArchive]) are excluded: they operate on files inside an
+// archive, not loose files in the sources tree.
+func (c *ComponentOverlay) ModifiesLooseFiles() bool {
+	if c.ModifiesArchive() {
+		return false
+	}
+
 	return c.Type == ComponentOverlayPrependLinesToFile ||
 		c.Type == ComponentOverlaySearchAndReplaceInFile ||
 		c.Type == ComponentOverlayAddFile ||
@@ -138,6 +195,50 @@ func (c *ComponentOverlay) ModifiesNonSpecFiles() bool {
 		c.Type == ComponentOverlayRenameFile ||
 		c.Type == ComponentOverlayAddPatch ||
 		c.Type == ComponentOverlayRemovePatch
+}
+
+// TargetsLooseFile reports whether a loose-file overlay can modify filename.
+func (c *ComponentOverlay) TargetsLooseFile(filename string) (bool, error) {
+	if !c.ModifiesLooseFiles() {
+		return false, nil
+	}
+
+	//nolint:exhaustive // Only types with special destination semantics are listed.
+	switch c.Type {
+	case ComponentOverlayAddFile, ComponentOverlayAddPatch:
+		return c.EffectiveSourceName() == filename, nil
+	case ComponentOverlayRenameFile:
+		if c.Replacement == filename {
+			return true, nil
+		}
+	}
+
+	matches, err := doublestar.PathMatch(c.Filename, filename)
+	if err != nil {
+		return false, fmt.Errorf("matching overlay file pattern %#q:\n%w", c.Filename, err)
+	}
+
+	return matches, nil
+}
+
+// HashInclude implements the hashstructure Includable interface so the
+// [ComponentOverlay.Archive] field is omitted from the component fingerprint while it holds
+// its default (empty) value. A defaulted Archive therefore reproduces the pre-existing fingerprint
+// (no cascading rebuild for existing overlays), while a non-empty Archive contributes to the hash.
+// Every other field is always included, preserving existing hashing behaviour.
+//
+// NOTE: Remove this method once the RFC for explicit fingerprint exclusions is implemented and
+// [ComponentOverlay.Archive] can be tagged with `fingerprint:"-,nonzero"` (or equivalent) instead.
+//
+// NOTE: the value receiver is required — [fingerprint.ComputeIdentity] hashes the component by
+// value, so the struct (and its nested fields) are not addressable and a pointer-receiver method
+// would never be detected by hashstructure.
+func (c ComponentOverlay) HashInclude(field string, _ any) (bool, error) {
+	if field == "Archive" {
+		return c.Archive != "", nil
+	}
+
+	return true, nil
 }
 
 // ComponentOverlayType is the type of a component overlay.
@@ -160,10 +261,7 @@ const (
 	// ComponentOverlayPrependSpecLines is an overlay that prepends lines to a section in a spec; fails if the section
 	// doesn't exist.
 	ComponentOverlayPrependSpecLines ComponentOverlayType = "spec-prepend-lines"
-	// ComponentOverlayPrependAllSpecLines is an overlay that prepends lines to every section
-	// matching the given name and package in a spec. This is useful when a spec contains multiple
-	// sections with the same name (e.g., two %check sections gated by different conditionals)
-	// and all of them need the same modification. Fails if no matching section exists.
+	// ComponentOverlayPrependAllSpecLines prepends lines to every matching section.
 	ComponentOverlayPrependAllSpecLines ComponentOverlayType = "spec-prepend-all-lines"
 	// ComponentOverlayAppendSpecLines is an overlay that appends lines to a section in a spec; fails if the section
 	// doesn't exist.
@@ -191,7 +289,10 @@ const (
 	ComponentOverlaySearchAndReplaceInFile ComponentOverlayType = "file-search-replace"
 	// ComponentOverlayAddFile is an overlay that adds a non-spec file.
 	ComponentOverlayAddFile ComponentOverlayType = "file-add"
-	// ComponentOverlayRemoveFile is an overlay that removes a non-spec file.
+	// ComponentOverlayRemoveFile is an overlay that removes a non-spec file. When
+	// [ComponentOverlay.Archive] is set, it removes file(s) matching the glob in
+	// [ComponentOverlay.Filename] from inside that source archive instead of loose
+	// files in the sources tree (see [ComponentOverlay.ArchiveTarget]).
 	ComponentOverlayRemoveFile ComponentOverlayType = "file-remove"
 	// ComponentOverlayRenameFile is an overlay that renames a non-spec file.
 	ComponentOverlayRenameFile ComponentOverlayType = "file-rename"
@@ -199,157 +300,244 @@ const (
 
 // Validate checks that required fields are set based on the overlay type. This catches
 // configuration errors at load time rather than at apply time.
-//
-//nolint:cyclop,gocognit,gocyclo,funlen // complexity is inherent to the number of overlay types.
 func (c *ComponentOverlay) Validate() error {
 	desc := c.Description
 	if desc == "" {
 		desc = "(no description)"
 	}
 
-	missingField := func(fieldName string) error {
-		return fmt.Errorf("overlay type %#q requires %#q field: %s", c.Type, fieldName, desc)
-	}
-
-	unexpectedField := func(fieldName string) error {
-		return fmt.Errorf("overlay type %#q does not accept %#q field: %s", c.Type, fieldName, desc)
-	}
-
-	requireRelativePath := func(fieldName, value string) error {
-		if value == "" {
-			return missingField(fieldName)
-		}
-
-		if filepath.IsAbs(value) {
-			return fmt.Errorf(
-				"overlay type %#q requires %#q to be a relative path; found %#q",
-				c.Type, fieldName, value,
-			)
-		}
-
-		return nil
-	}
-
-	requireFileBasename := func(fieldName, value string) error {
-		if value == "" {
-			return missingField(fieldName)
-		}
-
-		if value != filepath.Base(value) {
-			return fmt.Errorf(
-				"overlay type %#q requires %#q to be a filename only (not a path); found %#q",
-				c.Type, fieldName, value,
-			)
-		}
-
-		return nil
-	}
-
-	switch c.Type {
-	case ComponentOverlayAddSpecTag, ComponentOverlayInsertSpecTag,
-		ComponentOverlaySetSpecTag, ComponentOverlayUpdateSpecTag:
-		if c.Tag == "" {
-			return missingField("tag")
-		}
-
-		if c.Value == "" {
-			return missingField("value")
-		}
-	case ComponentOverlayRemoveSpecTag:
-		if c.Tag == "" {
-			return missingField("tag")
-		}
-	case ComponentOverlayPrependSpecLines, ComponentOverlayPrependAllSpecLines, ComponentOverlayAppendSpecLines:
-		if len(c.Lines) == 0 {
-			return missingField("lines")
-		}
-	case ComponentOverlaySearchAndReplaceInSpec:
-		if c.Regex == "" {
-			return missingField("regex")
-		}
-
-		if err := validateRegex(c.Regex, desc); err != nil {
-			return err
-		}
-	case ComponentOverlayPrependLinesToFile:
-		if err := requireRelativePath("file", c.Filename); err != nil {
-			return err
-		}
-
-		if len(c.Lines) == 0 {
-			return missingField("lines")
-		}
-	case ComponentOverlaySearchAndReplaceInFile:
-		if err := requireRelativePath("file", c.Filename); err != nil {
-			return err
-		}
-
-		if c.Regex == "" {
-			return missingField("regex")
-		}
-
-		if err := validateRegex(c.Regex, desc); err != nil {
-			return err
-		}
-	case ComponentOverlayAddFile:
-		if err := requireRelativePath("file", c.Filename); err != nil {
-			return err
-		}
-
-		if c.Source == "" {
-			return missingField("source")
-		}
-	case ComponentOverlayRemoveFile:
-		if err := requireRelativePath("file", c.Filename); err != nil {
-			return err
-		}
-	case ComponentOverlayRenameFile:
-		if err := requireRelativePath("file", c.Filename); err != nil {
-			return err
-		}
-
-		if err := requireFileBasename("replacement", c.Replacement); err != nil {
-			return err
-		}
-	case ComponentOverlayRemoveSection:
-		if c.SectionName == "" {
-			return missingField("section")
-		}
-	case ComponentOverlayRemoveSubpackage:
-		if c.PackageName == "" {
-			return missingField("package")
-		}
-
-		if c.SectionName != "" {
-			return unexpectedField("section")
-		}
-	case ComponentOverlayAddPatch:
-		if c.Source == "" {
-			return missingField("source")
-		}
-
-		// Filename is optional; if provided, it must be a relative path.
-		if c.Filename != "" {
-			if err := requireRelativePath("file", c.Filename); err != nil {
-				return err
-			}
-		}
-	case ComponentOverlayRemovePatch:
-		if err := requireRelativePath("file", c.Filename); err != nil {
-			return err
-		}
-
-		if err := validateGlobPattern(c.Filename, desc); err != nil {
-			return err
-		}
-	default:
-		return fmt.Errorf("unknown overlay type %#q: %#q", c.Type, desc)
+	if err := c.validateRequiredFields(desc); err != nil {
+		return err
 	}
 
 	if c.Metadata != nil {
 		if err := c.Metadata.Validate(); err != nil {
 			return fmt.Errorf("invalid metadata for overlay %q:\n%w", desc, err)
 		}
+	}
+
+	return nil
+}
+
+func (c *ComponentOverlay) validateArchiveField(desc string) error {
+	if c.Archive == "" {
+		return nil
+	}
+
+	if !archive.IsArchiveName(c.Archive) {
+		return fmt.Errorf(
+			"overlay 'archive' field %#q is not a recognized archive name: %s",
+			c.Archive, desc,
+		)
+	}
+
+	if err := fileutils.ValidateFilename(c.Archive); err != nil {
+		return fmt.Errorf("unsafe overlay 'archive' field %#q: %s:\n%w", c.Archive, desc, err)
+	}
+
+	if !c.SupportsArchiveScope() {
+		return fmt.Errorf(
+			"overlay type %#q does not support archive-scoped file paths: %s",
+			c.Type, desc,
+		)
+	}
+
+	if c.Filename == "" {
+		return fmt.Errorf("overlay type %#q requires %#q field: %s", c.Type, "file", desc)
+	}
+
+	return nil
+}
+
+func (c *ComponentOverlay) validateRequiredFields(desc string) error {
+	if err := c.validateArchiveField(desc); err != nil {
+		return err
+	}
+
+	switch c.Type {
+	case ComponentOverlayAddSpecTag, ComponentOverlayInsertSpecTag,
+		ComponentOverlaySetSpecTag, ComponentOverlayUpdateSpecTag, ComponentOverlayRemoveSpecTag:
+		return c.validateSpecTagFields(desc)
+	case ComponentOverlayPrependSpecLines, ComponentOverlayPrependAllSpecLines, ComponentOverlayAppendSpecLines:
+		return c.validateSpecLineOverlay(desc)
+	case ComponentOverlaySearchAndReplaceInSpec:
+		return c.validateSpecSearchReplaceOverlay(desc)
+	case ComponentOverlayPrependLinesToFile, ComponentOverlaySearchAndReplaceInFile:
+		return c.validateFileOverlay(desc)
+	case ComponentOverlayAddFile:
+		return c.validateAddFileOverlay(desc)
+	case ComponentOverlayRemoveFile:
+		return c.validateRemoveFileOverlay(desc)
+	case ComponentOverlayRenameFile:
+		return c.validateRenameFileOverlay(desc)
+	case ComponentOverlayRemoveSection:
+		return c.validateRemoveSectionOverlay(desc)
+	case ComponentOverlayRemoveSubpackage:
+		return c.validateRemoveSubpackageOverlay(desc)
+	case ComponentOverlayAddPatch, ComponentOverlayRemovePatch:
+		return c.validatePatchOverlay(desc)
+	default:
+		return fmt.Errorf("unknown overlay type %#q: %#q", c.Type, desc)
+	}
+}
+
+func (c *ComponentOverlay) validateSpecTagFields(desc string) error {
+	if c.Tag == "" {
+		return fmt.Errorf("overlay type %#q requires %#q field: %s", c.Type, "tag", desc)
+	}
+
+	if c.Type != ComponentOverlayRemoveSpecTag && c.Value == "" {
+		return fmt.Errorf("overlay type %#q requires %#q field: %s", c.Type, "value", desc)
+	}
+
+	return nil
+}
+
+func (c *ComponentOverlay) validateSpecLineOverlay(desc string) error {
+	if len(c.Lines) == 0 {
+		return fmt.Errorf("overlay type %#q requires %#q field: %s", c.Type, "lines", desc)
+	}
+
+	return c.requireSectionIfPackageSet(desc)
+}
+
+func (c *ComponentOverlay) validateSpecSearchReplaceOverlay(desc string) error {
+	if c.Regex == "" {
+		return fmt.Errorf("overlay type %#q requires %#q field: %s", c.Type, "regex", desc)
+	}
+
+	if err := validateRegex(c.Regex, desc); err != nil {
+		return err
+	}
+
+	return c.requireSectionIfPackageSet(desc)
+}
+
+func (c *ComponentOverlay) validateFileOverlay(desc string) error {
+	if err := c.requireRelativePath(c.Filename, desc); err != nil {
+		return err
+	}
+
+	if c.Type == ComponentOverlayPrependLinesToFile {
+		if len(c.Lines) == 0 {
+			return fmt.Errorf("overlay type %#q requires %#q field: %s", c.Type, "lines", desc)
+		}
+
+		return nil
+	}
+
+	if c.Regex == "" {
+		return fmt.Errorf("overlay type %#q requires %#q field: %s", c.Type, "regex", desc)
+	}
+
+	return validateRegex(c.Regex, desc)
+}
+
+func (c *ComponentOverlay) validateAddFileOverlay(desc string) error {
+	if err := c.requireRelativePath(c.Filename, desc); err != nil {
+		return err
+	}
+
+	if c.Source == "" {
+		return fmt.Errorf("overlay type %#q requires %#q field: %s", c.Type, "source", desc)
+	}
+
+	return nil
+}
+
+func (c *ComponentOverlay) validateRemoveFileOverlay(desc string) error {
+	return c.requireRelativePath(c.Filename, desc)
+}
+
+func (c *ComponentOverlay) validateRenameFileOverlay(desc string) error {
+	if err := c.requireRelativePath(c.Filename, desc); err != nil {
+		return err
+	}
+
+	return c.requireFileBasename("replacement", c.Replacement, desc)
+}
+
+func (c *ComponentOverlay) validateRemoveSectionOverlay(desc string) error {
+	if c.SectionName == "" {
+		return fmt.Errorf("overlay type %#q requires %#q field: %s", c.Type, "section", desc)
+	}
+
+	return nil
+}
+
+func (c *ComponentOverlay) validateRemoveSubpackageOverlay(desc string) error {
+	if c.PackageName == "" {
+		return fmt.Errorf("overlay type %#q requires %#q field: %s", c.Type, "package", desc)
+	}
+
+	if c.SectionName != "" {
+		return fmt.Errorf("overlay type %#q does not accept %#q field: %s", c.Type, "section", desc)
+	}
+
+	return nil
+}
+
+func (c *ComponentOverlay) validatePatchOverlay(desc string) error {
+	if c.Type == ComponentOverlayAddPatch {
+		if c.Source == "" {
+			return fmt.Errorf("overlay type %#q requires %#q field: %s", c.Type, "source", desc)
+		}
+
+		// Filename is optional; if provided, it must be a relative path.
+		if c.Filename != "" {
+			return c.requireRelativePath(c.Filename, desc)
+		}
+
+		return nil
+	}
+
+	if err := c.requireRelativePath(c.Filename, desc); err != nil {
+		return err
+	}
+
+	return validateGlobPattern(c.Filename, desc)
+}
+
+// requireSectionIfPackageSet checks that, for overlays that may target either a single
+// section or the entire spec file (indicated by omitting `section`), a `package` is only
+// specified when a `section` is also specified. A package is always a sub-qualifier of
+// a section, so specifying one without the other is meaningless.
+func (c *ComponentOverlay) requireSectionIfPackageSet(desc string) error {
+	if c.SectionName == "" && c.PackageName != "" {
+		return fmt.Errorf(
+			"overlay type %#q requires %#q field when %#q is set: %s",
+			c.Type, "section", "package", desc,
+		)
+	}
+
+	return nil
+}
+
+func (c *ComponentOverlay) requireRelativePath(value, desc string) error {
+	if value == "" {
+		return fmt.Errorf("overlay type %#q requires %#q field: %s", c.Type, "file", desc)
+	}
+
+	if filepath.IsAbs(value) {
+		return fmt.Errorf(
+			"overlay type %#q requires %#q to be a relative path; found %#q",
+			c.Type, "file", value,
+		)
+	}
+
+	return nil
+}
+
+func (c *ComponentOverlay) requireFileBasename(fieldName, value, desc string) error {
+	if value == "" {
+		return fmt.Errorf("overlay type %#q requires %#q field: %s", c.Type, fieldName, desc)
+	}
+
+	if value != filepath.Base(value) {
+		return fmt.Errorf(
+			"overlay type %#q requires %#q to be a filename only (not a path); found %#q",
+			c.Type, fieldName, value,
+		)
 	}
 
 	return nil

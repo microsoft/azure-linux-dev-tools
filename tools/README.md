@@ -4,6 +4,8 @@ This directory contains a subdirectory for each golang-based build tool that thi
 
 We use separate modules (one per tool) to manage and isolate tools' dependencies.
 
+> **Note:** Not every tool here is Go. [`git-cliff`](./git-cliff/) (used by `mage changelog`) is a Rust CLI, pinned via a `Cargo.toml` instead of a `go.mod` so Dependabot (cargo ecosystem) and security scanners can track and bump it. It is not installed via `go tool`; install it with `cargo`/`brew` (or in CI).
+
 ## MCP Server (magemcp)
 
 The `magemcp` subdirectory contains an MCP (Model Context Protocol) server that exposes Mage build targets as tools for AI coding assistants. This allows AI agents to build, test, and check code quality in this repository.
