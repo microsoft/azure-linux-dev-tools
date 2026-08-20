@@ -36,5 +36,6 @@ command tree, suitable for inclusion in the user guide.
 ### SEE ALSO
 
 * [azldev](azldev.md)	 - 🐧 Azure Linux Dev Tool
+* [azldev docs agent](azldev_docs_agent.md)	 - Emit AI agent skill and instruction files
 * [azldev docs markdown](azldev_docs_markdown.md)	 - Generates Markdown (.md) docs for this tool
 

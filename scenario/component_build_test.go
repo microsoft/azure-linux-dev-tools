@@ -34,6 +34,7 @@ func TestBuildingLocalComponent(t *testing.T) {
 	project := projecttest.NewDynamicTestProject(
 		projecttest.AddSpec(spec),
 		projecttest.UseTestDefaultConfigs(),
+		projecttest.WithGitRepo(),
 	)
 
 	// Run the build with test default configs copied into the container.
@@ -76,6 +77,7 @@ func TestBuildingLocalComponentFromCheckedInFiles(t *testing.T) {
 	// Include test default configs to get distro and mock configurations.
 	project := projecttest.NewTemplatedTestProject(t, "testdata/simple",
 		projecttest.TemplatedUseTestDefaultConfigs(),
+		projecttest.TemplatedWithGitRepo(),
 	)
 
 	// Run the build with test default configs copied into the container.
@@ -121,10 +123,15 @@ func TestBuildingUpstreamComponent(t *testing.T) {
 	project := projecttest.NewDynamicTestProject(
 		projecttest.AddComponent(&projectconfig.ComponentConfig{Name: testComponentName}),
 		projecttest.UseTestDefaultConfigs(),
+		projecttest.WithGitRepo(),
 	)
 
 	// Run the build with test default configs copied into the container.
-	results := buildtest.NewBuildTest(project, testComponentName, projecttest.WithTestDefaultConfigs()).Run(t)
+	// component update populates lock files first (required by lock validation).
+	results := buildtest.NewBuildTest(project, testComponentName,
+		projecttest.WithTestDefaultConfigs(),
+		projecttest.WithPreCommand("component", "update", "-a"),
+	).Run(t)
 
 	// Make sure we got 1 SRPM.
 	srpms := results.GetSRPMs(t)

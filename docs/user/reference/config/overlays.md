@@ -2,7 +2,7 @@
 
 Overlays are semantic patches that modify RPM spec files and other source files during component processing. They allow you to make targeted changes to upstream specs without maintaining full forks.
 
-Overlays are defined within a component's configuration in your TOML config file and are applied in the order they appear. Each overlay specifies a type and the parameters needed to perform its modification.
+Overlays are defined within a component's configuration in your TOML config file. Overlays targeting the same scope are applied in declaration order. Archive overlays are batched and applied before spec and loose-file overlays; because these scopes normally modify different files, this does not change their result.
 
 > **Note:** Overlays are applied in sequence and modifications are non-atomic. If an overlay fails mid-way, previously applied changes remain. Work on copies if atomicity is required.
 
@@ -19,10 +19,11 @@ These overlays modify `.spec` files using the structured spec parser, allowing p
 | `spec-set-tag` | Sets a tag value; replaces if exists, adds if not | `tag`, `value` |
 | `spec-update-tag` | Updates an existing tag; **fails if the tag doesn't exist** | `tag`, `value` |
 | `spec-remove-tag` | Removes a tag from the spec; **fails if the tag doesn't exist** | `tag` |
-| `spec-prepend-lines` | Prepends lines to the start of a section; **fails if section doesn't exist** | `lines` |
-| `spec-append-lines` | Appends lines to the end of a section; **fails if section doesn't exist** | `lines` |
-| `spec-search-replace` | Regex-based search and replace on spec content | `regex` |
+| `spec-prepend-lines` | Prepends lines to the start of a section, or to the top of the file if `section` is omitted; **fails if a named section doesn't exist** | `lines` |
+| `spec-append-lines` | Appends lines to the end of a section, or to the bottom of the file if `section` is omitted; **fails if a named section doesn't exist** | `lines` |
+| `spec-search-replace` | Regex-based search and replace on spec content; targets a single section if `section` is given, otherwise the entire spec | `regex` |
 | `spec-remove-section` | Removes an entire section from the spec; **fails if section doesn't exist** | `section` |
+| `spec-remove-subpackage` | Removes every section associated with a sub-package (e.g. its `%package`, `%description`, `%files`, `%post`, `%postun`, ...); **fails if no such sections exist** | `package` |
 | `patch-add` | Adds a patch file and registers it in the spec (PatchN tag or %patchlist) | `source` |
 | `patch-remove` | Removes patch files and their spec references matching a glob pattern | `file` |
 
@@ -46,6 +47,40 @@ successfully makes a replacement to at least one matching file.
 | `file-remove` | Removes a file | `file` | Glob pattern for files to remove |
 | `file-rename` | Renames a file within the same directory | `file`, `replacement` | Name of file to rename |
 
+ > **Tip:** `file-remove` and `file-search-replace` can also operate inside a source archive by setting the `archive` field — see [Archive Overlays](#archive-overlays).
+
+### Archive Overlays
+
+A `file-remove` or `file-search-replace` overlay can modify files **inside** a source archive
+instead of loose files in the sources tree by setting the `archive` field to the archive name
+and the `file` field to a glob matched against the extracted archive contents. The archive is extracted,
+the matching files are modified with the same machinery as loose-file overlays, and the archive is
+repacked with its original compression format.
+
+```
+archive = "pkg-1.0.tar.gz"
+file = "vendor/**"                   # files inside the archive
+```
+
+> **Note:** Archive overlays are batched per archive — all overlays targeting the same archive
+> share a single extract/modify/repack cycle. When wired into the source-preparation pipeline, the `sources` file
+> is rehashed afterward to reflect the repacked archive. A loose-file overlay cannot target an archive that is also modified by an archive-scoped overlay; azldev rejects that ambiguous combination rather than allowing a later loose-file operation to discard or corrupt the repacked archive.
+
+> **Required drift protection:** Every archive targeted by an archive overlay must have one matching
+> `source-files` entry with `origin.type = "overlay"`. The entry records the expected post-overlay
+> hash; one entry can cover multiple overlays for the same archive. Conversely, every
+> `origin.type = "overlay"` entry must have a matching archive overlay; stale entries are rejected.
+> While bootstrapping a new overlay, `prep-sources --allow-no-hashes` permits the archive overlay
+> to temporarily omit its origin entry, or permits the matching origin entry to omit its hash.
+> An origin entry without a matching archive overlay is always rejected. See
+> [Components](components.md#recording-the-post-overlay-hash-for-archive-overlays).
+
+> **Extraction root:** The inner path is interpreted relative to the archive's extraction root: if the archive unpacks to a single top-level directory (the conventional `%{name}-%{version}` layout) that directory is the root; otherwise the archive root is used.
+
+> **Supported entry types:** Only regular files, directories, and symlinks are supported inside an archive overlay's target. If the archive contains an entry that cannot be repacked safely (a hardlink, device node, FIFO, etc.), the overlay fails with an error rather than silently dropping the entry from the repacked archive.
+
+| `file-remove` (archive-scoped) | Removes file(s) matching a glob pattern from inside an archive | `archive`, `file` |
+| `file-search-replace` (archive-scoped) | Regex-based search and replace on file(s) inside an archive | `archive`, `file`, `regex` |
 ## Field Reference
 
 | Field | TOML Key | Description | Used By |
@@ -54,15 +89,199 @@ successfully makes a replacement to at least one matching file.
 | Description | `description` | Human-readable explanation documenting the need for the change; helps identify overlays in error messages | All (optional) |
 | Tag | `tag` | The spec tag name (e.g., `BuildRequires`, `Requires`, `Version`) | `spec-add-tag`, `spec-insert-tag`, `spec-set-tag`, `spec-update-tag`, `spec-remove-tag` |
 | Value | `value` | The tag value to set, or value to match for removal | `spec-add-tag`, `spec-insert-tag`, `spec-set-tag`, `spec-update-tag`, `spec-remove-tag` (optional for matching) |
-| Section | `section` | The spec section to target (e.g., `%build`, `%install`, `%files`, `%description`) | `spec-prepend-lines`, `spec-append-lines`, `spec-search-replace` (optional), `spec-remove-section` |
-| Package | `package` | The sub-package name for multi-package specs; omit to target the main package | All spec overlays (optional) |
+| Section | `section` | The spec section to target (e.g., `%build`, `%install`, `%files`, `%description`). Optional for `spec-prepend-lines`, `spec-append-lines`, and `spec-search-replace` — omit to target the entire spec file. Required for `spec-remove-section`. | `spec-prepend-lines` (optional), `spec-append-lines` (optional), `spec-search-replace` (optional), `spec-remove-section` |
+| Package | `package` | The sub-package name for multi-package specs; omit to target the main package. Cannot be combined with an omitted `section` (a sub-package is always a sub-qualifier of a section). | All spec overlays (optional, except `spec-remove-subpackage` which **requires** it) |
 | Regex | `regex` | Regular expression pattern to match | `spec-search-replace`, `file-search-replace` |
 | Replacement | `replacement` | Literal replacement text; capture group references like `$1` are **not** expanded. Omit or leave empty to delete matched text. | `spec-search-replace`, `file-search-replace`, `file-rename` |
 | Lines | `lines` | Array of text lines to insert | `spec-prepend-lines`, `spec-append-lines`, `file-prepend-lines` |
-| File | `file` | The name of the non-spec file to modify or add | `file-prepend-lines`, `file-search-replace`, `file-add`, `file-remove`, `file-rename`, `patch-add` (optional), `patch-remove` |
-| Source | `source` | Path to source file for `file-add` and `patch-add`; relative paths are relative to the config file | `file-add`, `patch-add` |
+| File | `file` | The name of the non-spec file to modify or add, or a glob pattern. When combined with the `archive` field, the glob is matched against files inside that source archive. | `file-prepend-lines`, `file-search-replace`, `file-add`, `file-remove`, `file-rename`, `patch-add` (optional), `patch-remove` |
+| Archive | `archive` | The source archive to extract, modify, and repack (e.g. `pkg-1.0.tar.gz`). When set, `file` is a glob matched relative to the archive's extraction root. | `file-remove`, `file-search-replace` (optional) |
+| Source | `source` | Path to source file for `file-add` and `patch-add`; relative paths are relative to the config file that defines the overlay (the overlay file if loaded via [`overlay-files`](#per-file-overlay-format), otherwise the component config) | `file-add`, `patch-add` |
+| Metadata | `metadata` | Documentation table describing intent and provenance — see [Overlay Metadata](#overlay-metadata). Not allowed inside an overlay file loaded via `overlay-files` (the file-level `[metadata]` block applies to every overlay in the file). | All (optional) |
 
 > **Note:** For `file-rename`, the `replacement` field is a **filename only** (not a path). The file is renamed within its current directory.
+
+### Component-level fields for overlays
+
+In addition to per-overlay fields, the following fields are set directly on the component:
+
+| Field | TOML Key | Description |
+|-------|----------|-------------|
+| Overlay files | `overlay-files` | List of path or glob patterns matched against the filesystem after component config resolution to locate per-file overlay documents. Relative patterns are resolved from the concrete component's config file, or from the matched spec file's directory for spec-discovered components. Patterns support `**` (globstar). Matches are concatenated in declaration order; within a single pattern, matches are applied in filename (lexicographic) order, with full path as a tie-breaker for duplicate filenames. Glob patterns that match no files are ignored; literal paths must match a file. Duplicate matches across patterns are de-duplicated. See [Per-file overlay format](#per-file-overlay-format). |
+
+## Overlay Metadata
+
+Overlays can carry an optional `metadata` table that documents *why* the overlay exists and *when* it can be removed. Metadata is reviewed by humans and surfaced in tooling; it does **not** affect how the overlay is applied and is excluded from component fingerprints (so editing metadata never invalidates build caches).
+
+### `metadata` fields
+
+| Field | TOML Key | Description |
+|-------|----------|-------------|
+| Category | `category` | **Required.** Classification of the overlay's intent. See the table below. |
+| Commits | `commits` | List of upstream commit references (Fedora dist-git or upstream project) that this overlay backports or implements. Each entry is a table with a required `url` (an absolute http(s) URL). See [URL references](#url-references). |
+| Bugs | `bugs` | List of bug-tracker references. Each entry is a table with a required `url`. See [URL references](#url-references). |
+| Upstream status | `upstream-status` | **Required.** Classifies the overlay's relationship to its upstream project. One of `upstreamed`, `upstreamable`, `needs-upstream-hook`, `inapplicable`, or `unknown`. Use `unknown` if the assessment has not been made yet — reviewers should push for a definite value before approving. See [Upstream status](#upstream-status). |
+
+### Categories
+
+| Category | When to use |
+|----------|-------------|
+| `upstream-backport` | Fix backported from an upstream source (Fedora dist-git or the component's OSS project) that AZL will inherit once it bumps past the fix. Self-resolves on version bump. Requires at least one entry in `commits` pointing to the upstream change. `upstream-status` must be `upstreamed` or `upstreamable` — any other value contradicts the category. See [Upstream status](#upstream-status). |
+| `azl-pruning` | Removing content from a component for AZL: dependencies that are not shipped, unneeded features, subpackages, or files. |
+| `azl-compatibility` | Adapting a component to *how Azure Linux is built and shipped* — its build tooling, buildroot, infrastructure, and runtime ecosystem — when an upstream package builds or behaves incorrectly for AZL-specific reasons that are not branding, a missing dependency, architecture, or tests. Examples: quirks of the `azldev` source downloader, reproducibility fixes for AZL's multi-arch Koji `rpmdiff`, buildroot gaps where an AZL build option breaks a transitive dependency, and Fedora version-skew or config fixes for AZL targets. Use `upstream-status` to separate AZL-only concerns (`inapplicable`) from fixes upstream could also take (`upstreamable` / `upstreamed`). |
+| `azl-temp-workaround` | Temporary workaround that is explicitly intended to be dropped once an upstream or environmental fix lands. Covers overlays working around a runtime or build dependency that has not yet been imported into AZL (or is unavailable on a given target), as well as any other transient workaround waiting on an external change. Drop the overlay once the fix lands. |
+| `azl-branding-policy` | Fedora→Azure Linux identity differences: intentional name/path/vendor conventions **and** spec fixes for upstream code that hard-codes Fedora identity strings (e.g. `_vendor=redhat`, `<cpu>-redhat-linux[-gnu]` triples, `redhat-linux-build` dirs). Covers both permanent branding choices and the fallout from AZL setting `_vendor=azurelinux`; use `upstream-status` to separate permanent choices (`inapplicable`) from upstreamable fallout (`upstreamable` / `needs-upstream-hook`). |
+| `azl-disable-flaky-tests` | Skipping tests that fail intermittently or due to environmental flakiness rather than a real problem with the component. |
+| `azl-disable-unsupported-tests` | Skipping tests that cannot meaningfully run in AZL's build/runtime environment (e.g. tests that require network access, root, or hardware that is unavailable in mock). |
+| `azl-security-compliance` | FIPS or crypto-policy changes. |
+| `azl-release-management` | Release-tag and changelog mechanics. |
+| `azl-platform-adaptation` | Architecture-specific adjustments. |
+
+### URL references
+
+The `commits` and `bugs` fields are lists of references to external resources. Each entry is a table with a single required field:
+
+| Field | TOML Key | Description |
+|-------|----------|-------------|
+| URL | `url` | **Required.** HTTP(S) link to the referenced resource. |
+
+Example:
+
+```toml
+[[components.mypackage.overlays.metadata.bugs]]
+url = "https://bugzilla.redhat.com/show_bug.cgi?id=2234567"
+
+[[components.mypackage.overlays.metadata.bugs]]
+url = "https://github.com/example/repo/issues/42"
+```
+
+The inline-table form is more compact for short lists:
+
+```toml
+bugs = [
+  { url = "https://bugzilla.redhat.com/show_bug.cgi?id=2234567" },
+  { url = "https://github.com/example/repo/issues/42" },
+]
+```
+
+### Upstream status
+
+`upstream-status` classifies the overlay's relationship to its upstream project. It answers "why are we carrying this?" and "what would it take to drop it?" Reviewers use it to decide whether to push back on a change or ask for an upstream link.
+
+| Value | Meaning |
+|-------|---------|
+| `upstreamed` | The change is already in Fedora / the upstream project. The overlay is carried only until AZL bumps past the fix. |
+| `upstreamable` | The change could be sent upstream as-is. Reviewers should ask the author to link the upstream PR. |
+| `needs-upstream-hook` | An AZL specialization that today requires invasive spec edits; upstream could add a `bcond`, `%if`, or config knob that would let us drop the overlay. Reviewers should ask whether the hook can be upstreamed instead of the change itself. |
+| `inapplicable` | A permanent AZL-only deviation. Reviewers should push back on why we have to fork upstream forever. |
+| `unknown` | The author has not yet assessed the overlay's upstream story. Reviewers should push for a definite status before approving. |
+
+`upstream-status` is required whenever `[metadata]` is present. On an `upstream-backport` overlay only `upstreamed` and `upstreamable` are allowed — any other value (`needs-upstream-hook`, `inapplicable`, `unknown`) is a validation error.
+
+#### `upstreamable` vs. `needs-upstream-hook`
+
+Both statuses mean "there is an upstream action available," but they differ in *what* would go upstream:
+
+- **`upstreamable`** — the patch we're carrying is itself upstream-shaped. Sending the same (or a close-to-identical) diff to Fedora / the upstream project would plausibly be accepted. The overlay contributor should open the upstream PR and link it, so we can drop this once it lands.
+- **`needs-upstream-hook`** — the change is AZL-specific (e.g. hard-coding `Vendor: Microsoft`, disabling a feature only we don't want, swapping a default path) and would *not* be accepted upstream as-is. But upstream could add a `bcond`, `%if`, or config knob so that it can be configured downstream without patching the spec.
+
+In short: `upstreamable` upstreams the change; `needs-upstream-hook` upstreams a mechanism that makes the change unnecessary.
+
+Example:
+
+```toml
+[[components.mypackage.overlays]]
+type = "spec-set-tag"
+tag = "Vendor"
+value = "Microsoft"
+
+  [components.mypackage.overlays.metadata]
+  category = "azl-branding-policy"
+  upstream-status = "inapplicable"
+```
+
+### Inline metadata example
+
+TOML inline tables (`metadata = { ... }`) must fit on a single line. When the metadata has more than one or two fields, use a sub-table (`[components.<name>.overlays.metadata]`) so each field gets its own line:
+
+```toml
+[[components.xclock.overlays]]
+type = "spec-search-replace"
+description = "Pass --force to autoreconf"
+regex = "autoreconf -i"
+replacement = "autoreconf -fi"
+
+  [components.xclock.overlays.metadata]
+  category = "upstream-backport"
+  upstream-status = "upstreamed"
+  commits = [{ url = "https://src.fedoraproject.org/rpms/xclock/c/1e407488" }]
+```
+
+For short metadata, the single-line inline form is also valid:
+
+```toml
+[[components.xclock.overlays]]
+type = "spec-set-tag"
+tag = "Vendor"
+value = "Microsoft"
+metadata = { category = "azl-branding-policy", upstream-status = "inapplicable" }
+```
+
+## Per-file overlay format
+
+When a single logical change (a CVE backport, a feature disablement, a Fedora cherry-pick…) needs **several overlays** that all share the same provenance, declaring them inline in the component config gets noisy and makes the boundary between unrelated changes hard to see. Use the per-file format instead.
+
+### Layout
+
+Set `overlay-files` on the component to one or more globs (relative to the component config) and drop one overlay file per logical change into a directory of your choosing. The conventional layout uses a sibling `overlays/` directory and a `*.overlay.toml` filename suffix, but neither is required — `overlay-files` is just a glob, so any layout you can describe with `**`/`*` patterns works.
+
+`overlay-files` can also be inherited from `default-component-config` at the project, distro, or component-group level. Inherited relative patterns are still resolved for each concrete component: from its component config file when it has one, or from the matched spec file's directory when it is discovered by a component group's `specs` pattern. This makes defaults useful for component-local discovery patterns such as `overlay-files = ["overlays/*.overlay.toml"]`. If a component sets `overlay-files`, that value replaces the inherited list; use `overlay-files = []` to disable inherited overlay files for a component, or include both patterns explicitly when you want to keep default discovery and add component-specific locations.
+
+```
+base/comps/mypackage/
+├── mypackage.comp.toml
+└── overlays/
+    ├── 0001-cve-2024-1234.overlay.toml
+    ├── 0002-disable-broken-tests.overlay.toml
+    └── 0003-azl-branding.overlay.toml
+```
+
+```toml
+# mypackage.comp.toml
+[components.mypackage]
+overlay-files = ["overlays/*.overlay.toml"]
+```
+
+Files are loaded in **filename (lexicographic) order** within each glob, using the full path as a tie-breaker when multiple matches have the same filename. Globs are concatenated in declaration order, so prefix each file with a numeric ordinal (`0001-`, `0002-`, …) to make the apply order obvious and stable. Files that don't match any of your globs are ignored, so you can keep `README.md` or other notes alongside without naming them out explicitly. A declared glob that matches no files contributes no overlays; a literal path without wildcard characters must match a file.
+
+Overlays loaded via `overlay-files` are **appended after** any inline overlays declared directly on the component.
+
+### File structure
+
+Each overlay file represents one logical change. It has:
+
+* exactly one top-level `[metadata]` table (uses the same fields documented in [Overlay Metadata](#overlay-metadata)); and
+* one or more `[[overlays]]` entries, applied in declaration order.
+
+Per-overlay `metadata` is **not allowed** inside an overlay file — the file-level `[metadata]` is the single source of truth and is stamped onto every overlay in the file. Relative `source` paths are resolved against the directory of the overlay file (not the component config).
+
+```toml
+# overlays/0001-cve-2024-1234.overlay.toml
+[metadata]
+category = "upstream-backport"
+upstream-status = "upstreamed"
+commits = [{ url = "https://src.fedoraproject.org/rpms/mypackage/c/abc123def456" }]
+bugs = [{ url = "https://bugzilla.redhat.com/show_bug.cgi?id=12345" }]
+
+[[overlays]]
+type = "patch-add"
+source = "patches/CVE-2024-1234.patch"
+
+[[overlays]]
+type = "spec-append-lines"
+section = "%changelog"
+lines = ["- Fix CVE-2024-1234"]
+```
 
 ## Examples
 
@@ -147,6 +366,35 @@ description = "Remove unwanted configure flag"
 section = "%build"
 regex = "--enable-deprecated-feature\\s*"
 replacement = ""
+```
+
+### Targeting the Entire Spec File
+
+The `spec-prepend-lines`, `spec-append-lines`, and `spec-search-replace` overlays accept an
+empty/omitted `section` field to operate on the whole spec file rather than a single section:
+prepend inserts at the very top of the file, append inserts at the very bottom, and search-replace
+scans every section. The `package` field cannot be combined with an omitted `section`.
+
+```toml
+[[components.mypackage.overlays]]
+type = "spec-prepend-lines"
+description = "Add a top-of-file banner comment"
+lines = ["# This spec is maintained by the Azure Linux team."]
+```
+
+```toml
+[[components.mypackage.overlays]]
+type = "spec-append-lines"
+description = "Append a trailing macro definition"
+lines = ["%global azl_marker 1"]
+```
+
+```toml
+[[components.mypackage.overlays]]
+type = "spec-search-replace"
+description = "Rename the project everywhere it appears"
+regex = "oldname"
+replacement = "newname"
 ```
 
 ### Targeting a Sub-Package
@@ -273,6 +521,37 @@ description = "Remove CVE patches that are now upstream"
 > `PatchN` tags. Macro-based tag numbering (e.g., `Patch%{n}`) is not expanded and may
 > conflict with auto-assigned numbers.
 
+### Removing a File from an Archive
+
+Set `archive` to the archive name and `file` to a glob to delete files matching the pattern from
+inside the source archive. The archive is extracted, matching files are removed, and the archive is
+repacked.
+
+```toml
+[[components.mypackage.overlays]]
+type = "file-remove"
+archive = "mypackage-1.0.tar.gz"
+file = "vendor/**"
+description = "Remove all bundled vendor files"
+```
+
+> **Tip:** Without the `archive` field, the same `file-remove` overlay removes a loose file
+> from the sources tree instead.
+
+### Search and Replace Inside an Archive
+
+Set `archive` to the archive name to rewrite content inside an archive:
+
+```toml
+[[components.mypackage.overlays]]
+type = "file-search-replace"
+archive = "mypackage-1.0.tar.xz"
+file = "configure.ac"
+regex = "AC_CHECK_LIB\\(old_lib"
+replacement = "AC_CHECK_LIB(new_lib"
+description = "Update library reference in configure script"
+```
+
 ### Removing a Section
 
 The `spec-remove-section` overlay removes an entire section from the spec, including its
@@ -295,6 +574,56 @@ section = "%files"
 package = "devel"
 description = "Remove devel sub-package files section"
 ```
+
+> **Conditionals (`%if`/`%endif`):** The same conditional handling described below for
+> `spec-remove-subpackage` applies here as well — boundary conditionals are preserved,
+> and an error is returned if a conditional block is interleaved with section content
+> in a way that cannot be cleanly separated.
+
+### Removing an Entire Sub-package
+
+The `spec-remove-subpackage` overlay removes **every** section associated with a given
+sub-package — its `%package` preamble as well as any per-section directives that target
+it (e.g. `%description`, `%files`, `%post`, `%postun`, `%pre`, `%trigger*`, etc.).
+Only the `package` field is needed; you do **not** need to enumerate each section.
+
+This is the preferred way to drop an unwanted sub-package: it avoids having to author
+multiple `spec-remove-section` overlays (and remember to keep them in sync if upstream
+later adds new sub-package scriptlets).
+
+```toml
+[[components.mypackage.overlays]]
+type = "spec-remove-subpackage"
+package = "devel"
+description = "Drop the devel sub-package; not shipped in Azure Linux"
+```
+
+The overlay fails if the spec contains no sections matching the indicated sub-package.
+Specifying a `section` field on this overlay is rejected at config-load time, since
+the overlay always removes every section associated with the sub-package.
+
+> **Note:** `spec-remove-subpackage` only edits the spec. If other parts of the project
+> reference the removed sub-package (for example, dependency lists in other components),
+> those references must be cleaned up separately.
+
+> **Note:** RPM permits two forms for declaring sub-package sections — a suffix form
+> (e.g. `%package devel`, which declares a sub-package named `<base>-devel`) and an
+> absolute form (e.g. `%package -n my-other-pkg`). The `package` value here must match
+> whichever form the spec uses on the section headers: `package = "devel"` matches
+> sections written as `%files devel`, while `package = "my-other-pkg"` matches sections
+> written as `%files -n my-other-pkg`. Specs that mix both forms for the same sub-package
+> (uncommon but legal) require a separate overlay per form.
+
+> **Conditionals (`%if`/`%endif`):** The overlay only removes section content — it does
+> not remove `%if`/`%endif` lines that sit at section boundaries. Conditional directives
+> that are entirely within a section (e.g. `%ifarch` … `%endif` guarding a `Requires`
+> tag) are removed along with the section. Conditional directives that straddle a
+> section boundary are left in place so the spec remains valid. For example, if a
+> sub-package is wrapped in `%if 0%{?with_devel}` … `%endif`, removing the sub-package
+> leaves an empty `%if` … `%endif` block behind (which is harmless). If a conditional
+> block is interleaved with section content in a way that cannot be cleanly separated,
+> an error is returned; use a `spec-search-replace` overlay to adjust the conditionals
+> before removing the sub-package.
 
 ## Validation
 

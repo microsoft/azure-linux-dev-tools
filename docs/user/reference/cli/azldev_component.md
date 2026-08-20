@@ -40,10 +40,12 @@ components defined in the project configuration.
 * [azldev](azldev.md)	 - 🐧 Azure Linux Dev Tool
 * [azldev component add](azldev_component_add.md)	 - Add component(s) to this project
 * [azldev component build](azldev_component_build.md)	 - Build packages for components
+* [azldev component changed](azldev_component_changed.md)	 - Detect which components changed between two git refs
 * [azldev component diff-sources](azldev_component_diff-sources.md)	 - Show the diff that overlays apply to a component's sources
+* [azldev component history](azldev_component_history.md)	 - Report per-component change activity and customization detail
 * [azldev component list](azldev_component_list.md)	 - List components in this project
 * [azldev component prepare-sources](azldev_component_prepare-sources.md)	 - Prepare buildable sources for components
 * [azldev component query](azldev_component_query.md)	 - Query info for components in this project
 * [azldev component render](azldev_component_render.md)	 - Render post-overlay specs and sidecar files to a checked-in directory
-* [azldev component update](azldev_component_update.md)	 - Resolve and lock upstream commits for components
+* [azldev component update](azldev_component_update.md)	 - Resolve and lock source identities for components
 

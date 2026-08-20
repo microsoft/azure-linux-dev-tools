@@ -18,7 +18,7 @@ import (
 var ErrCompletion = errors.New("error installing completions")
 
 // InstallCompletions installs bash completions for mage to the user's personal completions directory.
-func InstallCompletions() error {
+func InstallCompletions() (err error) {
 	mageutil.MagePrintln(mageutil.MsgStart, "Installing bash completions for mage")
 
 	// Packages should install completions to /usr/share/bash-completion/completions, but since this is a user operation
@@ -47,7 +47,12 @@ func InstallCompletions() error {
 	if err != nil {
 		return mageutil.PrintAndReturnError("could not open bash completion file", mageutil.ErrFile, err)
 	}
-	defer fOut.Close()
+	// fOut is writable, so a failed Close may indicate data loss; surface it via the named return.
+	defer func() {
+		if closeErr := fOut.Close(); closeErr != nil && err == nil {
+			err = mageutil.PrintAndReturnError("could not close bash completion file", mageutil.ErrFile, closeErr)
+		}
+	}()
 
 	fIn, err := os.Open(inputPath)
 	if err != nil {
@@ -71,13 +76,8 @@ func InstallCompletions() error {
 // markers' indices (including the markers). If neither marker is found, it returns the original lines and '-1' for
 // both start and end. If the markers are misaligned, it returns an error.
 func readCompletionAndFindMageSection(filePath, start, end string) ([]string, int, int, error) {
-	// Read the file into memory.
-	fIn, err := os.OpenFile(filePath, os.O_RDWR, os.ModePerm)
-	if err != nil {
-		return nil, -1, -1, fmt.Errorf("could not open file: %w", err)
-	}
-	defer fIn.Close()
-
+	// Read the file into memory. The file is only read here; the caller rewrites it atomically via renameio, so no
+	// writable handle is needed.
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, -1, -1, fmt.Errorf("could not read file: %w", err)

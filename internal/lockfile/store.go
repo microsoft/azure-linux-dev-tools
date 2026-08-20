@@ -4,21 +4,33 @@
 package lockfile
 
 import (
+	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
+	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 )
 
 // LockReader provides read-only access to per-component lock files. Use this
 // interface for commands that consume lock state but should not modify it
-// (e.g., render, build).
+// (e.g., render, build, validation).
 type LockReader interface {
 	// Get returns the lock for a component. Returns an error if the lock file
 	// does not exist or cannot be parsed.
 	Get(componentName string) (*ComponentLock, error)
 	// Exists checks whether a lock file exists for the given component.
 	Exists(componentName string) (bool, error)
+	// LockDir returns the absolute path to the lock file directory.
+	LockDir() string
+	// ValidateConsistency checks lock files against the resolved component
+	// configs. Returns sorted lists of components with missing/stale locks
+	// and orphan component names.
+	ValidateConsistency(
+		components map[string]projectconfig.ComponentConfig,
+		checkOrphans bool,
+	) (missingOrStale, orphans []string, err error)
 }
 
 // LockWriter extends [LockReader] with write operations. Use this interface
@@ -62,6 +74,11 @@ func NewStore(fs opctx.FS, lockDir string) *Store {
 		fs:      fs,
 		lockDir: lockDir,
 	}
+}
+
+// LockDir returns the absolute path to the lock file directory.
+func (s *Store) LockDir() string {
+	return s.lockDir
 }
 
 // lockPath returns the path for a component's lock file within this store.
@@ -181,4 +198,66 @@ func (s *Store) Remove(componentName string) error {
 	s.cache.Delete(componentName)
 
 	return nil
+}
+
+// ValidateConsistency checks lock files against the resolved component configs.
+// For each non-local component, verifies a lock file exists and any explicit
+// upstream-commit pin matches. When checkOrphans is true, also detects orphan
+// lock files (only appropriate when validating the full project).
+//
+// Returns sorted lists of components with missing/stale locks and orphan
+// component names. Returns an error if any issues are found.
+func (s *Store) ValidateConsistency(
+	components map[string]projectconfig.ComponentConfig,
+	checkOrphans bool,
+) (missingOrStale, orphans []string, err error) {
+	return validateConsistency(s.fs, s.lockDir, components, checkOrphans)
+}
+
+// FindOrphanLockFiles returns component names that have lock files but no
+// corresponding component in the given config map.
+func (s *Store) FindOrphanLockFiles(
+	components map[string]projectconfig.ComponentConfig,
+) ([]string, error) {
+	return FindOrphanLockFiles(s.fs, s.lockDir, components)
+}
+
+// PruneOrphans removes lock files for components that no longer exist in
+// config. Returns the number of files removed and an error if any removals
+// failed. Also evicts pruned entries from the cache.
+func (s *Store) PruneOrphans(
+	components map[string]projectconfig.ComponentConfig,
+) (int, error) {
+	orphans, findErr := s.FindOrphanLockFiles(components)
+	if findErr != nil {
+		return 0, fmt.Errorf("finding orphan lock files:\n%w", findErr)
+	}
+
+	if len(orphans) == 0 {
+		return 0, nil
+	}
+
+	var (
+		pruned int
+		errs   []error
+	)
+
+	for _, componentName := range orphans {
+		slog.Info("Removing orphan lock file", "component", componentName)
+
+		if removeErr := s.Remove(componentName); removeErr != nil {
+			errs = append(errs, fmt.Errorf("removing lock for %#q:\n%w", componentName, removeErr))
+
+			continue
+		}
+
+		pruned++
+	}
+
+	if len(errs) > 0 {
+		return pruned, fmt.Errorf("failed to remove %d orphan lock file(s):\n  %w",
+			len(errs), errors.Join(errs...))
+	}
+
+	return pruned, nil
 }

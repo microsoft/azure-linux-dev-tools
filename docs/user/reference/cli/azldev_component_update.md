@@ -2,18 +2,31 @@
 
 ## azldev component update
 
-Resolve and lock upstream commits for components
+Resolve and lock source identities for components
 
 ### Synopsis
 
-Resolve upstream commit hashes for components and write them to per-component lock files.
+Resolve source identities for components and write them to per-component lock files.
 
 For upstream components, this resolves the effective commit hash using the
 distro snapshot time or explicit pin, then records it in locks/<name>.lock.
-Subsequent commands (render, build) use the locked commit for deterministic,
+For local components, this computes a content hash of the spec directory.
+Subsequent commands (render, build) use the locked state for deterministic,
 reproducible results.
 
-Local components are skipped — they have no upstream commit to resolve.
+When updating all components (-a), orphan lock files (locks for components
+that no longer exist in the project config) are automatically pruned.
+Orphan pruning is skipped when updating individual components to avoid
+accidentally removing lock files for components not included in the filter.
+
+The --bump flag updates matching lock files to increment the manual-rebuild
+counter, triggering a new release. Useful for mass-rebuild scenarios (e.g.,
+toolchain bug, static library update). Orphan pruning is skipped under --bump.
+
+The --check-only flag runs the full pipeline but does NOT write lock files or
+prune orphans. The command exits 0 when nothing would change and exits 1 when
+any component is stale or any lock would be pruned. Intended for CI gates.
+Cannot be combined with --bump.
 
 ```
 azldev component update [flags]
@@ -30,14 +43,23 @@ azldev component update [flags]
 
   # Update components in a group
   azldev component update -g core
+
+  # Bump rebuild counter for a component (triggers new release)
+  azldev component update --bump curl
+
+  # CI gate: exit 0 if locks are fresh, 1 if anything would change
+  azldev component update -a --check-only -q
 ```
 
 ### Options
 
 ```
   -a, --all-components                Include all components
+      --bump                          increment the manual-rebuild counter to trigger a new release
+      --check-only                    resolve identities and recompute fingerprints but do not write lock files or prune orphans. Exits 0 when nothing would change and 1 when any component is stale (or, with --all-components, when any orphan lock would be pruned). Intended for CI gates. Cannot be combined with --bump
   -p, --component stringArray         Component name pattern
   -g, --component-group stringArray   Component group name
+      --force-recalculate             force re-resolution of all components, ignoring freshness checks that would skip unchanged components. Use when upstream state may have changed independently of the snapshot time and the new commit is preferred
   -h, --help                          help for update
   -s, --spec-path stringArray         Spec path
 ```

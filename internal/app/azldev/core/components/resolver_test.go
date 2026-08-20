@@ -10,6 +10,7 @@ import (
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
+	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
@@ -55,6 +56,9 @@ func addTestComponentToConfig(t *testing.T, env *testutils.TestEnv) projectconfi
 
 	env.Config.Components[component.Name] = component
 
+	// Write a minimal lock so lock validation passes.
+	env.WriteDefaultLock(t, component.Name)
+
 	return component
 }
 
@@ -73,12 +77,17 @@ func TestFindComponents_AllComponents(t *testing.T) {
 	filter := &components.ComponentFilter{IncludeAllComponents: true}
 
 	// Find!
-	components, err := components.NewResolver(env.Env).FindComponents(filter)
+	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
 	require.NoError(t, err)
-	require.Len(t, components.Components(), 1)
+	require.Len(t, resolved.Components(), 1)
 
-	actualComponent := components.Components()[0]
-	require.Equal(t, &expectedComponent, actualComponent.GetConfig())
+	actualComponent := resolved.Components()[0]
+
+	// Locked is populated at resolve time from the lock file — clear it
+	// so we can compare just the config fields set by the test.
+	actualConfig := *actualComponent.GetConfig()
+	actualConfig.Locked = nil
+	require.Equal(t, expectedComponent, actualConfig)
 }
 
 func TestFindComponents_NonExistentSpecPaths(t *testing.T) {
@@ -168,7 +177,12 @@ func TestFindComponents_MatchingNamedPattern(t *testing.T) {
 	require.Len(t, components.Components(), 1)
 
 	actualComponent := components.Components()[0]
-	assert.Equal(t, &component, actualComponent.GetConfig())
+
+	// Locked is populated at resolve time from the lock file — clear it
+	// so we can compare just the config fields set by the test.
+	actualConfig := *actualComponent.GetConfig()
+	actualConfig.Locked = nil
+	assert.Equal(t, component, actualConfig)
 }
 
 func TestFindComponents_FoundGroups(t *testing.T) {
@@ -187,9 +201,9 @@ func TestFindComponents_FoundGroups(t *testing.T) {
 	}
 
 	// Setup the specs and compose a list of expected components.
-	expectedComponentConfigs := []projectconfig.ComponentConfig{}
-	for _, specPath := range specPaths {
-		expectedComponentConfigs = append(expectedComponentConfigs, setupTestSpec(t, env, specPath))
+	expectedComponentConfigs := make([]projectconfig.ComponentConfig, len(specPaths))
+	for idx, specPath := range specPaths {
+		expectedComponentConfigs[idx] = setupTestSpec(t, env, specPath)
 	}
 
 	// Find!
@@ -224,7 +238,12 @@ func TestFindAllComponents_SomeComponents(t *testing.T) {
 	require.Len(t, components.Components(), 1)
 
 	actualComponent := components.Components()[0]
-	assert.Equal(t, &expectedComponent, actualComponent.GetConfig())
+
+	// Locked is populated at resolve time from the lock file — clear it
+	// so we can compare just the config fields set by the test.
+	actualConfig := *actualComponent.GetConfig()
+	actualConfig.Locked = nil
+	assert.Equal(t, expectedComponent, actualConfig)
 }
 
 func TestFindAllComponents_MergesComponentPresentBySpecAndConfig(t *testing.T) {
@@ -437,6 +456,8 @@ func TestApplyInheritedDefaults_GroupDefaults(t *testing.T) {
 	}
 	env.Config.Components[component.Name] = component
 
+	env.WriteDefaultLock(t, component.Name)
+
 	// Set up a group with default build config.
 	env.Config.ComponentGroups["my-group"] = projectconfig.ComponentGroupConfig{
 		Components: []string{"my-comp"},
@@ -470,6 +491,8 @@ func TestApplyInheritedDefaults_MultipleGroupsDeterministicOrder(t *testing.T) {
 
 	component := projectconfig.ComponentConfig{Name: "my-comp"}
 	env.Config.Components[component.Name] = component
+
+	env.WriteDefaultLock(t, component.Name)
 
 	// Group "aaa" adds with=["from-aaa"].
 	env.Config.ComponentGroups["aaa"] = projectconfig.ComponentGroupConfig{
@@ -519,6 +542,8 @@ func TestApplyInheritedDefaults_ComponentOverridesGroupDefaults(t *testing.T) {
 	}
 	env.Config.Components[component.Name] = component
 
+	env.WriteDefaultLock(t, component.Name)
+
 	env.Config.ComponentGroups["my-group"] = projectconfig.ComponentGroupConfig{
 		Components: []string{"my-comp"},
 		DefaultComponentConfig: projectconfig.ComponentConfig{
@@ -556,6 +581,8 @@ func TestApplyInheritedDefaults_NoGroupMembership(t *testing.T) {
 	}
 	env.Config.Components[component.Name] = component
 
+	env.WriteDefaultLock(t, component.Name)
+
 	filter := &components.ComponentFilter{IncludeAllComponents: true}
 
 	result, err := components.NewResolver(env.Env).FindComponents(filter)
@@ -564,6 +591,93 @@ func TestApplyInheritedDefaults_NoGroupMembership(t *testing.T) {
 
 	resolved := result.Components()[0].GetConfig()
 	assert.Contains(t, resolved.Build.With, "my-feature")
+}
+
+func TestApplyInheritedDefaults_ProjectDefault(t *testing.T) {
+	// The project-level DefaultComponentConfig should be applied as the
+	// lowest-priority layer, before distro and group defaults.
+	env := testutils.NewTestEnv(t)
+
+	// Set project-level defaults.
+	env.Config.DefaultComponentConfig = projectconfig.ComponentConfig{
+		Build: projectconfig.ComponentBuildConfig{
+			Without: []string{"docs"},
+		},
+		Publish: projectconfig.ComponentPublishConfig{
+			RPMChannel:  "rpms-sdk",
+			SRPMChannel: "rpms-sdk-srpm",
+		},
+	}
+
+	component := projectconfig.ComponentConfig{
+		Name: "my-comp",
+		Build: projectconfig.ComponentBuildConfig{
+			With: []string{"feature-x"},
+		},
+	}
+	env.Config.Components[component.Name] = component
+
+	env.WriteDefaultLock(t, component.Name)
+
+	filter := &components.ComponentFilter{IncludeAllComponents: true}
+
+	result, err := components.NewResolver(env.Env).FindComponents(filter)
+	require.NoError(t, err)
+	require.Len(t, result.Components(), 1)
+
+	resolved := result.Components()[0].GetConfig()
+
+	// Component's own With should be present.
+	assert.Contains(t, resolved.Build.With, "feature-x")
+	// Project default Without should be inherited.
+	assert.Contains(t, resolved.Build.Without, "docs")
+	// Project default publish config should be inherited.
+	assert.Equal(t, "rpms-sdk", resolved.Publish.RPMChannel)
+	assert.Equal(t, "rpms-sdk-srpm", resolved.Publish.SRPMChannel)
+}
+
+func TestApplyInheritedDefaults_ProjectDefaultOverriddenByGroup(t *testing.T) {
+	// Group defaults should override project defaults, and the component's own
+	// config should override everything.
+	env := testutils.NewTestEnv(t)
+
+	env.Config.DefaultComponentConfig = projectconfig.ComponentConfig{
+		Publish: projectconfig.ComponentPublishConfig{
+			RPMChannel:       "rpms-sdk",
+			SRPMChannel:      "rpms-sdk-srpm",
+			DebugInfoChannel: "rpms-sdk-debuginfo",
+		},
+	}
+
+	env.Config.ComponentGroups["base-group"] = projectconfig.ComponentGroupConfig{
+		Components: []string{"my-comp"},
+		DefaultComponentConfig: projectconfig.ComponentConfig{
+			Publish: projectconfig.ComponentPublishConfig{
+				RPMChannel:  "rpms-base",
+				SRPMChannel: "rpms-base-srpm",
+			},
+		},
+	}
+	env.Config.GroupsByComponent["my-comp"] = []string{"base-group"}
+
+	component := projectconfig.ComponentConfig{Name: "my-comp"}
+	env.Config.Components[component.Name] = component
+
+	env.WriteDefaultLock(t, component.Name)
+
+	filter := &components.ComponentFilter{IncludeAllComponents: true}
+
+	result, err := components.NewResolver(env.Env).FindComponents(filter)
+	require.NoError(t, err)
+	require.Len(t, result.Components(), 1)
+
+	resolved := result.Components()[0].GetConfig()
+
+	// Group overrides project default for RPM and SRPM channels.
+	assert.Equal(t, "rpms-base", resolved.Publish.RPMChannel)
+	assert.Equal(t, "rpms-base-srpm", resolved.Publish.SRPMChannel)
+	// Project default is inherited for DebugInfoChannel (not overridden by group).
+	assert.Equal(t, "rpms-sdk-debuginfo", resolved.Publish.DebugInfoChannel)
 }
 
 func TestFindAllSpecPaths_Nothing(t *testing.T) {
@@ -589,4 +703,399 @@ func TestFindAllSpecPaths_MultipleSpecs(t *testing.T) {
 	specPaths, err := components.FindAllSpecPaths(env.Env)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"/specs/a/test-a.spec", "/specs/b/test-b.spec"}, specPaths)
+}
+
+func TestFindComponents_SpecDiscoveredComponentInheritsOverlayFilesFromDefaults(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	touchFile(t, env, "/specs/ant/ant.spec")
+	require.NoError(t, fileutils.WriteFile(env.TestFS,
+		"/specs/ant/overlays/0001-branding.overlay.toml",
+		[]byte(`
+[metadata]
+category = "azl-branding-policy"
+upstream-status = "inapplicable"
+
+[[overlays]]
+type  = "spec-set-tag"
+tag   = "Vendor"
+value = "Microsoft"
+`), fileperms.PrivateFile))
+
+	env.Config.ComponentGroups["specs"] = projectconfig.ComponentGroupConfig{
+		SpecPathPatterns: []string{"/specs/**/*.spec"},
+		DefaultComponentConfig: projectconfig.ComponentConfig{
+			OverlayFiles: []string{"overlays/*.overlay.toml"},
+		},
+	}
+
+	filter := &components.ComponentFilter{
+		IncludeAllComponents: true,
+		SkipLockValidation:   true,
+	}
+
+	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
+	require.NoError(t, err)
+
+	comp, ok := resolved.TryGet("ant")
+	require.True(t, ok)
+
+	overlays := comp.GetConfig().Overlays
+	require.Len(t, overlays, 1)
+	assert.Empty(t, comp.GetConfig().OverlayFiles)
+	assert.Equal(t, projectconfig.ComponentOverlaySetSpecTag, overlays[0].Type)
+	assert.Equal(t, "Vendor", overlays[0].Tag)
+	require.NotNil(t, overlays[0].Metadata)
+	assert.Equal(t, projectconfig.OverlayCategoryAZLBrandingPolicy, overlays[0].Metadata.Category)
+}
+
+func TestFindComponents_SpecPathFilterInheritsOverlayFilesFromGroupDefaults(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	touchFile(t, env, "/specs/ant/ant.spec")
+	require.NoError(t, fileutils.WriteFile(env.TestFS,
+		"/specs/ant/overlays/0001-branding.overlay.toml",
+		[]byte(`
+[metadata]
+category = "azl-branding-policy"
+upstream-status = "inapplicable"
+
+[[overlays]]
+type  = "spec-set-tag"
+tag   = "Vendor"
+value = "Microsoft"
+`), fileperms.PrivateFile))
+
+	env.Config.ComponentGroups["specs"] = projectconfig.ComponentGroupConfig{
+		SpecPathPatterns: []string{"/specs/**/*.spec"},
+		DefaultComponentConfig: projectconfig.ComponentConfig{
+			OverlayFiles: []string{"overlays/*.overlay.toml"},
+		},
+	}
+
+	filter := &components.ComponentFilter{
+		SpecPaths:          []string{"/specs/ant/ant.spec"},
+		SkipLockValidation: true,
+	}
+
+	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
+	require.NoError(t, err)
+
+	comp, ok := resolved.TryGet("ant")
+	require.True(t, ok)
+
+	overlays := comp.GetConfig().Overlays
+	require.Len(t, overlays, 1)
+	assert.Empty(t, comp.GetConfig().OverlayFiles)
+	assert.Equal(t, projectconfig.ComponentOverlaySetSpecTag, overlays[0].Type)
+	assert.Equal(t, "Vendor", overlays[0].Tag)
+	require.NotNil(t, overlays[0].Metadata)
+	assert.Equal(t, projectconfig.OverlayCategoryAZLBrandingPolicy, overlays[0].Metadata.Category)
+}
+
+// When a lock file exists for a component, the resolver should attach all of
+// its data (commit, import-commit, manual-bump, fingerprint) to the resolved
+// component via the Locked field — without touching the original Spec config.
+// This is how downstream commands (render, build) get the locked commit.
+func TestFindComponents_PopulatesLockedData(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	// Add an upstream component with no explicit pin.
+	env.Config.Components["curl"] = projectconfig.ComponentConfig{
+		Name: "curl",
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeUpstream,
+		},
+	}
+
+	// Create a lock file with upstream commit.
+	lock := lockfile.New()
+	lock.UpstreamCommit = "locked-commit-abc123"
+	lock.ImportCommit = "import-commit-def456"
+	lock.ManualBump = 2
+	lock.InputFingerprint = "sha256:test-fingerprint"
+
+	env.WriteLock(t, "curl", lock)
+
+	filter := &components.ComponentFilter{IncludeAllComponents: true}
+
+	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
+	require.NoError(t, err)
+
+	comp, ok := resolved.TryGet("curl")
+	require.True(t, ok)
+
+	// Locked field should be populated from the lock file.
+	require.NotNil(t, comp.GetConfig().Locked, "Locked should be populated when lock file exists")
+	assert.Equal(t, "locked-commit-abc123", comp.GetConfig().Locked.UpstreamCommit)
+	assert.Equal(t, "import-commit-def456", comp.GetConfig().Locked.ImportCommit)
+	assert.Equal(t, 2, comp.GetConfig().Locked.ManualBump)
+	assert.Equal(t, "sha256:test-fingerprint", comp.GetConfig().Locked.InputFingerprint)
+
+	// Original config field should NOT be modified.
+	assert.Empty(t, comp.GetConfig().Spec.UpstreamCommit,
+		"Spec.UpstreamCommit should remain empty — lock data goes into Locked, not Spec")
+}
+
+// When no lock file exists for an upstream component, FindComponents should
+// return a validation error telling the user to run 'component update' first.
+func TestFindComponents_ErrorWhenNoLockFile(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	// Add upstream component with no lock file.
+	env.Config.Components["bash"] = projectconfig.ComponentConfig{
+		Name: "bash",
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeUpstream,
+		},
+	}
+
+	filter := &components.ComponentFilter{IncludeAllComponents: true}
+
+	_, err := components.NewResolver(env.Env).FindComponents(filter)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "lock file")
+}
+
+// When SkipLockValidation is set, a missing lock file is tolerated —
+// the component's Locked field is nil instead of causing an error.
+func TestFindComponents_LockedNilWhenValidationSkipped(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	// Add upstream component with no lock file.
+	env.Config.Components["bash"] = projectconfig.ComponentConfig{
+		Name: "bash",
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeUpstream,
+		},
+	}
+
+	filter := &components.ComponentFilter{
+		IncludeAllComponents: true,
+		SkipLockValidation:   true,
+	}
+
+	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
+	require.NoError(t, err)
+
+	comp, ok := resolved.TryGet("bash")
+	require.True(t, ok)
+
+	assert.Nil(t, comp.GetConfig().Locked, "Locked should be nil when no lock file exists")
+}
+
+// When a user explicitly pins a commit in their component config (intent),
+// that pin must survive lock population unchanged. The lock's commit goes
+// into Locked.UpstreamCommit separately. This separation is what allows
+// validation to detect "config says X but lock says Y" staleness.
+func TestFindComponents_ExplicitPinPreserved(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	// Component with explicit upstream-commit pin in config.
+	env.Config.Components["curl"] = projectconfig.ComponentConfig{
+		Name: "curl",
+		Spec: projectconfig.SpecSource{
+			SourceType:     projectconfig.SpecSourceTypeUpstream,
+			UpstreamCommit: "config-pinned-commit",
+		},
+	}
+
+	// Lock file has a different commit.
+	lock := lockfile.New()
+	lock.UpstreamCommit = "locked-commit-different"
+
+	env.WriteLock(t, "curl", lock)
+
+	filter := &components.ComponentFilter{
+		IncludeAllComponents: true,
+		SkipLockValidation:   true,
+	}
+
+	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
+	require.NoError(t, err)
+
+	comp, ok := resolved.TryGet("curl")
+	require.True(t, ok)
+
+	// Explicit pin must be preserved in Spec.
+	assert.Equal(t, "config-pinned-commit", comp.GetConfig().Spec.UpstreamCommit,
+		"explicit config pin must not be overwritten by lock data")
+
+	// Locked should still be populated with the correct data from the lock file.
+	require.NotNil(t, comp.GetConfig().Locked)
+	assert.Equal(t, "locked-commit-different", comp.GetConfig().Locked.UpstreamCommit)
+}
+
+// When no lock file exists for a local component, Locked stays nil.
+func TestFindComponents_LocalComponentNoLockFile(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	specPath := "/specs/local-pkg/local-pkg.spec"
+	require.NoError(t, fileutils.WriteFile(env.TestFS, specPath, []byte("Name: local-pkg\n"), fileperms.PrivateFile))
+
+	env.Config.Components["local-pkg"] = projectconfig.ComponentConfig{
+		Name: "local-pkg",
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeLocal,
+			Path:       specPath,
+		},
+	}
+
+	filter := &components.ComponentFilter{IncludeAllComponents: true}
+
+	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
+	require.NoError(t, err)
+
+	comp, ok := resolved.TryGet("local-pkg")
+	require.True(t, ok)
+
+	assert.Nil(t, comp.GetConfig().Locked, "no lock file → Locked must be nil")
+}
+
+// When a lock file exists for a local component (written by a prior 'update'),
+// the resolver should populate Locked with the stored data.
+func TestFindComponents_LocalComponentWithLockFile(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	specPath := "/specs/local-pkg/local-pkg.spec"
+	require.NoError(t, fileutils.WriteFile(env.TestFS, specPath, []byte("Name: local-pkg\n"), fileperms.PrivateFile))
+
+	env.Config.Components["local-pkg"] = projectconfig.ComponentConfig{
+		Name: "local-pkg",
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeLocal,
+			Path:       specPath,
+		},
+	}
+
+	// Write a lock file for the local component.
+	lock := lockfile.New()
+	lock.InputFingerprint = "sha256:test-local-fingerprint"
+	lock.ManualBump = 1
+
+	env.WriteLock(t, "local-pkg", lock)
+
+	filter := &components.ComponentFilter{IncludeAllComponents: true}
+
+	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
+	require.NoError(t, err)
+
+	comp, ok := resolved.TryGet("local-pkg")
+	require.True(t, ok)
+
+	require.NotNil(t, comp.GetConfig().Locked, "lock file exists → Locked must be populated")
+	assert.Equal(t, "sha256:test-local-fingerprint", comp.GetConfig().Locked.InputFingerprint)
+	assert.Equal(t, 1, comp.GetConfig().Locked.ManualBump)
+	assert.Empty(t, comp.GetConfig().Locked.UpstreamCommit, "local components have no upstream commit")
+}
+
+// A corrupt or unparseable lock file should not silently fall back to
+// unlocked live resolution. populateFromLock should leave Locked nil and
+// log a warning (no error returned, since validation is gated separately).
+func TestFindComponents_CorruptLockSurfaces(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	env.Config.Components["curl"] = projectconfig.ComponentConfig{
+		Name: "curl",
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeUpstream,
+		},
+	}
+
+	// Write garbage to the lock file path so Load() returns a parse error.
+	lockPath := "/project/locks/curl.lock"
+	require.NoError(t, fileutils.WriteFile(env.TestFS, lockPath,
+		[]byte("this is not valid TOML \x00\x01\x02"), fileperms.PrivateFile))
+
+	filter := &components.ComponentFilter{
+		IncludeAllComponents: true,
+		SkipLockValidation:   true,
+	}
+
+	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
+	require.NoError(t, err, "corrupt lock should warn, not fail (validation is separate)")
+
+	comp, ok := resolved.TryGet("curl")
+	require.True(t, ok)
+
+	assert.Nil(t, comp.GetConfig().Locked,
+		"corrupt lock must NOT silently populate — leaves Locked nil and warns")
+}
+
+// When the explicit config pin and the locked commit differ, the lock wins
+// and a staleness warning fires (during normal resolution). The warning is
+// suppressed when SuppressLockWarnings is set (e.g., during component update).
+func TestFindComponents_PinDiffersFromLock(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	env.Config.Components["curl"] = projectconfig.ComponentConfig{
+		Name: "curl",
+		Spec: projectconfig.SpecSource{
+			SourceType:     projectconfig.SpecSourceTypeUpstream,
+			UpstreamCommit: "config-pin-aaa",
+		},
+	}
+
+	lock := lockfile.New()
+	lock.UpstreamCommit = "lock-commit-bbb"
+
+	env.WriteLock(t, "curl", lock)
+
+	filter := &components.ComponentFilter{
+		IncludeAllComponents: true,
+		SkipLockValidation:   true,
+	}
+
+	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
+	require.NoError(t, err)
+
+	comp, found := resolved.TryGet("curl")
+	require.True(t, found)
+
+	// Lock value populated; user intent preserved on Spec.
+	require.NotNil(t, comp.GetConfig().Locked)
+	assert.Equal(t, "lock-commit-bbb", comp.GetConfig().Locked.UpstreamCommit,
+		"lock value populated despite differing config pin")
+	assert.Equal(t, "config-pin-aaa", comp.GetConfig().Spec.UpstreamCommit,
+		"user intent preserved on Spec.UpstreamCommit")
+
+	// Re-resolve with SuppressLockWarnings — should still populate, just no warning.
+	suppressed := components.NewResolver(env.Env)
+	suppressed.SuppressLockWarnings = true
+
+	resolved2, err := suppressed.FindComponents(filter)
+	require.NoError(t, err)
+
+	comp2, found := resolved2.TryGet("curl")
+	require.True(t, found)
+	require.NotNil(t, comp2.GetConfig().Locked)
+	assert.Equal(t, "lock-commit-bbb", comp2.GetConfig().Locked.UpstreamCommit,
+		"suppression doesn't change the populated data, only the warning emission")
+}
+
+func TestComponentFilter_HasNoCriteria(t *testing.T) {
+	t.Run("empty filter has no criteria", func(t *testing.T) {
+		filter := components.ComponentFilter{}
+		assert.True(t, filter.HasNoCriteria())
+	})
+
+	t.Run("all-components set means criteria exist", func(t *testing.T) {
+		filter := components.ComponentFilter{IncludeAllComponents: true}
+		assert.False(t, filter.HasNoCriteria())
+	})
+
+	t.Run("group names set means criteria exist", func(t *testing.T) {
+		filter := components.ComponentFilter{ComponentGroupNames: []string{"core"}}
+		assert.False(t, filter.HasNoCriteria())
+	})
+
+	t.Run("name patterns set means criteria exist", func(t *testing.T) {
+		filter := components.ComponentFilter{ComponentNamePatterns: []string{"curl"}}
+		assert.False(t, filter.HasNoCriteria())
+	})
+
+	t.Run("spec paths set means criteria exist", func(t *testing.T) {
+		filter := components.ComponentFilter{SpecPaths: []string{"/specs/test.spec"}}
+		assert.False(t, filter.HasNoCriteria())
+	})
 }

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/kballard/go-shellquote"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/mock"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spectool"
@@ -21,13 +22,18 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 )
 
+// chrootProvenanceDir is the in-chroot mount point for the single component's
+// source directory when resolving %autorelease. It is distinct from the batch
+// staging mount so a CalculateRelease call never collides with BatchProcess.
+const chrootProvenanceDir = "/tmp/provenance"
+
 //go:embed render_process.py
 var renderProcessScript []byte
 
 // MockProcessor provides a shared mock chroot for running rpmautospec and
-// spectool during component rendering. The chroot is lazily initialized on
-// first use and supports batch processing of multiple components in a single
-// mock invocation.
+// spectool during component source preparation and rendering. The chroot is
+// lazily initialized on first use and supports batch processing of multiple
+// components in a single mock invocation.
 type MockProcessor struct {
 	mu          sync.Mutex
 	runner      *mock.Runner
@@ -35,12 +41,34 @@ type MockProcessor struct {
 	initErr     error
 }
 
+// MockProcessorOption configures a [MockProcessor] at construction time.
+type MockProcessorOption func(*mock.Runner)
+
+// WithIsolatedMockBaseDir returns a [MockProcessorOption] that places the
+// processor's mock root under baseDir instead of mock's shared default
+// (/var/lib/mock). This gives the processor a self-contained root tree so a
+// concurrently used build chroot (which shares the same mock config) cannot
+// scrub it, and so destroying the processor scrubs only its own tree. A blank
+// baseDir is ignored, preserving the default location.
+func WithIsolatedMockBaseDir(baseDir string) MockProcessorOption {
+	return func(runner *mock.Runner) {
+		if baseDir != "" {
+			runner.WithBaseDir(baseDir)
+		}
+	}
+}
+
 // NewMockProcessor creates a new processor that will lazily initialize
 // a mock chroot using the given config path. The runner is created eagerly
 // but the chroot is only initialized on first use.
-func NewMockProcessor(ctx opctx.Ctx, mockConfigPath string) *MockProcessor {
+func NewMockProcessor(ctx opctx.Ctx, mockConfigPath string, opts ...MockProcessorOption) *MockProcessor {
+	runner := mock.NewRunner(ctx, mockConfigPath)
+	for _, opt := range opts {
+		opt(runner)
+	}
+
 	return &MockProcessor{
-		runner: mock.NewRunner(ctx, mockConfigPath),
+		runner: runner,
 	}
 }
 
@@ -99,7 +127,7 @@ func (p *MockProcessor) initOnce(ctx context.Context) error {
 		return p.initErr
 	}
 
-	slog.Info("Initializing mock chroot for rendering")
+	slog.Info("Initializing mock chroot for source processing")
 
 	p.runner.EnableNetwork()
 
@@ -232,6 +260,54 @@ func (p *MockProcessor) BatchProcess(
 	return parseBatchJSON(string(resultsData), inputs)
 }
 
+// CalculateRelease resolves an rpmautospec %autorelease to a concrete Fedora
+// release number (without the dist tag) by running `rpmautospec
+// calculate-release --complete-release` inside the shared mock chroot. This
+// keeps rpmautospec out of azldev's host dependencies — the chroot already has
+// it installed by initOnce.
+//
+// specHostDir is the host directory holding the pristine spec and its .git
+// history; it is bind-mounted read/write into the chroot. specFilename is the
+// spec's basename within that directory. The raw command output is returned;
+// the caller parses and validates it. The chroot is lazily initialized on first
+// use, shared with [MockProcessor.BatchProcess].
+func (p *MockProcessor) CalculateRelease(ctx context.Context, specHostDir, specFilename string) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if err := p.initOnce(ctx); err != nil {
+		return "", err
+	}
+
+	// Clone so this invocation's bind mount and privilege drop don't mutate the
+	// shared template. WithUnprivileged runs as the mockbuild user, whose UID
+	// matches the host user (mock chrootuid defaults to os.getuid()), so the
+	// bind-mounted .git is owned consistently.
+	runner := p.runner.Clone()
+	runner.WithUnprivileged()
+	runner.AddBindMount(specHostDir, chrootProvenanceDir)
+
+	specInChroot := filepath.Join(chrootProvenanceDir, specFilename)
+
+	// safe.directory guards against any residual host/chroot ownership mismatch
+	// on the bind-mounted .git, mirroring the render batch path. Wrapped in
+	// `sh -c` so the shell operators survive shellquote joining in CmdInChroot.
+	shellCmd := "git config --global --add safe.directory '*' && " +
+		"rpmautospec calculate-release --complete-release " + shellquote.Join(specInChroot)
+
+	cmd, err := runner.CmdInChroot(ctx, []string{"sh", "-c", shellCmd}, false)
+	if err != nil {
+		return "", fmt.Errorf("creating rpmautospec command in mock chroot:\n%w", err)
+	}
+
+	out, err := cmd.RunAndGetOutput(ctx)
+	if err != nil {
+		return "", fmt.Errorf("rpmautospec calculate-release failed in mock chroot:\n%w", err)
+	}
+
+	return out, nil
+}
+
 // componentInputJSON is the JSON-serializable form written to inputs.json.
 type componentInputJSON struct {
 	Name         string `json:"name"`
@@ -305,7 +381,7 @@ func writeInputsManifest(fs opctx.FS, stagingDir string, inputs []ComponentInput
 	return nil
 }
 
-// Destroy cleans up the mock chroot. Should be called when rendering is complete.
+// Destroy cleans up the mock chroot. It should be called when source processing is complete.
 // The processor must not be reused after Destroy — create a new MockProcessor if needed.
 // Attempts cleanup even if initialization partially failed (e.g., InitRoot succeeded
 // but InstallPackages failed), since a partially initialized chroot still needs scrubbing.

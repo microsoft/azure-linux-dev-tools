@@ -71,12 +71,6 @@ func Build() error {
 
 	mageutil.MagePrintf(mageutil.MsgSuccess, "Placed tools in %s\n", mageutil.BinDir())
 
-	// Generate CLI reference docs from the built binary.
-	err = magesrc.GenerateDocs()
-	if err != nil {
-		return fmt.Errorf("generating CLI reference docs:\n%w", err)
-	}
-
 	return nil
 }
 
@@ -373,8 +367,14 @@ func collectLicenses() error {
 
 	env := map[string]string{"GOROOT": goRoot}
 
-	err = sh.RunWith(env, cmdAbsPath, "save", "--save_path", mageutil.LicenseDir(), "--force", "./...")
-	if err != nil {
+	// go-licenses spews a benign glog warning to stderr for every dependency that contains non-Go
+	// (assembly) code. Capture stderr, strip those warnings, and only surface what's left on failure.
+	var stderr strings.Builder
+
+	if _, err := sh.Exec(env, os.Stdout, &stderr, cmdAbsPath,
+		"save", "--save_path", mageutil.LicenseDir(), "--force", "./..."); err != nil {
+		mageutil.PrintLicenseOutput(stderr.String())
+
 		return mageutil.PrintAndReturnError(errorText, ErrLicenses, err)
 	}
 

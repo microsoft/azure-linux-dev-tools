@@ -87,6 +87,54 @@ func TestRunFunc_ResultsAsJSON(t *testing.T) {
 	}
 }
 
+func TestRunFunc_ResultsAsJSON_NilSlice(t *testing.T) {
+	// A typed-nil slice should marshal as `[]` rather than `null` so the
+	// JSON output is safe to pipe into jq without `(. // [])` guards.
+	runFunc := azldev.RunFunc(func(env *azldev.Env) (interface{}, error) {
+		var results []string
+
+		return results, nil
+	})
+
+	env := testutils.NewTestEnv(t)
+	env.Env.SetDefaultReportFormat(azldev.ReportFormatJSON)
+
+	reportOutput := new(strings.Builder)
+	env.Env.SetReportFile(reportOutput)
+
+	if assert.NotNil(t, runFunc) {
+		err := runFunc(testCmd(env.Env), []string{})
+
+		if assert.NoError(t, err) {
+			assert.Equal(t, "[]\n", reportOutput.String())
+		}
+	}
+}
+
+func TestRunFunc_ResultsAsJSON_NilMap(t *testing.T) {
+	// A typed-nil map should marshal as `{}` rather than `null` so the
+	// JSON output is safe to pipe into jq without `(. // {})` guards.
+	runFunc := azldev.RunFunc(func(env *azldev.Env) (interface{}, error) {
+		var results map[string]int
+
+		return results, nil
+	})
+
+	env := testutils.NewTestEnv(t)
+	env.Env.SetDefaultReportFormat(azldev.ReportFormatJSON)
+
+	reportOutput := new(strings.Builder)
+	env.Env.SetReportFile(reportOutput)
+
+	if assert.NotNil(t, runFunc) {
+		err := runFunc(testCmd(env.Env), []string{})
+
+		if assert.NoError(t, err) {
+			assert.Equal(t, "{}\n", reportOutput.String())
+		}
+	}
+}
+
 func TestRunFunc_ResultsAsCSV(t *testing.T) {
 	runFunc := azldev.RunFunc(func(env *azldev.Env) (interface{}, error) {
 		return "a", nil

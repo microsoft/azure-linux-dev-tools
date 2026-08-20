@@ -122,6 +122,29 @@ key = "value"
 	assert.Equal(t, "/project/artifacts/logs", config.Project.LogDir)
 }
 
+func TestLoadAndResolveProjectConfig_PermissiveParsing_IgnoresValidationError(t *testing.T) {
+	// This config is structurally valid TOML but fails semantic validation: the
+	// component group references a component that is not defined.
+	const configContents = `
+[component-groups.my-group]
+components = ["missing-component"]
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	// Strict parsing should fail because the referenced component is undefined.
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.ErrorIs(t, err, ErrUndefinedComponent)
+	assert.Nil(t, config)
+
+	// Permissive parsing should ignore the validation error and return the config.
+	config, err = loadAndResolveProjectConfig(ctx.FS(), true, testConfigPath)
+	require.NoError(t, err)
+	require.NotNil(t, config)
+	assert.Contains(t, config.ComponentGroups, "my-group")
+}
+
 func TestLoadAndResolveProjectConfig_EmptyFile(t *testing.T) {
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte{}, fileperms.PrivateFile))
@@ -288,7 +311,7 @@ log-dir = "artifacts/logs"
 	assert.Equal(t, "/project/subdir/artifacts/logs", config.Project.LogDir)
 }
 
-func TestLoadAndResolveProjectConfig_DuplicateComponents(t *testing.T) {
+func TestLoadAndResolveProjectConfig_MergeComponents(t *testing.T) {
 	testFiles := []struct {
 		path     string
 		contents string
@@ -297,9 +320,15 @@ func TestLoadAndResolveProjectConfig_DuplicateComponents(t *testing.T) {
 includes = ["include.toml"]
 
 [components.abc]
+[components.abc.spec]
+type = "upstream"
+upstream-commit = "aaa1111"
 `},
 		{"/project/include.toml", `
 [components.abc]
+[components.abc.spec]
+type = "upstream"
+upstream-commit = "bbb2222"
 `},
 	}
 
@@ -311,8 +340,11 @@ includes = ["include.toml"]
 		require.NoError(t, fileutils.WriteFile(ctx.FS(), testFile.path, []byte(testFile.contents), fileperms.PrivateFile))
 	}
 
-	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testFiles[0].path)
-	require.ErrorIs(t, err, ErrDuplicateComponents)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testFiles[0].path)
+	require.NoError(t, err)
+
+	// The included file is loaded after the parent, so its values override.
+	assert.Equal(t, "bbb2222", config.Components["abc"].Spec.UpstreamCommit)
 }
 
 func TestLoadAndResolveProjectConfig_DuplicateComponentGroups(t *testing.T) {
@@ -406,15 +438,21 @@ dist-git-branch = "TenPointZero"
 	assert.Len(t, config.Distros, 1)
 }
 
-func TestLoadAndResolveProjectConfig_DuplicateComponentsAcrossFiles(t *testing.T) {
-	// Two separate config files both defining the same component should error.
-	// Unlike distros, components do not support merging across config files.
+func TestLoadAndResolveProjectConfig_MergeComponentsAcrossFiles(t *testing.T) {
+	// Two separate config files both defining the same component should merge.
+	// Later files' non-empty fields override earlier files' fields.
 	const configContents1 = `
 [components.foo]
+[components.foo.spec]
+type = "upstream"
+upstream-commit = "aaa1111"
 `
 
 	const configContents2 = `
 [components.foo]
+[components.foo.spec]
+type = "upstream"
+upstream-commit = "bbb2222"
 `
 
 	configPath1 := testConfigPath
@@ -424,12 +462,190 @@ func TestLoadAndResolveProjectConfig_DuplicateComponentsAcrossFiles(t *testing.T
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath1, []byte(configContents1), fileperms.PrivateFile))
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath2, []byte(configContents2), fileperms.PrivateFile))
 
-	_, err := loadAndResolveProjectConfig(ctx.FS(), false, configPath1, configPath2)
-	require.ErrorIs(t, err, ErrDuplicateComponents)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, configPath1, configPath2)
+	require.NoError(t, err)
+
+	// The second file's upstream-commit should override the first.
+	assert.Equal(t, "bbb2222", config.Components["foo"].Spec.UpstreamCommit)
+}
+
+func TestLoadAndResolveProjectConfig_MergeComponentsPreservesEarlierFields(t *testing.T) {
+	// When the later file only sets some fields, earlier fields should be preserved.
+	const configContents1 = `
+[components.curl]
+[components.curl.spec]
+type = "upstream"
+upstream-commit = "abc1234"
+
+[components.curl.build]
+with = ["ssl"]
+
+[components.curl.release]
+calculation = "auto"
+`
+
+	// Second file only overrides upstream-commit; build and release should survive.
+	const configContents2 = `
+[components.curl]
+[components.curl.spec]
+type = "upstream"
+upstream-commit = "def5678"
+`
+
+	configPath1 := testConfigPath
+	configPath2 := filepath.Join("/project", "extra.toml")
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath1, []byte(configContents1), fileperms.PrivateFile))
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath2, []byte(configContents2), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, configPath1, configPath2)
+	require.NoError(t, err)
+
+	comp := config.Components["curl"]
+
+	// Overridden field should use the later value.
+	assert.Equal(t, "def5678", comp.Spec.UpstreamCommit)
+
+	// Fields not set in the later file should be preserved from the earlier file.
+	assert.Equal(t, []string{"ssl"}, comp.Build.With)
+	assert.Equal(t, ReleaseCalculationAuto, comp.Release.Calculation)
+}
+
+func TestLoadAndResolveProjectConfig_MergeComponentsSourceConfigFile(t *testing.T) {
+	// SourceConfigFile should point to the last file that contributed to the component.
+	testFiles := []struct {
+		path     string
+		contents string
+	}{
+		{testConfigPath, `
+includes = ["sub/include.toml"]
+
+[components.abc]
+[components.abc.spec]
+type = "upstream"
+upstream-commit = "aaa1111"
+`},
+		{"/project/sub/include.toml", `
+[components.abc]
+[components.abc.spec]
+type = "upstream"
+upstream-commit = "bbb2222"
+`},
+	}
+
+	ctx := testctx.NewCtx()
+
+	for _, testFile := range testFiles {
+		require.NoError(t, fileutils.MkdirAll(ctx.FS(), filepath.Dir(testFile.path)))
+		require.NoError(t, fileutils.WriteFile(ctx.FS(), testFile.path, []byte(testFile.contents), fileperms.PrivateFile))
+	}
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testFiles[0].path)
+	require.NoError(t, err)
+
+	comp := config.Components["abc"]
+	require.NotNil(t, comp.SourceConfigFile)
+
+	// SourceConfigFile should reference the last file that contributed.
+	assert.Equal(t, "/project/sub", comp.SourceConfigFile.dir)
+}
+
+func TestLoadAndResolveProjectConfig_MergeComponentsMultipleComponents(t *testing.T) {
+	// When two files define different components, both should be present.
+	// When they also share a component, that component should be merged.
+	const configContents1 = `
+[components.alpha]
+[components.alpha.spec]
+type = "upstream"
+upstream-commit = "aaa1111"
+
+[components.beta]
+[components.beta.spec]
+type = "upstream"
+upstream-commit = "bbb2222"
+`
+
+	const configContents2 = `
+[components.alpha]
+[components.alpha.spec]
+type = "upstream"
+upstream-commit = "ccc3333"
+
+[components.gamma]
+[components.gamma.spec]
+type = "upstream"
+`
+
+	configPath1 := testConfigPath
+	configPath2 := filepath.Join("/project", "extra.toml")
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath1, []byte(configContents1), fileperms.PrivateFile))
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath2, []byte(configContents2), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, configPath1, configPath2)
+	require.NoError(t, err)
+
+	// All three components should be present.
+	assert.Len(t, config.Components, 3)
+	assert.Contains(t, config.Components, "alpha")
+	assert.Contains(t, config.Components, "beta")
+	assert.Contains(t, config.Components, "gamma")
+
+	// alpha should have the merged (overridden) commit.
+	assert.Equal(t, "ccc3333", config.Components["alpha"].Spec.UpstreamCommit)
+
+	// beta should be unchanged.
+	assert.Equal(t, "bbb2222", config.Components["beta"].Spec.UpstreamCommit)
+}
+
+func TestLoadAndResolveProjectConfig_MergeComponentsOverlaysAppended(t *testing.T) {
+	// Overlays are slice fields — MergeUpdatesFrom with mergo.WithAppendSlice
+	// should append later overlays to earlier ones.
+	const configContents1 = `
+[components.pkg]
+[components.pkg.spec]
+type = "upstream"
+
+[[components.pkg.overlays]]
+type = "spec-add-tag"
+tag = "BuildRequires"
+value = "openssl-devel"
+`
+
+	const configContents2 = `
+[components.pkg]
+
+[[components.pkg.overlays]]
+type = "spec-add-tag"
+tag = "Requires"
+value = "libcurl"
+`
+
+	configPath1 := testConfigPath
+	configPath2 := filepath.Join("/project", "extra.toml")
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath1, []byte(configContents1), fileperms.PrivateFile))
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath2, []byte(configContents2), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, configPath1, configPath2)
+	require.NoError(t, err)
+
+	comp := config.Components["pkg"]
+
+	// Both overlays should be present (appended, not replaced).
+	require.Len(t, comp.Overlays, 2)
+	assert.Equal(t, "BuildRequires", comp.Overlays[0].Tag)
+	assert.Equal(t, "Requires", comp.Overlays[1].Tag)
 }
 
 func TestLoadAndResolveProjectConfig_ComponentGroupWithMembers(t *testing.T) {
 	const configContents = `
+[components.foo]
+[components.bar]
+
 [component-groups.core]
 components = ["foo", "bar"]
 description = "Core components"
@@ -459,6 +675,51 @@ specs = ["SPECS/**/*.spec"]
 	assert.Equal(t, []string{"core"}, config.GroupsByComponent["bar"])
 }
 
+func TestLoadAndResolveProjectConfig_ComponentGroupWithMetadata(t *testing.T) {
+	const configContents = `
+[component-groups.core]
+specs = ["SPECS/**/*.spec"]
+
+[component-groups.core.metadata]
+category = "upstream-backport"
+commits = [{ url = "https://example.com/commit/abc" }]
+bugs = [{ url = "https://example.com/bug/1" }]
+upstream-status = "upstreamable"
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.NoError(t, err)
+
+	if assert.Contains(t, config.ComponentGroups, "core") {
+		group := config.ComponentGroups["core"]
+		require.NotNil(t, group.Metadata)
+		assert.Equal(t, OverlayCategoryUpstreamBackport, group.Metadata.Category)
+		assert.Equal(t, []URLRef{{URL: "https://example.com/commit/abc"}}, group.Metadata.Commits)
+		assert.Equal(t, []URLRef{{URL: "https://example.com/bug/1"}}, group.Metadata.Bugs)
+		assert.Equal(t, OverlayUpstreamStatusUpstreamable, group.Metadata.UpstreamStatus)
+	}
+}
+
+func TestLoadAndResolveProjectConfig_ComponentGroupMetadataMissingCategory(t *testing.T) {
+	const configContents = `
+[component-groups.core]
+specs = ["SPECS/**/*.spec"]
+
+[component-groups.core.metadata]
+bugs = [{ url = "https://example.com/bug/1" }]
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.Error(t, err)
+	assert.Nil(t, config)
+}
+
 func TestLoadAndResolveProjectConfig_GroupsByComponent_MultipleGroups(t *testing.T) {
 	testFiles := []struct {
 		path     string
@@ -466,6 +727,10 @@ func TestLoadAndResolveProjectConfig_GroupsByComponent_MultipleGroups(t *testing
 	}{
 		{testConfigPath, `
 includes = ["extra.toml"]
+
+[components.shared]
+[components.only-alpha]
+[components.only-beta]
 
 [component-groups.alpha]
 components = ["shared", "only-alpha"]
@@ -497,6 +762,8 @@ components = ["shared", "only-beta"]
 
 func TestLoadAndResolveProjectConfig_ComponentGroupWithDefaultConfig(t *testing.T) {
 	const configContents = `
+[components.foo]
+
 [component-groups.core]
 components = ["foo"]
 
@@ -565,7 +832,7 @@ includes = ["*non-existent*.toml"]
 func TestLoadAndResolveProjectConfig_DefaultPackageConfig(t *testing.T) {
 	const configContents = `
 [default-package-config.publish]
-channel = "base"
+rpm-channel = "base"
 `
 
 	ctx := testctx.NewCtx()
@@ -574,7 +841,7 @@ channel = "base"
 	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
 	require.NoError(t, err)
 
-	assert.Equal(t, "base", config.DefaultPackageConfig.Publish.Channel)
+	assert.Equal(t, "base", config.DefaultPackageConfig.Publish.RPMChannel)
 }
 
 func TestLoadAndResolveProjectConfig_DefaultPackageConfig_MergedAcrossFiles(t *testing.T) {
@@ -587,11 +854,11 @@ func TestLoadAndResolveProjectConfig_DefaultPackageConfig_MergedAcrossFiles(t *t
 includes = ["extra.toml"]
 
 [default-package-config.publish]
-channel = "base"
+rpm-channel = "base"
 `},
 		{"/project/extra.toml", `
 [default-package-config.publish]
-channel = "stable"
+rpm-channel = "stable"
 `},
 	}
 
@@ -605,7 +872,7 @@ channel = "stable"
 	require.NoError(t, err)
 
 	// The later-loaded file wins.
-	assert.Equal(t, "stable", config.DefaultPackageConfig.Publish.Channel)
+	assert.Equal(t, "stable", config.DefaultPackageConfig.Publish.RPMChannel)
 }
 
 func TestLoadAndResolveProjectConfig_DefaultPackageConfig_MergedAcrossTopLevelFiles(t *testing.T) {
@@ -613,11 +880,11 @@ func TestLoadAndResolveProjectConfig_DefaultPackageConfig_MergedAcrossTopLevelFi
 	const (
 		configContents1 = `
 [default-package-config.publish]
-channel = "first"
+rpm-channel = "first"
 `
 		configContents2 = `
 [default-package-config.publish]
-channel = "second"
+rpm-channel = "second"
 `
 	)
 
@@ -631,7 +898,7 @@ channel = "second"
 	config, err := loadAndResolveProjectConfig(ctx.FS(), false, configPath1, configPath2)
 	require.NoError(t, err)
 
-	assert.Equal(t, "second", config.DefaultPackageConfig.Publish.Channel)
+	assert.Equal(t, "second", config.DefaultPackageConfig.Publish.RPMChannel)
 }
 
 func TestLoadAndResolveProjectConfig_PackageGroups(t *testing.T) {
@@ -641,14 +908,14 @@ description = "Development subpackages"
 packages = ["curl-devel", "wget2-devel"]
 
 [package-groups.devel-packages.default-package-config.publish]
-channel = "devel"
+rpm-channel = "devel"
 
 [package-groups.debug-packages]
 description = "Debug info packages"
 packages = ["curl-debuginfo", "curl-debugsource"]
 
 [package-groups.debug-packages.default-package-config.publish]
-channel = "none"
+rpm-channel = "none"
 `
 
 	ctx := testctx.NewCtx()
@@ -663,14 +930,14 @@ channel = "none"
 		g := config.PackageGroups["devel-packages"]
 		assert.Equal(t, "Development subpackages", g.Description)
 		assert.Equal(t, []string{"curl-devel", "wget2-devel"}, g.Packages)
-		assert.Equal(t, "devel", g.DefaultPackageConfig.Publish.Channel)
+		assert.Equal(t, "devel", g.DefaultPackageConfig.Publish.RPMChannel)
 	}
 
 	if assert.Contains(t, config.PackageGroups, "debug-packages") {
 		g := config.PackageGroups["debug-packages"]
 		assert.Equal(t, "Debug info packages", g.Description)
 		assert.Equal(t, []string{"curl-debuginfo", "curl-debugsource"}, g.Packages)
-		assert.Equal(t, "none", g.DefaultPackageConfig.Publish.Channel)
+		assert.Equal(t, "none", g.DefaultPackageConfig.Publish.RPMChannel)
 	}
 }
 
@@ -772,15 +1039,12 @@ packages = ["wget2-devel", "bash-devel"]
 	assert.Contains(t, err.Error(), "may only belong to one group")
 }
 
-func TestLoadAndResolveProjectConfig_ComponentDefaultPackageConfig(t *testing.T) {
+func TestLoadAndResolveProjectConfig_ComponentPackageOverrides(t *testing.T) {
 	const configContents = `
 [components.curl]
 
-[components.curl.default-package-config.publish]
-channel = "base"
-
 [components.curl.packages.curl-devel.publish]
-channel = "devel"
+rpm-channel = "devel"
 `
 
 	ctx := testctx.NewCtx()
@@ -791,10 +1055,9 @@ channel = "devel"
 
 	if assert.Contains(t, config.Components, "curl") {
 		comp := config.Components["curl"]
-		assert.Equal(t, "base", comp.DefaultPackageConfig.Publish.Channel)
 
 		if assert.Contains(t, comp.Packages, "curl-devel") {
-			assert.Equal(t, "devel", comp.Packages["curl-devel"].Publish.Channel)
+			assert.Equal(t, "devel", comp.Packages["curl-devel"].Publish.RPMChannel)
 		}
 	}
 }
@@ -802,11 +1065,28 @@ channel = "devel"
 func TestLoadAndResolveProjectConfig_TestSuite(t *testing.T) {
 	const configContents = `
 [test-suites.smoke]
+type = "pytest"
 description = "Smoke tests for images"
 
+[test-suites.smoke.pytest]
+working-dir = "tests"
+test-paths = ["cases/test_*.py"]
+extra-args = ["--image-path", "{image-path}"]
+
 [test-suites.integration]
-description = "Integration tests"
+type = "lisa"
+description = "LISA integration tests"
+
+[test-suites.integration.lisa]
+test-cases = ["verify_cpu_count", "verify_grub"]
+extra-args = ["-v", "qcow2:{image-path}"]
+
+[test-suites.integration.lisa.framework]
+git-url = "https://github.com/microsoft/lisa.git"
+ref = "abcdef0123456789abcdef0123456789abcdef01"
 `
+
+	configDir := filepath.Dir(testConfigPath)
 
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
@@ -816,16 +1096,29 @@ description = "Integration tests"
 
 	require.Len(t, config.TestSuites, 2)
 
+	// Check pytest test.
 	if assert.Contains(t, config.TestSuites, "smoke") {
 		smokeTest := config.TestSuites["smoke"]
 		assert.Equal(t, "smoke", smokeTest.Name)
+		assert.Equal(t, TestTypePytest, smokeTest.Type)
 		assert.Equal(t, "Smoke tests for images", smokeTest.Description)
+		require.NotNil(t, smokeTest.Pytest)
+		assert.Equal(t, filepath.Join(configDir, "tests"), smokeTest.Pytest.WorkingDir)
+		assert.Equal(t, []string{"cases/test_*.py"}, smokeTest.Pytest.TestPaths)
+		assert.Equal(t, []string{"--image-path", "{image-path}"}, smokeTest.Pytest.ExtraArgs)
 	}
 
+	// Check LISA test.
 	if assert.Contains(t, config.TestSuites, "integration") {
-		integrationTest := config.TestSuites["integration"]
-		assert.Equal(t, "integration", integrationTest.Name)
-		assert.Equal(t, "Integration tests", integrationTest.Description)
+		lisaTest := config.TestSuites["integration"]
+		assert.Equal(t, "integration", lisaTest.Name)
+		assert.Equal(t, TestTypeLisa, lisaTest.Type)
+		assert.Equal(t, "LISA integration tests", lisaTest.Description)
+		require.NotNil(t, lisaTest.Lisa)
+		assert.Equal(t, "https://github.com/microsoft/lisa.git", lisaTest.Lisa.Framework.GitURL)
+		assert.Equal(t, "abcdef0123456789abcdef0123456789abcdef01", lisaTest.Lisa.Framework.Ref)
+		assert.Equal(t, []string{"verify_cpu_count", "verify_grub"}, lisaTest.Lisa.TestCases)
+		assert.Equal(t, []string{"-v", "qcow2:{image-path}"}, lisaTest.Lisa.ExtraArgs)
 	}
 }
 
@@ -838,11 +1131,19 @@ func TestLoadAndResolveProjectConfig_DuplicateTests(t *testing.T) {
 includes = ["include.toml"]
 
 [test-suites.smoke]
-description = "Smoke tests"
+type = "pytest"
+
+[test-suites.smoke.pytest]
+working-dir = "tests"
+test-paths = ["cases/"]
 `},
 		{"/project/include.toml", `
 [test-suites.smoke]
-description = "Other smoke tests"
+type = "pytest"
+
+[test-suites.smoke.pytest]
+working-dir = "tests"
+test-paths = ["other/"]
 `},
 	}
 
@@ -857,10 +1158,78 @@ description = "Other smoke tests"
 	require.ErrorIs(t, err, ErrDuplicateTestSuites)
 }
 
+func TestLoadAndResolveProjectConfig_InvalidTestType(t *testing.T) {
+	const configContents = `
+[test-suites.bad]
+type = "unsupported"
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnknownTestType)
+}
+
+func TestLoadAndResolveProjectConfig_TestMissingRequiredField(t *testing.T) {
+	const configContents = `
+[test-suites.smoke]
+type = "pytest"
+# Missing [test-suites.smoke.pytest] subtable
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrMissingTestField)
+}
+
+func TestLoadAndResolveProjectConfig_TestSuiteMissingType(t *testing.T) {
+	const configContents = `
+[test-suites.smoke]
+# 'type' intentionally omitted.
+description = "no type set"
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrMissingTestField)
+	assert.Contains(t, err.Error(), "type")
+}
+
+func TestLoadAndResolveProjectConfig_TestSuiteInvalidName(t *testing.T) {
+	// Names containing path separators or traversal segments must be rejected at
+	// config load time since they are used as path components (e.g., venv directories).
+	const configContents = `
+[test-suites."../escape"]
+type = "pytest"
+
+[test-suites."../escape".pytest]
+working-dir = "tests"
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid test suite name")
+}
+
 func TestLoadAndResolveProjectConfig_ImageWithValidTestRef(t *testing.T) {
 	const configContents = `
 [test-suites.smoke]
-description = "Smoke tests"
+type = "pytest"
+
+[test-suites.smoke.pytest]
+working-dir = "tests"
+test-paths = ["cases/"]
 
 [images.myimage]
 description = "Test image"
@@ -896,4 +1265,221 @@ test-suites = [{ name = "nonexistent" }]
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrUndefinedTestSuite)
 	assert.Contains(t, err.Error(), "nonexistent")
+}
+
+// TestLoadAndResolveProjectConfig_DeprecatedChannelField_DefaultPackageConfig verifies that the
+// deprecated 'publish.channel' field is preserved as-is after loading and used as a fallback
+// by the channel resolver via [PackagePublishConfig.EffectiveRPMChannel].
+func TestLoadAndResolveProjectConfig_DeprecatedChannelField_DefaultPackageConfig(t *testing.T) {
+	const configContents = `
+[default-package-config.publish]
+channel = "rpm-base"
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), true, testConfigPath)
+	require.NoError(t, err)
+
+	// The deprecated field is preserved; no migration happens at load time.
+	assert.Empty(t, config.DefaultPackageConfig.Publish.RPMChannel)
+	assert.Equal(t, "rpm-base", config.DefaultPackageConfig.Publish.DeprecatedChannel)
+	// The resolver falls back to the deprecated field when rpm-channel is unset.
+	assert.Equal(t, "rpm-base", config.DefaultPackageConfig.Publish.EffectiveRPMChannel())
+}
+
+// TestLoadAndResolveProjectConfig_DeprecatedChannelField_PackageGroup verifies that the deprecated
+// 'publish.channel' field is preserved and used as a fallback by the channel resolver in
+// package-group default-package-config.
+func TestLoadAndResolveProjectConfig_DeprecatedChannelField_PackageGroup(t *testing.T) {
+	const configContents = `
+[package-groups.my-group]
+packages = ["curl-devel"]
+
+[package-groups.my-group.default-package-config.publish]
+channel = "rpm-sdk"
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), true, testConfigPath)
+	require.NoError(t, err)
+
+	require.Contains(t, config.PackageGroups, "my-group")
+	g := config.PackageGroups["my-group"]
+	// The deprecated field is preserved; the resolver falls back to it via EffectiveRPMChannel.
+	assert.Empty(t, g.DefaultPackageConfig.Publish.RPMChannel)
+	assert.Equal(t, "rpm-sdk", g.DefaultPackageConfig.Publish.DeprecatedChannel)
+	assert.Equal(t, "rpm-sdk", g.DefaultPackageConfig.Publish.EffectiveRPMChannel())
+}
+
+// TestLoadAndResolveProjectConfig_DeprecatedChannelField_ComponentPackage verifies that the deprecated
+// 'publish.channel' field is preserved and used as a fallback by the channel resolver in
+// per-package component overrides.
+func TestLoadAndResolveProjectConfig_DeprecatedChannelField_ComponentPackage(t *testing.T) {
+	const configContents = `
+[components.curl]
+
+[components.curl.packages.curl-devel.publish]
+channel = "devel"
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), true, testConfigPath)
+	require.NoError(t, err)
+
+	require.Contains(t, config.Components, "curl")
+	comp := config.Components["curl"]
+	require.Contains(t, comp.Packages, "curl-devel")
+	// The deprecated field is preserved; the resolver falls back to it via EffectiveRPMChannel.
+	assert.Empty(t, comp.Packages["curl-devel"].Publish.RPMChannel)
+	assert.Equal(t, "devel", comp.Packages["curl-devel"].Publish.DeprecatedChannel)
+	assert.Equal(t, "devel", comp.Packages["curl-devel"].Publish.EffectiveRPMChannel())
+}
+
+// TestLoadAndResolveProjectConfig_DeprecatedChannelField_NotOverriddenByNewField verifies that when
+// both 'publish.channel' (deprecated) and 'publish.rpm-channel' are set, rpm-channel takes precedence
+// via [PackagePublishConfig.EffectiveRPMChannel].
+func TestLoadAndResolveProjectConfig_DeprecatedChannelField_NotOverriddenByNewField(t *testing.T) {
+	const configContents = `
+[default-package-config.publish]
+channel = "old-channel"
+rpm-channel = "new-channel"
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), true, testConfigPath)
+	require.NoError(t, err)
+
+	// Both fields are preserved as loaded.
+	assert.Equal(t, "new-channel", config.DefaultPackageConfig.Publish.RPMChannel)
+	assert.Equal(t, "old-channel", config.DefaultPackageConfig.Publish.DeprecatedChannel)
+	// rpm-channel takes precedence over the deprecated field.
+	assert.Equal(t, "new-channel", config.DefaultPackageConfig.Publish.EffectiveRPMChannel(),
+		"rpm-channel should take precedence over the deprecated channel field")
+}
+
+func TestLoadAndResolveProjectConfig_TestSuiteInstallMode(t *testing.T) {
+	const configContents = `
+[test-suites.smoke]
+type = "pytest"
+
+[test-suites.smoke.pytest]
+working-dir = "tests"
+install = "requirements"
+test-paths = ["cases/"]
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.NoError(t, err)
+
+	if assert.Contains(t, config.TestSuites, "smoke") {
+		smokeTest := config.TestSuites["smoke"]
+		require.NotNil(t, smokeTest.Pytest)
+		assert.Equal(t, PytestInstallRequirements, smokeTest.Pytest.Install)
+		assert.Equal(t, PytestInstallRequirements, smokeTest.Pytest.EffectiveInstallMode())
+	}
+}
+
+func TestLoadAndResolveProjectConfig_TestSuiteInvalidInstallMode(t *testing.T) {
+	const configContents = `
+[test-suites.smoke]
+type = "pytest"
+
+[test-suites.smoke.pytest]
+install = "invalid"
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidInstallMode)
+}
+
+func TestLoadAndResolveProjectConfig_CircularInclude(t *testing.T) {
+	t.Run("direct self-include", func(t *testing.T) {
+		ctx := testctx.NewCtx()
+		require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath,
+			[]byte(`includes = ["azldev.toml"]`), fileperms.PrivateFile))
+
+		_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+		require.ErrorIs(t, err, ErrCircularInclude)
+	})
+
+	t.Run("A includes B, B includes A", func(t *testing.T) {
+		ctx := testctx.NewCtx()
+
+		const includePath = "/project/child.toml"
+
+		require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath,
+			[]byte(`includes = ["child.toml"]`), fileperms.PrivateFile))
+		require.NoError(t, fileutils.WriteFile(ctx.FS(), includePath,
+			[]byte(`includes = ["azldev.toml"]`), fileperms.PrivateFile))
+
+		_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+		require.ErrorIs(t, err, ErrCircularInclude)
+	})
+
+	t.Run("A includes B includes C includes A", func(t *testing.T) {
+		ctx := testctx.NewCtx()
+
+		const (
+			bPath = "/project/b.toml"
+			cPath = "/project/c.toml"
+		)
+
+		require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath,
+			[]byte(`includes = ["b.toml"]`), fileperms.PrivateFile))
+		require.NoError(t, fileutils.WriteFile(ctx.FS(), bPath,
+			[]byte(`includes = ["c.toml"]`), fileperms.PrivateFile))
+		require.NoError(t, fileutils.WriteFile(ctx.FS(), cPath,
+			[]byte(`includes = ["azldev.toml"]`), fileperms.PrivateFile))
+
+		_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+		require.ErrorIs(t, err, ErrCircularInclude)
+	})
+}
+
+func TestLoadAndResolveProjectConfig_BuildFailureValidation(t *testing.T) {
+	t.Run("failure expected without reason is rejected", func(t *testing.T) {
+		const configContents = `
+[components.test-pkg]
+[components.test-pkg.build.failure]
+expected = true
+`
+
+		ctx := testctx.NewCtx()
+		require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+		_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "expected-reason")
+	})
+
+	t.Run("failure expected with reason is accepted", func(t *testing.T) {
+		const configContents = `
+[components.test-pkg]
+[components.test-pkg.build.failure]
+expected = true
+expected-reason = "Known upstream issue #456"
+`
+
+		ctx := testctx.NewCtx()
+		require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
+
+		config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+		require.NoError(t, err)
+		assert.True(t, config.Components["test-pkg"].Build.Failure.Expected)
+	})
 }

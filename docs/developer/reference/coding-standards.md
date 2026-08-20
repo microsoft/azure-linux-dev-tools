@@ -50,6 +50,19 @@
 
 - See [azldev command guidelines](../reference/command-guidelines.md) for details on command structure and naming conventions.
 
+## Python Code Style
+
+Some functionality is implemented in Python scripts (e.g. scripts embedded in the
+Go binary).
+
+- **Linting & formatting**: All Python must pass `ruff` (config: [`ruff.toml`](../../../ruff.toml)).
+  Run `mage check python` to lint and `mage fix python` to auto-format and apply fixes.
+- **Type checking**: All Python must pass `pyright` (config: [`pyrightconfig.json`](../../../pyrightconfig.json)).
+  This is also run by `mage check python`.
+- **Tool installation**: Install the pinned versions from [`requirements-lint.txt`](../../../requirements-lint.txt)
+  in the virtual environment described in [Getting Started](../how-to/get-started.md#prerequisites).
+- Both checks are part of `mage check all`.
+
 ## Logging Guidelines
 
 - Use structured logging with the `slog` package

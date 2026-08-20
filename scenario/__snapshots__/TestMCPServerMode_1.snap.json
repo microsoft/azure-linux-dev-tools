@@ -8,6 +8,108 @@
      "destructiveHint": true,
      "idempotentHint": false,
      "openWorldHint": true,
+     "readOnlyHint": true
+    },
+    "description": "Detect which components changed between two git refs",
+    "inputSchema": {
+     "properties": {
+      "accept-all": {
+       "default": false,
+       "description": "accept all prompts",
+       "type": "boolean"
+      },
+      "all-components": {
+       "default": false,
+       "description": "Include all components",
+       "type": "boolean"
+      },
+      "color": {
+       "description": "output colorization mode {always, auto, never}",
+       "type": "string"
+      },
+      "component": {
+       "description": "Component name pattern",
+       "type": "string"
+      },
+      "component-group": {
+       "description": "Component group name",
+       "type": "string"
+      },
+      "config-file": {
+       "description": "additional TOML config file(s) to merge (may be repeated)",
+       "type": "string"
+      },
+      "dry-run": {
+       "default": false,
+       "description": "dry run only (do not take action)",
+       "type": "boolean"
+      },
+      "from": {
+       "default": "",
+       "description": "Git ref to compare from (required)",
+       "type": "string"
+      },
+      "include-unchanged": {
+       "default": false,
+       "description": "Include unchanged components in output (only applies to broad -a scans; explicit selections always show status)",
+       "type": "boolean"
+      },
+      "network-retries": {
+       "default": 3,
+       "description": "maximum number of attempts for network operations (minimum 1)",
+       "type": "number"
+      },
+      "no-default-config": {
+       "default": false,
+       "description": "disable default configuration",
+       "type": "boolean"
+      },
+      "output-format": {
+       "description": "output format {csv, json, markdown, table}",
+       "type": "string"
+      },
+      "permissive-config": {
+       "default": false,
+       "description": "do not fail on unknown fields in TOML config files",
+       "type": "boolean"
+      },
+      "project": {
+       "default": "",
+       "description": "path to Azure Linux project",
+       "type": "string"
+      },
+      "quiet": {
+       "default": false,
+       "description": "only enable minimal output",
+       "type": "boolean"
+      },
+      "spec-path": {
+       "description": "Spec path",
+       "type": "string"
+      },
+      "to": {
+       "default": "HEAD",
+       "description": "Git ref to compare to",
+       "type": "string"
+      },
+      "verbose": {
+       "default": false,
+       "description": "enable verbose output",
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "from"
+     ],
+     "type": "object"
+    },
+    "name": "component-changed"
+   },
+   {
+    "annotations": {
+     "destructiveHint": true,
+     "idempotentHint": false,
+     "openWorldHint": true,
      "readOnlyHint": false
     },
     "description": "Show the diff that overlays apply to a component's sources",
@@ -78,6 +180,11 @@
        "description": "only enable minimal output",
        "type": "boolean"
       },
+      "skip-lock-validation": {
+       "default": false,
+       "description": "skip lock file consistency checks",
+       "type": "boolean"
+      },
       "spec-path": {
        "description": "Spec path",
        "type": "string"
@@ -88,10 +195,7 @@
        "type": "boolean"
       }
      },
-     "required": [
-      "output-file",
-      "project"
-     ],
+     "required": [],
      "type": "object"
     },
     "name": "component-diff-sources"
@@ -101,7 +205,102 @@
      "destructiveHint": true,
      "idempotentHint": false,
      "openWorldHint": true,
-     "readOnlyHint": false
+     "readOnlyHint": true
+    },
+    "description": "Report per-component change activity and customization detail",
+    "inputSchema": {
+     "properties": {
+      "accept-all": {
+       "default": false,
+       "description": "accept all prompts",
+       "type": "boolean"
+      },
+      "all-components": {
+       "default": false,
+       "description": "Include all components",
+       "type": "boolean"
+      },
+      "color": {
+       "description": "output colorization mode {always, auto, never}",
+       "type": "string"
+      },
+      "component": {
+       "description": "Component name pattern",
+       "type": "string"
+      },
+      "component-group": {
+       "description": "Component group name",
+       "type": "string"
+      },
+      "config-file": {
+       "description": "additional TOML config file(s) to merge (may be repeated)",
+       "type": "string"
+      },
+      "dry-run": {
+       "default": false,
+       "description": "dry run only (do not take action)",
+       "type": "boolean"
+      },
+      "include-bare": {
+       "default": false,
+       "description": "Include components with zero customizations in the output. By default they are hidden -- their config inherits everything from defaults, and computing their git metrics is the dominant cost on large projects.",
+       "type": "boolean"
+      },
+      "network-retries": {
+       "default": 3,
+       "description": "maximum number of attempts for network operations (minimum 1)",
+       "type": "number"
+      },
+      "no-default-config": {
+       "default": false,
+       "description": "disable default configuration",
+       "type": "boolean"
+      },
+      "output-format": {
+       "description": "output format {csv, json, markdown, table}",
+       "type": "string"
+      },
+      "permissive-config": {
+       "default": false,
+       "description": "do not fail on unknown fields in TOML config files",
+       "type": "boolean"
+      },
+      "project": {
+       "default": "",
+       "description": "path to Azure Linux project",
+       "type": "string"
+      },
+      "quiet": {
+       "default": false,
+       "description": "only enable minimal output",
+       "type": "boolean"
+      },
+      "shared": {
+       "default": "show",
+       "description": "How to report rows for components that share a TOML file with others: show (keep row, count is coarse), omit (drop row).",
+       "type": "string"
+      },
+      "spec-path": {
+       "description": "Spec path",
+       "type": "string"
+      },
+      "verbose": {
+       "default": false,
+       "description": "enable verbose output",
+       "type": "boolean"
+      }
+     },
+     "required": [],
+     "type": "object"
+    },
+    "name": "component-history"
+   },
+   {
+    "annotations": {
+     "destructiveHint": true,
+     "idempotentHint": false,
+     "openWorldHint": true,
+     "readOnlyHint": true
     },
     "description": "List components in this project",
     "inputSchema": {
@@ -176,9 +375,7 @@
        "type": "boolean"
       }
      },
-     "required": [
-      "project"
-     ],
+     "required": [],
      "type": "object"
     },
     "name": "component-list"
@@ -188,7 +385,7 @@
      "destructiveHint": true,
      "idempotentHint": false,
      "openWorldHint": true,
-     "readOnlyHint": false
+     "readOnlyHint": true
     },
     "description": "Dump the current configuration",
     "inputSchema": {
@@ -250,9 +447,7 @@
        "type": "boolean"
       }
      },
-     "required": [
-      "project"
-     ],
+     "required": [],
      "type": "object"
     },
     "name": "config-dump"
@@ -262,7 +457,7 @@
      "destructiveHint": true,
      "idempotentHint": false,
      "openWorldHint": true,
-     "readOnlyHint": false
+     "readOnlyHint": true
     },
     "description": "Generates JSON schema for validating .toml config files",
     "inputSchema": {
@@ -320,12 +515,83 @@
        "type": "boolean"
       }
      },
-     "required": [
-      "project"
-     ],
+     "required": [],
      "type": "object"
     },
     "name": "config-generate-schema"
+   },
+   {
+    "annotations": {
+     "destructiveHint": true,
+     "idempotentHint": false,
+     "openWorldHint": true,
+     "readOnlyHint": true
+    },
+    "description": "Print an azldev agent skill to stdout",
+    "inputSchema": {
+     "properties": {
+      "accept-all": {
+       "default": false,
+       "description": "accept all prompts",
+       "type": "boolean"
+      },
+      "color": {
+       "description": "output colorization mode {always, auto, never}",
+       "type": "string"
+      },
+      "config-file": {
+       "description": "additional TOML config file(s) to merge (may be repeated)",
+       "type": "string"
+      },
+      "dry-run": {
+       "default": false,
+       "description": "dry run only (do not take action)",
+       "type": "boolean"
+      },
+      "network-retries": {
+       "default": 3,
+       "description": "maximum number of attempts for network operations (minimum 1)",
+       "type": "number"
+      },
+      "no-default-config": {
+       "default": false,
+       "description": "disable default configuration",
+       "type": "boolean"
+      },
+      "output-format": {
+       "description": "output format {csv, json, markdown, table}",
+       "type": "string"
+      },
+      "permissive-config": {
+       "default": false,
+       "description": "do not fail on unknown fields in TOML config files",
+       "type": "boolean"
+      },
+      "project": {
+       "default": "",
+       "description": "path to Azure Linux project",
+       "type": "string"
+      },
+      "quiet": {
+       "default": false,
+       "description": "only enable minimal output",
+       "type": "boolean"
+      },
+      "skill": {
+       "default": "",
+       "description": "skill to print",
+       "type": "string"
+      },
+      "verbose": {
+       "default": false,
+       "description": "enable verbose output",
+       "type": "boolean"
+      }
+     },
+     "required": [],
+     "type": "object"
+    },
+    "name": "docs-agent-show"
    },
    {
     "annotations": {
@@ -406,8 +672,7 @@
       }
      },
      "required": [
-      "output-dir",
-      "project"
+      "output-dir"
      ],
      "type": "object"
     },
@@ -418,7 +683,7 @@
      "destructiveHint": true,
      "idempotentHint": false,
      "openWorldHint": true,
-     "readOnlyHint": false
+     "readOnlyHint": true
     },
     "description": "List images in this project",
     "inputSchema": {
@@ -476,9 +741,7 @@
        "type": "boolean"
       }
      },
-     "required": [
-      "project"
-     ],
+     "required": [],
      "type": "object"
     },
     "name": "image-list"
@@ -488,9 +751,9 @@
      "destructiveHint": true,
      "idempotentHint": false,
      "openWorldHint": true,
-     "readOnlyHint": false
+     "readOnlyHint": true
     },
-    "description": "List resolved configuration for binary packages",
+    "description": "List resolved configuration for packages (RPMs and SRPMs)",
     "inputSchema": {
      "properties": {
       "accept-all": {
@@ -549,6 +812,11 @@
        "description": "only enable minimal output",
        "type": "boolean"
       },
+      "rpm-file": {
+       "default": "",
+       "description": "Path to a JSON RPM source map file (lists all SRPMs and their binary RPMs)",
+       "type": "string"
+      },
       "synthesize-debug-packages": {
        "default": false,
        "description": "Also synthesize '-debuginfo' packages (per reported package) and '-debugsource' packages (per component)",
@@ -560,9 +828,7 @@
        "type": "boolean"
       }
      },
-     "required": [
-      "project"
-     ],
+     "required": [],
      "type": "object"
     },
     "name": "package-list"

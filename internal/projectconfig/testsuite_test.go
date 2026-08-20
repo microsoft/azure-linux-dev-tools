@@ -12,6 +12,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// validTestSHA is a 40-character hex string for use in tests.
+const validTestSHA = "abcdef0123456789abcdef0123456789abcdef01"
+
+// validLisaConfig returns a valid [projectconfig.LisaConfig] for use in tests.
+func validLisaConfig() *projectconfig.LisaConfig {
+	return &projectconfig.LisaConfig{
+		Framework: projectconfig.GitSourceConfig{
+			GitURL: "https://github.com/microsoft/lisa.git",
+			Ref:    validTestSHA,
+		},
+		TestCases: []string{"verify_cpu_count", "verify_grub"},
+	}
+}
+
 func TestImageCapabilities_EnabledNames(t *testing.T) {
 	t.Run("all enabled", func(t *testing.T) {
 		caps := projectconfig.ImageCapabilities{
@@ -66,6 +80,277 @@ func TestImageConfig_TestNames(t *testing.T) {
 	})
 }
 
+func TestTestSuiteConfig_Validate(t *testing.T) {
+	t.Run("valid pytest config", func(t *testing.T) {
+		testConfig := projectconfig.TestSuiteConfig{
+			Name: "smoke",
+			Type: projectconfig.TestTypePytest,
+			Pytest: &projectconfig.PytestConfig{
+				WorkingDir: "tests",
+				TestPaths:  []string{"cases/"},
+				ExtraArgs:  []string{"--image-path", "{image-path}"},
+			},
+		}
+		assert.NoError(t, testConfig.Validate())
+	})
+
+	t.Run("valid pytest config with install mode", func(t *testing.T) {
+		for _, mode := range []projectconfig.PytestInstallMode{
+			projectconfig.PytestInstallPyproject,
+			projectconfig.PytestInstallRequirements,
+			projectconfig.PytestInstallNone,
+		} {
+			t.Run(string(mode), func(t *testing.T) {
+				testConfig := projectconfig.TestSuiteConfig{
+					Name: "smoke",
+					Type: projectconfig.TestTypePytest,
+					Pytest: &projectconfig.PytestConfig{
+						Install:    mode,
+						WorkingDir: "tests",
+					},
+				}
+				assert.NoError(t, testConfig.Validate())
+			})
+		}
+	})
+
+	t.Run("valid pytest config with empty install mode", func(t *testing.T) {
+		testConfig := projectconfig.TestSuiteConfig{
+			Name: "smoke",
+			Type: projectconfig.TestTypePytest,
+			Pytest: &projectconfig.PytestConfig{
+				WorkingDir: "tests",
+			},
+		}
+		assert.NoError(t, testConfig.Validate())
+	})
+
+	t.Run("invalid install mode", func(t *testing.T) {
+		testConfig := projectconfig.TestSuiteConfig{
+			Name: "smoke",
+			Type: projectconfig.TestTypePytest,
+			Pytest: &projectconfig.PytestConfig{
+				Install: "bad-mode",
+			},
+		}
+		err := testConfig.Validate()
+		require.Error(t, err)
+		require.ErrorIs(t, err, projectconfig.ErrInvalidInstallMode)
+		assert.Contains(t, err.Error(), "bad-mode")
+	})
+
+	t.Run("install mode requires working-dir", func(t *testing.T) {
+		for _, mode := range []projectconfig.PytestInstallMode{
+			projectconfig.PytestInstallPyproject,
+			projectconfig.PytestInstallRequirements,
+		} {
+			t.Run(string(mode), func(t *testing.T) {
+				testConfig := projectconfig.TestSuiteConfig{
+					Name: "smoke",
+					Type: projectconfig.TestTypePytest,
+					Pytest: &projectconfig.PytestConfig{
+						Install: mode,
+						// WorkingDir intentionally omitted.
+					},
+				}
+				err := testConfig.Validate()
+				require.Error(t, err)
+				require.ErrorIs(t, err, projectconfig.ErrMissingTestField)
+				assert.Contains(t, err.Error(), "working-dir")
+			})
+		}
+	})
+
+	t.Run("install none without working-dir is valid", func(t *testing.T) {
+		testConfig := projectconfig.TestSuiteConfig{
+			Name: "smoke",
+			Type: projectconfig.TestTypePytest,
+			Pytest: &projectconfig.PytestConfig{
+				Install: projectconfig.PytestInstallNone,
+			},
+		}
+		assert.NoError(t, testConfig.Validate())
+	})
+
+	t.Run("default install without working-dir is valid", func(t *testing.T) {
+		// Default mode is 'none' (no install) and so doesn't require working-dir.
+		testConfig := projectconfig.TestSuiteConfig{
+			Name:   "smoke",
+			Type:   projectconfig.TestTypePytest,
+			Pytest: &projectconfig.PytestConfig{
+				// Both Install and WorkingDir omitted.
+			},
+		}
+		assert.NoError(t, testConfig.Validate())
+	})
+
+	t.Run("valid lisa config", func(t *testing.T) {
+		testConfig := projectconfig.TestSuiteConfig{
+			Name: "integration",
+			Type: projectconfig.TestTypeLisa,
+			Lisa: validLisaConfig(),
+		}
+		assert.NoError(t, testConfig.Validate())
+	})
+
+	t.Run("pytest missing subtable", func(t *testing.T) {
+		testConfig := projectconfig.TestSuiteConfig{
+			Name: "smoke",
+			Type: projectconfig.TestTypePytest,
+		}
+		err := testConfig.Validate()
+		require.Error(t, err)
+		require.ErrorIs(t, err, projectconfig.ErrMissingTestField)
+		assert.Contains(t, err.Error(), "[pytest]")
+	})
+
+	t.Run("pytest with lisa subtable", func(t *testing.T) {
+		testConfig := projectconfig.TestSuiteConfig{
+			Name:   "smoke",
+			Type:   projectconfig.TestTypePytest,
+			Pytest: &projectconfig.PytestConfig{},
+			Lisa:   validLisaConfig(),
+		}
+		err := testConfig.Validate()
+		require.Error(t, err)
+		require.ErrorIs(t, err, projectconfig.ErrMismatchedTestSubtable)
+	})
+
+	t.Run("lisa missing subtable is valid (optional)", func(t *testing.T) {
+		testConfig := projectconfig.TestSuiteConfig{
+			Name: "integration",
+			Type: projectconfig.TestTypeLisa,
+		}
+		assert.NoError(t, testConfig.Validate())
+	})
+
+	t.Run("lisa missing framework git-url", func(t *testing.T) {
+		cfg := validLisaConfig()
+		cfg.Framework.GitURL = ""
+		testConfig := projectconfig.TestSuiteConfig{
+			Name: "integration",
+			Type: projectconfig.TestTypeLisa,
+			Lisa: cfg,
+		}
+		err := testConfig.Validate()
+		require.Error(t, err)
+		require.ErrorIs(t, err, projectconfig.ErrMissingTestField)
+		assert.Contains(t, err.Error(), "git-url")
+	})
+
+	t.Run("lisa invalid framework ref", func(t *testing.T) {
+		cfg := validLisaConfig()
+		cfg.Framework.Ref = "not-a-sha"
+		testConfig := projectconfig.TestSuiteConfig{
+			Name: "integration",
+			Type: projectconfig.TestTypeLisa,
+			Lisa: cfg,
+		}
+		err := testConfig.Validate()
+		require.Error(t, err)
+		require.ErrorIs(t, err, projectconfig.ErrInvalidGitRef)
+	})
+
+	t.Run("lisa missing test-cases", func(t *testing.T) {
+		cfg := validLisaConfig()
+		cfg.TestCases = nil
+		testConfig := projectconfig.TestSuiteConfig{
+			Name: "integration",
+			Type: projectconfig.TestTypeLisa,
+			Lisa: cfg,
+		}
+		err := testConfig.Validate()
+		require.Error(t, err)
+		require.ErrorIs(t, err, projectconfig.ErrMissingTestField)
+		assert.Contains(t, err.Error(), "test-cases")
+	})
+
+	t.Run("lisa with pytest subtable", func(t *testing.T) {
+		testConfig := projectconfig.TestSuiteConfig{
+			Name:   "integration",
+			Type:   projectconfig.TestTypeLisa,
+			Lisa:   validLisaConfig(),
+			Pytest: &projectconfig.PytestConfig{},
+		}
+		err := testConfig.Validate()
+		require.Error(t, err)
+		require.ErrorIs(t, err, projectconfig.ErrMismatchedTestSubtable)
+	})
+
+	t.Run("unknown test type", func(t *testing.T) {
+		testConfig := projectconfig.TestSuiteConfig{
+			Name: "bad",
+			Type: "unknown-type",
+		}
+		err := testConfig.Validate()
+		require.Error(t, err)
+		assert.ErrorIs(t, err, projectconfig.ErrUnknownTestType)
+	})
+
+	t.Run("missing type returns missing-field error", func(t *testing.T) {
+		testConfig := projectconfig.TestSuiteConfig{
+			Name: "smoke",
+			// Type intentionally omitted.
+		}
+		err := testConfig.Validate()
+		require.Error(t, err)
+		require.ErrorIs(t, err, projectconfig.ErrMissingTestField)
+		assert.Contains(t, err.Error(), "type")
+	})
+}
+
+func TestPytestConfig_EffectiveInstallMode(t *testing.T) {
+	t.Run("default is none", func(t *testing.T) {
+		cfg := &projectconfig.PytestConfig{}
+		assert.Equal(t, projectconfig.PytestInstallNone, cfg.EffectiveInstallMode())
+	})
+
+	t.Run("explicit mode is preserved", func(t *testing.T) {
+		cfg := &projectconfig.PytestConfig{Install: projectconfig.PytestInstallPyproject, WorkingDir: "tests"}
+		assert.Equal(t, projectconfig.PytestInstallPyproject, cfg.EffectiveInstallMode())
+	})
+
+	t.Run("requirements mode", func(t *testing.T) {
+		cfg := &projectconfig.PytestConfig{Install: projectconfig.PytestInstallRequirements}
+		assert.Equal(t, projectconfig.PytestInstallRequirements, cfg.EffectiveInstallMode())
+	})
+}
+
+func TestTestSuiteConfig_MergeUpdatesFrom(t *testing.T) {
+	t.Run("merge overrides non-zero fields", func(t *testing.T) {
+		base := projectconfig.TestSuiteConfig{
+			Name: "smoke",
+			Type: projectconfig.TestTypePytest,
+			Pytest: &projectconfig.PytestConfig{
+				WorkingDir: "tests",
+			},
+		}
+		other := projectconfig.TestSuiteConfig{
+			Description: "Updated description",
+		}
+		require.NoError(t, base.MergeUpdatesFrom(&other))
+		assert.Equal(t, "Updated description", base.Description)
+		assert.Equal(t, "tests", base.Pytest.WorkingDir)
+	})
+
+	t.Run("merge appends test-paths", func(t *testing.T) {
+		base := projectconfig.TestSuiteConfig{
+			Name: "smoke",
+			Type: projectconfig.TestTypePytest,
+			Pytest: &projectconfig.PytestConfig{
+				TestPaths: []string{"cases/"},
+			},
+		}
+		other := projectconfig.TestSuiteConfig{
+			Pytest: &projectconfig.PytestConfig{
+				TestPaths: []string{"extra/"},
+			},
+		}
+		require.NoError(t, base.MergeUpdatesFrom(&other))
+		assert.Equal(t, []string{"cases/", "extra/"}, base.Pytest.TestPaths)
+	})
+}
+
 func TestValidateTestSuiteReferences(t *testing.T) {
 	t.Run("valid references", func(t *testing.T) {
 		cfg := projectconfig.ProjectConfig{
@@ -78,6 +363,10 @@ func TestValidateTestSuiteReferences(t *testing.T) {
 			TestSuites: map[string]projectconfig.TestSuiteConfig{
 				"smoke": {
 					Name: "smoke",
+					Type: projectconfig.TestTypePytest,
+					Pytest: &projectconfig.PytestConfig{
+						WorkingDir: "tests",
+					},
 				},
 			},
 			Components:        make(map[string]projectconfig.ComponentConfig),

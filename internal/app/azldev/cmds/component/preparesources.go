@@ -19,11 +19,12 @@ import (
 type PrepareSourcesOptions struct {
 	ComponentFilter components.ComponentFilter
 
-	OutputDir     string
-	SkipOverlays  bool
-	WithGitRepo   bool
-	Force         bool
-	AllowNoHashes bool
+	OutputDir      string
+	SkipOverlays   bool
+	WithoutGitRepo bool
+	Force          bool
+	AllowNoHashes  bool
+	SkipSources    bool
 }
 
 func prepareOnAppInit(_ *azldev.App, sourceCmd *cobra.Command) {
@@ -68,11 +69,14 @@ Only one component may be selected at a time.`,
 	_ = cmd.MarkFlagDirname("output-dir")
 
 	cmd.Flags().BoolVar(&options.SkipOverlays, "skip-overlays", false, "skip applying overlays to prepared sources")
-	cmd.Flags().BoolVar(&options.WithGitRepo, "with-git", false,
-		"Create a dist-git repository with synthetic commit history (requires a project git repository)")
+	cmd.Flags().BoolVar(&options.WithoutGitRepo, "without-git", false,
+		"Disable dist-git repository creation (enabled by default)")
 	cmd.Flags().BoolVar(&options.Force, "force", false, "delete and recreate the output directory if it already exists")
 	cmd.Flags().BoolVar(&options.AllowNoHashes, "allow-no-hashes", false,
 		"compute missing hashes by downloading source files from their origin")
+	cmd.Flags().BoolVar(&options.SkipSources, "skip-sources", false,
+		"skip downloading fetched sources when preparing the package (useful to extract "+
+			"dist-git metadata when source files are not needed)")
 
 	return cmd
 }
@@ -121,19 +125,12 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 		return err
 	}
 
-	if options.SkipOverlays && options.WithGitRepo {
-		slog.Warn("--with-git has no effect when --skip-overlays is set; " +
+	if options.SkipOverlays && !options.WithoutGitRepo {
+		slog.Warn("dist-git flow has no effect when '--skip-overlays' is set; " +
 			"synthetic history requires overlays to be applied")
 	}
 
-	var preparerOpts []sources.PreparerOption
-	if options.WithGitRepo {
-		preparerOpts = append(preparerOpts, sources.WithGitRepo(env.Config().Project.DefaultAuthorEmail))
-	}
-
-	if options.AllowNoHashes {
-		preparerOpts = append(preparerOpts, sources.WithAllowNoHashes())
-	}
+	preparerOpts := buildPreparerOptions(env, distro, options)
 
 	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, preparerOpts...)
 	if err != nil {
@@ -146,6 +143,36 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 	}
 
 	return nil
+}
+
+// buildPreparerOptions assembles [sources.PreparerOption] values based on the resolved
+// distro and command-line options.
+func buildPreparerOptions(
+	env *azldev.Env,
+	distro sourceproviders.ResolvedDistro,
+	options *PrepareSourcesOptions,
+) []sources.PreparerOption {
+	var opts []sources.PreparerOption
+
+	if !options.WithoutGitRepo && !options.SkipOverlays {
+		opts = append(opts,
+			sources.WithGitRepo(env, env.LockReader(), distro.Version.ReleaseVer),
+			sources.WithDirtyDetection(),
+		)
+	}
+
+	opts = append(opts,
+		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)))
+
+	if options.AllowNoHashes {
+		opts = append(opts, sources.WithAllowNoHashes())
+	}
+
+	if options.SkipSources {
+		opts = append(opts, sources.WithSkipLookaside())
+	}
+
+	return opts
 }
 
 // CheckOutputDir verifies the output directory state before source preparation.

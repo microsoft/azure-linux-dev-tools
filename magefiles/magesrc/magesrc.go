@@ -14,7 +14,7 @@ import (
 
 var ErrSrcCode = errors.New("source code generation failed")
 
-// Generate runs the code generation tools.
+// Generate runs the code generation tools needed for building.
 func Generate() error {
 	mageutil.MagePrintln(mageutil.MsgStart, "Running code generation...")
 

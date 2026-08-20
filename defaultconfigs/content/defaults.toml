@@ -3,3 +3,29 @@ default-author-email = "azurelinux@microsoft.com"
 
 [tools.imageCustomizer]
 containerTag = "mcr.microsoft.com/azurelinux/imagecustomizer:1"
+
+# A standard "channelized" layout with two channels (`base`, `sdk`) and three
+# kinds of sub-repo per channel (binary, debug, source). Pair this template
+# with one or more `[resources.rpm-repo-sets.*]` entries that set `base-uri`
+# to the URL prefix of a published tree.
+[resources.rpm-repo-set-templates.azl-standard]
+description = "Standard base/sdk x binary/debug/source layout"
+subrepos = [
+    { name = "base",       kind = "binary", subpath = "base/$basearch" },
+    { name = "base-debug", kind = "debug",  subpath = "base/debuginfo/$basearch" },
+    { name = "base-src",   kind = "source", subpath = "base/srpms" },
+    { name = "sdk",        kind = "binary", subpath = "sdk/$basearch" },
+    { name = "sdk-debug",  kind = "debug",  subpath = "sdk/debuginfo/$basearch" },
+    { name = "sdk-src",    kind = "source", subpath = "sdk/srpms" },
+]
+
+# Standard Koji dist-repo layout. dist-repos publish one rpm-md tree per
+# arch under `<arch>/`, a parallel `<arch>/debug/` tree for debuginfo
+# packages, and a single `src/` tree for SRPMs.
+[resources.rpm-repo-set-templates.koji-dist-repo]
+description = "Koji dist-repo layout: per-arch binary + debug trees plus a src/ tree"
+subrepos = [
+    { name = "binary", kind = "binary", subpath = "$basearch" },
+    { name = "debug",  kind = "debug",  subpath = "$basearch/debug" },
+    { name = "src",    kind = "source", subpath = "src" },
+]

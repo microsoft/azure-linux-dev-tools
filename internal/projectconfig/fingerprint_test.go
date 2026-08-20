@@ -5,6 +5,7 @@ package projectconfig_test
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
@@ -32,7 +33,9 @@ func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
 		reflect.TypeFor[projectconfig.SpecSource](),
 		reflect.TypeFor[projectconfig.DistroReference](),
 		reflect.TypeFor[projectconfig.SourceFileReference](),
+		reflect.TypeFor[projectconfig.Origin](),
 		reflect.TypeFor[projectconfig.ReleaseConfig](),
+		reflect.TypeFor[projectconfig.ComponentRenderConfig](),
 	}
 
 	// Maps "StructName.FieldName" for every field that should carry a
@@ -44,6 +47,11 @@ func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
 		"ComponentConfig.Name": true,
 		// ComponentConfig.SourceConfigFile — internal bookkeeping reference, not a build input.
 		"ComponentConfig.SourceConfigFile": true,
+		// ComponentConfig.RenderedSpecDir — derived output path that varies by checkout location.
+		"ComponentConfig.RenderedSpecDir": true,
+		// ComponentConfig.Locked — runtime lock state populated by resolver, not a build input.
+		// Lock data is an output of the update command, not a config-level input.
+		"ComponentConfig.Locked": true,
 
 		// ComponentBuildConfig.Failure — CI policy (expected failure tracking), not a build input.
 		"ComponentBuildConfig.Failure": true,
@@ -56,8 +64,20 @@ func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
 		// PackageConfig.Publish — post-build routing (where to publish), not a build input.
 		"PackageConfig.Publish": true,
 
+		// ComponentConfig.Publish — post-build routing (where to publish), not a build input.
+		"ComponentConfig.Publish": true,
+
 		// ComponentOverlay.Description — human-readable documentation for the overlay.
 		"ComponentOverlay.Description": true,
+		// ComponentOverlay.Source — absolute path that varies by checkout location.
+		// Overlay content is hashed separately by ComputeIdentity.
+		"ComponentOverlay.Source": true,
+		// ComponentOverlay.Metadata — documentation describing overlay intent and provenance.
+		"ComponentOverlay.Metadata": true,
+
+		// ComponentConfig.OverlayFiles — affects only where overlays are sourced from, not
+		// their content; the resulting overlays are fingerprinted normally.
+		"ComponentConfig.OverlayFiles": true,
 
 		// SourceFileReference.Component — back-reference to parent, not a build input.
 		"SourceFileReference.Component": true,
@@ -67,10 +87,21 @@ func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
 		// Excluding this prevents a snapshot bump from marking all upstream components as changed.
 		"DistroReference.Snapshot": true,
 
-		// SourceFileReference.Origin — download location metadata (URI, type), not a build input.
+		// Origin.Type and Origin.Uri — download location metadata, not build inputs.
 		// The file content is already captured by Filename + Hash; changing a CDN URL should not
-		// trigger a rebuild.
-		"SourceFileReference.Origin": true,
+		// trigger a rebuild. Script and MockPackages remain fingerprinted because they determine
+		// what the generated artifact contains.
+		"Origin.Type": true,
+		"Origin.Uri":  true,
+
+		// SourceFileReference.ReplaceReason — human documentation for why an upstream entry is
+		// being replaced. ReplaceUpstream itself remains in the fingerprint because flipping it
+		// changes the resulting 'sources' file content.
+		"SourceFileReference.ReplaceReason": true,
+
+		// SpecSource.Path — absolute path that varies by checkout location.
+		// Spec content identity is captured separately via SourceIdentity.
+		"SpecSource.Path": true,
 	}
 
 	// Collect all actual exclusions found via reflection, and flag invalid tag values.
@@ -83,15 +114,29 @@ func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
 
 			tag := field.Tag.Get("fingerprint")
 
-			switch tag {
+			// hashstructure tags are `name,option,...`; the name part decides
+			// inclusion ("-" excludes, anything else includes) and the options
+			// tune how an included field is hashed.
+			name, options, _ := strings.Cut(tag, ",")
+
+			switch name {
 			case "":
-				// No tag — included by default (the safe default).
+				// Empty name — included by default (the safe default). The only
+				// option we permit is `omitempty`, which makes hashstructure skip
+				// the field when it holds its zero value (so an unset field never
+				// perturbs the hash) while still hashing it when set. Reject any
+				// other option as a likely typo.
+				if options != "" && options != "omitempty" {
+					assert.Failf(t, "invalid fingerprint tag",
+						"field %q has unrecognised fingerprint tag option %q — "+
+							"only `omitempty` is supported on included fields", key, options)
+				}
 			case "-":
 				actualExclusions[key] = true
 			default:
-				// hashstructure only recognises "" (include) and "-" (exclude).
-				// Any other value is silently treated as included, which is
-				// almost certainly a typo.
+				// hashstructure only recognises "" (include) and "-" (exclude)
+				// for the name part. Any other value is silently treated as
+				// included, which is almost certainly a typo.
 				assert.Failf(t, "invalid fingerprint tag",
 					"field %q has unrecognised fingerprint tag value %q — "+
 						"only `fingerprint:\"-\"` (exclude) is valid; "+

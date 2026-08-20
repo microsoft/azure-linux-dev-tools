@@ -8,15 +8,18 @@ For field-level reference documentation, see the [Reference](../reference/config
 
 azldev searches for its root config file (`azldev.toml`) by walking up the directory tree from the current working directory. The first `azldev.toml` found becomes the project root, and all relative paths in the configuration are resolved from that file's location.
 
+In addition to the project config, azldev also looks for an optional user-level config file at `${XDG_CONFIG_HOME:-$HOME/.config}/azldev/config.toml`. If present, it is loaded after the project config and may override its settings; any `--config-file` extras still override the user config (see [Load Order](#load-order)). If the file is missing, it is silently ignored.
+
 ## Load Order
 
-Configuration is loaded in three phases, in this order:
+Configuration is loaded in four phases, in this order:
 
 1. **Embedded defaults** — azldev ships with built-in default values (e.g., tool container tags). These are loaded first and provide baseline configuration.
-2. **Project config** — the `azldev.toml` file and all of its transitive includes.
-3. **Extra config files** — any additional config files passed via `--config-file` CLI flags.
+2. **Project config** — the `azldev.toml` file and all of its transitive includes (project-specific).
+3. **User config** — an optional user-level config file at `${XDG_CONFIG_HOME:-$HOME/.config}/azldev/config.toml` (user-specific). If the file does not exist, this phase is skipped silently. When present, the file (and any of its transitive `includes`) is loaded after the project config so that user-level settings override the project config. The location follows the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/), so on Linux the default path is `~/.config/azldev/config.toml`.
+4. **Extra config files** — any additional config files passed via `--config-file` CLI flags (invocation-specific). These are loaded last and have the highest priority, so an explicit invocation can always override both the project and the user config.
 
-Later phases can override values from earlier phases according to the [merge rules](#merge-rules) described below.
+Later phases can override values from earlier phases according to the [merge rules](#merge-rules) described below. The progression project → user → invocation matches the conventional priority order used by most command-line tools.
 
 ## Include Resolution
 
@@ -70,16 +73,22 @@ When multiple files define the same top-level section, azldev applies section-sp
 
 | Section | Merge behavior | Duplicates across files |
 |---------|---------------|------------------------|
-| `components` | Additive (union of all component definitions) | **Error** — each component name must be unique across all files |
+| `components` | Additive with field-level merge | **Allowed** — fields from later files override matching fields in earlier files |
 | `component-groups` | Additive (union of all group definitions) | **Error** — each group name must be unique across all files |
 | `images` | Additive (union of all image definitions) | **Error** — each image name must be unique across all files |
 | `distros` | Additive with field-level merge | **Allowed** — fields from later files override matching fields in earlier files |
 | `project` | Field-level override | N/A (single struct, not a map) |
 | `tools` | Field-level override | N/A (single struct, not a map) |
 
-### Components, Component Groups, and Images
+### Components
 
-These are strict-union maps: each name may appear in exactly one config file across the entire include tree. If two files both define `[components.curl]`, azldev reports an error. This prevents accidental shadowing and makes it clear where each definition lives.
+Component definitions are merged additively. If the same component name (e.g., `curl`) appears in multiple files, later files' non-empty fields override earlier ones. This allows splitting a component definition across files — for example, defining the component's general properties in one file and overriding specific details in another.
+
+> **Note:** Slice fields (like `overlays`) are **appended**, not replaced, following the same merge behavior used by component configuration inheritance.
+
+### Component Groups and Images
+
+These are strict-union maps: each name may appear in exactly one config file across the entire include tree. If two files both define `[component-groups.my-group]` or `[images.my-image]`, azldev reports an error. This prevents accidental shadowing and makes it clear where each definition lives.
 
 ### Distros
 
@@ -96,8 +105,9 @@ These are simple structs (not maps). Later files' non-empty fields override earl
 Component configuration supports a layered inheritance model. When azldev resolves the effective configuration for a component, it assembles it from multiple sources in this order (later layers override earlier ones):
 
 1. **Distro version defaults** — the `default-component-config` defined in the distro version (e.g., `[distros.azurelinux.versions.'4.0'.default-component-config]`)
-2. **Component group defaults** — the `default-component-config` from any component groups the component belongs to (applied in alphabetical order by group name)
-3. **Component-specific config** — the component's own explicit configuration
+2. **Project-level defaults** — the `default-component-config` defined at the project root
+3. **Component group defaults** — the `default-component-config` from any component groups the component belongs to (applied in alphabetical order by group name)
+4. **Component-specific config** — the component's own explicit configuration
 
 This inheritance is applied lazily at resolution time, not at config load time.
 

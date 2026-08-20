@@ -296,3 +296,85 @@ func (d *noOpDownloader) ExtractSourcesFromRepo(
 ) error {
 	return nil
 }
+
+// --- ResolveIdentity always resolves from upstream ---
+
+// TestFedoraProvider_ResolveIdentity_IgnoresLockedData verifies that
+// ResolveIdentity does not short-circuit on locked data — it always
+// resolves from upstream. Callers that want the cached locked commit should
+// read ComponentLockData.UpstreamCommit directly.
+func TestFedoraProvider_ResolveIdentity_IgnoresLockedData(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockGitProvider := git_test.NewMockGitProvider(ctrl)
+
+	provider, err := sourceproviders.NewFedoraSourcesProviderImpl(
+		afero.NewMemMapFs(),
+		newNoOpDryRunnable(),
+		mockGitProvider,
+		newNoOpDownloader(),
+		testResolvedDistro(),
+		retry.Disabled(),
+	)
+	require.NoError(t, err)
+
+	headCommit := "fresh-upstream-commit"
+
+	comp := newMockCompWithConfig(ctrl, testPackageName, &projectconfig.ComponentConfig{
+		Name: testPackageName,
+		Spec: projectconfig.SpecSource{
+			SourceType: projectconfig.SpecSourceTypeUpstream,
+			// No UpstreamCommit pin → resolves via clone + snapshot/HEAD.
+		},
+		Locked: &projectconfig.ComponentLockData{
+			UpstreamCommit: "stale-locked-commit",
+		},
+	})
+
+	// Expects clone even though Locked data is present.
+	mockGitProvider.EXPECT().
+		Clone(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil)
+	mockGitProvider.EXPECT().
+		GetCurrentCommit(gomock.Any(), gomock.Any()).
+		Return(headCommit, nil)
+
+	identity, resolveErr := provider.ResolveIdentity(t.Context(), comp)
+	require.NoError(t, resolveErr)
+	assert.Equal(t, headCommit, identity,
+		"should resolve from upstream, ignoring locked data")
+}
+
+// TestFedoraProvider_ResolveIdentity_UsesConfigPin verifies that
+// when Spec.UpstreamCommit is set, ResolveIdentity returns it
+// directly (even if Locked data is also present).
+func TestFedoraProvider_ResolveIdentity_UsesConfigPin(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	mockGitProvider := git_test.NewMockGitProvider(ctrl)
+
+	provider, err := sourceproviders.NewFedoraSourcesProviderImpl(
+		afero.NewMemMapFs(),
+		newNoOpDryRunnable(),
+		mockGitProvider,
+		newNoOpDownloader(),
+		testResolvedDistro(),
+		retry.Disabled(),
+	)
+	require.NoError(t, err)
+
+	comp := newMockCompWithConfig(ctrl, testPackageName, &projectconfig.ComponentConfig{
+		Name: testPackageName,
+		Spec: projectconfig.SpecSource{
+			SourceType:     projectconfig.SpecSourceTypeUpstream,
+			UpstreamCommit: "config-pinned-commit",
+		},
+		Locked: &projectconfig.ComponentLockData{
+			UpstreamCommit: "locked-commit-ignored",
+		},
+	})
+
+	// No clone expected — pinned commit returned directly.
+	identity, resolveErr := provider.ResolveIdentity(t.Context(), comp)
+	require.NoError(t, resolveErr)
+	assert.Equal(t, "config-pinned-commit", identity,
+		"config pin should be used for identity calculation")
+}

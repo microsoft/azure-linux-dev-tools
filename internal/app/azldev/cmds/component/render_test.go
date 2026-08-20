@@ -44,6 +44,10 @@ func TestNewRenderCmd_Flags(t *testing.T) {
 	cleanStaleFlag := cmd.Flags().Lookup("clean-stale")
 	require.NotNil(t, cleanStaleFlag, "clean-stale flag should be registered")
 	assert.Equal(t, "false", cleanStaleFlag.DefValue)
+
+	checkOnlyFlag := cmd.Flags().Lookup("check-only")
+	require.NotNil(t, checkOnlyFlag, "check-only flag should be registered")
+	assert.Equal(t, "false", checkOnlyFlag.DefValue)
 }
 
 func TestRenderCmd_NoComponents(t *testing.T) {
@@ -83,4 +87,17 @@ func TestRenderCmd_CleanStaleRequiresAll(t *testing.T) {
 	// --clean-stale without -a should fail.
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--clean-stale requires -a")
+}
+
+func TestRenderCmd_CleanStaleCustomOutDirRequiresForce(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	cmd := componentcmds.NewRenderCmd()
+	cmd.SetArgs([]string{"-a", "-o", "SPECS", "--clean-stale"})
+
+	err := cmd.ExecuteContext(testEnv.Env)
+
+	// --clean-stale with -o but without -f should fail.
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--clean-stale with --output-dir requires --force")
 }

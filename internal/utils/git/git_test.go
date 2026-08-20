@@ -5,8 +5,12 @@ package git_test
 
 import (
 	"context"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx/opctx_test"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/externalcmd"
@@ -228,4 +232,110 @@ func TestCloneWithMetadataOnly(t *testing.T) {
 	assert.DirExists(t, filepath.Join(destDir, testGitDir))
 	// --no-checkout means the working tree file should NOT be present.
 	assert.NoFileExists(t, filepath.Join(destDir, testRepoReadmeFile))
+}
+
+func TestGetCommitHashBeforeDate_FirstParentOnly(t *testing.T) {
+	// Verify that GetCommitHashBeforeDate returns a first-parent commit
+	// even when a side-branch commit has a more recent timestamp that
+	// still falls before the snapshot date.
+	//
+	// Graph:
+	//   M  ← merge (2024-05-01), parents: [B, S]  ← HEAD (main)
+	//   |\
+	//   B  S ← S on side branch (2024-04-01), B on main (2024-02-01)
+	//   |  |
+	//   A  R ← R side-branch root (2024-03-01), A main root (2024-01-01)
+	//
+	// With snapshot date 2024-04-15:
+	//   All-parent walk would pick S (2024-04-01, closest before snapshot)
+	//   First-parent walk should pick B (2024-02-01, latest first-parent before snapshot)
+	repoDir := t.TempDir()
+
+	// Helper to run git commands in the repo.
+	runGit := func(args ...string) string {
+		t.Helper()
+
+		cmd := exec.CommandContext(t.Context(), "git", append([]string{"-C", repoDir}, args...)...)
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v failed: %s", args, out)
+
+		return string(out)
+	}
+
+	// Helper to commit with both author and committer dates set.
+	commitWithDate := func(msg, date string) {
+		t.Helper()
+
+		cmd := exec.CommandContext(t.Context(), "git", "-C", repoDir, "commit", "-m", msg, "--date="+date)
+		cmd.Env = append(os.Environ(), "GIT_COMMITTER_DATE="+date)
+
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git commit failed: %s", out)
+	}
+
+	// Init repo.
+	runGit("init", "--initial-branch=main")
+	runGit("config", "user.email", "test@test.com")
+	runGit("config", "user.name", "Test")
+
+	// Commit A — main root (2024-01-01).
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "file.txt"), []byte("a"), 0o600))
+
+	runGit("add", ".")
+	commitWithDate("A: main root", "2024-01-01T00:00:00Z")
+
+	// Commit B — main second commit (2024-02-01).
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "file.txt"), []byte("b"), 0o600))
+
+	runGit("add", ".")
+	commitWithDate("B: main update", "2024-02-01T00:00:00Z")
+
+	mainCommitB := strings.TrimSpace(runGit("rev-parse", "HEAD"))
+
+	// Create side branch from A.
+	runGit("checkout", "-b", "side", "HEAD~1")
+
+	// Commit R — side-branch root (2024-03-01).
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "side.txt"), []byte("r"), 0o600))
+
+	runGit("add", ".")
+	commitWithDate("R: side root", "2024-03-01T00:00:00Z")
+
+	// Commit S — side-branch tip (2024-04-01), newer than B.
+	require.NoError(t, os.WriteFile(filepath.Join(repoDir, "side.txt"), []byte("s"), 0o600))
+
+	runGit("add", ".")
+	commitWithDate("S: side update", "2024-04-01T00:00:00Z")
+
+	// Back to main, merge side branch with date 2024-05-01.
+	runGit("checkout", "main")
+
+	mergeCmd := exec.CommandContext(t.Context(), "git", "-C", repoDir, "merge", "side", "--no-ff",
+		"-m", "M: merge side into main")
+
+	mergeCmd.Env = append(os.Environ(), "GIT_COMMITTER_DATE=2024-05-01T00:00:00Z")
+
+	mergeOut, mergeErr := mergeCmd.CombinedOutput()
+	require.NoError(t, mergeErr, "merge failed: %s", mergeOut)
+
+	// Now test: snapshot at 2024-04-15 should pick B (first-parent),
+	// not S (side-branch, even though S is newer and before snapshot).
+	ctrl := gomock.NewController(t)
+
+	cmdFactory, err := externalcmd.NewCmdFactory(
+		opctx_test.NewNoOpMockDryRunnable(ctrl),
+		opctx_test.NewNoOpMockEventListener(ctrl),
+	)
+	require.NoError(t, err)
+
+	provider, err := git.NewGitProviderImpl(opctx_test.NewNoOpMockEventListener(ctrl), cmdFactory)
+	require.NoError(t, err)
+
+	snapshotDate := time.Date(2024, 4, 15, 0, 0, 0, 0, time.UTC)
+
+	resolved, err := provider.GetCommitHashBeforeDate(t.Context(), repoDir, snapshotDate)
+	require.NoError(t, err)
+
+	assert.Equal(t, mainCommitB, resolved,
+		"should resolve to first-parent commit B, not side-branch commit S")
 }

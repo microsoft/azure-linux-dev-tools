@@ -10,12 +10,11 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
-	"github.com/brunoga/deep"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
+	"github.com/microsoft/azure-linux-dev-tools/internal/fingerprint"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 )
@@ -26,6 +25,23 @@ var ErrComponentGroupNotFound = errors.New("component group not found")
 // Resolver is a utility for resolving components in an environment.
 type Resolver struct {
 	env *azldev.Env
+	// SuppressLockWarnings disables advisory warnings emitted during lock
+	// population (e.g., staleness warning when config pin differs from locked
+	// commit). Set this for commands that are about to refresh the lock
+	// themselves (e.g., 'component update') to avoid noise telling the user
+	// to do what they're already doing.
+	SuppressLockWarnings bool
+	// CheckFreshness enables fingerprint-based freshness computation during
+	// component resolution. When true, each component's
+	// [projectconfig.ComponentLockData.Freshness] is set based on comparing
+	// stored hashes to recomputed ones. When false (default), freshness
+	// remains [projectconfig.FreshnessUnknown].
+	//
+	// Off by default because most commands (build, render, prepare-sources)
+	// consume locked state as-is and don't need to know whether it's stale.
+	// Only 'component update' enables this — it uses the freshness status to
+	// decide which components need re-resolution and which can be skipped.
+	CheckFreshness bool
 }
 
 // NewResolver constructs a new [Resolver] for the given environment.
@@ -37,6 +53,12 @@ func NewResolver(env *azldev.Env) *Resolver {
 
 // Given a component filter, finds all components defined in the environment that match the filter.
 func (r *Resolver) FindComponents(filter *ComponentFilter) (components *ComponentSet, err error) {
+	// The filter's SkipLockValidation field is the primary control. When
+	// created via AddComponentFilterOptionsToCommand, its default is false
+	// (validation on). Commands that write locks (update) or are read-only
+	// (list) explicitly set it to true.
+	skipValidation := filter.SkipLockValidation
+
 	// For usability's sake, detect if the caller/user forgot to specify *any* criteria.
 	if filter.HasNoCriteria() {
 		slog.Warn("No component selection options were given, no components will be selected.")
@@ -46,7 +68,14 @@ func (r *Resolver) FindComponents(filter *ComponentFilter) (components *Componen
 
 	// If we were asked to include all components, then it's not even worth looking at anything else.
 	if filter.IncludeAllComponents {
-		return r.FindAllComponents()
+		allComps, findErr := r.FindAllComponents()
+		if findErr != nil {
+			return allComps, findErr
+		}
+
+		r.warnOnLockDrift(allComps)
+
+		return allComps, r.validateLockFiles(allComps, true, skipValidation)
 	}
 
 	components = NewComponentSet()
@@ -75,7 +104,9 @@ func (r *Resolver) FindComponents(filter *ComponentFilter) (components *Componen
 		}
 	}
 
-	return components, err
+	r.warnOnLockDrift(components)
+
+	return components, r.validateLockFiles(components, false, skipValidation)
 }
 
 // Finds *all* components defined in the environment.
@@ -99,7 +130,9 @@ func (r *Resolver) FindAllComponents() (components *ComponentSet, err error) {
 			var component Component
 
 			// Resolve the config for this group member.
-			component, err = r.getComponentFromNameAndSpecPath(groupMember.ComponentName, groupMember.SpecPath)
+			component, err = r.getComponentFromNameAndSpecPath(
+				groupMember.ComponentName, groupMember.SpecPath, []string{groupName},
+			)
 			if err != nil {
 				return components, fmt.Errorf("failed to enumerate components in group '%s':\n%w", groupName, err)
 			}
@@ -118,7 +151,9 @@ func (r *Resolver) FindAllComponents() (components *ComponentSet, err error) {
 		var updatedComponentConfig *projectconfig.ComponentConfig
 
 		// Apply defaults from the loaded distro config...
-		updatedComponentConfig, err = applyInheritedDefaultsToComponent(r.env, componentConfig)
+		updatedComponentConfig, err = applyInheritedDefaultsToComponent(
+			r.env, componentConfig, overlayFilesReferenceDir(componentConfig, ""), nil,
+		)
 		if err != nil {
 			return components, err
 		}
@@ -313,6 +348,48 @@ func componentGroupExcludesSpec(
 	return false, nil
 }
 
+func componentGroupMatchesSpecPath(
+	group *projectconfig.ComponentGroupConfig, specPath string,
+) (matches bool, err error) {
+	for _, pattern := range group.SpecPathPatterns {
+		matched, err := doublestar.PathMatch(pattern, specPath)
+		if err != nil {
+			return false, fmt.Errorf(
+				"failed to compare %#q against spec pattern %#q:\n%w", specPath, pattern, err)
+		}
+
+		if !matched {
+			continue
+		}
+
+		excludes, err := componentGroupExcludesSpec(group, specPath)
+		if err != nil {
+			return false, err
+		}
+
+		return !excludes, nil
+	}
+
+	return false, nil
+}
+
+func componentGroupNamesForSpecPath(env *azldev.Env, specPath string) ([]string, error) {
+	var groupNames []string
+
+	for groupName, group := range env.Config().ComponentGroups {
+		matches, err := componentGroupMatchesSpecPath(&group, specPath)
+		if err != nil {
+			return nil, err
+		}
+
+		if matches {
+			groupNames = append(groupNames, groupName)
+		}
+	}
+
+	return groupNames, nil
+}
+
 func (r *Resolver) addComponentsBySpecPathToSet(specPath string, components *ComponentSet) error {
 	var component Component
 
@@ -365,7 +442,9 @@ func (r *Resolver) addComponentsByGroupNameToSet(groupName string, components *C
 	for _, groupMember := range componentGroup.Components {
 		var component Component
 
-		component, err = r.getComponentFromNameAndSpecPath(groupMember.ComponentName, groupMember.SpecPath)
+		component, err = r.getComponentFromNameAndSpecPath(
+			groupMember.ComponentName, groupMember.SpecPath, []string{groupName},
+		)
 		if err != nil {
 			return fmt.Errorf(
 				"failed to enumerate components in group '%s':\n%w", groupName, err)
@@ -391,7 +470,12 @@ func (r *Resolver) getComponentForSpecPath(specPath string) (component Component
 		return component, fmt.Errorf("failed to verify spec '%s' exists:\n%w", specPath, statErr)
 	}
 
-	return r.getComponentFromNameAndSpecPath(name, specPath)
+	groupNames, err := componentGroupNamesForSpecPath(r.env, specPath)
+	if err != nil {
+		return component, err
+	}
+
+	return r.getComponentFromNameAndSpecPath(name, specPath, groupNames)
 }
 
 // Given a path to a .spec file, deduce the component's name.
@@ -408,7 +492,9 @@ func deduceComponentNameFromSpec(specPath string) string {
 }
 
 // Finds the named component in the provided environment; returns its configuration. Returns error if it can't be found.
-func (r *Resolver) getComponentFromNameAndSpecPath(name, specPath string) (component Component, err error) {
+func (r *Resolver) getComponentFromNameAndSpecPath(
+	name, specPath string, groupNames []string,
+) (component Component, err error) {
 	config := r.env.Config()
 	if config == nil {
 		return component, errors.New("no project config loaded")
@@ -429,7 +515,11 @@ func (r *Resolver) getComponentFromNameAndSpecPath(name, specPath string) (compo
 	var updatedComponentConfig *projectconfig.ComponentConfig
 
 	// Apply inherited defaults to the component.
-	updatedComponentConfig, err = applyInheritedDefaultsToComponent(r.env, foundComponentConfig)
+	overlayReferenceDir := overlayFilesReferenceDir(foundComponentConfig, specPath)
+
+	updatedComponentConfig, err = applyInheritedDefaultsToComponent(
+		r.env, foundComponentConfig, overlayReferenceDir, groupNames,
+	)
 	if err != nil {
 		return component, err
 	}
@@ -467,58 +557,381 @@ func (r *Resolver) createComponentFromConfig(componentConfig *projectconfig.Comp
 		componentConfig.Release.Calculation = projectconfig.ReleaseCalculationAuto
 	}
 
+	// Populate locked state onto the component config. This makes lock data
+	// available to all downstream consumers (render, build, prepare-sources,
+	// diff-sources) without each needing lock-file awareness.
+	r.populateFromLock(componentConfig)
+
 	return &resolvedComponent{
 		env:    r.env,
 		config: *componentConfig,
 	}, nil
 }
 
-// Given an explicit component config, apply all inherited defaults.
-func applyInheritedDefaultsToComponent(
-	env *azldev.Env, component projectconfig.ComponentConfig,
-) (result *projectconfig.ComponentConfig, err error) {
-	var distroVer projectconfig.DistroVersionDefinition
-
-	// Find the distro.
-	_, distroVer, err = env.Distro()
-	if err != nil {
-		return result, fmt.Errorf("failed to resolve current distro:\n%w", err)
+// populateFromLock reads lock file data and attaches it to the component config
+// as [projectconfig.ComponentLockData]. This centralizes lock-file consumption so
+// all downstream commands (render, build, prepare-sources, diff-sources) get
+// locked state automatically via config.Locked.
+//
+// Works for both upstream and local components. For local components, the lock
+// file will have empty UpstreamCommit/ImportCommit fields but a populated
+// InputFingerprint.
+//
+// IMPORTANT: This must NEVER overwrite user-specified config values. Lock data
+// goes into the separate Locked field, preserving the manifest/lock boundary:
+// Spec.UpstreamCommit = user intent, Locked.UpstreamCommit = resolved reality.
+func (r *Resolver) populateFromLock(config *projectconfig.ComponentConfig) {
+	reader := r.env.LockReader()
+	if reader == nil {
+		return
 	}
 
-	// Start by deep-cloning the distro defaults, using them as a template.
-	result = &projectconfig.ComponentConfig{}
-	*result = deep.MustCopy(distroVer.DefaultComponentConfig)
+	// Distinguish "not found" from real errors. A missing lock is normal
+	// (new component, or lock validation disabled); a corrupt/unreadable
+	// lock should be surfaced so it doesn't silently fall back to live
+	// upstream resolution.
+	exists, existsErr := reader.Exists(config.Name)
+	if existsErr != nil {
+		slog.Warn("Cannot check lock file", "component", config.Name, "error", existsErr)
 
-	// Find all component groups that this component belongs to and apply their defaults.
-	if groupNames, ok := env.Config().GroupsByComponent[component.Name]; ok {
-		// Sort the group names for deterministic layering of defaults.
-		sortedGroupNames := slices.Clone(groupNames)
-		sort.Strings(sortedGroupNames)
+		return
+	}
 
-		for _, groupName := range sortedGroupNames {
-			// Find the group.
-			groupConfig, ok := env.Config().ComponentGroups[groupName]
-			if !ok {
-				return result, fmt.Errorf("component group not found: %s", groupName)
-			}
+	if !exists {
+		return
+	}
 
-			// Apply its defaults.
-			err = result.MergeUpdatesFrom(&groupConfig.DefaultComponentConfig)
-			if err != nil {
-				return result, fmt.Errorf(
-					"failed to apply defaults from component group '%s' to config for component '%s':\n%w",
-					groupName, component.Name, err,
-				)
-			}
+	lock, err := reader.Get(config.Name)
+	if err != nil {
+		slog.Warn("Lock file exists but is unreadable (corrupt or unsupported version)",
+			"component", config.Name, "error", err)
+
+		return
+	}
+
+	config.Locked = &projectconfig.ComponentLockData{
+		UpstreamCommit:      lock.UpstreamCommit,
+		ImportCommit:        lock.ImportCommit,
+		ManualBump:          lock.ManualBump,
+		InputFingerprint:    lock.InputFingerprint,
+		ResolutionInputHash: lock.ResolutionInputHash,
+	}
+
+	if r.CheckFreshness {
+		r.computeFreshnessStatus(config)
+	}
+
+	slog.Debug("Populated lock data", "component", config.Name,
+		"commit", lock.UpstreamCommit, "freshness", config.Locked.Freshness)
+}
+
+// computeFreshnessStatus compares current config state to stored lock data.
+// A component is [projectconfig.FreshnessCurrent] only when both:
+//   - InputFingerprint matches (build inputs unchanged)
+//   - ResolutionInputHash matches (resolution inputs like snapshot unchanged)
+//
+// If either differs, the component is [projectconfig.FreshnessStale].
+// [projectconfig.ComponentLockData.ResolutionStale] is set separately so
+// callers can distinguish "need re-resolution" from "reuse locked commit."
+//
+// Left as [projectconfig.FreshnessUnknown] when comparison isn't possible
+// (missing stored hash, distro error, etc.).
+func (r *Resolver) computeFreshnessStatus(config *projectconfig.ComponentConfig) {
+	if config.Locked == nil {
+		return
+	}
+
+	// Freshness optimization only applies to upstream components. Local
+	// components resolve via filesystem hashing (cheap), and their empty
+	// UpstreamCommit can't serve as source identity for fingerprint checks.
+	if config.Spec.SourceType != projectconfig.SpecSourceTypeUpstream {
+		return
+	}
+
+	// Need at least one stored hash to compare against.
+	if config.Locked.InputFingerprint == "" && config.Locked.ResolutionInputHash == "" {
+		return
+	}
+
+	// Check resolution inputs (cheap, no I/O beyond distro resolution).
+	resInputs, resolveErr := BuildUpstreamCommitResolutionInputs(r.env, config)
+	if resolveErr != nil {
+		slog.Debug("Cannot compute resolution hash (distro resolve failed)",
+			"component", config.Name, "error", resolveErr)
+
+		return
+	}
+
+	resolutionHash := fingerprint.ComputeResolutionHash(resInputs)
+
+	// HEAD-tracking components (no snapshot, no pin) resolve to whatever
+	// the remote branch HEAD is at call time. This is inherently
+	// non-deterministic — the same resolution inputs produce different
+	// commits when upstream pushes new code. The freshness optimization
+	// assumes "same inputs → same commit," which doesn't hold here.
+	// Always mark these as stale so they re-resolve every run.
+	if resInputs.Snapshot == "" && resInputs.UpstreamCommitPin == "" {
+		config.Locked.ResolutionStale = true
+		config.Locked.Freshness = projectconfig.FreshnessStale
+
+		slog.Debug("Component tracks HEAD (no snapshot/pin); always re-resolves",
+			"component", config.Name)
+
+		return
+	}
+
+	switch {
+	case config.Locked.ResolutionInputHash == "":
+		// Legacy lock — ResolutionInputHash was not populated. Force full
+		// re-resolution to ensure the commit matches current resolution
+		// inputs. The old commit may have been resolved under different
+		// snapshot/distro settings.
+		config.Locked.ResolutionStale = true
+		config.Locked.Freshness = projectconfig.FreshnessStale
+
+		slog.Debug("Legacy lock missing resolution hash; will re-resolve",
+			"component", config.Name)
+
+		return
+
+	case config.Locked.ResolutionInputHash != resolutionHash:
+		config.Locked.ResolutionStale = true
+		config.Locked.Freshness = projectconfig.FreshnessStale
+
+		slog.Debug("Component is stale (resolution inputs changed)",
+			"component", config.Name,
+			"stored", config.Locked.ResolutionInputHash,
+			"computed", resolutionHash)
+
+		// Skip fingerprint check — resolution is stale, so we'll
+		// re-resolve regardless. Fingerprint recomputed after resolve.
+		return
+	}
+
+	// Check input fingerprint (requires distro for release ver + overlay I/O).
+	r.checkFingerprintFreshness(config)
+}
+
+// checkFingerprintFreshness compares the recomputed input fingerprint against
+// the stored value. Sets [projectconfig.FreshnessCurrent] when the fingerprint
+// matches (and resolution is also fresh), or [projectconfig.FreshnessStale]
+// when it differs.
+func (r *Resolver) checkFingerprintFreshness(config *projectconfig.ComponentConfig) {
+	if config.Locked.InputFingerprint == "" {
+		return
+	}
+
+	releaseVer, distroErr := r.resolveReleaseVer(config)
+	if distroErr != nil {
+		slog.Debug("Cannot compute freshness (distro resolve failed)",
+			"component", config.Name, "error", distroErr)
+
+		return
+	}
+
+	identity, fpErr := fingerprint.ComputeIdentity(
+		r.env.FS(),
+		*config,
+		releaseVer,
+		fingerprint.IdentityOptions{
+			ManualBump:     config.Locked.ManualBump,
+			SourceIdentity: config.Locked.UpstreamCommit,
+		},
+	)
+	if fpErr != nil {
+		slog.Debug("Cannot compute freshness",
+			"component", config.Name, "error", fpErr)
+
+		return
+	}
+
+	if identity.Fingerprint == config.Locked.InputFingerprint {
+		// Fingerprint matches. If resolution was also fresh, mark Current.
+		if !config.Locked.ResolutionStale {
+			config.Locked.Freshness = projectconfig.FreshnessCurrent
+		}
+	} else {
+		config.Locked.Freshness = projectconfig.FreshnessStale
+
+		slog.Debug("Component is stale (build inputs changed)",
+			"component", config.Name,
+			"stored", config.Locked.InputFingerprint,
+			"computed", identity.Fingerprint)
+	}
+}
+
+// resolveReleaseVer resolves the per-component distro release version.
+func (r *Resolver) resolveReleaseVer(config *projectconfig.ComponentConfig) (string, error) {
+	ref := config.Spec.UpstreamDistro
+	if ref.Name == "" {
+		ref = r.env.Config().Project.DefaultDistro
+	}
+
+	_, distroVer, err := r.env.ResolveDistroRef(ref)
+	if err != nil {
+		return "", fmt.Errorf("resolving distro ref %#q:\n%w", ref.Name, err)
+	}
+
+	return distroVer.ReleaseVer, nil
+}
+
+// BuildUpstreamCommitResolutionInputs resolves the effective distro for a
+// component and builds [fingerprint.UpstreamCommitResolutionInputs] for
+// resolution hash computation. Uses the resolved (inherited) config values —
+// not raw spec fields — so that default-distro and distro-version-level
+// snapshots are captured.
+func BuildUpstreamCommitResolutionInputs(
+	env *azldev.Env, config *projectconfig.ComponentConfig,
+) (fingerprint.UpstreamCommitResolutionInputs, error) {
+	ref := config.Spec.UpstreamDistro
+	if ref.Name == "" {
+		ref = env.Config().Project.DefaultDistro
+	}
+
+	distroDef, distroVer, err := env.ResolveDistroRef(ref)
+	if err != nil {
+		return fingerprint.UpstreamCommitResolutionInputs{}, fmt.Errorf("resolving distro ref %#q:\n%w", ref.Name, err)
+	}
+
+	return fingerprint.UpstreamCommitResolutionInputs{
+		// Use resolved config's snapshot — not ref.Snapshot — because the
+		// snapshot may come from distro-version-level default-component-config
+		// inheritance, which is merged into config.Spec before we get here.
+		Snapshot:          config.Spec.UpstreamDistro.Snapshot,
+		DistroName:        ref.Name,
+		DistroVersion:     ref.Version,
+		DistGitBranch:     distroVer.DistGitBranch,
+		DistGitBaseURI:    distroDef.DistGitBaseURI,
+		UpstreamCommitPin: config.Spec.UpstreamCommit,
+		UpstreamName:      config.Spec.UpstreamName,
+	}, nil
+}
+
+// warnOnLockDrift emits a staleness warning for each component in the resolved
+// set whose explicit config pin (Spec.UpstreamCommit) disagrees with its locked
+// commit. This runs against the filtered set so users only see warnings about
+// components they asked about, not about all components in the project.
+//
+// No-op when [Resolver.SuppressLockWarnings] is set (e.g., during component
+// update, which is about to refresh the lock).
+func (r *Resolver) warnOnLockDrift(resolved *ComponentSet) {
+	if r.SuppressLockWarnings {
+		return
+	}
+
+	for _, comp := range resolved.Components() {
+		cfg := comp.GetConfig()
+		if cfg.Locked == nil {
+			continue
+		}
+
+		if cfg.Spec.UpstreamCommit != "" &&
+			cfg.Locked.UpstreamCommit != "" &&
+			cfg.Spec.UpstreamCommit != cfg.Locked.UpstreamCommit {
+			slog.Warn("Lock differs from config pin - run 'component update' to refresh",
+				"component", cfg.Name,
+				"configPin", cfg.Spec.UpstreamCommit,
+				"lockedCommit", cfg.Locked.UpstreamCommit)
+		}
+	}
+}
+
+// Given an explicit component config, apply all inherited defaults.
+func overlayFilesReferenceDir(component projectconfig.ComponentConfig, specPath string) string {
+	if component.SourceConfigFile != nil {
+		return component.SourceConfigFile.Dir()
+	}
+
+	if specPath != "" {
+		return filepath.Dir(specPath)
+	}
+
+	return ""
+}
+
+func applyInheritedDefaultsToComponent(
+	env *azldev.Env, component projectconfig.ComponentConfig, overlayFilesReferenceDir string, extraGroupNames []string,
+) (result *projectconfig.ComponentConfig, err error) {
+	_, distroVer, err := env.Distro()
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve current distro:\n%w", err)
+	}
+
+	groupNames := componentGroupNames(env, component.Name, extraGroupNames)
+
+	resolved, err := projectconfig.ResolveComponentConfig(
+		component,
+		env.Config().DefaultComponentConfig,
+		distroVer.DefaultComponentConfig,
+		env.Config().ComponentGroups,
+		groupNames,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("resolving config for component '%s':\n%w", component.Name, err)
+	}
+
+	resolved, err = projectconfig.ExpandResolvedOverlayFiles(
+		env.FS(), resolved, overlayFilesReferenceDir, env.PermissiveConfigParsing(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("resolving overlay files for component '%s':\n%w", component.Name, err)
+	}
+
+	return &resolved, nil
+}
+
+func componentGroupNames(env *azldev.Env, componentName string, extraGroupNames []string) []string {
+	groupNames := slices.Clone(env.Config().GroupsByComponent[componentName])
+
+	for _, groupName := range extraGroupNames {
+		if !slices.Contains(groupNames, groupName) {
+			groupNames = append(groupNames, groupName)
 		}
 	}
 
-	// Layer in the component's explicit config.
-	err = result.MergeUpdatesFrom(&component)
-	if err != nil {
-		return result,
-			fmt.Errorf("failed to apply distro defaults to config for component '%s':\n%w", component.Name, err)
+	return groupNames
+}
+
+// validateLockFiles checks lock file consistency against the resolved component
+// set. Skipped when skipValidation is true (set per-filter or via the global
+// '--skip-lock-validation' flag).
+//
+// When checkOrphans is true (i.e., all components are being validated), orphan
+// lock files are also detected. On filtered commands, only missing/stale checks
+// run — orphan detection is a project-wide invariant that would misfire against
+// a subset.
+func (r *Resolver) validateLockFiles(resolved *ComponentSet, checkOrphans bool, skipValidation bool) error {
+	if skipValidation {
+		return nil
 	}
 
-	return result, nil
+	reader := r.env.LockReader()
+	if reader == nil {
+		return nil
+	}
+
+	// Build resolved config map from the component set.
+	resolvedConfigs := make(map[string]projectconfig.ComponentConfig, resolved.Len())
+	for _, comp := range resolved.Components() {
+		resolvedConfigs[comp.GetName()] = *comp.GetConfig()
+	}
+
+	stale, orphans, err := reader.ValidateConsistency(resolvedConfigs, checkOrphans)
+	if err == nil {
+		return nil
+	}
+
+	// Format fix suggestions at the call site (not in the lockfile package)
+	// so CLI-specific strings don't leak into the data layer.
+	const maxIssuesForDetailedSuggestion = 10
+
+	if len(orphans) > 0 || len(stale) > maxIssuesForDetailedSuggestion {
+		r.env.AddFixSuggestion("run 'azldev component update -a' to fix all lock file issues")
+	} else if len(stale) > 0 {
+		r.env.AddFixSuggestion(fmt.Sprintf(
+			"run 'azldev component update %s'",
+			strings.Join(stale, " ")))
+	}
+
+	return fmt.Errorf("lock file validation failed:\n%w", err)
 }

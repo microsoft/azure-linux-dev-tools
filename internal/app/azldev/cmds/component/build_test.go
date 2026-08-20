@@ -23,6 +23,15 @@ func TestNewBuildCommand(t *testing.T) {
 		assert.Equal(t, "build", cmd.Use)
 		assert.NotNil(t, cmd.RunE)
 	}
+
+	withoutGitFlag := cmd.Flags().Lookup("without-git")
+	require.NotNil(t, withoutGitFlag, "--without-git flag should be registered")
+	assert.Equal(t, "false", withoutGitFlag.DefValue, "dist-git flow should be enabled by default")
+	assert.Contains(t, withoutGitFlag.Usage, "dist-git")
+
+	// Legacy --with-git flag must NOT exist.
+	withGitFlag := cmd.Flags().Lookup("with-git")
+	assert.Nil(t, withGitFlag, "--with-git flag must not be registered")
 }
 
 func TestNewBuildCommand_MockConfigOptFlag(t *testing.T) {

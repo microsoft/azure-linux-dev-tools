@@ -19,9 +19,6 @@ import (
 
 const (
 	defaultIntermediateOutputDir = "build"
-	DefaultLogDir                = "build/logs"
-	DefaultWorkDir               = "build/work"
-	defaultOutputDir             = "out"
 
 	defaultFilePerms = fileperms.PublicFile
 )
@@ -102,16 +99,17 @@ func InitializeProject(fs opctx.FS, projectPath string, options *NewProjectOptio
 	return nil
 }
 
-// GenerateBasicConfig generates a basic project configuration file with default paths and settings.
+// GenerateBasicConfig generates a basic project configuration file.
+//
+// Path defaults are written explicitly into the seed (rather than relying on
+// [projectconfig.ProjectInfo.ApplyProjectDefaults] at load time) so the user's
+// scaffolded toml clearly shows the directory layout and provides ready-made
+// hooks to customize.
 func GenerateBasicConfig(projectName string) projectconfig.ConfigFile {
-	// Set basic directory paths as starting points for the user to customize.
-	return projectconfig.ConfigFile{
+	cfg := projectconfig.ConfigFile{
 		SchemaURI: projectconfig.DefaultSchemaURI,
 		Project: &projectconfig.ProjectInfo{
 			Description: projectName,
-			LogDir:      DefaultLogDir,
-			WorkDir:     DefaultWorkDir,
-			OutputDir:   defaultOutputDir,
 		},
 
 		// Add a default component group that builds all *.spec files as components.
@@ -123,11 +121,17 @@ func GenerateBasicConfig(projectName string) projectconfig.ConfigFile {
 
 				ExcludedPathPatterns: []string{
 					filepath.Join(defaultIntermediateOutputDir, "**"),
-					filepath.Join(defaultOutputDir, "**"),
+					filepath.Join(projectconfig.DefaultOutputDir, "**"),
 				},
 			},
 		},
 	}
+
+	// Empty projectDir → paths stay relative, which is what we want in the
+	// serialized seed (resolved at load time relative to the toml file).
+	cfg.Project.ApplyProjectDefaults("")
+
+	return cfg
 }
 
 func writeBasicConfigFile(fs opctx.FS, projectName, projectDirPath string) error {
@@ -155,7 +159,7 @@ func writeGitIgnoreFile(fs opctx.FS, projectDirPath string) error {
 		defaultIntermediateOutputDir + "/",
 		"",
 		"# Ignore build output",
-		defaultOutputDir + "/",
+		projectconfig.DefaultOutputDir + "/",
 	}
 
 	gitIgnoreContents := strings.Join(gitIgnoreLines, "\n") + "\n"

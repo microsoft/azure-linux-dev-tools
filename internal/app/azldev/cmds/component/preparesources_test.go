@@ -28,6 +28,20 @@ func TestNewPrepareSourcesCmd(t *testing.T) {
 	require.NotNil(t, allowNoHashesFlag, "--allow-no-hashes flag should be registered")
 	assert.Equal(t, "false", allowNoHashesFlag.DefValue)
 	assert.Contains(t, allowNoHashesFlag.Usage, "compute missing hashes")
+
+	withoutGitFlag := cmd.Flags().Lookup("without-git")
+	require.NotNil(t, withoutGitFlag, "--without-git flag should be registered")
+	assert.Equal(t, "false", withoutGitFlag.DefValue, "dist-git flow should be enabled by default")
+	assert.Contains(t, withoutGitFlag.Usage, "dist-git")
+
+	skipSourcesFlag := cmd.Flags().Lookup("skip-sources")
+	require.NotNil(t, skipSourcesFlag, "--skip-sources flag should be registered")
+	assert.Equal(t, "false", skipSourcesFlag.DefValue)
+	assert.Contains(t, skipSourcesFlag.Usage, "skip downloading")
+
+	// Legacy --with-git flag must NOT exist.
+	withGitFlag := cmd.Flags().Lookup("with-git")
+	assert.Nil(t, withGitFlag, "--with-git flag must not be registered")
 }
 
 func TestPrepareSourcesCmd_NoMatch(t *testing.T) {

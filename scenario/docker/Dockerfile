@@ -28,11 +28,13 @@ RUN groupadd -f -g "${GID}" mock && \
 # Install additional dependencies
 #   * We require ca-certificates to be able to interact with standard https endpoints
 #   * We require mock to build packages
+#   * We require mock-rpmautospec to install rpmautospec support in mock
 #   * We require sudo to run commands as root after dropping to test user
 RUN tdnf -y install \
     ca-certificates \
     git \
     mock \
+    mock-rpmautospec \
     moby-containerd \
     moby-engine \
     docker-cli \

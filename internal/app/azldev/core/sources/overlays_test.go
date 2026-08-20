@@ -38,6 +38,7 @@ func applyOverlayToSpecContents(
 	return outputBuffer.String(), nil
 }
 
+//nolint:maintidx // Test table complexity scales with the number of overlay types.
 func TestApplySpecOverlay(t *testing.T) {
 	testCases := []struct {
 		name          string
@@ -257,6 +258,58 @@ line1
 			errorExpected: true,
 		},
 		{
+			name: "prepend lines to entire spec (no section)",
+			overlay: projectconfig.ComponentOverlay{
+				Type:  projectconfig.ComponentOverlayPrependSpecLines,
+				Lines: []string{"# top of file"},
+			},
+			spec: `Name: name
+
+%description
+text
+
+%changelog
+* Mon Jan 01 2024 User <user@example.com> - 1.0-1
+- Initial release
+`,
+			result: `# top of file
+Name: name
+
+%description
+text
+
+%changelog
+* Mon Jan 01 2024 User <user@example.com> - 1.0-1
+- Initial release
+`,
+		},
+		{
+			name: "append lines to entire spec (no section)",
+			overlay: projectconfig.ComponentOverlay{
+				Type:  projectconfig.ComponentOverlayAppendSpecLines,
+				Lines: []string{"# end of file"},
+			},
+			spec: `Name: name
+
+%description
+text
+
+%changelog
+* Mon Jan 01 2024 User <user@example.com> - 1.0-1
+- Initial release
+`,
+			result: `Name: name
+
+%description
+text
+
+%changelog
+* Mon Jan 01 2024 User <user@example.com> - 1.0-1
+- Initial release
+# end of file
+`,
+		},
+		{
 			name: "search and replace",
 			overlay: projectconfig.ComponentOverlay{
 				Type:        projectconfig.ComponentOverlaySearchAndReplaceInSpec,
@@ -295,6 +348,34 @@ line1
 %changelog
 `,
 			errorExpected: true,
+		},
+		{
+			name: "search and replace across entire spec (no section)",
+			overlay: projectconfig.ComponentOverlay{
+				Type:        projectconfig.ComponentOverlaySearchAndReplaceInSpec,
+				Regex:       `oldname`,
+				Replacement: "newname",
+			},
+			spec: `Name: oldname
+
+%description
+oldname package
+
+%build
+./configure --prefix=/opt/oldname
+
+%changelog
+`,
+			result: `Name: newname
+
+%description
+newname package
+
+%build
+./configure --prefix=/opt/newname
+
+%changelog
+`,
 		},
 	}
 
@@ -1286,4 +1367,163 @@ make
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 	})
+}
+
+func TestApplyRemoveSubpackageOverlay(t *testing.T) {
+	t.Run("removes all sections for a sub-package", func(t *testing.T) {
+		specContent := `Name: test
+Version: 1.0
+
+%description
+Main description.
+
+%package devel
+Summary: Devel files
+Requires: test = 1.0
+
+%description devel
+Devel description.
+
+%files
+/usr/bin/test
+
+%files devel
+/usr/include/test.h
+
+%post devel
+echo posting
+`
+		overlay := projectconfig.ComponentOverlay{
+			Type:        projectconfig.ComponentOverlayRemoveSubpackage,
+			PackageName: "devel",
+		}
+
+		result, err := applyOverlayToSpecContents(t, overlay, specContent)
+		require.NoError(t, err)
+
+		// Main package content should remain.
+		assert.Contains(t, result, "Main description.")
+		assert.Contains(t, result, "/usr/bin/test")
+
+		// All devel-scoped sections should be gone.
+		assert.NotContains(t, result, "%package devel")
+		assert.NotContains(t, result, "%description devel")
+		assert.NotContains(t, result, "%files devel")
+		assert.NotContains(t, result, "%post devel")
+		assert.NotContains(t, result, "Devel description.")
+		assert.NotContains(t, result, "/usr/include/test.h")
+		assert.NotContains(t, result, "echo posting")
+	})
+
+	t.Run("fails when sub-package has no sections", func(t *testing.T) {
+		specContent := `Name: test
+
+%description
+Main.
+
+%files
+/usr/bin/test
+`
+		overlay := projectconfig.ComponentOverlay{
+			Type:        projectconfig.ComponentOverlayRemoveSubpackage,
+			PackageName: "devel",
+		}
+
+		_, err := applyOverlayToSpecContents(t, overlay, specContent)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
+
+func TestApplySpecOverlay_InvalidRegex(t *testing.T) {
+	specContent := `Name: test
+Version: 1.0
+
+%build
+make
+`
+	overlay := projectconfig.ComponentOverlay{
+		Type:        projectconfig.ComponentOverlaySearchAndReplaceInSpec,
+		Regex:       `(?P<invalid`,
+		Replacement: "replaced",
+	}
+
+	_, err := applyOverlayToSpecContents(t, overlay, specContent)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "search and replace")
+}
+
+func TestApplyNonSpecOverlay_InvalidRegex(t *testing.T) {
+	ctx := testctx.NewCtx()
+	testFS := ctx.FS()
+
+	// Write source files to the destination directory.
+	const destDir = "/dest"
+	require.NoError(t, testFS.MkdirAll(destDir, fileperms.PublicDir))
+	require.NoError(t, fileutils.WriteFile(testFS, destDir+"/config.txt",
+		[]byte("DEBUG=false\n"), fileperms.PublicFile))
+
+	overlay := projectconfig.ComponentOverlay{
+		Type:        projectconfig.ComponentOverlaySearchAndReplaceInFile,
+		Filename:    "config.txt",
+		Regex:       `(?P<invalid`,
+		Replacement: "replaced",
+	}
+
+	err := sources.ApplyOverlayToSources(ctx, testFS, overlay, destDir, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "regex")
+}
+
+func TestApplyNonSpecOverlay_MissingSourceFile(t *testing.T) {
+	ctx := testctx.NewCtx()
+	testFS := ctx.FS()
+
+	const destDir = "/dest"
+	require.NoError(t, testFS.MkdirAll(destDir, fileperms.PublicDir))
+
+	overlay := projectconfig.ComponentOverlay{
+		Type:     projectconfig.ComponentOverlayAddFile,
+		Filename: "extra.txt",
+		Source:   "/nonexistent/path/extra.txt",
+	}
+
+	err := sources.ApplyOverlayToSources(ctx, testFS, overlay, destDir, "")
+	require.Error(t, err)
+}
+
+func TestApplyNonSpecOverlay_SearchReplaceOnNonexistentFile(t *testing.T) {
+	ctx := testctx.NewCtx()
+	testFS := ctx.FS()
+
+	const destDir = "/dest"
+	require.NoError(t, testFS.MkdirAll(destDir, fileperms.PublicDir))
+
+	overlay := projectconfig.ComponentOverlay{
+		Type:        projectconfig.ComponentOverlaySearchAndReplaceInFile,
+		Filename:    "nonexistent.txt",
+		Regex:       `pattern`,
+		Replacement: "replaced",
+	}
+
+	err := sources.ApplyOverlayToSources(ctx, testFS, overlay, destDir, "")
+	require.Error(t, err)
+}
+
+func TestApplyAddPatchOverlay_MissingPatchFile(t *testing.T) {
+	ctx := testctx.NewCtx()
+	testFS := ctx.FS()
+
+	const destDir = "/dest"
+	require.NoError(t, testFS.MkdirAll(destDir, fileperms.PublicDir))
+	require.NoError(t, fileutils.WriteFile(testFS, destDir+"/test.spec",
+		[]byte("Name: test\nVersion: 1.0\n"), fileperms.PublicFile))
+
+	overlay := projectconfig.ComponentOverlay{
+		Type:   projectconfig.ComponentOverlayAddPatch,
+		Source: "/nonexistent/fix.patch",
+	}
+
+	err := sources.ApplyOverlayToSources(ctx, testFS, overlay, destDir, destDir+"/test.spec")
+	require.Error(t, err)
 }

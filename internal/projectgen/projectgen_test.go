@@ -29,8 +29,8 @@ func requireProjectHasValidDefaultConfig(t *testing.T, ctx opctx.Ctx, projectPat
 
 	// Load the config.
 	_, config, err := projectconfig.LoadProjectConfig(
-		ctx,
 		ctx.FS(),
+		ctx.OSEnv(),
 		projectPath,
 		true, /*disable default config?*/
 		t.TempDir(),
@@ -42,9 +42,11 @@ func requireProjectHasValidDefaultConfig(t *testing.T, ctx opctx.Ctx, projectPat
 	assert.NotNil(t, config)
 
 	// Check for some basic properties; we expect them to be filled out and not left empty.
-	assert.NotNil(t, config.Project.LogDir)
-	assert.NotNil(t, config.Project.WorkDir)
-	assert.NotNil(t, config.Project.OutputDir)
+	assert.NotEmpty(t, config.Project.LogDir)
+	assert.NotEmpty(t, config.Project.WorkDir)
+	assert.NotEmpty(t, config.Project.OutputDir)
+	assert.NotEmpty(t, config.Project.LockDir)
+	assert.NotEmpty(t, config.Project.RenderedSpecsDir)
 }
 
 func TestFindProjectRootAndConfigFile(t *testing.T) {
@@ -64,7 +66,7 @@ default-distro = { name = "other", version = "42.42" }
 
 	// Load the project.
 	foundProjectDir, config, err := projectconfig.LoadProjectConfig(
-		ctx, ctx.FS(), testProjectPath, false /*disable default config?*/, t.TempDir(), nil, false,
+		ctx.FS(), ctx.OSEnv(), testProjectPath, false /*disable default config?*/, t.TempDir(), nil, false,
 	)
 
 	require.NoError(t, err)

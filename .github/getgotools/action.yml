@@ -1,15 +1,17 @@
-name: 'Get go tools'
-description: 'Install go and related go tools'
+name: "Get go tools"
+description: "Install go and related go tools"
 runs:
-  using: 'composite'
+  using: "composite"
   steps:
-  - name: Install go
-    uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
-    with:
-      go-version-file: 'go.mod'
+    - name: Install go
+      uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+      with:
+        go-version-file: "go.mod"
 
-  - name: Build and install mage
-    shell: bash
-    run: |
-      echo "Building and installing mage..."
-      go install github.com/magefile/mage@latest
+    - name: Build and install mage
+      shell: bash
+      run: |
+        echo "Building and installing mage..."
+        # No @version: inside the module this installs the mage version pinned in
+        # go.mod, so Dependabot keeps it current from a single source of truth.
+        go install github.com/magefile/mage

@@ -19,14 +19,14 @@ import (
 )
 
 var (
-	// ErrDuplicateComponents is returned when duplicate conflicting component definitions are found.
-	ErrDuplicateComponents = errors.New("duplicate component")
 	// ErrDuplicateComponentGroups is returned when duplicate conflicting component group definitions are found.
 	ErrDuplicateComponentGroups = errors.New("duplicate component group")
 	// ErrDuplicateImages is returned when duplicate conflicting image definitions are found.
 	ErrDuplicateImages = errors.New("duplicate image")
 	// ErrDuplicatePackageGroups is returned when duplicate conflicting package group definitions are found.
 	ErrDuplicatePackageGroups = errors.New("duplicate package group")
+	// ErrCircularInclude is returned when a config file include chain forms a cycle.
+	ErrCircularInclude = errors.New("circular include detected")
 )
 
 // Loads and resolves the project configuration files located at the given path. Referenced include files
@@ -56,7 +56,15 @@ func loadAndResolveProjectConfig(
 	// Validate the resulting configuration.
 	err := resolvedCfg.Validate()
 	if err != nil {
-		return nil, err
+		if permissiveConfigParsing {
+			slog.Warn(
+				"Project config validation failed; continuing due to '--permissive-config'",
+				"configFiles", configFilePaths,
+				"error", err,
+			)
+		} else {
+			return nil, err
+		}
 	}
 
 	return resolvedCfg, nil
@@ -67,7 +75,7 @@ func loadAndMergeConfigWithIncludes(
 	permissiveConfigParsing bool,
 ) error {
 	// Load the project config file and all transitive includes.
-	loadedCfgs, err := loadProjectConfigWithIncludes(fs, filePath, permissiveConfigParsing)
+	loadedCfgs, err := loadProjectConfigWithIncludes(fs, filePath, permissiveConfigParsing, nil)
 	if err != nil {
 		return err
 	}
@@ -120,6 +128,10 @@ func mergeConfigFile(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
 		return err
 	}
 
+	if err := mergeDefaultComponentConfig(resolvedCfg, loadedCfg); err != nil {
+		return err
+	}
+
 	if err := mergeDefaultPackageConfig(resolvedCfg, loadedCfg); err != nil {
 		return err
 	}
@@ -131,6 +143,25 @@ func mergeConfigFile(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
 	if err := mergeTestSuites(resolvedCfg, loadedCfg); err != nil {
 		return err
 	}
+
+	if err := mergeResources(resolvedCfg, loadedCfg); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// mergeResources merges the [ResourcesConfig] from a loaded config file into the resolved
+// config. Map-keyed entries (e.g., rpm-repos by name) are overlaid: a duplicate name in
+// a later-loaded file replaces the earlier definition (matching the policy applied to
+// other top-level resource collections).
+func mergeResources(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
+	if loadedCfg.Resources == nil {
+		return nil
+	}
+
+	resolved := loadedCfg.Resources.WithAbsolutePaths(loadedCfg.dir)
+	resolvedCfg.Resources.MergeUpdatesFrom(resolved)
 
 	return nil
 }
@@ -181,18 +212,31 @@ func mergeComponentGroups(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) err
 }
 
 // mergeComponents merges component definitions from a loaded config file into
-// the resolved config. Duplicate component names are not allowed.
+// the resolved config. Components support additive merging: if a component
+// already exists, its fields are updated from the new definition.
 func mergeComponents(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
 	for componentName, component := range loadedCfg.Components {
-		if _, ok := resolvedCfg.Components[componentName]; ok {
-			return fmt.Errorf("%w: %s", ErrDuplicateComponents, componentName)
-		}
-
 		// Fill out fields not explicitly serialized.
 		component.Name = componentName
 		component.SourceConfigFile = loadedCfg
 
-		resolvedCfg.Components[componentName] = *(component.WithAbsolutePaths(loadedCfg.dir))
+		resolved := component.WithAbsolutePaths(loadedCfg.dir)
+		for i := range resolved.OverlayFiles {
+			resolved.OverlayFiles[i] = makeAbsolute(loadedCfg.dir, resolved.OverlayFiles[i])
+		}
+
+		if existing, ok := resolvedCfg.Components[componentName]; ok {
+			err := existing.MergeUpdatesFrom(resolved)
+			if err != nil {
+				return fmt.Errorf("failed to merge component %#q:\n%w", componentName, err)
+			}
+
+			// Preserve the latest source config file reference.
+			existing.SourceConfigFile = loadedCfg
+			resolvedCfg.Components[componentName] = existing
+		} else {
+			resolvedCfg.Components[componentName] = *resolved
+		}
 	}
 
 	return nil
@@ -241,6 +285,19 @@ func mergeDefaultPackageConfig(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile
 	return nil
 }
 
+// mergeDefaultComponentConfig merges the project-level default component config from a loaded
+// config file into the resolved config.
+func mergeDefaultComponentConfig(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
+	if loadedCfg.DefaultComponentConfig != nil {
+		absConfig := loadedCfg.DefaultComponentConfig.WithAbsolutePaths(loadedCfg.dir)
+		if err := resolvedCfg.DefaultComponentConfig.MergeUpdatesFrom(absConfig); err != nil {
+			return fmt.Errorf("failed to merge project default component config:\n%w", err)
+		}
+	}
+
+	return nil
+}
+
 // mergePackageGroups merges package group definitions from a loaded config file into
 // the resolved config. Duplicate package group names are not allowed.
 func mergePackageGroups(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
@@ -258,16 +315,16 @@ func mergePackageGroups(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error
 // mergeTestSuites merges test suite definitions from a loaded config file into the
 // resolved config. Duplicate test suite names are not allowed.
 func mergeTestSuites(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
-	for testName, test := range loadedCfg.TestSuites {
-		if _, ok := resolvedCfg.TestSuites[testName]; ok {
-			return fmt.Errorf("%w: test suite %#q", ErrDuplicateTestSuites, testName)
+	for suiteName, suite := range loadedCfg.TestSuites {
+		if _, ok := resolvedCfg.TestSuites[suiteName]; ok {
+			return fmt.Errorf("%w: test suite %#q", ErrDuplicateTestSuites, suiteName)
 		}
 
 		// Fill out fields not explicitly serialized.
-		test.Name = testName
-		test.SourceConfigFile = loadedCfg
+		suite.Name = suiteName
+		suite.SourceConfigFile = loadedCfg
 
-		resolvedCfg.TestSuites[testName] = test
+		resolvedCfg.TestSuites[suiteName] = *(suite.WithAbsolutePaths(loadedCfg.dir))
 	}
 
 	return nil
@@ -275,7 +332,26 @@ func mergeTestSuites(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
 
 func loadProjectConfigWithIncludes(
 	fs opctx.FS, filePath string, permissiveConfigParsing bool,
+	seen map[string]bool,
 ) ([]*ConfigFile, error) {
+	absFilePath, err := filepath.Abs(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve absolute path for '%s':\n%w", filePath, err)
+	}
+
+	if seen == nil {
+		seen = make(map[string]bool)
+	}
+
+	if seen[absFilePath] {
+		return nil, fmt.Errorf(
+			"%w: '%s' is included by a file that it transitively includes",
+			ErrCircularInclude, absFilePath,
+		)
+	}
+
+	seen[absFilePath] = true
+
 	// Load the immediate config file.
 	cfg, err := loadProjectConfigFile(fs, filePath, permissiveConfigParsing)
 	if err != nil {
@@ -310,7 +386,7 @@ func loadProjectConfigWithIncludes(
 			absIncludePath := makeAbsolute(cfg.dir, includePath)
 
 			includeCfgs, err := loadProjectConfigWithIncludes(
-				fs, absIncludePath, permissiveConfigParsing,
+				fs, absIncludePath, permissiveConfigParsing, seen,
 			)
 			if err != nil {
 				return nil, err

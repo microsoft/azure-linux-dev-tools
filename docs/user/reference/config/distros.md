@@ -55,6 +55,7 @@ Each distro can define multiple versions under `[distros.<name>.versions.<versio
 | Mock config | `mock-config` | string | No | Path to the mock config file for this version (architecture-independent) |
 | Mock config (x86_64) | `mock-config-x86_64` | string | No | Path to the x86_64-specific mock config file |
 | Mock config (aarch64) | `mock-config-aarch64` | string | No | Path to the aarch64-specific mock config file |
+| Inputs | `inputs` | [DistroVersionInputs](#inputs) | No | Per-use-case input RPM repositories for this version |
 
 ### Default Component Config
 
@@ -68,6 +69,42 @@ spec = { type = "upstream", upstream-distro = { name = "fedora", version = "43",
 With this configuration, every component automatically uses specs from Fedora 43 (as they existed at the snapshot date) unless it specifies its own `spec` field.
 
 See [Configuration Inheritance](../../explanation/config-system.md#configuration-inheritance) for the full inheritance chain.
+
+### Inputs
+
+The `inputs` field selects which top-level [RPM repository resources](resources.md) (and [repo sets](resources.md#rpm-repo-set)) are made available to each build use-case for this distro version. Each list is an ordered sequence of typed entries; each entry references **either** an individual repo **or** a repo set (exactly one of `repo` / `set` must be present):
+
+| Field | TOML Key | Type | Description |
+|---|---|---|---|
+| RPM-build inputs | `rpm-build` | list of [DistroVersionInput](#distroversioninput) | Repos and repo sets made available to mock when building RPMs. |
+| Image-build inputs | `image-build` | list of [DistroVersionInput](#distroversioninput) | Repos and repo sets made available to kiwi when building images. |
+
+#### DistroVersionInput
+
+| Field | TOML Key | Type | Description |
+|---|---|---|---|
+| Repo | `repo` | string | Name of an entry under `[resources.rpm-repos]`. **Mutually exclusive** with `set`. |
+| Set | `set` | string | Name of an entry under `[resources.rpm-repo-sets]`; expanded inline at validation time. **Mutually exclusive** with `repo`. |
+
+Order is preserved when the list is projected into mock/kiwi config but is **not** treated as a priority hint — neither dnf nor kiwi guarantees ordering semantics across remote repos. Define explicit priorities at the consumer level if needed.
+
+The effective per-use-case list is each entry expanded in declaration order. Duplicates (whether from a direct `repo` entry or two sets whose expansions overlap) are reported as errors.
+
+`rpm-build` repos may not have a local (bare or `file://`) `gpg-key`: mock evaluates the URI inside the chroot, where the host path is invisible. Use an `http(s)://` URI, or only reference such a repo from `image-build`.
+
+```toml
+[distros.mydistro.versions.'4.0'.inputs]
+rpm-build = [
+    { repo = "fedora-43-everything" },
+    { set  = "azl4-prod" },
+]
+image-build = [
+    { repo = "fedora-43-everything" },
+    { set  = "azl4-prod" },
+]
+```
+
+See [RPM repos & repo sets overview](../../explanation/repos.md) for the bigger picture.
 
 ## Distro References
 

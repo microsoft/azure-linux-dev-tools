@@ -8,12 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"path"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
-	"github.com/microsoft/azure-linux-dev-tools/internal/projectgen"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/docker"
 )
 
@@ -164,17 +162,8 @@ func runImageCustomizerContainer(
 		return errors.New("the Image Customizer container tag is not set in the project configuration")
 	}
 
-	// Because buildDir and logsDir will be mapped to the container, they
-	// cannot be empty.
 	buildDir := env.WorkDir()
-	if buildDir == "" {
-		buildDir = filepath.Join(env.ProjectDir(), projectgen.DefaultWorkDir)
-	}
-
 	logsDir := env.LogsDir()
-	if logsDir == "" {
-		logsDir = filepath.Join(env.ProjectDir(), projectgen.DefaultLogDir)
-	}
 
 	timestamp := time.Now().Format(logFileTimeFormat)
 	logFile := path.Join(logsDir, fmt.Sprintf("image-customizer-%s.log", timestamp))

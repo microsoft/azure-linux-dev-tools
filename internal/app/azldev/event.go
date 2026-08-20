@@ -19,6 +19,7 @@ type event struct {
 	name                string
 	spinner             *spinner.Spinner
 	quiet               bool
+	verbose             bool
 
 	lastReportedCompletionRatio float64
 
@@ -50,7 +51,9 @@ func (e *event) End() {
 }
 
 func (e *event) SetLongRunning(longRunningText string) {
-	if e.quiet {
+	// Skip the indeterminate spinner when quiet (no UI) or verbose (the command streams its own
+	// output live, and a spinner would fight with that output).
+	if e.quiet || e.verbose {
 		return
 	}
 

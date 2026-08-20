@@ -959,6 +959,133 @@ Name: test
 	})
 }
 
+func TestPrependLines(t *testing.T) {
+	t.Run("empty spec", func(t *testing.T) {
+		specFile, err := spec.OpenSpec(strings.NewReader(""))
+		require.NoError(t, err)
+
+		specFile.PrependLines([]string{"New line", "Next line"})
+
+		actual := new(bytes.Buffer)
+		err = specFile.Serialize(actual)
+		require.NoError(t, err)
+
+		assert.Equal(t, `New line
+Next line
+`, actual.String())
+	})
+
+	t.Run("spec starting with a section header", func(t *testing.T) {
+		input := `%description
+A package.
+`
+		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
+
+		specFile.PrependLines([]string{"# top comment"})
+
+		actual := new(bytes.Buffer)
+		err = specFile.Serialize(actual)
+		require.NoError(t, err)
+
+		assert.Equal(t, `# top comment
+%description
+A package.
+`, actual.String())
+	})
+
+	t.Run("spec with preamble and sections", func(t *testing.T) {
+		input := `Name: test
+Version: 1.0
+
+%description
+A package.
+`
+		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
+
+		specFile.PrependLines([]string{"# header line 1", "# header line 2"})
+
+		actual := new(bytes.Buffer)
+		err = specFile.Serialize(actual)
+		require.NoError(t, err)
+
+		assert.Equal(t, `# header line 1
+# header line 2
+Name: test
+Version: 1.0
+
+%description
+A package.
+`, actual.String())
+	})
+}
+
+func TestAppendLines(t *testing.T) {
+	t.Run("empty spec", func(t *testing.T) {
+		specFile, err := spec.OpenSpec(strings.NewReader(""))
+		require.NoError(t, err)
+
+		specFile.AppendLines([]string{"New line", "Next line"})
+
+		actual := new(bytes.Buffer)
+		err = specFile.Serialize(actual)
+		require.NoError(t, err)
+
+		assert.Equal(t, `New line
+Next line
+`, actual.String())
+	})
+
+	t.Run("spec ending with changelog", func(t *testing.T) {
+		input := `Name: test
+
+%description
+A package.
+
+%changelog
+* Mon Jan 01 2024 User <user@example.com> - 1.0-1
+- Initial release
+`
+		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
+
+		specFile.AppendLines([]string{"# trailing comment"})
+
+		actual := new(bytes.Buffer)
+		err = specFile.Serialize(actual)
+		require.NoError(t, err)
+
+		assert.Equal(t, `Name: test
+
+%description
+A package.
+
+%changelog
+* Mon Jan 01 2024 User <user@example.com> - 1.0-1
+- Initial release
+# trailing comment
+`, actual.String())
+	})
+
+	t.Run("preamble only", func(t *testing.T) {
+		input := `Name: test
+`
+		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		require.NoError(t, err)
+
+		specFile.AppendLines([]string{"# tail"})
+
+		actual := new(bytes.Buffer)
+		err = specFile.Serialize(actual)
+		require.NoError(t, err)
+
+		assert.Equal(t, `Name: test
+# tail
+`, actual.String())
+	})
+}
+
 func TestPrependLinesToSection(t *testing.T) {
 	t.Run("empty spec", func(t *testing.T) {
 		input := ""
@@ -1183,6 +1310,21 @@ func TestGetHighestPatchTagNumber(t *testing.T) {
 			name:     "scans across all packages",
 			input:    "Name: test\nPatch0: main.patch\n\n%package devel\nPatch5: devel.patch\n",
 			expected: 5,
+		},
+		{
+			name:     "unnumbered patch tags counted as auto-numbered from 0",
+			input:    "Name: test\nPatch: fix1.patch\nPatch: fix2.patch\n",
+			expected: 1,
+		},
+		{
+			name:     "unnumbered and numbered patch tags mixed",
+			input:    "Name: test\nPatch: fix1.patch\nPatch: fix2.patch\nPatch5: fix5.patch\n",
+			expected: 5,
+		},
+		{
+			name:     "single unnumbered patch tag",
+			input:    "Name: test\nPatch: fix.patch\n",
+			expected: 0,
 		},
 	}
 
@@ -1613,6 +1755,40 @@ make
 make
 `,
 		},
+		{
+			// Locks in the contract documented on RemoveSection: when a spec lexically
+			// contains multiple sections with the same (section, package) identity (e.g.
+			// inside mutually-exclusive %if/%else branches), every such section is removed.
+			name: "removes every match when (section, package) appears more than once",
+			input: `Name: test
+
+%description
+Main.
+
+%files devel
+/usr/include/v1.h
+
+%files
+/usr/bin/test
+
+%files devel
+/usr/include/v2.h
+
+%changelog
+`,
+			sectionName: "%files",
+			packageName: "devel",
+			expectedOutput: `Name: test
+
+%description
+Main.
+
+%files
+/usr/bin/test
+
+%changelog
+`,
+		},
 	}
 
 	for _, testCase := range tests {
@@ -1621,6 +1797,452 @@ make
 			require.NoError(t, err)
 
 			err = specFile.RemoveSection(testCase.sectionName, testCase.packageName)
+
+			if testCase.errorExpected {
+				require.Error(t, err)
+
+				if testCase.errorContains != "" {
+					assert.Contains(t, err.Error(), testCase.errorContains)
+				}
+
+				return
+			}
+
+			require.NoError(t, err)
+
+			var buf bytes.Buffer
+			require.NoError(t, specFile.Serialize(&buf))
+			assert.Equal(t, testCase.expectedOutput, buf.String())
+		})
+	}
+}
+
+//nolint:maintidx // Test table complexity scales with the number of conditional handling scenarios.
+func TestRemoveSubpackage(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		packageName    string
+		expectedOutput string
+		errorExpected  bool
+		errorContains  string
+	}{
+		{
+			name: "removes all sections for a sub-package",
+			input: `Name: test
+Version: 1.0
+
+%description
+Main description.
+
+%package devel
+Summary: Devel files
+Requires: test = 1.0
+
+%description devel
+Devel description.
+
+%files
+/usr/bin/test
+
+%files devel
+/usr/include/test.h
+
+%post devel
+echo posting
+
+%changelog
+`,
+			packageName: "devel",
+			expectedOutput: `Name: test
+Version: 1.0
+
+%description
+Main description.
+
+%files
+/usr/bin/test
+
+%changelog
+`,
+		},
+		{
+			name: "handles -n style sub-package",
+			input: `Name: test
+
+%description
+Main.
+
+%package -n other-pkg
+Summary: Other
+
+%description -n other-pkg
+Other description.
+
+%files -n other-pkg
+/usr/bin/other
+
+%files
+/usr/bin/test
+`,
+			packageName: "other-pkg",
+			expectedOutput: `Name: test
+
+%description
+Main.
+
+%files
+/usr/bin/test
+`,
+		},
+		{
+			name: "removes sub-package whose final section runs to EOF",
+			input: `Name: test
+
+%description
+Main.
+
+%package devel
+Summary: Devel
+
+%files devel
+/usr/include/test.h
+`,
+			packageName: "devel",
+			expectedOutput: `Name: test
+
+%description
+Main.
+
+`,
+		},
+		{
+			name: "fails when sub-package has no sections",
+			input: `Name: test
+
+%description
+Main.
+
+%files
+/usr/bin/test
+`,
+			packageName:   "devel",
+			errorExpected: true,
+			errorContains: "not found",
+		},
+		{
+			name: "fails on empty package name",
+			input: `Name: test
+%description
+Main.
+`,
+			packageName:   "",
+			errorExpected: true,
+			errorContains: "empty",
+		},
+		{
+			name: "does not affect main-package sections with the same name",
+			input: `Name: test
+
+%description
+Main description.
+
+%package devel
+Summary: Devel
+
+%description devel
+Devel description.
+
+%files
+/usr/bin/test
+
+%files devel
+/usr/include/test.h
+`,
+			packageName: "devel",
+			expectedOutput: `Name: test
+
+%description
+Main description.
+
+%files
+/usr/bin/test
+
+`,
+		},
+		{
+			name: "handles balanced conditional inside section",
+			input: `Name: test
+
+%description
+Main.
+
+%package devel
+Summary: Devel
+%ifarch x86_64
+Requires: special-x86-lib
+%endif
+
+%description devel
+Devel description.
+
+%files
+/usr/bin/test
+`,
+			packageName: "devel",
+			expectedOutput: `Name: test
+
+%description
+Main.
+
+%files
+/usr/bin/test
+`,
+		},
+		{
+			name: "trims trailing conditional opener belonging to next section",
+			input: `Name: test
+
+%description
+Main.
+
+%files foo
+/usr/share/foo
+
+%if 0
+%files bar
+/usr/share/bar
+%endif
+
+%files
+/usr/bin/test
+`,
+			packageName: "foo",
+			expectedOutput: `Name: test
+
+%description
+Main.
+
+%if 0
+%files bar
+/usr/share/bar
+%endif
+
+%files
+/usr/bin/test
+`,
+		},
+		{
+			name: "trims trailing endif from section wrapped in conditional",
+			input: `Name: test
+
+%description
+Main.
+
+%if 0%{?with_devel}
+%package devel
+Summary: Devel
+
+%description devel
+Devel description.
+
+%files devel
+/usr/include/test.h
+%endif
+
+%files
+/usr/bin/test
+`,
+			packageName: "devel",
+			expectedOutput: `Name: test
+
+%description
+Main.
+
+%if 0%{?with_devel}
+%endif
+
+%files
+/usr/bin/test
+`,
+		},
+		{
+			name: "errors on conditional spanning across sections",
+			input: `Name: test
+
+%files foo
+/usr/share/foo1
+%if 0%{?with_extra}
+/usr/share/foo-extra
+
+%files bar
+/usr/share/bar
+%endif
+
+%files
+/usr/bin/test
+`,
+			packageName:   "foo",
+			errorExpected: true,
+			errorContains: "conditional block spans",
+		},
+		{
+			name: "errors on else branch inside straddling conditional",
+			input: `Name: test
+
+%description
+Main.
+
+%if cond
+%files foo
+/usr/share/foo
+%else
+%files bar
+/usr/share/bar
+%endif
+
+%files
+/usr/bin/test
+`,
+			packageName:   "foo",
+			errorExpected: true,
+			errorContains: "branch directive",
+		},
+		{
+			name: "errors when trimmed zone contains section content in a balanced conditional",
+			input: `Name: test
+
+%description
+Main.
+
+%if 0%{?with_devel}
+%files devel
+/usr/include/test.h
+%endif
+%if 0%{?with_extra}
+/usr/include/extra.h
+%endif
+
+%files
+/usr/bin/test
+`,
+			packageName:   "devel",
+			errorExpected: true,
+			errorContains: "conditional block spans",
+		},
+		{
+			name: "trims consecutive endifs from nested wrapping conditionals",
+			input: `Name: test
+
+%description
+Main.
+
+%if A
+%if B
+%files devel
+/usr/include/test.h
+%endif
+%endif
+
+%files
+/usr/bin/test
+`,
+			packageName: "devel",
+			expectedOutput: `Name: test
+
+%description
+Main.
+
+%if A
+%if B
+%endif
+%endif
+
+%files
+/usr/bin/test
+`,
+		},
+		{
+			name: "trims consecutive if openers belonging to next sections",
+			input: `Name: test
+
+%description
+Main.
+
+%files foo
+/usr/share/foo
+
+%if 0
+%if 0
+%files bar
+/usr/share/bar
+%endif
+%endif
+
+%files
+/usr/bin/test
+`,
+			packageName: "foo",
+			expectedOutput: `Name: test
+
+%description
+Main.
+
+%if 0
+%if 0
+%files bar
+/usr/share/bar
+%endif
+%endif
+
+%files
+/usr/bin/test
+`,
+		},
+		{
+			name: "trims mixed endif then if at tail",
+			input: `Name: test
+
+%description
+Main.
+
+%if A
+%files devel
+/usr/include/test.h
+%endif
+%if 0
+%files bar
+/usr/share/bar
+%endif
+
+%files
+/usr/bin/test
+`,
+			packageName: "devel",
+			expectedOutput: `Name: test
+
+%description
+Main.
+
+%if A
+%endif
+%if 0
+%files bar
+/usr/share/bar
+%endif
+
+%files
+/usr/bin/test
+`,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			specFile, err := spec.OpenSpec(strings.NewReader(testCase.input))
+			require.NoError(t, err)
+
+			err = specFile.RemoveSubpackage(testCase.packageName)
 
 			if testCase.errorExpected {
 				require.Error(t, err)

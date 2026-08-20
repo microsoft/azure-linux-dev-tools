@@ -2,22 +2,36 @@
 
 ## azldev package list
 
-List resolved configuration for binary packages
+List resolved configuration for packages (RPMs and SRPMs)
 
 ### Synopsis
 
-List resolved configuration for binary packages.
+List resolved configuration for packages (RPMs and SRPMs).
 
-Use -a to enumerate all packages that have explicit configuration (via
-package-groups or component package overrides). Use -p (or positional args)
-to look up one or more specific packages by exact name — including packages
-that are not explicitly configured (they resolve using only project defaults).
+Use -a to enumerate all packages that have explicit configuration (via package-groups
+or component package overrides).
+
+Use --rpm-file <file> to enumerate all source packages (SRPMs) and their binary RPMs
+from a JSON RPM source map file (an array of {"packageName":"bash","sourcePackageName":"bash"} records).
+Each SRPM is resolved against the component with the same name; each binary RPM is
+resolved using the full publish-channel stack. Results include a 'type' column
+("srpm" or "rpm") to distinguish the two.
+
+Use -p (or positional args) to look up one or more specific packages by exact name —
+including packages that are not explicitly configured (they resolve using only project
+defaults).
 
 Resolution order (lowest to highest priority):
-  1. Project default-package-config
-  2. Package group default-package-config
-  3. Component default-package-config
-  4. Component packages.<name> override
+  1. Project default-component-config publish settings
+  2. Component-group default-component-config publish settings
+  3. Component publish settings
+  4. Package-group default-package-config
+  5. Component packages.<name> override
+
+Each result has two independent group lists. 'packageGroups' is every package-group whose
+'packages' list contains the package (always empty for SRPM rows). 'componentGroups' is
+every component-group the resolved component belongs to. Both lists are sorted alphabetically
+and are emitted as empty arrays (never null) when there are no memberships.
 
 ```
 azldev package list [package-name...] [flags]
@@ -29,6 +43,9 @@ azldev package list [package-name...] [flags]
   # List all explicitly-configured packages
   azldev package list -a
 
+  # List all packages from an RPM source map file
+  azldev package list --rpm-file rpm_source_map.json
+
   # Look up a specific package
   azldev package list -p curl
 
@@ -37,6 +54,7 @@ azldev package list [package-name...] [flags]
 
   # Output as JSON for scripting
   azldev package list -a -q -O json
+  azldev package list --rpm-file rpm_source_map.json -q -O json
 ```
 
 ### Options
@@ -45,6 +63,7 @@ azldev package list [package-name...] [flags]
   -a, --all-packages                List all explicitly-configured binary packages
   -h, --help                        help for list
   -p, --package stringArray         Package name to look up (repeatable)
+      --rpm-file string             Path to a JSON RPM source map file (lists all SRPMs and their binary RPMs)
       --synthesize-debug-packages   Also synthesize '-debuginfo' packages (per reported package) and '-debugsource' packages (per component)
 ```
 

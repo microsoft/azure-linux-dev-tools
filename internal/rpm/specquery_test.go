@@ -300,16 +300,18 @@ func TestQuerySpecSuccessWithWarningsAndErrors(t *testing.T) {
 
 func TestQuerySpecFailure(t *testing.T) {
 	tests := []struct {
-		name       string
-		mockStdout string
-		mockRunErr error
-		setupFS    bool
+		name          string
+		mockStdout    string
+		mockRunErr    error
+		setupFS       bool
+		errorContains string
 	}{
 		{
-			name:       "command execution error",
-			mockStdout: "",
-			mockRunErr: errors.New("command failed"),
-			setupFS:    true,
+			name:          "command execution error",
+			mockStdout:    "",
+			mockRunErr:    errors.New("command failed"),
+			setupFS:       true,
+			errorContains: "failed to run rpmspec",
 		},
 		{
 			name:       "empty output",
@@ -341,6 +343,41 @@ func TestQuerySpecFailure(t *testing.T) {
 			mockRunErr: nil,
 			setupFS:    true,
 		},
+		{
+			name:          "missing name field",
+			mockStdout:    "epoch=1\nversion=2.3.4\nrelease=5.azl3",
+			mockRunErr:    nil,
+			setupFS:       true,
+			errorContains: "missing required fields",
+		},
+		{
+			name:          "missing version field",
+			mockStdout:    "name=test-package\nepoch=1\nrelease=5.azl3",
+			mockRunErr:    nil,
+			setupFS:       true,
+			errorContains: "missing required fields",
+		},
+		{
+			name:          "missing release field",
+			mockStdout:    "name=test-package\nepoch=1\nversion=2.3.4",
+			mockRunErr:    nil,
+			setupFS:       true,
+			errorContains: "missing required fields",
+		},
+		{
+			name:          "missing epoch field",
+			mockStdout:    "name=test-package\nversion=2.3.4\nrelease=5.azl3",
+			mockRunErr:    nil,
+			setupFS:       true,
+			errorContains: "missing required fields",
+		},
+		{
+			name:          "malformed EVR - invalid epoch",
+			mockStdout:    "name=test-package\nepoch=notanumber\nversion=2.3.4\nrelease=5.azl3",
+			mockRunErr:    nil,
+			setupFS:       true,
+			errorContains: "failed to create version from EVR",
+		},
 	}
 
 	for _, test := range tests {
@@ -366,7 +403,9 @@ func TestQuerySpecFailure(t *testing.T) {
 			assert.Nil(t, result)
 			require.Error(t, err)
 
-			if test.mockRunErr != nil {
+			if test.errorContains != "" {
+				assert.Contains(t, err.Error(), test.errorContains)
+			} else if test.mockRunErr != nil {
 				assert.Contains(t, err.Error(), "failed to run rpmspec in isolated root")
 			}
 		})

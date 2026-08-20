@@ -11,9 +11,10 @@ A component definition tells azldev where to find the spec file, how to customiz
 | Spec source | `spec` | [SpecSource](#spec-source) | No | Where to find the spec file for this component. Inherited from distro defaults if not specified. |
 | Release config | `release` | [ReleaseConfig](#release-configuration) | No | Controls how the Release tag is managed during rendering |
 | Overlays | `overlays` | array of [Overlay](overlays.md) | No | Modifications to apply to the spec and/or source files |
+| Overlay files | `overlay-files` | array of string | No | Path or glob patterns that load per-file overlay documents after component config resolution. Inherited relative patterns are resolved from the concrete component's config file, or from the matched spec file's directory for spec-discovered components. Use `[]` to disable inherited patterns. See [Per-file overlay format](overlays.md#per-file-overlay-format). |
 | Build config | `build` | [BuildConfig](#build-configuration) | No | Build-time options (macros, conditionals, check config) |
+| Render config | `render` | [RenderConfig](#render-configuration) | No | Options controlling spec rendering behavior |
 | Source files | `source-files` | array of [SourceFileReference](#source-file-references) | No | Additional source files to download for this component |
-| Default package config | `default-package-config` | [PackageConfig](package-groups.md#package-config) | No | Default configuration applied to all binary packages produced by this component; overrides project defaults and package-group defaults |
 | Package overrides | `packages` | map of string → [PackageConfig](package-groups.md#package-config) | No | Exact per-package configuration overrides; highest priority in the resolution order |
 
 ### Bare Components
@@ -104,14 +105,49 @@ The `[components.<name>.release]` section controls how azldev manages the Releas
 
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
-| Calculation | `calculation` | string | No | `"auto"` (default) = auto-bump; `"manual"` = skip all automatic Release manipulation |
+| Calculation | `calculation` | string | No | One of `"auto"` (default), `"autorelease"`, `"static"`, or `"manual"` |
 
-Most components use auto mode (the default) and need no release configuration. Set `calculation = "manual"` for components that manage their own release numbering, such as kernel:
+### Calculation Modes
+
+| Mode | Behavior |
+|------|----------|
+| `auto` | Auto-detects from the spec's Release tag value. If `%autorelease` is found, rpmautospec handles it. If a static integer is found, optionally followed by `%{?dist}` or `%{dist}`, it is bumped by the synthetic commit count. |
+| `autorelease` | Explicitly declares the spec uses `%autorelease`. Skips all Release manipulation. Use this for specs with conditional `%autorelease`/`%else` fallbacks that confuse auto-detection. |
+| `static` | Explicitly declares the spec uses a static integer release. Bumps it by the synthetic commit count only when the Release tag is an integer, optionally followed by `%{?dist}` or `%{dist}`. Non-integer or other non-standard Release values (for example, `%{pkg_release}`) require `manual` or an overlay. |
+| `manual` | Skips all automatic Release manipulation. Use for components that manage their own release numbering (e.g. kernel). |
+
+Most components use `auto` (the default) and need no release configuration. Examples:
 
 ```toml
+# Spec with conditional %autorelease that auto-detection gets wrong:
+[components.gvisor-tap-vsock.release]
+calculation = "autorelease"
+
+# Component that manages its own release numbering:
 [components.kernel.release]
 calculation = "manual"
 ```
+
+## Render Configuration
+
+The `[components.<name>.render]` section controls rendering behavior for a component.
+
+| Field | TOML Key | Type | Required | Description |
+|-------|----------|------|----------|-------------|
+| Skip file filter | `skip-file-filter` | boolean | No | Disable post-render file filtering (defaults to `false`) |
+
+### Skip File Filter
+
+During rendering, azldev uses `spectool` to determine which files are referenced by `Source` and `Patch` tags in the spec, then removes unreferenced files from the rendered output. Some specs use dynamic macros (e.g., `%{fontpkgname1}`) that `spectool` cannot expand, causing it to report incorrect filenames. This results in referenced files being incorrectly removed.
+
+Set `skip-file-filter = true` to preserve all files from the dist-git checkout:
+
+```toml
+[components.dejavu-fonts.render]
+skip-file-filter = true
+```
+
+> **Note:** This should only be used for specs with macros that `spectool` cannot resolve. For most components, the default filtering behavior is correct and keeps the rendered output clean.
 
 ## Build Configuration
 
@@ -123,6 +159,7 @@ The `[components.<name>.build]` section controls build-time options for a compon
 | Without options | `without` | string array | No | Build conditionals to disable (`--without <option>` passed to rpmbuild) |
 | Macro definitions | `defines` | map of string to string | No | RPM macro definitions (`--define '<name> <value>'` passed to rpmbuild) |
 | Undefined macros | `undefines` | string array | No | RPM macro names to undefine (`--undefine '<name>'` passed to rpmbuild) |
+| Emit upstream provenance | `emit-upstream-provenance` | boolean | No | Inject `%fedora_upstream_version`/`%fedora_upstream_release` macros for Fedora upstream components (defaults to `false`) |
 | Check config | `check` | [CheckConfig](#check-configuration) | No | Configuration for the `%check` section of the spec |
 | Failure config | `failure` | [FailureConfig](#failure-configuration) | No | Configuration and policy regarding build failures |
 | Build hints | `hints` | [BuildHints](#build-hints) | No | Non-essential hints for how or when to build the component |
@@ -160,6 +197,43 @@ The `undefines` field removes macros that would otherwise be defined:
 [components.mypackage.build]
 undefines = ["fedora"]
 ```
+
+### Upstream Provenance Macros
+
+For components sourced from a Fedora upstream (`spec.type = "upstream"` with a Fedora `upstream-distro`), azldev can inject two macros into the component's build so the spec can record where it was derived from (useful for SBAT and similar provenance metadata). This is **opt-in** — enable it with `emit-upstream-provenance`:
+
+```toml
+[components.grub2.build]
+emit-upstream-provenance = true
+```
+
+| Macro | Description |
+|-------|-------------|
+| `%fedora_upstream_version` | The `Version` tag from the pristine upstream Fedora spec |
+| `%fedora_upstream_release` | The `Release` tag from the pristine upstream Fedora spec, with `%{?dist}` expanded to the Fedora dist tag (e.g. `.fc43`) |
+
+The values are read from the upstream spec **before** any azldev overlays are applied, so they reflect the true upstream Name-Version-Release, not the Azure Linux–modified spec. The macros are derived fresh at render/build time from the pinned upstream commit and emitted into the component's generated macros file (loaded via `%{load:...}`).
+
+For specs whose `Release` uses rpmautospec (`Release: %autorelease`), the pristine Fedora release number is computed by running `rpmautospec calculate-release` in the project distro's mock chroot against the upstream dist-git checkout (whose history is Fedora's, not azldev's synthetic overlay history). This keeps `rpmautospec` out of azldev's host dependencies. If the project distro has no mock config, or mock resolution fails, `%fedora_upstream_release` is skipped (with a warning) rather than emitting the literal `%autorelease`.
+
+Example: for a component pinned to Fedora 43's `grub2-2.12-5.fc43`, the spec can reference:
+
+```spec
+%sbat_generate_metadata ... derived from grub2 %{?fedora_upstream_version}-%{?fedora_upstream_release}
+```
+
+which expands to `grub2 2.12-5.fc43`. The conditional macro form (`%{?name}`) is recommended because provenance emission is best-effort: `%fedora_upstream_release` is skipped when the upstream spec can't be parsed or when mock cannot resolve `%autorelease`, and the conditional form degrades gracefully (expanding to empty) instead of referencing an undefined macro.
+
+Notes:
+
+- The flag has no effect on local or SRPM components (they have no upstream provenance) or on non-Fedora upstreams; for those it is silently ignored.
+- If a component defines a macro of the same name via `build.defines`, the user-defined value wins — the injected value does not overwrite it.
+- **How tag values are resolved:** `Version` and `Release` are read as plain text from the pristine upstream spec. `%{?dist}` is substituted with the Fedora dist tag, and `%autorelease` is resolved to a concrete number via `rpmautospec` (see above). Any *other* in-spec macros — e.g. `Version: %{majorver}.%{minorver}` — are emitted into the macros file unexpanded. Because that file is loaded back into the same spec via `%{load:...}`, RPM expands them lazily at build time using the spec's own macro definitions, so the consuming spec still sees the correct fully-expanded value.
+
+Limitations:
+
+- When `Version`/`Release` is built from other in-spec macros, those macros are resolved lazily at build time against the **overlaid** spec, not the pristine upstream one. So if an overlay redefines a macro that the upstream `Version`/`Release` depends on (e.g. `%majorver`), the provenance value reflects the overlaid definition. This is rare in practice — overlays rarely change version macros.
+- Listing `fedora_upstream_version` or `fedora_upstream_release` in `build.undefines` does **not** suppress the injected macros — they are layered on after `undefines` is applied. To disable them, set `emit-upstream-provenance = false` (or omit it) instead.
 
 ### Check Configuration
 
@@ -210,16 +284,7 @@ hints = { expensive = true }
 
 ## Package Configuration
 
-Components can customize the configuration for the binary packages they produce. There are two fields for this, applied at different levels of specificity.
-
-### Default Package Config
-
-The `default-package-config` field provides a component-level default that applies to **all** binary packages produced by this component. It overrides any matching [package groups](package-groups.md) but is itself overridden by the `packages` map.
-
-```toml
-[components.curl.default-package-config.publish]
-channel = "rpm-base"
-```
+Components can customize the configuration for the binary packages they produce using the `packages` map.
 
 ### Per-Package Overrides
 
@@ -228,7 +293,7 @@ The `[components.<name>.packages.<pkgname>]` map lets you override config for a 
 ```toml
 # Override just one subpackage
 [components.curl.packages.curl-devel.publish]
-channel = "rpm-devel"
+rpm-channel = "rpm-devel"
 ```
 
 ### Resolution Order
@@ -237,64 +302,152 @@ For each binary package produced by a component, the effective config is assembl
 
 1. Project `default-package-config`
 2. Package group containing this package name (if any)
-3. Component `default-package-config`
-4. Component `packages.<exact-name>` (highest priority)
+3. Component `packages.<exact-name>` (highest priority)
+
+The component's `[publish]` section provides default channels for all packages that don't have explicit overrides. See [Publish Settings](#publish-settings) for details.
 
 See [Package Groups](package-groups.md) for the full field reference and a complete example.
+
+### Publish Settings
+
+The `[components.<name>.publish]` section sets default publish channels for all packages produced by this component. These channels are inherited by every binary package unless overridden by a package-group or per-package setting.
+
+| Field | TOML Key | Type | Required | Description |
+|-------|----------|------|----------|-------------|
+| RPM Channel | `rpm-channel` | string | No | Default publish channel for binary (non-debuginfo) packages |
+| SRPM Channel | `srpm-channel` | string | No | Publish channel for the SRPM |
+| Debuginfo Channel | `debuginfo-channel` | string | No | Publish channel for debuginfo and debugsource packages |
 
 ### Example
 
 ```toml
 [components.curl]
 
-# Route all curl packages to "base" by default ...
-[components.curl.default-package-config.publish]
-channel = "rpm-base"
+# Set component-level default channels via publish
+[components.curl.publish]
+rpm-channel = "rpm-base"
+srpm-channel = "rpm-base-srpm"
+debuginfo-channel = "rpm-base-debuginfo"
 
 # ... but put curl-devel in the "devel" channel
 [components.curl.packages.libcurl-devel.publish]
-channel = "rpm-devel"
+rpm-channel = "rpm-devel"
 
 # Signal to downstream tooling that this package should not be published
 [components.curl.packages.libcurl-minimal.publish]
-channel = "none"
+rpm-channel = "none"
 ```
 
 ## Source File References
 
-The `[[components.<name>.source-files]]` array defines additional source files that azldev should download before building. These are files not available in the dist-git repository or lookaside cache — typically binaries, pre-built artifacts, or files from custom hosting.
+The `[[components.<name>.source-files]]` array defines additional source files to fetch or generate before building — binaries, pre-built artifacts, or archives generated on-the-fly by a script.
 
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
-| Filename | `filename` | string | **Yes** | Name of the file as it will appear in the sources directory |
-| Hash | `hash` | string | Conditional | Expected hash of the downloaded file for integrity verification. Required for the `prep-sources` command unless `--allow-no-hashes` is used, in which case the hash is computed automatically from the downloaded file. |
-| Hash type | `hash-type` | string | Conditional | Hash algorithm used (examples: `"SHA256"`, `"SHA512"`). Required when `hash` is specified. When omitted alongside `hash` for the `prep-sources` command and `--allow-no-hashes` is used, defaults to `"SHA512"`. |
-| Origin | `origin` | [Origin](#origin) | **Yes** | Where to download the file from |
+| Filename | `filename` | string | **Yes** | Name of the file in the sources directory |
+| Hash | `hash` | string | Conditional | Expected hash. Required unless `--allow-no-hashes` is passed to `prep-sources` (which computes and prints the hash). |
+| Hash type | `hash-type` | string | Conditional | Hash algorithm (`"SHA256"`, `"SHA512"`). Required with `hash`; defaults to `"SHA512"` when auto-computed. |
+| Origin | `origin` | [Origin](#origin) | **Yes** | How to obtain the file |
+| Replace upstream | `replace-upstream` | bool | No | Replace the same-named entry in the upstream `sources` file. The upstream entry must exist. Requires `replace-reason`. |
+| Replace reason | `replace-reason` | string | Conditional | Required when `replace-upstream = true`. Logged by `prep-sources` for auditability. |
 
 ### Origin
 
-The `origin` field specifies how to obtain the source file.
+Three origin types are supported.
 
-| Field | TOML Key | Type | Required | Description |
-|-------|----------|------|----------|-------------|
-| Type | `type` | string | **Yes** | Origin type. Currently only `"download"` is supported. |
-| URI | `uri` | string | No | URI to download the file from (required when type is `"download"`) |
+#### `"download"` — fetch from a URI
 
-### Example
+`origin = { type = "download", uri = "https://..." }`. The `uri` field is required.
 
 ```toml
 [[components.shim.source-files]]
-filename = "shimx64.efi"
-hash = "7741013d9a24ce554bf6a9df6b776a57b114055e..."
+filename  = "shimx64.efi"
+hash      = "7741013d9a24ce554bf6a9df6b776a57b114055e..."
 hash-type = "SHA512"
-origin = { type = "download", uri = "https://example.com/repo/pkgs/shim/shimx64.efi/sha512/.../shimx64.efi" }
-
-[[components.shim.source-files]]
-filename = "shimaa64.efi"
-hash = "57aa116d1c91a9ec36ab8b46c9164ae19af192b..."
-hash-type = "SHA512"
-origin = { type = "download", uri = "https://example.com/repo/pkgs/shim/shimaa64.efi/sha512/.../shimaa64.efi" }
+origin    = { type = "download", uri = "https://example.com/repo/.../shimx64.efi" }
 ```
+
+#### `"custom"` — generate via a mock script
+
+Use `origin.type = "custom"` when a source archive must be assembled or modified (e.g. stripping sensitive test fixtures from an upstream tarball). azldev runs the script inside a fresh mock chroot — the script **must write all output to `/azldev-gen/output/`**, which azldev packages into the archive named by `filename`. Network access is always enabled; the mock config comes from the project's default distro.
+
+Custom sources are regenerated on every source preparation rather than restored from lookaside. The generated archive is validated against its configured hash, so changes to the script or its inputs fail with a hash mismatch until the hash is intentionally refreshed.
+
+The `script`, `mock-packages`, and `inputs` fields are nested under `[origin]`:
+
+| Field | TOML Key | Type | Required | Description |
+|-------|----------|------|----------|-------------|
+| Script | `origin.script` | string | **Yes** | Script filename (relative to the component's spec dir) to run in mock. Required for `origin.type = "custom"`. |
+| Mock packages | `origin.mock-packages` | array of string | No | Extra RPM packages to install in the mock chroot before the script runs. |
+| Inputs | `origin.inputs` | array of string | No | Unique filenames to make available in the mock chroot before the script runs. Each file must already be present in the fetched source output directory — upstream source tarballs, sidecar files (patches, scripts), and any earlier `source-files` entries are all placed there by the upstream fetch before custom scripts run. |
+
+On first use, omit `hash` and run `prep-sources --allow-no-hashes` to generate the archive and print its hash, then copy it into the TOML.
+
+```toml
+[[components.yara.source-files]]
+filename  = "yara-4.5.4-azl-stripped.tar.gz"
+hash-type = "SHA512"
+hash      = "abc123..."               # from: prep-sources --allow-no-hashes
+origin.type          = "custom"
+origin.script        = "gen-yara-stripped.sh"    # relative to the component's spec directory
+origin.mock-packages = ["cmake"]                 # omit if not needed
+origin.inputs        = ["yara-4.5.4.tar.gz"]     # available to the script as ./yara-4.5.4.tar.gz
+```
+
+**Note:** Upstream source tarballs are automatically available as inputs before running custom generation scripts. There is no need to re-declare an upstream file in `source-files` to use it as an input.
+
+#### `"overlay"` — record a post-overlay hash
+
+- **`hash` and `hash-type` are required** for normal use. To bootstrap a new archive overlay, omit both and run `prep-sources --allow-no-hashes` once; it computes the post-overlay hash for you.
+- **`replace-upstream = true` is required** — the archive already exists in the upstream `sources` file, and this entry replaces its hash with the post-overlay value.
+- During `prep-sources` (full run), azldev verifies that the hash it computed after repacking the archive matches the stated `hash`. A mismatch means the config is stale and must be updated.
+- The post-overlay archive is hashed using the configured `hash-type`, regardless of the algorithm used by the upstream `sources` entry. The archive's actual compression format is preserved when repacking, even when it does not match the filename extension.
+
+See [Recording the post-overlay hash for archive overlays](#recording-the-post-overlay-hash-for-archive-overlays) below for the full workflow.
+
+### Recording the post-overlay hash for archive overlays
+
+When you apply archive overlays (e.g. removing vendored files from a tarball) using `file-remove` or `file-search-replace` with an archive-scoped path, the repacked archive has a different hash than the original. Use a `source-files` entry with `origin.type = "overlay"` to record the expected post-overlay hash:
+
+```toml
+[[components.apache-commons-compress.source-files]]
+filename = "commons-compress-1.27.1-src.tar.gz"
+hash = "c7a2cef26959e687ad19b96b5ba8393d7514095e13bf0f29bd41e6b3c3cb2260d8ff23283ff3d5fd137b2522b843e7f0f50ab46bcf0f66df5383674f35f223ab"
+hash-type = "SHA512"
+origin = { type = "overlay" }
+replace-upstream = true
+replace-reason = "Upstream source tarball contains test fixtures flagged as malware by the AZL RPM signing pipeline. These files are not needed at runtime and are removed to allow SRPM publication."
+```
+
+**Workflow:**
+
+1. Add the archive overlay(s) in the component's `[[overlays]]` array.
+2. Run `prep-sources --allow-no-hashes` once — this repacks the archive and writes the computed hash to the output `sources` file.
+3. Paste the computed `hash` and `hash-type` into the `source-files` entry above.
+4. Run `prep-sources` again to confirm the hash matches, then commit.
+
+`replace-upstream = true` and `replace-reason` are required because the archive is already in the upstream `sources` file. The entry replaces its hash with the post-overlay value, regardless of how many overlays target that archive.
+
+### Replacing an upstream `sources` entry
+
+A `source-files` entry whose `filename` collides with an upstream `sources` entry is an error by default. Set `replace-upstream = true` (with a non-empty `replace-reason`) to intentionally substitute it:
+
+```toml
+[[components.example.source-files]]
+filename         = "example-1.0.tar.gz"
+hash             = "deadbeef..."
+hash-type        = "SHA512"
+origin           = { type = "download", uri = "https://internal.example.com/example-1.0-patched.tar.gz" }
+replace-upstream = true
+replace-reason   = "patched to fix CVE-2026-0001 before upstream"
+```
+
+`prep-sources` removes the matching upstream entry, inserts the new one in its place, and logs a `WARN` with both hashes and the reason. If no upstream entry with that filename exists, `prep-sources` fails — this is almost always a stale config or filename typo. Drop `replace-upstream` if you intended a brand-new
+  artifact instead.
+
+`replace-upstream` and `replace-reason` are per-entry switches, not a
+per-component setting; multiple entries within the same `source-files` array
+can opt in independently.
 
 ## Complete Examples
 

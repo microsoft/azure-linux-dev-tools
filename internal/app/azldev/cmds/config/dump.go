@@ -91,7 +91,7 @@ issues or inspecting effective values.`,
 
 	cmd.Flags().VarP(&configDumpFormat, "format", "f", "Output format {json, toml}")
 
-	azldev.ExportAsMCPTool(cmd)
+	azldev.ExportAsReadOnlyMCPTool(cmd)
 
 	return cmd
 }

@@ -22,6 +22,10 @@ type ComponentFilter struct {
 	SpecPaths []string
 	// If true, then *all* known components are included in the result set.
 	IncludeAllComponents bool
+	// SkipLockValidation disables lock file consistency checks for this
+	// filter's resolution. Commands that write lock files (update) or are
+	// read-only (list) set this to true.
+	SkipLockValidation bool
 }
 
 // HasNoCriteria returns true if the filter has no criteria set, meaning that it will never
@@ -48,6 +52,10 @@ func AddComponentFilterOptionsToCommand(cmd *cobra.Command, filter *ComponentFil
 
 	cmd.Flags().StringArrayVarP(&filter.SpecPaths, "spec-path", "s", []string{}, "Spec path")
 	_ = cmd.MarkFlagFilename("spec-path", ".spec")
+
+	cmd.Flags().BoolVar(&filter.SkipLockValidation, "skip-lock-validation",
+		false,
+		"skip lock file consistency checks")
 }
 
 // Function suitable for use as a [cobra.ValidArgsFunction] in a [cobra.Command]. Intended for use

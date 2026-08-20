@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -16,9 +15,12 @@ import (
 	"unicode"
 
 	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
+	"github.com/microsoft/azure-linux-dev-tools/internal/fingerprint"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
+	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource"
@@ -63,12 +65,36 @@ type PreparerOption func(*sourcePreparerImpl)
 // requires the project configuration to reside inside a git repository.
 // Without this option, no dist-git is created and synthetic history is skipped.
 //
-// The defaultAuthorEmail is used for synthetic changelog entries and commits
-// when no author email is available from git history.
-func WithGitRepo(defaultAuthorEmail string) PreparerOption {
+// The cmdFactory is used to shell out to git for fingerprint change detection.
+// The lockReader provides access to per-component lock files and their directory.
+// The releaseVer must be the per-component resolved distro release version
+// (e.g., "4.0"), not the project default — components may override the distro
+// via [projectconfig.SpecSource.UpstreamDistro].
+func WithGitRepo(
+	cmdFactory opctx.CmdFactory,
+	lockReader lockfile.LockReader,
+	releaseVer string,
+) PreparerOption {
 	return func(p *sourcePreparerImpl) {
 		p.withGitRepo = true
-		p.defaultAuthorEmail = defaultAuthorEmail
+		p.cmdFactory = cmdFactory
+		p.lockReader = lockReader
+		p.releaseVer = releaseVer
+	}
+}
+
+// WithDirtyDetection returns a [PreparerOption] that enables uncommitted-change
+// detection during synthetic history generation. When set, the current input
+// fingerprint is compared against the committed lock file; if they differ, a
+// "dirty" synthetic commit is appended to represent the uncommitted changes.
+// Without this option, only committed fingerprint changes produce synthetic commits.
+//
+// This should be enabled for commands that operate on the working tree state
+// (build, render, prepare-sources) and left disabled for commands that should
+// only reflect committed state.
+func WithDirtyDetection() PreparerOption {
+	return func(p *sourcePreparerImpl) {
+		p.dirtyDetection = true
 	}
 }
 
@@ -82,6 +108,30 @@ func WithGitRepo(defaultAuthorEmail string) PreparerOption {
 func WithSkipLookaside() PreparerOption {
 	return func(p *sourcePreparerImpl) {
 		p.skipLookaside = true
+	}
+}
+
+// WithUpstreamProvenance returns a [PreparerOption] that enables emission of
+// the %fedora_upstream_version and %fedora_upstream_release macros for Fedora
+// upstream components. distTag is the resolved %{?dist} expansion (e.g.
+// ".fc43", as produced by [FedoraDistTag]) used to expand the pristine Release
+// tag. Pass "" (e.g. for non-Fedora upstreams) to disable the macros.
+func WithUpstreamProvenance(distTag string) PreparerOption {
+	return func(p *sourcePreparerImpl) {
+		p.upstreamDistTag = distTag
+	}
+}
+
+// WithMockProcessor returns a [PreparerOption] that supplies the mock chroot
+// used to resolve an rpmautospec %autorelease when emitting
+// %fedora_upstream_release. Without it, upstream components whose Release uses
+// %autorelease get no release macro (best-effort). Running rpmautospec inside
+// mock keeps it out of azldev's host dependencies. A nil processor is ignored.
+func WithMockProcessor(mp *MockProcessor) PreparerOption {
+	return func(p *sourcePreparerImpl) {
+		if mp != nil {
+			p.autoreleaseResolver = mp
+		}
 	}
 }
 
@@ -118,13 +168,37 @@ type sourcePreparerImpl struct {
 	// source preparation. Git-tracked files are still fetched.
 	skipLookaside bool
 
-	// defaultAuthorEmail is the email address used for synthetic changelog
-	// entries and commits when no author email is available from git history.
-	defaultAuthorEmail string
+	// cmdFactory is used to shell out to git for fingerprint change detection
+	// in the project repository. Set via [WithGitRepo].
+	cmdFactory opctx.CmdFactory
+
+	// lockReader provides access to per-component lock files and their
+	// directory path. Set via [WithGitRepo].
+	lockReader lockfile.LockReader
 
 	// allowNoHashes, when true, allows source file references without hash
 	// values. Missing hashes are computed from the downloaded files.
 	allowNoHashes bool
+
+	// dirtyDetection, when true, enables uncommitted-change detection during
+	// synthetic history generation. Set via [WithDirtyDetection].
+	dirtyDetection bool
+
+	// releaseVer is the per-component resolved distro release version, not the
+	// project default. Set via [WithGitRepo].
+	releaseVer string
+
+	// upstreamDistTag is the resolved %{?dist} expansion (e.g. ".fc43") used to
+	// expand a Fedora upstream component's pristine Release tag when emitting
+	// the %fedora_upstream_* macros. Empty disables provenance macros. Set via
+	// [WithUpstreamProvenance].
+	upstreamDistTag string
+
+	// autoreleaseResolver runs rpmautospec inside a mock chroot to resolve an
+	// %autorelease Release into a concrete Fedora release number for
+	// %fedora_upstream_release. Nil disables autorelease resolution (the release
+	// macro is skipped for such specs). Set via [WithMockProcessor].
+	autoreleaseResolver autoreleaseResolver
 }
 
 // NewPreparer creates a new [SourcePreparer] instance. All positional arguments
@@ -165,6 +239,11 @@ func NewPreparer(
 		}
 	}
 
+	if impl.dirtyDetection && !impl.withGitRepo {
+		return nil, errors.New("WithDirtyDetection requires WithGitRepo; " +
+			"dirty detection compares fingerprints against committed lock files in the git history")
+	}
+
 	return impl, nil
 }
 
@@ -172,14 +251,9 @@ func NewPreparer(
 func (p *sourcePreparerImpl) PrepareSources(
 	ctx context.Context, component components.Component, outputDir string, applyOverlays bool,
 ) error {
-	// Use the source manager to fetch source files (archives, patches, etc.)
-	// Skip this step when skipLookaside is set — source tarballs are not needed
-	// for rendering and are the most expensive download.
-	if !p.skipLookaside {
-		err := p.sourceManager.FetchFiles(ctx, component, outputDir)
-		if err != nil {
-			return fmt.Errorf("failed to fetch source files for component %#q:\n%w",
-				component.GetName(), err)
+	if applyOverlays {
+		if err := p.validateArchiveOverlayConfig(component); err != nil {
+			return err
 		}
 	}
 
@@ -195,20 +269,31 @@ func (p *sourcePreparerImpl) PrepareSources(
 		fetchOpts = append(fetchOpts, sourceproviders.WithSkipLookaside())
 	}
 
-	// Use the source manager to fetch the component (spec file and sidecar files).
+	// Fetch the component first (spec, sidecar files, and upstream source tarballs).
 	err := p.sourceManager.FetchComponent(ctx, component, outputDir, fetchOpts...)
 	if err != nil {
 		return fmt.Errorf("failed to fetch sources for component %#q:\n%w",
 			component.GetName(), err)
 	}
 
+	// Fetch custom and downloaded source files.
+	if !p.skipLookaside {
+		if err := p.sourceManager.FetchFiles(ctx, component, outputDir); err != nil {
+			return fmt.Errorf("failed to fetch source files for component %#q:\n%w",
+				component.GetName(), err)
+		}
+	}
+
+	fingerprintConfig := component.GetConfig()
+
 	if applyOverlays {
-		err := p.applyOverlaysToSources(ctx, component, outputDir)
+		repackedArchives, err := p.applyOverlaysToSources(ctx, component, outputDir)
 		if err != nil {
 			return err
 		}
 
-		if err := p.updateSourcesFile(component, outputDir); err != nil {
+		fingerprintConfig, err = p.updateSourcesFile(component, outputDir, repackedArchives)
+		if err != nil {
 			return fmt.Errorf("failed to update 'sources' file for component %#q:\n%w",
 				component.GetName(), err)
 		}
@@ -220,7 +305,7 @@ func (p *sourcePreparerImpl) PrepareSources(
 
 	// Record the changes as synthetic git history when dist-git creation is enabled.
 	if p.withGitRepo {
-		if err := p.trySyntheticHistory(component, outputDir); err != nil {
+		if err := p.trySyntheticHistory(ctx, component, fingerprintConfig, outputDir); err != nil {
 			return fmt.Errorf("failed to generate synthetic history for component %#q:\n%w",
 				component.GetName(), err)
 		}
@@ -229,18 +314,27 @@ func (p *sourcePreparerImpl) PrepareSources(
 	return nil
 }
 
+func (p *sourcePreparerImpl) validateArchiveOverlayConfig(component components.Component) error {
+	config := component.GetConfig()
+	if err := config.ValidateArchiveOverlays(p.allowNoHashes); err != nil {
+		return fmt.Errorf("invalid archive overlays for component %#q:\n%w", component.GetName(), err)
+	}
+
+	return nil
+}
+
 // applyOverlaysToSources writes the macros file and then applies all overlays.
+// It returns the names of any archives that were repacked by archive overlays
+// (empty in dry-run mode or when no archive overlays ran), so the caller can
+// rehash exactly those entries in the 'sources' file.
 func (p *sourcePreparerImpl) applyOverlaysToSources(
 	ctx context.Context, component components.Component, outputDir string,
-) error {
-	// Emit computed macros to a macros file in the output directory.
-	// If the build configuration produces no macros, no file is written and
-	// macrosFileName will be empty.
+) ([]string, error) {
 	var macrosFileName string
 
-	macrosFilePath, err := p.writeMacrosFile(component, outputDir)
+	macrosFilePath, err := p.writeMacrosFile(ctx, component, outputDir)
 	if err != nil {
-		return fmt.Errorf("failed to write macros file for component %#q:\n%w",
+		return nil, fmt.Errorf("failed to write macros file for component %#q:\n%w",
 			component.GetName(), err)
 	}
 
@@ -248,47 +342,88 @@ func (p *sourcePreparerImpl) applyOverlaysToSources(
 		macrosFileName = filepath.Base(macrosFilePath)
 	}
 
-	// Apply all overlays to prepared sources.
-	if err := p.applyOverlays(ctx, component, outputDir, macrosFileName); err != nil {
-		return fmt.Errorf("failed to apply overlays for component %#q:\n%w", component.GetName(), err)
+	repackedArchives, err := p.applyOverlays(component, outputDir, macrosFileName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to apply overlays for component %#q:\n%w",
+			component.GetName(), err)
 	}
 
-	return nil
+	return repackedArchives, nil
 }
 
 // applyOverlays applies all overlays (user-defined and system-generated) to the
-// component sources. Overlay application is decoupled from git history generation:
-// overlays modify the working tree; synthetic history is recorded separately by
-// [trySyntheticHistory].
+// component sources. It returns the names of any archives that were repacked by
+// archive overlays.
 func (p *sourcePreparerImpl) applyOverlays(
-	_ context.Context, component components.Component, sourcesDirPath, macrosFileName string,
-) error {
+	component components.Component, sourcesDirPath, macrosFileName string,
+) ([]string, error) {
 	event := p.eventListener.StartEvent("Applying overlays", "component", component.GetName())
 	defer event.End()
 
-	// Resolve the spec path once for all overlay operations in this call.
 	absSpecPath, err := p.resolveSpecPath(component, sourcesDirPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	// Collect all overlays in application order. This ensures every change is
-	// captured in the synthetic history, including build configuration changes.
 	allOverlays, err := p.collectOverlays(component, macrosFileName)
 	if err != nil {
-		return fmt.Errorf("failed to collect overlays for component %#q:\n%w", component.GetName(), err)
+		return nil, fmt.Errorf("failed to collect overlays for component %#q:\n%w", component.GetName(), err)
 	}
 
 	if len(allOverlays) == 0 {
-		return nil
+		return nil, nil
 	}
 
-	// Apply all overlays to the working tree.
+	// Archive overlays are applied first (they modify archived source files
+	// in-place), followed by spec and loose-file overlays. Each function
+	// self-filters to the overlay types it handles.
+	repackedArchives, err := p.applyArchiveOverlayGroup(component, sourcesDirPath, allOverlays)
+	if err != nil {
+		return nil, err
+	}
+
 	if err := p.applyOverlayList(allOverlays, sourcesDirPath, absSpecPath); err != nil {
-		return fmt.Errorf("failed to apply overlays for component %#q:\n%w", component.GetName(), err)
+		return nil, fmt.Errorf("failed to apply overlays for component %#q:\n%w", component.GetName(), err)
 	}
 
-	return nil
+	return repackedArchives, nil
+}
+
+// applyArchiveOverlayGroup applies the archive-scoped overlays contained in the
+// given overlay list. The list may hold overlays of any type; only those for
+// which [projectconfig.ComponentOverlay.ModifiesArchive] reports true are
+// processed here. Skipped when source downloads were not performed. It returns
+// the names of the archives that were actually repacked (empty in dry-run mode
+// or when source downloads were skipped).
+func (p *sourcePreparerImpl) applyArchiveOverlayGroup(
+	component components.Component,
+	sourcesDirPath string, overlays []projectconfig.ComponentOverlay,
+) ([]string, error) {
+	archiveOverlays := lo.Filter(overlays, func(overlay projectconfig.ComponentOverlay, _ int) bool {
+		return overlay.ModifiesArchive()
+	})
+
+	if len(archiveOverlays) == 0 {
+		return nil, nil
+	}
+
+	if p.skipLookaside {
+		slog.Warn("Skipping archive overlays because source downloads were skipped (--skip-sources)",
+			"component", component.GetName(),
+			"count", len(archiveOverlays))
+
+		return nil, nil
+	}
+
+	repackedArchives, err := applyArchiveOverlays(
+		p.dryRunnable, p.eventListener, sourcesDirPath, archiveOverlays,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to apply archive overlays for component %#q:\n%w",
+			component.GetName(), err)
+	}
+
+	return repackedArchives, nil
 }
 
 // collectOverlays gathers all overlays for a component into a single ordered slice:
@@ -318,7 +453,7 @@ func (p *sourcePreparerImpl) collectOverlays(
 
 // initSourcesRepo initializes a new git repository in sourcesDirPath, stages all files,
 // and creates an initial commit. This is used for components that don't have an upstream
-// dist-git so that Affects commits can still be layered on top.
+// dist-git so that synthetic commits can still be layered on top.
 func initSourcesRepo(sourcesDirPath string) (*gogit.Repository, error) {
 	slog.Info("Initializing git repository for sources", "path", sourcesDirPath)
 
@@ -350,48 +485,66 @@ func initSourcesRepo(sourcesDirPath string) (*gogit.Repository, error) {
 }
 
 // trySyntheticHistory attempts to create synthetic git commits on top of the
-// component's sources directory. If no .git directory exists, one is initialized
-// with an initial commit so Affects commits can be layered on uniformly for all
-// component types.
+// component's sources directory. Synthetic commits are derived from lock file
+// fingerprint changes in the project repository and interleaved into the
+// upstream dist-git history. If no .git directory exists, one is initialized
+// with an initial commit so synthetic commits can be layered on uniformly.
 //
 // Returns a non-nil error if history generation fails.
 func (p *sourcePreparerImpl) trySyntheticHistory(
+	ctx context.Context,
 	component components.Component,
+	fingerprintConfig *projectconfig.ComponentConfig,
 	sourcesDirPath string,
 ) error {
 	config := component.GetConfig()
+	componentName := component.GetName()
 
-	// Build commit metadata from Affects commits.
-	commits, err := buildSyntheticCommits(config, component.GetName(), p.defaultAuthorEmail)
+	// Compute the current fingerprint for uncommitted-change detection.
+	// Only computed when dirty detection is enabled (e.g., build, render).
+	// An empty fingerprint skips dirty detection in buildSyntheticCommits.
+	var currentFingerprint string
+
+	if p.dirtyDetection {
+		var fpErr error
+
+		currentFingerprint, fpErr = computeCurrentFingerprint(p.fs, fingerprintConfig, p.releaseVer)
+		if fpErr != nil {
+			return fmt.Errorf("dirty detection failed for component %#q:\n%w", componentName, fpErr)
+		}
+	}
+
+	changes, importCommit, err := buildSyntheticCommits(
+		ctx, p.cmdFactory, config, componentName, p.lockReader.LockDir(),
+		currentFingerprint,
+	)
 	if err != nil {
 		return fmt.Errorf("failed to build synthetic commits:\n%w", err)
 	}
 
-	if len(commits) == 0 {
+	if len(changes) == 0 {
 		slog.Debug("No synthetic commits to create; skipping history generation",
-			"component", component.GetName())
+			"component", componentName)
 
 		return nil
 	}
 
 	// Adjust the Release tag before staging changes. See [tryBumpStaticRelease]
 	// for the handling of %autorelease, static integers, and non-standard values.
-	if err := p.tryBumpStaticRelease(component, sourcesDirPath, len(commits)); err != nil {
+	if err := p.tryBumpStaticRelease(component, sourcesDirPath, len(changes)); err != nil {
 		return fmt.Errorf("failed to apply release bump:\n%w", err)
 	}
 
-	// Use os.Stat (not p.fs) because go-git always operates on the real filesystem.
 	gitDirPath := filepath.Join(sourcesDirPath, ".git")
 
-	_, statErr := os.Stat(gitDirPath)
-
-	if statErr != nil && !os.IsNotExist(statErr) {
-		return fmt.Errorf("failed to check for .git directory at %#q:\n%w", gitDirPath, statErr)
+	gitDirExists, err := fileutils.Exists(p.fs, gitDirPath)
+	if err != nil {
+		return fmt.Errorf("failed to check for .git directory at %#q:\n%w", gitDirPath, err)
 	}
 
-	if os.IsNotExist(statErr) {
+	if !gitDirExists {
 		slog.Info("No .git directory in sources; initializing repository",
-			"component", component.GetName())
+			"component", componentName)
 
 		if _, err := initSourcesRepo(sourcesDirPath); err != nil {
 			return fmt.Errorf("failed to initialize sources repository:\n%w", err)
@@ -404,9 +557,104 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 		return fmt.Errorf("failed to open sources repository at %#q:\n%w", sourcesDirPath, err)
 	}
 
-	if err := CommitSyntheticHistory(sourcesRepo, commits); err != nil {
+	// Strip bogus submodule entries from the index before staging. Some upstream
+	// repos have gitlink entries without .gitmodules that break go-git's staging.
+	if err := removeSubmoduleEntries(p.fs, sourcesRepo, sourcesDirPath); err != nil {
+		return fmt.Errorf("failed to remove submodule entries:\n%w", err)
+	}
+
+	if err := CommitInterleavedHistory(sourcesRepo, changes, importCommit); err != nil {
 		return fmt.Errorf("failed to commit synthetic history:\n%w", err)
 	}
+
+	return nil
+}
+
+// computeCurrentFingerprint computes the current input fingerprint for a
+// component from its resolved config. Returns ("", nil) for local components
+// or when the source identity cannot be determined — dirty detection is
+// silently skipped for these. Returns a non-nil error when the fingerprint
+// computation itself fails.
+func computeCurrentFingerprint(
+	fs opctx.FS,
+	config *projectconfig.ComponentConfig,
+	releaseVer string,
+) (string, error) {
+	if config == nil {
+		return "", nil
+	}
+
+	sourceIdentity := config.EffectiveUpstreamCommit()
+	if sourceIdentity == "" {
+		return "", nil
+	}
+
+	var manualBump int
+	if config.Locked != nil {
+		manualBump = config.Locked.ManualBump
+	}
+
+	identity, err := fingerprint.ComputeIdentity(
+		fs,
+		*config,
+		releaseVer,
+		fingerprint.IdentityOptions{
+			ManualBump:     manualBump,
+			SourceIdentity: sourceIdentity,
+		},
+	)
+	if err != nil {
+		return "", fmt.Errorf("computing current fingerprint for %#q:\n%w", config.Name, err)
+	}
+
+	return identity.Fingerprint, nil
+}
+
+// removeSubmoduleEntries strips gitlink (mode 160000) entries from the repository
+// index and removes the corresponding empty directories from disk. Some upstream
+// dist-git repositories (e.g., Fedora's "at" package) contain bogus submodule
+// references — gitlink entries without a .gitmodules file — that leave empty
+// directories after cloning. go-git's [gogit.Worktree.AddWithOptions] fails when
+// it encounters these because it tries to read the directory path as a file.
+func removeSubmoduleEntries(fs opctx.FS, repo *gogit.Repository, repoDir string) error {
+	idx, err := repo.Storer.Index()
+	if err != nil {
+		return fmt.Errorf("failed to read git index:\n%w", err)
+	}
+
+	originalLen := len(idx.Entries)
+	kept := 0
+
+	for _, entry := range idx.Entries {
+		if entry.Mode == filemode.Submodule {
+			slog.Info("Removing bogus submodule entry from index",
+				"path", entry.Name)
+
+			// Remove the directory left by the uninitialized submodule.
+			if removeErr := fs.RemoveAll(filepath.Join(repoDir, entry.Name)); removeErr != nil {
+				slog.Warn("Failed to remove submodule directory",
+					"path", entry.Name, "error", removeErr)
+			}
+
+			continue
+		}
+
+		idx.Entries[kept] = entry
+		kept++
+	}
+
+	if kept == originalLen {
+		return nil
+	}
+
+	idx.Entries = idx.Entries[:kept]
+
+	if err := repo.Storer.SetIndex(idx); err != nil {
+		return fmt.Errorf("failed to update git index:\n%w", err)
+	}
+
+	slog.Info("Removed submodule entries from git index",
+		"count", originalLen-kept)
 
 	return nil
 }
@@ -449,8 +697,10 @@ func (p *sourcePreparerImpl) DiffSources(
 		return nil, fmt.Errorf("failed to copy sources for component %#q:\n%w", component.GetName(), err)
 	}
 
-	// Apply overlays in-place to the copied directory only.
-	if err := p.applyOverlaysToSources(ctx, component, overlaidDir); err != nil {
+	// Apply overlays in-place to the copied directory only. The repacked-archive
+	// list is unused here: DiffSources diffs the trees directly and does not
+	// rewrite a 'sources' file.
+	if _, err := p.applyOverlaysToSources(ctx, component, overlaidDir); err != nil {
 		return nil, fmt.Errorf("failed to apply overlays for component %#q:\n%w", component.GetName(), err)
 	}
 
@@ -464,53 +714,60 @@ func (p *sourcePreparerImpl) DiffSources(
 	return result, nil
 }
 
-// updateSourcesFile appends entries to the 'sources' file for any extra source files
-// defined in the component's [projectconfig.SourceFileReference] configuration. Each source file reference
-// must have both [projectconfig.SourceFileReference.Hash] and [projectconfig.SourceFileReference.HashType]
-// specified unless [sourcePreparerImpl.allowNoHashes] is set, in which case
-// missing hashes are computed from the downloaded files in outputDir.
-// Conflicts between existing entries in the 'sources' file and sources introduced through
-// the [projectconfig.SourceFileReference] configuration are also treated as errors.
-func (p *sourcePreparerImpl) updateSourcesFile(component components.Component, outputDir string) error {
-	sourceFiles := component.GetConfig().SourceFiles
-	if len(sourceFiles) == 0 {
-		return nil
+// updateSourcesFile rewrites the 'sources' file so that it lists the merged set of
+// upstream entries plus entries declared in the component's [projectconfig.SourceFileReference]
+// configuration.
+//
+// Each source file reference must have both [projectconfig.SourceFileReference.Hash] and
+// [projectconfig.SourceFileReference.HashType] specified unless [sourcePreparerImpl.allowNoHashes]
+// is set, in which case missing hashes are computed from the downloaded files in outputDir.
+//
+// Filename collisions between an upstream entry and a [projectconfig.SourceFileReference] are
+// errors by default. Setting [projectconfig.SourceFileReference.ReplaceUpstream] = true on a
+// collision intentionally substitutes the user-defined entry in the upstream entry's original
+// position (a [projectconfig.SourceFileReference.ReplaceReason] is required when doing so,
+// enforced by [projectconfig.ConfigFile.Validate]). Setting `ReplaceUpstream` = true without
+// a matching upstream entry is also an error: the user expressed intent to replace something
+// that isn't there, which almost certainly indicates a stale config or filename typo.
+func (p *sourcePreparerImpl) updateSourcesFile(
+	component components.Component, outputDir string, modifiedArchives []string,
+) (*projectconfig.ComponentConfig, error) {
+	config := component.GetConfig()
+	sourceFiles := slices.Clone(config.SourceFiles)
+
+	// modifiedArchives lists the archives that archive overlays actually repacked
+	// during this run; their 'sources' digests must be refreshed. The list is empty
+	// when no archive overlays ran, in dry-run mode, or when source downloads were
+	// skipped, so rehashing is correctly avoided in those cases.
+	if len(sourceFiles) == 0 && len(modifiedArchives) == 0 {
+		return config, nil
 	}
 
 	sourcesFilePath := filepath.Join(outputDir, fedorasource.SourcesFileName)
 
 	existingContent, err := p.readSourcesFileIfExists(sourcesFilePath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	existingEntries, err := fedorasource.ReadSourcesFileEntries(existingContent)
+	// Parse once, then rehash modified archives and merge source-files entries
+	// on the parsed representation — single parse, single write.
+	existingLines, err := fedorasource.ReadSourcesFile(existingContent)
 	if err != nil {
-		return fmt.Errorf("failed to parse existing sources file %#q:\n%w", sourcesFilePath, err)
+		return nil, fmt.Errorf("failed to parse 'sources' file %#q:\n%w", sourcesFilePath, err)
 	}
 
-	existingFilenames := make(map[string]bool, len(existingEntries))
-	for _, entry := range existingEntries {
-		if existingFilenames[entry.Filename] {
-			return fmt.Errorf(
-				"failed to process existing 'sources' file %#q: duplicate filename %#q",
-				sourcesFilePath, entry.Filename)
-		}
-
-		existingFilenames[entry.Filename] = true
+	// Rehash and validate archives modified by archive overlays.
+	if err := p.rehashModifiedEntries(existingLines, sourceFiles, outputDir, modifiedArchives); err != nil {
+		return nil, err
 	}
 
-	newEntries, err := p.buildSourceEntries(sourceFiles, existingFilenames, component.GetName(), outputDir)
+	mergedLines, err := p.buildSourceEntries(sourceFiles, existingLines, component.GetName(), outputDir)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	// Ensure existing content ends with a newline before appending.
-	if existingContent != "" && !strings.HasSuffix(existingContent, "\n") {
-		existingContent += "\n"
-	}
-
-	newContent := existingContent + strings.Join(newEntries, "\n") + "\n"
+	newContent := strings.Join(mergedLines, "\n") + "\n"
 
 	if err := fileutils.WriteFile(
 		p.fs,
@@ -518,21 +775,174 @@ func (p *sourcePreparerImpl) updateSourcesFile(component components.Component, o
 		[]byte(newContent),
 		fileperms.PublicFile,
 	); err != nil {
-		return fmt.Errorf("failed to write sources file %#q:\n%w", sourcesFilePath, err)
+		return nil, fmt.Errorf("failed to write 'sources' file %#q:\n%w", sourcesFilePath, err)
 	}
 
-	slog.Info("Updated sources file with extra source file entries",
-		"count", len(newEntries),
-		"path", sourcesFilePath)
+	effectiveConfig := *config
+	effectiveConfig.SourceFiles = sourceFiles
+
+	return &effectiveConfig, nil
+}
+
+// rehashModifiedEntries updates the Raw and Entry fields of parsed 'sources' lines
+// for archives that were modified by archive overlays. Overlay-origin entries are
+// rehashed using their configured post-overlay hash type, which may differ from the
+// upstream entry's hash type. During hash bootstrapping, an omitted type defaults to
+// SHA-512. It returns an error if any modified archive has no matching 'sources'
+// entry, since that would leave a stale digest.
+func (p *sourcePreparerImpl) rehashModifiedEntries(
+	lines []fedorasource.SourcesFileLine,
+	sourceFiles []projectconfig.SourceFileReference,
+	outputDir string,
+	modifiedArchives []string,
+) error {
+	if len(modifiedArchives) == 0 {
+		return nil
+	}
+
+	overlayOrigins := make(map[string]projectconfig.SourceFileReference, len(sourceFiles))
+	for _, ref := range sourceFiles {
+		if ref.Origin.Type == projectconfig.OriginTypeOverlay {
+			overlayOrigins[ref.Filename] = ref
+		}
+	}
+
+	// Track which archives we actually rehashed so we can detect any that were
+	// repacked by an overlay but have no matching 'sources' entry. Leaving such
+	// an archive unrehashed would record a stale digest, so it is treated as an error.
+	rehashed := make(map[string]bool, len(modifiedArchives))
+	for _, name := range modifiedArchives {
+		rehashed[name] = false
+	}
+
+	for idx, line := range lines {
+		if line.Entry == nil {
+			continue
+		}
+
+		if _, ok := rehashed[line.Entry.Filename]; !ok {
+			continue
+		}
+
+		archivePath := filepath.Join(outputDir, line.Entry.Filename)
+		oldHashType := line.Entry.HashType
+		ref, hasOverlayOrigin := overlayOrigins[line.Entry.Filename]
+
+		newHashType, newHash, err := p.computePostOverlayHash(
+			line.Entry.Filename, archivePath, oldHashType, ref, hasOverlayOrigin)
+		if err != nil {
+			return err
+		}
+
+		slog.Debug("Rehashed modified archive in 'sources' file",
+			"archive", line.Entry.Filename,
+			"oldHashType", oldHashType,
+			"newHashType", newHashType,
+			"oldHash", line.Entry.Hash,
+			"newHash", newHash,
+		)
+
+		lines[idx].Raw = fedorasource.FormatSourcesEntry(line.Entry.Filename, newHashType, newHash)
+		lines[idx].Entry.HashType = newHashType
+		lines[idx].Entry.Hash = newHash
+
+		if p.allowNoHashes && hasOverlayOrigin && ref.Hash == "" {
+			setBootstrapSourceHash(sourceFiles, line.Entry.Filename, newHashType, newHash)
+		}
+
+		rehashed[line.Entry.Filename] = true
+	}
+
+	missing := missingRehashedArchives(rehashed)
+
+	if len(missing) > 0 {
+		slices.Sort(missing)
+
+		return fmt.Errorf(
+			"archive overlay(s) modified %d archive(s) with no matching 'sources' entry to rehash: %s",
+			len(missing), strings.Join(missing, ", "))
+	}
 
 	return nil
 }
 
-// readSourcesFileIfExists reads the sources file content if it exists, returning empty string if not.
+func (p *sourcePreparerImpl) computePostOverlayHash(
+	filename, archivePath string,
+	upstreamHashType fileutils.HashType,
+	ref projectconfig.SourceFileReference,
+	hasOverlayOrigin bool,
+) (hashType fileutils.HashType, hash string, err error) {
+	hashType = postOverlayHashType(upstreamHashType, ref.HashType, hasOverlayOrigin, p.allowNoHashes)
+	if hashType == "" {
+		return "", "", fmt.Errorf(
+			"archive %#q has 'origin.type = overlay' but no 'hash-type'; set 'hash-type' or run "+
+				"with '--allow-no-hashes' to bootstrap", filename)
+	}
+
+	hash, err = fileutils.ComputeFileHash(p.fs, hashType, archivePath)
+	if err != nil {
+		return "", "", fmt.Errorf("rehashing modified archive %#q:\n%w", filename, err)
+	}
+
+	if ref.Hash != "" && !strings.EqualFold(hash, ref.Hash) {
+		return "", "", fmt.Errorf(
+			"archive %#q 'source-files' hash does not match the hash computed after applying overlays; "+
+				"update the 'hash' field:\n  stated:   %s %s\n  computed: %s %s",
+			filename, ref.HashType, ref.Hash, hashType, hash)
+	}
+
+	return hashType, hash, nil
+}
+
+func missingRehashedArchives(rehashed map[string]bool) []string {
+	var missing []string
+
+	for name, done := range rehashed {
+		if !done {
+			missing = append(missing, name)
+		}
+	}
+
+	return missing
+}
+
+func setBootstrapSourceHash(
+	sourceFiles []projectconfig.SourceFileReference,
+	filename string,
+	hashType fileutils.HashType,
+	hash string,
+) {
+	for sourceIndex := range sourceFiles {
+		if sourceFiles[sourceIndex].Origin.Type == projectconfig.OriginTypeOverlay &&
+			sourceFiles[sourceIndex].Filename == filename {
+			sourceFiles[sourceIndex].Hash = hash
+			sourceFiles[sourceIndex].HashType = hashType
+
+			return
+		}
+	}
+}
+
+func postOverlayHashType(
+	upstream, configured fileutils.HashType,
+	hasOverlayOrigin, allowNoHashes bool,
+) fileutils.HashType {
+	if !hasOverlayOrigin {
+		return upstream
+	}
+
+	if configured == "" && allowNoHashes {
+		return fileutils.HashTypeSHA512
+	}
+
+	return configured
+}
+
+// readSourcesFileIfExists reads the 'sources' file content if it exists, returning empty string if not.
 func (p *sourcePreparerImpl) readSourcesFileIfExists(sourcesFilePath string) (string, error) {
 	exists, err := fileutils.Exists(p.fs, sourcesFilePath)
 	if err != nil {
-		return "", fmt.Errorf("failed to check if sources file %#q exists:\n%w", sourcesFilePath, err)
+		return "", fmt.Errorf("failed to check if 'sources' file %#q exists:\n%w", sourcesFilePath, err)
 	}
 
 	if !exists {
@@ -541,52 +951,165 @@ func (p *sourcePreparerImpl) readSourcesFileIfExists(sourcesFilePath string) (st
 
 	data, err := fileutils.ReadFile(p.fs, sourcesFilePath)
 	if err != nil {
-		return "", fmt.Errorf("failed to read sources file %#q:\n%w", sourcesFilePath, err)
+		return "", fmt.Errorf("failed to read 'sources' file %#q:\n%w", sourcesFilePath, err)
 	}
 
 	return string(data), nil
 }
 
-// buildSourceEntries validates [projectconfig.SourceFileReference] and collects formatted entries.
-// When [sourcePreparerImpl.allowNoHashes] is true, missing hashes are computed from the downloaded files
-// in [outputDir]. When [sourcePreparerImpl.skipLookaside] is also true, hash computation is skipped
-// because the source files were not downloaded.
+// buildSourceEntries merges user-declared [projectconfig.SourceFileReference] entries
+// into the parsed 'sources' lines. Returns the final set of raw lines ready to be
+// written to the 'sources' file.
+//
+// Output ordering and preservation:
+//   - Each existing line is emitted verbatim, except for entry lines whose
+//     filename matches a replacement, which are swapped for the new formatted entry.
+//     Comments and blank lines are kept in their original positions.
+//   - Brand-new entries (no upstream filename collision) are appended after the
+//     existing content in the order they appear in [sourceFiles].
+//
+// Collision rules and hash resolution are documented on [sourcePreparerImpl.processSourceRef].
 func (p *sourcePreparerImpl) buildSourceEntries(
 	sourceFiles []projectconfig.SourceFileReference,
-	existingFilenames map[string]bool,
+	existingLines []fedorasource.SourcesFileLine,
 	componentName string,
 	outputDir string,
-) ([]string, error) {
-	newEntries := make([]string, 0, len(sourceFiles))
-
-	for _, ref := range sourceFiles {
-		if err := fileutils.ValidateFilename(ref.Filename); err != nil {
-			return nil, fmt.Errorf("invalid filename %#q in 'source-files' configuration:\n%w", ref.Filename, err)
+) (mergedLines []string, err error) {
+	// Index upstream entries by filename for O(1) collision lookup. The parser
+	// (fedorasource.ReadSourcesFile) errors on duplicate filenames, so the
+	// entries are guaranteed unique by the time we get here.
+	existingByName := make(map[string]fedorasource.SourcesFileEntry, len(existingLines))
+	for _, line := range existingLines {
+		if line.Entry != nil {
+			existingByName[line.Entry.Filename] = *line.Entry
 		}
+	}
 
-		if existingFilenames[ref.Filename] {
-			return nil, fmt.Errorf(
-				"source file %#q in 'source-files' configuration conflicts with an existing entry in the 'sources' file; "+
-					"to overwrite the existing entry, ensure it's removed first; "+
-					"if this is unintentional, use a different filename",
-				ref.Filename)
-		}
+	replacementByName := make(map[string]string, len(sourceFiles))
+	appendLines := make([]string, 0, len(sourceFiles))
 
-		hash, hashType, err := p.resolveSourceHash(ref, componentName, outputDir)
+	for index := range sourceFiles {
+		formatted, isReplacement, resolvedRef, err := p.processSourceRef(
+			sourceFiles[index], existingByName, componentName, outputDir)
 		if err != nil {
 			return nil, err
 		}
 
-		entry := fedorasource.FormatSourcesEntry(ref.Filename, hashType, hash)
-		newEntries = append(newEntries, entry)
+		sourceFiles[index] = resolvedRef
 
-		slog.Debug("New 'sources' file entry",
-			"filename", ref.Filename,
-			"hashType", hashType,
-			"hash", hash)
+		if isReplacement {
+			replacementByName[resolvedRef.Filename] = formatted
+		} else {
+			appendLines = append(appendLines, formatted)
+		}
 	}
 
-	return newEntries, nil
+	// Emit each upstream line verbatim from its raw form, swapping in the new line
+	// when the entry's filename matches a replacement; this preserves comments and
+	// blank lines at their original positions. Brand-new entries are appended last.
+	mergedLines = make([]string, 0, len(existingLines)+len(appendLines))
+	for _, line := range existingLines {
+		if line.Entry != nil {
+			if replacement, ok := replacementByName[line.Entry.Filename]; ok {
+				mergedLines = append(mergedLines, replacement)
+
+				continue
+			}
+		}
+
+		mergedLines = append(mergedLines, line.Raw)
+	}
+
+	mergedLines = append(mergedLines, appendLines...)
+
+	slog.Info("Will update 'sources' file with extra source file entries",
+		"added", len(appendLines),
+		"replacedUpstream", len(replacementByName),
+		"path", filepath.Join(outputDir, fedorasource.SourcesFileName))
+
+	return mergedLines, nil
+}
+
+// processSourceRef validates a single [projectconfig.SourceFileReference], resolves its
+// hash, formats it as a 'sources' file line, and emits the appropriate per-entry log
+// event. It returns the formatted line and a flag indicating whether the entry should
+// replace an existing upstream entry (true) or be appended as a new entry (false).
+//
+// Collision rules:
+//   - Filename collision with an upstream entry AND
+//     [projectconfig.SourceFileReference.ReplaceUpstream] = true → returns isReplacement
+//     = true and emits a WARN-level event citing the
+//     [projectconfig.SourceFileReference.ReplaceReason].
+//   - Filename collision with an upstream entry AND `ReplaceUpstream` = false → error.
+//   - No filename collision AND `ReplaceUpstream` = true → error (the user expressed
+//     intent to replace something that doesn't exist; almost certainly a stale config
+//     or a filename typo).
+//   - No collision AND `ReplaceUpstream` = false → returns isReplacement = false and
+//     emits a DEBUG-level event.
+//
+// When [sourcePreparerImpl.allowNoHashes] is true, missing hashes are computed from the
+// downloaded files in outputDir. When [sourcePreparerImpl.skipLookaside] is also true,
+// hash computation is skipped because the source files were not downloaded.
+func (p *sourcePreparerImpl) processSourceRef(
+	ref projectconfig.SourceFileReference,
+	existingByName map[string]fedorasource.SourcesFileEntry,
+	componentName string,
+	outputDir string,
+) (formatted string, isReplacement bool, resolvedRef projectconfig.SourceFileReference, err error) {
+	if err := fileutils.ValidateFilename(ref.Filename); err != nil {
+		return "", false, ref, fmt.Errorf(
+			"invalid filename %#q in 'source-files' configuration:\n%w", ref.Filename, err)
+	}
+
+	existing, hasUpstream := existingByName[ref.Filename]
+
+	switch {
+	case hasUpstream && !ref.ReplaceUpstream:
+		return "", false, ref, fmt.Errorf(
+			"source file %#q in 'source-files' configuration conflicts with an existing entry "+
+				"in the 'sources' file; to intentionally replace the upstream entry, set "+
+				"'replace-upstream = true' (with a non-empty 'replace-reason') on the "+
+				"'source-files' entry; if this collision is unintentional, use a different filename",
+			ref.Filename)
+
+	case !hasUpstream && ref.ReplaceUpstream:
+		return "", false, ref, fmt.Errorf(
+			"source file %#q in 'source-files' configuration has 'replace-upstream = true' "+
+				"but no entry with that filename exists in the upstream 'sources' file; "+
+				"remove 'replace-upstream' or correct the filename to match the upstream entry",
+			ref.Filename)
+	}
+
+	hash, hashType, err := p.resolveSourceHash(ref, componentName, outputDir)
+	if err != nil {
+		return "", false, ref, err
+	}
+
+	ref.Hash = hash
+	ref.HashType = hashType
+
+	formatted = fedorasource.FormatSourcesEntry(ref.Filename, hashType, hash)
+
+	if ref.ReplaceUpstream {
+		slog.Warn("Replacing upstream 'sources' entry from 'source-files' configuration",
+			"component", componentName,
+			"filename", ref.Filename,
+			"upstreamHashType", existing.HashType,
+			"upstreamHash", existing.Hash,
+			"newHashType", hashType,
+			"newHash", hash,
+			"reason", ref.ReplaceReason)
+
+		return formatted, true, ref, nil
+	}
+
+	slog.Debug("New 'sources' file entry",
+		"component", componentName,
+		"filename", ref.Filename,
+		"hashType", hashType,
+		"hash", hash)
+
+	return formatted, false, ref, nil
 }
 
 // resolveSourceHash returns the hash and hash type for a source file reference.
@@ -657,8 +1180,16 @@ func (p *sourcePreparerImpl) resolveSourceHash(
 // This includes with/without flags converted to macro format, and any explicit defines.
 // If the build configuration produces no macros, no file is written and an empty path is
 // returned. Otherwise, the path to the written macros file is returned.
-func (p *sourcePreparerImpl) writeMacrosFile(component components.Component, outputDir string) (string, error) {
-	contents := GenerateMacrosFileContents(component.GetConfig().Build)
+func (p *sourcePreparerImpl) writeMacrosFile(
+	ctx context.Context, component components.Component, outputDir string,
+) (string, error) {
+	macros := buildMacrosMap(component.GetConfig().Build)
+
+	// Layer Fedora upstream provenance macros on top, reading the pristine
+	// upstream spec that is already on disk (before overlays are applied).
+	p.addUpstreamProvenanceMacros(ctx, macros, component, outputDir)
+
+	contents := renderMacrosFile(macros)
 	if contents == "" {
 		return "", nil
 	}
@@ -698,8 +1229,15 @@ func (p *sourcePreparerImpl) writeMacrosFile(component components.Component, out
 // If no macros remain after processing (empty config, or all macros removed via
 // undefines), an empty string is returned to signal that no macros file is needed.
 func GenerateMacrosFileContents(buildConfig projectconfig.ComponentBuildConfig) string {
-	// Build a unified map of all macros. Later definitions override earlier ones.
-	// Processing order: with flags -> without flags -> explicit defines.
+	return renderMacrosFile(buildMacrosMap(buildConfig))
+}
+
+// buildMacrosMap converts a build configuration's with/without/defines/undefines
+// into a unified macro name->value map. Later definitions override earlier ones;
+// processing order is: with flags -> without flags -> explicit defines ->
+// undefines. Upstream provenance macros are layered on separately by
+// [sourcePreparerImpl.addUpstreamProvenanceMacros].
+func buildMacrosMap(buildConfig projectconfig.ComponentBuildConfig) map[string]string {
 	macros := make(map[string]string)
 
 	// Convert 'with' flags to macros: FLAG -> _with_FLAG = 1
@@ -723,6 +1261,14 @@ func GenerateMacrosFileContents(buildConfig projectconfig.ComponentBuildConfig) 
 		delete(macros, undef)
 	}
 
+	return macros
+}
+
+// renderMacrosFile serializes a fully-resolved macro map to RPM macros-file
+// format (%name value), sorted alphabetically for deterministic output and
+// prefixed with the standard auto-generated header. Returns "" when the map is
+// empty, signaling that no macros file is needed.
+func renderMacrosFile(macros map[string]string) string {
 	if len(macros) == 0 {
 		return ""
 	}
@@ -832,10 +1378,17 @@ func (p *sourcePreparerImpl) resolveSpecPath(
 }
 
 // applyOverlayList applies a list of overlays to the component sources sequentially.
+// Archive-scoped overlays (see [projectconfig.ComponentOverlay.ModifiesArchive]) are
+// skipped here; they are handled separately by [applyArchiveOverlays], which batches
+// extraction and repacking per archive.
 func (p *sourcePreparerImpl) applyOverlayList(
 	overlays []projectconfig.ComponentOverlay, sourcesDirPath, absSpecPath string,
 ) error {
 	for _, overlay := range overlays {
+		if overlay.ModifiesArchive() {
+			continue
+		}
+
 		if err := ApplyOverlayToSources(
 			p.dryRunnable, p.fs, overlay, sourcesDirPath, absSpecPath,
 		); err != nil {

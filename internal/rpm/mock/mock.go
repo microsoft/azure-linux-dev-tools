@@ -242,9 +242,7 @@ func (r *Runner) InitRoot(ctx context.Context) (err error) {
 		return fmt.Errorf("failed to create external command for mock:\n%w", err)
 	}
 
-	if !r.verbose {
-		extcmd.SetLongRunning("Waiting for mock (initializing build root)...")
-	}
+	extcmd.SetLongRunning("Waiting for mock (initializing build root)...")
 
 	err = extcmd.Run(ctx)
 	if err != nil {
@@ -359,12 +357,10 @@ func (r *Runner) BuildSRPM(
 		return fmt.Errorf("failed to create external command for mock:\n%w", err)
 	}
 
-	if !r.verbose {
-		extcmd.SetLongRunning("Waiting for mock (building SRPM)...")
-	}
+	extcmd.SetLongRunning("Waiting for mock (building SRPM)...")
 
 	// Watch output logs in real-time so we can asynchronously synthesize progress updates.
-	err = addMockCmdListeners(r.eventListener, extcmd, outputDirPath)
+	err = addMockCmdListeners(r.eventListener, extcmd, outputDirPath, r.verbose)
 	if err != nil {
 		return err
 	}
@@ -443,7 +439,7 @@ func (r *Runner) BuildRPM(ctx context.Context, srpmPath, outputDirPath string, o
 	extcmd = extcmd.SetLongRunning("Waiting for mock (building RPM)...")
 
 	// Watch output logs in real-time so we can asynchronously synthesize progress updates.
-	err = addMockCmdListeners(r.eventListener, extcmd, outputDirPath)
+	err = addMockCmdListeners(r.eventListener, extcmd, outputDirPath, r.verbose)
 	if err != nil {
 		return err
 	}
@@ -463,18 +459,15 @@ func (r *Runner) BuildRPM(ctx context.Context, srpmPath, outputDirPath string, o
 // will only run for the duration of mock's invocation, allowing us to get insights
 // into what's happening *inside* mock while we're otherwise opaquely blocking on its
 // execution.
-func addMockCmdListeners(eventListener opctx.EventListener, extcmd opctx.Cmd, outputDirPath string) error {
-	// Color-code stderr lines.
+func addMockCmdListeners(
+	eventListener opctx.EventListener,
+	extcmd opctx.Cmd,
+	outputDirPath string,
+	verbose bool,
+) error {
+	// Keep verbose mock output readable by defaulting to the terminal's normal style.
 	err := extcmd.SetRealTimeStderrListener(func(ctx context.Context, line string) {
-		if strings.HasPrefix(line, "No matching package to install:") {
-			color.Set(color.FgHiYellow)
-		} else {
-			color.Set(color.FgHiBlack, color.Italic)
-		}
-
-		defer color.Unset()
-
-		fmt.Fprintf(os.Stderr, "%s\n", line)
+		fmt.Fprintf(os.Stderr, "%s\n", styleMockStderrLine(verbose, line))
 	})
 	if err != nil {
 		return fmt.Errorf("failed to setup mock stderr listener: %w", err)
@@ -523,6 +516,18 @@ func addMockCmdListeners(eventListener opctx.EventListener, extcmd opctx.Cmd, ou
 	}
 
 	return nil
+}
+
+func styleMockStderrLine(verbose bool, line string) string {
+	if verbose {
+		return line
+	}
+
+	if strings.HasPrefix(line, "No matching package to install:") {
+		return color.New(color.FgHiYellow).Sprint(line)
+	}
+
+	return color.New(color.FgHiBlack, color.Italic).Sprint(line)
 }
 
 func (r *Runner) ensureMockPresentAndConfigured() error {
@@ -644,7 +649,10 @@ func (r *Runner) ScrubRoot(ctx context.Context) error {
 }
 
 func (r *Runner) getBaseArgs() (args []string) {
-	if !r.verbose {
+	if r.verbose {
+		// Have mock stream its full build output (including build.log) live to the console.
+		args = append(args, "--verbose")
+	} else {
 		args = append(args, "--quiet")
 	}
 

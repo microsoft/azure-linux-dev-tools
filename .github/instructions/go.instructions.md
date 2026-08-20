@@ -17,7 +17,7 @@ description: "Instructions for working on the azldev Go codebase. IMPORTANT: Alw
 
 ## Coding Standards
 
-- **CRITICAL**: Unit tests must NOT write to real filesystem or spawn external processes. Use `internal/global/testctx` or `afero.NewMemMapFs` directly for in-memory filesystem
+- **CRITICAL**: Unit tests must NOT write to real filesystem or spawn external processes. See `.github/instructions/testing.instructions.md` for test conventions, mock patterns, and test environment setup.
 - Follow common coding principles like:
   - DRY - Don't Repeat Yourself
   - KISS - Keep It Simple, Stupid
@@ -33,6 +33,7 @@ description: "Instructions for working on the azldev Go codebase. IMPORTANT: Alw
 - For error messages with context, add a newline after the context message, before the error format specifier. Examples:
   - `fmt.Errorf("This is an error context with wrapped error:\n%w")`
   - `fmt.Errorf("This is a regular error with context string:\n%v")`
+- When an operation can fail in a way that has a meaningful cause (parse failure, validation failure, lookup miss with explanation, etc.), return `(T, error)` rather than `(T, bool)`. The boolean form throws away the *why*, forcing callers to reconstruct context they don't have. Reserve `(T, bool)` for the "comma-ok" idiom where the failure is genuinely binary and self-explanatory (map lookups, type assertions, channel receives). The inner error should describe the failure concisely; the immediate caller wraps it with positional context (line number, field name, file path) using the `"context:\n%w"` pattern.
 - Follow established Go language practices and conventions:
   - Follow Go naming conventions (e.g., CamelCase for exported names)
   - Write concise, readable code with appropriate comments
@@ -41,10 +42,11 @@ description: "Instructions for working on the azldev Go codebase. IMPORTANT: Alw
   - `return fmt.Errorf("failed to open %#q:\n%w", filename, err)`
   - `return fmt.Errorf("failed to run command 'go %s':\n%w", strings.Join(args, " "), err)`
 - Comments referring to types should encapsulate the type name in square brackets. Example: `// [packagename.MyType] is a custom type`
-- Config field names and CLI flags in comments and error messages:
+- Config field names, CLI flags, and well-known literal token names (filenames, special-purpose file types, etc.) in comments and error messages:
   - In code comments, use square brackets for field names: `[module.StructName.FieldName]`
   - In code comments, use single quotes for flag names: `'--flag-name'`
   - In log messages and error strings, use single quotes: `'field-name'`, `'--flag-name'`
+  - When referring to a well-known literal token by name (e.g., a fixed filename like `sources`, `spec`, `lockfile`, or a special directory name) in logs, errors, or doc comments, surround it in quotes — pick whichever is cleaner: single quotes around the bare token (`'sources' file`) when the surrounding text is unquoted prose, or `%#q` when interpolating a runtime value (`%#q file`). Do not write the token unquoted in user-facing strings.
 - Use structured logging with slog
 - Ensure code passes golangci-lint checks
 - Use `github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms` instead of re-defining file permission constants
@@ -115,16 +117,33 @@ CLI commands should return meaningful structured results. azldev has output form
 ## Quality Standards
 
 - Make minimal, focused changes to achieve the required functionality
-- Write or update tests for new or modified code
+- Write or update tests for new or modified code. When adding a new package or non-trivial logic, audit whether those tests actually catch bugs with mutation testing (`mage mutationDiff <ref>`) — see `.github/instructions/testing.instructions.md`
 - Ensure backward compatibility unless explicitly instructed otherwise
 - Organize imports according to Go best practices
 - Linting: Prefer fixing issues over `//nolint` comments. Use targeted `//nolint:<linter>` if absolutely required
-- Testing: Table-driven tests preferred. Use `scenario/internal/cmdtest` helpers
+- Testing: See `.github/instructions/testing.instructions.md` for conventions
 
-### Component Command Testing
+## Distro Resolution
 
-New component subcommands (`internal/app/azldev/cmds/component/`) require:
-- **Command wiring test** (`*_test.go`, external `package component_test`): verify `NewXxxCmd()` returns a valid command with correct `Use`, `RunE`, and expected flags/defaults.
-- **No-match test**: call `cmd.ExecuteContext(testEnv.Env)` with a nonexistent component to verify error handling.
-- **Helper unit tests** (`*_test.go`, same-package `package component`): test unexported helper functions (e.g., `findSpecFile`, `cleanupStaleRenders`) using `afero.NewMemMapFs`; where needed, follow the existing `//nolint:testpackage` pattern used in this repo.
-- **Snapshot update**: if the command changes the schema or CLI docs, run `mage scenarioUpdate` to update snapshots.
+Components can override the project-default distro via `Spec.UpstreamDistro`. There are three ways to get distro information, each for a different purpose:
+
+| Need | Call | Returns |
+|------|------|---------|
+| Project-default distro (release ver, mock config) | `env.Distro()` | `(DistroDefinition, DistroVersionDefinition, error)` |
+| Per-component distro (for source providers) | `sourceproviders.ResolveDistro(env, comp)` | `ResolvedDistro` (includes ref, definition, version) |
+| Per-component release version only (for fingerprints) | Read `distroVer.ReleaseVer` from the resolved distro | `string` |
+
+**When to use which:**
+- **`env.Distro()`** — safe when all components share the same distro (e.g., iterating over results in `saveComponentLocks`). Breaks if components override the distro.
+- **`sourceproviders.ResolveDistro(env, comp)`** — use when you need the full distro context for a specific component (snapshot time, dist-git branch, lookaside URI). This is what `resolveOneSourceIdentity` uses to create the source manager.
+- **Per-component release version** — when computing fingerprints per-component, resolve the distro per-component to get the correct `ReleaseVer`. Using the project-default release version is wrong when component-level distro overrides exist.
+
+## Archive Overlay Invariants
+
+When working on archive overlays or `origin.type = "overlay"`, preserve these rules:
+
+- Overlay-origin entries are declarations of a post-overlay hash, not separately fetched files. `SourceManager.FetchFiles` must skip them, while component lookaside extraction must still fetch the original upstream archive. Build lookaside skip lists with `OriginType.IsFetched()`.
+- Validate associations in both directions: each archive modified by an archive-scoped overlay needs one matching overlay-origin `source-files` entry, and each overlay-origin entry must target an archive that is actually modified. During `--allow-no-hashes` bootstrapping, a modified archive may temporarily omit its origin entry, but an orphaned origin entry is never valid.
+- Use the upstream `sources` hash algorithm only to fetch and verify the original archive. After repacking, compute and validate the digest with the TOML entry's configured `hash-type` (SHA-256 or SHA-512); the two algorithms need not match.
+- Preserve the archive's actual compression detected from its contents, even when its filename extension claims a different format. Do not “fix” a mislabeled archive during repacking.
+- Archive overlays are batched per archive and run before spec and loose-file overlays. Preserve declaration order within each scope. Reject a loose-file overlay that can modify, remove, replace, or rename an archive also targeted by an archive-scoped overlay; otherwise it can silently discard the repacked result.

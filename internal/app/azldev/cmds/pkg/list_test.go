@@ -4,11 +4,14 @@
 package pkg_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	pkgcmds "github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/pkg"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -36,7 +39,7 @@ func TestListPackages_NoCriteria(t *testing.T) {
 func TestListPackages_Empty(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
 
-	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{All: true})
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{})
 
 	require.NoError(t, err)
 	assert.Empty(t, results)
@@ -48,24 +51,27 @@ func TestListPackages_FromPackageGroup(t *testing.T) {
 		"devel-packages": {
 			Packages: []string{"curl-devel", "wget2-devel"},
 			DefaultPackageConfig: projectconfig.PackageConfig{
-				Publish: projectconfig.PackagePublishConfig{Channel: "devel"},
+				Publish: projectconfig.PackagePublishConfig{RPMChannel: "devel"},
 			},
 		},
 	}
 
-	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{All: true})
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{
+		PackageNames: []string{"curl-devel", "wget2-devel"},
+	})
 
 	require.NoError(t, err)
 	require.Len(t, results, 2)
 
 	// Results are sorted by package name.
 	assert.Equal(t, "curl-devel", results[0].PackageName)
-	assert.Equal(t, "devel-packages", results[0].Group)
+	assert.Equal(t, []string{"devel-packages"}, results[0].PackageGroups)
+	assert.Empty(t, results[0].ComponentGroups)
 	assert.Empty(t, results[0].Component)
 	assert.Equal(t, "devel", results[0].Channel)
 
 	assert.Equal(t, "wget2-devel", results[1].PackageName)
-	assert.Equal(t, "devel-packages", results[1].Group)
+	assert.Equal(t, []string{"devel-packages"}, results[1].PackageGroups)
 	assert.Equal(t, "devel", results[1].Channel)
 }
 
@@ -75,17 +81,18 @@ func TestListPackages_FromComponentPackageOverride(t *testing.T) {
 		Name: "curl",
 		Packages: map[string]projectconfig.PackageConfig{
 			"curl-minimal": {
-				Publish: projectconfig.PackagePublishConfig{Channel: "none"},
+				Publish: projectconfig.PackagePublishConfig{RPMChannel: "none"},
 			},
 		},
 	}
 
-	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{All: true})
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{PackageNames: []string{"curl-minimal"}})
 
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, "curl-minimal", results[0].PackageName)
-	assert.Empty(t, results[0].Group)
+	assert.Empty(t, results[0].PackageGroups)
+	assert.Empty(t, results[0].ComponentGroups)
 	assert.Equal(t, "curl", results[0].Component)
 	assert.Equal(t, "none", results[0].Channel)
 }
@@ -96,7 +103,7 @@ func TestListPackages_ComponentOverrideWinsOverGroup(t *testing.T) {
 		"base-packages": {
 			Packages: []string{"curl-devel"},
 			DefaultPackageConfig: projectconfig.PackageConfig{
-				Publish: projectconfig.PackagePublishConfig{Channel: "base"},
+				Publish: projectconfig.PackagePublishConfig{RPMChannel: "base"},
 			},
 		},
 	}
@@ -104,17 +111,17 @@ func TestListPackages_ComponentOverrideWinsOverGroup(t *testing.T) {
 		Name: "curl",
 		Packages: map[string]projectconfig.PackageConfig{
 			"curl-devel": {
-				Publish: projectconfig.PackagePublishConfig{Channel: "none"},
+				Publish: projectconfig.PackagePublishConfig{RPMChannel: "none"},
 			},
 		},
 	}
 
-	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{All: true})
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{PackageNames: []string{"curl-devel"}})
 
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, "curl-devel", results[0].PackageName)
-	assert.Equal(t, "base-packages", results[0].Group)
+	assert.Equal(t, []string{"base-packages"}, results[0].PackageGroups)
 	assert.Equal(t, "curl", results[0].Component)
 	// Component override (none) wins over group (base).
 	assert.Equal(t, "none", results[0].Channel)
@@ -128,7 +135,9 @@ func TestListPackages_SortedByName(t *testing.T) {
 		},
 	}
 
-	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{All: true})
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{
+		PackageNames: []string{"zzz-pkg", "aaa-pkg", "mmm-pkg"},
+	})
 
 	require.NoError(t, err)
 	require.Len(t, results, 3)
@@ -143,7 +152,7 @@ func TestListPackages_ByName_InExplicitConfig(t *testing.T) {
 		"devel-packages": {
 			Packages: []string{"curl-devel", "wget2-devel"},
 			DefaultPackageConfig: projectconfig.PackageConfig{
-				Publish: projectconfig.PackagePublishConfig{Channel: "devel"},
+				Publish: projectconfig.PackagePublishConfig{RPMChannel: "devel"},
 			},
 		},
 	}
@@ -154,7 +163,7 @@ func TestListPackages_ByName_InExplicitConfig(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, "curl-devel", results[0].PackageName)
-	assert.Equal(t, "devel-packages", results[0].Group)
+	assert.Equal(t, []string{"devel-packages"}, results[0].PackageGroups)
 	assert.Empty(t, results[0].Component)
 	assert.Equal(t, "devel", results[0].Channel)
 }
@@ -162,18 +171,40 @@ func TestListPackages_ByName_InExplicitConfig(t *testing.T) {
 func TestListPackages_ByName_NotInExplicitConfig(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
 	testEnv.Config.DefaultPackageConfig = projectconfig.PackageConfig{
-		Publish: projectconfig.PackagePublishConfig{Channel: "default-channel"},
+		Publish: projectconfig.PackagePublishConfig{RPMChannel: "default-channel"},
 	}
 
-	// Look up a package that has no explicit config; it still resolves via project defaults.
+	// Look up a package that has no component publish config or package group.
+	// DefaultPackageConfig acts as the lowest-priority fallback, so the channel resolves
+	// to the project default when no higher-priority source provides one.
 	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{PackageNames: []string{"unknown-pkg"}})
 
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, "unknown-pkg", results[0].PackageName)
-	assert.Empty(t, results[0].Group)
+	assert.Empty(t, results[0].PackageGroups)
+	assert.Empty(t, results[0].ComponentGroups)
 	assert.Empty(t, results[0].Component)
 	assert.Equal(t, "default-channel", results[0].Channel)
+}
+
+// TestListPackages_EmptyGroupsMarshalAsJSONArray verifies that a result with no group
+// memberships serializes 'packageGroups' and 'componentGroups' as empty JSON arrays
+// ('[]') rather than 'null', so consumers can iterate the fields without null-checking.
+func TestListPackages_EmptyGroupsMarshalAsJSONArray(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{PackageNames: []string{"unknown-pkg"}})
+
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.NotNil(t, results[0].PackageGroups, "PackageGroups must be a non-nil slice")
+	require.NotNil(t, results[0].ComponentGroups, "ComponentGroups must be a non-nil slice")
+
+	data, marshalErr := json.Marshal(results[0])
+	require.NoError(t, marshalErr)
+	assert.Contains(t, string(data), `"packageGroups":[]`)
+	assert.Contains(t, string(data), `"componentGroups":[]`)
 }
 
 func TestListPackages_ByName_MultipleNames(t *testing.T) {
@@ -195,17 +226,17 @@ func TestListPackages_DuplicatePackageAcrossComponents_ReturnsError(t *testing.T
 	testEnv.Config.Components["curl"] = projectconfig.ComponentConfig{
 		Name: "curl",
 		Packages: map[string]projectconfig.PackageConfig{
-			"shared-pkg": {Publish: projectconfig.PackagePublishConfig{Channel: "base"}},
+			"shared-pkg": {Publish: projectconfig.PackagePublishConfig{RPMChannel: "base"}},
 		},
 	}
 	testEnv.Config.Components["other"] = projectconfig.ComponentConfig{
 		Name: "other",
 		Packages: map[string]projectconfig.PackageConfig{
-			"shared-pkg": {Publish: projectconfig.PackagePublishConfig{Channel: "none"}},
+			"shared-pkg": {Publish: projectconfig.PackagePublishConfig{RPMChannel: "none"}},
 		},
 	}
 
-	_, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{All: true})
+	_, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{PackageNames: []string{"shared-pkg"}})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "shared-pkg")
@@ -217,26 +248,21 @@ func TestListPackages_DuplicatePackageAcrossComponents_ReturnsError(t *testing.T
 func TestListPackages_SynthesizeDebugPackages(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
 	testEnv.Config.DefaultPackageConfig = projectconfig.PackageConfig{
-		Publish: projectconfig.PackagePublishConfig{Channel: "default-channel"},
+		Publish: projectconfig.PackagePublishConfig{RPMChannel: "default-channel"},
 	}
 	testEnv.Config.PackageGroups = map[string]projectconfig.PackageGroupConfig{
 		"devel-packages": {
 			Packages: []string{"curl-devel"},
 			DefaultPackageConfig: projectconfig.PackageConfig{
-				Publish: projectconfig.PackagePublishConfig{Channel: "devel"},
+				Publish: projectconfig.PackagePublishConfig{RPMChannel: "devel"},
 			},
 		},
 	}
 	testEnv.Config.Components["curl"] = projectconfig.ComponentConfig{Name: "curl"}
-	testEnv.Config.Components["wget"] = projectconfig.ComponentConfig{
-		Name: "wget",
-		DefaultPackageConfig: projectconfig.PackageConfig{
-			Publish: projectconfig.PackagePublishConfig{Channel: "wget-default"},
-		},
-	}
+	testEnv.Config.Components["wget"] = projectconfig.ComponentConfig{Name: "wget"}
 
 	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{
-		All:                     true,
+		PackageNames:            []string{"curl-devel"},
 		SynthesizeDebugPackages: true,
 	})
 
@@ -254,17 +280,18 @@ func TestListPackages_SynthesizeDebugPackages(t *testing.T) {
 	// '-debuginfo' synthesized for each reported package on the parallel debug channel.
 	require.Contains(t, byName, "curl-devel-debuginfo")
 	assert.Equal(t, "devel-debuginfo", byName["curl-devel-debuginfo"].Channel)
-	assert.Equal(t, "devel-packages", byName["curl-devel-debuginfo"].Group)
+	assert.Equal(t, []string{"devel-packages"}, byName["curl-devel-debuginfo"].PackageGroups)
 
 	// '-debugsource' synthesized for each component, with its channel resolved through the
 	// component → project default chain and suffixed onto the parallel debug channel.
 	require.Contains(t, byName, "curl-debugsource")
 	assert.Equal(t, "default-channel-debuginfo", byName["curl-debugsource"].Channel)
 	assert.Equal(t, "curl", byName["curl-debugsource"].Component)
-	assert.Empty(t, byName["curl-debugsource"].Group)
+	assert.Empty(t, byName["curl-debugsource"].PackageGroups)
+	assert.Empty(t, byName["curl-debugsource"].ComponentGroups)
 
 	require.Contains(t, byName, "wget-debugsource")
-	assert.Equal(t, "wget-default-debuginfo", byName["wget-debugsource"].Channel)
+	assert.Equal(t, "default-channel-debuginfo", byName["wget-debugsource"].Channel)
 	assert.Equal(t, "wget", byName["wget-debugsource"].Component)
 }
 
@@ -274,19 +301,19 @@ func TestListPackages_SynthesizeDebugPackages_SkipsExisting(t *testing.T) {
 		"g": {
 			Packages: []string{"curl", "curl-debuginfo"},
 			DefaultPackageConfig: projectconfig.PackageConfig{
-				Publish: projectconfig.PackagePublishConfig{Channel: "real"},
+				Publish: projectconfig.PackagePublishConfig{RPMChannel: "real", DebugInfoChannel: "real"},
 			},
 		},
 	}
 	testEnv.Config.Components["curl"] = projectconfig.ComponentConfig{
 		Name: "curl",
 		Packages: map[string]projectconfig.PackageConfig{
-			"curl-debugsource": {Publish: projectconfig.PackagePublishConfig{Channel: "explicit"}},
+			"curl-debugsource": {Publish: projectconfig.PackagePublishConfig{DebugInfoChannel: "explicit"}},
 		},
 	}
 
 	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{
-		All:                     true,
+		PackageNames:            []string{"curl", "curl-debuginfo", "curl-debugsource"},
 		SynthesizeDebugPackages: true,
 	})
 
@@ -319,13 +346,13 @@ func TestListPackages_SynthesizeDebugPackages_SkipsExisting(t *testing.T) {
 func TestListPackages_SynthesizeDebugPackages_ByName(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
 	testEnv.Config.DefaultPackageConfig = projectconfig.PackageConfig{
-		Publish: projectconfig.PackagePublishConfig{Channel: "default-channel"},
+		Publish: projectconfig.PackagePublishConfig{RPMChannel: "default-channel"},
 	}
 	testEnv.Config.PackageGroups = map[string]projectconfig.PackageGroupConfig{
 		"devel-packages": {
 			Packages: []string{"curl-devel"},
 			DefaultPackageConfig: projectconfig.PackageConfig{
-				Publish: projectconfig.PackagePublishConfig{Channel: "devel"},
+				Publish: projectconfig.PackagePublishConfig{RPMChannel: "devel"},
 			},
 		},
 	}
@@ -363,7 +390,7 @@ func TestListPackages_SynthesizeDebugPackages_ChannelSuffixRules(t *testing.T) {
 		"none-grp": {
 			Packages: []string{"pkg-none"},
 			DefaultPackageConfig: projectconfig.PackageConfig{
-				Publish: projectconfig.PackagePublishConfig{Channel: "none"},
+				Publish: projectconfig.PackagePublishConfig{RPMChannel: "none"},
 			},
 		},
 		"empty-grp": {
@@ -373,13 +400,13 @@ func TestListPackages_SynthesizeDebugPackages_ChannelSuffixRules(t *testing.T) {
 		"already-grp": {
 			Packages: []string{"pkg-already"},
 			DefaultPackageConfig: projectconfig.PackageConfig{
-				Publish: projectconfig.PackagePublishConfig{Channel: "ms-debuginfo"},
+				Publish: projectconfig.PackagePublishConfig{RPMChannel: "ms-debuginfo"},
 			},
 		},
 	}
 
 	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{
-		All:                     true,
+		PackageNames:            []string{"pkg-none", "pkg-empty", "pkg-already"},
 		SynthesizeDebugPackages: true,
 	})
 
@@ -396,4 +423,305 @@ func TestListPackages_SynthesizeDebugPackages_ChannelSuffixRules(t *testing.T) {
 	assert.Empty(t, byName["pkg-empty-debuginfo"].Channel)
 	// Already-suffixed channels are not doubled.
 	assert.Equal(t, "ms-debuginfo", byName["pkg-already-debuginfo"].Channel)
+}
+
+func TestListPackages_ComponentGroupPublishChannel(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	// Project-wide default — lowest priority.
+	testEnv.Config.DefaultComponentConfig = projectconfig.ComponentConfig{
+		Publish: projectconfig.ComponentPublishConfig{RPMChannel: "rpm-sdk"},
+	}
+
+	// Component group with a higher-priority publish channel.
+	testEnv.Config.ComponentGroups["base-published"] = projectconfig.ComponentGroupConfig{
+		Components: []string{"jq"},
+		DefaultComponentConfig: projectconfig.ComponentConfig{
+			Publish: projectconfig.ComponentPublishConfig{RPMChannel: "rpm-base"},
+		},
+	}
+	testEnv.Config.GroupsByComponent["jq"] = []string{"base-published"}
+
+	// No explicit [components.jq] entry — the component is defined only via group membership.
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{PackageNames: []string{"jq"}})
+
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, "jq", results[0].PackageName)
+	// The group's rpm-base channel must win over the project default rpm-sdk.
+	assert.Equal(t, "rpm-base", results[0].Channel)
+}
+
+func TestListPackages_SRPMFile_UsesSRPMChannel(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	// Project default component config sets both RPM and SRPM channels.
+	testEnv.Config.DefaultComponentConfig = projectconfig.ComponentConfig{
+		Publish: projectconfig.ComponentPublishConfig{
+			RPMChannel:  "rpm-sdk",
+			SRPMChannel: "rpm-sdk-srpm",
+		},
+	}
+
+	// Component with a higher-priority SRPM channel override.
+	testEnv.Config.Components["curl"] = projectconfig.ComponentConfig{
+		Name: "curl",
+		Publish: projectconfig.ComponentPublishConfig{
+			RPMChannel:  "rpm-base",
+			SRPMChannel: "rpm-base-srpm",
+		},
+	}
+
+	const srpmMapPath = "/test-srpm-map.json"
+
+	entries := []map[string]string{
+		// 389-ds-base has no component entry — resolves from project default.
+		{"packageName": "389-ds-base", "sourcePackageName": "389-ds-base"},
+		{"packageName": "389-ds-base-devel", "sourcePackageName": "389-ds-base"},
+		// curl has an explicit component entry — resolves from component config.
+		{"packageName": "curl", "sourcePackageName": "curl"},
+		{"packageName": "curl-devel", "sourcePackageName": "curl"},
+	}
+
+	data, jsonErr := json.Marshal(entries)
+	require.NoError(t, jsonErr)
+	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, srpmMapPath, data, fileperms.PublicFile))
+
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{RPMFile: srpmMapPath})
+	require.NoError(t, err)
+
+	byName := make(map[string]pkgcmds.PackageListResult, len(results))
+	for _, r := range results {
+		byName[r.PackageName+"#"+r.Type] = r
+	}
+
+	// SRPMs must use SRPMChannel, not RPMChannel.
+	srpm389 := byName["389-ds-base#"+pkgcmds.PackageTypeSRPM]
+	assert.Equal(t, pkgcmds.PackageTypeSRPM, srpm389.Type)
+	assert.Equal(t, "rpm-sdk-srpm", srpm389.Channel, "SRPM should use SRPMChannel from project default")
+
+	srpmCurl := byName["curl#"+pkgcmds.PackageTypeSRPM]
+	assert.Equal(t, pkgcmds.PackageTypeSRPM, srpmCurl.Type)
+	assert.Equal(t, "rpm-base-srpm", srpmCurl.Channel, "SRPM should use SRPMChannel from component config")
+
+	// RPMs must use RPMChannel, not SRPMChannel.
+	rpm389 := byName["389-ds-base#"+pkgcmds.PackageTypeRPM]
+	assert.Equal(t, pkgcmds.PackageTypeRPM, rpm389.Type)
+	assert.Equal(t, "rpm-sdk", rpm389.Channel, "binary RPM should use RPMChannel from project default")
+
+	rpmCurlDevel := byName["curl-devel#"+pkgcmds.PackageTypeRPM]
+	assert.Equal(t, pkgcmds.PackageTypeRPM, rpmCurlDevel.Type)
+	// curl-devel's component is resolved from the JSON (sourcePackageName = "curl"),
+	// so it correctly inherits the curl component's RPMChannel.
+	assert.Equal(t, "rpm-base", rpmCurlDevel.Channel, "binary RPM should use RPMChannel from its SRPM's component")
+}
+
+// TestListPackages_RPMFile_Validation exercises the JSON parsing and validation
+// error paths in 'loadRPMFile' (invalid JSON, missing fields, conflicting
+// mappings) and the silent dedup path for repeated identical mappings.
+func TestListPackages_RPMFile_Validation(t *testing.T) {
+	const path = "/test-rpm-map.json"
+
+	cases := []struct {
+		name        string
+		body        string // raw file contents (not necessarily valid JSON)
+		wantErrSub  string // expected substring in the returned error; empty means success
+		wantResults int    // expected number of results on success
+	}{
+		{
+			name:       "invalid json",
+			body:       "not json",
+			wantErrSub: "parsing RPM source map",
+		},
+		{
+			name:       "empty packageName",
+			body:       `[{"packageName":"","sourcePackageName":"bash"}]`,
+			wantErrSub: "missing non-empty 'packageName'",
+		},
+		{
+			name:       "empty sourcePackageName",
+			body:       `[{"packageName":"bash","sourcePackageName":""}]`,
+			wantErrSub: "missing non-empty 'sourcePackageName'",
+		},
+		{
+			// Conflicting source package names must dedup (first mapping wins):
+			// one SRPM result for "bash" + one RPM result, not two of either.
+			name: "conflicting source package names dedup",
+			body: `[
+				{"packageName":"bash","sourcePackageName":"bash"},
+				{"packageName":"bash","sourcePackageName":"other"}
+			]`,
+			wantResults: 2,
+		},
+		{
+			// Identical duplicate mappings must not produce duplicate entries:
+			// one SRPM result + one RPM result, not one SRPM + two RPMs.
+			name: "duplicate identical mappings dedup",
+			body: `[
+				{"packageName":"bash","sourcePackageName":"bash"},
+				{"packageName":"bash","sourcePackageName":"bash"}
+			]`,
+			wantResults: 2,
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			testEnv := testutils.NewTestEnv(t)
+			require.NoError(t, fileutils.WriteFile(testEnv.TestFS, path, []byte(testCase.body), fileperms.PublicFile))
+
+			results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{RPMFile: path})
+
+			if testCase.wantErrSub != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), testCase.wantErrSub)
+				assert.Nil(t, results)
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Len(t, results, testCase.wantResults)
+		})
+	}
+}
+
+// TestListPackages_ComponentGroupsReportedSorted verifies that the
+// [PackageListResult.ComponentGroups] field reports every component-group the
+// resolved component belongs to, sorted alphabetically, even when the package
+// itself is not listed in any package-group.
+func TestListPackages_ComponentGroupsReportedSorted(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	testEnv.Config.ComponentGroups["base-published"] = projectconfig.ComponentGroupConfig{
+		Components: []string{"jq"},
+	}
+	testEnv.Config.ComponentGroups["alpha"] = projectconfig.ComponentGroupConfig{
+		Components: []string{"jq"},
+	}
+
+	// Loader normally builds GroupsByComponent; tests that mutate ComponentGroups
+	// directly must keep the reverse index aligned. Insert in non-sorted order to
+	// confirm the per-result list is sorted alphabetically.
+	testEnv.Config.GroupsByComponent["jq"] = []string{"base-published", "alpha"}
+
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{PackageNames: []string{"jq"}})
+
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, "jq", results[0].PackageName)
+	assert.Empty(t, results[0].PackageGroups,
+		"PackageGroups should be empty when the package is not in any package-group")
+	assert.Equal(t, []string{"alpha", "base-published"}, results[0].ComponentGroups,
+		"ComponentGroups should be the sorted list of component-group memberships")
+}
+
+// TestListPackages_PackageGroupAndComponentGroupCoexist verifies that
+// package-group and component-group memberships are reported independently in the
+// [PackageListResult] rather than one overriding the other.
+func TestListPackages_PackageGroupAndComponentGroupCoexist(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	testEnv.Config.PackageGroups = map[string]projectconfig.PackageGroupConfig{
+		"devel-packages": {Packages: []string{"jq"}},
+	}
+	testEnv.Config.ComponentGroups["base-published"] = projectconfig.ComponentGroupConfig{
+		Components: []string{"jq"},
+	}
+	testEnv.Config.GroupsByComponent["jq"] = []string{"base-published"}
+
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{PackageNames: []string{"jq"}})
+
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, []string{"devel-packages"}, results[0].PackageGroups,
+		"PackageGroups should report the package-group membership")
+	assert.Equal(t, []string{"base-published"}, results[0].ComponentGroups,
+		"ComponentGroups should report the component-group membership independently")
+}
+
+// TestListPackages_RPMFile_ComponentGroupsReported verifies that --rpm-file rows
+// (both SRPM and binary RPM) report their resolved component's component-group
+// memberships in [PackageListResult.ComponentGroups]. SRPM rows always have an
+// empty [PackageListResult.PackageGroups] list.
+func TestListPackages_RPMFile_ComponentGroupsReported(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	testEnv.Config.Components["curl"] = projectconfig.ComponentConfig{Name: "curl"}
+	testEnv.Config.ComponentGroups["base-published"] = projectconfig.ComponentGroupConfig{
+		Components: []string{"curl"},
+	}
+	testEnv.Config.GroupsByComponent["curl"] = []string{"base-published"}
+
+	const srpmMapPath = "/test-srpm-map.json"
+
+	entries := []map[string]string{
+		{"packageName": "curl", "sourcePackageName": "curl"},
+		{"packageName": "curl-devel", "sourcePackageName": "curl"},
+	}
+
+	data, jsonErr := json.Marshal(entries)
+	require.NoError(t, jsonErr)
+	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, srpmMapPath, data, fileperms.PublicFile))
+
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{RPMFile: srpmMapPath})
+	require.NoError(t, err)
+
+	byKey := make(map[string]pkgcmds.PackageListResult, len(results))
+	for _, r := range results {
+		byKey[r.PackageName+"#"+r.Type] = r
+	}
+
+	srpm := byKey["curl#"+pkgcmds.PackageTypeSRPM]
+	assert.Empty(t, srpm.PackageGroups,
+		"SRPM PackageGroups should be empty (SRPMs have no package-group membership)")
+	assert.Equal(t, []string{"base-published"}, srpm.ComponentGroups,
+		"SRPM ComponentGroups should report the component's component-group memberships")
+
+	rpm := byKey["curl-devel#"+pkgcmds.PackageTypeRPM]
+	assert.Empty(t, rpm.PackageGroups,
+		"binary RPM PackageGroups should be empty when no package-group contains it")
+	assert.Equal(t, []string{"base-published"}, rpm.ComponentGroups,
+		"binary RPM ComponentGroups should report the resolved component's component-group memberships")
+}
+
+// TestListPackages_SynthesizeDebugPackages_DebugsourcePackageGroupReportedAlongsideComponentGroup verifies
+// that a synthesized '-debugsource' entry reports an explicit package-group membership in
+// [PackageListResult.PackageGroups] alongside the component-group baseline in
+// [PackageListResult.ComponentGroups]. This mirrors the resolution used by
+// [resolvePackageListResult] for regular RPMs.
+func TestListPackages_SynthesizeDebugPackages_DebugsourcePackageGroupReportedAlongsideComponentGroup(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	testEnv.Config.Components["curl"] = projectconfig.ComponentConfig{Name: "curl"}
+
+	// Component-group provides the baseline attribution.
+	testEnv.Config.ComponentGroups["base-published"] = projectconfig.ComponentGroupConfig{
+		Components: []string{"curl"},
+	}
+	testEnv.Config.GroupsByComponent["curl"] = []string{"base-published"}
+
+	// Package-group explicitly lists 'curl-debugsource' — this should appear in the
+	// synthesized entry's PackageGroups list independently of the component-group baseline.
+	testEnv.Config.PackageGroups = map[string]projectconfig.PackageGroupConfig{
+		"debug-packages": {Packages: []string{"curl-debugsource"}},
+	}
+
+	results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{
+		PackageNames:            []string{"curl"},
+		SynthesizeDebugPackages: true,
+	})
+
+	require.NoError(t, err)
+
+	byName := make(map[string]pkgcmds.PackageListResult, len(results))
+	for _, result := range results {
+		byName[result.PackageName] = result
+	}
+
+	require.Contains(t, byName, "curl-debugsource")
+	assert.Equal(t, []string{"debug-packages"}, byName["curl-debugsource"].PackageGroups,
+		"synthesized -debugsource PackageGroups should reflect the explicit package-group membership")
+	assert.Equal(t, []string{"base-published"}, byName["curl-debugsource"].ComponentGroups,
+		"synthesized -debugsource ComponentGroups should report the component's component-group memberships")
 }

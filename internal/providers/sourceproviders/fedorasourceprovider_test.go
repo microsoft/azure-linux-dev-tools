@@ -191,6 +191,10 @@ func TestGetComponentFromGit(t *testing.T) {
 		mockComponent.EXPECT().GetName().AnyTimes().Return(testPackageName)
 		mockComponent.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
 			Name: testPackageName,
+			SourceFiles: []projectconfig.SourceFileReference{{
+				Filename: testFileName,
+				Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeOverlay},
+			}},
 		})
 
 		// Execute the method under test
@@ -220,7 +224,7 @@ func TestGetComponentFromGit(t *testing.T) {
 		assert.Equal(t, "tarball content", string(tarballContent))
 	})
 
-	t.Run("existing file in destination skips lookaside download", func(t *testing.T) {
+	t.Run("configured replacement skips upstream lookaside download", func(t *testing.T) {
 		ctrl := gomock.NewController(t)
 
 		httpDownloader, err := downloader.NewHTTPDownloader(
@@ -288,26 +292,23 @@ func TestGetComponentFromGit(t *testing.T) {
 		mockComponent.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
 			Name: testPackageName,
 			SourceFiles: []projectconfig.SourceFileReference{
-				{Filename: testFileName},
+				{
+					Filename:        testFileName,
+					ReplaceUpstream: true,
+					ReplaceReason:   "use configured replacement",
+				},
 			},
 		})
 
-		// Pre-populate destination with the file — simulating a prior FetchFiles download
-		err = fileutils.MkdirAll(env.FS(), testDestDir)
-		require.NoError(t, err)
-
-		preExistingContent := []byte("azure-linux-signed-binary")
-		err = fileutils.WriteFile(env.FS(), testDestDir+"/"+testFileName, preExistingContent, fileperms.PublicFile)
-		require.NoError(t, err)
-
-		// Should succeed — the file is in skipFilenames so the 404 lookaside download is skipped
+		// The upstream hash would return 404 from the test server. Success proves the
+		// configured filename suppressed that upstream lookaside download.
 		err = provider.GetComponent(context.Background(), mockComponent, testDestDir)
 		require.NoError(t, err)
 
-		// Verify the pre-existing file was preserved (not overwritten by git repo version)
-		content, err := fileutils.ReadFile(env.FS(), testDestDir+"/"+testFileName)
+		// The skipped upstream lookaside artifact was not materialized.
+		exists, err := fileutils.Exists(env.FS(), testDestDir+"/"+testFileName)
 		require.NoError(t, err)
-		assert.Equal(t, preExistingContent, content)
+		assert.False(t, exists)
 	})
 
 	t.Run("successful extraction without lookaside sources", func(t *testing.T) {
@@ -1041,4 +1042,65 @@ func TestCheckoutTargetCommit_UpstreamCommit(t *testing.T) {
 		assert.Contains(t, err.Error(), "failed to checkout commit")
 		assert.ErrorIs(t, err, checkoutError)
 	})
+}
+
+// TestGetComponent_LockedCommitTakesPriorityOverConfigPin verifies that the
+// fetch path (used by render/build) uses EffectiveUpstreamCommit, which prefers
+// the locked commit over the config pin. When both Locked.UpstreamCommit and
+// Spec.UpstreamCommit are set, Checkout must be called with the locked value.
+func TestGetComponent_LockedCommitTakesPriorityOverConfigPin(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	ctrl := gomock.NewController(t)
+	mockGitProvider := git_test.NewMockGitProvider(ctrl)
+	mockExtractor := fedorasource_test.NewMockFedoraSourceDownloader(ctrl)
+
+	const (
+		configPinCommit = "config-pin-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		lockedCommit    = "locked-commit-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	)
+
+	provider, err := sourceproviders.NewFedoraSourcesProviderImpl(
+		env.FS(),
+		env.DryRunnable,
+		mockGitProvider,
+		mockExtractor,
+		testResolvedDistro(),
+		retry.Disabled(),
+	)
+	require.NoError(t, err)
+
+	mockComponent := components_testutils.NewMockComponent(ctrl)
+	mockComponent.EXPECT().GetName().AnyTimes().Return(testPackageName)
+	mockComponent.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
+		Name: testPackageName,
+		Spec: projectconfig.SpecSource{
+			SourceType:     projectconfig.SpecSourceTypeUpstream,
+			UpstreamCommit: configPinCommit,
+		},
+		Locked: &projectconfig.ComponentLockData{
+			UpstreamCommit: lockedCommit,
+		},
+	})
+
+	mockGitProvider.EXPECT().
+		Clone(gomock.Any(), repoURL, gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _, cloneDir string, _ ...git.GitOptions) error {
+			specPath := cloneDir + "/" + testPackageName + ".spec"
+
+			return fileutils.WriteFile(env.FS(), specPath, []byte("Name: "+testPackageName), fileperms.PublicFile)
+		})
+
+	// Critical: Checkout must use the LOCKED commit, not the config pin.
+	// gomock will fail the test if Checkout is called with anything else.
+	mockGitProvider.EXPECT().
+		Checkout(gomock.Any(), gomock.Any(), lockedCommit).
+		Return(nil)
+
+	mockExtractor.EXPECT().
+		ExtractSourcesFromRepo(gomock.Any(), gomock.Any(), testPackageName, gomock.Any(), gomock.Any()).
+		Return(nil)
+
+	err = provider.GetComponent(context.Background(), mockComponent, destDir)
+	require.NoError(t, err)
 }

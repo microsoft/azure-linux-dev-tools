@@ -6,6 +6,7 @@ package projectconfig
 import (
 	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
@@ -34,6 +35,10 @@ type ConfigFile struct {
 	// Definitions of distros.
 	Distros map[string]DistroDefinition `toml:"distros,omitempty" jsonschema:"title=Distros,description=Definitions of distros to build for or consume from"`
 
+	// Reusable resource definitions (e.g., RPM repositories) referenced from
+	// elsewhere in the configuration.
+	Resources *ResourcesConfig `toml:"resources,omitempty" jsonschema:"title=Resources,description=Reusable named resource definitions"`
+
 	// Definitions of component groups.
 	ComponentGroups map[string]ComponentGroupConfig `toml:"component-groups,omitempty" validate:"dive" jsonschema:"title=Component groups,description=Definitions of component groups for this project"`
 
@@ -45,6 +50,10 @@ type ConfigFile struct {
 
 	// Configuration for tools used by azldev.
 	Tools *ToolsConfig `toml:"tools,omitempty" jsonschema:"title=Tools configuration,description=Configuration for tools used by azldev"`
+
+	// DefaultComponentConfig is the project-wide default component configuration applied before any
+	// component-group or component-level config is considered.
+	DefaultComponentConfig *ComponentConfig `toml:"default-component-config,omitempty" jsonschema:"title=Default component config,description=Project-wide default applied to all components before group and component overrides"`
 
 	// DefaultPackageConfig is the project-wide default package configuration applied before any
 	// package-group or component-level config is considered.
@@ -88,6 +97,17 @@ func (f ConfigFile) Validate() error {
 		}
 	}
 
+	// Validate component group metadata.
+	if err := validateComponentGroupMetadata(f.ComponentGroups); err != nil {
+		return err
+	}
+
+	// Per-component snapshot timestamps are not allowed. Components inherit
+	// the snapshot from the distro/group default-component-config or the
+	// project's default-distro. Per-component snapshots would create
+	// non-deterministic builds that the lock file cannot reliably track.
+	// Use an explicit 'upstream-commit' pin instead.
+
 	// Validate overlay configurations for each component.
 	for componentName, component := range f.Components {
 		for i, overlay := range component.Overlays {
@@ -106,6 +126,46 @@ func (f ConfigFile) Validate() error {
 		if err := validateSourceFiles(component.SourceFiles, componentName); err != nil {
 			return err
 		}
+
+		if component.Spec.UpstreamDistro.Snapshot != "" {
+			return fmt.Errorf(
+				"component %#q has a per-component 'snapshot' on 'upstream-distro'; "+
+					"snapshots should be set on the distro or group default-component-config, "+
+					"or use 'upstream-commit' to pin a specific commit",
+				componentName)
+		}
+	}
+
+	// Validate test suite configurations.
+	for suiteName, suite := range f.TestSuites {
+		// Suite names are used as path components (e.g., for the per-suite venv directory),
+		// so reject anything that could escape the intended directory or otherwise be unsafe
+		// across platforms.
+		if err := fileutils.ValidateFilename(suiteName); err != nil {
+			return fmt.Errorf("invalid test suite name %#q:\n%w", suiteName, err)
+		}
+
+		suite.Name = suiteName
+
+		if err := suite.Validate(); err != nil {
+			return fmt.Errorf("invalid test suite %#q:\n%w", suiteName, err)
+		}
+	}
+
+	return nil
+}
+
+// validateComponentGroupMetadata validates the optional documentation metadata declared
+// on each component group.
+func validateComponentGroupMetadata(groups map[string]ComponentGroupConfig) error {
+	for groupName, group := range groups {
+		if group.Metadata == nil {
+			continue
+		}
+
+		if err := group.Metadata.Validate(); err != nil {
+			return fmt.Errorf("invalid metadata on component group %#q:\n%w", groupName, err)
+		}
 	}
 
 	return nil
@@ -116,6 +176,8 @@ func (f ConfigFile) Validate() error {
 //   - Hash type must be a supported algorithm when specified.
 //   - Hash value without a hash type is not allowed.
 //   - Origin must be present and valid for each source file.
+//   - 'replace-upstream' and 'replace-reason' must be set together.
+//   - [OriginTypeOverlay] entries additionally require 'hash', 'hash-type', and 'replace-upstream = true'.
 func validateSourceFiles(sourceFiles []SourceFileReference, componentName string) error {
 	seen := make(map[string]bool, len(sourceFiles))
 
@@ -145,8 +207,145 @@ func validateSourceFiles(sourceFiles []SourceFileReference, componentName string
 				ref.Filename, componentName)
 		}
 
+		if err := validateReplaceUpstream(ref, componentName); err != nil {
+			return err
+		}
+
+		if err := validateCustomSourceRef(ref, componentName); err != nil {
+			return err
+		}
+
 		if err := validateOrigin(ref.Origin, ref.Filename, componentName); err != nil {
 			return err
+		}
+
+		if ref.Origin.Type == OriginTypeOverlay {
+			if err := validateOverlayOriginRef(ref, componentName); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// validateOverlayOriginRef enforces additional constraints on [SourceFileReference] entries
+// with [OriginTypeOverlay]. 'replace-upstream = true' is required because the archive is
+// already present as a spec source. Hashes may be omitted while bootstrapping an archive
+// overlay with '--allow-no-hashes'; source preparation computes the post-overlay hash.
+func validateOverlayOriginRef(ref SourceFileReference, componentName string) error {
+	if !ref.ReplaceUpstream {
+		return fmt.Errorf(
+			"source file %#q in component %#q has 'origin.type = overlay' but 'replace-upstream' is not true; "+
+				"'replace-upstream = true' is required because the archive already exists in the upstream 'sources' file",
+			ref.Filename, componentName)
+	}
+
+	return nil
+}
+
+// validateReplaceUpstream enforces the pairing rules for the 'replace-upstream' and
+// 'replace-reason' fields on a [SourceFileReference]:
+//   - 'replace-upstream = true' requires a non-empty 'replace-reason' (whitespace-only
+//     values do not count).
+//   - 'replace-reason' may only be set when 'replace-upstream = true'. A non-empty
+//     'replace-reason' (even if it would trim to empty) is rejected when
+//     'replace-upstream' is false, to surface the configuration mistake rather than
+//     silently ignoring the value.
+func validateReplaceUpstream(ref SourceFileReference, componentName string) error {
+	if ref.ReplaceUpstream && strings.TrimSpace(ref.ReplaceReason) == "" {
+		return fmt.Errorf(
+			"source file %#q in component %#q has 'replace-upstream = true' but no 'replace-reason'; "+
+				"a non-empty 'replace-reason' is required to document the override",
+			ref.Filename, componentName)
+	}
+
+	if !ref.ReplaceUpstream && ref.ReplaceReason != "" {
+		return fmt.Errorf(
+			"source file %#q in component %#q has 'replace-reason' set but 'replace-upstream' is not true; "+
+				"'replace-reason' is only valid when 'replace-upstream = true'",
+			ref.Filename, componentName)
+	}
+
+	return nil
+}
+
+// validateCustomSourceRef enforces the pairing rules for the 'script', 'mock-packages',
+// and 'inputs' fields on a [SourceFileReference]:
+//   - 'script' is required when 'origin.type' is 'custom'.
+//   - 'script' must be empty when 'origin.type' is not 'custom'.
+//   - 'mock-packages' must be empty when 'origin.type' is not 'custom'.
+//   - 'inputs' must be empty when 'origin.type' is not 'custom'.
+//   - each 'inputs' entry must be a valid filename (no path separators).
+//   - each 'inputs' entry must be unique.
+func validateCustomSourceRef(ref SourceFileReference, componentName string) error {
+	if ref.Origin.Type == OriginTypeCustom {
+		if ref.Origin.Script == "" {
+			return fmt.Errorf(
+				"source file %#q in component %#q has 'custom' origin but no 'script'; "+
+					"a non-empty 'script' filename is required for 'custom' origin",
+				ref.Filename, componentName)
+		}
+
+		if err := fileutils.ValidateFilename(ref.Origin.Script); err != nil {
+			return fmt.Errorf(
+				"invalid 'script' value %#q for source file %#q in component %#q:\n%w",
+				ref.Origin.Script, ref.Filename, componentName, err)
+		}
+
+		if err := validateCustomSourceInputs(ref, componentName); err != nil {
+			return err
+		}
+
+		return nil
+	}
+
+	if ref.Origin.Script != "" {
+		return fmt.Errorf(
+			"source file %#q in component %#q has 'script' set but origin type is %#q; "+
+				"'script' is only valid when origin type is 'custom'",
+			ref.Filename, componentName, string(ref.Origin.Type))
+	}
+
+	if len(ref.Origin.MockPackages) > 0 {
+		return fmt.Errorf(
+			"source file %#q in component %#q has 'mock-packages' set but origin type is %#q; "+
+				"'mock-packages' is only valid when origin type is 'custom'",
+			ref.Filename, componentName, string(ref.Origin.Type))
+	}
+
+	if len(ref.Origin.Inputs) > 0 {
+		return fmt.Errorf(
+			"source file %#q in component %#q has 'inputs' set but origin type is %#q; "+
+				"'inputs' is only valid when origin type is 'custom'",
+			ref.Filename, componentName, string(ref.Origin.Type))
+	}
+
+	return nil
+}
+
+func validateCustomSourceInputs(ref SourceFileReference, componentName string) error {
+	seen := make(map[string]bool, len(ref.Origin.Inputs))
+
+	for _, input := range ref.Origin.Inputs {
+		if err := fileutils.ValidateFilename(input); err != nil {
+			return fmt.Errorf(
+				"invalid 'inputs' entry %#q for source file %#q in component %#q:\n%w",
+				input, ref.Filename, componentName, err)
+		}
+
+		if seen[input] {
+			return fmt.Errorf(
+				"duplicate 'inputs' entry %#q for source file %#q in component %#q; each input filename must be unique",
+				input, ref.Filename, componentName)
+		}
+
+		seen[input] = true
+
+		if input == ref.Origin.Script {
+			return fmt.Errorf(
+				"'inputs' entry %#q for source file %#q in component %#q conflicts with 'script' filename",
+				input, ref.Filename, componentName)
 		}
 	}
 
@@ -155,6 +354,7 @@ func validateSourceFiles(sourceFiles []SourceFileReference, componentName string
 
 // validateOrigin checks that a source file [Origin] is present and valid for its type.
 // For [OriginTypeURI] ('download'), the [Origin.Uri] field must be a valid URI with a scheme.
+// For [OriginTypeOverlay] ('overlay'), no URI is used; the archive is already on disk.
 func validateOrigin(origin Origin, filename string, componentName string) error {
 	if origin.Type == "" {
 		return fmt.Errorf(
@@ -184,6 +384,24 @@ func validateOrigin(origin Origin, filename string, componentName string) error 
 				"invalid 'uri' for source file %#q, component %#q; "+
 					"URI %#q is missing a scheme (e.g. 'https://')",
 				filename, componentName, origin.Uri)
+		}
+
+	case OriginTypeCustom:
+		// Script validation is handled by validateCustomSourceRef on SourceFileReference.
+		// Reject 'uri' since it is meaningless for custom-generated sources.
+		if origin.Uri != "" {
+			return fmt.Errorf(
+				"source file %#q in component %#q has 'uri' set but origin type is 'custom'; "+
+					"'uri' is only valid when origin type is 'download'",
+				filename, componentName)
+		}
+
+	case OriginTypeOverlay:
+		if origin.Uri != "" {
+			return fmt.Errorf(
+				"unexpected 'uri' for source file %#q, component %#q; "+
+					"'uri' must not be set when 'origin' type is 'overlay'",
+				filename, componentName)
 		}
 	default:
 		return fmt.Errorf(

@@ -5,6 +5,7 @@ package sources_test
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/sourceproviders_test"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/archive"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/stretchr/testify/assert"
@@ -43,6 +45,19 @@ func TestNewPreparer_NilArgs(t *testing.T) {
 	require.Nil(t, preparer)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "filesystem")
+}
+
+func TestNewPreparer_DirtyDetectionWithoutGitRepo(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	sourceManager := sourceproviders_test.NewMockSourceManager(ctrl)
+	ctx := testctx.NewCtx()
+
+	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx,
+		sources.WithDirtyDetection(),
+	)
+	require.Nil(t, preparer)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "WithDirtyDetection requires WithGitRepo")
 }
 
 func TestPrepareSources_Success(t *testing.T) {
@@ -86,6 +101,201 @@ func TestPrepareSources_Success(t *testing.T) {
 	assert.NotContains(t, string(specContents), "Source9999")
 }
 
+// TestPrepareSources_ArchiveOverlayRehashesSourcesEntry is an end-to-end check
+// of the key correctness behavior introduced with archive overlays: when an
+// archive-scoped overlay mutates an archive's contents, the matching 'sources'
+// entry must be re-hashed in place so the recorded digest reflects the repacked
+// archive using the overlay-origin entry's configured hash type, independently
+// of the upstream entry's hash type.
+//
+// This runs against the host filesystem with a real temp dir because archive
+// overlays extract/repack through the [archive] package, which uses OS
+// primitives ([os.Root], os.*) and therefore requires genuine on-disk paths —
+// an in-memory FS would not be visible to extraction/repacking. This mirrors
+// the existing archive internal tests, which likewise use t.TempDir().
+func TestPrepareSources_ArchiveOverlayRehashesSourcesEntry(t *testing.T) {
+	const (
+		componentName = "test-component"
+		archiveName   = "pkg-1.0.tar.gz"
+	)
+
+	// Host FS + real temp dir: archive extraction/repacking happens on disk.
+	ctx := testctx.NewCtx(testctx.WithHostFS())
+	outputDir := t.TempDir()
+
+	archivePath := filepath.Join(outputDir, archiveName)
+	specPath := filepath.Join(outputDir, componentName+".spec")
+	sourcesPath := filepath.Join(outputDir, fedorasource.SourcesFileName)
+
+	// Build a deterministic archive whose single top-level directory follows the
+	// conventional "%{name}-%{version}/" layout, containing a file we will remove
+	// and one we will keep.
+	stagingDir := t.TempDir()
+	pkgRoot := filepath.Join(stagingDir, "pkg-1.0")
+	require.NoError(t, os.MkdirAll(pkgRoot, fileperms.PublicDir))
+	require.NoError(t, os.WriteFile(filepath.Join(pkgRoot, "keep.txt"), []byte("keep me"), fileperms.PrivateFile))
+	require.NoError(t, os.WriteFile(filepath.Join(pkgRoot, "remove-me.txt"), []byte("delete me"), fileperms.PrivateFile))
+	require.NoError(t, archive.CreateDeterministicArchive(archivePath, stagingDir, archive.CompressionGzip))
+
+	// Seed a legacy upstream MD5 entry. The upstream algorithm verifies the
+	// original download only; the repacked result must use the configured SHA-512.
+	originalHash, err := fileutils.ComputeFileHash(ctx.FS(), fileutils.HashTypeMD5, archivePath)
+	require.NoError(t, err)
+
+	originalEntry := fedorasource.FormatSourcesEntry(archiveName, fileutils.HashTypeMD5, originalHash)
+	require.NoError(t, fileutils.WriteFile(
+		ctx.FS(), sourcesPath, []byte(originalEntry+"\n"), fileperms.PublicFile))
+
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+	sourceManager := sourceproviders_test.NewMockSourceManager(ctrl)
+
+	component.EXPECT().GetName().AnyTimes().Return(componentName)
+	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
+		Overlays: []projectconfig.ComponentOverlay{
+			{
+				Type:     projectconfig.ComponentOverlayRemoveFile,
+				Archive:  archiveName,
+				Filename: "remove-me.txt",
+			},
+		},
+		SourceFiles: []projectconfig.SourceFileReference{
+			{
+				Filename:        archiveName,
+				HashType:        fileutils.HashTypeSHA512,
+				Origin:          projectconfig.Origin{Type: projectconfig.OriginTypeOverlay},
+				ReplaceUpstream: true,
+				ReplaceReason:   "record the post-overlay archive",
+			},
+		},
+	})
+
+	// The archive and 'sources' file already exist on disk; the source manager
+	// only needs to provide the spec file (FetchFiles is a no-op download).
+	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, outputDir).Return(nil)
+	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, outputDir, gomock.Any()).DoAndReturn(
+		func(_ interface{}, _ interface{}, dir string, _ ...sourceproviders.FetchComponentOption) error {
+			return fileutils.WriteFile(
+				ctx.FS(), filepath.Join(dir, componentName+".spec"),
+				[]byte("# test spec"), fileperms.PublicFile)
+		},
+	)
+
+	// '--allow-no-hashes' permits bootstrapping an archive overlay before its
+	// overlay-origin source-file entry and post-overlay hash are configured.
+	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx, sources.WithAllowNoHashes())
+	require.NoError(t, err)
+
+	err = preparer.PrepareSources(ctx, component, outputDir, true /*applyOverlays*/)
+	require.NoError(t, err)
+
+	// The overlay must have actually mutated the archive on disk.
+	assert.FileExists(t, specPath)
+
+	repackedHash, err := fileutils.ComputeFileHash(ctx.FS(), fileutils.HashTypeSHA512, archivePath)
+	require.NoError(t, err)
+	require.NotEqual(t, originalHash, repackedHash,
+		"precondition: removing a file from the archive should change its hash")
+
+	// The 'sources' entry must use the configured post-overlay algorithm, not the
+	// legacy algorithm from the upstream entry.
+	sourcesContent, err := fileutils.ReadFile(ctx.FS(), sourcesPath)
+	require.NoError(t, err)
+
+	entry := findSourcesEntry(t, string(sourcesContent), archiveName)
+	require.NotNil(t, entry, "rewritten 'sources' file should still contain an entry for %q", archiveName)
+	assert.Equal(t, fileutils.HashTypeSHA512, entry.HashType, "configured post-overlay hash type must be used")
+	assert.Equal(t, repackedHash, entry.Hash, "'sources' entry must record the repacked archive's hash")
+	assert.NotEqual(t, originalHash, entry.Hash, "'sources' entry hash must have been updated")
+}
+
+func TestPrepareSources_ArchiveOverlayAssociationValidation(t *testing.T) {
+	const archiveName = "source.tar.gz"
+
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+	sourceManager := sourceproviders_test.NewMockSourceManager(ctrl)
+	ctx := testctx.NewCtx()
+
+	component.EXPECT().GetName().AnyTimes().Return("test-component")
+	component.EXPECT().GetConfig().Return(&projectconfig.ComponentConfig{
+		SourceFiles: []projectconfig.SourceFileReference{{
+			Filename: archiveName,
+			Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeOverlay},
+		}},
+	})
+
+	preparer, err := sources.NewPreparer(
+		sourceManager, ctx.FS(), ctx, ctx, sources.WithAllowNoHashes())
+	require.NoError(t, err)
+	require.ErrorContains(t,
+		preparer.PrepareSources(ctx, component, testOutputDir, true),
+		"no archive-scoped overlay modifies that archive")
+}
+
+// TestPrepareSources_ArchiveOverlayMissingSourcesEntryErrors verifies that when an
+// archive-scoped overlay repacks an archive that has no matching 'sources' entry,
+// preparation fails instead of silently leaving a stale (or absent) digest.
+func TestPrepareSources_ArchiveOverlayMissingSourcesEntryErrors(t *testing.T) {
+	const (
+		componentName = "test-component"
+		archiveName   = "pkg-1.0.tar.gz"
+	)
+
+	// Host FS + real temp dir: archive extraction/repacking happens on disk.
+	ctx := testctx.NewCtx(testctx.WithHostFS())
+	outputDir := t.TempDir()
+
+	archivePath := filepath.Join(outputDir, archiveName)
+	sourcesPath := filepath.Join(outputDir, fedorasource.SourcesFileName)
+
+	// Build a deterministic archive with a file to remove, but deliberately seed a
+	// 'sources' file that has NO entry for this archive.
+	stagingDir := t.TempDir()
+	pkgRoot := filepath.Join(stagingDir, "pkg-1.0")
+	require.NoError(t, os.MkdirAll(pkgRoot, fileperms.PublicDir))
+	require.NoError(t, os.WriteFile(filepath.Join(pkgRoot, "remove-me.txt"), []byte("delete me"), fileperms.PrivateFile))
+	require.NoError(t, archive.CreateDeterministicArchive(archivePath, stagingDir, archive.CompressionGzip))
+
+	// 'sources' file references some unrelated file, not the archive being modified.
+	require.NoError(t, fileutils.WriteFile(
+		ctx.FS(), sourcesPath,
+		[]byte("SHA256 (unrelated.tar.gz) = 0000000000000000000000000000000000000000000000000000000000000000\n"),
+		fileperms.PublicFile))
+
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+	sourceManager := sourceproviders_test.NewMockSourceManager(ctrl)
+
+	component.EXPECT().GetName().AnyTimes().Return(componentName)
+	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
+		Overlays: []projectconfig.ComponentOverlay{
+			{
+				Type:     projectconfig.ComponentOverlayRemoveFile,
+				Archive:  archiveName,
+				Filename: "remove-me.txt",
+			},
+		},
+	})
+
+	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, outputDir).Return(nil)
+	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, outputDir, gomock.Any()).DoAndReturn(
+		func(_ interface{}, _ interface{}, dir string, _ ...sourceproviders.FetchComponentOption) error {
+			return fileutils.WriteFile(
+				ctx.FS(), filepath.Join(dir, componentName+".spec"),
+				[]byte("# test spec"), fileperms.PublicFile)
+		},
+	)
+
+	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx, sources.WithAllowNoHashes())
+	require.NoError(t, err)
+
+	err = preparer.PrepareSources(ctx, component, outputDir, true /*applyOverlays*/)
+	require.Error(t, err, "preparing sources should fail when a modified archive has no 'sources' entry")
+	assert.Contains(t, err.Error(), archiveName,
+		"error should identify the archive missing from the 'sources' file")
+}
+
 func TestPrepareSources_SourceManagerError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	component := components_testutils.NewMockComponent(ctrl)
@@ -95,6 +305,8 @@ func TestPrepareSources_SourceManagerError(t *testing.T) {
 	expectedErr := errors.New("failed to fetch files")
 
 	component.EXPECT().GetName().AnyTimes().Return("test-component")
+	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{})
+	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).Return(nil)
 	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(expectedErr)
 
 	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx)
@@ -620,8 +832,11 @@ func TestDiffSources_FetchError(t *testing.T) {
 	require.NoError(t, fileutils.MkdirAll(ctx.FS(), baseDir))
 
 	component.EXPECT().GetName().AnyTimes().Return("test-component")
+	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{})
 
 	expectedErr := errors.New("network failure")
+
+	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, gomock.Any(), gomock.Any()).Return(nil)
 	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, gomock.Any()).Return(expectedErr)
 
 	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx)
@@ -633,18 +848,25 @@ func TestDiffSources_FetchError(t *testing.T) {
 	require.ErrorIs(t, err, expectedErr)
 }
 
+//nolint:maintidx // Test table complexity scales with the number of source-file merge scenarios.
 func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 	validOrigin := projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/new-source.tar.gz"}
 	tests := []struct {
-		name                   string
-		sourceFiles            []projectconfig.SourceFileReference
-		existingSourcesContent string
-		expectError            bool
-		errorContains          []string
-		expectedSourceEntries  []string
+		name                        string
+		sourceFiles                 []projectconfig.SourceFileReference
+		existingSourcesContent      string
+		expectError                 bool
+		errorContains               []string
+		expectedSourceEntries       []string
+		expectedSourceEntriesAbsent []string
+		// expectedExactContent, when non-empty, asserts the merged 'sources' file matches
+		// this string byte-for-byte. Use this for cases where blank-line and comment
+		// preservation must be verified exactly (substring checks alone don't catch
+		// dropped or extra blank lines).
+		expectedExactContent string
 	}{
 		{
-			name: "adds new entry to existing sources file",
+			name: "adds new entry to existing 'sources' file",
 			sourceFiles: []projectconfig.SourceFileReference{
 				{
 					Filename: "extra-source.tar.gz",
@@ -660,10 +882,10 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 			},
 		},
 		{
-			name: "error on duplicate filename in sources file",
+			name: "error on filename collision when replace-upstream is not set",
 			sourceFiles: []projectconfig.SourceFileReference{
 				{
-					Filename: "existing.tar.gz", // Already in sources file.
+					Filename: "existing.tar.gz", // Already in 'sources' file.
 					Hash:     "11223344aabb",
 					HashType: fileutils.HashTypeSHA512,
 					Origin:   validOrigin,
@@ -674,6 +896,189 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 			errorContains: []string{
 				"existing.tar.gz",
 				"conflicts with an existing entry",
+				"replace-upstream = true",
+			},
+		},
+		{
+			name: "replaces upstream entry in place when replace-upstream is true",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename:        "existing.tar.gz", // Already in 'sources' file.
+					Hash:            "deadbeefcafe",
+					HashType:        fileutils.HashTypeSHA512,
+					Origin:          validOrigin,
+					ReplaceUpstream: true,
+					ReplaceReason:   "patched to fix CVE-2026-0001",
+				},
+			},
+			existingSourcesContent: "SHA512 (existing.tar.gz) = aabbccdd1122\nSHA512 (other.tar.gz) = 99887766\n",
+			// The replacement must occupy the original position of 'existing.tar.gz' (line 1),
+			// not be shuffled to the end. Order is asserted by the surrounding test logic.
+			expectedSourceEntries: []string{
+				"SHA512 (existing.tar.gz) = deadbeefcafe",
+				"SHA512 (other.tar.gz) = 99887766",
+			},
+			expectedSourceEntriesAbsent: []string{
+				"SHA512 (existing.tar.gz) = aabbccdd1122",
+			},
+		},
+		{
+			name: "new entries are appended after upstream entries",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename:        "existing.tar.gz", // Replacement (in-place).
+					Hash:            "deadbeefcafe",
+					HashType:        fileutils.HashTypeSHA512,
+					Origin:          validOrigin,
+					ReplaceUpstream: true,
+					ReplaceReason:   "patched",
+				},
+				{
+					Filename: "brand-new.tar.gz", // Net-new (appended).
+					Hash:     "abc123def456",
+					HashType: fileutils.HashTypeSHA512,
+					Origin:   validOrigin,
+				},
+			},
+			existingSourcesContent: "SHA512 (existing.tar.gz) = aabbccdd1122\nSHA512 (other.tar.gz) = 99887766\n",
+			// Order matters: replacement keeps line 1; line 2 is the untouched upstream entry;
+			// brand-new entry is appended at the end.
+			expectedSourceEntries: []string{
+				"SHA512 (existing.tar.gz) = deadbeefcafe",
+				"SHA512 (other.tar.gz) = 99887766",
+				"SHA512 (brand-new.tar.gz) = abc123def456",
+			},
+		},
+		{
+			name: "multiple replace-upstream entries are all swapped in place",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename:        "first.tar.gz",
+					Hash:            "1111aaaa",
+					HashType:        fileutils.HashTypeSHA512,
+					Origin:          validOrigin,
+					ReplaceUpstream: true,
+					ReplaceReason:   "patched first",
+				},
+				{
+					Filename:        "third.tar.gz",
+					Hash:            "3333cccc",
+					HashType:        fileutils.HashTypeSHA512,
+					Origin:          validOrigin,
+					ReplaceUpstream: true,
+					ReplaceReason:   "patched third",
+				},
+				{
+					Filename: "appended.tar.gz",
+					Hash:     "9999ffff",
+					HashType: fileutils.HashTypeSHA512,
+					Origin:   validOrigin,
+				},
+			},
+			existingSourcesContent: "SHA512 (first.tar.gz) = aaaa1111\n" +
+				"SHA512 (second.tar.gz) = bbbb2222\n" +
+				"SHA512 (third.tar.gz) = cccc3333\n",
+			// Both replacements occupy their original positions; the untouched 'second'
+			// entry stays between them; brand-new entry lands at the end.
+			expectedSourceEntries: []string{
+				"SHA512 (first.tar.gz) = 1111aaaa",
+				"SHA512 (second.tar.gz) = bbbb2222",
+				"SHA512 (third.tar.gz) = 3333cccc",
+				"SHA512 (appended.tar.gz) = 9999ffff",
+			},
+			expectedSourceEntriesAbsent: []string{
+				"SHA512 (first.tar.gz) = aaaa1111",
+				"SHA512 (third.tar.gz) = cccc3333",
+			},
+		},
+		{
+			name: "comments and blank lines in upstream 'sources' file are preserved verbatim",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename:        "patched.tar.gz",
+					Hash:            "deadbeefcafe",
+					HashType:        fileutils.HashTypeSHA512,
+					Origin:          validOrigin,
+					ReplaceUpstream: true,
+					ReplaceReason:   "patched",
+				},
+				{
+					Filename: "extra.tar.gz",
+					Hash:     "abc123",
+					HashType: fileutils.HashTypeSHA512,
+					Origin:   validOrigin,
+				},
+			},
+			// The blank lines between entries and the comments above each entry must be
+			// preserved at their original positions; only the matching entry line is swapped.
+			existingSourcesContent: "# top-level comment about the package\n" +
+				"\n" +
+				"# comment about the patched archive\n" +
+				"SHA512 (patched.tar.gz) = aabbccdd1122\n" +
+				"\n" +
+				"# comment about the untouched archive\n" +
+				"SHA512 (untouched.tar.gz) = 99887766\n",
+			// Asserting byte-for-byte equality here is what guarantees that the blank
+			// lines (between the top-level comment and the patched-archive section, and
+			// between the patched and untouched sections) survive the merge intact.
+			expectedExactContent: "# top-level comment about the package\n" +
+				"\n" +
+				"# comment about the patched archive\n" +
+				"SHA512 (patched.tar.gz) = deadbeefcafe\n" +
+				"\n" +
+				"# comment about the untouched archive\n" +
+				"SHA512 (untouched.tar.gz) = 99887766\n" +
+				"SHA512 (extra.tar.gz) = abc123\n",
+			expectedSourceEntries: []string{
+				"# top-level comment about the package",
+				"# comment about the patched archive",
+				"SHA512 (patched.tar.gz) = deadbeefcafe",
+				"# comment about the untouched archive",
+				"SHA512 (untouched.tar.gz) = 99887766",
+				"SHA512 (extra.tar.gz) = abc123",
+			},
+			expectedSourceEntriesAbsent: []string{
+				"SHA512 (patched.tar.gz) = aabbccdd1122",
+			},
+		},
+		{
+			name: "duplicate filename in upstream 'sources' file is rejected as malformed",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename: "extra.tar.gz",
+					Hash:     "abc123",
+					HashType: fileutils.HashTypeSHA512,
+					Origin:   validOrigin,
+				},
+			},
+			// Two entries for the same filename in the upstream file is malformed; merge
+			// must error rather than silently picking one.
+			existingSourcesContent: "SHA512 (dup.tar.gz) = aaaa1111\nSHA512 (dup.tar.gz) = bbbb2222\n",
+			expectError:            true,
+			errorContains: []string{
+				"failed to parse 'sources' file",
+				"duplicate filename",
+				"dup.tar.gz",
+			},
+		},
+		{
+			name: "error when replace-upstream true but no matching upstream entry",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename:        "not-in-upstream.tar.gz",
+					Hash:            "abc123",
+					HashType:        fileutils.HashTypeSHA512,
+					Origin:          validOrigin,
+					ReplaceUpstream: true,
+					ReplaceReason:   "intended to override (typo demo)",
+				},
+			},
+			existingSourcesContent: "SHA512 (existing.tar.gz) = aabbccdd1122\n",
+			expectError:            true,
+			errorContains: []string{
+				"not-in-upstream.tar.gz",
+				"replace-upstream = true",
+				"no entry with that filename exists",
 			},
 		},
 		{
@@ -703,7 +1108,7 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 			errorContains: []string{"missing-hashtype.tar.gz", "has a 'hash' value but no 'hash-type'"},
 		},
 		{
-			name: "creates sources file if not exists",
+			name: "creates 'sources' file if not exists",
 			sourceFiles: []projectconfig.SourceFileReference{
 				{
 					Filename: "new-source.tar.gz",
@@ -735,7 +1140,7 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 			sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil)
 			sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).DoAndReturn(
 				func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
-					// Create existing sources file if specified.
+					// Create existing 'sources' file if specified.
 					if testCase.existingSourcesContent != "" {
 						err := fileutils.WriteFile(ctx.FS(), filepath.Join(outputDir, fedorasource.SourcesFileName),
 							[]byte(testCase.existingSourcesContent), fileperms.PublicFile)
@@ -764,13 +1169,37 @@ func TestPrepareSources_UpdatesSourcesFile(t *testing.T) {
 
 			require.NoError(t, err)
 
-			if len(testCase.expectedSourceEntries) > 0 {
+			if len(testCase.expectedSourceEntries) > 0 || len(testCase.expectedSourceEntriesAbsent) > 0 ||
+				testCase.expectedExactContent != "" {
 				sourcesFilePath := filepath.Join(testOutputDir, fedorasource.SourcesFileName)
 				sourcesContent, err := fileutils.ReadFile(ctx.FS(), sourcesFilePath)
 				require.NoError(t, err)
 
+				if testCase.expectedExactContent != "" {
+					assert.Equal(t, testCase.expectedExactContent, string(sourcesContent),
+						"merged 'sources' file does not match expected byte content "+
+							"(blank-line / comment preservation regression?)")
+				}
+
+				// Verify substrings are present and appear in the same order they were
+				// declared in expectedSourceEntries (catches accidental reordering, e.g. an
+				// in-place replacement being shuffled to the end of the file).
+				lastIdx := -1
+
 				for _, expectedEntry := range testCase.expectedSourceEntries {
-					assert.Contains(t, string(sourcesContent), expectedEntry)
+					idx := strings.Index(string(sourcesContent), expectedEntry)
+					assert.GreaterOrEqual(t, idx, 0,
+						"expected entry %q not found in 'sources' file content:\n%s",
+						expectedEntry, string(sourcesContent))
+					assert.Greater(t, idx, lastIdx,
+						"expected entry %q appears before earlier entry; ordering violated",
+						expectedEntry)
+					lastIdx = idx
+				}
+
+				for _, absentEntry := range testCase.expectedSourceEntriesAbsent {
+					assert.NotContains(t, string(sourcesContent), absentEntry,
+						"upstream entry should have been removed by replace-upstream")
 				}
 			}
 		})
@@ -797,6 +1226,10 @@ func TestPrepareSources_AllowNoHashes(t *testing.T) {
 		expectError            bool
 		errorContains          []string
 		expectedSourceEntries  []string
+		// forbiddenSourceEntries are substrings that must NOT appear in the
+		// final 'sources' file (e.g. the original upstream hash after a
+		// 'replace-upstream' merge).
+		forbiddenSourceEntries []string
 	}{
 		{
 			name: "computes hash with provided hash type",
@@ -855,6 +1288,39 @@ func TestPrepareSources_AllowNoHashes(t *testing.T) {
 			createFile:    false,
 			expectError:   true,
 			errorContains: []string{"test-file.tar.gz", "downloads were skipped"},
+		},
+		{
+			// Combining 'allow-no-hashes' with 'replace-upstream' must compute the fresh
+			// hash from the on-disk file *and* swap the upstream entry in place, instead
+			// of erroring on the filename collision or appending a duplicate entry.
+			name: "replace-upstream with allow-no-hashes computes fresh hash and replaces upstream entry",
+			sourceFiles: []projectconfig.SourceFileReference{
+				{
+					Filename: "test-file.tar.gz",
+					HashType: fileutils.HashTypeSHA256,
+					Origin: projectconfig.Origin{
+						Type: projectconfig.OriginTypeURI,
+						Uri:  "https://example.com/test-file.tar.gz",
+					},
+					ReplaceUpstream: true,
+					ReplaceReason:   "patched to fix upstream regression",
+				},
+			},
+			preparerOpts: []sources.PreparerOption{sources.WithAllowNoHashes()},
+			createFile:   true,
+			existingSourcesContent: "SHA256 (test-file.tar.gz) = " +
+				"0000000000000000000000000000000000000000000000000000000000000000\n" +
+				"SHA512 (other.tar.gz) = aabbcc\n",
+			expectedSourceEntries: []string{
+				// Replacement entry uses the freshly computed hash, not the upstream value.
+				"SHA256 (test-file.tar.gz) = " + testFileSHA256,
+				// Untouched sibling entry is preserved.
+				"SHA512 (other.tar.gz) = aabbcc",
+			},
+			forbiddenSourceEntries: []string{
+				// The upstream stub hash must be gone; the entry was replaced, not duplicated.
+				"0000000000000000000000000000000000000000000000000000000000000000",
+			},
 		},
 	}
 
@@ -916,13 +1382,19 @@ func TestPrepareSources_AllowNoHashes(t *testing.T) {
 
 			require.NoError(t, err)
 
-			if len(testCase.expectedSourceEntries) > 0 {
+			if len(testCase.expectedSourceEntries) > 0 || len(testCase.forbiddenSourceEntries) > 0 {
 				sourcesFilePath := filepath.Join(testOutputDir, fedorasource.SourcesFileName)
 				sourcesContent, err := fileutils.ReadFile(ctx.FS(), sourcesFilePath)
 				require.NoError(t, err)
 
 				for _, expectedEntry := range testCase.expectedSourceEntries {
 					assert.Contains(t, string(sourcesContent), expectedEntry)
+				}
+
+				for _, forbiddenEntry := range testCase.forbiddenSourceEntries {
+					assert.NotContains(t, string(sourcesContent), forbiddenEntry,
+						"forbidden substring %q must not appear in the merged 'sources' file",
+						forbiddenEntry)
 				}
 			}
 		})

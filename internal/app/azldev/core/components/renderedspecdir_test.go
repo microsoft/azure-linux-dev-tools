@@ -73,3 +73,26 @@ func TestRenderedSpecDir(t *testing.T) {
 		assert.Error(t, err)
 	})
 }
+
+func TestRenderedSpecDirAliasName(t *testing.T) {
+	t.Run("EmptyForPlainAsciiName", func(t *testing.T) {
+		assert.Empty(t, components.RenderedSpecDirAliasName("vim"))
+	})
+
+	t.Run("EmptyForDashAndUnderscore", func(t *testing.T) {
+		assert.Empty(t, components.RenderedSpecDirAliasName("my-component_v2"))
+	})
+
+	t.Run("EmptyForDotInName", func(t *testing.T) {
+		// '.' is a safe filesystem char and not URL-encoded.
+		assert.Empty(t, components.RenderedSpecDirAliasName("foo.bar"))
+	})
+
+	t.Run("EncodesPlusCharacters", func(t *testing.T) {
+		assert.Equal(t, "libxml%2B%2B", components.RenderedSpecDirAliasName("libxml++"))
+	})
+
+	t.Run("EncodesSinglePlus", func(t *testing.T) {
+		assert.Equal(t, "gtk%2B", components.RenderedSpecDirAliasName("gtk+"))
+	})
+}
