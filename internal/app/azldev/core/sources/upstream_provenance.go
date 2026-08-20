@@ -6,6 +6,7 @@ package sources
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -256,24 +257,26 @@ func parseSpecVersionRelease(fs opctx.FS, specPath string) (version, release str
 		return "", "", fmt.Errorf("failed to parse spec %#q:\n%w", specPath, err)
 	}
 
-	// VisitTagsPackage("") iterates tags in the base (unnamed) package, where
-	// Name/Version/Release live for a well-formed spec.
-	visitErr := parsed.VisitTagsPackage("", func(tagLine *spec.TagLine, _ *spec.Context) error {
-		switch strings.ToLower(tagLine.Tag) {
-		case "version":
-			if version == "" {
-				version = strings.TrimSpace(tagLine.Value)
-			}
-		case "release":
-			if release == "" {
-				release = strings.TrimSpace(tagLine.Value)
-			}
-		}
+	version, err = parsed.GetTag("", "Version")
+	if err != nil && !errors.Is(err, spec.ErrNoSuchTag) {
+		return "", "", fmt.Errorf("failed to read Version tag in spec %#q:\n%w", specPath, err)
+	}
 
-		return nil
-	})
-	if visitErr != nil {
-		return "", "", fmt.Errorf("failed to scan spec tags in %#q:\n%w", specPath, visitErr)
+	if errors.Is(err, spec.ErrNoSuchTag) {
+		version = ""
+	} else {
+		version = strings.TrimSpace(version)
+	}
+
+	release, err = parsed.GetTag("", "Release")
+	if err != nil && !errors.Is(err, spec.ErrNoSuchTag) {
+		return "", "", fmt.Errorf("failed to read Release tag in spec %#q:\n%w", specPath, err)
+	}
+
+	if errors.Is(err, spec.ErrNoSuchTag) {
+		release = ""
+	} else {
+		release = strings.TrimSpace(release)
 	}
 
 	return version, release, nil

@@ -229,6 +229,7 @@
             "spec-update-tag",
             "spec-remove-tag",
             "spec-prepend-lines",
+            "spec-prepend-all-lines",
             "spec-append-lines",
             "spec-search-replace",
             "spec-remove-section",

@@ -36,9 +36,9 @@ import (
 //   - Duplicate definitions of the same name across removed sections collapse
 //     to the first declaration.
 //
-// Hoisted macros are emitted in their original declaration order, which keeps
-// inter-macro dependencies well-formed for both lazy `%define` and eager
-// `%global` expansion.
+// Hoisted macros are emitted in dependency order. This is essential for eager
+// `%global` expansion when a dependent macro appeared before its dependency in
+// the removed section.
 //
 // This function mutates root in place. It must be called BEFORE removed
 // blocks are detached from the tree so that the "referenced outside the
@@ -64,7 +64,7 @@ func hoistReferencedMacros(root *block, removed []*block) {
 		return
 	}
 
-	ordered := orderedHoistBlocks(macros, toHoist)
+	ordered := orderedHoistBlocks(macros, macroByName, toHoist)
 
 	// Hoisting moves a definition the caller didn't explicitly touch, so make
 	// it visible at the default log level rather than silently relocating it.
@@ -149,18 +149,46 @@ func computeHoistClosure(
 	return toHoist
 }
 
-// orderedHoistBlocks returns the first declaration of each hoisted name, in
-// original declaration order. Eager `%global` and lazy `%define` are both kept
-// well-formed because dependencies precede their dependents in this order.
-func orderedHoistBlocks(macros []*block, toHoist map[string]bool) []*block {
+// orderedHoistBlocks returns the first declaration of each hoisted name with
+// dependencies before dependents. Traversal starts in declaration order, so
+// unrelated macros retain their original order. Cyclic dependencies retain
+// their stable first-encounter order because RPM cannot make eager cycles
+// well-defined.
+func orderedHoistBlocks(
+	macros []*block,
+	macroByName map[string]*block,
+	toHoist map[string]bool,
+) []*block {
 	ordered := make([]*block, 0, len(toHoist))
-	emitted := make(map[string]bool, len(toHoist))
+	visited := make(map[string]bool, len(toHoist))
+	visiting := make(map[string]bool, len(toHoist))
+
+	var visit func(string)
+
+	visit = func(name string) {
+		if visited[name] || visiting[name] {
+			return
+		}
+
+		macro, ok := macroByName[name]
+		if !ok || !toHoist[name] {
+			return
+		}
+
+		visiting[name] = true
+
+		for _, dependency := range macroNamesReferencedIn(macro.Lines) {
+			visit(dependency)
+		}
+
+		visiting[name] = false
+		visited[name] = true
+
+		ordered = append(ordered, macro)
+	}
 
 	for _, macro := range macros {
-		if toHoist[macro.Name] && !emitted[macro.Name] {
-			emitted[macro.Name] = true
-			ordered = append(ordered, macro)
-		}
+		visit(macro.Name)
 	}
 
 	return ordered

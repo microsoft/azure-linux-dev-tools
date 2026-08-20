@@ -61,6 +61,7 @@ the config loads, so a missing field fails fast rather than at apply time.
 | `spec-update-tag` | change an existing tag; fails if it is missing | `tag`, `value` |
 | `spec-remove-tag` | delete tag instances; without `value`, deletes every instance | `tag` |
 | `spec-prepend-lines` | insert lines at the top of a section (or the whole file) | `lines` |
+| `spec-prepend-all-lines` | insert lines at the top of every matching named section | `section`, `lines` |
 | `spec-append-lines` | insert lines at the end of a section (or the whole file) | `lines` |
 | `spec-search-replace` | regex replace within a section (or the whole spec) | `regex` |
 | `spec-remove-section` | delete a whole section | `section` |

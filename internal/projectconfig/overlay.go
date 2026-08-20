@@ -359,7 +359,7 @@ func (c *ComponentOverlay) validateRequiredFields(desc string) error {
 		ComponentOverlaySetSpecTag, ComponentOverlayUpdateSpecTag, ComponentOverlayRemoveSpecTag:
 		return c.validateSpecTagFields(desc)
 	case ComponentOverlayPrependSpecLines, ComponentOverlayPrependAllSpecLines, ComponentOverlayAppendSpecLines:
-		return c.validateSpecLineOverlay(desc)
+		return c.validateSpecLineOverlayType(desc)
 	case ComponentOverlaySearchAndReplaceInSpec:
 		return c.validateSpecSearchReplaceOverlay(desc)
 	case ComponentOverlayPrependLinesToFile, ComponentOverlaySearchAndReplaceInFile:
@@ -379,6 +379,18 @@ func (c *ComponentOverlay) validateRequiredFields(desc string) error {
 	default:
 		return fmt.Errorf("unknown overlay type %#q: %#q", c.Type, desc)
 	}
+}
+
+func (c *ComponentOverlay) validateSpecLineOverlayType(desc string) error {
+	if err := c.validateSpecLineOverlay(desc); err != nil {
+		return err
+	}
+
+	if c.Type == ComponentOverlayPrependAllSpecLines && c.SectionName == "" {
+		return fmt.Errorf("overlay type %#q requires %#q field: %s", c.Type, "section", desc)
+	}
+
+	return nil
 }
 
 func (c *ComponentOverlay) validateSpecTagFields(desc string) error {

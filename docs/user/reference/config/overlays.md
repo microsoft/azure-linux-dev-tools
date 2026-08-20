@@ -20,6 +20,7 @@ These overlays modify `.spec` files using the structured spec parser, allowing p
 | `spec-update-tag` | Updates an existing tag; **fails if the tag doesn't exist** | `tag`, `value` |
 | `spec-remove-tag` | Removes a tag from the spec; **fails if the tag doesn't exist** | `tag` |
 | `spec-prepend-lines` | Prepends lines to the start of a section, or to the top of the file if `section` is omitted; **fails if a named section doesn't exist** | `lines` |
+| `spec-prepend-all-lines` | Prepends lines to every matching named section; useful for repeated sections in conditional branches; **fails if no matching section exists** | `section`, `lines` |
 | `spec-append-lines` | Appends lines to the end of a section, or to the bottom of the file if `section` is omitted; **fails if a named section doesn't exist** | `lines` |
 | `spec-search-replace` | Regex-based search and replace on spec content; targets a single section if `section` is given, otherwise the entire spec | `regex` |
 | `spec-remove-section` | Removes an entire section from the spec; **fails if section doesn't exist** | `section` |
@@ -89,7 +90,7 @@ file = "vendor/**"                   # files inside the archive
 | Description | `description` | Human-readable explanation documenting the need for the change; helps identify overlays in error messages | All (optional) |
 | Tag | `tag` | The spec tag name (e.g., `BuildRequires`, `Requires`, `Version`) | `spec-add-tag`, `spec-insert-tag`, `spec-set-tag`, `spec-update-tag`, `spec-remove-tag` |
 | Value | `value` | The tag value to set, or value to match for removal | `spec-add-tag`, `spec-insert-tag`, `spec-set-tag`, `spec-update-tag`, `spec-remove-tag` (optional for matching) |
-| Section | `section` | The spec section to target (e.g., `%build`, `%install`, `%files`, `%description`). Optional for `spec-prepend-lines`, `spec-append-lines`, and `spec-search-replace` — omit to target the entire spec file. Required for `spec-remove-section`. | `spec-prepend-lines` (optional), `spec-append-lines` (optional), `spec-search-replace` (optional), `spec-remove-section` |
+| Section | `section` | The spec section to target (e.g., `%build`, `%install`, `%files`, `%description`). Optional for `spec-prepend-lines`, `spec-append-lines`, and `spec-search-replace` — omit to target the entire spec file. Required for `spec-prepend-all-lines` and `spec-remove-section`. | `spec-prepend-lines` (optional), `spec-prepend-all-lines`, `spec-append-lines` (optional), `spec-search-replace` (optional), `spec-remove-section` |
 | Package | `package` | The sub-package name for multi-package specs; omit to target the main package. Cannot be combined with an omitted `section` (a sub-package is always a sub-qualifier of a section). | All spec overlays (optional, except `spec-remove-subpackage` which **requires** it) |
 | Regex | `regex` | Regular expression pattern to match | `spec-search-replace`, `file-search-replace` |
 | Replacement | `replacement` | Literal replacement text; capture group references like `$1` are **not** expanded. Omit or leave empty to delete matched text. | `spec-search-replace`, `file-search-replace`, `file-rename` |

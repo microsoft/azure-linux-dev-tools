@@ -438,7 +438,12 @@ func buildConditionalBranches(
 // isElifDirective returns true if the line is a %elif/%elifarch/%elifnarch/%elifos/%elifnos
 // directive (as opposed to a plain %else which is a terminal branch).
 func isElifDirective(rawLine string) bool {
-	lower := strings.ToLower(strings.Fields(strings.TrimSpace(rawLine))[0])
+	tokens := strings.Fields(strings.TrimSpace(rawLine))
+	if len(tokens) == 0 {
+		return false
+	}
+
+	lower := strings.ToLower(tokens[0])
 
 	return lower != "%else" && isConditionalBranchDirective(rawLine)
 }

@@ -612,6 +612,26 @@ func TestTestdataRemoveSubpackageHoistsTransitiveMacro(t *testing.T) {
 	require.NoError(t, err, "spec must re-parse after subpackage removal")
 }
 
+func TestRemoveSubpackageOrdersGlobalDependencies(t *testing.T) {
+	input := `%package tests
+%global foo %{bar}
+%global bar value
+
+%description tests
+Tests
+
+%install
+echo %{foo}`
+	specObj, err := spec.OpenSpec(strings.NewReader(input))
+	require.NoError(t, err)
+
+	require.NoError(t, specObj.RemoveSubpackage("tests"))
+
+	outLines := strings.Split(serializeSpec(t, specObj), "\n")
+	assert.Less(t, lineIndex(outLines, "%global bar value"), lineIndex(outLines, "%global foo %{bar}"),
+		"eager %%global dependencies must be defined before their dependents")
+}
+
 // TestTestdataRemoveSubpackageDoesNotHoistShadowedMacro verifies the
 // surviving-definition guard. The `tools` subpackage redefines
 // `%global toolsdir` with an override value, but a definition with the same

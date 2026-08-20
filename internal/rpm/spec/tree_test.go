@@ -680,6 +680,15 @@ func TestParseTreeErrors(t *testing.T) {
 	})
 }
 
+func TestWhitespaceLinesDoNotPanic(t *testing.T) {
+	lines := []string{"", " \t ", "%if 0", "  ", "%else", "\t", "%endif"}
+
+	root, err := parseTree(lines)
+	require.NoError(t, err)
+	assert.Equal(t, lines, serializeTree(root))
+	assert.False(t, isElifDirective(" \t "))
+}
+
 // splitLines splits input into lines. For an empty string, returns a slice with
 // one empty element (matching strings.Split behavior).
 func splitLines(input string) []string {

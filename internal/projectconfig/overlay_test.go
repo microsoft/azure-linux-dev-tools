@@ -138,6 +138,25 @@ func TestComponentOverlay_Validate(t *testing.T) {
 			errorExpected: true,
 			errorContains: "lines",
 		},
+		// spec-prepend-all-lines tests
+		{
+			name: "spec-prepend-all-lines valid",
+			overlay: projectconfig.ComponentOverlay{
+				Type:        projectconfig.ComponentOverlayPrependAllSpecLines,
+				SectionName: "%check",
+				Lines:       []string{"exit 0"},
+			},
+			errorExpected: false,
+		},
+		{
+			name: "spec-prepend-all-lines missing section",
+			overlay: projectconfig.ComponentOverlay{
+				Type:  projectconfig.ComponentOverlayPrependAllSpecLines,
+				Lines: []string{"exit 0"},
+			},
+			errorExpected: true,
+			errorContains: "section",
+		},
 		// spec-append-lines tests
 		{
 			name: "spec-append-lines valid",
