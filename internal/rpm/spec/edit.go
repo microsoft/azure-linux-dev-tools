@@ -331,7 +331,9 @@ func isConditionalBranchDirective(rawLine string) bool {
 // "source" family.
 //
 // If the chosen insertion point falls inside a conditional block (%if/%endif), the tag is
-// placed after the closing %endif instead, so it remains unconditional.
+// placed after the closing %endif when that location retains the target's lexical ownership.
+// Otherwise it remains next to its anchor inside the conditional rather than being assigned
+// to another package or section.
 //
 // Note: When inserting into a sub-package (non-empty packageName), the corresponding
 // %package section must already exist in the spec; otherwise, an [ErrSectionNotFound]
@@ -354,6 +356,7 @@ func (s *Spec) insertLinearTag(packageName, tag, value string, preferFamily bool
 	lastAnyTag := -1
 	lastFamilyTag := -1
 	secName, secPkg := "", ""
+	owners := make([]struct{ section, pkg string }, len(s.rawLines))
 
 	for lineIdx, line := range s.rawLines {
 		if isSectionHeaderLine(line) {
@@ -365,6 +368,8 @@ func (s *Spec) insertLinearTag(packageName, tag, value string, preferFamily bool
 
 			continue
 		}
+
+		owners[lineIdx] = struct{ section, pkg string }{secName, secPkg}
 
 		if secName != targetSection || secPkg != packageName {
 			continue
@@ -403,10 +408,16 @@ func (s *Spec) insertLinearTag(packageName, tag, value string, preferFamily bool
 			return fmt.Errorf("parsing conditional structure:\n%w", err)
 		}
 
+		unconditionalAfter := insertAfter
 		for _, pair := range pairs {
 			if pair.ifLine < insertAfter && insertAfter < pair.endifLine && pair.endifLine > insertAfter {
-				insertAfter = pair.endifLine
+				unconditionalAfter = pair.endifLine
 			}
+		}
+
+		if owners[unconditionalAfter].section == targetSection &&
+			owners[unconditionalAfter].pkg == packageName {
+			insertAfter = unconditionalAfter
 		}
 	}
 
@@ -889,10 +900,11 @@ func collectConditionalPairs(rawLines []string) ([]conditionalPair, error) {
 
 	inMacroCont := false
 	braceDepth := 0
+	macroStart := -1
 
 	for lineNum, line := range rawLines {
 		if inMacroCont {
-			braceDepth += macroBraceDelta(line)
+			braceDepth = macroBraceDepthAfter(line, braceDepth)
 			inMacroCont = strings.HasSuffix(line, "\\") || braceDepth > 0
 
 			continue
@@ -901,7 +913,8 @@ func collectConditionalPairs(rawLines []string) ([]conditionalPair, error) {
 		// Only skip continuations that start from a %define/%global line —
 		// those are macro body text where %if/%endif are not structural.
 		if _, isMacro := isMacroDefLine(line); isMacro {
-			braceDepth = macroBraceDelta(line)
+			macroStart = lineNum
+			braceDepth = macroBraceDepthAfter(line, 0)
 			inMacroCont = strings.HasSuffix(line, "\\") || braceDepth > 0
 
 			continue
@@ -920,6 +933,10 @@ func collectConditionalPairs(rawLines []string) ([]conditionalPair, error) {
 
 			pairs = append(pairs, conditionalPair{ifLine: ifLine, endifLine: lineNum})
 		}
+	}
+
+	if braceDepth > 0 {
+		return nil, fmt.Errorf("unterminated macro construct at line %d", macroStart+1)
 	}
 
 	if len(stack) > 0 {

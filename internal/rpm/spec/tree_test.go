@@ -678,6 +678,17 @@ func TestParseTreeErrors(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unmatched %if")
 	})
+
+	t.Run("unterminated macro construct", func(t *testing.T) {
+		input := `%global broken %{lua:
+print("still open")
+%install
+echo must-not-be-consumed`
+
+		_, err := parseTree(splitLines(input))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unterminated macro construct")
+	})
 }
 
 func TestWhitespaceLinesDoNotPanic(t *testing.T) {
@@ -725,6 +736,24 @@ func TestMacroContinuationsDoNotCreateConditionalBranches(t *testing.T) {
 			assert.Empty(t, cond.ElseDirective)
 		})
 	}
+}
+
+func TestMacroConstructTrackingIgnoresLiteralAndEscapedBraces(t *testing.T) {
+	input := strings.Join([]string{
+		"%package tests",
+		"%global lbrace {",
+		`%global quoted_open "{"`,
+		`%global quoted "}"`,
+		"%global escaped %%{not-a-macro}",
+		"%description tests",
+		"Tests",
+		"%install",
+		"echo must-survive",
+	}, "\n")
+
+	root, err := parseTree(splitLines(input))
+	require.NoError(t, err)
+	assert.Equal(t, splitLines(input), serializeTree(root))
 }
 
 // splitLines splits input into lines. For an empty string, returns a slice with

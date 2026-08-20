@@ -125,12 +125,64 @@ func macroHasUnsafeHoistSemantics(root *block, candidate *block, removedSet map[
 		}
 
 		if hasDefinitionInRemovedSections(root, name, removedSet) ||
-			hasDefinitionOutsidePreamble(root, name, candidate) {
+			hasDefinitionOutsidePreamble(root, name, candidate) ||
+			hasDependencyStateChangeBeforeCandidate(root, name, candidate) {
 			return true
 		}
 	}
 
 	return false
+}
+
+// hasDependencyStateChangeBeforeCandidate reports a define, redefine, or
+// undefine event for name that relocation would cross while moving candidate
+// to the end of the preamble. Eager macro definitions expand at definition
+// time, so crossing any such event can change the candidate's value.
+func hasDependencyStateChangeBeforeCandidate(root *block, name string, candidate *block) bool {
+	preamble := findSectionBlock(root, "", "")
+	found := false
+	seenCandidate := false
+
+	var visit func(*block)
+
+	visit = func(blk *block) {
+		if found || seenCandidate || blk == preamble {
+			return
+		}
+
+		if blk == candidate {
+			seenCandidate = true
+
+			return
+		}
+
+		if blk.Kind == macroDefBlock && blk.Name == name {
+			found = true
+
+			return
+		}
+
+		if blk.Kind == textBlock || blk.Kind == macroDefBlock {
+			for _, line := range blk.Lines {
+				if undefined, ok := isUndefineLine(line); ok && undefined == name {
+					found = true
+
+					return
+				}
+			}
+		}
+
+		for _, child := range blk.Children {
+			visit(child)
+		}
+
+		for _, child := range blk.Else {
+			visit(child)
+		}
+	}
+	visit(root)
+
+	return found
 }
 
 // hasSurvivingReferenceBeforeCandidate rejects relocation when it would make a

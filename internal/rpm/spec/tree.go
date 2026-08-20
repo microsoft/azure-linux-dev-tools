@@ -186,7 +186,7 @@ func findSectionHeaderLines(rawLines []string) []int {
 
 	for lineIdx, line := range rawLines {
 		if inCont {
-			braceDepth += macroBraceDelta(line)
+			braceDepth = macroBraceDepthAfter(line, braceDepth)
 			inCont = strings.HasSuffix(line, "\\") || braceDepth > 0
 
 			continue
@@ -197,7 +197,7 @@ func findSectionHeaderLines(rawLines []string) []int {
 		}
 
 		if _, isMacro := isMacroDefLine(line); isMacro {
-			braceDepth = macroBraceDelta(line)
+			braceDepth = macroBraceDepthAfter(line, 0)
 			inCont = strings.HasSuffix(line, "\\") || braceDepth > 0
 		} else {
 			inCont = strings.HasSuffix(line, "\\")
@@ -234,7 +234,7 @@ func hasSectionHeaderInRange(start, end int, sectionHeaderSet map[int]bool) bool
 // to parent.Children. topLevel indicates whether sections can appear (true at
 // root level and inside conditional wrappers).
 //
-//nolint:funlen,gocognit,cyclop // Recursive parser with multiple block types.
+//nolint:funlen // Recursive parser with multiple block types.
 func buildBlockChildren(
 	rawLines []string,
 	start, end int,
@@ -339,36 +339,13 @@ func buildBlockChildren(
 		if name, ok := isMacroDefLine(line); ok {
 			flushText()
 
-			macroBlock := &block{
-				Kind:   macroDefBlock,
-				Header: line,
-				Name:   name,
-				Lines:  []string{line},
-			}
-
-			braceDepth := macroBraceDelta(line)
-			if strings.HasSuffix(line, "\\") || braceDepth > 0 {
-				inCont = true
-				lineIdx++
-
-				for lineIdx < end {
-					macroBlock.Lines = append(macroBlock.Lines, rawLines[lineIdx])
-					braceDepth += macroBraceDelta(rawLines[lineIdx])
-
-					if !strings.HasSuffix(rawLines[lineIdx], "\\") && braceDepth <= 0 {
-						inCont = false
-						lineIdx++
-
-						break
-					}
-
-					lineIdx++
-				}
-			} else {
-				lineIdx++
+			macroBlock, nextLineIdx, err := parseMacroDefBlock(rawLines, lineIdx, end, name)
+			if err != nil {
+				return err
 			}
 
 			parent.Children = append(parent.Children, macroBlock)
+			lineIdx = nextLineIdx
 
 			continue
 		}
@@ -382,6 +359,39 @@ func buildBlockChildren(
 	flushText()
 
 	return nil
+}
+
+func parseMacroDefBlock(rawLines []string, start, end int, name string) (*block, int, error) {
+	macroBlock := &block{
+		Kind:   macroDefBlock,
+		Header: rawLines[start],
+		Name:   name,
+		Lines:  []string{rawLines[start]},
+	}
+
+	braceDepth := macroBraceDepthAfter(rawLines[start], 0)
+
+	lineIdx := start + 1
+	if !strings.HasSuffix(rawLines[start], "\\") && braceDepth == 0 {
+		return macroBlock, lineIdx, nil
+	}
+
+	for lineIdx < end {
+		line := rawLines[lineIdx]
+		macroBlock.Lines = append(macroBlock.Lines, line)
+		braceDepth = macroBraceDepthAfter(line, braceDepth)
+		lineIdx++
+
+		if !strings.HasSuffix(line, "\\") && braceDepth == 0 {
+			return macroBlock, lineIdx, nil
+		}
+	}
+
+	if braceDepth > 0 {
+		return nil, 0, fmt.Errorf("unterminated macro construct at line %d", start+1)
+	}
+
+	return macroBlock, lineIdx, nil
 }
 
 // buildConditionalBranches parses the then and optional else/elif branches of a
@@ -493,14 +503,14 @@ func findElseDirectiveLine(rawLines []string, start, end int) int {
 	for lineIdx := start; lineIdx < end; lineIdx++ {
 		line := rawLines[lineIdx]
 		if inMacroCont {
-			braceDepth += macroBraceDelta(line)
+			braceDepth = macroBraceDepthAfter(line, braceDepth)
 			inMacroCont = strings.HasSuffix(line, "\\") || braceDepth > 0
 
 			continue
 		}
 
 		if _, isMacro := isMacroDefLine(line); isMacro {
-			braceDepth = macroBraceDelta(line)
+			braceDepth = macroBraceDepthAfter(line, 0)
 			inMacroCont = strings.HasSuffix(line, "\\") || braceDepth > 0
 
 			continue
@@ -547,11 +557,22 @@ func isMacroDefLine(rawLine string) (string, bool) {
 	return "", false
 }
 
-// macroBraceDelta tracks the brace-delimited body of a macro definition. RPM
-// macros such as `%define helper() %{lua:` continue through their balancing
-// closing brace even without a backslash continuation.
-func macroBraceDelta(line string) int {
-	return strings.Count(line, "{") - strings.Count(line, "}")
+// macroBraceDepthAfter tracks actual RPM `%{...}` constructs in a macro
+// definition. Literal braces do not open a construct; a doubled percent is an
+// escaped literal percent rather than a macro expansion.
+func macroBraceDepthAfter(line string, depth int) int {
+	for idx := 0; idx < len(line); idx++ {
+		switch {
+		case line[idx] == '%' && idx+1 < len(line) && line[idx+1] == '{' &&
+			(idx == 0 || line[idx-1] != '%'):
+			depth++
+			idx++
+		case line[idx] == '}' && depth > 0:
+			depth--
+		}
+	}
+
+	return depth
 }
 
 // getSectionNameAndPackageFromHeader extracts the section keyword and package name

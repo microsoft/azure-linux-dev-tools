@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-package spec_test
+package spec //nolint:testpackage // Fixture suites directly exercise structural parser internals.
 
 import (
 	"bytes"
@@ -13,7 +13,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -35,19 +34,19 @@ func loadFixture(t *testing.T, name string) []byte {
 }
 
 // openFixture parses a fixture into a *Spec.
-func openFixture(t *testing.T, name string) *spec.Spec {
+func openFixture(t *testing.T, name string) *Spec {
 	t.Helper()
 
 	raw := loadFixture(t, name)
 
-	specObj, err := spec.OpenSpec(bytes.NewReader(raw))
+	specObj, err := OpenSpec(bytes.NewReader(raw))
 	require.NoError(t, err, "parsing fixture %s", name)
 
 	return specObj
 }
 
 // serializeSpec serializes a Spec to a string for assertion.
-func serializeSpec(t *testing.T, s *spec.Spec) string {
+func serializeSpec(t *testing.T, s *Spec) string {
 	t.Helper()
 
 	var buf bytes.Buffer
@@ -57,29 +56,20 @@ func serializeSpec(t *testing.T, s *spec.Spec) string {
 	return buf.String()
 }
 
-// requireStructuralRoundTrip forces the structural parser and serializer used
-// by edits, while retaining the fixture's original bytes.
+// requireStructuralRoundTrip directly exercises parseTree and serializeTree
+// while retaining the fixture's original bytes.
 func requireStructuralRoundTrip(t *testing.T, input string) string {
 	t.Helper()
 
-	versionLine := ""
-
-	for _, line := range strings.Split(input, "\n") {
-		if strings.HasPrefix(line, "Version:") {
-			versionLine = line
-
-			break
-		}
-	}
-
-	require.NotEmpty(t, versionLine, "fixture must contain a Version tag")
-
-	version := strings.TrimSpace(strings.TrimPrefix(versionLine, "Version:"))
-	s, err := spec.OpenSpec(strings.NewReader(input))
+	specFile, err := OpenSpec(strings.NewReader(input))
 	require.NoError(t, err)
-	require.NoError(t, s.UpdateExistingTag("", "Version", version))
 
-	return serializeSpec(t, s)
+	tree, err := parseTree(specFile.rawLines)
+	require.NoError(t, err)
+
+	specFile.rawLines = serializeTree(tree)
+
+	return serializeSpec(t, specFile)
 }
 
 // listFixtures returns the names (basename only) of all *.spec files in
@@ -143,7 +133,7 @@ func TestTestdataAddTagPreservesStructure(t *testing.T) {
 				"edited output must structurally parse and serialize")
 
 			// Re-parse the result. The parser should accept its own output.
-			_, err := spec.OpenSpec(bytes.NewReader([]byte(out)))
+			_, err := OpenSpec(bytes.NewReader([]byte(out)))
 			require.NoError(t, err, "serialized output should re-parse cleanly")
 		})
 	}
@@ -216,7 +206,7 @@ func TestTestdataAppendLinesToSection(t *testing.T) {
 			assert.Contains(t, out, testCase.marker, "marker should appear in serialized output")
 
 			// Sanity: parser should accept its own output.
-			_, err := spec.OpenSpec(bytes.NewReader([]byte(out)))
+			_, err := OpenSpec(bytes.NewReader([]byte(out)))
 			require.NoError(t, err)
 		})
 	}
@@ -242,7 +232,7 @@ func TestTestdataScriptSectionTagShapedSafety(t *testing.T) {
 		require.Contains(t, string(raw), line, "fixture must contain %q for the test to be meaningful", line)
 	}
 
-	specObj, err := spec.OpenSpec(bytes.NewReader(raw))
+	specObj, err := OpenSpec(bytes.NewReader(raw))
 	require.NoError(t, err)
 
 	// Try to remove every tag named "Name", "Version", "Requires", "License",
@@ -461,7 +451,7 @@ func TestSyntheticSpecsAddTag(t *testing.T) {
 		t.Run("seed_"+strconv.Itoa(iteration), func(t *testing.T) {
 			input := generateSyntheticSpec(seed1, seed2)
 
-			s, err := spec.OpenSpec(bytes.NewReader([]byte(input)))
+			s, err := OpenSpec(bytes.NewReader([]byte(input)))
 			require.NoError(t, err)
 
 			require.NoError(t, s.AddTag("", "BuildRequires", "synth-marker"))
@@ -552,7 +542,7 @@ func TestTestdataRemoveSubpackageHoistsReferencedMacro(t *testing.T) {
 		"surviving %%install must still reference the hoisted macro")
 
 	// Output must re-parse cleanly.
-	_, err := spec.OpenSpec(bytes.NewReader([]byte(out)))
+	_, err := OpenSpec(bytes.NewReader([]byte(out)))
 	require.NoError(t, err, "spec must re-parse after subpackage removal")
 }
 
@@ -581,14 +571,14 @@ func TestTestdataRemoveSubpackageDoesNotHoistUnreferencedMacro(t *testing.T) {
 		"subpackage files must be removed")
 
 	// Output must re-parse cleanly.
-	_, err := spec.OpenSpec(bytes.NewReader([]byte(out)))
+	_, err := OpenSpec(bytes.NewReader([]byte(out)))
 	require.NoError(t, err, "spec must re-parse after subpackage removal")
 }
 
 func TestTestdataRemoveSubpackageRejectsTransitiveMacroHoist(t *testing.T) {
 	specObj := openFixture(t, "subpackage-define-transitive.spec")
 
-	require.ErrorIs(t, specObj.RemoveSubpackage("tests"), spec.ErrUnsafeMacroHoist)
+	require.ErrorIs(t, specObj.RemoveSubpackage("tests"), ErrUnsafeMacroHoist)
 }
 
 func TestRemoveSubpackageRejectsForwardGlobalDependencies(t *testing.T) {
@@ -601,10 +591,10 @@ Tests
 
 %install
 echo %{foo}`
-	specObj, err := spec.OpenSpec(strings.NewReader(input))
+	specObj, err := OpenSpec(strings.NewReader(input))
 	require.NoError(t, err)
 
-	require.ErrorIs(t, specObj.RemoveSubpackage("tests"), spec.ErrUnsafeMacroHoist)
+	require.ErrorIs(t, specObj.RemoveSubpackage("tests"), ErrUnsafeMacroHoist)
 }
 
 func TestRemoveSubpackageRejectsHoistThatChangesEarlierConditional(t *testing.T) {
@@ -618,10 +608,10 @@ echo enabled
 Tests
 %install
 echo %{feature}`
-	specObj, err := spec.OpenSpec(strings.NewReader(input))
+	specObj, err := OpenSpec(strings.NewReader(input))
 	require.NoError(t, err)
 
-	require.ErrorIs(t, specObj.RemoveSubpackage("tests"), spec.ErrUnsafeMacroHoist)
+	require.ErrorIs(t, specObj.RemoveSubpackage("tests"), ErrUnsafeMacroHoist)
 }
 
 func TestRemoveSubpackageRejectsHoistWithSurvivingDependencyAfterPreamble(t *testing.T) {
@@ -633,10 +623,10 @@ func TestRemoveSubpackageRejectsHoistWithSurvivingDependencyAfterPreamble(t *tes
 Tests
 %install
 echo %{foo}`
-	specObj, err := spec.OpenSpec(strings.NewReader(input))
+	specObj, err := OpenSpec(strings.NewReader(input))
 	require.NoError(t, err)
 
-	require.ErrorIs(t, specObj.RemoveSubpackage("tests"), spec.ErrUnsafeMacroHoist)
+	require.ErrorIs(t, specObj.RemoveSubpackage("tests"), ErrUnsafeMacroHoist)
 }
 
 func TestRemoveSubpackagePreservesBraceDelimitedMacroAtomically(t *testing.T) {
@@ -648,14 +638,74 @@ func TestRemoveSubpackagePreservesBraceDelimitedMacroAtomically(t *testing.T) {
 Tests
 %install
 %{helper}`
-	specObj, err := spec.OpenSpec(strings.NewReader(input))
+	specObj, err := OpenSpec(strings.NewReader(input))
 	require.NoError(t, err)
 
 	require.NoError(t, specObj.RemoveSubpackage("tests"))
 	out := serializeSpec(t, specObj)
 	assert.Contains(t, out, "%define helper() %{lua:\n    print(\"value\")\n}")
-	_, err = spec.OpenSpec(strings.NewReader(out))
+	_, err = OpenSpec(strings.NewReader(out))
 	require.NoError(t, err)
+}
+
+func TestRemoveSubpackageIgnoresLiteralMacroBraces(t *testing.T) {
+	input := `%package tests
+%global lbrace {
+	%global quoted_open "{"
+	%global quoted "}"
+	%global escaped %%{not-a-macro}
+%description tests
+Tests
+%install
+echo must-survive`
+	specObj, err := OpenSpec(strings.NewReader(input))
+	require.NoError(t, err)
+
+	require.NoError(t, specObj.RemoveSubpackage("tests"))
+	out := serializeSpec(t, specObj)
+	assert.Equal(t, "%install\necho must-survive\n", out)
+	assert.Equal(t, out, requireStructuralRoundTrip(t, out))
+}
+
+func TestRemoveSubpackageRejectsUnterminatedMacroConstructTransactionally(t *testing.T) {
+	input := `%package tests
+%global broken %{lua:
+print("still open")
+%description tests
+Tests
+%install
+echo must-survive`
+	specObj, err := OpenSpec(strings.NewReader(input))
+	require.NoError(t, err)
+
+	require.Error(t, specObj.RemoveSubpackage("tests"))
+	assert.Equal(t, input+"\n", serializeSpec(t, specObj))
+}
+
+func TestRemoveSubpackageRejectsDependencyStateChangesAcrossHoist(t *testing.T) {
+	for _, stateChange := range []string{
+		"%global dep old",
+		"%global dep replacement",
+		"%undefine dep",
+	} {
+		t.Run(stateChange, func(t *testing.T) {
+			input := strings.Join([]string{
+				"%global dep initial",
+				"%package tests",
+				stateChange,
+				"%global exported %{?dep:bad}%{!?dep:good}",
+				"%description tests",
+				"Tests",
+				"%install",
+				"echo %{exported}",
+			}, "\n")
+			specObj, err := OpenSpec(strings.NewReader(input))
+			require.NoError(t, err)
+
+			require.ErrorIs(t, specObj.RemoveSubpackage("tests"), ErrUnsafeMacroHoist)
+			assert.Equal(t, input+"\n", serializeSpec(t, specObj))
+		})
+	}
 }
 
 func TestRemoveSubpackagePreservesParameterizedMacroReference(t *testing.T) {
@@ -665,7 +715,7 @@ func TestRemoveSubpackagePreservesParameterizedMacroReference(t *testing.T) {
 Tests
 %install
 echo %{build_with foo}`
-	specObj, err := spec.OpenSpec(strings.NewReader(input))
+	specObj, err := OpenSpec(strings.NewReader(input))
 	require.NoError(t, err)
 
 	require.NoError(t, specObj.RemoveSubpackage("tests"))
@@ -676,7 +726,7 @@ echo %{build_with foo}`
 func TestTestdataRemoveSubpackageRejectsShadowedMacro(t *testing.T) {
 	specObj := openFixture(t, "subpackage-define-shadowed.spec")
 
-	require.ErrorIs(t, specObj.RemoveSubpackage("tools"), spec.ErrUnsafeMacroHoist)
+	require.ErrorIs(t, specObj.RemoveSubpackage("tools"), ErrUnsafeMacroHoist)
 }
 
 func TestRemoveSubpackageRejectsCyclicMacros(t *testing.T) {
@@ -709,10 +759,10 @@ mkdir -p %{buildroot}%{alpha}
 - Initial fixture.
 `
 
-	specObj, err := spec.OpenSpec(bytes.NewReader([]byte(input)))
+	specObj, err := OpenSpec(bytes.NewReader([]byte(input)))
 	require.NoError(t, err)
 
-	require.ErrorIs(t, specObj.RemoveSubpackage("tests"), spec.ErrUnsafeMacroHoist)
+	require.ErrorIs(t, specObj.RemoveSubpackage("tests"), ErrUnsafeMacroHoist)
 }
 
 // TestRemoveSubpackageLogsHoistedMacro verifies that hoisting a referenced
@@ -752,7 +802,7 @@ func TestRemoveSubpackageHoistsMacroReferencedBySectionHeaders(t *testing.T) {
 		"echo post",
 	}, "\n")
 
-	specObj, err := spec.OpenSpec(strings.NewReader(input))
+	specObj, err := OpenSpec(strings.NewReader(input))
 	require.NoError(t, err)
 	require.NoError(t, specObj.RemoveSubpackage("tests"))
 

@@ -10,7 +10,7 @@ Overlays are defined within a component's configuration in your TOML config file
 
 ### Spec Overlays
 
-These overlays modify `.spec` files using the structured spec parser, allowing precise targeting of tags and sections.
+These overlays modify `.spec` files with lexical tag operations and a structured parser for section-aware operations, allowing precise targeting of tags and sections.
 
 | Type | Description | Required Fields |
 |------|-------------|-----------------|

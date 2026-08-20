@@ -928,6 +928,64 @@ BuildRequires: gcc
 			tag:   "Source9999",
 			value: "macros.azl.macros",
 		},
+		{
+			name: "insert stays with package across else transition",
+			input: `%if 0%{?with_foo}
+%package foo
+Source0: foo.tar.gz
+%else
+%package bar
+Summary: Bar
+%endif
+Requires: bar-runtime
+`,
+			expectedOutput: `%if 0%{?with_foo}
+%package foo
+Source0: foo.tar.gz
+Source1: foo-extra.tar.gz
+%else
+%package bar
+Summary: Bar
+%endif
+Requires: bar-runtime
+`,
+			packageName: "foo",
+			tag:         "Source1",
+			value:       "foo-extra.tar.gz",
+		},
+		{
+			name: "insert stays with package across elif and nested transitions",
+			input: `%if 0%{?with_outer}
+%if 0%{?with_foo}
+%package foo
+Source0: foo.tar.gz
+%elif 0%{?with_bar}
+%package bar
+Summary: Bar
+%else
+%package baz
+Summary: Baz
+%endif
+%endif
+`,
+			expectedOutput: `%if 0%{?with_outer}
+%if 0%{?with_foo}
+%package foo
+Source0: foo.tar.gz
+Source1: foo-extra.tar.gz
+%elif 0%{?with_bar}
+%package bar
+Summary: Bar
+%else
+%package baz
+Summary: Baz
+%endif
+%endif
+`,
+			packageName: "foo",
+			tag:         "Source1",
+			value:       "foo-extra.tar.gz",
+		},
 	}
 
 	for _, test := range tests {
