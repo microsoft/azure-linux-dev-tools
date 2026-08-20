@@ -689,6 +689,44 @@ func TestWhitespaceLinesDoNotPanic(t *testing.T) {
 	assert.False(t, isElifDirective(" \t "))
 }
 
+func TestParseTreePreservesEmptyConditionalBranches(t *testing.T) {
+	tests := []string{
+		"%if 1\n%else\n%endif",
+		"%if 1\n%elif 0\n%endif",
+		"%if 1\n%elif 0\n%else\n%endif",
+	}
+
+	for _, input := range tests {
+		t.Run(input, func(t *testing.T) {
+			root, err := parseTree(splitLines(input))
+			require.NoError(t, err)
+			assert.Equal(t, splitLines(input), serializeTree(root))
+		})
+	}
+}
+
+func TestMacroContinuationsDoNotCreateConditionalBranches(t *testing.T) {
+	for _, directive := range []string{"%else", "%elif 0"} {
+		t.Run(directive, func(t *testing.T) {
+			input := strings.Join([]string{
+				"%if 1",
+				"%define example \\",
+				directive + " \\",
+				"  body",
+				"%endif",
+			}, "\n")
+
+			root, err := parseTree(splitLines(input))
+			require.NoError(t, err)
+			assert.Equal(t, splitLines(input), serializeTree(root))
+
+			cond := root.Children[0].Children[0]
+			assert.Empty(t, cond.Else)
+			assert.Empty(t, cond.ElseDirective)
+		})
+	}
+}
+
 // splitLines splits input into lines. For an empty string, returns a slice with
 // one empty element (matching strings.Split behavior).
 func splitLines(input string) []string {

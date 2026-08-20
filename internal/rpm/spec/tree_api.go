@@ -132,7 +132,9 @@ func (t *specTree) RemoveSections(handles []*sectionHandle) error {
 		return err
 	}
 
-	hoistReferencedMacros(t.root, blocks)
+	if err := hoistReferencedMacros(t.root, blocks); err != nil {
+		return err
+	}
 
 	for _, b := range blocks {
 		removeBlockFromParent(t.root, b)

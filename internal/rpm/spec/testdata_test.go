@@ -57,6 +57,31 @@ func serializeSpec(t *testing.T, s *spec.Spec) string {
 	return buf.String()
 }
 
+// requireStructuralRoundTrip forces the structural parser and serializer used
+// by edits, while retaining the fixture's original bytes.
+func requireStructuralRoundTrip(t *testing.T, input string) string {
+	t.Helper()
+
+	versionLine := ""
+
+	for _, line := range strings.Split(input, "\n") {
+		if strings.HasPrefix(line, "Version:") {
+			versionLine = line
+
+			break
+		}
+	}
+
+	require.NotEmpty(t, versionLine, "fixture must contain a Version tag")
+
+	version := strings.TrimSpace(strings.TrimPrefix(versionLine, "Version:"))
+	s, err := spec.OpenSpec(strings.NewReader(input))
+	require.NoError(t, err)
+	require.NoError(t, s.UpdateExistingTag("", "Version", version))
+
+	return serializeSpec(t, s)
+}
+
 // listFixtures returns the names (basename only) of all *.spec files in
 // the curated testdata directory.
 func listFixtures(t *testing.T) []string {
@@ -91,10 +116,7 @@ func TestTestdataRoundTrip(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			raw := loadFixture(t, name)
 
-			s, err := spec.OpenSpec(bytes.NewReader(raw))
-			require.NoError(t, err, "parsing %s", name)
-
-			got := serializeSpec(t, s)
+			got := requireStructuralRoundTrip(t, string(raw))
 			assert.Equal(t, string(raw), got, "round-trip mismatch for %s", name)
 		})
 	}
@@ -117,6 +139,8 @@ func TestTestdataAddTagPreservesStructure(t *testing.T) {
 			out := serializeSpec(t, s)
 			assert.Contains(t, out, "BuildRequires: regression-marker",
 				"injected tag should appear in serialized output")
+			assert.Equal(t, out, requireStructuralRoundTrip(t, out),
+				"edited output must structurally parse and serialize")
 
 			// Re-parse the result. The parser should accept its own output.
 			_, err := spec.OpenSpec(bytes.NewReader([]byte(out)))
@@ -415,10 +439,7 @@ func TestSyntheticSpecsRoundTrip(t *testing.T) {
 		t.Run("seed_"+strconv.Itoa(iteration), func(t *testing.T) {
 			input := generateSyntheticSpec(seed1, seed2)
 
-			s, err := spec.OpenSpec(bytes.NewReader([]byte(input)))
-			require.NoError(t, err, "parsing synthetic spec (seed1=%d, seed2=%d)", seed1, seed2)
-
-			out := serializeSpec(t, s)
+			out := requireStructuralRoundTrip(t, input)
 			assert.Equal(t, input, out,
 				"synthetic spec must round-trip (seed1=%d, seed2=%d)", seed1, seed2)
 		})
@@ -447,9 +468,8 @@ func TestSyntheticSpecsAddTag(t *testing.T) {
 
 			out := serializeSpec(t, s)
 			assert.Contains(t, out, "BuildRequires: synth-marker")
-
-			_, err = spec.OpenSpec(bytes.NewReader([]byte(out)))
-			require.NoError(t, err, "spec must re-parse after AddTag")
+			assert.Equal(t, out, requireStructuralRoundTrip(t, out),
+				"edited output must structurally parse and serialize")
 		})
 	}
 }
@@ -565,54 +585,13 @@ func TestTestdataRemoveSubpackageDoesNotHoistUnreferencedMacro(t *testing.T) {
 	require.NoError(t, err, "spec must re-parse after subpackage removal")
 }
 
-// TestTestdataRemoveSubpackageHoistsTransitiveMacro covers the transitive
-// macro-hoisting case. The `tests` subpackage defines a chain
-// `%define testroot ...` / `%define testsdir %{testroot}/...`, and only the
-// outer `%{testsdir}` is referenced from the surviving `%install`.
-//
-// Required behavior: BOTH macros must be hoisted (not just `testsdir`), in
-// declaration order, before `%install`. Hoisting only `testsdir` would leave a
-// dangling `%{testroot}` reference in the hoisted definition.
-func TestTestdataRemoveSubpackageHoistsTransitiveMacro(t *testing.T) {
+func TestTestdataRemoveSubpackageRejectsTransitiveMacroHoist(t *testing.T) {
 	specObj := openFixture(t, "subpackage-define-transitive.spec")
 
-	require.NoError(t, specObj.RemoveSubpackage("tests"))
-
-	out := serializeSpec(t, specObj)
-	outLines := strings.Split(out, "\n")
-
-	rootLine := "%define testroot %{_libdir}/%{name}"
-	dirLine := "%define testsdir %{testroot}/tests-src"
-
-	assert.True(t, hasLine(outLines, rootLine),
-		"inner macro testroot must be hoisted transitively, not dropped")
-	assert.True(t, hasLine(outLines, dirLine),
-		"outer macro testsdir must be hoisted")
-
-	// Declaration order must be preserved: testroot before testsdir.
-	rootIdx := lineIndex(outLines, rootLine)
-	dirIdx := lineIndex(outLines, dirLine)
-	installIdx := lineIndex(outLines, "%install")
-
-	require.GreaterOrEqual(t, rootIdx, 0)
-	require.GreaterOrEqual(t, dirIdx, 0)
-	require.GreaterOrEqual(t, installIdx, 0)
-
-	assert.Less(t, rootIdx, dirIdx,
-		"testroot must precede testsdir so the dependency resolves")
-	assert.Less(t, dirIdx, installIdx,
-		"hoisted macros must precede %%install")
-
-	// Subpackage sections must be gone.
-	assert.False(t, hasLineWithPrefix(outLines, "%package tests"),
-		"subpackage header must be removed")
-
-	// Output must re-parse cleanly.
-	_, err := spec.OpenSpec(bytes.NewReader([]byte(out)))
-	require.NoError(t, err, "spec must re-parse after subpackage removal")
+	require.ErrorIs(t, specObj.RemoveSubpackage("tests"), spec.ErrUnsafeMacroHoist)
 }
 
-func TestRemoveSubpackageOrdersGlobalDependencies(t *testing.T) {
+func TestRemoveSubpackageRejectsForwardGlobalDependencies(t *testing.T) {
 	input := `%package tests
 %global foo %{bar}
 %global bar value
@@ -625,54 +604,16 @@ echo %{foo}`
 	specObj, err := spec.OpenSpec(strings.NewReader(input))
 	require.NoError(t, err)
 
-	require.NoError(t, specObj.RemoveSubpackage("tests"))
-
-	outLines := strings.Split(serializeSpec(t, specObj), "\n")
-	assert.Less(t, lineIndex(outLines, "%global bar value"), lineIndex(outLines, "%global foo %{bar}"),
-		"eager %%global dependencies must be defined before their dependents")
+	require.ErrorIs(t, specObj.RemoveSubpackage("tests"), spec.ErrUnsafeMacroHoist)
 }
 
-// TestTestdataRemoveSubpackageDoesNotHoistShadowedMacro verifies the
-// surviving-definition guard. The `tools` subpackage redefines
-// `%global toolsdir` with an override value, but a definition with the same
-// name already exists in the preamble and survives removal. The subpackage copy
-// must NOT be hoisted, otherwise it would clobber the preamble value for all
-// survivors.
-func TestTestdataRemoveSubpackageDoesNotHoistShadowedMacro(t *testing.T) {
+func TestTestdataRemoveSubpackageRejectsShadowedMacro(t *testing.T) {
 	specObj := openFixture(t, "subpackage-define-shadowed.spec")
 
-	require.NoError(t, specObj.RemoveSubpackage("tools"))
-
-	out := serializeSpec(t, specObj)
-	outLines := strings.Split(out, "\n")
-
-	// The preamble definition survives; the subpackage override is dropped.
-	assert.True(t, hasLine(outLines, "%global toolsdir %{_libdir}/%{name}"),
-		"preamble definition must survive")
-	assert.False(t, hasLine(outLines, "%global toolsdir %{_libdir}/%{name}/tools-override"),
-		"shadowing subpackage override must not be hoisted")
-
-	// There must be exactly one surviving toolsdir definition.
-	count := 0
-
-	for _, line := range outLines {
-		if strings.HasPrefix(strings.TrimSpace(line), "%global toolsdir") {
-			count++
-		}
-	}
-
-	assert.Equal(t, 1, count, "exactly one toolsdir definition should remain")
-
-	// Output must re-parse cleanly.
-	_, err := spec.OpenSpec(bytes.NewReader([]byte(out)))
-	require.NoError(t, err, "spec must re-parse after subpackage removal")
+	require.ErrorIs(t, specObj.RemoveSubpackage("tools"), spec.ErrUnsafeMacroHoist)
 }
 
-// TestRemoveSubpackageTerminatesOnCyclicMacros guards against infinite
-// recursion in the hoisting closure when removed macros reference each other
-// cyclically. A cyclic definition is degenerate RPM, but the
-// closure must still terminate.
-func TestRemoveSubpackageTerminatesOnCyclicMacros(t *testing.T) {
+func TestRemoveSubpackageRejectsCyclicMacros(t *testing.T) {
 	input := `Name:    cyclic-macros
 Version: 1.0
 Release: 1
@@ -705,13 +646,7 @@ mkdir -p %{buildroot}%{alpha}
 	specObj, err := spec.OpenSpec(bytes.NewReader([]byte(input)))
 	require.NoError(t, err)
 
-	// Must return (not hang) and produce re-parseable output.
-	require.NoError(t, specObj.RemoveSubpackage("tests"))
-
-	out := serializeSpec(t, specObj)
-
-	_, err = spec.OpenSpec(bytes.NewReader([]byte(out)))
-	require.NoError(t, err, "spec must re-parse after subpackage removal")
+	require.ErrorIs(t, specObj.RemoveSubpackage("tests"), spec.ErrUnsafeMacroHoist)
 }
 
 // TestRemoveSubpackageLogsHoistedMacro verifies that hoisting a referenced
@@ -732,4 +667,33 @@ func TestRemoveSubpackageLogsHoistedMacro(t *testing.T) {
 		"hoisting must be logged at Info level")
 	assert.Contains(t, logOutput, "testsdir",
 		"log must identify the hoisted macro by name")
+}
+
+func TestRemoveSubpackageHoistsMacroReferencedBySectionHeaders(t *testing.T) {
+	input := strings.Join([]string{
+		"Name: app",
+		"%package tests",
+		"%define suffix tests",
+		"%description tests",
+		"Tests",
+		"%package -n app-%{suffix}",
+		"Summary: Uses the surviving macro in a package header",
+		"%description -n app-%{suffix}",
+		"Application",
+		"%files -n app-%{suffix}",
+		"/usr/bin/app",
+		"%post -n app-%{suffix}",
+		"echo post",
+	}, "\n")
+
+	specObj, err := spec.OpenSpec(strings.NewReader(input))
+	require.NoError(t, err)
+	require.NoError(t, specObj.RemoveSubpackage("tests"))
+
+	out := serializeSpec(t, specObj)
+	assert.Contains(t, out, "%define suffix tests")
+	assert.Contains(t, out, "%package -n app-%{suffix}")
+	assert.Contains(t, out, "%description -n app-%{suffix}")
+	assert.Contains(t, out, "%files -n app-%{suffix}")
+	assert.Contains(t, out, "%post -n app-%{suffix}")
 }

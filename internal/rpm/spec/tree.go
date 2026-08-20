@@ -478,16 +478,30 @@ func findTreeSectionEnd(start, end int, pairByIf map[int]conditionalPair, sectio
 // conditional depth 0.
 func findElseDirectiveLine(rawLines []string, start, end int) int {
 	depth := 0
+	inMacroCont := false
 
 	for lineIdx := start; lineIdx < end; lineIdx++ {
-		d := conditionalDepthChange(rawLines[lineIdx])
+		line := rawLines[lineIdx]
+		if inMacroCont {
+			inMacroCont = strings.HasSuffix(line, "\\")
+
+			continue
+		}
+
+		if _, isMacro := isMacroDefLine(line); isMacro && strings.HasSuffix(line, "\\") {
+			inMacroCont = true
+
+			continue
+		}
+
+		d := conditionalDepthChange(line)
 
 		switch {
 		case d == 1:
 			depth++
 		case d == -1:
 			depth--
-		case depth == 0 && isConditionalBranchDirective(rawLines[lineIdx]):
+		case depth == 0 && isConditionalBranchDirective(line):
 			return lineIdx
 		}
 	}
@@ -569,11 +583,11 @@ func serializeTree(block *block) []string {
 			lines = append(lines, serializeTree(child)...)
 		}
 
-		if block.Else != nil {
-			if block.ElseDirective != "" {
-				lines = append(lines, block.ElseDirective)
-			}
+		if block.ElseDirective != "" {
+			lines = append(lines, block.ElseDirective)
+		}
 
+		if block.Else != nil {
 			for _, child := range block.Else {
 				lines = append(lines, serializeTree(child)...)
 			}
@@ -731,26 +745,23 @@ func validateSectionRemoval(root *block, toRemove []*block) error {
 	return validateRemovalInChildren(root.Children, removeSet)
 }
 
+//nolint:cyclop // The checks enumerate distinct conditional ownership hazards.
 func validateRemovalInChildren(children []*block, removeSet map[*block]bool) error {
 	for childIdx, child := range children {
 		if child.Kind != conditionalBlock {
 			continue
 		}
 
-		// Check if a wrapper conditional has orphaned text that semantically belongs
-		// to the section immediately preceding it. If that preceding section is being
-		// removed, the text would be orphaned.
-		//
-		// Note: cross-branch asymmetry (removing sections from %if but not %else,
-		// or vice versa) is intentionally allowed — a valid use case is removing
-		// a subpackage from one branch while keeping the alternative in the other.
-		// Text/macro content alongside surviving sections is also fine — it belongs
-		// to the section preceding the wrapper, not to the removed section.
-		if hasTextOrMacroContent(child.Children) && containsSectionBlocks(child) {
+		if containsSectionBlocks(child) {
 			preceding := findPrecedingSection(children, childIdx)
-			if preceding != nil && removeSet[preceding] {
+			related := (preceding != nil && removeSet[preceding]) ||
+				containsRemovedSection(child, removeSet)
+
+			if related && (hasMeaningfulLooseContent(child.Children) ||
+				hasMeaningfulLooseContent(child.Else) ||
+				hasLooseContentAfter(children, childIdx)) {
 				return fmt.Errorf("%%if block at %q "+
-					"contains content belonging to the preceding section:\n%w",
+					"has ambiguous linear section ownership:\n%w",
 					child.Header, ErrConditionalSpansSections)
 			}
 		}
@@ -780,6 +791,62 @@ func validateRemovalInChildren(children []*block, removeSet map[*block]bool) err
 	}
 
 	return nil
+}
+
+func containsRemovedSection(blk *block, removeSet map[*block]bool) bool {
+	if blk.Kind == sectionBlock && removeSet[blk] {
+		return true
+	}
+
+	for _, child := range blk.Children {
+		if containsRemovedSection(child, removeSet) {
+			return true
+		}
+	}
+
+	for _, child := range blk.Else {
+		if containsRemovedSection(child, removeSet) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func hasLooseContentAfter(children []*block, conditionalIdx int) bool {
+	for _, child := range children[conditionalIdx+1:] {
+		if child.Kind == sectionBlock {
+			return false
+		}
+
+		if hasMeaningfulLooseContent([]*block{child}) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func hasMeaningfulLooseContent(blocks []*block) bool {
+	for _, blk := range blocks {
+		switch blk.Kind {
+		case macroDefBlock:
+			return true
+		case textBlock:
+			for _, line := range blk.Lines {
+				if strings.TrimSpace(line) != "" {
+					return true
+				}
+			}
+		case rootBlock, sectionBlock, conditionalBlock:
+			if blk.Kind == conditionalBlock &&
+				(hasMeaningfulLooseContent(blk.Children) || hasMeaningfulLooseContent(blk.Else)) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // findPrecedingSection walks backwards from index i in children to find

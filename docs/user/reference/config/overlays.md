@@ -28,6 +28,14 @@ These overlays modify `.spec` files using the structured spec parser, allowing p
 | `patch-add` | Adds a patch file and registers it in the spec (PatchN tag or %patchlist) | `source` |
 | `patch-remove` | Removes patch files and their spec references matching a glob pattern | `file` |
 
+> **Conditional section wrappers:** `spec-remove-section` and
+> `spec-remove-subpackage` reject specs where `%if`/`%elif`/`%else` wraps one
+> or more section headers. RPM section ownership continues linearly across
+> those directives, so removing a structurally nested section could leave
+> lines owned by the deleted section in another branch or after `%endif`.
+> Use a whole-spec `spec-search-replace` overlay to make the conditional
+> layout unambiguous first, then remove the section.
+
 ### File Overlays
 
 These overlays modify non-spec source files directly. They cannot be used on `.spec` files. These

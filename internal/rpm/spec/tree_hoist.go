@@ -4,6 +4,7 @@
 package spec
 
 import (
+	"fmt"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -21,177 +22,132 @@ import (
 // definition at the end of the preamble (before any section) so survivors
 // still resolve regardless of where in the file they sit.
 //
-// The set of macros to hoist is computed as a transitive closure: starting
-// from macros referenced by surviving content, any macro those definitions
-// themselves reference (and which also lives in the removed set) is hoisted
-// too, to a fixed point. This prevents a hoisted macro from dangling on an
-// inner macro that would otherwise be dropped (e.g. `%define testsdir
-// %{testroot}/tests` where `testroot` is also defined in the subpackage).
-//
-// The closure is conservative:
-//   - A name explicitly `%undefine`d within the removed set is never hoisted
-//     (the author tore it down in-scope on purpose).
-//   - A name that already has a surviving definition outside the removed set
-//     is never hoisted (the survivor reference resolves to the existing one).
-//   - Duplicate definitions of the same name across removed sections collapse
-//     to the first declaration.
-//
-// Hoisted macros are emitted in dependency order. This is essential for eager
-// `%global` expansion when a dependent macro appeared before its dependency in
-// the removed section.
+// Hoisting is deliberately narrow because RPM macro definitions are ordered
+// and scope-sensitive. It moves only one unconditional, unique definition
+// with no dependency on another removed definition. Redefinitions, undefines,
+// conditionals, and eager forward dependencies are rejected rather than
+// guessing at a different evaluation order.
 //
 // This function mutates root in place. It must be called BEFORE removed
 // blocks are detached from the tree so that the "referenced outside the
 // removed subtrees" check can compute the survivor set correctly.
-func hoistReferencedMacros(root *block, removed []*block) {
+func hoistReferencedMacros(root *block, removed []*block) error {
 	if len(removed) == 0 {
-		return
+		return nil
 	}
 
 	removedSet := blockSet(removed)
 
 	macros := collectMacrosInSections(removed)
 	if len(macros) == 0 {
-		return
+		return nil
 	}
 
-	// First declaration wins for each name; declaration order is preserved by
-	// iterating macros (which collectMacrosInSections returns in order).
-	macroByName := firstDeclarations(macros)
+	var referenced []*block
 
-	toHoist := computeHoistClosure(root, macros, macroByName, removedSet, collectUndefinedNames(removed))
-	if len(toHoist) == 0 {
-		return
+	for _, macro := range macros {
+		if isMacroReferencedOutside(root, macro.Name, removedSet) {
+			referenced = append(referenced, macro)
+		}
 	}
 
-	ordered := orderedHoistBlocks(macros, macroByName, toHoist)
+	if len(referenced) == 0 {
+		return nil
+	}
+
+	if len(referenced) != 1 {
+		return fmt.Errorf("cannot safely hoist multiple referenced macro definitions:\n%w", ErrUnsafeMacroHoist)
+	}
+
+	macro := referenced[0]
+	if macroHasUnsafeHoistSemantics(root, macro, removedSet) {
+		return fmt.Errorf("cannot safely hoist macro %#q because its RPM scope or evaluation order is ambiguous:\n%w",
+			macro.Name, ErrUnsafeMacroHoist)
+	}
 
 	// Hoisting moves a definition the caller didn't explicitly touch, so make
 	// it visible at the default log level rather than silently relocating it.
-	for _, macro := range ordered {
-		slog.Info("Hoisted referenced macro to preamble during section removal",
-			"macro", macro.Name, "definition", strings.TrimSpace(macro.Header))
-	}
+	slog.Info("Hoisted referenced macro to preamble during section removal",
+		"macro", macro.Name, "definition", strings.TrimSpace(macro.Header))
 
-	hoistIntoPreamble(root, ordered)
+	hoistIntoPreamble(root, []*block{macro})
+
+	return nil
 }
 
-// firstDeclarations indexes macros by name, keeping the first declaration of
-// each name. Declaration order is the order collectMacrosInSections returns.
-func firstDeclarations(macros []*block) map[string]*block {
-	byName := make(map[string]*block, len(macros))
+//nolint:cyclop // The checks enumerate the independent RPM scope hazards.
+func macroHasUnsafeHoistSemantics(root *block, candidate *block, removedSet map[*block]bool) bool {
+	definitions := 0
+	conditional := false
+	undefined := false
 
-	for _, macro := range macros {
-		if _, dup := byName[macro.Name]; !dup {
-			byName[macro.Name] = macro
-		}
-	}
+	var visit func(*block, bool)
 
-	return byName
-}
-
-// computeHoistClosure returns the set of macro names that must be hoisted: the
-// transitive closure of macros referenced by surviving content, following
-// references between removed macros to a fixed point. Names that are
-// %undefine'd in-scope or already defined by a survivor are excluded.
-func computeHoistClosure(
-	root *block,
-	macros []*block,
-	macroByName map[string]*block,
-	removedSet map[*block]bool,
-	undefined map[string]bool,
-) map[string]bool {
-	toHoist := make(map[string]bool, len(macros))
-	enqueued := make(map[string]bool, len(macros))
-	queue := make([]string, 0, len(macros))
-
-	enqueue := func(name string) {
-		if !enqueued[name] {
-			enqueued[name] = true
-			queue = append(queue, name)
-		}
-	}
-
-	// Seed with macros referenced by surviving (non-removed) content.
-	for _, macro := range macros {
-		if isMacroReferencedOutside(root, macro.Name, removedSet) {
-			enqueue(macro.Name)
-		}
-	}
-
-	for len(queue) > 0 {
-		name := queue[0]
-		queue = queue[1:]
-
-		// Skip names torn down in-scope (%undefine) or already defined by a
-		// surviving definition (the reference resolves to the existing one).
-		if undefined[name] || hasDefinitionOutside(root, name, removedSet) {
-			continue
+	visit = func(blk *block, inConditional bool) {
+		if blk.Kind == conditionalBlock {
+			inConditional = true
 		}
 
-		def, ok := macroByName[name]
-		if !ok {
-			// Referenced name isn't one of the removed macros; nothing to hoist.
-			continue
+		if blk.Kind == macroDefBlock && blk.Name == candidate.Name {
+			definitions++
+			conditional = conditional || inConditional
 		}
 
-		toHoist[name] = true
-
-		// Follow this definition's own references into other removed macros so
-		// transitive dependencies are hoisted alongside it.
-		for _, ref := range macroNamesReferencedIn(def.Lines) {
-			if _, isRemovedMacro := macroByName[ref]; isRemovedMacro {
-				enqueue(ref)
+		if blk.Kind == textBlock || blk.Kind == macroDefBlock {
+			for _, line := range blk.Lines {
+				if name, ok := isUndefineLine(line); ok && name == candidate.Name {
+					undefined = true
+				}
 			}
 		}
+
+		for _, child := range blk.Children {
+			visit(child, inConditional)
+		}
+
+		for _, child := range blk.Else {
+			visit(child, inConditional)
+		}
+	}
+	visit(root, false)
+
+	if definitions != 1 || conditional || undefined {
+		return true
 	}
 
-	return toHoist
+	for _, name := range macroNamesReferencedIn(candidate.Lines) {
+		if name == candidate.Name {
+			return true
+		}
+
+		if hasDefinitionInRemovedSections(root, name, removedSet) {
+			return true
+		}
+	}
+
+	return false
 }
 
-// orderedHoistBlocks returns the first declaration of each hoisted name with
-// dependencies before dependents. Traversal starts in declaration order, so
-// unrelated macros retain their original order. Cyclic dependencies retain
-// their stable first-encounter order because RPM cannot make eager cycles
-// well-defined.
-func orderedHoistBlocks(
-	macros []*block,
-	macroByName map[string]*block,
-	toHoist map[string]bool,
-) []*block {
-	ordered := make([]*block, 0, len(toHoist))
-	visited := make(map[string]bool, len(toHoist))
-	visiting := make(map[string]bool, len(toHoist))
+func hasDefinitionInRemovedSections(root *block, name string, removedSet map[*block]bool) bool {
+	found := false
 
-	var visit func(string)
+	walk(root, func(blk *block) bool {
+		if blk.Kind == sectionBlock && removedSet[blk] {
+			walk(blk, func(descendant *block) bool {
+				if descendant.Kind == macroDefBlock && descendant.Name == name {
+					found = true
+				}
 
-	visit = func(name string) {
-		if visited[name] || visiting[name] {
-			return
+				return !found
+			})
+
+			return false
 		}
 
-		macro, ok := macroByName[name]
-		if !ok || !toHoist[name] {
-			return
-		}
+		return !found
+	})
 
-		visiting[name] = true
-
-		for _, dependency := range macroNamesReferencedIn(macro.Lines) {
-			visit(dependency)
-		}
-
-		visiting[name] = false
-		visited[name] = true
-
-		ordered = append(ordered, macro)
-	}
-
-	for _, macro := range macros {
-		visit(macro.Name)
-	}
-
-	return ordered
+	return found
 }
 
 // hoistIntoPreamble appends the given macro blocks to the end of the preamble
@@ -206,28 +162,6 @@ func hoistIntoPreamble(root *block, macros []*block) {
 	}
 
 	root.Children = append(append([]*block{}, macros...), root.Children...)
-}
-
-// collectUndefinedNames returns the set of macro names that are %undefine'd
-// anywhere within the removed sections. Such names must not be hoisted.
-func collectUndefinedNames(removed []*block) map[string]bool {
-	undefined := make(map[string]bool)
-
-	for _, sec := range removed {
-		walk(sec, func(blk *block) bool {
-			if blk.Kind == textBlock || blk.Kind == macroDefBlock {
-				for _, line := range blk.Lines {
-					if name, ok := isUndefineLine(line); ok {
-						undefined[name] = true
-					}
-				}
-			}
-
-			return true
-		})
-	}
-
-	return undefined
 }
 
 // isUndefineLine returns the macro name if the line is a %undefine directive.
@@ -245,29 +179,6 @@ func isUndefineLine(rawLine string) (string, bool) {
 	}
 
 	return "", false
-}
-
-// hasDefinitionOutside reports whether a macro named name is defined by a
-// [macroDefBlock] that lives outside every removed section subtree.
-func hasDefinitionOutside(root *block, name string, removedSet map[*block]bool) bool {
-	found := false
-
-	walk(root, func(blk *block) bool {
-		// Don't count definitions inside the removed subtrees.
-		if blk.Kind == sectionBlock && removedSet[blk] {
-			return false
-		}
-
-		if blk.Kind == macroDefBlock && blk.Name == name {
-			found = true
-
-			return false
-		}
-
-		return true
-	})
-
-	return found
 }
 
 // blockSet builds an identity-set of block pointers for O(1) lookup.
@@ -331,8 +242,12 @@ func isMacroReferencedOutside(root *block, name string, removedSet map[*block]bo
 				(blk.ElseDirective != "" && pattern.MatchString(blk.ElseDirective)) {
 				found = true
 			}
-		case rootBlock, sectionBlock:
-			// Containers: references live in their descendant leaves/headers.
+		case sectionBlock:
+			if pattern.MatchString(blk.Header) {
+				found = true
+			}
+		case rootBlock:
+			// Container: references live in descendants.
 		}
 
 		return !found

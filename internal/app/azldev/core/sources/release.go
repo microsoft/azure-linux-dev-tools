@@ -45,7 +45,10 @@ func GetReleaseTagValue(fs opctx.FS, specPath string) (string, error) {
 		return "", fmt.Errorf("failed to parse spec %#q:\n%w", specPath, err)
 	}
 
-	releaseValue, err := openedSpec.GetTag("", "Release")
+	// Preserve the historical visitor behavior: when a spec contains multiple
+	// lexical Release tags (including conditional alternatives), the last one
+	// is the value considered for release calculation.
+	releaseValue, err := openedSpec.GetLastTag("", "Release")
 	if err != nil {
 		return "", fmt.Errorf("failed to get Release tag from spec %#q:\n%w", specPath, err)
 	}

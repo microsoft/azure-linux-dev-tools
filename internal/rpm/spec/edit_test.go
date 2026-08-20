@@ -155,6 +155,109 @@ Name: value
 	}
 }
 
+func TestGetTagDistinguishesEmptyAndDuplicateTags(t *testing.T) {
+	specFile, err := spec.OpenSpec(strings.NewReader(strings.Join([]string{"Release:", "Release: 2", ""}, "\n")))
+	require.NoError(t, err)
+
+	value, err := specFile.GetTag("", "Release")
+	require.NoError(t, err)
+	assert.Empty(t, value)
+
+	last, err := specFile.GetLastTag("", "Release")
+	require.NoError(t, err)
+	assert.Equal(t, "2", last)
+}
+
+func TestSearchAndReplaceRepairsMalformedWholeSpecConditionals(t *testing.T) {
+	tests := []struct {
+		name, input, regex, replacement, expected string
+	}{
+		{"unmatched endif", "Name: test\n%endif\n", `^%endif$`, "# %endif", "Name: test\n# %endif\n"},
+		{"unmatched if", "Name: test\n%if 1\n", `^%if 1$`, "# %if 1", "Name: test\n# %if 1\n"},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			specFile, err := spec.OpenSpec(strings.NewReader(testCase.input))
+			require.NoError(t, err)
+			require.NoError(t, specFile.SearchAndReplace("", "", testCase.regex, testCase.replacement))
+
+			var output bytes.Buffer
+			require.NoError(t, specFile.Serialize(&output))
+			assert.Equal(t, testCase.expected, output.String())
+		})
+	}
+}
+
+func TestScopedRemovalRejectsConditionalSectionWrappers(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"then", "%files foo\n/foo\n%if 1\n/foo-extra\n%files bar\n/bar\n%endif\n"},
+		{"else", "%files foo\n/foo\n%if 1\n%files bar\n/bar\n%else\n/foo-extra\n%endif\n"},
+		{"elif", "%files foo\n/foo\n%if 1\n%files bar\n/bar\n%elif 0\n/foo-extra\n%endif\n"},
+		{"post endif", strings.Join([]string{
+			"%package headless",
+			"Recommends: default-yama-scope",
+			"%if 1",
+			"%package gui",
+			"%endif",
+			"Recommends: default-yama-scope",
+			"",
+		}, "\n")},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			specFile, err := spec.OpenSpec(strings.NewReader(testCase.body))
+			require.NoError(t, err)
+
+			if testCase.name == "post endif" {
+				err = specFile.RemoveSubpackage("headless")
+			} else {
+				err = specFile.RemoveSection("%files", "foo")
+			}
+
+			require.ErrorIs(t, err, spec.ErrConditionalSpansSections)
+
+			var output bytes.Buffer
+			require.NoError(t, specFile.Serialize(&output))
+			assert.Equal(t, testCase.body, output.String())
+		})
+	}
+}
+
+func TestPublicEditsPreserveEmptyConditionalBranches(t *testing.T) {
+	input := "Name: test\n%if 1\n%elif 0\n%else\n%endif\n"
+	specFile, err := spec.OpenSpec(strings.NewReader(input))
+	require.NoError(t, err)
+	require.NoError(t, specFile.UpdateExistingTag("", "Name", "updated"))
+
+	var output bytes.Buffer
+	require.NoError(t, specFile.Serialize(&output))
+	assert.Equal(t, "Name: updated\n%if 1\n%elif 0\n%else\n%endif\n", output.String())
+}
+
+func TestRemovalDoesNotMisparseMacroContinuationBranches(t *testing.T) {
+	input := strings.Join([]string{
+		"%if 1",
+		"%package tests",
+		"%define macro \\",
+		"%else \\",
+		"body",
+		"%endif",
+	}, "\n")
+	specFile, err := spec.OpenSpec(strings.NewReader(input))
+	require.NoError(t, err)
+
+	require.NoError(t, specFile.RemoveSubpackage("tests"))
+
+	var output bytes.Buffer
+	require.NoError(t, specFile.Serialize(&output))
+	assert.Equal(t, "%if 1\n%endif\n", output.String())
+}
+
 func TestUpdateTag(t *testing.T) {
 	tests := []struct {
 		name            string

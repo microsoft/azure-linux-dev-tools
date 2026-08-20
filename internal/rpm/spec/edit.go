@@ -26,6 +26,10 @@ var ErrSectionNotFound = errors.New("section not found")
 // breaking the conditional nesting structure.
 var ErrConditionalSpansSections = errors.New("conditional block spans across section boundaries")
 
+// ErrUnsafeMacroHoist is returned when removing a section would require moving
+// a macro definition whose RPM scope or evaluation order cannot be preserved.
+var ErrUnsafeMacroHoist = errors.New("unsafe macro hoist")
+
 // ErrPatternNotFound is returned when a search pattern does not match any content in the spec.
 var ErrPatternNotFound = errors.New("pattern not found")
 
@@ -118,13 +122,28 @@ func (s *Spec) RemoveTag(packageName string, tag string, value string) (err erro
 // GetTag returns the value of the first instance of the named tag in the given package.
 // Returns [ErrNoSuchTag] if the tag does not exist.
 func (s *Spec) GetTag(packageName string, tag string) (string, error) {
+	return s.getTag(packageName, tag, true)
+}
+
+// GetLastTag returns the value of the last lexical instance of the named tag
+// in the given package. It preserves the historical Release-tag selection
+// behavior for callers that need it. Returns [ErrNoSuchTag] if the tag does
+// not exist.
+func (s *Spec) GetLastTag(packageName string, tag string) (string, error) {
+	return s.getTag(packageName, tag, false)
+}
+
+func (s *Spec) getTag(packageName string, tag string, first bool) (string, error) {
 	tagToCompareAgainst := strings.ToLower(tag)
 
-	var foundValue string
+	var (
+		foundValue string
+		found      bool
+	)
 
 	err := s.inspectTree(func(tree *specTree) error {
 		return tree.VisitAllLines(func(secName, secPkg string, line *lineHandle) error {
-			if foundValue != "" || secPkg != packageName || !isTagBearingSection(secName) {
+			if (first && found) || secPkg != packageName || !isTagBearingSection(secName) {
 				return nil
 			}
 
@@ -134,6 +153,7 @@ func (s *Spec) GetTag(packageName string, tag string) (string, error) {
 			}
 
 			foundValue = parsedValue
+			found = true
 
 			return nil
 		})
@@ -142,7 +162,7 @@ func (s *Spec) GetTag(packageName string, tag string) (string, error) {
 		return "", err
 	}
 
-	if foundValue == "" {
+	if !found {
 		return "", fmt.Errorf("tag %#q not found in package %#q:\n%w", tag, packageName, ErrNoSuchTag)
 	}
 
@@ -399,6 +419,30 @@ func (s *Spec) SearchAndReplace(sectionName, packageName, regex, replacement str
 	compiledRegex, err := regexp.Compile(regex)
 	if err != nil {
 		return fmt.Errorf("failed to compile regex %#q:\n%w", regex, err)
+	}
+
+	if sectionName == "" && packageName == "" {
+		updated := false
+
+		rawLines := append([]string(nil), s.rawLines...)
+
+		for lineIdx, line := range rawLines {
+			if replacementLine := compiledRegex.ReplaceAllLiteralString(line, replacement); replacementLine != line {
+				rawLines[lineIdx] = replacementLine
+				updated = true
+			}
+		}
+
+		if !updated {
+			return fmt.Errorf(
+				"pattern %#q not found (section=%#q, package=%#q):\n%w",
+				regex, sectionName, packageName, ErrPatternNotFound,
+			)
+		}
+
+		s.rawLines = rawLines
+
+		return nil
 	}
 
 	var updated bool
