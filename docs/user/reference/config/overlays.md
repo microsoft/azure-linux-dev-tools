@@ -29,12 +29,10 @@ These overlays modify `.spec` files using the structured spec parser, allowing p
 | `patch-remove` | Removes patch files and their spec references matching a glob pattern | `file` |
 
 > **Conditional section wrappers:** `spec-remove-section` and
-> `spec-remove-subpackage` reject specs where `%if`/`%elif`/`%else` wraps one
-> or more section headers. RPM section ownership continues linearly across
-> those directives, so removing a structurally nested section could leave
-> lines owned by the deleted section in another branch or after `%endif`.
-> Use a whole-spec `spec-search-replace` overlay to make the conditional
-> layout unambiguous first, then remove the section.
+> `spec-remove-subpackage` preserve simple wrappers, but reject layouts that
+> interleave removed sections with loose content whose linear RPM ownership
+> cannot be preserved. Use a whole-spec `spec-search-replace` overlay to make
+> an ambiguous layout unambiguous first, then remove the section.
 
 ### File Overlays
 
@@ -102,7 +100,7 @@ file = "vendor/**"                   # files inside the archive
 | Package | `package` | The sub-package name for multi-package specs; omit to target the main package. Cannot be combined with an omitted `section` (a sub-package is always a sub-qualifier of a section). | All spec overlays (optional, except `spec-remove-subpackage` which **requires** it) |
 | Regex | `regex` | Regular expression pattern to match | `spec-search-replace`, `file-search-replace` |
 | Replacement | `replacement` | Literal replacement text; capture group references like `$1` are **not** expanded. Omit or leave empty to delete matched text. | `spec-search-replace`, `file-search-replace`, `file-rename` |
-| Lines | `lines` | Array of text lines to insert | `spec-prepend-lines`, `spec-append-lines`, `file-prepend-lines` |
+| Lines | `lines` | Array of text lines to insert | `spec-prepend-lines`, `spec-prepend-all-lines`, `spec-append-lines`, `file-prepend-lines` |
 | File | `file` | The name of the non-spec file to modify or add, or a glob pattern. When combined with the `archive` field, the glob is matched against files inside that source archive. | `file-prepend-lines`, `file-search-replace`, `file-add`, `file-remove`, `file-rename`, `patch-add` (optional), `patch-remove` |
 | Archive | `archive` | The source archive to extract, modify, and repack (e.g. `pkg-1.0.tar.gz`). When set, `file` is a glob matched relative to the archive's extraction root. | `file-remove`, `file-search-replace` (optional) |
 | Source | `source` | Path to source file for `file-add` and `patch-add`; relative paths are relative to the config file that defines the overlay (the overlay file if loaded via [`overlay-files`](#per-file-overlay-format), otherwise the component config) | `file-add`, `patch-add` |
@@ -638,33 +636,22 @@ the overlay always removes every section associated with the sub-package.
 
 ### Section-scoped operations and straddling conditionals
 
-Spec overlays that target a specific section and package (e.g., `spec-remove-tag` with `package = "headless"`) rely on the structural tree parser to identify which lines belong to that section. In rare cases, a section header may live inside a `%if` wrapper while its content continues past the `%endif`:
+Section-scoped tag and search/replace overlays use RPM's linear section ownership, including when a section header is inside a `%if` wrapper and its content continues past `%endif`:
 
 ```spec
 %if 0%{!?scl:1}
 %package headless
 Requires: binutils
 %endif
-# ← content below is still part of %package headless in RPM's view,
-#   but the tree parser cannot associate it with the headless section
-#   because the section header is structurally inside the wrapper.
+# ← content below is still part of %package headless in RPM's view.
 Recommends: default-yama-scope
 ```
 
-In this pattern, section-scoped overlays (`spec-remove-tag`, `spec-add-tag`, `spec-update-tag`, `spec-insert-tag`) cannot find or modify tags that fall outside the `%endif`. Use `spec-search-replace` with a precise anchored regex instead:
-
-```toml
-# Instead of:
-#   type = "spec-remove-tag"
-#   package = "headless"
-#   tag = "Recommends"
-#   value = "default-yama-scope"
-
-# Use:
-type = "spec-search-replace"
-regex = "^Recommends: default-yama-scope$"
-replacement = "# Recommends: default-yama-scope (disabled)"
-```
+In this pattern, `spec-remove-tag` with `package = "headless"` can remove
+`Recommends`. Section removal remains more restrictive: it rejects wrappers
+that interleave removed sections with loose content whose ownership cannot be
+preserved. Use whole-spec `spec-search-replace` to make those layouts
+unambiguous before removing a section.
 
 ### Macro-generated sections
 

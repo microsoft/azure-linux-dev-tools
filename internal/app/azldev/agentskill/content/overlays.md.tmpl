@@ -115,12 +115,13 @@ the config loads, so a missing field fails fast rather than at apply time.
   For a multi-line change use a structured spec overlay (`spec-remove-section`,
   `spec-prepend-lines`/`spec-append-lines`, etc.). `file-search-replace` is different: it
   matches against the whole file, so multi-line patterns (and `(?s)`) work there.
-- **Section deletion cannot cross conditional section wrappers.**
-  `spec-remove-section` and `spec-remove-subpackage` reject a spec where
-  `%if`/`%elif`/`%else` wraps section headers, because RPM section ownership
-  continues across branches and after `%endif`. First use whole-spec
-  `spec-search-replace` to make the layout unambiguous, then remove the
-  section.
+- **Section deletion rejects ambiguous conditional section wrappers.**
+  `spec-remove-section` and `spec-remove-subpackage` preserve simple wrapped
+  sections, but reject wrappers that interleave removed sections with loose
+  content whose linear RPM ownership cannot be preserved. Section-scoped tag
+  and search/replace overlays do follow linear ownership across branches and
+  after `%endif`. Use whole-spec `spec-search-replace` to make an ambiguous
+  removal layout unambiguous first.
 - **`file` is a glob** (`**` supported) for the multi-file file overlays; for `file-add`
   and `file-rename` it is a single name, and `file-rename`'s `replacement` is a
   filename only (not a path).

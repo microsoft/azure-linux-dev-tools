@@ -79,17 +79,18 @@ func TestParseSpecVersionRelease(t *testing.T) {
 	assert.Equal(t, "5%{?dist}", release, "release is captured verbatim, dist is expanded later")
 }
 
-func TestParseSpecVersionReleaseUsesLastLexicalTags(t *testing.T) {
+func TestParseSpecVersionReleaseUsesFirstNonEmptyTags(t *testing.T) {
 	memFS := afero.NewMemMapFs()
 	require.NoError(t, fileutils.MkdirAll(memFS, provenanceWorkDir))
 	path := filepath.Join(provenanceWorkDir, "conditional.spec")
-	content := "Name: conditional\n%if 0\nVersion: 1\nRelease: 1\n%else\nVersion: 2\nRelease: 2\n%endif\n"
+	content := "Name: conditional\nVersion:\nRelease:\n%if 0\nVersion: 1\nRelease: 1\n" +
+		"%else\nVersion: 2\nRelease: 2\n%endif\n"
 	require.NoError(t, fileutils.WriteFile(memFS, path, []byte(content), fileperms.PublicFile))
 
 	version, release, err := parseSpecVersionRelease(memFS, path)
 	require.NoError(t, err)
-	assert.Equal(t, "2", version)
-	assert.Equal(t, "2", release)
+	assert.Equal(t, "1", version)
+	assert.Equal(t, "1", release)
 }
 
 func TestParseSpecVersionRelease_MissingFile(t *testing.T) {

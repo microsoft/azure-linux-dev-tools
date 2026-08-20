@@ -228,6 +228,53 @@ func TestScopedRemovalRejectsConditionalSectionWrappers(t *testing.T) {
 	}
 }
 
+func TestScopedTagOperationsUseLinearOwnershipAcrossConditionalWrappers(t *testing.T) {
+	input := strings.Join([]string{
+		"%if 0%{!?scl:1}",
+		"%package headless",
+		"Requires: binutils",
+		"%endif",
+		"Recommends: default-yama-scope",
+		"",
+	}, "\n")
+	specFile, err := spec.OpenSpec(strings.NewReader(input))
+	require.NoError(t, err)
+
+	value, err := specFile.GetTag("headless", "Recommends")
+	require.NoError(t, err)
+	assert.Equal(t, "default-yama-scope", value)
+	require.NoError(t, specFile.UpdateExistingTag("headless", "Recommends", "updated-yama-scope"))
+	require.NoError(t, specFile.RemoveTag("headless", "Recommends", "updated-yama-scope"))
+
+	var output bytes.Buffer
+	require.NoError(t, specFile.Serialize(&output))
+	assert.Equal(t, strings.Replace(input, "Recommends: default-yama-scope\n", "", 1), output.String())
+}
+
+func TestScopedSearchReplaceDoesNotAssignRequestedOwnership(t *testing.T) {
+	input := "%files foo\n/foo\n%if 1\n%files bar\n/bar\n%else\n/foo-extra\n%endif\n"
+	specFile, err := spec.OpenSpec(strings.NewReader(input))
+	require.NoError(t, err)
+
+	err = specFile.SearchAndReplace("%files", "baz", "^/foo-extra$", "/changed")
+	require.ErrorIs(t, err, spec.ErrPatternNotFound)
+
+	var output bytes.Buffer
+	require.NoError(t, specFile.Serialize(&output))
+	assert.Equal(t, input, output.String())
+}
+
+func TestUpdateExistingTagUpdatesAllMatchingOccurrences(t *testing.T) {
+	input := "Release: 1\n%if 0\nRelease: 2\n%else\nRelease: 3\n%endif\n"
+	specFile, err := spec.OpenSpec(strings.NewReader(input))
+	require.NoError(t, err)
+
+	require.NoError(t, specFile.UpdateExistingTag("", "Release", "4"))
+	release, err := specFile.GetLastTag("", "Release")
+	require.NoError(t, err)
+	assert.Equal(t, "4", release)
+}
+
 func TestPublicEditsPreserveEmptyConditionalBranches(t *testing.T) {
 	input := "Name: test\n%if 1\n%elif 0\n%else\n%endif\n"
 	specFile, err := spec.OpenSpec(strings.NewReader(input))

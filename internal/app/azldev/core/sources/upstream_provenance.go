@@ -257,7 +257,7 @@ func parseSpecVersionRelease(fs opctx.FS, specPath string) (version, release str
 		return "", "", fmt.Errorf("failed to parse spec %#q:\n%w", specPath, err)
 	}
 
-	version, err = parsed.GetLastTag("", "Version")
+	version, err = parsed.GetFirstNonEmptyTag("", "Version")
 	if err != nil && !errors.Is(err, spec.ErrNoSuchTag) {
 		return "", "", fmt.Errorf("failed to read Version tag in spec %#q:\n%w", specPath, err)
 	}
@@ -268,7 +268,7 @@ func parseSpecVersionRelease(fs opctx.FS, specPath string) (version, release str
 		version = strings.TrimSpace(version)
 	}
 
-	release, err = parsed.GetLastTag("", "Release")
+	release, err = parsed.GetFirstNonEmptyTag("", "Release")
 	if err != nil && !errors.Is(err, spec.ErrNoSuchTag) {
 		return "", "", fmt.Errorf("failed to read Release tag in spec %#q:\n%w", specPath, err)
 	}

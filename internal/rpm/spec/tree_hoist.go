@@ -115,12 +115,122 @@ func macroHasUnsafeHoistSemantics(root *block, candidate *block, removedSet map[
 		return true
 	}
 
+	if hasSurvivingReferenceBeforeCandidate(root, candidate, removedSet) {
+		return true
+	}
+
 	for _, name := range macroNamesReferencedIn(candidate.Lines) {
 		if name == candidate.Name {
 			return true
 		}
 
-		if hasDefinitionInRemovedSections(root, name, removedSet) {
+		if hasDefinitionInRemovedSections(root, name, removedSet) ||
+			hasDefinitionOutsidePreamble(root, name, candidate) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// hasSurvivingReferenceBeforeCandidate rejects relocation when it would make a
+// macro visible to content that originally preceded its definition.
+//
+//nolint:cyclop // The switch covers every block kind while preserving lexical order.
+func hasSurvivingReferenceBeforeCandidate(root, candidate *block, removedSet map[*block]bool) bool {
+	found := false
+	seenCandidate := false
+
+	var visit func(*block, bool)
+
+	visit = func(blk *block, inRemovedSection bool) {
+		if found {
+			return
+		}
+
+		if blk.Kind == sectionBlock {
+			inRemovedSection = inRemovedSection || removedSet[blk]
+		}
+
+		if blk == candidate {
+			seenCandidate = true
+
+			return
+		}
+
+		if seenCandidate {
+			return
+		}
+
+		if !inRemovedSection {
+			pattern := macroReferencePattern(candidate.Name)
+
+			switch blk.Kind {
+			case textBlock, macroDefBlock:
+				found = anyLineMatches(blk.Lines, pattern)
+			case conditionalBlock:
+				found = pattern.MatchString(blk.Header) ||
+					(blk.ElseDirective != "" && pattern.MatchString(blk.ElseDirective))
+			case sectionBlock:
+				found = pattern.MatchString(blk.Header)
+			case rootBlock:
+			}
+		}
+
+		if found {
+			return
+		}
+
+		for _, child := range blk.Children {
+			visit(child, inRemovedSection)
+		}
+
+		for _, child := range blk.Else {
+			visit(child, inRemovedSection)
+		}
+	}
+
+	visit(root, false)
+
+	return found
+}
+
+// hasDefinitionOutsidePreamble reports a dependency definition that would no
+// longer be available when candidate is moved to the preamble.
+func hasDefinitionOutsidePreamble(root *block, name string, candidate *block) bool {
+	preamble := findSectionBlock(root, "", "")
+	found := false
+
+	walk(root, func(blk *block) bool {
+		if blk.Kind == macroDefBlock && blk != candidate && blk.Name == name && !isDescendant(preamble, blk) {
+			found = true
+
+			return false
+		}
+
+		return true
+	})
+
+	return found
+}
+
+func isDescendant(root, target *block) bool {
+	if root == nil {
+		return false
+	}
+
+	if root == target {
+		return true
+	}
+
+	for _, child := range root.Children {
+		if isDescendant(child, target) {
+			return true
+		}
+	}
+
+	for _, child := range root.Else {
+		if isDescendant(child, target) {
 			return true
 		}
 	}
@@ -276,9 +386,9 @@ func anyLineMatches(lines []string, pattern *regexp.Regexp) bool {
 // The bare form requires a word boundary so we don't match %nameOther.
 func macroReferencePattern(name string) *regexp.Regexp {
 	quoted := regexp.QuoteMeta(name)
-	// Braced: %{ optional ! optional ? NAME ( } | : ... )
+	// Braced: %{ optional ! optional ? NAME ( } | : ... | whitespace args )
 	// Bare:   %NAME terminated by \b
-	pattern := `%(?:\{!?\??` + quoted + `[}:]|` + quoted + `\b)`
+	pattern := `%(?:\{!?\??` + quoted + `(?:[}:]|\s)|` + quoted + `\b)`
 
 	return regexp.MustCompile(pattern)
 }

@@ -607,6 +607,72 @@ echo %{foo}`
 	require.ErrorIs(t, specObj.RemoveSubpackage("tests"), spec.ErrUnsafeMacroHoist)
 }
 
+func TestRemoveSubpackageRejectsHoistThatChangesEarlierConditional(t *testing.T) {
+	input := `%if 0%{?feature}
+%build
+echo enabled
+%endif
+%package tests
+%global feature 1
+%description tests
+Tests
+%install
+echo %{feature}`
+	specObj, err := spec.OpenSpec(strings.NewReader(input))
+	require.NoError(t, err)
+
+	require.ErrorIs(t, specObj.RemoveSubpackage("tests"), spec.ErrUnsafeMacroHoist)
+}
+
+func TestRemoveSubpackageRejectsHoistWithSurvivingDependencyAfterPreamble(t *testing.T) {
+	input := `%description
+%global bar value
+%package tests
+%global foo %{bar}
+%description tests
+Tests
+%install
+echo %{foo}`
+	specObj, err := spec.OpenSpec(strings.NewReader(input))
+	require.NoError(t, err)
+
+	require.ErrorIs(t, specObj.RemoveSubpackage("tests"), spec.ErrUnsafeMacroHoist)
+}
+
+func TestRemoveSubpackagePreservesBraceDelimitedMacroAtomically(t *testing.T) {
+	input := `%package tests
+%define helper() %{lua:
+    print("value")
+}
+%description tests
+Tests
+%install
+%{helper}`
+	specObj, err := spec.OpenSpec(strings.NewReader(input))
+	require.NoError(t, err)
+
+	require.NoError(t, specObj.RemoveSubpackage("tests"))
+	out := serializeSpec(t, specObj)
+	assert.Contains(t, out, "%define helper() %{lua:\n    print(\"value\")\n}")
+	_, err = spec.OpenSpec(strings.NewReader(out))
+	require.NoError(t, err)
+}
+
+func TestRemoveSubpackagePreservesParameterizedMacroReference(t *testing.T) {
+	input := `%package tests
+%define build_with() enabled
+%description tests
+Tests
+%install
+echo %{build_with foo}`
+	specObj, err := spec.OpenSpec(strings.NewReader(input))
+	require.NoError(t, err)
+
+	require.NoError(t, specObj.RemoveSubpackage("tests"))
+	out := serializeSpec(t, specObj)
+	assert.Contains(t, out, "%define build_with() enabled")
+}
+
 func TestTestdataRemoveSubpackageRejectsShadowedMacro(t *testing.T) {
 	specObj := openFixture(t, "subpackage-define-shadowed.spec")
 

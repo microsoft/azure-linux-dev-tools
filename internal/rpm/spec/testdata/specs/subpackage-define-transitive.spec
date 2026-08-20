@@ -5,10 +5,10 @@ Summary: Transitive %%define chain inside a subpackage (issue #203 follow-up)
 License: MIT
 
 %description
-Fixture for the transitive macro-hoisting case: the subpackage defines a
-chain of helper macros (%%testroot -> %%testsdir) and only the outer one is
-referenced from the surviving %%install section. Removing the subpackage must
-hoist BOTH macros so the survivor reference resolves.
+Fixture for conservative transitive macro-hoisting rejection: the subpackage
+defines a chain of helper macros (%%testroot -> %%testsdir) and only the outer
+one is referenced from the surviving %%install section. Removing the
+subpackage must reject rather than reorder the dependency chain.
 
 %package tests
 Summary: Tests for %{name}

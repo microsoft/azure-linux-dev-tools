@@ -182,10 +182,12 @@ func findSectionHeaderLines(rawLines []string) []int {
 	var headers []int
 
 	inCont := false
+	braceDepth := 0
 
 	for lineIdx, line := range rawLines {
 		if inCont {
-			inCont = strings.HasSuffix(line, "\\")
+			braceDepth += macroBraceDelta(line)
+			inCont = strings.HasSuffix(line, "\\") || braceDepth > 0
 
 			continue
 		}
@@ -194,7 +196,12 @@ func findSectionHeaderLines(rawLines []string) []int {
 			headers = append(headers, lineIdx)
 		}
 
-		inCont = strings.HasSuffix(line, "\\")
+		if _, isMacro := isMacroDefLine(line); isMacro {
+			braceDepth = macroBraceDelta(line)
+			inCont = strings.HasSuffix(line, "\\") || braceDepth > 0
+		} else {
+			inCont = strings.HasSuffix(line, "\\")
+		}
 	}
 
 	return headers
@@ -227,7 +234,7 @@ func hasSectionHeaderInRange(start, end int, sectionHeaderSet map[int]bool) bool
 // to parent.Children. topLevel indicates whether sections can appear (true at
 // root level and inside conditional wrappers).
 //
-//nolint:funlen,gocognit // Recursive parser with multiple block types.
+//nolint:funlen,gocognit,cyclop // Recursive parser with multiple block types.
 func buildBlockChildren(
 	rawLines []string,
 	start, end int,
@@ -339,14 +346,16 @@ func buildBlockChildren(
 				Lines:  []string{line},
 			}
 
-			if strings.HasSuffix(line, "\\") {
+			braceDepth := macroBraceDelta(line)
+			if strings.HasSuffix(line, "\\") || braceDepth > 0 {
 				inCont = true
 				lineIdx++
 
 				for lineIdx < end {
 					macroBlock.Lines = append(macroBlock.Lines, rawLines[lineIdx])
+					braceDepth += macroBraceDelta(rawLines[lineIdx])
 
-					if !strings.HasSuffix(rawLines[lineIdx], "\\") {
+					if !strings.HasSuffix(rawLines[lineIdx], "\\") && braceDepth <= 0 {
 						inCont = false
 						lineIdx++
 
@@ -479,17 +488,20 @@ func findTreeSectionEnd(start, end int, pairByIf map[int]conditionalPair, sectio
 func findElseDirectiveLine(rawLines []string, start, end int) int {
 	depth := 0
 	inMacroCont := false
+	braceDepth := 0
 
 	for lineIdx := start; lineIdx < end; lineIdx++ {
 		line := rawLines[lineIdx]
 		if inMacroCont {
-			inMacroCont = strings.HasSuffix(line, "\\")
+			braceDepth += macroBraceDelta(line)
+			inMacroCont = strings.HasSuffix(line, "\\") || braceDepth > 0
 
 			continue
 		}
 
-		if _, isMacro := isMacroDefLine(line); isMacro && strings.HasSuffix(line, "\\") {
-			inMacroCont = true
+		if _, isMacro := isMacroDefLine(line); isMacro {
+			braceDepth = macroBraceDelta(line)
+			inMacroCont = strings.HasSuffix(line, "\\") || braceDepth > 0
 
 			continue
 		}
@@ -533,6 +545,13 @@ func isMacroDefLine(rawLine string) (string, bool) {
 	}
 
 	return "", false
+}
+
+// macroBraceDelta tracks the brace-delimited body of a macro definition. RPM
+// macros such as `%define helper() %{lua:` continue through their balancing
+// closing brace even without a backslash continuation.
+func macroBraceDelta(line string) int {
+	return strings.Count(line, "{") - strings.Count(line, "}")
 }
 
 // getSectionNameAndPackageFromHeader extracts the section keyword and package name
