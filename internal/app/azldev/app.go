@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -51,6 +52,7 @@ type App struct {
 	permissiveConfigParsing bool
 	configFiles             []string
 	colorMode               ColorMode
+	withoutLockfile         bool
 
 	// Root command for the CLI.
 	cmd cobra.Command
@@ -184,6 +186,8 @@ func (app *App) registerGlobalFlags() {
 		"output colorization mode {always, auto, never}")
 	app.cmd.PersistentFlags().BoolVar(&app.permissiveConfigParsing, "permissive-config",
 		false, "do not fail on unknown fields in TOML config files")
+	app.cmd.PersistentFlags().BoolVar(&app.withoutLockfile, "without-lockfile", false,
+		"preview: track resolved upstream commits in generated config instead of lock files")
 }
 
 // addAdvancedCommandHint embeds a hint about the hidden "advanced" command group
@@ -257,7 +261,7 @@ func (a *App) Execute(args []string) int {
 	// We tried to do this with cobra first, but it was too difficult to get
 	// the "right thing" to happen.
 	//
-	a.handParseConfigFlags(args)
+	a.PreParseGlobalFlags(args)
 
 	envOptions := a.initializeEnvOptions()
 
@@ -397,6 +401,7 @@ func (a *App) initializeEnvOptions() *EnvOptions {
 	envOptions.Interfaces.FileSystemFactory = a.fsFactory
 	envOptions.Interfaces.OSEnvFactory = a.osEnvFactory
 	envOptions.DryRunnable = NewAppDryRunnable(a.dryRun)
+	envOptions.WithoutLockfile = a.withoutLockfile
 
 	return &envOptions
 }
@@ -456,6 +461,68 @@ func setEventListener(stdioLogger *slog.Logger, quiet, verbose bool, envOptions 
 	envOptions.EventListener = eventListener
 
 	return nil
+}
+
+// PreParseGlobalFlags hand-parses the global flags that must be known before commands
+// are registered and configuration is loaded. It is safe to call more than once with the
+// same arguments; each call fully recomputes the pre-parsed state.
+//
+// Command registration is mode-sensitive, so the CLI entry point calls this before it
+// registers commands; [App.Execute] calls it again so that an App executed directly
+// (e.g. from a test) behaves identically.
+func (a *App) PreParseGlobalFlags(args []string) {
+	// Reset accumulating state so repeated calls are idempotent.
+	a.configFiles = nil
+
+	a.withoutLockfile = parseWithoutLockfileFlag(args)
+	a.handParseConfigFlags(args)
+}
+
+// WithoutLockfile reports whether the preview lock-file-free mode was requested via the
+// global '--without-lockfile' flag. Valid only after [App.PreParseGlobalFlags] has run.
+func (a *App) WithoutLockfile() bool {
+	return a.withoutLockfile
+}
+
+// withoutLockfileFlagName is the global flag that selects lock-file-free mode.
+const withoutLockfileFlagName = "--without-lockfile"
+
+// parseWithoutLockfileFlag hand-parses the global '--without-lockfile' boolean flag.
+//
+// Only exact '--without-lockfile' and '--without-lockfile=<value>' tokens are
+// recognized, and scanning stops at the '--' terminator so that positional text
+// (for example a mock command line) is never mistaken for the flag. An invalid or
+// missing value is treated the same way cobra treats it: '--without-lockfile' alone
+// enables the mode, and an unparseable '=<value>' leaves the mode disabled so the
+// final cobra parse reports the error.
+func parseWithoutLockfileFlag(args []string) bool {
+	withoutLockfile := false
+
+	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
+
+		if arg == withoutLockfileFlagName {
+			withoutLockfile = true
+
+			continue
+		}
+
+		value, found := strings.CutPrefix(arg, withoutLockfileFlagName+"=")
+		if !found {
+			continue
+		}
+
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return false
+		}
+
+		withoutLockfile = parsed
+	}
+
+	return withoutLockfile
 }
 
 // Hand-parses a few critical configuration flags from the command line -- just enough to

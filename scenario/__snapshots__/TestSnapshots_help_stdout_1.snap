@@ -37,6 +37,7 @@ Flags:
   -q, --quiet                     only enable minimal output
   -v, --verbose                   enable verbose output
       --version                   version for azldev
+      --without-lockfile          preview: track resolved upstream commits in generated config instead of lock files
 
 Use "azldev [command] --help" for more information about a command.
 Use "azldev advanced --help" for additional tools (mock, mcp, wget).
