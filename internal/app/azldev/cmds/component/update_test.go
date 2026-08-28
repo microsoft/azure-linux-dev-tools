@@ -445,7 +445,7 @@ func TestUpdateComponents_CheckOnly_StaleReturnsError(t *testing.T) {
 	var foundCurl bool
 
 	for _, r := range results {
-		if r.Component == "curl" {
+		if r.Component == testComponentName {
 			foundCurl = true
 
 			assert.True(t, r.Changed, "stale curl must surface as Changed in returned results")

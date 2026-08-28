@@ -50,6 +50,7 @@ type App struct {
 	reportFormat            ReportFormat
 	disableDefaultConfig    bool
 	permissiveConfigParsing bool
+	commandPermissiveConfig bool
 	configFiles             []string
 	colorMode               ColorMode
 	withoutLockfile         bool
@@ -137,7 +138,7 @@ lives), or use -C to point to one.`,
 			env.SetAcceptAllPrompts(app.acceptAllPrompts)
 			env.SetColorMode(app.colorMode)
 			env.SetNetworkRetries(app.networkRetries)
-			env.SetPermissiveConfigParsing(app.permissiveConfigParsing)
+			env.SetPermissiveConfigParsing(app.permissiveConfigEnabled())
 
 			return nil
 		},
@@ -262,6 +263,7 @@ func (a *App) Execute(args []string) int {
 	// the "right thing" to happen.
 	//
 	a.PreParseGlobalFlags(args)
+	a.commandPermissiveConfig = a.commandRequestsPermissiveConfig(args)
 
 	envOptions := a.initializeEnvOptions()
 
@@ -363,6 +365,25 @@ func (a *App) Execute(args []string) int {
 	// where the verbose log is stored.
 	//
 	return a.dispatchToCommand(env, args)
+}
+
+// commandRequestsPermissiveConfig reports whether the command selected by args asked
+// for permissive configuration loading via [CommandAnnotationPermissiveConfig].
+func (a *App) commandRequestsPermissiveConfig(args []string) bool {
+	cmd, _, err := a.cmd.Find(args)
+	if err != nil {
+		return false
+	}
+
+	_, permissive := cmd.Annotations[CommandAnnotationPermissiveConfig]
+
+	return permissive
+}
+
+// permissiveConfigEnabled reports whether configuration should be loaded permissively,
+// either because the user asked for it or because the selected command requires it.
+func (a *App) permissiveConfigEnabled() bool {
+	return a.permissiveConfigParsing || a.commandPermissiveConfig
 }
 
 func (*App) setCmdFactory(envOptions *EnvOptions) error {
@@ -603,7 +624,7 @@ func (a *App) findAndLoadConfig(tempDirPath string, extraConfigFiles []string) (
 		a.disableDefaultConfig,
 		tempDirPath,
 		extraConfigFiles,
-		a.permissiveConfigParsing,
+		a.permissiveConfigEnabled(),
 		a.withoutLockfile,
 	)
 	if err != nil {

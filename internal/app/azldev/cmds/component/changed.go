@@ -32,12 +32,12 @@ type ChangedComponentOptions struct {
 	IncludeUnchanged bool
 }
 
-func changedOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
-	parentCmd.AddCommand(NewChangedCmd())
+func changedOnAppInit(app *azldev.App, parentCmd *cobra.Command) {
+	parentCmd.AddCommand(NewChangedCmd(cmdOptionsForApp(app)...))
 }
 
 // NewChangedCmd constructs a [cobra.Command] for the "component changed" CLI subcommand.
-func NewChangedCmd() *cobra.Command {
+func NewChangedCmd(opts ...CmdOption) *cobra.Command {
 	options := &ChangedComponentOptions{}
 
 	cmd := &cobra.Command{
@@ -81,7 +81,8 @@ detected via lock file presence in the compared refs when using -a.`,
 		ValidArgsFunction: components.GenerateComponentNameCompletions,
 	}
 
-	components.AddComponentFilterOptionsToCommand(cmd, &options.ComponentFilter)
+	cmdOptions := newCmdOptions(opts...)
+	addComponentFilterOptions(cmd, &options.ComponentFilter, cmdOptions)
 
 	cmd.Flags().StringVar(&options.From, "from", "", "Git ref to compare from (required)")
 	cmd.Flags().StringVar(&options.To, "to", "HEAD", "Git ref to compare to")
@@ -92,7 +93,9 @@ detected via lock file presence in the compared refs when using -a.`,
 
 	// Hide inherited flag -- this command always skips lock validation since
 	// it inspects historical locks at arbitrary refs.
-	_ = cmd.Flags().MarkHidden("skip-lock-validation")
+	if !cmdOptions.withoutLockfile {
+		_ = cmd.Flags().MarkHidden("skip-lock-validation")
+	}
 
 	azldev.ExportAsReadOnlyMCPTool(cmd)
 
