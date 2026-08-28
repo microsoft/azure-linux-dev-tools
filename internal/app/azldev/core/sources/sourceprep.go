@@ -98,6 +98,16 @@ func WithDirtyDetection() PreparerOption {
 	}
 }
 
+// WithoutLockfileHistory returns a [PreparerOption] that derives synthetic history
+// from the component's generated upstream-commit TOML instead of its lock file.
+// It selects the behavior of the global '--without-lockfile' flag; the lock reader
+// and release version passed to [WithGitRepo] are unused in that mode.
+func WithoutLockfileHistory() PreparerOption {
+	return func(p *sourcePreparerImpl) {
+		p.withoutLockfile = true
+	}
+}
+
 // WithSkipLookaside returns a [PreparerOption] that skips all lookaside cache
 // downloads during source preparation. This includes both explicit source file
 // downloads ([SourceManager.FetchFiles]) and lookaside extraction during
@@ -184,6 +194,11 @@ type sourcePreparerImpl struct {
 	// synthetic history generation. Set via [WithDirtyDetection].
 	dirtyDetection bool
 
+	// withoutLockfile, when true, derives synthetic history from the generated
+	// upstream-commit TOML rather than the lock file. Set via
+	// [WithoutLockfileHistory].
+	withoutLockfile bool
+
 	// releaseVer is the per-component resolved distro release version, not the
 	// project default. Set via [WithGitRepo].
 	releaseVer string
@@ -242,6 +257,11 @@ func NewPreparer(
 	if impl.dirtyDetection && !impl.withGitRepo {
 		return nil, errors.New("WithDirtyDetection requires WithGitRepo; " +
 			"dirty detection compares fingerprints against committed lock files in the git history")
+	}
+
+	if impl.dirtyDetection && impl.withoutLockfile {
+		return nil, errors.New("WithDirtyDetection is incompatible with WithoutLockfileHistory; " +
+			"there is no lock file to compare fingerprints against")
 	}
 
 	return impl, nil
@@ -500,26 +520,9 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 	config := component.GetConfig()
 	componentName := component.GetName()
 
-	// Compute the current fingerprint for uncommitted-change detection.
-	// Only computed when dirty detection is enabled (e.g., build, render).
-	// An empty fingerprint skips dirty detection in buildSyntheticCommits.
-	var currentFingerprint string
-
-	if p.dirtyDetection {
-		var fpErr error
-
-		currentFingerprint, fpErr = computeCurrentFingerprint(p.fs, fingerprintConfig, p.releaseVer)
-		if fpErr != nil {
-			return fmt.Errorf("dirty detection failed for component %#q:\n%w", componentName, fpErr)
-		}
-	}
-
-	changes, importCommit, err := buildSyntheticCommits(
-		ctx, p.cmdFactory, config, componentName, p.lockReader.LockDir(),
-		currentFingerprint,
-	)
+	changes, importCommit, err := p.findSyntheticChanges(ctx, config, fingerprintConfig, componentName)
 	if err != nil {
-		return fmt.Errorf("failed to build synthetic commits:\n%w", err)
+		return err
 	}
 
 	if len(changes) == 0 {
@@ -568,6 +571,52 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 	}
 
 	return nil
+}
+
+// findSyntheticChanges discovers the component changes that synthetic history
+// should represent, using the source selected by the preparer's mode: the
+// component's lock file by default, or its generated upstream-commit TOML when
+// [WithoutLockfileHistory] is set. The returned import commit bounds the upstream
+// walk; it is always empty in lock-file-free mode, where no fork point is
+// persisted and the repository's first-parent root bounds the walk instead.
+func (p *sourcePreparerImpl) findSyntheticChanges(
+	ctx context.Context,
+	config *projectconfig.ComponentConfig,
+	fingerprintConfig *projectconfig.ComponentConfig,
+	componentName string,
+) (changes []FingerprintChange, importCommit string, err error) {
+	if p.withoutLockfile {
+		changes, err = buildUpstreamCommitSyntheticCommits(ctx, p.cmdFactory, config, componentName)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to build synthetic commits:\n%w", err)
+		}
+
+		return changes, "", nil
+	}
+
+	// Compute the current fingerprint for uncommitted-change detection.
+	// Only computed when dirty detection is enabled (e.g., build, render).
+	// An empty fingerprint skips dirty detection in buildSyntheticCommits.
+	var currentFingerprint string
+
+	if p.dirtyDetection {
+		var fpErr error
+
+		currentFingerprint, fpErr = computeCurrentFingerprint(p.fs, fingerprintConfig, p.releaseVer)
+		if fpErr != nil {
+			return nil, "", fmt.Errorf("dirty detection failed for component %#q:\n%w", componentName, fpErr)
+		}
+	}
+
+	changes, importCommit, err = buildSyntheticCommits(
+		ctx, p.cmdFactory, config, componentName, p.lockReader.LockDir(),
+		currentFingerprint,
+	)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to build synthetic commits:\n%w", err)
+	}
+
+	return changes, importCommit, nil
 }
 
 // computeCurrentFingerprint computes the current input fingerprint for a

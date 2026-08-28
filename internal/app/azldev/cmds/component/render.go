@@ -523,13 +523,11 @@ func prepareComponentSources(
 	// rpmautospec can expand %autorelease and %autochangelog correctly.
 	// WithSkipLookaside avoids expensive tarball downloads — only spec +
 	// sidecar files are needed for rendering.
-	preparerOpts := []sources.PreparerOption{
-		sources.WithGitRepo(env, env.LockReader(), distro.Version.ReleaseVer),
-		sources.WithDirtyDetection(),
+	preparerOpts := append(gitRepoPreparerOptions(env, distro),
 		sources.WithSkipLookaside(),
 		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)),
 		sources.WithMockProcessor(mockProcessor),
-	}
+	)
 
 	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, preparerOpts...)
 	if err != nil {

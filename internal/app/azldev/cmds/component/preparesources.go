@@ -155,10 +155,7 @@ func buildPreparerOptions(
 	var opts []sources.PreparerOption
 
 	if !options.WithoutGitRepo && !options.SkipOverlays {
-		opts = append(opts,
-			sources.WithGitRepo(env, env.LockReader(), distro.Version.ReleaseVer),
-			sources.WithDirtyDetection(),
-		)
+		opts = append(opts, gitRepoPreparerOptions(env, distro)...)
 	}
 
 	opts = append(opts,
