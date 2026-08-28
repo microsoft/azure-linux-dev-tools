@@ -31,7 +31,7 @@ type RefreshUpstreamCommitOptions struct {
 	CheckOnly bool
 }
 
-const defaultUpstreamCommitsDir = "base/upstream-commits"
+const defaultUpstreamCommitsDir = upstreamcommit.DefaultDir
 
 func refreshUpstreamCommitOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
 	parentCmd.AddCommand(NewRefreshUpstreamCommitCmd())
