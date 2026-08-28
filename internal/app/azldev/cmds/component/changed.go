@@ -36,14 +36,32 @@ func changedOnAppInit(app *azldev.App, parentCmd *cobra.Command) {
 	parentCmd.AddCommand(NewChangedCmd(cmdOptionsForApp(app)...))
 }
 
-// NewChangedCmd constructs a [cobra.Command] for the "component changed" CLI subcommand.
-func NewChangedCmd(opts ...CmdOption) *cobra.Command {
-	options := &ChangedComponentOptions{}
+// changedCommandLong returns the long help for 'component changed', which
+// describes the comparison performed by the active mode.
+func changedCommandLong(options cmdOptions) string {
+	if options.withoutLockfile {
+		return `Load the project configuration independently at two git refs and compare the
+resolved component build inputs. Normal project TOML parsing is used at each
+ref, including recursive includes, config merging, component defaults, and
+generated upstream-commit TOMLs included by the project.
 
-	cmd := &cobra.Command{
-		Use:   "changed",
-		Short: "Detect which components changed between two git refs",
-		Long: `Compare component lock files and rendered sources between two git refs to
+For each selected component, the command reports whether the build inputs
+changed: normalized component configuration, upstream commit or local
+spec-directory contents, overlay source filenames and contents, and effective
+distro release version.
+
+Documentation, publishing, test-selection, scheduling-hint, snapshot-time, and
+checkout-path-only fields do not trigger a component change. The sourcesChange
+field separately compares the raw committed sources manifests at the rendered
+spec directories configured by each ref. All-component scans use the union of
+components in both refs, so added and deleted components are reported without
+consulting the current checkout.
+
+This is useful for CI/CD pipelines to determine which components need to be
+rebuilt or have their lookaside tarballs re-uploaded after a PR merge.`
+	}
+
+	return `Compare component lock files and rendered sources between two git refs to
 determine which components changed. For each component, reports whether its
 input fingerprint changed (any change) and whether its rendered sources file
 changed (sources change).
@@ -61,7 +79,18 @@ Note: component selection and directory paths (lock-dir, rendered-specs-dir)
 are resolved from the current checkout's configuration, not from the compared
 refs. For accurate results, run this command from a checkout that matches the
 --to ref (e.g., after merging a PR). Components not in the current config are
-detected via lock file presence in the compared refs when using -a.`,
+detected via lock file presence in the compared refs when using -a.`
+}
+
+// NewChangedCmd constructs a [cobra.Command] for the "component changed" CLI subcommand.
+func NewChangedCmd(opts ...CmdOption) *cobra.Command {
+	options := &ChangedComponentOptions{}
+	cmdOptions := newCmdOptions(opts...)
+
+	cmd := &cobra.Command{
+		Use:   "changed",
+		Short: "Detect which components changed between two git refs",
+		Long:  changedCommandLong(cmdOptions),
 		Example: `  # Show changed components between a branch and HEAD
   azldev component changed --from main -a
 
@@ -81,7 +110,6 @@ detected via lock file presence in the compared refs when using -a.`,
 		ValidArgsFunction: components.GenerateComponentNameCompletions,
 	}
 
-	cmdOptions := newCmdOptions(opts...)
 	addComponentFilterOptions(cmd, &options.ComponentFilter, cmdOptions)
 
 	cmd.Flags().StringVar(&options.From, "from", "", "Git ref to compare from (required)")
@@ -117,9 +145,23 @@ const (
 	changeTypeDeleted   = "deleted"
 )
 
-// ChangedComponents compares component lock files and rendered sources between
-// two git refs to determine which changed.
+// ChangedComponents determines which components changed between two git refs,
+// using the comparison that matches the active mode: stored lock file
+// fingerprints by default, or configuration resolved at each ref when the global
+// '--without-lockfile' flag is set.
 func ChangedComponents(
+	env *azldev.Env, options *ChangedComponentOptions,
+) ([]ChangedResult, error) {
+	if env.WithoutLockfile() {
+		return changedComponentsFromProjectConfigs(env, options)
+	}
+
+	return changedComponentsFromLocks(env, options)
+}
+
+// changedComponentsFromLocks compares component lock files and rendered sources
+// between two git refs to determine which changed.
+func changedComponentsFromLocks(
 	env *azldev.Env, options *ChangedComponentOptions,
 ) ([]ChangedResult, error) {
 	// Changed compares lock files between git refs — skip validation since
@@ -213,19 +255,28 @@ type changedContext struct {
 	integrityViolations []string
 }
 
-// newChangedContext opens the project repository and resolves paths.
-func newChangedContext(env *azldev.Env) (*changedContext, error) {
+// openChangedRepo opens the project's git repository and returns it together with
+// its worktree root.
+func openChangedRepo(env *azldev.Env) (*gogit.Repository, string, error) {
 	repo, err := git.OpenProjectRepo(env.ProjectDir())
 	if err != nil {
-		return nil, fmt.Errorf("opening project repository:\n%w", err)
+		return nil, "", fmt.Errorf("opening project repository:\n%w", err)
 	}
 
 	worktree, err := repo.Worktree()
 	if err != nil {
-		return nil, fmt.Errorf("getting project worktree:\n%w", err)
+		return nil, "", fmt.Errorf("getting project worktree:\n%w", err)
 	}
 
-	repoRoot := worktree.Filesystem.Root()
+	return repo, worktree.Filesystem.Root(), nil
+}
+
+// newChangedContext opens the project repository and resolves paths.
+func newChangedContext(env *azldev.Env) (*changedContext, error) {
+	repo, repoRoot, err := openChangedRepo(env)
+	if err != nil {
+		return nil, err
+	}
 
 	lockRelDir, err := repoRelPath(repoRoot, env.Config().Project.LockDir)
 	if err != nil {
