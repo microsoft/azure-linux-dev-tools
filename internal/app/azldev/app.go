@@ -604,6 +604,7 @@ func (a *App) findAndLoadConfig(tempDirPath string, extraConfigFiles []string) (
 		tempDirPath,
 		extraConfigFiles,
 		a.permissiveConfigParsing,
+		a.withoutLockfile,
 	)
 	if err != nil {
 		return projectDir, config, fmt.Errorf("failed to load project configuration:\n%w", err)
