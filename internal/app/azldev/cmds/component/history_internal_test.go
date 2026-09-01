@@ -157,6 +157,12 @@ func TestCustomizationCollectorsCoverEveryFingerprintableField(t *testing.T) {
 			field := st.Field(i)
 			key := st.Name() + "." + field.Name
 
+			// Unexported fields are never fingerprinted: hashstructure skips
+			// them because it cannot read them by reflection.
+			if field.PkgPath != "" {
+				continue
+			}
+
 			// Fields excluded from the fingerprint are operational
 			// metadata (publish channels, build hints, maintenance
 			// markers, etc.), not modifications to upstream. Skip them.

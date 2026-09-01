@@ -31,7 +31,7 @@ func TestRenderInstructionRejectsInvalidSkillPointers(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := renderInstruction(Instruction{
+			_, err := NewCatalog(false).renderInstruction(Instruction{
 				Name:   "test-instruction",
 				Skills: test.skills,
 			}, Params{})

@@ -20,6 +20,9 @@ const (
 	// CommandAnnotationRootOK is a [cobra.Command.Annotations] key used to indicate that a command
 	// is allowed to be run as root.
 	CommandAnnotationRootOK = "rootOK"
+	// CommandAnnotationPermissiveConfig is a [cobra.Command.Annotations] key used to indicate that
+	// project configuration must be loaded permissively before running a command.
+	CommandAnnotationPermissiveConfig = "azldev.config.permissive"
 )
 
 const (
@@ -40,6 +43,10 @@ const CmdAnnotationMCPEnabled = "azldev.mcp.enabled"
 // when exposed as an MCP tool, is read-only (does not mutate any state). MCP clients may use this
 // hint to auto-approve the tool. The value associated with the key is ignored.
 const CmdAnnotationMCPReadOnly = "azldev.mcp.readonly"
+
+// CmdAnnotationMarkdownDocsExcluded prevents a command from appearing in generated Markdown
+// reference documentation, including when hidden commands are requested.
+const CmdAnnotationMarkdownDocsExcluded = "azldev.docs.markdown-excluded"
 
 // cmdMCPAnnotationValue is the placeholder value stored for MCP command annotations; only the
 // presence of the key matters.
@@ -241,6 +248,16 @@ func ExportAsReadOnlyMCPTool(cmd *cobra.Command) {
 	for _, subCmd := range cmd.Commands() {
 		ExportAsReadOnlyMCPTool(subCmd)
 	}
+}
+
+// ExcludeFromMarkdownDocs prevents cmd from appearing in generated Markdown reference
+// documentation while leaving it registered for compatibility.
+func ExcludeFromMarkdownDocs(cmd *cobra.Command) {
+	if cmd.Annotations == nil {
+		cmd.Annotations = make(map[string]string)
+	}
+
+	cmd.Annotations[CmdAnnotationMarkdownDocsExcluded] = "true"
 }
 
 // Displays the results of a command in the appropriate format to stdout.

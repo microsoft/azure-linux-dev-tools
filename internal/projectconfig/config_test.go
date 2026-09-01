@@ -51,7 +51,7 @@ description = "`+testProjectDesc+`"
 `)
 
 	_, config, err := projectconfig.LoadProjectConfig(
-		ctx.FS(), ctx.OSEnv(), testProjectDir, true /*disableDefaultConfig*/, t.TempDir(), nil, false,
+		ctx.FS(), ctx.OSEnv(), testProjectDir, true /*disableDefaultConfig*/, t.TempDir(), nil, false, false,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, config)
@@ -66,7 +66,7 @@ func TestLoadProjectConfig_WithDefaultConfig(t *testing.T) {
 	require.NoError(t, fileutils.MkdirAll(ctx.FS(), tempDir))
 
 	_, config, err := projectconfig.LoadProjectConfig(
-		ctx.FS(), ctx.OSEnv(), testProjectDir, false /*disableDefaultConfig*/, tempDir, nil, false,
+		ctx.FS(), ctx.OSEnv(), testProjectDir, false /*disableDefaultConfig*/, tempDir, nil, false, false,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, config)
@@ -94,7 +94,7 @@ output-dir = "/from/user/out"
 `), fileperms.PublicFile))
 
 	_, config, err := projectconfig.LoadProjectConfig(
-		ctx.FS(), ctx.OSEnv(), testProjectDir, true /*disableDefaultConfig*/, t.TempDir(), nil, false,
+		ctx.FS(), ctx.OSEnv(), testProjectDir, true /*disableDefaultConfig*/, t.TempDir(), nil, false, false,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, config)
@@ -136,7 +136,7 @@ description = "`+testUserDesc+`"
 
 	_, config, err := projectconfig.LoadProjectConfig(
 		ctx.FS(), ctx.OSEnv(), testProjectDir, true /*disableDefaultConfig*/, t.TempDir(),
-		[]string{extraConfigPath}, false,
+		[]string{extraConfigPath}, false, false,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, config)
@@ -166,9 +166,41 @@ description = "`+testUserDesc+`"
 `), fileperms.PublicFile))
 
 	_, config, err := projectconfig.LoadProjectConfig(
-		ctx.FS(), ctx.OSEnv(), testProjectDir, true /*disableDefaultConfig*/, t.TempDir(), nil, false,
+		ctx.FS(), ctx.OSEnv(), testProjectDir, true /*disableDefaultConfig*/, t.TempDir(), nil, false, false,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, config)
 	assert.Equal(t, testUserDesc, config.Project.Description)
+}
+
+// TestLoadProjectConfig_LockDirByMode verifies that the project's lock directory is
+// defaulted in azldev's default mode and left unset in lock-file-free mode, where an
+// explicitly configured 'lock-dir' is accepted but ignored.
+func TestLoadProjectConfig_LockDirByMode(t *testing.T) {
+	testCases := []struct {
+		name            string
+		withoutLockfile bool
+		expected        string
+	}{
+		{name: "default mode", withoutLockfile: false, expected: filepath.Join(testProjectDir, "legacy-locks")},
+		{name: "lock-file-free mode", withoutLockfile: true, expected: ""},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			ctx := newTestCtxWithXDGConfigHome()
+			writeProjectConfig(t, ctx, `
+[project]
+lock-dir = "legacy-locks"
+`)
+
+			_, config, err := projectconfig.LoadProjectConfig(
+				ctx.FS(), ctx.OSEnv(), testProjectDir, true /*disableDefaultConfig*/, t.TempDir(), nil,
+				false, testCase.withoutLockfile,
+			)
+			require.NoError(t, err)
+			require.NotNil(t, config)
+			assert.Equal(t, testCase.expected, config.Project.LockDir)
+		})
+	}
 }

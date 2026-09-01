@@ -42,6 +42,12 @@ type FingerprintChange struct {
 	UpstreamCommit string
 }
 
+// UpstreamCommitChange records a project commit that changed a component's
+// configured upstream commit. Lock-file-free mode discovers changes from the
+// generated upstream-commit TOML instead of a lock file's fingerprint, but the
+// recorded data and the replay that consumes it are identical.
+type UpstreamCommitChange = FingerprintChange
+
 // interleavedEntry represents a single commit in the rebuilt dist-git history.
 // Exactly one of upstreamCommit or syntheticChange is non-nil.
 type interleavedEntry struct {
@@ -585,14 +591,28 @@ func openProjectRepo(
 	config *projectconfig.ComponentConfig,
 	componentName string,
 ) (*gogit.Repository, string, error) {
-	if config.SourceConfigFile == nil || config.SourceConfigFile.SourcePath() == "" {
+	var configFilePath string
+	if config.SourceConfigFile != nil {
+		configFilePath = config.SourceConfigFile.SourcePath()
+	}
+
+	return openProjectRepoForConfigFile(configFilePath, componentName)
+}
+
+// openProjectRepoForConfigFile opens the git repository containing configFilePath
+// and returns both the [gogit.Repository] and the worktree root directory. Returns
+// (nil, "", nil) when the path is empty, indicating that synthetic commits should
+// be skipped.
+func openProjectRepoForConfigFile(
+	configFilePath string,
+	componentName string,
+) (*gogit.Repository, string, error) {
+	if configFilePath == "" {
 		slog.Debug("Cannot resolve config file for synthetic commits; skipping",
 			"component", componentName)
 
 		return nil, "", nil
 	}
-
-	configFilePath := config.SourceConfigFile.SourcePath()
 
 	repo, err := git.OpenProjectRepo(filepath.Dir(configFilePath))
 	if err != nil {

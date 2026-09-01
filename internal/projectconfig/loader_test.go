@@ -22,7 +22,7 @@ var testConfigPath = filepath.Join("/project", DefaultConfigFileName)
 func TestLoadAndResolveProjectConfig(t *testing.T) {
 	ctx := testctx.NewCtx()
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, "/non/existent")
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, "/non/existent")
 	require.ErrorIs(t, err, os.ErrNotExist)
 	assert.Nil(t, config)
 }
@@ -31,7 +31,7 @@ func TestLoadAndResolveProjectConfig_SyntaxError(t *testing.T) {
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte("///"), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.Error(t, err)
 	assert.Nil(t, config)
 }
@@ -41,7 +41,7 @@ func TestLoadAndResolveProjectConfig_BadSchema(t *testing.T) {
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath,
 		[]byte("[non-existent-section]"), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.Error(t, err)
 	assert.Nil(t, config)
 }
@@ -52,7 +52,7 @@ func TestLoadAndResolveProjectConfig_BadSchema_PermissiveParsing(t *testing.T) {
 		[]byte("[non-existent-section]"), fileperms.PrivateFile))
 
 	// With permissive parsing enabled, unknown fields should be silently ignored.
-	config, err := loadAndResolveProjectConfig(ctx.FS(), true, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{permissiveConfigParsing: true}, testConfigPath)
 	require.NoError(t, err)
 	assert.NotNil(t, config)
 }
@@ -70,12 +70,12 @@ key = "value"
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
 	// Strict parsing should fail on the unknown section.
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.Error(t, err)
 	assert.Nil(t, config)
 
 	// Permissive parsing should succeed and preserve the known fields.
-	config, err = loadAndResolveProjectConfig(ctx.FS(), true, testConfigPath)
+	config, err = loadAndResolveProjectConfig(ctx.FS(), loadOptions{permissiveConfigParsing: true}, testConfigPath)
 	require.NoError(t, err)
 	require.NotNil(t, config)
 	assert.Equal(t, "my project", config.Project.Description)
@@ -110,12 +110,12 @@ key = "value"
 	}
 
 	// Strict parsing should fail because the included file has an unknown section.
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testFiles[0].path)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testFiles[0].path)
 	require.Error(t, err)
 	assert.Nil(t, config)
 
 	// Permissive parsing should succeed and resolve fields from both files.
-	config, err = loadAndResolveProjectConfig(ctx.FS(), true, testFiles[0].path)
+	config, err = loadAndResolveProjectConfig(ctx.FS(), loadOptions{permissiveConfigParsing: true}, testFiles[0].path)
 	require.NoError(t, err)
 	require.NotNil(t, config)
 	assert.Equal(t, "my project", config.Project.Description)
@@ -154,7 +154,7 @@ ref = "0123456789abcdef0123456789abcdef01234567"
 		require.NoError(t, fileutils.WriteFile(ctx.FS(), testFile.path, []byte(testFile.contents), fileperms.PrivateFile))
 	}
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.NoError(t, err)
 	require.Contains(t, config.Components, "bash")
 	require.Contains(t, config.Tests, "bash-fedora-shell")
@@ -173,12 +173,12 @@ components = ["missing-component"]
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
 	// Strict parsing should fail because the referenced component is undefined.
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.ErrorIs(t, err, ErrUndefinedComponent)
 	assert.Nil(t, config)
 
 	// Permissive parsing should ignore the validation error and return the config.
-	config, err = loadAndResolveProjectConfig(ctx.FS(), true, testConfigPath)
+	config, err = loadAndResolveProjectConfig(ctx.FS(), loadOptions{permissiveConfigParsing: true}, testConfigPath)
 	require.NoError(t, err)
 	require.NotNil(t, config)
 	assert.Contains(t, config.ComponentGroups, "my-group")
@@ -188,7 +188,7 @@ func TestLoadAndResolveProjectConfig_EmptyFile(t *testing.T) {
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte{}, fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.NoError(t, err)
 
 	// Check config
@@ -213,7 +213,7 @@ specs = ["SPECS/**/*.spec"]
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.NoError(t, err)
 
 	// Confirm parsed data.
@@ -234,7 +234,7 @@ func TestLoadAndResolveProjectConfig_Component(t *testing.T) {
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.NoError(t, err)
 
 	// Confirm parsed data.
@@ -266,7 +266,7 @@ dist-git-branch = "NinePointThree"
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.NoError(t, err)
 
 	if assert.Contains(t, config.Distros, "abc") {
@@ -301,7 +301,7 @@ output-dir = "out"
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.NoError(t, err)
 
 	// Validate config, making sure paths were made absolute.
@@ -342,7 +342,7 @@ log-dir = "artifacts/logs"
 		require.NoError(t, fileutils.WriteFile(ctx.FS(), testFile.path, []byte(testFile.contents), fileperms.PrivateFile))
 	}
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testFiles[0].path)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testFiles[0].path)
 	require.NoError(t, err)
 
 	// Validate resolved config.
@@ -379,7 +379,7 @@ upstream-commit = "bbb2222"
 		require.NoError(t, fileutils.WriteFile(ctx.FS(), testFile.path, []byte(testFile.contents), fileperms.PrivateFile))
 	}
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testFiles[0].path)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testFiles[0].path)
 	require.NoError(t, err)
 
 	// The included file is loaded after the parent, so its values override.
@@ -409,7 +409,7 @@ includes = ["include.toml"]
 		require.NoError(t, fileutils.WriteFile(ctx.FS(), testFile.path, []byte(testFile.contents), fileperms.PrivateFile))
 	}
 
-	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testFiles[0].path)
+	_, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testFiles[0].path)
 	require.ErrorIs(t, err, ErrDuplicateComponentGroups)
 }
 
@@ -444,7 +444,7 @@ dist-git-branch = "TenPointZero"
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath1, []byte(configContents1), fileperms.PrivateFile))
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath2, []byte(configContents2), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, configPath1, configPath2)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, configPath1, configPath2)
 	require.NoError(t, err)
 
 	if assert.Contains(t, config.Distros, "abc") {
@@ -501,7 +501,7 @@ upstream-commit = "bbb2222"
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath1, []byte(configContents1), fileperms.PrivateFile))
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath2, []byte(configContents2), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, configPath1, configPath2)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, configPath1, configPath2)
 	require.NoError(t, err)
 
 	// The second file's upstream-commit should override the first.
@@ -538,7 +538,7 @@ upstream-commit = "def5678"
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath1, []byte(configContents1), fileperms.PrivateFile))
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath2, []byte(configContents2), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, configPath1, configPath2)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, configPath1, configPath2)
 	require.NoError(t, err)
 
 	comp := config.Components["curl"]
@@ -580,7 +580,7 @@ upstream-commit = "bbb2222"
 		require.NoError(t, fileutils.WriteFile(ctx.FS(), testFile.path, []byte(testFile.contents), fileperms.PrivateFile))
 	}
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testFiles[0].path)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testFiles[0].path)
 	require.NoError(t, err)
 
 	comp := config.Components["abc"]
@@ -623,7 +623,7 @@ type = "upstream"
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath1, []byte(configContents1), fileperms.PrivateFile))
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath2, []byte(configContents2), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, configPath1, configPath2)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, configPath1, configPath2)
 	require.NoError(t, err)
 
 	// All three components should be present.
@@ -669,7 +669,7 @@ value = "libcurl"
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath1, []byte(configContents1), fileperms.PrivateFile))
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath2, []byte(configContents2), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, configPath1, configPath2)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, configPath1, configPath2)
 	require.NoError(t, err)
 
 	comp := config.Components["pkg"]
@@ -696,7 +696,7 @@ specs = ["SPECS/**/*.spec"]
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.NoError(t, err)
 
 	// Confirm group parsed correctly.
@@ -729,7 +729,7 @@ upstream-status = "upstreamable"
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.NoError(t, err)
 
 	if assert.Contains(t, config.ComponentGroups, "core") {
@@ -754,7 +754,7 @@ bugs = [{ url = "https://example.com/bug/1" }]
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.Error(t, err)
 	assert.Nil(t, config)
 }
@@ -786,7 +786,7 @@ components = ["shared", "only-beta"]
 		require.NoError(t, fileutils.WriteFile(ctx.FS(), testFile.path, []byte(testFile.contents), fileperms.PrivateFile))
 	}
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testFiles[0].path)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testFiles[0].path)
 	require.NoError(t, err)
 
 	// "shared" belongs to both groups.
@@ -814,7 +814,7 @@ without = ["docs"]
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.NoError(t, err)
 
 	if assert.Contains(t, config.ComponentGroups, "core") {
@@ -836,7 +836,7 @@ specs = ["SPECS/**/*.spec"]
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.NoError(t, err)
 
 	// No members means no GroupsByComponent entries.
@@ -851,7 +851,7 @@ includes = ["include.toml"]
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.ErrorIs(t, err, os.ErrNotExist)
 	assert.Nil(t, config)
 }
@@ -864,7 +864,7 @@ includes = ["*non-existent*.toml"]
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	_, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.NoError(t, err)
 }
 
@@ -877,7 +877,7 @@ rpm-channel = "base"
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.NoError(t, err)
 
 	assert.Equal(t, "base", config.DefaultPackageConfig.Publish.RPMChannel)
@@ -907,7 +907,7 @@ rpm-channel = "stable"
 		require.NoError(t, fileutils.WriteFile(ctx.FS(), f.path, []byte(f.contents), fileperms.PrivateFile))
 	}
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testFiles[0].path)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testFiles[0].path)
 	require.NoError(t, err)
 
 	// The later-loaded file wins.
@@ -934,7 +934,7 @@ rpm-channel = "second"
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath1, []byte(configContents1), fileperms.PrivateFile))
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath2, []byte(configContents2), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, configPath1, configPath2)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, configPath1, configPath2)
 	require.NoError(t, err)
 
 	assert.Equal(t, "second", config.DefaultPackageConfig.Publish.RPMChannel)
@@ -960,7 +960,7 @@ rpm-channel = "none"
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.NoError(t, err)
 
 	require.Len(t, config.PackageGroups, 2)
@@ -1003,7 +1003,7 @@ packages = ["wget2-devel"]
 		require.NoError(t, fileutils.WriteFile(ctx.FS(), f.path, []byte(f.contents), fileperms.PrivateFile))
 	}
 
-	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testFiles[0].path)
+	_, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testFiles[0].path)
 	require.ErrorIs(t, err, ErrDuplicatePackageGroups)
 }
 
@@ -1026,7 +1026,7 @@ packages = ["wget2-devel"]
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath1, []byte(configContents1), fileperms.PrivateFile))
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), configPath2, []byte(configContents2), fileperms.PrivateFile))
 
-	_, err := loadAndResolveProjectConfig(ctx.FS(), false, configPath1, configPath2)
+	_, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, configPath1, configPath2)
 	require.ErrorIs(t, err, ErrDuplicatePackageGroups)
 }
 
@@ -1039,7 +1039,7 @@ packages = ["curl-devel", ""]
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	_, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "packages[1]")
 	assert.Contains(t, err.Error(), "must not be empty")
@@ -1054,7 +1054,7 @@ packages = ["curl-devel", "wget2-devel", "curl-devel"]
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	_, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "curl-devel")
 	assert.Contains(t, err.Error(), "more than once")
@@ -1072,7 +1072,7 @@ packages = ["wget2-devel", "bash-devel"]
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	_, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "wget2-devel")
 	assert.Contains(t, err.Error(), "may only belong to one group")
@@ -1089,7 +1089,7 @@ rpm-channel = "devel"
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.NoError(t, err)
 
 	if assert.Contains(t, config.Components, "curl") {
@@ -1130,7 +1130,7 @@ ref = "abcdef0123456789abcdef0123456789abcdef01"
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.NoError(t, err)
 
 	require.Len(t, config.TestSuites, 2)
@@ -1193,7 +1193,7 @@ test-paths = ["other/"]
 		require.NoError(t, fileutils.WriteFile(ctx.FS(), testFile.path, []byte(testFile.contents), fileperms.PrivateFile))
 	}
 
-	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testFiles[0].path)
+	_, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testFiles[0].path)
 	require.ErrorIs(t, err, ErrDuplicateTestSuites)
 }
 
@@ -1206,7 +1206,7 @@ type = "unsupported"
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	_, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnknownTestType)
 }
@@ -1221,7 +1221,7 @@ type = "pytest"
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	_, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrMissingTestField)
 }
@@ -1236,7 +1236,7 @@ description = "no type set"
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	_, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrMissingTestField)
 	assert.Contains(t, err.Error(), "type")
@@ -1256,7 +1256,7 @@ working-dir = "tests"
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	_, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid test suite name")
 }
@@ -1276,7 +1276,7 @@ test-paths = ["test_smoke.py"]
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	_, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid test name")
 }
@@ -1300,7 +1300,7 @@ test-suites = [{ name = "smoke" }]
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.NoError(t, err)
 
 	if assert.Contains(t, config.Images, "myimage") {
@@ -1321,7 +1321,7 @@ test-suites = [{ name = "nonexistent" }]
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	_, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrUndefinedTestSuite)
 	assert.Contains(t, err.Error(), "nonexistent")
@@ -1341,7 +1341,7 @@ cvm = true
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.NoError(t, err)
 
 	if assert.Contains(t, config.Images, "myimage") {
@@ -1367,7 +1367,7 @@ name = "smoke_test"
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.NoError(t, err)
 
 	if assert.Contains(t, config.Tests, "smoke-test") {
@@ -1387,7 +1387,7 @@ channel = "rpm-base"
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), true, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{permissiveConfigParsing: true}, testConfigPath)
 	require.NoError(t, err)
 
 	// The deprecated field is preserved; no migration happens at load time.
@@ -1412,7 +1412,7 @@ channel = "rpm-sdk"
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), true, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{permissiveConfigParsing: true}, testConfigPath)
 	require.NoError(t, err)
 
 	require.Contains(t, config.PackageGroups, "my-group")
@@ -1437,7 +1437,7 @@ channel = "devel"
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), true, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{permissiveConfigParsing: true}, testConfigPath)
 	require.NoError(t, err)
 
 	require.Contains(t, config.Components, "curl")
@@ -1462,7 +1462,7 @@ rpm-channel = "new-channel"
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), true, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{permissiveConfigParsing: true}, testConfigPath)
 	require.NoError(t, err)
 
 	// Both fields are preserved as loaded.
@@ -1487,7 +1487,7 @@ test-paths = ["cases/"]
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.NoError(t, err)
 
 	if assert.Contains(t, config.TestSuites, "smoke") {
@@ -1510,7 +1510,7 @@ install = "invalid"
 	ctx := testctx.NewCtx()
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+	_, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrInvalidInstallMode)
 }
@@ -1521,7 +1521,7 @@ func TestLoadAndResolveProjectConfig_CircularInclude(t *testing.T) {
 		require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath,
 			[]byte(`includes = ["azldev.toml"]`), fileperms.PrivateFile))
 
-		_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+		_, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 		require.ErrorIs(t, err, ErrCircularInclude)
 	})
 
@@ -1535,7 +1535,7 @@ func TestLoadAndResolveProjectConfig_CircularInclude(t *testing.T) {
 		require.NoError(t, fileutils.WriteFile(ctx.FS(), includePath,
 			[]byte(`includes = ["azldev.toml"]`), fileperms.PrivateFile))
 
-		_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+		_, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 		require.ErrorIs(t, err, ErrCircularInclude)
 	})
 
@@ -1554,7 +1554,7 @@ func TestLoadAndResolveProjectConfig_CircularInclude(t *testing.T) {
 		require.NoError(t, fileutils.WriteFile(ctx.FS(), cPath,
 			[]byte(`includes = ["azldev.toml"]`), fileperms.PrivateFile))
 
-		_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+		_, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 		require.ErrorIs(t, err, ErrCircularInclude)
 	})
 }
@@ -1570,7 +1570,7 @@ expected = true
 		ctx := testctx.NewCtx()
 		require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-		_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+		_, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "expected-reason")
 	})
@@ -1586,8 +1586,152 @@ expected-reason = "Known upstream issue #456"
 		ctx := testctx.NewCtx()
 		require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
 
-		config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
+		config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
 		require.NoError(t, err)
 		assert.True(t, config.Components["test-pkg"].Build.Failure.Expected)
 	})
+}
+
+func TestLoadAndResolveProjectConfig_WithoutLockfile_MergesComponents(t *testing.T) {
+	testFiles := []struct {
+		path     string
+		contents string
+	}{
+		{testConfigPath, `
+includes = ["include.toml", "later.toml"]
+
+[components.abc]
+spec = { type = "upstream", upstream-distro = { name = "fedora", version = "rawhide" }, upstream-name = "source-abc" }
+build = { defines = { with_feature = "1" } }
+`},
+		{"/project/include.toml", `
+[components.abc]
+spec = { upstream-commit = "abcdef1234567" }
+`},
+		{"/project/later.toml", `
+[components.abc.release]
+calculation = "static"
+`},
+	}
+
+	ctx := testctx.NewCtx()
+	for _, testFile := range testFiles {
+		require.NoError(t, fileutils.WriteFile(
+			ctx.FS(), testFile.path, []byte(testFile.contents), fileperms.PrivateFile,
+		))
+	}
+
+	config, err := loadAndResolveProjectConfig(
+		ctx.FS(), loadOptions{withoutLockfile: true}, testFiles[0].path,
+	)
+	require.NoError(t, err)
+	require.Contains(t, config.Components, "abc")
+
+	component := config.Components["abc"]
+	assert.Equal(t, SpecSourceTypeUpstream, component.Spec.SourceType)
+	assert.Equal(t, DistroReference{Name: "fedora", Version: "rawhide"}, component.Spec.UpstreamDistro)
+	assert.Equal(t, "source-abc", component.Spec.UpstreamName)
+	assert.Equal(t, "abcdef1234567", component.Spec.UpstreamCommit)
+	assert.Equal(t, ReleaseCalculationStatic, component.Release.Calculation)
+	assert.Equal(t, map[string]string{"with_feature": "1"}, component.Build.Defines)
+	require.NotNil(t, component.SourceConfigFile)
+	assert.Equal(t, "/project/later.toml", component.SourceConfigFile.sourcePath)
+	require.NotNil(t, component.UpstreamCommitConfigFile())
+	assert.Equal(t, "/project/include.toml", component.UpstreamCommitConfigFile().sourcePath)
+}
+
+func TestLoadAndResolveProjectConfig_WithoutLockfile_ValidatesComponentsAfterMerge(t *testing.T) {
+	testFiles := []struct {
+		path     string
+		contents string
+	}{
+		{testConfigPath, `
+includes = ["pin.toml", "component.toml"]
+`},
+		{"/project/pin.toml", `
+[components.abc.spec]
+upstream-commit = "abcdef1234567"
+`},
+		{"/project/component.toml", `
+[components.abc.spec]
+type = "upstream"
+upstream-distro = { name = "fedora", version = "rawhide" }
+`},
+	}
+
+	ctx := testctx.NewCtx()
+	for _, testFile := range testFiles {
+		require.NoError(t, fileutils.WriteFile(
+			ctx.FS(), testFile.path, []byte(testFile.contents), fileperms.PrivateFile,
+		))
+	}
+
+	config, err := loadAndResolveProjectConfig(
+		ctx.FS(), loadOptions{withoutLockfile: true}, testConfigPath,
+	)
+	require.NoError(t, err)
+	require.Contains(t, config.Components, "abc")
+	assert.Equal(t, SpecSourceTypeUpstream, config.Components["abc"].Spec.SourceType)
+	assert.Equal(t, "abcdef1234567", config.Components["abc"].Spec.UpstreamCommit)
+
+	// The default lock-file mode validates each config file on its own, so the
+	// partial definition in pin.toml is rejected there.
+	_, err = loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
+	require.Error(t, err)
+}
+
+func TestLoadAndResolveProjectConfig_WithoutLockfile_RejectsInvalidComponentAfterMerge(t *testing.T) {
+	const configContents = `
+[components.abc.spec]
+upstream-commit = "abcdef1234567"
+`
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(
+		ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile,
+	))
+
+	_, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{withoutLockfile: true}, testConfigPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "UpstreamCommit")
+}
+
+func TestLoadAndResolveProjectConfig_WithoutLockfile_ComponentOverridesEarlierGeneratedCommit(t *testing.T) {
+	testFiles := []struct {
+		path     string
+		contents string
+	}{
+		{testConfigPath, `
+includes = ["generated.toml", "component.toml"]
+`},
+		{"/project/generated.toml", `
+[components.abc.spec]
+upstream-commit = "abcdef1234567"
+`},
+		{"/project/component.toml", `
+[components.abc.spec]
+type = "upstream"
+upstream-commit = "1234567abcdef"
+upstream-distro = { name = "fedora", version = "rawhide" }
+`},
+	}
+
+	ctx := testctx.NewCtx()
+	for _, testFile := range testFiles {
+		require.NoError(t, fileutils.WriteFile(
+			ctx.FS(), testFile.path, []byte(testFile.contents), fileperms.PrivateFile,
+		))
+	}
+
+	config, err := loadAndResolveProjectConfig(
+		ctx.FS(), loadOptions{withoutLockfile: true}, testConfigPath,
+	)
+	require.NoError(t, err)
+	require.Contains(t, config.Components, "abc")
+
+	component := config.Components["abc"]
+	assert.Equal(t, SpecSourceTypeUpstream, component.Spec.SourceType)
+	assert.Equal(t, "1234567abcdef", component.Spec.UpstreamCommit)
+	require.NotNil(t, component.UpstreamCommitConfigFile())
+	assert.Equal(t, "/project/component.toml", component.UpstreamCommitConfigFile().sourcePath)
 }

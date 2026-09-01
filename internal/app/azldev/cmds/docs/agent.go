@@ -13,6 +13,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/agentskill"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/upstreamcommit"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/spf13/cobra"
@@ -34,11 +35,11 @@ type InstalledAgentFile struct {
 }
 
 // Called once when the app is initialized; registers the 'agent' command tree under 'docs'.
-func agentOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
-	parentCmd.AddCommand(newAgentCmd())
+func agentOnAppInit(app *azldev.App, parentCmd *cobra.Command) {
+	parentCmd.AddCommand(newAgentCmd(agentskill.NewCatalog(app.WithoutLockfile())))
 }
 
-func newAgentCmd() *cobra.Command {
+func newAgentCmd(catalog agentskill.Catalog) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "agent",
 		Short: "Emit AI agent skill and instruction files",
@@ -51,7 +52,7 @@ reference so that agents always load the guidance that ships with the binary.`,
 	}
 
 	cmd.AddCommand(newAgentInstallCmd())
-	cmd.AddCommand(newAgentShowCmd())
+	cmd.AddCommand(newAgentShowCmd(catalog))
 
 	return cmd
 }
@@ -81,11 +82,13 @@ read-only 'docs-agent-show' MCP tool for the full, always-current skill. Pass
 --full to inline the complete skill instead, for environments without the azldev
 MCP server.
 
-Directory paths in the emitted content (such as the lock and rendered-spec
-directories) are resolved from the loaded azldev.toml, falling back to azldev's
-built-in defaults when no configuration is found. The bindings reflect the project
-azldev runs in, so pair --output-dir with -C pointing at the target repository when
-scaffolding a different repo.`,
+Directory paths in the emitted content (such as the lock, generated
+upstream-commit, and rendered-spec directories) are resolved from the loaded
+azldev.toml, falling back to azldev's built-in defaults when no configuration is
+found. The emitted content also reflects the mode azldev runs in, so pass
+--without-lockfile to describe the lock-file-free workflow. The bindings reflect
+the project azldev runs in, so pair --output-dir with -C pointing at the target
+repository when scaffolding a different repo.`,
 		Example: `  # Write agent files into the current repository
   azldev docs agent install
 
@@ -113,10 +116,10 @@ scaffolding a different repo.`,
 	return cmd
 }
 
-func newAgentShowCmd() *cobra.Command {
+func newAgentShowCmd(catalog agentskill.Catalog) *cobra.Command {
 	var skillName string
 
-	completeSkillNames := cobra.FixedCompletions(skillNames(), cobra.ShellCompDirectiveNoFileComp)
+	completeSkillNames := cobra.FixedCompletions(skillNames(catalog), cobra.ShellCompDirectiveNoFileComp)
 
 	cmd := &cobra.Command{
 		Use:     "show",
@@ -139,7 +142,12 @@ skill to list the available skills.`,
 	}
 
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
-		name, list, err := resolveShowSkill(skillName)
+		env, err := azldev.GetEnvFromCommand(cmd)
+		if err != nil {
+			return fmt.Errorf("failed to get command environment:\n%w", err)
+		}
+
+		name, list, err := resolveShowSkill(agentSkillCatalog(env), skillName)
 		if err != nil {
 			return err
 		}
@@ -153,12 +161,7 @@ skill to list the available skills.`,
 			return nil
 		}
 
-		env, err := azldev.GetEnvFromCommand(cmd)
-		if err != nil {
-			return fmt.Errorf("failed to get command environment:\n%w", err)
-		}
-
-		doc, err := agentskill.SkillDocument(name, agentSkillParams(env, cmd.Root()))
+		doc, err := agentSkillCatalog(env).SkillDocument(name, agentSkillParams(env, cmd.Root()))
 		if err != nil {
 			return fmt.Errorf("failed to render azldev skill:\n%w", err)
 		}
@@ -186,7 +189,7 @@ func InstallAgentFiles(
 		return nil, err
 	}
 
-	files, err := agentskill.Files(layout, agentSkillParams(env, rootCmd), options.Full)
+	files, err := agentSkillCatalog(env).Files(layout, agentSkillParams(env, rootCmd), options.Full)
 	if err != nil {
 		return nil, fmt.Errorf("failed to render azldev agent files:\n%w", err)
 	}
@@ -313,6 +316,12 @@ func emitMCPConfig(
 	return InstalledAgentFile{Path: destPath, Written: true}, nil
 }
 
+// agentSkillCatalog returns the skill catalog describing the mode azldev is running
+// in, so the emitted and served content matches the commands the user actually has.
+func agentSkillCatalog(env *azldev.Env) agentskill.Catalog {
+	return agentskill.NewCatalog(env != nil && env.WithoutLockfile())
+}
+
 // agentSkillParams gathers the dynamic values injected into the emitted and served agent content,
 // including the target-repo bindings resolved from the loaded project configuration.
 func agentSkillParams(env *azldev.Env, rootCmd *cobra.Command) agentskill.Params {
@@ -330,9 +339,10 @@ func agentSkillParams(env *azldev.Env, rootCmd *cobra.Command) agentskill.Params
 // with '-C' pointing at that repository so the emitted paths match it.
 func resolveBindings(env *azldev.Env) agentskill.Bindings {
 	bindings := agentskill.Bindings{
-		LockDir:          projectconfig.DefaultLockDir,
-		RenderedSpecsDir: projectconfig.DefaultRenderedSpecsDir,
-		WorkDir:          projectconfig.DefaultWorkDir,
+		LockDir:            projectconfig.DefaultLockDir,
+		UpstreamCommitsDir: upstreamcommit.DefaultDir,
+		RenderedSpecsDir:   projectconfig.DefaultRenderedSpecsDir,
+		WorkDir:            projectconfig.DefaultWorkDir,
 	}
 
 	if env == nil || env.Config() == nil {
@@ -394,14 +404,14 @@ func resolveLayout(layoutName string) (agentskill.Layout, error) {
 // It returns the skill name to print; or, when no skill is named, an empty name plus
 // the list of skill names for the caller to display.
 // An unknown name is an error that names the valid choices.
-func resolveShowSkill(requested string) (name string, list []string, err error) {
-	names := skillNames()
+func resolveShowSkill(catalog agentskill.Catalog, requested string) (name string, list []string, err error) {
+	names := skillNames(catalog)
 
 	if requested == "" {
 		return "", names, nil
 	}
 
-	if _, findErr := agentskill.FindSkill(requested); findErr != nil {
+	if _, findErr := catalog.FindSkill(requested); findErr != nil {
 		return "", nil, fmt.Errorf("unknown skill %#q; choose one of: %s",
 			requested, strings.Join(names, ", "))
 	}
@@ -409,9 +419,9 @@ func resolveShowSkill(requested string) (name string, list []string, err error) 
 	return requested, nil, nil
 }
 
-// skillNames returns the registered skill names in emission order.
-func skillNames() []string {
-	skills := agentskill.Skills()
+// skillNames returns the catalog's skill names in emission order.
+func skillNames(catalog agentskill.Catalog) []string {
+	skills := catalog.Skills()
 	names := make([]string, len(skills))
 
 	for i, skill := range skills {

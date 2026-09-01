@@ -80,9 +80,26 @@ func NewProjectConfig() ProjectConfig {
 
 // Validates the configuration, returning an error if any semantic errors are found.
 func (cfg *ProjectConfig) Validate() error {
+	return cfg.validate(false)
+}
+
+// validate checks the assembled project configuration. In lock-file-free mode the
+// component definitions are validated here rather than per config file, because
+// override merging lets a single file hold a partial definition.
+func (cfg *ProjectConfig) validate(withoutLockfile bool) error {
 	err := validator.New().Struct(cfg)
 	if err != nil {
 		return fmt.Errorf("config error:\n%w", err)
+	}
+
+	if withoutLockfile {
+		if err := validateComponentStructs(cfg.Components); err != nil {
+			return err
+		}
+
+		if err := validateComponentConfigs(cfg.Components); err != nil {
+			return err
+		}
 	}
 
 	if err := validateComponentGroupMembership(cfg.ComponentGroups, cfg.Components); err != nil {

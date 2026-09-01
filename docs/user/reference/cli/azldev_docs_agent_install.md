@@ -24,11 +24,13 @@ read-only 'docs-agent-show' MCP tool for the full, always-current skill. Pass
 --full to inline the complete skill instead, for environments without the azldev
 MCP server.
 
-Directory paths in the emitted content (such as the lock and rendered-spec
-directories) are resolved from the loaded azldev.toml, falling back to azldev's
-built-in defaults when no configuration is found. The bindings reflect the project
-azldev runs in, so pair --output-dir with -C pointing at the target repository when
-scaffolding a different repo.
+Directory paths in the emitted content (such as the lock, generated
+upstream-commit, and rendered-spec directories) are resolved from the loaded
+azldev.toml, falling back to azldev's built-in defaults when no configuration is
+found. The emitted content also reflects the mode azldev runs in, so pass
+--without-lockfile to describe the lock-file-free workflow. The bindings reflect
+the project azldev runs in, so pair --output-dir with -C pointing at the target
+repository when scaffolding a different repo.
 
 ```
 azldev docs agent install [flags]
@@ -67,6 +69,7 @@ azldev docs agent install [flags]
   -C, --project string            path to Azure Linux project
   -q, --quiet                     only enable minimal output
   -v, --verbose                   enable verbose output
+      --without-lockfile          preview: track resolved upstream commits in generated config instead of lock files
 ```
 
 ### SEE ALSO

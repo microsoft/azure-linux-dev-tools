@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/agentskill"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/spf13/cobra"
@@ -71,29 +72,34 @@ func TestResolveBindingsFromConfig(t *testing.T) {
 	assert.Equal(t, "build/work", bindings.WorkDir)
 }
 
+// defaultCatalog is the agent skill catalog for azldev's default mode.
+//
+//nolint:gochecknoglobals // effectively a constant used by several tests.
+var defaultCatalog = agentskill.NewCatalog(false)
+
 func TestResolveShowSkill(t *testing.T) {
 	// A known skill resolves to itself, with nothing to list.
-	name, list, err := resolveShowSkill("azldev")
+	name, list, err := resolveShowSkill(defaultCatalog, "azldev")
 	require.NoError(t, err)
 	assert.Equal(t, "azldev", name)
 	assert.Nil(t, list)
 
 	// No skill named, with several registered, returns the names to display.
-	name, list, err = resolveShowSkill("")
+	name, list, err = resolveShowSkill(defaultCatalog, "")
 	require.NoError(t, err)
 	assert.Empty(t, name)
-	assert.Equal(t, skillNames(), list)
+	assert.Equal(t, skillNames(defaultCatalog), list)
 	assert.Greater(t, len(list), 1, "test assumes more than one skill is registered")
 
 	// An unknown skill errors and names the valid choices.
-	_, _, err = resolveShowSkill("not-a-real-skill")
+	_, _, err = resolveShowSkill(defaultCatalog, "not-a-real-skill")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown skill")
 	assert.Contains(t, err.Error(), "azldev")
 }
 
 func TestAgentShowCmdUsesSkillFlag(t *testing.T) {
-	cmd := newAgentShowCmd()
+	cmd := newAgentShowCmd(defaultCatalog)
 
 	assert.Equal(t, "show", cmd.Use)
 	require.NoError(t, cmd.Args(cmd, nil))
@@ -103,6 +109,6 @@ func TestAgentShowCmdUsesSkillFlag(t *testing.T) {
 	require.True(t, ok, "--skill must have shell completion")
 
 	choices, directive := complete(cmd, nil, "")
-	assert.Equal(t, skillNames(), choices)
+	assert.Equal(t, skillNames(defaultCatalog), choices)
 	assert.Equal(t, cobra.ShellCompDirectiveNoFileComp, directive)
 }

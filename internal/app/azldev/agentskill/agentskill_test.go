@@ -423,3 +423,64 @@ func TestOverlayMetadataSkillCoversSchemaEnums(t *testing.T) {
 		}
 	}
 }
+
+// TestCatalog_SkillsByMode verifies that each mode advertises the skill describing
+// how it maintains resolved component state, and only that one.
+func TestCatalog_SkillsByMode(t *testing.T) {
+	defaultNames := skillNamesOf(agentskill.NewCatalog(false))
+	assert.Contains(t, defaultNames, "azldev-update-component")
+	assert.NotContains(t, defaultNames, "azldev-refresh-upstream-commit")
+
+	withoutLockfileNames := skillNamesOf(agentskill.NewCatalog(true))
+	assert.Contains(t, withoutLockfileNames, "azldev-refresh-upstream-commit")
+	assert.NotContains(t, withoutLockfileNames, "azldev-update-component")
+
+	// The two catalogs otherwise describe the same set of skills, in the same order.
+	assert.Len(t, withoutLockfileNames, len(defaultNames))
+}
+
+// TestCatalog_SkillContentByMode verifies that the rendered skill bodies describe
+// the mode's own workflow.
+func TestCatalog_SkillContentByMode(t *testing.T) {
+	params := testParams()
+	params.UpstreamCommitsDir = "base/upstream-commits"
+
+	defaultDoc, err := agentskill.NewCatalog(false).SkillDocument("azldev-add-component", params)
+	require.NoError(t, err)
+	assert.Contains(t, defaultDoc, "azldev comp update")
+	assert.Contains(t, defaultDoc, "locks/<name>.lock")
+
+	withoutLockfileDoc, err := agentskill.NewCatalog(true).SkillDocument("azldev-add-component", params)
+	require.NoError(t, err)
+	assert.Contains(t, withoutLockfileDoc, "azldev comp refresh-upstream-commit")
+	assert.Contains(t, withoutLockfileDoc, "base/upstream-commits/<name>.toml")
+	assert.NotContains(t, withoutLockfileDoc, "azldev comp update")
+}
+
+// TestCatalog_InstructionsPointAtModeSkills verifies that instruction wrappers point
+// at the skill that exists in the active mode.
+func TestCatalog_InstructionsPointAtModeSkills(t *testing.T) {
+	for _, withoutLockfile := range []bool{false, true} {
+		catalog := agentskill.NewCatalog(withoutLockfile)
+		names := skillNamesOf(catalog)
+
+		for _, inst := range catalog.Instructions() {
+			for _, pointer := range inst.Skills {
+				assert.Contains(t, names, pointer.Skill,
+					"instruction %q points at a skill that is not registered in this mode", inst.Name)
+			}
+		}
+	}
+}
+
+// skillNamesOf returns the names of the catalog's skills.
+func skillNamesOf(catalog agentskill.Catalog) []string {
+	skills := catalog.Skills()
+	names := make([]string, 0, len(skills))
+
+	for _, skill := range skills {
+		names = append(names, skill.Name)
+	}
+
+	return names
+}

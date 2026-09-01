@@ -96,7 +96,7 @@ Cannot be combined with --bump.`,
 		ValidArgsFunction: components.GenerateComponentNameCompletions,
 	}
 
-	components.AddComponentFilterOptionsToCommand(cmd, &options.ComponentFilter)
+	addComponentFilterOptions(cmd, &options.ComponentFilter, cmdOptions{})
 
 	cmd.Flags().BoolVar(&options.Bump, "bump", false,
 		"increment the manual-rebuild counter to trigger a new release")
@@ -256,42 +256,43 @@ func handleOrphanLocks(
 	comps []components.Component,
 	options *UpdateComponentOptions,
 ) ([]string, error) {
-	if !options.ComponentFilter.IncludeAllComponents {
-		return nil, nil
+	return handleOrphans(
+		lockOrphanStore{store: store},
+		comps,
+		options.ComponentFilter.IncludeAllComponents,
+		options.CheckOnly,
+		orphanMessages{
+			noComponents: "all existing lock files",
+			pruned:       "Pruned orphan lock files",
+		},
+	)
+}
+
+// lockOrphanStore adapts [lockfile.Store] to [orphanStore].
+type lockOrphanStore struct {
+	store *lockfile.Store
+}
+
+func (s lockOrphanStore) findOrphans(
+	resolved map[string]projectconfig.ComponentConfig,
+) ([]string, error) {
+	orphans, err := s.store.FindOrphanLockFiles(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("finding orphan lock files:\n%w", err)
 	}
 
-	if len(comps) == 0 {
-		if options.CheckOnly {
-			slog.Warn("No components resolved; all existing lock files would be treated as orphans")
-		} else {
-			slog.Warn("No components resolved; all existing lock files will be treated as orphans")
-		}
+	return orphans, nil
+}
+
+func (s lockOrphanStore) pruneOrphans(
+	resolved map[string]projectconfig.ComponentConfig,
+) (int, error) {
+	pruned, err := s.store.PruneOrphans(resolved)
+	if err != nil {
+		return 0, fmt.Errorf("pruning orphan lock files:\n%w", err)
 	}
 
-	resolvedNames := make(map[string]projectconfig.ComponentConfig, len(comps))
-	for _, comp := range comps {
-		resolvedNames[comp.GetName()] = *comp.GetConfig()
-	}
-
-	if options.CheckOnly {
-		orphans, findErr := store.FindOrphanLockFiles(resolvedNames)
-		if findErr != nil {
-			return nil, fmt.Errorf("finding orphan lock files:\n%w", findErr)
-		}
-
-		return orphans, nil
-	}
-
-	pruned, pruneErr := store.PruneOrphans(resolvedNames)
-	if pruneErr != nil {
-		return nil, fmt.Errorf("pruning orphan lock files:\n%w", pruneErr)
-	}
-
-	if pruned > 0 {
-		slog.Info("Pruned orphan lock files", "count", pruned)
-	}
-
-	return nil, nil
+	return pruned, nil
 }
 
 // checkOnlyResult inspects the results of a --check-only update run and

@@ -68,6 +68,21 @@ func NewTestEnv(t *testing.T) *TestEnv {
 	return testEnv
 }
 
+// NewTestEnvWithoutLockfile creates a [TestEnv] configured for azldev's
+// lock-file-free mode: no lock directory is configured and the environment
+// reports [azldev.Env.WithoutLockfile], so lock population and lock validation
+// are skipped exactly as they are under the global '--without-lockfile' flag.
+func NewTestEnvWithoutLockfile(t *testing.T) *TestEnv {
+	t.Helper()
+
+	testEnv := NewTestEnv(t)
+	testEnv.Config.Project.LockDir = ""
+
+	setEnvWithOptions(t, testEnv, testEnv.Env.ProjectDir(), true /*withoutLockfile*/)
+
+	return testEnv
+}
+
 // newTestEnv creates a new [TestEnv] with a test project config
 // and mock implementations of [opctx.FS] and [opctx.OSEnv].
 func newTestEnv(testMockConfigPath string) *TestEnv {
@@ -125,12 +140,21 @@ func populateTestProjectFiles(t *testing.T, testEnv *TestEnv, testProjectDir str
 func setEnv(t *testing.T, testEnv *TestEnv, testProjectDir string) {
 	t.Helper()
 
+	setEnvWithOptions(t, testEnv, testProjectDir, false /*withoutLockfile*/)
+}
+
+// setEnvWithOptions sets the [azldev.Env] for the test environment in the
+// requested mode.
+func setEnvWithOptions(t *testing.T, testEnv *TestEnv, testProjectDir string, withoutLockfile bool) {
+	t.Helper()
+
 	envOptions := azldev.NewEnvOptions()
 	envOptions.DryRunnable = testEnv.DryRunnable
 	envOptions.EventListener = testEnv.EventListener
 	envOptions.Interfaces = testEnv.TestInterfaces
 	envOptions.ProjectDir = testProjectDir
 	envOptions.Config = testEnv.Config
+	envOptions.WithoutLockfile = withoutLockfile
 
 	testEnv.Env = azldev.NewEnv(t.Context(), envOptions)
 }

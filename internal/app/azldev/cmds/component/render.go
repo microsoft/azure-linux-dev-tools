@@ -38,12 +38,12 @@ type RenderOptions struct {
 	CheckOnly         bool
 }
 
-func renderOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
-	parentCmd.AddCommand(NewRenderCmd())
+func renderOnAppInit(app *azldev.App, parentCmd *cobra.Command) {
+	parentCmd.AddCommand(NewRenderCmd(cmdOptionsForApp(app)...))
 }
 
 // NewRenderCmd constructs a [cobra.Command] for the "component render" CLI subcommand.
-func NewRenderCmd() *cobra.Command {
+func NewRenderCmd(opts ...CmdOption) *cobra.Command {
 	var options RenderOptions
 
 	var cmd *cobra.Command
@@ -97,7 +97,7 @@ valid with -a.`,
 		},
 	}
 
-	components.AddComponentFilterOptionsToCommand(cmd, &options.ComponentFilter)
+	addComponentFilterOptions(cmd, &options.ComponentFilter, newCmdOptions(opts...))
 
 	cmd.Flags().StringVarP(&options.OutputDir, "output-dir", "o", "",
 		"output directory for rendered specs (overrides rendered-specs-dir from config)")
@@ -523,13 +523,11 @@ func prepareComponentSources(
 	// rpmautospec can expand %autorelease and %autochangelog correctly.
 	// WithSkipLookaside avoids expensive tarball downloads — only spec +
 	// sidecar files are needed for rendering.
-	preparerOpts := []sources.PreparerOption{
-		sources.WithGitRepo(env, env.LockReader(), distro.Version.ReleaseVer),
-		sources.WithDirtyDetection(),
+	preparerOpts := append(gitRepoPreparerOptions(env, distro),
 		sources.WithSkipLookaside(),
 		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)),
 		sources.WithMockProcessor(mockProcessor),
-	}
+	)
 
 	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, preparerOpts...)
 	if err != nil {

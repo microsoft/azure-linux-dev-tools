@@ -38,6 +38,8 @@ Glob patterns that match no files are silently ignored. Literal filenames (no wi
 
 Includes are resolved recursively — included files can themselves declare further includes. For a detailed explanation of load order and merge semantics, see [Configuration System](../../explanation/config-system.md).
 
+> **Preview:** With the global `--without-lockfile` flag, the generated upstream-commit files must be included before any component-specific TOML configuration, so that later component definitions supply the remaining `spec` fields and may explicitly override a generated pin. See [Preview the Lock-File-Free Mode](../../how-to/preview-without-lockfile.md).
+
 ## Minimal Example
 
 A minimal root config file that includes distro definitions and a project:

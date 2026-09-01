@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"path"
 	"slices"
+	"strings"
 	"text/template"
 )
 
@@ -31,15 +32,26 @@ const (
 )
 
 // The embedded templates rendered into the emitted files and the served skill
-// documents.
+// documents. Templates under 'content/withoutlockfile' replace the same-named
+// template when lock-file-free mode is selected.
 //
-//go:embed content/*.tmpl
+//go:embed content/*.tmpl content/withoutlockfile/*.tmpl
 var content embed.FS
 
-// templates holds all parsed templates, keyed by their base file name.
+// templates holds all parsed templates for azldev's default mode, keyed by their
+// base file name.
 //
 //nolint:gochecknoglobals // parsed templates are effectively constant and safe for concurrent use.
 var templates = template.Must(template.ParseFS(content, "content/*.tmpl"))
+
+// withoutLockfileTemplates holds the same templates with the lock-file-free
+// variants layered on top: parsing a template whose base name already exists
+// replaces it, so only the differing documents need their own file.
+//
+//nolint:gochecknoglobals // parsed templates are effectively constant and safe for concurrent use.
+var withoutLockfileTemplates = template.Must(template.ParseFS(
+	content, "content/*.tmpl", "content/withoutlockfile/*.tmpl",
+))
 
 // Skill describes a single emitted Agent Skill.
 type Skill struct {
@@ -156,20 +168,129 @@ var skills = []Skill{
 	},
 }
 
-// Skills returns the registered skills in emission order.
-func Skills() []Skill {
-	return slices.Clone(skills)
+// withoutLockfileSkills replaces registry entries when lock-file-free mode is
+// selected, keyed by the name of the default-mode skill it replaces. Everything
+// else — order, remaining skills, and the emitted layout — is shared.
+//
+//nolint:gochecknoglobals // effectively a constant registry of the mode's skills.
+var withoutLockfileSkills = map[string]Skill{
+	"azldev": {
+		Name: "azldev",
+		Description: "Read this before running azldev or editing azldev config, and whenever working " +
+			"in a repo that contains an azldev.toml file; do not guess azldev's commands or config. " +
+			"Explains how to use the azldev CLI to build a distro from TOML config, including the core " +
+			"concepts (components, overlays, distros, rendered specs, upstream commit config), running " +
+			"azldev (repo root or -C, plus the -q and -O json flags), the common commands, and where to " +
+			"go for each workflow. Triggers include azldev, comp build, comp render, " +
+			"comp refresh-upstream-commit, build a component, add a component, distro config.",
+		bodyTemplate: "azldev.md.tmpl",
+	},
+	"azldev-update-component": {
+		Name: "azldev-refresh-upstream-commit",
+		Description: "Read this before finalizing a component change, changing source resolution, or " +
+			"editing generated upstream commit TOML by hand. Explains how to refresh commits with " +
+			"'azldev comp refresh-upstream-commit', covering when to refresh versus render, the " +
+			"update/render/commit/re-render/amend workflow, and per-component versus -a refresh. " +
+			"Triggers include comp refresh-upstream-commit, refresh upstream commit, bump pin, change " +
+			"snapshot, upstream distro, commit drift, version bump, finalize component.",
+		bodyTemplate: "refresh-upstream-commit.md.tmpl",
+	},
 }
 
-// FindSkill returns the registered skill with the given name.
-func FindSkill(name string) (Skill, error) {
-	for _, skill := range skills {
+// updateComponentSkillName is the default mode's finalization skill; lock-file-free
+// mode replaces it with the refresh-upstream-commit skill.
+const updateComponentSkillName = "azldev-update-component"
+
+// Catalog exposes the skills and instruction files for one of azldev's modes. The
+// registries are shared; only the documents and pointers that describe how resolved
+// component state is maintained differ.
+type Catalog struct {
+	withoutLockfile bool
+}
+
+// NewCatalog returns the catalog for the selected mode. Pass true to describe
+// lock-file-free mode, as selected by the global '--without-lockfile' flag.
+func NewCatalog(withoutLockfile bool) Catalog {
+	return Catalog{withoutLockfile: withoutLockfile}
+}
+
+// templates returns the parsed template set for the catalog's mode.
+func (c Catalog) templates() *template.Template {
+	if c.withoutLockfile {
+		return withoutLockfileTemplates
+	}
+
+	return templates
+}
+
+// Skills returns the catalog's skills in emission order.
+func (c Catalog) Skills() []Skill {
+	result := slices.Clone(skills)
+
+	if !c.withoutLockfile {
+		return result
+	}
+
+	for idx := range result {
+		if replacement, ok := withoutLockfileSkills[result[idx].Name]; ok {
+			result[idx] = replacement
+		}
+	}
+
+	return result
+}
+
+// FindSkill returns the catalog's skill with the given name.
+func (c Catalog) FindSkill(name string) (Skill, error) {
+	for _, skill := range c.Skills() {
 		if skill.Name == name {
 			return skill, nil
 		}
 	}
 
 	return Skill{}, fmt.Errorf("unknown skill %#q", name)
+}
+
+// Instructions returns the catalog's instruction files in emission order.
+func (c Catalog) Instructions() []Instruction {
+	result := slices.Clone(instructions)
+	for idx := range result {
+		result[idx].Skills = slices.Clone(result[idx].Skills)
+	}
+
+	if !c.withoutLockfile {
+		return result
+	}
+
+	refresh := withoutLockfileSkills[updateComponentSkillName]
+
+	for instIdx := range result {
+		if replacement, ok := withoutLockfileInstructions[result[instIdx].Name]; ok {
+			result[instIdx].Description = replacement.Description
+		}
+
+		for skillIdx := range result[instIdx].Skills {
+			pointer := &result[instIdx].Skills[skillIdx]
+			if pointer.Skill != updateComponentSkillName {
+				continue
+			}
+
+			pointer.Skill = refresh.Name
+			pointer.Purpose = strings.ReplaceAll(pointer.Purpose, "lock", "upstream commit")
+		}
+	}
+
+	return result
+}
+
+// Skills returns the registered skills in emission order for azldev's default mode.
+func Skills() []Skill {
+	return NewCatalog(false).Skills()
+}
+
+// FindSkill returns the registered skill with the given name in azldev's default mode.
+func FindSkill(name string) (Skill, error) {
+	return NewCatalog(false).FindSkill(name)
 }
 
 // SkillPointer names a skill an instruction file points at, together with a short
@@ -268,14 +389,24 @@ var instructions = []Instruction{
 	},
 }
 
-// Instructions returns the registered instruction files in emission order.
-func Instructions() []Instruction {
-	result := slices.Clone(instructions)
-	for i := range result {
-		result[i].Skills = slices.Clone(result[i].Skills)
-	}
+// withoutLockfileInstructions replaces instruction descriptions when lock-file-free
+// mode is selected, keyed by instruction name. Skill pointers are rewritten
+// automatically, so only the free-form trigger text lives here.
+//
+//nolint:gochecknoglobals // effectively a constant registry of the mode's instructions.
+var withoutLockfileInstructions = map[string]Instruction{
+	SkillName: {
+		Description: "This repo is an azldev distro project (azldev.toml present). Before running azldev " +
+			"or editing its config, load the azldev skill; do not guess azldev's commands or config. " +
+			"Triggers include azldev, comp build, comp render, comp refresh-upstream-commit, build a " +
+			"component, add a component, distro config.",
+	},
+}
 
-	return result
+// Instructions returns the registered instruction files in emission order for
+// azldev's default mode.
+func Instructions() []Instruction {
+	return NewCatalog(false).Instructions()
 }
 
 // Layout controls where emitted skill files are written in a target repository.
@@ -322,7 +453,12 @@ type Command struct {
 // accurate for a default project even with no configuration present.
 type Bindings struct {
 	// LockDir is the repo-relative directory holding per-component lock files.
+	// Only meaningful in azldev's default mode.
 	LockDir string
+
+	// UpstreamCommitsDir is the repo-relative directory holding the generated
+	// per-component commit TOMLs. Only meaningful in lock-file-free mode.
+	UpstreamCommitsDir string
 
 	// RenderedSpecsDir is the repo-relative directory holding rendered component specs.
 	RenderedSpecsDir string
@@ -356,7 +492,7 @@ type EmittedFile struct {
 	Content string `json:"-"`
 }
 
-func renderSkill(templateName string, skill Skill, params Params) (string, error) {
+func (c Catalog) renderSkill(templateName string, skill Skill, params Params) (string, error) {
 	var buf bytes.Buffer
 
 	data := struct {
@@ -369,7 +505,7 @@ func renderSkill(templateName string, skill Skill, params Params) (string, error
 		ShowSkillToolName: ShowSkillToolName,
 	}
 
-	err := templates.ExecuteTemplate(&buf, templateName, data)
+	err := c.templates().ExecuteTemplate(&buf, templateName, data)
 	if err != nil {
 		return "", fmt.Errorf("failed to render agent skill template %#q:\n%w", templateName, err)
 	}
@@ -377,8 +513,8 @@ func renderSkill(templateName string, skill Skill, params Params) (string, error
 	return buf.String(), nil
 }
 
-func renderInstruction(inst Instruction, params Params) (string, error) {
-	if err := validateInstruction(inst); err != nil {
+func (c Catalog) renderInstruction(inst Instruction, params Params) (string, error) {
+	if err := c.validateInstruction(inst); err != nil {
 		return "", err
 	}
 
@@ -398,7 +534,7 @@ func renderInstruction(inst Instruction, params Params) (string, error) {
 		Instruction: inst,
 	}
 
-	err = templates.ExecuteTemplate(&buf, "instruction-wrapper.md.tmpl", data)
+	err = c.templates().ExecuteTemplate(&buf, "instruction-wrapper.md.tmpl", data)
 	if err != nil {
 		return "", fmt.Errorf("failed to render instruction template for %#q:\n%w", inst.Name, err)
 	}
@@ -406,13 +542,13 @@ func renderInstruction(inst Instruction, params Params) (string, error) {
 	return buf.String(), nil
 }
 
-func validateInstruction(inst Instruction) error {
+func (c Catalog) validateInstruction(inst Instruction) error {
 	if len(inst.Skills) == 0 {
 		return fmt.Errorf("instruction %#q must reference at least one skill", inst.Name)
 	}
 
 	for _, pointer := range inst.Skills {
-		if _, err := FindSkill(pointer.Skill); err != nil {
+		if _, err := c.FindSkill(pointer.Skill); err != nil {
 			return fmt.Errorf("instruction %#q references unknown skill %#q:\n%w",
 				inst.Name, pointer.Skill, err)
 		}
@@ -442,13 +578,18 @@ func renderInline(name, text string, params Params) (string, error) {
 // SkillDocument renders the full document for the named skill. It is served
 // verbatim by the read-only MCP tool and by 'azldev docs agent show'. The default
 // layout is used since a served document has no on-disk directory.
-func SkillDocument(name string, params Params) (string, error) {
-	skill, err := FindSkill(name)
+func (c Catalog) SkillDocument(name string, params Params) (string, error) {
+	skill, err := c.FindSkill(name)
 	if err != nil {
 		return "", err
 	}
 
-	return renderSkill(skill.bodyTemplate, skill, params)
+	return c.renderSkill(skill.bodyTemplate, skill, params)
+}
+
+// SkillDocument renders the named skill's document for azldev's default mode.
+func SkillDocument(name string, params Params) (string, error) {
+	return NewCatalog(false).SkillDocument(name, params)
 }
 
 // Files renders the set of agent files to write into a target repository using the
@@ -456,16 +597,18 @@ func SkillDocument(name string, params Params) (string, error) {
 // skill document instead of a light MCP wrapper (useful when the azldev MCP server
 // is not available in the target environment). Instruction files are always light
 // wrappers that point at the relevant skills.
-func Files(layout Layout, params Params, full bool) ([]EmittedFile, error) {
-	files := make([]EmittedFile, 0, len(skills)+len(instructions))
+func (c Catalog) Files(layout Layout, params Params, full bool) ([]EmittedFile, error) {
+	catalogSkills := c.Skills()
+	catalogInstructions := c.Instructions()
+	files := make([]EmittedFile, 0, len(catalogSkills)+len(catalogInstructions))
 
-	for _, skill := range skills {
+	for _, skill := range catalogSkills {
 		templateName := "skill-wrapper.md.tmpl"
 		if full {
 			templateName = skill.bodyTemplate
 		}
 
-		rendered, err := renderSkill(templateName, skill, params)
+		rendered, err := c.renderSkill(templateName, skill, params)
 		if err != nil {
 			return nil, err
 		}
@@ -473,8 +616,8 @@ func Files(layout Layout, params Params, full bool) ([]EmittedFile, error) {
 		files = append(files, EmittedFile{RelPath: layout.SkillFile(skill), Content: rendered})
 	}
 
-	for _, inst := range instructions {
-		rendered, err := renderInstruction(inst, params)
+	for _, inst := range catalogInstructions {
+		rendered, err := c.renderInstruction(inst, params)
 		if err != nil {
 			return nil, err
 		}
@@ -483,4 +626,9 @@ func Files(layout Layout, params Params, full bool) ([]EmittedFile, error) {
 	}
 
 	return files, nil
+}
+
+// Files renders the agent files for azldev's default mode.
+func Files(layout Layout, params Params, full bool) ([]EmittedFile, error) {
+	return NewCatalog(false).Files(layout, params, full)
 }

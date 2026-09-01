@@ -7,6 +7,51 @@ All notable changes to `azldev` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`--without-lockfile` preview mode.** Add a global `--without-lockfile`
+  flag that opts in to a preview of tracking resolved upstream commits in
+  generated component configuration instead of per-component lock files. The
+  flag defaults to off; without it azldev's behavior, command set, and
+  configuration handling are unchanged. The preview surface is not stable and
+  may change.
+- **Generated upstream commit configuration.** With `--without-lockfile`,
+  record snapshot-selected upstream commits as normal layered TOML under
+  `base/upstream-commits`. Generated pin files participate in standard
+  configuration loading, merging, provenance tracking, and validation, and the
+  project's `lock-dir` setting is accepted but ignored.
+- **Upstream commit refresh command.** With `--without-lockfile`, `azldev
+  component refresh-upstream-commit` resolves and records upstream commits. It
+  supports check-only operation, removes obsolete pins for selected
+  non-upstream components, and prunes orphaned generated files when all
+  components are selected. Configuration is loaded permissively for this
+  command so stale generated pins can be removed after a component is deleted
+  or converted to another source type.
+
+### Changed
+
+- **Mode-specific component commands.** With `--without-lockfile`, `azldev
+  component update`, `component history`, and `component query` are replaced by
+  hidden no-op shims, and the lock-file-only `--skip-lock-validation` flag is
+  not registered. All of them are unchanged in the default mode.
+- **Configuration-based component change detection.** With
+  `--without-lockfile`, `azldev component changed` loads each historical
+  project configuration independently and compares normalized build inputs
+  instead of stored fingerprints. It handles added and deleted components,
+  resolves recursive includes and inherited defaults at each ref, compares
+  local source and overlay content, and reports rendered `sources` changes
+  separately.
+- **Synthetic source history.** With `--without-lockfile`, synthetic dist-git
+  history is built from configured upstream commit transitions and walks
+  first-parent history to the repository root instead of relying on
+  lock-recorded import commits.
+- **Component workflow guidance.** Agent skills, instruction files, and MCP
+  tools describe the workflow of the mode azldev runs in. The generated CLI
+  reference continues to document the default mode; the preview mode is
+  documented in the user guide.
+
 ## [0.3.0] - 2026-08-10
 
 ### Added

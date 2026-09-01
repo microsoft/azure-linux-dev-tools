@@ -37,6 +37,7 @@ Meta commands:
   [1;36m-q,[0m [1;36m--quiet[0m                     only enable minimal output
   [1;36m-v,[0m [1;36m--verbose[0m                   enable verbose output
       [1;36m--version[0m                   version for azldev
+      [1;36m--without-lockfile[0m          preview: track resolved upstream commits in generated config instead of lock files
 
 Use "[1;3mazldev[0m [command] --help" for more information about a command.
 Use "[1;3mazldev[0m advanced --help" for additional tools (mock, mcp, wget).

@@ -7,6 +7,7 @@
 - [Build a Component](./how-to/build-component.md) — build RPMs from component definitions
 - [Build an Image](./how-to/build-image.md) — build and boot Azure Linux images
 - [Set Up AI Coding Agents](./how-to/set-up-ai-agents.md) — emit agent skill and instruction files
+- [Preview the Lock-File-Free Mode](./how-to/preview-without-lockfile.md) — opt in to `--without-lockfile`
 
 ## Explanation
 

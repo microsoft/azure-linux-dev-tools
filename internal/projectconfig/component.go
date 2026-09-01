@@ -368,7 +368,13 @@ type ComponentConfig struct {
 
 	// Reference to the source config file that this definition came from; not present
 	// in serialized files.
-	SourceConfigFile *ConfigFile `toml:"-" json:"-" table:"-" fingerprint:"-"`
+	SourceConfigFile *ConfigFile `toml:"-" json:"-" table:"-" validate:"-" fingerprint:"-"`
+
+	// upstreamCommitConfigFile references the config file that supplied the
+	// component's upstream commit pin. Populated in lock-file-free mode, where
+	// synthetic history must follow the file that actually changed the pin even
+	// when another partial component definition is merged later.
+	upstreamCommitConfigFile *ConfigFile
 
 	// RenderedSpecDir is the output directory for this component's rendered spec files.
 	// Derived at resolve time from the project's rendered-specs-dir setting; not present
@@ -458,6 +464,71 @@ func (c *ComponentConfig) MergeUpdatesFrom(other *ComponentConfig) error {
 	return nil
 }
 
+// MergeOverridesFrom mutates the component config so that values present in other
+// replace the existing ones, instead of being merged additively into them.
+//
+// Used in lock-file-free mode, where a generated upstream-commit config file holds
+// a partial component definition whose 'spec' block must override the component's
+// primary definition rather than merge with it. Slices in the build config are
+// still appended, matching [ComponentConfig.MergeUpdatesFrom].
+func (c *ComponentConfig) MergeOverridesFrom(other *ComponentConfig) error {
+	otherOverlayFiles := slices.Clone(other.OverlayFiles)
+
+	// Merge the nested config blocks separately so that mergo does not descend
+	// into them with slice-appending semantics.
+	otherTopLevel := *other
+	otherTopLevel.Spec = SpecSource{}
+	otherTopLevel.Release = ReleaseConfig{}
+	otherTopLevel.Build = ComponentBuildConfig{}
+	otherTopLevel.Render = ComponentRenderConfig{}
+	otherTopLevel.Publish = ComponentPublishConfig{}
+
+	err := mergo.Merge(c, &otherTopLevel, mergo.WithOverride, mergo.WithAppendSlice)
+	if err != nil {
+		return fmt.Errorf("failed to merge project info:\n%w", err)
+	}
+
+	for destination, source := range map[any]any{
+		&c.Spec:    &other.Spec,
+		&c.Release: &other.Release,
+		&c.Render:  &other.Render,
+		&c.Publish: &other.Publish,
+	} {
+		if err := mergo.Merge(destination, source, mergo.WithOverride); err != nil {
+			return fmt.Errorf("failed to merge component config:\n%w", err)
+		}
+	}
+
+	if err := mergo.Merge(&c.Build, &other.Build, mergo.WithOverride, mergo.WithAppendSlice); err != nil {
+		return fmt.Errorf("failed to merge component build config:\n%w", err)
+	}
+
+	if other.SourceConfigFile != nil {
+		c.SourceConfigFile = other.SourceConfigFile
+	}
+
+	if other.upstreamCommitConfigFile != nil {
+		c.upstreamCommitConfigFile = other.upstreamCommitConfigFile
+	}
+
+	if other.OverlayFiles != nil {
+		c.OverlayFiles = otherOverlayFiles
+	}
+
+	return nil
+}
+
+// UpstreamCommitConfigFile returns the config file that supplied the component's
+// effective upstream commit pin, or nil when no commit is pinned. Only meaningful
+// in lock-file-free mode, where the pin lives in generated component config.
+func (c *ComponentConfig) UpstreamCommitConfigFile() *ConfigFile {
+	if c.upstreamCommitConfigFile == nil && c.Spec.UpstreamCommit != "" {
+		return c.SourceConfigFile
+	}
+
+	return c.upstreamCommitConfigFile
+}
+
 // EffectiveUpstreamCommit returns the commit to use for upstream operations.
 // Prefers the locked commit (resolved reality) over the config pin (user intent).
 // Falls back to Spec.UpstreamCommit for SkipLockValidation paths (update, list,
@@ -518,17 +589,18 @@ func (c *ComponentConfig) WithAbsolutePaths(referenceDir string) *ComponentConfi
 	// the SourceConfigFile, as we *do* want to alias that pointer, sharing it across
 	// all configs that came from that source config file.
 	result := &ComponentConfig{
-		Name:             c.Name,
-		SourceConfigFile: c.SourceConfigFile,
-		RenderedSpecDir:  c.RenderedSpecDir,
-		Locked:           deep.MustCopy(c.Locked),
-		Release:          c.Release,
-		Spec:             deep.MustCopy(c.Spec),
-		Build:            deep.MustCopy(c.Build),
-		Render:           c.Render,
-		SourceFiles:      deep.MustCopy(c.SourceFiles),
-		Packages:         deep.MustCopy(c.Packages),
-		Publish:          deep.MustCopy(c.Publish),
+		Name:                     c.Name,
+		SourceConfigFile:         c.SourceConfigFile,
+		upstreamCommitConfigFile: c.upstreamCommitConfigFile,
+		RenderedSpecDir:          c.RenderedSpecDir,
+		Locked:                   deep.MustCopy(c.Locked),
+		Release:                  c.Release,
+		Spec:                     deep.MustCopy(c.Spec),
+		Build:                    deep.MustCopy(c.Build),
+		Render:                   c.Render,
+		SourceFiles:              deep.MustCopy(c.SourceFiles),
+		Packages:                 deep.MustCopy(c.Packages),
+		Publish:                  deep.MustCopy(c.Publish),
 		// OverlayFiles is consumed after component config resolution; preserve it verbatim
 		// here so inherited patterns can be interpreted relative to the concrete component
 		// config file.

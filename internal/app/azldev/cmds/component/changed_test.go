@@ -59,3 +59,12 @@ func TestChangedCmd_NoComponents(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "component not found")
 }
+
+func TestNewChangedCmd_LongDescriptionByMode(t *testing.T) {
+	defaultCmd := componentcmds.NewChangedCmd()
+	assert.Contains(t, defaultCmd.Long, "Compare component lock files")
+
+	withoutLockfileCmd := componentcmds.NewChangedCmd(componentcmds.WithoutLockfileFlags())
+	assert.Contains(t, withoutLockfileCmd.Long, "Load the project configuration independently")
+	assert.NotContains(t, withoutLockfileCmd.Long, "lock file")
+}

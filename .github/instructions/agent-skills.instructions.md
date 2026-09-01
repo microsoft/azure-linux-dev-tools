@@ -65,9 +65,32 @@ Before shipping any skill/instruction:
   `TestOverlaysSkillCoversAllOverlayTypes` extracts the overlay-type enum from the jsonschema tag
   on `projectconfig.ComponentOverlay.Type` and fails if the skill omits a type.
 
+## Mode-specific content
+
+azldev has two modes, and the emitted content follows the one it runs in. A `Catalog`
+(`NewCatalog(withoutLockfile)`) resolves the skills, instruction wrappers, and templates;
+the package-level `Skills`, `Instructions`, `FindSkill`, `SkillDocument`, and `Files`
+helpers are the default (lock-file) mode.
+
+- **Shared by default.** Registry entries and templates under `content/` describe the
+  default mode and are used by both, so most edits need nothing extra.
+- **Replace only what differs.** `withoutLockfileSkills` replaces registry entries by the
+  name of the default-mode skill it supersedes, and `withoutLockfileInstructions` replaces
+  instruction descriptions. Pointers to a replaced skill are rewritten automatically.
+- **Templates layer.** A template under `content/withoutlockfile/` replaces the
+  same-named default template for that mode; add one only when the document's content
+  actually differs.
+
+When you add or edit a skill, check whether its content names a command that exists in
+only one mode (for example `comp update` versus `comp refresh-upstream-commit`) and, if
+so, provide the mode-specific variant. Verify both with
+`./out/bin/azldev docs agent show --skill <name>` and
+`./out/bin/azldev --without-lockfile docs agent show --skill <name>`.
+
 ## Config-resolved bindings
 
-Repo-specific values (lock dir, rendered-specs dir, work dir) are resolved from the target `azldev.toml` in
+Repo-specific values (lock dir, generated upstream-commit dir, rendered-specs dir, work
+dir) are resolved from the target `azldev.toml` in
 [cmds/docs/agent.go](../../internal/app/azldev/cmds/docs/agent.go) and degrade to azldev's defaults
 when no config is present. To add a binding, extend `Bindings`, resolve it in `resolveBindings`, and
 reference it in a template as `{{ .FieldName }}`.

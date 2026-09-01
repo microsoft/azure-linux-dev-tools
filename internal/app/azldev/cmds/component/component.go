@@ -27,10 +27,20 @@ components defined in the project configuration.`,
 	buildOnAppInit(app, cmd)
 	changedOnAppInit(app, cmd)
 	diffSourcesOnAppInit(app, cmd)
-	historyOnAppInit(app, cmd)
 	listOnAppInit(app, cmd)
 	prepareOnAppInit(app, cmd)
-	queryOnAppInit(app, cmd)
 	renderOnAppInit(app, cmd)
-	updateOnAppInit(app, cmd)
+
+	// The commands that maintain resolved component state differ by mode: the
+	// default mode maintains lock files, while lock-file-free mode maintains
+	// generated upstream-commit config. Registering only the commands that
+	// belong to the active mode keeps help, docs, and MCP tools honest.
+	if app.WithoutLockfile() {
+		legacyOnAppInit(app, cmd)
+		refreshUpstreamCommitOnAppInit(app, cmd)
+	} else {
+		historyOnAppInit(app, cmd)
+		queryOnAppInit(app, cmd)
+		updateOnAppInit(app, cmd)
+	}
 }
