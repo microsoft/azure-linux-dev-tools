@@ -7,6 +7,43 @@ All notable changes to `azldev` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-09-01
+
+### Added
+
+- **Overlay metadata agent guidance.** Add the emitted
+  `azldev-overlay-metadata` skill for choosing overlay categories, upstream
+  status, and provenance.
+  ([#311](https://github.com/microsoft/azure-linux-dev-tools/pull/311))
+- **Component configuration merging.** Allow repeated
+  `[components.<name>]` definitions across configuration files to merge.
+  Later non-empty fields override earlier values, while overlays are appended.
+  ([#296](https://github.com/microsoft/azure-linux-dev-tools/pull/296))
+- **Test configuration schema.** Add parse-only `[tests]` and `[test-groups]`
+  declarations and test references from components and images.
+  ([#229](https://github.com/microsoft/azure-linux-dev-tools/pull/229))
+- **KIWI configuration overrides.** Add the distro-version
+  `kiwi-config-override` field for passing an additional configuration file to
+  KIWI image builds.
+  ([#325](https://github.com/microsoft/azure-linux-dev-tools/pull/325))
+
+### Changed
+
+- **Component spec queries.** Query post-overlay specs from
+  `rendered-specs-dir` in bulk through a shared mock chroot. Add `--arch`
+  selection with `ExclusiveArch` and `ExcludeArch` enforcement and preserve
+  successful results when individual specs fail. Run `azldev component render`
+  before querying.
+  ([#204](https://github.com/microsoft/azure-linux-dev-tools/pull/204))
+- **ISO creation dependency.** Replace `genisoimage`/`cdrkit` with `xorriso`
+  for creating cloud-init and other generated ISO images.
+  ([#304](https://github.com/microsoft/azure-linux-dev-tools/pull/304))
+
+### Fixed
+
+- Reject test names that cannot safely be used as filesystem path components.
+  ([#229](https://github.com/microsoft/azure-linux-dev-tools/pull/229))
+
 ## [0.3.0] - 2026-08-10
 
 ### Added
