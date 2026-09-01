@@ -27,7 +27,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Get go tools
-        uses: ./.github/getgotools
+        uses: $/.github/getgotools
       - name: Run publish prep checks
         run: |
           mage -v publishPrep

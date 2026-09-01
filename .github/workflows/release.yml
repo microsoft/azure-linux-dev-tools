@@ -32,7 +32,7 @@ jobs:
           persist-credentials: false
 
       - name: Get go tools
-        uses: ./.github/getgotools
+        uses: $/.github/getgotools
 
       - name: Create release tag from changelog
         run: |

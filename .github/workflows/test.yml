@@ -27,7 +27,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Get go tools
-        uses: ./.github/getgotools
+        uses: $/.github/getgotools
       - name: Run tests
         run: |
           mage -v unit
@@ -45,7 +45,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Get go tools
-        uses: ./.github/getgotools
+        uses: $/.github/getgotools
 
       - name: Disable unix_chkpwd policy
         run: |
@@ -81,7 +81,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Get go tools
-        uses: ./.github/getgotools
+        uses: $/.github/getgotools
 
       - name: Disable unix_chkpwd policy
         run: |

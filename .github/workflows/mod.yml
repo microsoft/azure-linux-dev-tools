@@ -27,7 +27,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Get go tools
-        uses: ./.github/getgotools
+        uses: $/.github/getgotools
       - name: Run go mod tidy
         run: |
           mage -v check mod

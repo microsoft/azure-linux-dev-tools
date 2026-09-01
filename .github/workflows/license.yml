@@ -27,7 +27,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Get go tools
-        uses: ./.github/getgotools
+        uses: $/.github/getgotools
       - name: Run license checks
         run: |
           mage -v check licenses

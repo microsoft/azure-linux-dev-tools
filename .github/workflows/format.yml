@@ -27,6 +27,6 @@ jobs:
         with:
           persist-credentials: false
       - name: Get go tools
-        uses: ./.github/getgotools
+        uses: $/.github/getgotools
       - name: Run mage check lint
         run: mage check lint
