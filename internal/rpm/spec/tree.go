@@ -66,6 +66,11 @@ type treeConditionalPair struct {
 	endifLine int
 }
 
+type treeConditionalFrame struct {
+	ifLine   int
+	elseLine int
+}
+
 // parseTree parses raw spec lines into a [block] tree.
 //
 // The parser runs in two passes:
@@ -116,7 +121,7 @@ func parseTree(rawLines []string) (*block, error) {
 func collectTreeConditionalPairs(rawLines []string) ([]treeConditionalPair, error) {
 	var (
 		pairs       []treeConditionalPair
-		stack       []int
+		stack       []treeConditionalFrame
 		inMacroBody bool
 		parseState  macroState
 	)
@@ -136,21 +141,41 @@ func collectTreeConditionalPairs(rawLines []string) ([]treeConditionalPair, erro
 
 		switch conditionalDepthChange(line) {
 		case 1:
-			stack = append(stack, lineNum)
+			stack = append(stack, treeConditionalFrame{ifLine: lineNum, elseLine: -1})
 		case -1:
 			if len(stack) == 0 {
 				return nil, fmt.Errorf("unmatched %%endif at line %d", lineNum+1)
 			}
 
-			ifLine := stack[len(stack)-1]
+			frame := stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
 
-			pairs = append(pairs, treeConditionalPair{ifLine: ifLine, endifLine: lineNum})
+			pairs = append(pairs, treeConditionalPair{ifLine: frame.ifLine, endifLine: lineNum})
+		case 0:
+			if !isConditionalBranchDirective(line) {
+				continue
+			}
+
+			if len(stack) == 0 {
+				return nil, fmt.Errorf("conditional branch directive at line %d is outside a conditional", lineNum+1)
+			}
+
+			frame := &stack[len(stack)-1]
+			if frame.elseLine >= 0 {
+				return nil, fmt.Errorf(
+					"conditional branch directive at line %d follows terminal %%else at line %d",
+					lineNum+1, frame.elseLine+1,
+				)
+			}
+
+			if !isElifDirective(line) {
+				frame.elseLine = lineNum
+			}
 		}
 	}
 
 	if len(stack) > 0 {
-		return nil, fmt.Errorf("unmatched %%if at line %d", stack[0]+1)
+		return nil, fmt.Errorf("unmatched %%if at line %d", stack[0].ifLine+1)
 	}
 
 	return pairs, nil
@@ -229,7 +254,7 @@ func containsSectionBlocks(block *block) bool {
 }
 
 // findSectionHeaderLines returns the 0-indexed line numbers of all section headers,
-// respecting line continuations (backslash-terminated lines suppress the next line).
+// suppressing recognition inside multiline '%define' and '%global' bodies.
 func findSectionHeaderLines(rawLines []string) []int {
 	var headers []int
 
@@ -712,7 +737,11 @@ func macroStateAfterPercentRun(line string, idx int, state macroState) (macroSta
 	}
 
 	if (runEnd-idx)%2 == 0 {
-		state.escapedBraces++
+		// An escaped opener is literal outside a live RPM expansion. Inside one,
+		// retain its brace depth so its closing brace cannot close the outer macro.
+		if state.depth > 0 {
+			state.escapedBraces++
+		}
 
 		return state, runEnd + 1
 	}
