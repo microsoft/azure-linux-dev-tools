@@ -5,6 +5,7 @@ package spec_test
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -157,6 +158,144 @@ Patch1: devel.patch
 				require.NoError(t, specFile.Serialize(&actual))
 				assert.Contains(t, actual.String(), "Summary: Structural mutation")
 			}
+		})
+	}
+}
+
+func TestStructuralVisitTagsPreservesMutationsBeforeVisitorError(t *testing.T) {
+	sentinel := errors.New("stop visiting tags")
+
+	tests := []struct {
+		name        string
+		input       string
+		expected    string
+		mutatedTag  string
+		mutatedLine string
+		failingTag  string
+		visit       func(*spec.Spec, func(*spec.TagLine, *spec.Context) error) error
+	}{
+		{
+			name:        "all packages",
+			input:       "Name: original\nVersion: 1\n",
+			expected:    "Name: changed\nVersion: 1\n",
+			mutatedTag:  "Name",
+			mutatedLine: "Name: changed",
+			failingTag:  "Version",
+			visit: func(specFile *spec.Spec, visitor func(*spec.TagLine, *spec.Context) error) error {
+				return specFile.VisitTags(visitor)
+			},
+		},
+		{
+			name:        "selected package",
+			input:       "Name: original\n%package devel\nSummary: original\nPatch0: devel.patch\n",
+			expected:    "Name: original\n%package devel\nSummary: changed\nPatch0: devel.patch\n",
+			mutatedTag:  "Summary",
+			mutatedLine: "Summary: changed",
+			failingTag:  "Patch0",
+			visit: func(specFile *spec.Spec, visitor func(*spec.TagLine, *spec.Context) error) error {
+				return specFile.VisitTagsPackage("devel", visitor)
+			},
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			specFile, err := spec.OpenSpec(
+				strings.NewReader(testCase.input),
+				spec.WithEditor(spec.EditorStructural),
+			)
+			require.NoError(t, err)
+
+			err = testCase.visit(specFile, func(tagLine *spec.TagLine, ctx *spec.Context) error {
+				switch tagLine.Tag {
+				case testCase.mutatedTag:
+					ctx.ReplaceLine(testCase.mutatedLine)
+				case testCase.failingTag:
+					return sentinel
+				}
+
+				return nil
+			})
+			require.Error(t, err)
+
+			if err != sentinel { //nolint:errorlint // The API must return the original callback error object.
+				t.Errorf("VisitTags returned %v, want original sentinel %v", err, sentinel)
+			}
+
+			var output bytes.Buffer
+			require.NoError(t, specFile.Serialize(&output))
+			assert.Equal(t, testCase.expected, output.String())
+		})
+	}
+}
+
+func TestVisitPreservesMutationsBeforeVisitorError(t *testing.T) {
+	visitorErr := errors.New("stop visiting")
+	input := "Name: example\nVersion: 1\n"
+
+	tests := []struct {
+		name    string
+		options []spec.OpenOption
+	}{
+		{name: "legacy editor"},
+		{
+			name:    "structural editor",
+			options: []spec.OpenOption{spec.WithEditor(spec.EditorStructural)},
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			specFile, err := spec.OpenSpec(strings.NewReader(input), testCase.options...)
+			require.NoError(t, err)
+
+			err = specFile.Visit(func(ctx *spec.Context) error {
+				if ctx.Target.TargetType != spec.SectionLineTarget {
+					return nil
+				}
+
+				switch ctx.CurrentLineNum {
+				case 0:
+					ctx.ReplaceLine("Name: changed")
+				case 1:
+					return visitorErr
+				}
+
+				return nil
+			})
+			require.ErrorIs(t, err, visitorErr)
+			assert.Same(t, visitorErr, err)
+
+			var output bytes.Buffer
+			require.NoError(t, specFile.Serialize(&output))
+			assert.Equal(t, "Name: changed\nVersion: 1\n", output.String())
+		})
+	}
+}
+
+func TestStructuralMixedCasePackageSectionsSupportTagLookupAndMutation(t *testing.T) {
+	tests := []struct {
+		name, header, packageName string
+	}{
+		{name: "mixed case package", header: "%Package devel", packageName: "devel"},
+		{name: "upper case package", header: "%PACKAGE -n example-tools", packageName: "example-tools"},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			specFile, err := spec.OpenSpec(strings.NewReader("Name: example\n"+testCase.header+"\nSummary: original\n"),
+				spec.WithEditor(spec.EditorStructural))
+			require.NoError(t, err)
+
+			value, err := specFile.GetTag(testCase.packageName, "Summary")
+			require.NoError(t, err)
+			assert.Equal(t, "original", value)
+
+			require.NoError(t, specFile.UpdateExistingTag(testCase.packageName, "Summary", "updated"))
+
+			var output bytes.Buffer
+			require.NoError(t, specFile.Serialize(&output))
+			assert.Equal(t, "Name: example\n"+testCase.header+"\nSummary: updated\n", output.String())
 		})
 	}
 }
