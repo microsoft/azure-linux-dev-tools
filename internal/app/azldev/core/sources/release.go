@@ -50,6 +50,10 @@ func GetReleaseTagValue(fs opctx.FS, specPath string, options ...spec.OpenOption
 		return "", fmt.Errorf("failed to get Release tag from spec %#q:\n%w", specPath, err)
 	}
 
+	if releaseValue == "" {
+		return "", fmt.Errorf("release tag not found in spec %#q:\n%w", specPath, spec.ErrNoSuchTag)
+	}
+
 	return releaseValue, nil
 }
 

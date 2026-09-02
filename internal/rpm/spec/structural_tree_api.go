@@ -417,7 +417,7 @@ const packageSectionName = "%package"
 // contain shell that happens to match the "word: word" pattern; we must avoid
 // treating those as tags.
 func isTagBearingSection(secName string) bool {
-	return secName == "" || secName == packageSectionName
+	return secName == "" || strings.EqualFold(secName, packageSectionName)
 }
 
 func walkBlocks(blk *block, visit func(*block) bool) bool {

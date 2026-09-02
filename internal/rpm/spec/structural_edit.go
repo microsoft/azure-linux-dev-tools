@@ -111,7 +111,7 @@ func (s *structuralSpec) VisitTags(visitor func(tagLine *TagLine, ctx *Context) 
 
 	tree := &specTree{root: root}
 
-	err = tree.VisitAllLines(func(sectionName, packageName string, line *lineHandle) error {
+	visitErr := tree.VisitAllLines(func(sectionName, packageName string, line *lineHandle) error {
 		if !isTagBearingSection(sectionName) {
 			return nil
 		}
@@ -138,11 +138,14 @@ func (s *structuralSpec) VisitTags(visitor func(tagLine *TagLine, ctx *Context) 
 			structuralLine: line,
 		})
 	})
-	if err != nil {
-		return err
-	}
 
 	lines := serializeTree(root)
+	if visitErr != nil {
+		s.rawLines = lines
+
+		return visitErr
+	}
+
 	if _, err := parseTree(lines); err != nil {
 		return fmt.Errorf("validating mutated spec tree:\n%w", err)
 	}
@@ -709,10 +712,6 @@ func (s *structuralSpec) AddChangelogEntry(user, email, version, release string,
 	})
 }
 
-// StructuralParsePatchTagNumber checks if the given tag name is a PatchN tag (case-insensitive)
-// and returns the numeric suffix N. Returns -1, false if the tag is not a PatchN tag
-// or the suffix is not a valid integer.
-
 // HasSection returns true if the spec contains a section with the given name.
 // The comparison is exact (case-sensitive), consistent with [AppendLinesToSection].
 func (s *structuralSpec) HasSection(sectionName string) (bool, error) {
@@ -1027,6 +1026,9 @@ func structuralIsConditionalBranchDirective(rawLine string) bool {
 	}
 }
 
+// StructuralParsePatchTagNumber checks if the given tag name is a PatchN tag (case-insensitive)
+// and returns the numeric suffix N. Returns -1, false if the tag is not a PatchN tag
+// or the suffix is not a valid integer.
 func StructuralParsePatchTagNumber(tag string) (int, bool) {
 	suffix, found := strings.CutPrefix(strings.ToLower(tag), "patch")
 	if !found || suffix == "" {
