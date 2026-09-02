@@ -32,7 +32,7 @@ var ErrPatternNotFound = errors.New("pattern not found")
 // SetTag sets the value of the given tag in the spec, under the specified package. It first
 // attempts to update the first instance of the tag found in the spec; if no such tag exists,
 // a new tag is added under the given package.
-func (s *Spec) SetTag(packageName string, tag string, value string) (err error) {
+func (s *legacySpec) SetTag(packageName string, tag string, value string) (err error) {
 	err = s.UpdateExistingTag(packageName, tag, value)
 	if err == nil {
 		return nil
@@ -48,7 +48,7 @@ func (s *Spec) SetTag(packageName string, tag string, value string) (err error) 
 // UpdateExistingTag looks for the first instance of the named tag in the given package; if it
 // finds such a tag instance, it replaces its value with the provided value. If no such tag
 // exists, it returns an error.
-func (s *Spec) UpdateExistingTag(packageName string, tag string, value string) (err error) {
+func (s *legacySpec) UpdateExistingTag(packageName string, tag string, value string) (err error) {
 	slog.Debug("Updating tag in spec", "package", packageName, "tag", tag, "newValue", value)
 
 	tagToCompareAgainst := strings.ToLower(tag)
@@ -78,7 +78,7 @@ func (s *Spec) UpdateExistingTag(packageName string, tag string, value string) (
 // package (or globally if `packageName` is empty). If the provided `value` is non-empty,
 // then only tag instances whose values are as specified will be removed. This function
 // returns an error if a tag matching those criteria did not exist in the given package.
-func (s *Spec) RemoveTag(packageName string, tag string, value string) (err error) {
+func (s *legacySpec) RemoveTag(packageName string, tag string, value string) (err error) {
 	slog.Debug("Removing tag from spec", "package", packageName, "tag", tag, "value", value)
 
 	tagToCompareAgainst := strings.ToLower(tag)
@@ -107,7 +107,7 @@ func (s *Spec) RemoveTag(packageName string, tag string, value string) (err erro
 
 // VisitTags iterates over all tag lines across all packages, calling the visitor function
 // for each one. The visitor receives the parsed [TagLine] and the mutation [Context].
-func (s *Spec) VisitTags(visitor func(tagLine *TagLine, ctx *Context) error) error {
+func (s *legacySpec) VisitTags(visitor func(tagLine *TagLine, ctx *Context) error) error {
 	return s.Visit(func(ctx *Context) error {
 		if ctx.Target.TargetType != SectionLineTarget {
 			return nil
@@ -130,7 +130,7 @@ func (s *Spec) VisitTags(visitor func(tagLine *TagLine, ctx *Context) error) err
 // function for each one. The visitor receives the parsed [TagLine] and the mutation [Context].
 // This extracts the common target-type / package / tag-type filtering that many tag-oriented
 // methods need.
-func (s *Spec) VisitTagsPackage(packageName string, visitor func(tagLine *TagLine, ctx *Context) error) error {
+func (s *legacySpec) VisitTagsPackage(packageName string, visitor func(tagLine *TagLine, ctx *Context) error) error {
 	return s.VisitTags(func(tagLine *TagLine, ctx *Context) error {
 		if ctx.CurrentSection.Package != packageName {
 			return nil
@@ -143,7 +143,7 @@ func (s *Spec) VisitTagsPackage(packageName string, visitor func(tagLine *TagLin
 // RemoveTagsMatching removes all tags in the given package for which the provided matcher
 // function returns true. The matcher receives the tag name and value as arguments. Returns
 // the number of tags removed. If no matching tags were found, returns 0 and no error.
-func (s *Spec) RemoveTagsMatching(packageName string, matcher func(tag, value string) bool) (int, error) {
+func (s *legacySpec) RemoveTagsMatching(packageName string, matcher func(tag, value string) bool) (int, error) {
 	removed := 0
 
 	err := s.VisitTagsPackage(packageName, func(tagLine *TagLine, ctx *Context) error {
@@ -169,7 +169,7 @@ func (s *Spec) RemoveTagsMatching(packageName string, matcher func(tag, value st
 //
 // Note: When adding to a sub-package (non-empty packageName), the corresponding %package
 // section must already exist in the spec; otherwise, an [ErrSectionNotFound] error is returned.
-func (s *Spec) AddTag(packageName string, tag string, value string) (err error) {
+func (s *legacySpec) AddTag(packageName string, tag string, value string) (err error) {
 	slog.Debug("Adding tag to spec", "package", packageName, "tag", tag, "value", value)
 
 	sectionName := ""
@@ -232,6 +232,8 @@ func conditionalDepthChange(rawLine string) int {
 // boundaries within an enclosing %if/%endif pair. Comments are ignored.
 //
 // The recognized branch directives are: %else, %elif, %elifarch, %elifnarch, %elifos, %elifnos.
+//
+
 func isConditionalBranchDirective(rawLine string) bool {
 	trimmed := strings.TrimSpace(rawLine)
 	if strings.HasPrefix(trimmed, "#") {
@@ -246,7 +248,7 @@ func isConditionalBranchDirective(rawLine string) bool {
 	lower := strings.ToLower(tokens[0])
 
 	switch lower {
-	case "%else", "%elif", "%elifarch", "%elifnarch", "%elifos", "%elifnos":
+	case elseDirective, "%elif", "%elifarch", "%elifnarch", "%elifos", "%elifnos":
 		return true
 	default:
 		return false
@@ -268,7 +270,7 @@ func isConditionalBranchDirective(rawLine string) bool {
 // Note: When inserting into a sub-package (non-empty packageName), the corresponding
 // %package section must already exist in the spec; otherwise, an [ErrSectionNotFound]
 // error is returned.
-func (s *Spec) InsertTag(packageName string, tag string, value string) error {
+func (s *legacySpec) InsertTag(packageName string, tag string, value string) error {
 	slog.Debug("Inserting tag to spec", "package", packageName, "tag", tag, "value", value)
 
 	family := tagFamily(tag)
@@ -315,7 +317,7 @@ type insertTagScanResult struct {
 // findInsertTagPosition scans the spec to find the best insertion point for a tag of the
 // given family within the specified section/package. Returns the scan results or an error
 // if the target section is not found.
-func (s *Spec) findInsertTagPosition(
+func (s *legacySpec) findInsertTagPosition(
 	sectionName, packageName, family string,
 ) (insertTagScanResult, error) {
 	result := insertTagScanResult{
@@ -379,7 +381,7 @@ func (s *Spec) findInsertTagPosition(
 // the conditional nesting depth from the start of the file up to that line. If depth > 0,
 // it scans forward to find the %endif that brings depth back to 0 and returns that line
 // number. Otherwise it returns lineNum unchanged.
-func (s *Spec) skipPastConditional(lineNum int, sectionEnd int) int {
+func (s *legacySpec) skipPastConditional(lineNum int, sectionEnd int) int {
 	// Compute conditional depth at the insertion point by scanning from the start.
 	depth := 0
 	for i := 0; i <= lineNum && i < len(s.rawLines); i++ {
@@ -405,7 +407,7 @@ func (s *Spec) skipPastConditional(lineNum int, sectionEnd int) int {
 // PrependLines prepends the given lines to the very top of the spec file. This is a
 // whole-file edit, distinct from section-targeted editing, which applies within a specific
 // section rather than to the raw file contents.
-func (s *Spec) PrependLines(lines []string) {
+func (s *legacySpec) PrependLines(lines []string) {
 	slog.Debug("Prepending lines to spec file", "lines", lines)
 
 	s.rawLines = append(append([]string{}, lines...), s.rawLines...)
@@ -414,7 +416,7 @@ func (s *Spec) PrependLines(lines []string) {
 // AppendLines appends the given lines at the very bottom of the spec file. This is a
 // whole-file edit, distinct from section-targeted editing, which applies within a specific
 // section rather than to the raw file contents.
-func (s *Spec) AppendLines(lines []string) {
+func (s *legacySpec) AppendLines(lines []string) {
 	slog.Debug("Appending lines to spec file", "lines", lines)
 
 	s.rawLines = append(s.rawLines, lines...)
@@ -423,7 +425,7 @@ func (s *Spec) AppendLines(lines []string) {
 // PrependLinesToSection prepends the given lines to the start of the specified section, placing
 // them just after the section header (or at the top of the file in the global section). An error
 // is returned if the identified section cannot be found in the spec.
-func (s *Spec) PrependLinesToSection(sectionName, packageName string, lines []string) (err error) {
+func (s *legacySpec) PrependLinesToSection(sectionName, packageName string, lines []string) (err error) {
 	slog.Debug("Prepending lines to spec", "section", sectionName, "package", packageName, "lines", lines)
 
 	var updated bool
@@ -470,7 +472,7 @@ func (s *Spec) PrependLinesToSection(sectionName, packageName string, lines []st
 // AppendLinesToSection appends the given lines at the end of the specified section, placing
 // them just after the current last line of the section. An error is returned if the identified
 // section cannot be found in the spec.
-func (s *Spec) AppendLinesToSection(sectionName, packageName string, lines []string) (err error) {
+func (s *legacySpec) AppendLinesToSection(sectionName, packageName string, lines []string) (err error) {
 	slog.Debug("Appending lines to spec", "section", sectionName, "package", packageName, "lines", lines)
 
 	var updated bool
@@ -511,7 +513,7 @@ func (s *Spec) AppendLinesToSection(sectionName, packageName string, lines []str
 // section. If `sectionName` is empty, the operation acts against all sections. If no matches were
 // found to replace, an error is returned. The replacement is performed literally; regex capture
 // group references like $1 are not expanded.
-func (s *Spec) SearchAndReplace(sectionName, packageName, regex, replacement string) (err error) {
+func (s *legacySpec) SearchAndReplace(sectionName, packageName, regex, replacement string) (err error) {
 	slog.Debug("Searching and replacing in spec",
 		"section", sectionName,
 		"package", packageName,
@@ -572,7 +574,9 @@ func (s *Spec) SearchAndReplace(sectionName, packageName, regex, replacement str
 
 // AddChangelogEntry adds a changelog entry to the spec's changelog section. An error is returned if
 // no %changelog section exists in the spec.
-func (s *Spec) AddChangelogEntry(user, email, version, release string, time time.Time, details []string) (err error) {
+//
+//nolint:lll
+func (s *legacySpec) AddChangelogEntry(user, email, version, release string, time time.Time, details []string) (err error) {
 	slog.Debug("Adding changelog entry to spec",
 		"user", user, "email", email, "version", version, "release", release, "details", details)
 
@@ -633,7 +637,7 @@ func ParsePatchTagNumber(tag string) (int, bool) {
 
 // HasSection returns true if the spec contains a section with the given name.
 // The comparison is exact (case-sensitive), consistent with [AppendLinesToSection].
-func (s *Spec) HasSection(sectionName string) (bool, error) {
+func (s *legacySpec) HasSection(sectionName string) (bool, error) {
 	var found bool
 
 	err := s.Visit(func(ctx *Context) error {
@@ -650,7 +654,7 @@ func (s *Spec) HasSection(sectionName string) (bool, error) {
 // AddPatchEntry registers a patch in the spec, either by appending to an existing %patchlist
 // section or by adding a new PatchN tag with the next available number. Returns an error
 // if the spec cannot be examined or updated.
-func (s *Spec) AddPatchEntry(packageName, filename string) error {
+func (s *legacySpec) AddPatchEntry(packageName, filename string) error {
 	slog.Debug("Adding patch entry to spec", "package", packageName, "filename", filename)
 
 	hasPatchlist, err := s.HasSection("%patchlist")
@@ -673,7 +677,7 @@ func (s *Spec) AddPatchEntry(packageName, filename string) error {
 // RemovePatchEntry removes all references to patches matching the given pattern from the spec.
 // The pattern is a glob pattern (supporting doublestar syntax) matched against PatchN tag values
 // and %patchlist entries across all packages. Returns an error if no references matched the pattern.
-func (s *Spec) RemovePatchEntry(pattern string) error {
+func (s *legacySpec) RemovePatchEntry(pattern string) error {
 	slog.Debug("Removing patch entry from spec", "pattern", pattern)
 
 	totalRemoved := 0
@@ -708,7 +712,7 @@ func (s *Spec) RemovePatchEntry(pattern string) error {
 
 // removePatchTagsMatching removes all PatchN tags across all packages whose values match the
 // given glob pattern. Returns the number of tags removed.
-func (s *Spec) removePatchTagsMatching(pattern string) (int, error) {
+func (s *legacySpec) removePatchTagsMatching(pattern string) (int, error) {
 	removed := 0
 
 	err := s.VisitTags(func(tagLine *TagLine, ctx *Context) error {
@@ -735,7 +739,7 @@ func (s *Spec) removePatchTagsMatching(pattern string) (int, error) {
 
 // removePatchlistEntriesMatching removes lines from the %patchlist section whose trimmed content
 // matches the given glob pattern. Returns the number of entries removed.
-func (s *Spec) removePatchlistEntriesMatching(pattern string) (int, error) {
+func (s *legacySpec) removePatchlistEntriesMatching(pattern string) (int, error) {
 	removed := 0
 
 	err := s.Visit(func(ctx *Context) error {
@@ -774,7 +778,7 @@ func (s *Spec) removePatchlistEntriesMatching(pattern string) (int, error) {
 // suffix) are treated as auto-numbered starting from 0, consistent with RPM's behavior.
 // Returns -1 if no numbered PatchN tags and no unnumbered "Patch:" tags are found. Tags with
 // non-numeric suffixes (e.g., macro-based names like Patch%{n}) are silently skipped.
-func (s *Spec) GetHighestPatchTagNumber() (int, error) {
+func (s *legacySpec) GetHighestPatchTagNumber() (int, error) {
 	highest := -1
 	unnumberedCount := 0
 
@@ -807,7 +811,7 @@ func (s *Spec) GetHighestPatchTagNumber() (int, error) {
 // sections with the same identity (e.g. inside mutually-exclusive `%if`/`%else`
 // branches), every such section is removed. Returns [ErrSectionNotFound] if no
 // matching section exists.
-func (s *Spec) RemoveSection(sectionName, packageName string) error {
+func (s *legacySpec) RemoveSection(sectionName, packageName string) error {
 	slog.Debug("Removing section from spec", "section", sectionName, "package", packageName)
 
 	if sectionName == "" {
@@ -852,7 +856,7 @@ func (s *Spec) RemoveSection(sectionName, packageName string) error {
 // wrapper. Trailing `%if` lines that belong to the next section are similarly excluded.
 // If a conditional block is interleaved with section content in a way that cannot be
 // resolved by trimming, an [ErrConditionalSpansSections] error is returned.
-func (s *Spec) RemoveSubpackage(packageName string) error {
+func (s *legacySpec) RemoveSubpackage(packageName string) error {
 	slog.Debug("Removing sub-package from spec", "package", packageName)
 
 	if packageName == "" {
@@ -893,7 +897,7 @@ type sectionLineRange struct {
 // spec's conditional structure. If a conditional block is interleaved with section
 // content in a way that cannot be resolved by trimming, an [ErrConditionalSpansSections]
 // error is returned.
-func (s *Spec) collectSectionRanges(
+func (s *legacySpec) collectSectionRanges(
 	matches func(sectName, packageName string) bool,
 ) ([]sectionLineRange, error) {
 	var (
@@ -953,8 +957,8 @@ func (s *Spec) collectSectionRanges(
 	return ranges, err
 }
 
-// conditionalPair represents a matched `%if`/`%endif` pair by their line numbers.
-type conditionalPair struct {
+// legacyConditionalPair represents a matched `%if`/`%endif` pair by their line numbers.
+type legacyConditionalPair struct {
 	ifLine    int
 	endifLine int
 }
@@ -962,9 +966,9 @@ type conditionalPair struct {
 // collectConditionalPairs walks the raw lines and returns all matched `%if`/`%endif`
 // pairs using a stack. Nested pairs are properly matched. Returns an error if there
 // are unmatched `%if` or `%endif` directives.
-func collectConditionalPairs(rawLines []string) ([]conditionalPair, error) {
+func collectConditionalPairs(rawLines []string) ([]legacyConditionalPair, error) {
 	var (
-		pairs []conditionalPair
+		pairs []legacyConditionalPair
 		stack []int
 	)
 
@@ -980,7 +984,7 @@ func collectConditionalPairs(rawLines []string) ([]conditionalPair, error) {
 			ifLine := stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
 
-			pairs = append(pairs, conditionalPair{ifLine: ifLine, endifLine: lineNum})
+			pairs = append(pairs, legacyConditionalPair{ifLine: ifLine, endifLine: lineNum})
 		}
 	}
 
@@ -1007,7 +1011,9 @@ func collectConditionalPairs(rawLines []string) ([]conditionalPair, error) {
 // If a straddling conditional is interleaved with real section content (not just
 // other conditional directives and blank lines), an [ErrConditionalSpansSections]
 // error is returned.
-func balanceRange(sectionRange sectionLineRange, rawLines []string, pairs []conditionalPair) (sectionLineRange, error) {
+//
+//nolint:lll
+func balanceRange(sectionRange sectionLineRange, rawLines []string, pairs []legacyConditionalPair) (sectionLineRange, error) {
 	// Find the earliest straddling line inside the range and validate that no
 	// straddling %if has real content after it. A pair straddles if exactly one
 	// of its lines falls within [sectionRange.start, sectionRange.end).
@@ -1092,7 +1098,7 @@ func validateNoContentAfter(startLine, endLine int, rawLines []string) error {
 func validateNoBranchDirectivesInExternalConditional(
 	sectionRange sectionLineRange,
 	rawLines []string,
-	pairs []conditionalPair,
+	pairs []legacyConditionalPair,
 ) error {
 	for lineNum := sectionRange.start; lineNum < sectionRange.end; lineNum++ {
 		if !isConditionalBranchDirective(rawLines[lineNum]) {
@@ -1130,8 +1136,56 @@ func isBlankOrComment(line string) bool {
 // removeRanges deletes the given line ranges from the spec. Ranges must be
 // non-overlapping and in ascending order (as produced by [Spec.collectSectionRanges]);
 // they are removed from last to first so earlier indices remain valid.
-func (s *Spec) removeRanges(ranges []sectionLineRange) {
+func (s *legacySpec) removeRanges(ranges []sectionLineRange) {
 	for i := len(ranges) - 1; i >= 0; i-- {
 		s.RemoveLines(ranges[i].start, ranges[i].end)
 	}
+}
+
+// GetTag returns the first matching tag in a package.
+func (s *legacySpec) GetTag(packageName, tag string) (string, error) {
+	var value string
+
+	found := false
+
+	err := s.VisitTagsPackage(packageName, func(tagLine *TagLine, _ *Context) error {
+		if !found && strings.EqualFold(tagLine.Tag, tag) {
+			value, found = tagLine.Value, true
+		}
+
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+
+	if !found {
+		return "", fmt.Errorf("tag %#q not found in package %#q:\n%w", tag, packageName, ErrNoSuchTag)
+	}
+
+	return value, nil
+}
+
+// GetLastTag returns the last matching tag in a package.
+func (s *legacySpec) GetLastTag(packageName, tag string) (string, error) {
+	var value string
+
+	found := false
+
+	err := s.VisitTagsPackage(packageName, func(tagLine *TagLine, _ *Context) error {
+		if strings.EqualFold(tagLine.Tag, tag) {
+			value, found = tagLine.Value, true
+		}
+
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+
+	if !found {
+		return "", fmt.Errorf("tag %#q not found in package %#q:\n%w", tag, packageName, ErrNoSuchTag)
+	}
+
+	return value, nil
 }
