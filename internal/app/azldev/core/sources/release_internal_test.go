@@ -103,6 +103,44 @@ func TestTryBumpStaticRelease_StaticBumps(t *testing.T) {
 	assert.Contains(t, string(content), "Release: 4%{?dist}")
 }
 
+func TestTryBumpStaticRelease_BumpsLastConditionalReleaseAndRereadsIt(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	memFS := afero.NewMemMapFs()
+	preparer := newTestPreparer(memFS)
+	specDir := filepath.Join(testSourcesDir, "test-pkg")
+	require.NoError(t, fileutils.MkdirAll(memFS, specDir))
+	specPath := filepath.Join(specDir, "test-pkg.spec")
+	require.NoError(t, fileutils.WriteFile(memFS, specPath, []byte(`Name: test-pkg
+Version: 1.0.0
+%if 0
+Release: 1%{?dist}
+%else
+Release: 2%{?dist}
+%endif
+`), fileperms.PublicFile))
+
+	comp := mockComponent(ctrl, "test-pkg", &projectconfig.ComponentConfig{
+		Release: projectconfig.ReleaseConfig{Calculation: projectconfig.ReleaseCalculationAuto},
+	})
+
+	require.NoError(t, preparer.tryBumpStaticRelease(comp, specDir, 3))
+
+	release, err := GetReleaseTagValue(memFS, specPath)
+	require.NoError(t, err)
+	assert.Equal(t, "5%{?dist}", release)
+
+	content, err := fileutils.ReadFile(memFS, specPath)
+	require.NoError(t, err)
+	assert.Equal(t, `Name: test-pkg
+Version: 1.0.0
+%if 0
+Release: 5%{?dist}
+%else
+Release: 5%{?dist}
+%endif
+`, string(content))
+}
+
 func TestTryBumpStaticRelease_StaticBumpsNonConditionalDist(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	memFS := afero.NewMemMapFs()
