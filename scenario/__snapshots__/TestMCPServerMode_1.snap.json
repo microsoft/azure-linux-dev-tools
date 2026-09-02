@@ -88,6 +88,10 @@
        "description": "only enable minimal output",
        "type": "boolean"
       },
+      "spec-editor": {
+       "description": "Select the RPM spec editor (legacy or experimental)",
+       "type": "string"
+      },
       "spec-path": {
        "description": "Spec path",
        "type": "string"
@@ -200,6 +204,10 @@
        "description": "skip lock file consistency checks",
        "type": "boolean"
       },
+      "spec-editor": {
+       "description": "Select the RPM spec editor (legacy or experimental)",
+       "type": "string"
+      },
       "spec-path": {
        "description": "Spec path",
        "type": "string"
@@ -305,6 +313,10 @@
        "description": "How to report rows for components that share a TOML file with others: show (keep row, count is coarse), omit (drop row).",
        "type": "string"
       },
+      "spec-editor": {
+       "description": "Select the RPM spec editor (legacy or experimental)",
+       "type": "string"
+      },
       "spec-path": {
        "description": "Spec path",
        "type": "string"
@@ -399,6 +411,10 @@
        "default": false,
        "description": "only enable minimal output",
        "type": "boolean"
+      },
+      "spec-editor": {
+       "description": "Select the RPM spec editor (legacy or experimental)",
+       "type": "string"
       },
       "spec-path": {
        "description": "Spec path",

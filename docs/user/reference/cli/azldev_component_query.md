@@ -58,6 +58,7 @@ azldev component query [flags]
       --permissive-config         do not fail on unknown fields in TOML config files
   -C, --project string            path to Azure Linux project
   -q, --quiet                     only enable minimal output
+      --spec-editor editor        Select the RPM spec editor (legacy or experimental) (default legacy)
   -v, --verbose                   enable verbose output
       --without-lockfile          preview: track resolved upstream commits in generated config instead of lock files
 ```
