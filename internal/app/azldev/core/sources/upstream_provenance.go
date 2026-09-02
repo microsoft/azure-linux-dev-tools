@@ -119,7 +119,7 @@ func (p *sourcePreparerImpl) addUpstreamProvenanceMacros(
 		return
 	}
 
-	version, release, err := parseSpecVersionRelease(p.fs, specPath)
+	version, release, err := parseSpecVersionRelease(p.fs, specPath, spec.WithEditor(p.specEditor))
 	if err != nil {
 		slog.Warn("Skipping upstream provenance macros; failed to parse spec",
 			"component", component.GetName(), "error", err)
@@ -245,13 +245,15 @@ func setMacroIfAbsent(macros map[string]string, name, value string) {
 // package of the spec at specPath. Values are captured verbatim (no macro
 // expansion beyond the caller's later %{?dist} substitution). Missing tags
 // yield empty strings; it is not an error for a tag to be absent.
-func parseSpecVersionRelease(fs opctx.FS, specPath string) (version, release string, err error) {
+func parseSpecVersionRelease(
+	fs opctx.FS, specPath string, options ...spec.OpenOption,
+) (version, release string, err error) {
 	data, err := fileutils.ReadFile(fs, specPath)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to read spec %#q:\n%w", specPath, err)
 	}
 
-	parsed, err := spec.OpenSpec(bytes.NewReader(data))
+	parsed, err := spec.OpenSpec(bytes.NewReader(data), options...)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to parse spec %#q:\n%w", specPath, err)
 	}
