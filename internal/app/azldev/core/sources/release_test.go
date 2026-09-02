@@ -104,17 +104,44 @@ func TestGetReleaseTagValue(t *testing.T) {
 	for _, testCase := range []struct {
 		name, specContent, expected string
 		wantErr                     bool
+		options                     []spec.OpenOption
 	}{
-		{"static with dist", makeSpec("1%{?dist}"), "1%{?dist}", false},
-		{"autorelease", makeSpec("%autorelease"), "%autorelease", false},
-		{"braced autorelease", makeSpec("%{autorelease}"), "%{autorelease}", false},
+		{name: "static with dist", specContent: makeSpec("1%{?dist}"), expected: "1%{?dist}"},
+		{name: "autorelease", specContent: makeSpec("%autorelease"), expected: "%autorelease"},
+		{name: "braced autorelease", specContent: makeSpec("%{autorelease}"), expected: "%{autorelease}"},
 		{
-			"last repeated conditional release",
-			"Name: test-package\nVersion: 1.0.0\n%if 0\nRelease: 1\n%else\nRelease: 2\n%endif\n",
-			"2",
-			false,
+			name:        "last repeated conditional release with legacy editor",
+			specContent: "Name: test-package\nVersion: 1.0.0\n%if 0\nRelease: 1\n%else\nRelease: 2\n%endif\n",
+			expected:    "2",
 		},
-		{"no release tag", "Name: test-package\nVersion: 1.0.0\nSummary: Test\n", "", true},
+		{
+			name:        "last repeated conditional release with structural editor",
+			specContent: "Name: test-package\nVersion: 1.0.0\n%if 0\nRelease: 1\n%else\nRelease: 2\n%endif\n",
+			expected:    "2",
+			options:     []spec.OpenOption{spec.WithEditor(spec.EditorStructural)},
+		},
+		{
+			name:        "no release tag with legacy editor",
+			specContent: "Name: test-package\nVersion: 1.0.0\nSummary: Test\n",
+			wantErr:     true,
+		},
+		{
+			name:        "no release tag with structural editor",
+			specContent: "Name: test-package\nVersion: 1.0.0\nSummary: Test\n",
+			options:     []spec.OpenOption{spec.WithEditor(spec.EditorStructural)},
+			wantErr:     true,
+		},
+		{
+			name:        "empty final release tag with legacy editor",
+			specContent: "Name: test-package\nVersion: 1.0.0\nRelease: 1\nRelease:\n",
+			wantErr:     true,
+		},
+		{
+			name:        "empty final release tag with structural editor",
+			specContent: "Name: test-package\nVersion: 1.0.0\nRelease: 1\nRelease:\n",
+			options:     []spec.OpenOption{spec.WithEditor(spec.EditorStructural)},
+			wantErr:     true,
+		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			ctx := testctx.NewCtx()
@@ -123,7 +150,7 @@ func TestGetReleaseTagValue(t *testing.T) {
 			err := fileutils.WriteFile(ctx.FS(), specPath, []byte(testCase.specContent), 0o644)
 			require.NoError(t, err)
 
-			result, err := sources.GetReleaseTagValue(ctx.FS(), specPath)
+			result, err := sources.GetReleaseTagValue(ctx.FS(), specPath, testCase.options...)
 			if testCase.wantErr {
 				require.ErrorIs(t, err, spec.ErrNoSuchTag)
 			} else {
