@@ -12,128 +12,8 @@ import (
 	"strings"
 )
 
-// sectionTypesByName is a table of known sections, mapping them to their types. This table must
-// be kept in sync with new section types as they are added to the RPM spec format.
-//
-//nolint:gochecknoglobals // This is effectively a constant, but Go doesn't have const maps.
-var sectionTypesByName = map[string]SectionType{
-	"%package":                PackageSection,
-	"%prep":                   ScriptSection,
-	"%conf":                   ScriptSection,
-	"%build":                  ScriptSection,
-	"%install":                ScriptSection,
-	"%check":                  ScriptSection,
-	"%clean":                  ScriptSection,
-	"%generate_buildrequires": ScriptSection,
-	"%pre":                    ScriptSection,
-	"%post":                   ScriptSection,
-	"%preun":                  ScriptSection,
-	"%postun":                 ScriptSection,
-	"%pretrans":               ScriptSection,
-	"%posttrans":              ScriptSection,
-	"%preuntrans":             ScriptSection,
-	"%postuntrans":            ScriptSection,
-	"%verify":                 ScriptSection,
-	"%triggerin":              ScriptSection,
-	"%triggerun":              ScriptSection,
-	"%triggerprein":           ScriptSection,
-	"%triggerpostun":          ScriptSection,
-	"%filetriggerin":          ScriptSection,
-	"%filetriggerun":          ScriptSection,
-	"%filetriggerpostun":      ScriptSection,
-	"%transfiletriggerin":     ScriptSection,
-	"%transfiletriggerun":     ScriptSection,
-	"%transfiletriggerpostun": ScriptSection,
-	"%description":            RawSection,
-	"%files":                  FilesSection,
-	"%changelog":              ChangelogSection,
-	"%patchlist":              SourceFileListSection,
-	"%sourcelist":             SourceFileListSection,
-}
-
-// Spec encapsulates the contents of an RPM spec file.
-type Spec struct {
+type legacySpec struct {
 	rawLines []string
-}
-
-// Line represents a single line in an RPM spec file.
-type Line struct {
-	// Text is the original physical text of the line.
-	Text string
-	// Parsed is the parsed representation of the line's contents.
-	Parsed ParsedLine
-}
-
-// ParsedLineType represents the type of a parsed line.
-type ParsedLineType string
-
-const (
-	// SectionStart applies to lines that start a new section, e.g. "%description".
-	SectionStart ParsedLineType = "SectionStart"
-	// Tag applies to lines that define a tag, e.g. "Name: foo".
-	Tag ParsedLineType = "Tag"
-	// Raw applies to lines that are raw text, e.g. a line in a script section.
-	Raw ParsedLineType = "Raw"
-)
-
-// ParsedLine is the interface that all parsed line types implement.
-type ParsedLine interface {
-	// GetType returns the type of the parsed line.
-	GetType() ParsedLineType
-}
-
-// SectionType represents the type of a section in an RPM spec file.
-type SectionType string
-
-const (
-	// PackageSection applies to sections that define a package, e.g. "%package -n foo".
-	PackageSection SectionType = "Package"
-	// ScriptSection applies to sections that contain scripts, e.g. "%build".
-	ScriptSection SectionType = "Script"
-	// RawSection applies to sections that contain raw content, e.g.: "%description".
-	RawSection SectionType = "Raw"
-	// ChangelogSection applies to the "%changelog" section.
-	ChangelogSection SectionType = "Changelog"
-	// FilesSection applies to a "%files" section.
-	FilesSection SectionType = "Files"
-	// SourceFileListSection applies to a section that lists source files, e.g.: "%sourcelist".
-	SourceFileListSection SectionType = "SourceFileList"
-)
-
-// SectionStartLine represents a line that starts a new section in the spec, e.g.: "%build".
-type SectionStartLine struct {
-	SectType SectionType
-	SectName string
-	Tokens   []string
-}
-
-// GetType returns the type of the parsed line.
-func (*SectionStartLine) GetType() ParsedLineType {
-	return SectionStart
-}
-
-// TagLine encapsulates the definition of a tag.
-type TagLine struct {
-	// Tag is the name of the tag being defined.
-	Tag string
-	// Value is the value assigned to the tag.
-	Value string
-}
-
-// GetType returns the type of the parsed line.
-func (*TagLine) GetType() ParsedLineType {
-	return Tag
-}
-
-// RawLine represents a line that is raw text.
-type RawLine struct {
-	// Content is the raw line text.
-	Content string
-}
-
-// GetType returns the type of the parsed line.
-func (*RawLine) GetType() ParsedLineType {
-	return Raw
 }
 
 type parseState struct {
@@ -152,9 +32,9 @@ func newParseState() parseState {
 
 // OpenSpec reads in the contents of an RPM spec file from the provided reader, returning a [Spec] object.
 // An error is returned if the reader cannot be fully read (e.g., I/O error or line exceeds buffer size).
-func OpenSpec(reader io.Reader) (*Spec, error) {
+func openLegacySpec(reader io.Reader) (*legacySpec, error) {
 	scanner := bufio.NewScanner(reader)
-	spec := &Spec{}
+	spec := &legacySpec{}
 
 	// Read each line from the reader, parsing as we go. Store all parsed lines in the spec object.
 	for scanner.Scan() {
@@ -170,7 +50,7 @@ func OpenSpec(reader io.Reader) (*Spec, error) {
 }
 
 // Serialize writes the spec's contents to the provided writer.
-func (s *Spec) Serialize(writer io.Writer) error {
+func (s *legacySpec) Serialize(writer io.Writer) error {
 	bufWriter := bufio.NewWriter(writer)
 	for _, line := range s.rawLines {
 		_, err := bufWriter.WriteString(line + "\n")
@@ -188,22 +68,22 @@ func (s *Spec) Serialize(writer io.Writer) error {
 }
 
 // ReplaceLine replaces the line at the specified (0-indexed) line number with the provided replacement line.
-func (s *Spec) ReplaceLine(lineNumber int, replacement string) {
+func (s *legacySpec) ReplaceLine(lineNumber int, replacement string) {
 	s.rawLines[lineNumber] = replacement
 }
 
 // RemoveLine removes the line at the specified (0-indexed) line number.
-func (s *Spec) RemoveLine(lineNumber int) {
+func (s *legacySpec) RemoveLine(lineNumber int) {
 	s.rawLines = slices.Delete(s.rawLines, lineNumber, lineNumber+1)
 }
 
 // RemoveLines removes the lines in the specified (0-indexed) line number range [startLineNumber, endLineNumber).
-func (s *Spec) RemoveLines(startLineNumber int, endLineNumber int) {
+func (s *legacySpec) RemoveLines(startLineNumber int, endLineNumber int) {
 	s.rawLines = slices.Delete(s.rawLines, startLineNumber, endLineNumber)
 }
 
 // InsertLinesAt inserts the provided lines just before the specified (0-indexed) line number.
-func (s *Spec) InsertLinesAt(insertedLines []string, lineNumber int) {
+func (s *legacySpec) InsertLinesAt(insertedLines []string, lineNumber int) {
 	s.rawLines = slices.Insert(s.rawLines, lineNumber, insertedLines...)
 }
 
@@ -230,14 +110,22 @@ type Context struct {
 	nextLineNumToParse int
 	// nextLineNumToVisit is the next (0-indexed) line number that will be visited.
 	nextLineNumToVisit int
-	// spec is the spec being visited.
-	spec *Spec
+	// spec is the legacy spec being visited.
+	spec *legacySpec
+	// structuralLine is the structural line being visited, when applicable.
+	structuralLine *lineHandle
 }
 
 // InsertLinesBefore inserts the provided lines just before the line currently being visited,
 // updating the context accordingly. The next line to be visited will be the line following
 // the current one being visited.
 func (ctx *Context) InsertLinesBefore(lines []string) {
+	if ctx.structuralLine != nil {
+		ctx.structuralLine.InsertBefore(lines)
+
+		return
+	}
+
 	ctx.spec.InsertLinesAt(lines, ctx.CurrentLineNum)
 
 	// Account for the displacement from the inserted lines. We will parse the
@@ -252,6 +140,12 @@ func (ctx *Context) InsertLinesBefore(lines []string) {
 // updating the context accordingly. The next line to be visited will be the line following
 // the newly inserted lines.
 func (ctx *Context) InsertLinesAfter(lines []string) {
+	if ctx.structuralLine != nil {
+		ctx.structuralLine.InsertAfter(lines)
+
+		return
+	}
+
 	ctx.spec.InsertLinesAt(lines, ctx.CurrentLineNum+1)
 
 	// Skip ahead past the newly inserted lines.
@@ -262,6 +156,12 @@ func (ctx *Context) InsertLinesAfter(lines []string) {
 // RemoveLine removes the line currently being visited, updating the context accordingly.
 // The next line to be visited will be the line that followed the removed line.
 func (ctx *Context) RemoveLine() {
+	if ctx.structuralLine != nil {
+		ctx.structuralLine.Remove()
+
+		return
+	}
+
 	ctx.spec.RemoveLine(ctx.CurrentLineNum)
 
 	// Account for the removed line. We will reparse the new current line and revisit it.
@@ -274,6 +174,12 @@ func (ctx *Context) RemoveLine() {
 // ReplaceLine replaces the line currently being visited with the provided replacement line,
 // updating the context accordingly.
 func (ctx *Context) ReplaceLine(replacement string) {
+	if ctx.structuralLine != nil {
+		ctx.structuralLine.Replace(replacement)
+
+		return
+	}
+
 	ctx.spec.ReplaceLine(ctx.CurrentLineNum, replacement)
 
 	// Account for the replaced line. We will reparse the current line, but not revisit it.
@@ -311,17 +217,6 @@ const (
 	SpecEndTarget VisitTargetType = "SpecEnd"
 )
 
-// SectionTarget encapsulates information about the current section context.
-type SectionTarget struct {
-	// SectName is the name of the section, e.g. "%description".
-	SectName string
-	// SectType is the type of the section.
-	SectType SectionType
-	// Package is the package this section applies to, if any. Left empty for
-	// the default package or sections that aren't package-specific.
-	Package string
-}
-
 // Visitor is the type of a visitor function that can be passed to [Spec.Visit].
 type Visitor = func(ctx *Context) error
 
@@ -337,7 +232,7 @@ type Visitor = func(ctx *Context) error
 //   - Context mutation methods update these values to maintain correct traversal after modifications.
 //
 //nolint:funlen
-func (s *Spec) Visit(visitor Visitor) error {
+func (s *legacySpec) Visit(visitor Visitor) error {
 	ctx := Context{
 		Target:                      VisitTarget{TargetType: SpecStartTarget},
 		CurrentSection:              newParseState().currentSect,
@@ -459,7 +354,7 @@ func parseSpecLine(physicalText string, state parseState) (ParsedLine, parseStat
 	if sectionStartLine, ok := parsedLine.(*SectionStartLine); ok {
 		state.currentSect.SectType = sectionStartLine.SectType
 		state.currentSect.SectName = sectionStartLine.SectName
-		state.currentSect.Package = getPackageNameForSection(sectionStartLine.SectType, sectionStartLine.Tokens)
+		state.currentSect.Package = legacyGetPackageNameForSection(sectionStartLine.SectType, sectionStartLine.Tokens)
 	}
 
 	return parsedLine, state
@@ -476,7 +371,7 @@ func newParsedLine(physicalText string, state parseState) ParsedLine {
 	return parseLogicalLine(logicalLine, state)
 }
 
-var tagRegex = regexp.MustCompile(`^\s*([^\s:]+):\s*(.*?)\s*$`)
+var legacyTagRegex = regexp.MustCompile(`^\s*([^\s:]+):\s*(.*?)\s*$`)
 
 func parseLogicalLine(logicalLine string, state parseState) ParsedLine {
 	tokens := strings.Fields(logicalLine)
@@ -500,7 +395,7 @@ func parseLogicalLine(logicalLine string, state parseState) ParsedLine {
 	if state.currentSect.SectType == PackageSection {
 		const reSubmatchCount = 3
 
-		matches := tagRegex.FindStringSubmatch(logicalLine)
+		matches := legacyTagRegex.FindStringSubmatch(logicalLine)
 		if len(matches) == reSubmatchCount {
 			return &TagLine{
 				Tag:   matches[1],
@@ -515,7 +410,7 @@ func parseLogicalLine(logicalLine string, state parseState) ParsedLine {
 	}
 }
 
-func getPackageNameForSection(sectionType SectionType, headerTokens []string) string {
+func legacyGetPackageNameForSection(sectionType SectionType, headerTokens []string) string {
 	switch sectionType {
 	case SourceFileListSection:
 		fallthrough
@@ -528,7 +423,7 @@ func getPackageNameForSection(sectionType SectionType, headerTokens []string) st
 	case FilesSection:
 		fallthrough
 	case ScriptSection:
-		return GetPackageNameFromSectionHeader(headerTokens)
+		return legacyGetPackageNameFromSectionHeader(headerTokens)
 	default:
 		return ""
 	}
@@ -539,7 +434,7 @@ func getPackageNameForSection(sectionType SectionType, headerTokens []string) st
 // For a line like "%package foo", it would return "foo" as well. Because this function
 // does not know the base name of the spec, it cannot take a suffix-only name and resolve
 // it to a full name.
-func GetPackageNameFromSectionHeader(tokens []string) string {
+func legacyGetPackageNameFromSectionHeader(tokens []string) string {
 	fullName := ""
 	nameSuffix := ""
 	index := 1 // Skip the first token
