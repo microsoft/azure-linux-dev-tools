@@ -108,6 +108,12 @@ func TestGetReleaseTagValue(t *testing.T) {
 		{"static with dist", makeSpec("1%{?dist}"), "1%{?dist}", false},
 		{"autorelease", makeSpec("%autorelease"), "%autorelease", false},
 		{"braced autorelease", makeSpec("%{autorelease}"), "%{autorelease}", false},
+		{
+			"last repeated conditional release",
+			"Name: test-package\nVersion: 1.0.0\n%if 0\nRelease: 1\n%else\nRelease: 2\n%endif\n",
+			"2",
+			false,
+		},
 		{"no release tag", "Name: test-package\nVersion: 1.0.0\nSummary: Test\n", "", true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
