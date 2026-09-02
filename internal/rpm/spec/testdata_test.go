@@ -196,6 +196,41 @@ func TestStructuralParserFixtureSearchAndReplaceCoversLineTypes(t *testing.T) {
 	assertReparseable(t, contents)
 }
 
+func TestStructuralParserFixtureSubpackageMacroRemovalHoistsReferencedDefinitions(t *testing.T) {
+	for _, name := range []string{
+		"subpackage-define-referenced.spec",
+		"subpackage-define-transitive.spec",
+		"subpackage-define-shadowed.spec",
+	} {
+		t.Run(name, func(t *testing.T) {
+			specification := openFixture(t, name)
+			require.NoError(t, specification.RemoveSubpackage(
+				map[string]string{
+					"subpackage-define-referenced.spec": "tests",
+					"subpackage-define-transitive.spec": "tests",
+					"subpackage-define-shadowed.spec":   "tools",
+				}[name],
+			))
+
+			contents := serializeFixture(t, specification)
+			assertReparseable(t, contents)
+
+			switch name {
+			case "subpackage-define-referenced.spec":
+				assert.Contains(t, contents, "%define testsdir %{_libdir}/%{name}/tests-src")
+				assert.Less(t, strings.LastIndex(contents, "%define testsdir"), strings.Index(contents, "\n%install\n"))
+			case "subpackage-define-transitive.spec":
+				assert.Less(t, strings.Index(contents, "%define testroot"), strings.Index(contents, "%define testsdir"))
+				assert.Contains(t, contents, "%define testsdir %{testroot}/tests-src")
+			case "subpackage-define-shadowed.spec":
+				assert.Equal(t, 2, strings.Count(contents, "%global toolsdir"))
+				assert.Contains(t, contents, "tools-override")
+				assert.Less(t, strings.LastIndex(contents, "%global toolsdir"), strings.Index(contents, "\n%install\n"))
+			}
+		})
+	}
+}
+
 func TestStructuralParserGDBShapedMacroBodyIsOpaqueKnownLimitation(t *testing.T) {
 	input := `%define gdb_python_configure \
 %if 0%{?with_python}\
