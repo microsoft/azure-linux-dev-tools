@@ -67,10 +67,14 @@ func newAgentInstallCmd() *cobra.Command {
 
 Creates (or overwrites) the generated agent substrate, relative to the output directory:
 
+.agents/skills/.azldev-generated.json         generator version and install mode
 .agents/skills/<name>/SKILL.md                one Agent Skill per built-in skill
 .github/instructions/<name>.instructions.md   path-specific instruction wrappers
 .mcp.json                                     registers the azldev MCP server for Copilot
 .vscode/mcp.json                              registers the azldev MCP server
+
+With --layout github, the provenance manifest and skill files are written under
+.github/skills instead of .agents/skills.
 
 Everything azldev writes is generated deterministically, so re-running install is a
 no-op once committed — a CI check can run install and assert an empty diff. The

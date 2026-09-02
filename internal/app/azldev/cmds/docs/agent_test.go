@@ -60,9 +60,9 @@ func TestInstallAgentFiles(t *testing.T) {
 		OutputDir: outputDir,
 	})
 	require.NoError(t, err)
-	// One skill file per registered skill, one instruction file per registered instruction,
-	// plus the VS Code and Copilot MCP server configs.
-	require.Len(t, results, len(agentskill.Skills())+len(agentskill.Instructions())+2)
+	// One provenance file, one skill file per registered skill, one instruction file per
+	// registered instruction, plus the VS Code and Copilot MCP server configs.
+	require.Len(t, results, len(agentskill.Skills())+len(agentskill.Instructions())+3)
 
 	skillPath := filepath.Join(outputDir, filepath.FromSlash(primarySkillFile(t)))
 
@@ -71,6 +71,8 @@ func TestInstallAgentFiles(t *testing.T) {
 		filepath.FromSlash(agentskill.InstructionFile(azldevInstruction)))
 
 	written := writtenPaths(results)
+	assert.True(t, written[filepath.Join(outputDir, filepath.FromSlash(agentskill.DefaultLayout().ProvenanceFile()))],
+		"expected the generator provenance to be written")
 	assert.True(t, written[skillPath], "expected the azldev skill to be written")
 	assert.True(t, written[instructionsPath], "expected the instructions file to be written")
 	assert.True(t, written[filepath.Join(outputDir, ".vscode/mcp.json")],

@@ -47,16 +47,18 @@
 // runtimes read to decide whether to load the skill. renderInstruction does the same via
 // the instruction wrapper. That front-matter line is the description's only destination.
 //
-// # Substituted values (Params)
+// # Dynamic values (Params)
 //
-// The {{ .Field }} placeholders in the templates are filled from Params, resolved by the
-// 'docs agent' command:
+// Params is resolved by the 'docs agent' command and consumed by the Markdown templates
+// and the provenance renderer:
 //
-//   - Version           — the azldev version stamped into every file.
+//   - Version           — passed only to the provenance renderer and recorded once in the
+//     central provenance file; it is not substituted into Markdown templates.
 //   - TopLevelCommands  — generated from the Cobra command tree, so the overview skill's
-//     command list never goes stale.
+//     command list never goes stale; substituted into the overview skill template.
 //   - Bindings          — repo-specific paths (LockDir, RenderedSpecsDir, WorkDir) read from
-//     the target azldev.toml, degrading to azldev's defaults when no config is present.
+//     the target azldev.toml, degrading to azldev's defaults when no config is present;
+//     substituted into skill and instruction templates.
 //
 // # Outputs (three sinks, one registry)
 //
@@ -65,7 +67,8 @@
 //	                                                 MCP     --> docs-agent-show returns text
 //
 // All three enumerate the same registries, so the on-disk files, the CLI, and the MCP
-// tool cannot drift from one another.
+// tool cannot drift from one another. Installed trees record the generator version and
+// full/wrapper mode once in a hidden JSON file at the skill-root directory.
 //
 // # Maintenance
 //

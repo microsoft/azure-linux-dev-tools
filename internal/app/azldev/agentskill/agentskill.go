@@ -6,6 +6,7 @@ package agentskill
 import (
 	"bytes"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"path"
 	"slices"
@@ -28,6 +29,8 @@ const (
 	// instructionFileSuffix is appended to an instruction's name to form its emitted file
 	// name (e.g. "comp-toml" -> "comp-toml.instructions.md").
 	instructionFileSuffix = ".instructions.md"
+
+	provenanceFileName = ".azldev-generated.json"
 )
 
 // The embedded templates rendered into the emitted files and the served skill
@@ -303,6 +306,11 @@ func (l Layout) SkillFile(skill Skill) string {
 	return path.Join(l.SkillDir(skill), "SKILL.md")
 }
 
+// ProvenanceFile returns the repo-relative path of the central generator provenance file.
+func (l Layout) ProvenanceFile() string {
+	return path.Join(l.SkillsDir, provenanceFileName)
+}
+
 // InstructionFile returns the repo-relative file path for an instruction.
 func InstructionFile(inst Instruction) string {
 	return path.Join(".github/instructions", inst.Name+instructionFileSuffix)
@@ -335,7 +343,7 @@ type Bindings struct {
 
 // Params carries the dynamic values injected into the emitted and served content.
 type Params struct {
-	// Version is the azldev version stamped into the generated content.
+	// Version is the azldev version recorded in the generator provenance file.
 	Version string
 
 	// TopLevelCommands is the sorted list of top-level azldev commands with summaries.
@@ -354,6 +362,25 @@ type EmittedFile struct {
 
 	// Content is the fully rendered file content.
 	Content string `json:"-"`
+}
+
+type provenance struct {
+	Generator     string `json:"generator"`
+	AzldevVersion string `json:"azldevVersion"`
+	Full          bool   `json:"full"`
+}
+
+func renderProvenance(params Params, full bool) (string, error) {
+	content, err := json.MarshalIndent(provenance{
+		Generator:     "azldev docs agent install",
+		AzldevVersion: params.Version,
+		Full:          full,
+	}, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("failed to render agent generator provenance:\n%w", err)
+	}
+
+	return string(append(content, '\n')), nil
 }
 
 func renderSkill(templateName string, skill Skill, params Params) (string, error) {
@@ -457,7 +484,13 @@ func SkillDocument(name string, params Params) (string, error) {
 // is not available in the target environment). Instruction files are always light
 // wrappers that point at the relevant skills.
 func Files(layout Layout, params Params, full bool) ([]EmittedFile, error) {
-	files := make([]EmittedFile, 0, len(skills)+len(instructions))
+	provenanceContent, err := renderProvenance(params, full)
+	if err != nil {
+		return nil, err
+	}
+
+	files := make([]EmittedFile, 0, len(skills)+len(instructions)+1)
+	files = append(files, EmittedFile{RelPath: layout.ProvenanceFile(), Content: provenanceContent})
 
 	for _, skill := range skills {
 		templateName := "skill-wrapper.md.tmpl"

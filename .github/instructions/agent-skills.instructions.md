@@ -51,7 +51,8 @@ and how dynamic values are substituted — read the package doc in
    overlays").
 3. A little hand-written prose here is fine, if it helps direct agents to the right skill. Keep it short, and avoid
    repeating the skill content.
-4. Keep the count-based tests happy: `Files()` emits one file per skill plus one per instruction.
+4. Keep the count-based tests happy: `Files()` emits one provenance file, one file per skill,
+   and one per instruction.
 
 ## Content accuracy is the hard part
 

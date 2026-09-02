@@ -13,8 +13,11 @@ azldev can emit two kinds of agent-facing files:
 - **Path-specific instructions** under `.github/instructions/` that apply automatically
   to azldev configuration and generated output.
 
-Every emitted file identifies itself as generated. Keep repository-specific policy and
-editorial guidance in separate files rather than editing emitted files.
+Every emitted Markdown file identifies itself as generated. Keep repository-specific
+policy and editorial guidance in separate files rather than editing emitted files.
+The central `.agents/skills/.azldev-generated.json` file records the azldev version and
+whether full skills were inlined. With the `github` layout, it is written under
+`.github/skills/` instead.
 
 The authoritative skill content ships inside the azldev binary. By default the
 emitted `SKILL.md` is a light wrapper that points agents at a read-only MCP tool
