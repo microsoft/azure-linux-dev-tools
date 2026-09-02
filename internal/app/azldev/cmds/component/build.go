@@ -25,6 +25,7 @@ import (
 )
 
 type ComponentBuildOptions struct {
+	componentCommandOptions
 	ComponentFilter components.ComponentFilter
 
 	ContinueOnError   bool
@@ -88,7 +89,9 @@ func NewBuildCmd() *cobra.Command {
 		BuildEnvPolicy: BuildEnvPreserveOnFailure,
 	}
 
-	cmd := &cobra.Command{
+	var cmd *cobra.Command
+
+	cmd = &cobra.Command{
 		Use:   "build",
 		Short: "Build packages for components",
 		Long: `Build RPM packages for one or more components using mock.
@@ -121,6 +124,7 @@ builds can consume.`,
   azldev component build --local-repo-with-publish ./base/out -p liba -p libb`,
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
 			options.ComponentFilter.ComponentNamePatterns = append(options.ComponentFilter.ComponentNamePatterns, args...)
+			options.SpecEditor = specEditorFromCommand(cmd)
 
 			return SelectAndBuildComponents(env, options)
 		}),
@@ -280,7 +284,10 @@ func buildComponent(
 
 	preparerOpts = append(preparerOpts, sources.WithMockProcessor(mockProcessor))
 
-	sourcePreparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, preparerOpts...)
+	sourcePreparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, append(
+		preparerOpts,
+		sources.WithSpecEditor(options.specEditorMode()),
+	)...)
 	if err != nil {
 		return ComponentBuildResults{},
 			fmt.Errorf("failed to create source preparer for component %q:\n%w", component.GetName(), err)
