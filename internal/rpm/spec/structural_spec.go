@@ -196,13 +196,10 @@ func (s *structuralSpec) InsertLinesAt(insertedLines []string, lineNumber int) {
 // tree API directly; visitor callbacks retain the established line semantics.
 func (s *structuralSpec) Visit(visitor Visitor) error {
 	legacy := legacySpec{rawLines: slices.Clone(s.rawLines)}
-	if err := legacy.Visit(visitor); err != nil {
-		return err
-	}
-
+	err := legacy.Visit(visitor)
 	s.rawLines = legacy.rawLines
 
-	return nil
+	return err
 }
 
 // SectionTarget encapsulates information about the current section context.
