@@ -99,7 +99,7 @@ Why split RPM-build vs image-build? They have different security envelopes:
 Expansion is deterministic and happens once during `ProjectConfig.Validate()`, after **all** config files (project, user, `--config-file` extras) have been merged. This means:
 
 - a later config file can override an earlier set's `base-uri` or `gpg-key`;
-- the merged config in `azldev config dump` is round-trippable: what you see is what you authored, and re-loading the dumped TOML produces the same effective state;
+- `azldev config dump` emits an inspection snapshot of the effective configuration; it is not intended to be reloaded as project configuration;
 - consumers (mock, kiwi) call `ResourcesConfig.EffectiveRpmRepos()` to get the flat resolved map without re-parsing layouts.
 
 `gpg-key` paths follow the usual rule: bare paths are resolved relative to the directory of the file that defines them, then re-emitted as a `file` URI. URI-shaped values (an `http` or `https` URI, or a `file` URI with an absolute path) are passed through unchanged.
@@ -192,7 +192,7 @@ image-build = [
 Inspect the fully resolved configuration with:
 
 ```sh
-azldev config dump -q -O json | jq '.resources, .distros.mydistro.versions["4.0"].inputs'
+azldev config dump -q -f json | jq '.resources, .distros.mydistro.versions["4.0"].inputs'
 ```
 
 ## Authoring tips
