@@ -73,5 +73,5 @@ includes = ["**/*.comp.toml"]
 
 - [Configuration System](../../explanation/config-system.md) — how config files are loaded, merged, and how inheritance works
 - [JSON Schema](../../../../schemas/azldev.schema.json) — machine-readable schema for editor integration and validation
-- Run `azldev config dump -q -O json` to inspect the fully resolved configuration
+- Run `azldev config dump -q -f json` to inspect the fully resolved configuration. The output is an inspection snapshot, not project configuration intended to be loaded again.
 - Run `azldev config generate-schema` to generate the latest schema

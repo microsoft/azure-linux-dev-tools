@@ -137,7 +137,7 @@ azldev validates each config file against its schema as it is loaded. Unknown fi
 azldev config generate-schema
 ```
 
-Use `azldev config dump -q -O json` to inspect the fully resolved configuration after all includes are merged and inheritance is applied.
+Use `azldev config dump -q -f json` to inspect the fully resolved configuration after all includes are merged, component inheritance is applied, and per-file overlays are expanded. The dump retains the default configuration blocks alongside the resolved component entries, so it is an inspection snapshot and must not be reloaded as project configuration.
 
 ## Related Resources
 
