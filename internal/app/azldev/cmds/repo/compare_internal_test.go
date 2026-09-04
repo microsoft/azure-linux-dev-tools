@@ -92,6 +92,24 @@ func TestComparisonRepositoriesRejectsUnknownSet(t *testing.T) {
 	assert.Contains(t, err.Error(), "missing")
 }
 
+func TestFilterToSharedKinds(t *testing.T) {
+	t.Parallel()
+
+	left := []repocompare.Repository{{ID: "left-binary", Kind: projectconfig.SubrepoKindBinary}}
+	right := []repocompare.Repository{
+		{ID: "right-binary", Kind: projectconfig.SubrepoKindBinary},
+		{ID: "right-debug", Kind: projectconfig.SubrepoKindDebug},
+		{ID: "right-source", Kind: projectconfig.SubrepoKindSource},
+	}
+
+	filteredLeft, filteredRight := filterToSharedKinds(left, right)
+
+	assert.Equal(t, left, filteredLeft)
+	assert.Equal(t, []repocompare.Repository{{
+		ID: "right-binary", Kind: projectconfig.SubrepoKindBinary,
+	}}, filteredRight)
+}
+
 func TestRunCompareReportsInventoryDifferences(t *testing.T) {
 	t.Parallel()
 

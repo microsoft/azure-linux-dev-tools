@@ -93,6 +93,11 @@ func runCompare(
 		return nil, fmt.Errorf("resolving right repositories:\n%w", err)
 	}
 
+	leftRepositories, rightRepositories = filterToSharedKinds(leftRepositories, rightRepositories)
+	if len(leftRepositories) == 0 {
+		return nil, errors.New("the selected rpm-repo-sets have no shared artifact kinds")
+	}
+
 	leftPackages, err := repocompare.LoadRepositories(env, fetcher, leftRepositories)
 	if err != nil {
 		return nil, fmt.Errorf("loading left repositories:\n%w", err)
@@ -185,4 +190,35 @@ func archAllowed(allowlist []string, arch string) bool {
 	}
 
 	return false
+}
+
+func filterToSharedKinds(
+	left []repocompare.Repository,
+	right []repocompare.Repository,
+) ([]repocompare.Repository, []repocompare.Repository) {
+	leftKinds := make(map[projectconfig.SubrepoKind]struct{})
+	for _, repository := range left {
+		leftKinds[repository.Kind] = struct{}{}
+	}
+
+	rightKinds := make(map[projectconfig.SubrepoKind]struct{})
+	for _, repository := range right {
+		rightKinds[repository.Kind] = struct{}{}
+	}
+
+	filter := func(
+		repositories []repocompare.Repository,
+		otherKinds map[projectconfig.SubrepoKind]struct{},
+	) []repocompare.Repository {
+		result := make([]repocompare.Repository, 0, len(repositories))
+		for _, repository := range repositories {
+			if _, ok := otherKinds[repository.Kind]; ok {
+				result = append(result, repository)
+			}
+		}
+
+		return result
+	}
+
+	return filter(left, rightKinds), filter(right, leftKinds)
 }
