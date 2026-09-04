@@ -662,6 +662,9 @@ type RpmRepoSet struct {
 	// this set; same default semantics as [RpmRepoResource.DisableGPGCheck].
 	DisableGPGCheck bool `toml:"disable-gpg-check,omitempty" json:"disableGpgCheck,omitempty" jsonschema:"title=Disable GPG check,description=Opt out of GPG signature verification for repos in this set"`
 
+	// DisableSSLVerify disables TLS certificate verification for every sub-repo in this set.
+	DisableSSLVerify bool `toml:"disable-ssl-verify,omitempty" json:"disableSslVerify,omitempty" jsonschema:"title=Disable SSL verification,description=Disable TLS certificate verification for repos in this set"`
+
 	// Arches optionally restricts every synthesized repo in this set to a
 	// specific list of target architectures. Empty = all.
 	Arches []string `toml:"arches,omitempty" json:"arches,omitempty" jsonschema:"title=Arches,description=Restrict to specific target architectures; empty = all"`

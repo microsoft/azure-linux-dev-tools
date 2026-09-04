@@ -98,6 +98,7 @@ Defined under `[resources.rpm-repo-sets.<name>]`.
 | Name prefix | `name-prefix` | string | Prepended to each sub-repo's `name` to form the synthesized repo ID. May be empty. |
 | GPG key | `gpg-key` | string | Shared GPG key for sub-repos in this set; same shape rules as the per-repo `gpg-key` |
 | Disable GPG check | `disable-gpg-check` | bool | Opt out of GPG verification for sub-repos in this set |
+| Disable SSL verification | `disable-ssl-verify` | bool | Disable TLS certificate verification for every sub-repo in this set. Use only for an explicitly trusted endpoint. |
 | Arches | `arches` | list of string | Restrict every synthesized repo in this set to specific architectures |
 | Sub-repos | `subrepos` | list of string | Allowlist of sub-repo names to include from the template. Empty/unset = include all sub-repos. Names must match entries in the referenced template. |
 
@@ -128,6 +129,10 @@ subrepos    = ["base", "base-src", "sdk", "sdk-src"]   # binary + sources, no de
 ```
 
 This expands into four `RpmRepoResource` entries: `azl4-base`, `azl4-base-src`, `azl4-sdk`, `azl4-sdk-src`.
+
+Named repo sets can also be compared directly with `azldev repo compare
+--left <set> --right <set>`; see the [repository comparison
+example](../../explanation/repos.md#compare-koji-and-pmc-inventories).
 
 ## Merging across files
 

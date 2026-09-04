@@ -36,6 +36,28 @@ func TestNewQueryCmd_FlagsRegistered(t *testing.T) {
 	}
 }
 
+func TestNewCompareCmd_FlagsRegistered(t *testing.T) {
+	t.Parallel()
+
+	cmd := repo.NewCompareCmd()
+	for _, name := range []string{"left", "right", "arch"} {
+		assert.NotNil(t, cmd.Flags().Lookup(name), "expected flag --%s", name)
+	}
+}
+
+func TestNewCompareCmd_RequiresPrefixes(t *testing.T) {
+	t.Parallel()
+
+	cmd := repo.NewCompareCmd()
+	cmd.SetArgs([]string{})
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "left")
+}
+
 func TestNewQueryCmd_OneOfRepoPrefixOrVersionRequired(t *testing.T) {
 	t.Parallel()
 

@@ -94,6 +94,47 @@ Why split RPM-build vs image-build? They have different security envelopes:
 - mock evaluates `gpg-key` URIs *inside* the chroot, so a local file path is invisible. azldev rejects local `gpg-key` values for `rpm-build` repos.
 - kiwi runs on the host, so any URI form works for `image-build`.
 
+### Compare Koji and PMC inventories
+
+Define each repository as a named repo set:
+
+```toml
+[resources.rpm-repo-sets.koji-build]
+template = "koji-dist-repo"
+base-uri = "https://koji.example.com/repos/azl-build/latest"
+disable-gpg-check = true
+# For a trusted internal endpoint with an invalid certificate only:
+# disable-ssl-verify = true
+
+[resources.rpm-repo-sets.pmc-prod]
+template = "azl-standard"
+base-uri = "https://packages.example.com/azurelinux/4.0/prod"
+disable-gpg-check = true
+```
+
+Then compare their inventories:
+
+```sh
+azldev repo compare \
+    --left koji-build \
+    --right pmc-prod \
+    --arch x86_64,aarch64
+```
+
+Each repo set is expanded with its selected template and respects its `arches`
+and `subrepos` restrictions. The command can also compare two PMC trees, two
+Koji dist-repos, or custom layouts. The report contains one row per differing
+package name, summary statuses, and the complete left and right NEVR
+inventories. `missing-from-right` means at least one left identity is absent
+from the right; `added-in-right` means at least one right identity is absent
+from the left. Identity includes name, normalized epoch, version, release, RPM
+architecture, and artifact kind (binary, debug, or source). Matching NEVRs with
+different architecture sets also receive `architectures-differ`. Replicated
+`noarch` packages are counted once.
+
+This comparison checks inventory only. It does not compare RPM bytes,
+signatures, checksums, or publication routing.
+
 ## Load-time vs use-time
 
 Expansion is deterministic and happens once during `ProjectConfig.Validate()`, after **all** config files (project, user, `--config-file` extras) have been merged. This means:
