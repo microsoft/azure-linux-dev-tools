@@ -94,8 +94,26 @@ func TestCompareSummarizesVersionAndArchitectureDifferences(t *testing.T) {
 
 	assert.Equal(t, []repocompare.PackageReport{{
 		Name:       "pkg",
-		Summary:    "missing-from-right, added-in-right, architectures-differ",
+		Summary:    "missing-from-right, architectures-differ",
 		LeftNEVRs:  "pkg-2-1.azl4",
 		RightNEVRs: "pkg-2-1.azl4, pkg-1-1.azl4",
+	}}, reports)
+}
+
+func TestCompareDoesNotTreatHistoricalRightVersionAsAddedPackage(t *testing.T) {
+	t.Parallel()
+
+	left := testPackage("shared", "2", "x86_64")
+	right := testPackage("shared", "1", "x86_64")
+
+	reports, err := repocompare.Compare(
+		[]repocompare.Package{left},
+		[]repocompare.Package{right},
+	)
+	require.NoError(t, err)
+
+	assert.Equal(t, []repocompare.PackageReport{{
+		Name: "shared", Summary: "missing-from-right",
+		LeftNEVRs: "shared-2-1.azl4", RightNEVRs: "shared-1-1.azl4",
 	}}, reports)
 }
