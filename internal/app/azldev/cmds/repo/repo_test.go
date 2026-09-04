@@ -40,7 +40,7 @@ func TestNewCompareCmd_FlagsRegistered(t *testing.T) {
 	t.Parallel()
 
 	cmd := repo.NewCompareCmd()
-	for _, name := range []string{"left", "right", "arch"} {
+	for _, name := range []string{"left", "right", "arch", "missing-from-right", "stat"} {
 		assert.NotNil(t, cmd.Flags().Lookup(name), "expected flag --%s", name)
 	}
 }
