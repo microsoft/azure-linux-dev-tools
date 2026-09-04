@@ -215,4 +215,13 @@ func TestRunCompareStatModes(t *testing.T) {
 	}, fetcher)
 	require.NoError(t, err)
 	assert.Equal(t, repocompare.MissingFromRightStat{MissingFromRight: 2}, result)
+
+	result, err = runCompare(testEnv.Env, &CompareOptions{
+		Left: "left-set", Right: "right-set", Arches: []string{"x86_64"},
+		IgnoreOlderAdded: true, Stat: true,
+	}, fetcher)
+	require.NoError(t, err)
+	assert.Equal(t, repocompare.DiffStat{
+		MissingFromRight: 2, AddedInRight: 1, Total: 3,
+	}, result)
 }
