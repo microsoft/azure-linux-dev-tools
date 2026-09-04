@@ -21,6 +21,7 @@ type CompareOptions struct {
 	Right            string
 	Arches           []string
 	MissingFromRight bool
+	IgnoreOlderAdded bool
 	Stat             bool
 }
 
@@ -43,8 +44,10 @@ statuses plus the complete left and right NEVR inventories. Package content is
 not compared.
 
 Use --missing-from-right to return package versions present on the left but
-absent from the right, regardless of architecture or artifact kind. Use --stat
-to return only counts for the selected comparison mode.`,
+absent from the right, regardless of architecture or artifact kind. Use
+--ignore-older-added-in-right to suppress historical right-side versions when
+the left has a newer matching package. Use --stat to return only counts for the
+selected comparison mode.`,
 	}
 
 	cmd.RunE = azldev.RunFunc(func(env *azldev.Env) (interface{}, error) {
@@ -57,6 +60,8 @@ to return only counts for the selected comparison mode.`,
 		"comma-separated target architectures")
 	cmd.Flags().BoolVar(&options.MissingFromRight, "missing-from-right", false,
 		"show package versions absent from the right, ignoring architecture and artifact kind")
+	cmd.Flags().BoolVar(&options.IgnoreOlderAdded, "ignore-older-added-in-right", false,
+		"ignore right-only identities older than a matching left package identity")
 	cmd.Flags().BoolVar(&options.Stat, "stat", false, "show only package-level difference counts")
 
 	for _, name := range []string{"left", "right"} {
@@ -126,7 +131,9 @@ func runCompare(
 		return missing, nil
 	}
 
-	reports, err := repocompare.Compare(leftPackages, rightPackages)
+	reports, err := repocompare.CompareWithOptions(leftPackages, rightPackages, repocompare.Options{
+		IgnoreOlderAddedInRight: options.IgnoreOlderAdded,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("comparing repository inventories:\n%w", err)
 	}

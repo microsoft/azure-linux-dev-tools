@@ -14,8 +14,10 @@ statuses plus the complete left and right NEVR inventories. Package content is
 not compared.
 
 Use --missing-from-right to return package versions present on the left but
-absent from the right, regardless of architecture or artifact kind. Use --stat
-to return only counts for the selected comparison mode.
+absent from the right, regardless of architecture or artifact kind. Use
+--ignore-older-added-in-right to suppress historical right-side versions when
+the left has a newer matching package. Use --stat to return only counts for the
+selected comparison mode.
 
 ```
 azldev repo compare [flags]
@@ -24,12 +26,13 @@ azldev repo compare [flags]
 ### Options
 
 ```
-      --arch strings         comma-separated target architectures (default [x86_64,aarch64])
-  -h, --help                 help for compare
-      --left string          left [resources.rpm-repo-sets] name
-      --missing-from-right   show package versions absent from the right, ignoring architecture and artifact kind
-      --right string         right [resources.rpm-repo-sets] name
-      --stat                 show only package-level difference counts
+      --arch strings                  comma-separated target architectures (default [x86_64,aarch64])
+  -h, --help                          help for compare
+      --ignore-older-added-in-right   ignore right-only identities older than a matching left package identity
+      --left string                   left [resources.rpm-repo-sets] name
+      --missing-from-right            show package versions absent from the right, ignoring architecture and artifact kind
+      --right string                  right [resources.rpm-repo-sets] name
+      --stat                          show only package-level difference counts
 ```
 
 ### Options inherited from parent commands

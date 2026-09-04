@@ -23,6 +23,11 @@ const (
 	PackageStatusArchitecturesDiffer PackageStatus = "architectures-differ"
 )
 
+// Options controls package inventory comparison behavior.
+type Options struct {
+	IgnoreOlderAddedInRight bool
+}
+
 // PackageReport summarizes both inventories for one differing package name.
 type PackageReport struct {
 	Name       string `json:"name"       table:"Name"`
@@ -52,6 +57,11 @@ type MissingFromRightStat struct {
 
 // Compare returns one package-centric report for each package name with inventory differences.
 func Compare(left, right []Package) ([]PackageReport, error) {
+	return CompareWithOptions(left, right, Options{})
+}
+
+// CompareWithOptions returns package-centric reports using the selected comparison behavior.
+func CompareWithOptions(left, right []Package, options Options) ([]PackageReport, error) {
 	leftByName := groupByName(left)
 	rightByName := groupByName(right)
 	names := unionNames(leftByName, rightByName)
@@ -61,7 +71,11 @@ func Compare(left, right []Package) ([]PackageReport, error) {
 		leftPackages := leftByName[name]
 		rightPackages := rightByName[name]
 
-		statuses := packageStatuses(leftPackages, rightPackages)
+		statuses, err := packageStatuses(leftPackages, rightPackages, options)
+		if err != nil {
+			return nil, fmt.Errorf("comparing package %#q:\n%w", name, err)
+		}
+
 		if len(statuses) == 0 {
 			continue
 		}
@@ -141,7 +155,7 @@ func MissingFromRight(left, right []Package) []MissingPackage {
 	return result
 }
 
-func packageStatuses(left, right []Package) []PackageStatus {
+func packageStatuses(left, right []Package, options Options) ([]PackageStatus, error) {
 	leftIdentities := identitySet(left)
 	rightIdentities := identitySet(right)
 
@@ -151,7 +165,14 @@ func packageStatuses(left, right []Package) []PackageStatus {
 		statuses = append(statuses, PackageStatusMissingFromRight)
 	}
 
-	if hasSetDifference(rightIdentities, leftIdentities) {
+	hasRightAddition, err := hasUnignoredRightAddition(
+		left, right, leftIdentities, options.IgnoreOlderAddedInRight,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if hasRightAddition {
 		statuses = append(statuses, PackageStatusAddedInRight)
 	}
 
@@ -159,7 +180,65 @@ func packageStatuses(left, right []Package) []PackageStatus {
 		statuses = append(statuses, PackageStatusArchitecturesDiffer)
 	}
 
-	return statuses
+	return statuses, nil
+}
+
+func hasUnignoredRightAddition(
+	left []Package,
+	right []Package,
+	leftIdentities map[string]struct{},
+	ignoreOlder bool,
+) (bool, error) {
+	if !ignoreOlder {
+		return hasSetDifference(identitySet(right), leftIdentities), nil
+	}
+
+	latestLeft, err := latestVersionsByKindAndArch(left)
+	if err != nil {
+		return false, err
+	}
+
+	for _, pkg := range right {
+		if _, ok := leftIdentities[pkg.Identity()]; ok {
+			continue
+		}
+
+		version, err := rpm.NewVersionFromEVR(normalizedEpoch(pkg.Epoch), pkg.Version, pkg.Release)
+		if err != nil {
+			return false, fmt.Errorf("invalid right EVR for %#q:\n%w", pkg.NEVRA(), err)
+		}
+
+		leftVersion, ok := latestLeft[kindAndArchKey(pkg)]
+		if !ok || version.Compare(leftVersion) >= 0 {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func latestVersionsByKindAndArch(packages []Package) (map[string]*rpm.Version, error) {
+	result := make(map[string]*rpm.Version)
+
+	for _, pkg := range packages {
+		version, err := rpm.NewVersionFromEVR(normalizedEpoch(pkg.Epoch), pkg.Version, pkg.Release)
+		if err != nil {
+			return nil, fmt.Errorf("invalid left EVR for %#q:\n%w", pkg.NEVRA(), err)
+		}
+
+		key := kindAndArchKey(pkg)
+
+		current, ok := result[key]
+		if !ok || version.GreaterThan(current) {
+			result[key] = version
+		}
+	}
+
+	return result, nil
+}
+
+func kindAndArchKey(pkg Package) string {
+	return string(pkg.Kind) + "\x00" + pkg.Arch
 }
 
 func identitySet(packages []Package) map[string]struct{} {
