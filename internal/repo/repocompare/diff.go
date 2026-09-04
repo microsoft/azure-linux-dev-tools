@@ -17,7 +17,7 @@ type PackageStatus string
 const (
 	// PackageStatusMissingFromRight indicates that the left contains an identity absent from the right.
 	PackageStatusMissingFromRight PackageStatus = "missing-from-right"
-	// PackageStatusAddedInRight indicates that the right contains a package name absent from the left.
+	// PackageStatusAddedInRight indicates that the right contains an identity absent from the left.
 	PackageStatusAddedInRight PackageStatus = "added-in-right"
 	// PackageStatusArchitecturesDiffer indicates that matching NEVRs have different architecture sets.
 	PackageStatusArchitecturesDiffer PackageStatus = "architectures-differ"
@@ -78,7 +78,7 @@ func packageStatuses(left, right []Package) []PackageStatus {
 		statuses = append(statuses, PackageStatusMissingFromRight)
 	}
 
-	if len(left) == 0 && len(right) > 0 {
+	if hasSetDifference(rightIdentities, leftIdentities) {
 		statuses = append(statuses, PackageStatusAddedInRight)
 	}
 
