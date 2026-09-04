@@ -25,4 +25,5 @@ under one or more URL prefixes.`,
 
 	app.AddTopLevelCommand(cmd)
 	queryOnAppInit(app, cmd)
+	compareOnAppInit(app, cmd)
 }

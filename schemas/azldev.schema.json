@@ -1289,6 +1289,11 @@
           "title": "Disable GPG check",
           "description": "Opt out of GPG signature verification for repos in this set"
         },
+        "disable-ssl-verify": {
+          "type": "boolean",
+          "title": "Disable SSL verification",
+          "description": "Disable TLS certificate verification for repos in this set"
+        },
         "arches": {
           "items": {
             "type": "string"

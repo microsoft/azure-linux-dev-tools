@@ -1249,6 +1249,11 @@
           "type": "array",
           "title": "Arches",
           "description": "Restrict to specific target architectures; empty = all"
+        },
+        "disable-ssl-verify": {
+          "type": "boolean",
+          "title": "Disable SSL verification",
+          "description": "Disable TLS certificate verification for this repository"
         }
       },
       "additionalProperties": false,
@@ -1288,6 +1293,11 @@
           "type": "boolean",
           "title": "Disable GPG check",
           "description": "Opt out of GPG signature verification for repos in this set"
+        },
+        "disable-ssl-verify": {
+          "type": "boolean",
+          "title": "Disable SSL verification",
+          "description": "Disable TLS certificate verification for repos in this set"
         },
         "arches": {
           "items": {
