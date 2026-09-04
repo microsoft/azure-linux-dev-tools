@@ -32,5 +32,6 @@ components defined in the project configuration.`,
 	prepareOnAppInit(app, cmd)
 	queryOnAppInit(app, cmd)
 	renderOnAppInit(app, cmd)
+	testOnAppInit(app, cmd)
 	updateOnAppInit(app, cmd)
 }

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/acobaugh/osrelease"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
@@ -29,6 +30,8 @@ const (
 	OSIDAzureLinux = "azurelinux"
 	// The OS ID of Fedora.
 	OSIDFedora = "fedora"
+	// The major version of Azure Linux 4, as reported by VERSION_ID.
+	azureLinux4MajorVersion = "4"
 )
 
 // ErrMissingExecutable is returned when a required executable cannot be found or acquired.
@@ -124,18 +127,9 @@ func (p *PackagePrereq) selectInstallerAndPackagesForHost(
 }
 
 func getHostOSID(ctx opctx.Ctx) (osid string, err error) {
-	osReleaseBytes, readErr := fileutils.ReadFile(ctx.FS(), osrelease.EtcOsRelease)
-	if readErr != nil && errors.Is(readErr, os.ErrNotExist) {
-		osReleaseBytes, readErr = fileutils.ReadFile(ctx.FS(), osrelease.UsrLibOsRelease)
-	}
-
-	if readErr != nil {
-		return osid, fmt.Errorf("failed to read os-release file to detect host OS:\n%w", readErr)
-	}
-
-	osRelease, err := osrelease.ReadString(string(osReleaseBytes))
+	osRelease, err := getHostOSRelease(ctx)
 	if err != nil {
-		return osid, fmt.Errorf("failed to parse os-release file to detect host OS:\n%w", err)
+		return osid, err
 	}
 
 	if osid, found := osRelease["ID"]; found {
@@ -143,6 +137,53 @@ func getHostOSID(ctx opctx.Ctx) (osid string, err error) {
 	}
 
 	return osid, errors.New("failed to find OS ID in host's os-release file")
+}
+
+// RequireAzureLinux4 verifies that commands which modify the current host run
+// only on Azure Linux 4.
+func RequireAzureLinux4(ctx opctx.Ctx) error {
+	osRelease, err := getHostOSRelease(ctx)
+	if err != nil {
+		return err
+	}
+
+	osid, found := osRelease["ID"]
+	if !found {
+		return errors.New("failed to find OS ID in host's os-release file")
+	}
+
+	if osid != OSIDAzureLinux {
+		return fmt.Errorf("requires Azure Linux 4, found host OS %#q", osid)
+	}
+
+	version, found := osRelease["VERSION_ID"]
+	if !found {
+		return errors.New("failed to find VERSION_ID in host's os-release file")
+	}
+
+	if major, _, _ := strings.Cut(version, "."); major != azureLinux4MajorVersion {
+		return fmt.Errorf("requires Azure Linux 4, found host version %#q", version)
+	}
+
+	return nil
+}
+
+func getHostOSRelease(ctx opctx.Ctx) (map[string]string, error) {
+	osReleaseBytes, readErr := fileutils.ReadFile(ctx.FS(), osrelease.EtcOsRelease)
+	if readErr != nil && errors.Is(readErr, os.ErrNotExist) {
+		osReleaseBytes, readErr = fileutils.ReadFile(ctx.FS(), osrelease.UsrLibOsRelease)
+	}
+
+	if readErr != nil {
+		return nil, fmt.Errorf("failed to read os-release file to detect host OS:\n%w", readErr)
+	}
+
+	osRelease, err := osrelease.ReadString(string(osReleaseBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse os-release file to detect host OS:\n%w", err)
+	}
+
+	return osRelease, nil
 }
 
 func makePackageInstallCmd(ctx opctx.Ctx, installer string, packageNames []string) (cmd *exec.Cmd, err error) {

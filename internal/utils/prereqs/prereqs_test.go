@@ -87,6 +87,33 @@ func TestRequireExecutable_Existent(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestRequireAzureLinux4(t *testing.T) {
+	for name, testCase := range map[string]struct {
+		contents      string
+		expectedError string
+	}{
+		"Azure Linux 4":      {contents: "ID=azurelinux\nVERSION_ID=4.0\n"},
+		"Azure Linux 3":      {contents: "ID=azurelinux\nVERSION_ID=3.0\n", expectedError: "requires Azure Linux 4"},
+		"Azure Linux 40":     {contents: "ID=azurelinux\nVERSION_ID=40\n", expectedError: "requires Azure Linux 4"},
+		"Fedora":             {contents: "ID=fedora\nVERSION_ID=43\n", expectedError: "requires Azure Linux 4"},
+		"missing ID":         {contents: "VERSION_ID=4.0\n", expectedError: "failed to find OS ID"},
+		"missing VERSION_ID": {contents: "ID=azurelinux\n", expectedError: "failed to find VERSION_ID"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := newTestCtx()
+			require.NoError(t, fileutils.WriteFile(ctx.FS(), osrelease.EtcOsRelease,
+				[]byte(testCase.contents), fileperms.PublicFile))
+
+			err := prereqs.RequireAzureLinux4(ctx)
+			if testCase.expectedError == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, testCase.expectedError)
+			}
+		})
+	}
+}
+
 func TestPrereqInstall_UnsupportedHost(t *testing.T) {
 	prereq := &prereqs.PackagePrereq{
 		AzureLinuxPackages: []string{"test-package"},

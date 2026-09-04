@@ -47,5 +47,6 @@ components defined in the project configuration.
 * [azldev component prepare-sources](azldev_component_prepare-sources.md)	 - Prepare buildable sources for components
 * [azldev component query](azldev_component_query.md)	 - Query info from locally rendered component specs
 * [azldev component render](azldev_component_render.md)	 - Render post-overlay specs and sidecar files to a checked-in directory
+* [azldev component test](azldev_component_test.md)	 - Run a component's TMT tests in a local QEMU VM
 * [azldev component update](azldev_component_update.md)	 - Resolve and lock source identities for components
 

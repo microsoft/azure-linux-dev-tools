@@ -11,12 +11,9 @@ without enumerating every member.
 
 Each entry under `[tests.<name>]` describes one configuration of one
 runner. Framework-specific options live in a typed subtable
-(`pytest`, `lisa`, `tmt`) whose contents are passed through
-to the runner. azldev validates only the minimal set of keys each
-framework requires (e.g. `pytest` requires `working-dir`/`test-paths`,
-`tmt` requires `plan`/`source`, `lisa` requires at least one selector);
-any other keys are passed through unvalidated so frameworks can evolve
-independently.
+(`pytest`, `lisa`, `tmt`). azldev validates the fields it consumes for local
+execution; other framework-specific fields are passed through so frameworks
+can evolve independently.
 
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
@@ -27,7 +24,7 @@ independently.
 | Metrics enabled | `metrics-enabled` | boolean | No | Hints to the test execution environment/validation service whether metrics from this test should be collected and stored |
 | Required capabilities | `required-capabilities` | string array | No | Capability tokens the image must declare for this test to be applicable |
 | Lisa | `lisa` | table | No | LISA-specific configuration (see [LISA fields](#lisa-fields)) |
-| Tmt | `tmt` | table | No | TMT-specific configuration (opaque to azldev; metadata-only, no local execution) |
+| Tmt | `tmt` | table | No | TMT plan configuration (see [TMT fields](#tmt-fields)) |
 | Pytest | `pytest` | table | No | pytest-specific configuration (opaque to azldev) |
 
 ### LISA Fields
@@ -50,6 +47,33 @@ VM, same as legacy `[test-suites]` LISA suites).
 
 At least one of `criteria`, `name`, `testcase-name`, or `testcase-names` is
 required.
+
+### TMT Fields
+
+The `[tests.<name>.tmt]` subtable identifies a pinned upstream TMT plan. It is
+also used by [`azldev component test`](../cli/azldev_component_test.md) to run
+the mapped plan locally in a QEMU VM. Local execution clones the source at the
+configured commit, provisions the supplied image with TMT/testcloud, and
+installs the RPMs passed through `--rpm` before the plan runs.
+
+| Field | TOML Key | Type | Description |
+|-------|----------|------|-------------|
+| Source | `source` | table (`git-url`, `ref`) | Git repository containing the plan. Required; `ref` must be a full 40-character hex commit SHA. |
+| Plan | `plan` | string | Absolute TMT plan name to run. Required. |
+
+For example, define a plan as follows:
+
+```toml
+[tests.example-tmt]
+type = "tmt"
+
+[tests.example-tmt.tmt]
+source = { git-url = "https://example.test/tests.git", ref = "0123456789012345678901234567890123456789" }
+plan = "/plans/example"
+```
+
+After associating `example-tmt` with a component, run it locally with
+`azldev component test <component> --image-path <image.qcow2> --rpm <package.rpm>`.
 
 ## Test Group
 
