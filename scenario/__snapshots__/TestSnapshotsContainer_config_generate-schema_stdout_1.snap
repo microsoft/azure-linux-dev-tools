@@ -1249,11 +1249,6 @@
           "type": "array",
           "title": "Arches",
           "description": "Restrict to specific target architectures; empty = all"
-        },
-        "disable-ssl-verify": {
-          "type": "boolean",
-          "title": "Disable SSL verification",
-          "description": "Disable TLS certificate verification for this repository"
         }
       },
       "additionalProperties": false,
