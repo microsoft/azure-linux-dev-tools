@@ -44,6 +44,58 @@ func TestCompareReportsDirectionalInventoryDifferences(t *testing.T) {
 	}, reports)
 }
 
+func TestSummarizeCountsDirectionalDifferences(t *testing.T) {
+	t.Parallel()
+
+	stat := repocompare.Summarize([]repocompare.PackageReport{
+		{Summary: "missing-from-right"},
+		{Summary: "missing-from-right, added-in-right"},
+		{Summary: "added-in-right, architectures-differ"},
+	})
+
+	assert.Equal(t, repocompare.DiffStat{
+		MissingFromRight: 2, AddedInRight: 2, ArchitecturesDiffer: 1, Total: 3,
+	}, stat)
+}
+
+func TestMissingFromRightIncludesMissingVersionsAndIgnoresArchitectureAndKind(t *testing.T) {
+	t.Parallel()
+
+	leftOnly := testPackage("left-only", "1", "x86_64")
+	leftOnlyOtherArch := leftOnly
+	leftOnlyOtherArch.Arch = "aarch64"
+
+	sharedLeft := testPackage("shared", "1", "x86_64")
+	sharedRight := sharedLeft
+	sharedRight.Arch = "noarch"
+	sharedRight.Kind = projectconfig.SubrepoKindSource
+	newerLeft := sharedLeft
+	newerLeft.Version = "2"
+
+	missing := repocompare.MissingFromRight(
+		[]repocompare.Package{sharedLeft, newerLeft, leftOnly, leftOnlyOtherArch},
+		[]repocompare.Package{sharedRight},
+	)
+
+	assert.Equal(t, []repocompare.MissingPackage{
+		{Name: "left-only", Version: "1-1.azl4"},
+		{Name: "shared", Version: "2-1.azl4"},
+	}, missing)
+}
+
+func TestMissingFromRightIncludesEpochInVersion(t *testing.T) {
+	t.Parallel()
+
+	left := testPackage("epoch-package", "1", "x86_64")
+	left.Epoch = "2"
+
+	missing := repocompare.MissingFromRight([]repocompare.Package{left}, nil)
+
+	assert.Equal(t, []repocompare.MissingPackage{{
+		Name: "epoch-package", Version: "2:1-1.azl4",
+	}}, missing)
+}
+
 func TestCompareNormalizesEpochAndNoarchReplication(t *testing.T) {
 	t.Parallel()
 
