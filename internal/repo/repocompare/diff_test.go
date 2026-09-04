@@ -151,3 +151,44 @@ func TestCompareSummarizesVersionAndArchitectureDifferences(t *testing.T) {
 		RightNEVRs: "pkg-2-1.azl4, pkg-1-1.azl4",
 	}}, reports)
 }
+
+func TestCompareCanIgnoreOlderAddedInRight(t *testing.T) {
+	t.Parallel()
+
+	left := testPackage("pkg", "2", "x86_64")
+	rightOlder := testPackage("pkg", "1", "x86_64")
+
+	reports, err := repocompare.CompareWithOptions(
+		[]repocompare.Package{left},
+		[]repocompare.Package{rightOlder},
+		repocompare.Options{IgnoreOlderAddedInRight: true},
+	)
+	require.NoError(t, err)
+
+	assert.Equal(t, []repocompare.PackageReport{{
+		Name: "pkg", Summary: "missing-from-right",
+		LeftNEVRs: "pkg-2-1.azl4", RightNEVRs: "pkg-1-1.azl4",
+	}}, reports)
+}
+
+func TestCompareDoesNotIgnoreNewerOrDifferentArchAddedInRight(t *testing.T) {
+	t.Parallel()
+
+	left := testPackage("pkg", "2", "x86_64")
+	rightNewer := testPackage("pkg", "3", "x86_64")
+	rightOlderArm := testPackage("pkg", "1", "aarch64")
+
+	reports, err := repocompare.CompareWithOptions(
+		[]repocompare.Package{left},
+		[]repocompare.Package{rightNewer, rightOlderArm},
+		repocompare.Options{IgnoreOlderAddedInRight: true},
+	)
+	require.NoError(t, err)
+
+	assert.Equal(t, []repocompare.PackageReport{{
+		Name:       "pkg",
+		Summary:    "missing-from-right, added-in-right",
+		LeftNEVRs:  "pkg-2-1.azl4",
+		RightNEVRs: "pkg-3-1.azl4, pkg-1-1.azl4",
+	}}, reports)
+}

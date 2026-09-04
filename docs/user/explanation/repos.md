@@ -144,6 +144,18 @@ absent from the right, ignoring architecture and artifact kind:
 azldev repo compare --left koji-build --right pmc-prod --missing-from-right
 ```
 
+PMC repositories commonly retain historical versions that are no longer in a
+current Koji snapshot. Add `--ignore-older-added-in-right` to the normal
+comparison to suppress a right-only identity when the left contains a strictly
+newer EVR with the same package name, artifact kind, and RPM architecture:
+
+```sh
+azldev repo compare \
+    --left koji-build \
+    --right pmc-prod \
+    --ignore-older-added-in-right
+```
+
 Add `--stat` to either comparison mode to return only package counts. With
 `--missing-from-right`, it returns only the number of missing package versions:
 
