@@ -160,7 +160,7 @@ func sortedNEVRs(packages []Package) ([]string, error) {
 
 		version, err := rpm.NewVersionFromEVR(normalizedEpoch(pkg.Epoch), pkg.Version, pkg.Release)
 		if err != nil {
-			return nil, fmt.Errorf("invalid EVR for %s:\n%w", pkg.NEVRA(), err)
+			return nil, fmt.Errorf("invalid EVR for %#q:\n%w", pkg.NEVRA(), err)
 		}
 
 		byNEVR[nevr] = entry{nevr: nevr, version: version}
