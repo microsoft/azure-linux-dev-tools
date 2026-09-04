@@ -106,31 +106,31 @@ func (f *HTTPFetcher) Fetch(ctx context.Context, rawURL string, disableSSLVerify
 	retryConfig := retry.DefaultConfig()
 	retryConfig.MaxAttempts = attempts
 
+	defaultTransport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return nil, errors.New("default HTTP transport is not an *http.Transport")
+	}
+
+	transport := defaultTransport.Clone()
+	if disableSSLVerify {
+		if transport.TLSClientConfig != nil {
+			clone := transport.TLSClientConfig.Clone()
+			clone.InsecureSkipVerify = true
+			transport.TLSClientConfig = clone
+		} else {
+			transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // explicit per-repo opt-out
+		}
+	}
+
+	client := &http.Client{Transport: transport, Timeout: requestTimeout}
+
 	err := retry.Do(ctx, retryConfig, func() error {
-		defaultTransport, ok := http.DefaultTransport.(*http.Transport)
-		if !ok {
-			return errors.New("default HTTP transport is not an *http.Transport")
-		}
-
-		transport := defaultTransport.Clone()
-		if disableSSLVerify {
-			if transport.TLSClientConfig != nil {
-				clone := transport.TLSClientConfig.Clone()
-				clone.InsecureSkipVerify = true
-				transport.TLSClientConfig = clone
-			} else {
-				transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // explicit per-repo opt-out
-			}
-		}
-
 		request, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 		if err != nil {
 			return fmt.Errorf("creating request for %#q:\n%w", rawURL, err)
 		}
 
 		request.Header.Set("Accept-Encoding", "identity")
-
-		client := &http.Client{Transport: transport, Timeout: requestTimeout}
 
 		response, err := client.Do(request)
 		if err != nil {
