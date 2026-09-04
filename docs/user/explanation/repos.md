@@ -126,8 +126,8 @@ and `subrepos` restrictions. The command can also compare two PMC trees, two
 Koji dist-repos, or custom layouts. The report contains one row per differing
 package name, summary statuses, and the complete left and right NEVR
 inventories. `missing-from-right` means at least one left identity is absent
-from the right; `added-in-right` means the package name exists only on the
-right. Identity includes name, normalized epoch, version, release, RPM
+from the right; `added-in-right` means at least one right identity is absent
+from the left. Identity includes name, normalized epoch, version, release, RPM
 architecture, and artifact kind (binary, debug, or source). Matching NEVRs with
 different architecture sets also receive `architectures-differ`. Replicated
 `noarch` packages are counted once. Only artifact kinds available on both sides
