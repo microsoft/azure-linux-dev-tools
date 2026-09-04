@@ -114,7 +114,13 @@ func (f *HTTPFetcher) Fetch(ctx context.Context, rawURL string, disableSSLVerify
 
 		transport := defaultTransport.Clone()
 		if disableSSLVerify {
-			transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // explicit per-repo opt-out
+			if transport.TLSClientConfig != nil {
+				clone := transport.TLSClientConfig.Clone()
+				clone.InsecureSkipVerify = true
+				transport.TLSClientConfig = clone
+			} else {
+				transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // explicit per-repo opt-out
+			}
 		}
 
 		request, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
