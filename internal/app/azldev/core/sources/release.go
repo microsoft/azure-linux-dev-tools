@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"regexp"
 	"strconv"
-	"strings"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
@@ -34,33 +33,21 @@ var staticReleasePattern = regexp.MustCompile(`^(\d+)(%\{\??dist\})?$`)
 // GetReleaseTagValue reads the Release tag value from the spec file at specPath.
 // It returns the raw value string as written in the spec (e.g. "1%{?dist}" or "%autorelease").
 // Returns [spec.ErrNoSuchTag] if no Release tag is found.
-func GetReleaseTagValue(fs opctx.FS, specPath string) (string, error) {
+func GetReleaseTagValue(fs opctx.FS, specPath string, options ...spec.OpenOption) (string, error) {
 	specFile, err := fs.Open(specPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to open spec %#q:\n%w", specPath, err)
 	}
 	defer specFile.Close()
 
-	openedSpec, err := spec.OpenSpec(specFile)
+	openedSpec, err := spec.OpenSpec(specFile, options...)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse spec %#q:\n%w", specPath, err)
 	}
 
-	var releaseValue string
-
-	err = openedSpec.VisitTagsPackage("", func(tagLine *spec.TagLine, _ *spec.Context) error {
-		if strings.EqualFold(tagLine.Tag, "Release") {
-			releaseValue = tagLine.Value
-		}
-
-		return nil
-	})
+	releaseValue, err := openedSpec.GetLastTag("", "Release")
 	if err != nil {
-		return "", fmt.Errorf("failed to visit tags in spec %#q:\n%w", specPath, err)
-	}
-
-	if releaseValue == "" {
-		return "", fmt.Errorf("release tag not found in spec %#q:\n%w", specPath, spec.ErrNoSuchTag)
+		return "", fmt.Errorf("failed to get Release tag from spec %#q:\n%w", specPath, err)
 	}
 
 	return releaseValue, nil
@@ -146,7 +133,7 @@ func (p *sourcePreparerImpl) readAndBumpRelease(
 		return err
 	}
 
-	releaseValue, err := GetReleaseTagValue(p.fs, specPath)
+	releaseValue, err := GetReleaseTagValue(p.fs, specPath, spec.WithEditor(p.specEditor))
 	if err != nil {
 		return fmt.Errorf("failed to read Release tag for component %#q:\n%w",
 			component.GetName(), err)
@@ -187,7 +174,7 @@ func (p *sourcePreparerImpl) readAndBumpRelease(
 		Value: newRelease,
 	}
 
-	if err := ApplySpecOverlayToFileInPlace(p.fs, overlay, specPath); err != nil {
+	if err := ApplySpecOverlayToFileInPlace(p.fs, overlay, specPath, spec.WithEditor(p.specEditor)); err != nil {
 		return fmt.Errorf("failed to apply release bump overlay for component %#q:\n%w",
 			component.GetName(), err)
 	}

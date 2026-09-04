@@ -12,6 +12,101 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestVisitAllLinesTracksPhysicalLineNumbersThroughConditionals(t *testing.T) {
+	tests := []struct {
+		name     string
+		lines    []string
+		expected []int
+	}{
+		{
+			name: "one elif",
+			lines: []string{
+				"%if 1",
+				"then",
+				"%elif 0",
+				"elif",
+				"%endif",
+				"after",
+			},
+			expected: []int{1, 3, 5},
+		},
+		{
+			name: "multiple elif",
+			lines: []string{
+				"%if 1",
+				"then",
+				"%elif 0",
+				"first elif",
+				"%elif 0",
+				"second elif",
+				"%endif",
+				"after",
+			},
+			expected: []int{1, 3, 5, 7},
+		},
+		{
+			name: "elif and else",
+			lines: []string{
+				"%if 1",
+				"then",
+				"%elif 0",
+				"elif",
+				"%else",
+				"else",
+				"%endif",
+				"after",
+			},
+			expected: []int{1, 3, 5, 7},
+		},
+		{
+			name: "nested if within elif",
+			lines: []string{
+				"%if 1",
+				"then",
+				"%elif 0",
+				"%if 1",
+				"nested",
+				"%endif",
+				"elif",
+				"%endif",
+				"after",
+			},
+			expected: []int{1, 4, 6, 8},
+		},
+		{
+			name: "ordinary if and else",
+			lines: []string{
+				"%if 1",
+				"then",
+				"%else",
+				"else",
+				"%endif",
+				"after",
+			},
+			expected: []int{1, 3, 5},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			specification := newTreeAPISpec(test.lines)
+
+			var lineNumbers []int
+
+			err := specification.inspectTree(func(tree *specTree) error {
+				return tree.VisitAllLines(func(_, _ string, line *lineHandle) error {
+					lineNumbers = append(lineNumbers, line.lineNumber)
+
+					return nil
+				})
+			})
+
+			require.NoError(t, err)
+			assert.Equal(t, test.expected, lineNumbers)
+		})
+	}
+}
+
 func TestInspectTreeQueriesSectionsInDocumentOrder(t *testing.T) {
 	specification := newTreeAPISpec([]string{
 		"Name: example",

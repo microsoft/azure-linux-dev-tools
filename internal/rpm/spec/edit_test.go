@@ -14,6 +14,153 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestVisitTags(t *testing.T) {
+	input := `Name: main-pkg
+Version: 1.0
+Patch0: main.patch
+
+%package devel
+Summary: Development files
+Patch1: devel.patch
+
+%package -n other
+Summary: Other package
+Patch2: other.patch
+`
+
+	tests := []struct {
+		name         string
+		options      []spec.OpenOption
+		expectedTags []string
+	}{
+		{
+			name:         "default legacy editor",
+			expectedTags: []string{"Name", "Version", "Patch0", "Summary", "Patch1", "Summary", "Patch2"},
+		},
+		{
+			name:         "structural editor",
+			options:      []spec.OpenOption{spec.WithEditor(spec.EditorStructural)},
+			expectedTags: []string{"Name", "Version", "Patch0", "Summary", "Patch1", "Summary", "Patch2"},
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			specFile, err := spec.OpenSpec(strings.NewReader(input), testCase.options...)
+			require.NoError(t, err)
+
+			var tags []string
+
+			require.NoError(t, specFile.VisitTags(func(tagLine *spec.TagLine, _ *spec.Context) error {
+				tags = append(tags, tagLine.Tag)
+
+				return nil
+			}))
+			assert.Equal(t, testCase.expectedTags, tags)
+		})
+	}
+}
+
+func TestStructuralVisitTagsUsesStructuralContent(t *testing.T) {
+	input := `Name: main
+%global hidden() \
+Name: macro-body
+%if 0
+Summary: conditional
+%endif
+%package devel
+Summary: development
+%build
+Name: script-body
+`
+
+	specFile, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(spec.EditorStructural))
+	require.NoError(t, err)
+
+	var (
+		tags        []string
+		lineNumbers []int
+	)
+
+	require.NoError(t, specFile.VisitTags(func(tagLine *spec.TagLine, ctx *spec.Context) error {
+		tags = append(tags, tagLine.Tag)
+
+		lineNumbers = append(lineNumbers, ctx.CurrentLineNum)
+		if tagLine.Tag == "Summary" && ctx.CurrentSection.Package == "devel" {
+			ctx.ReplaceLine("Summary: updated")
+		}
+
+		return nil
+	}))
+	assert.Equal(t, []string{"Name", "Summary", "Summary"}, tags)
+	assert.Equal(t, []int{0, 4, 7}, lineNumbers)
+
+	var output bytes.Buffer
+	require.NoError(t, specFile.Serialize(&output))
+	assert.Contains(t, output.String(), "Summary: updated")
+	assert.Contains(t, output.String(), "Name: macro-body")
+	assert.Contains(t, output.String(), "Name: script-body")
+}
+
+func TestVisitTagsPackage(t *testing.T) {
+	input := `Name: main-pkg
+Version: 1.0
+
+%package devel
+Summary: Development files
+Patch1: devel.patch
+`
+
+	tests := []struct {
+		name         string
+		packageName  string
+		options      []spec.OpenOption
+		expectedTags []string
+	}{
+		{
+			name:         "default legacy editor filters package",
+			packageName:  "devel",
+			expectedTags: []string{"Summary", "Patch1"},
+		},
+		{
+			name:         "structural editor filters package and mutates it",
+			packageName:  "devel",
+			options:      []spec.OpenOption{spec.WithEditor(spec.EditorStructural)},
+			expectedTags: []string{"Summary", "Patch1"},
+		},
+		{
+			name:        "default legacy editor ignores unknown package",
+			packageName: "missing",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			specFile, err := spec.OpenSpec(strings.NewReader(input), testCase.options...)
+			require.NoError(t, err)
+
+			var tags []string
+
+			require.NoError(t, specFile.VisitTagsPackage(
+				testCase.packageName, func(tagLine *spec.TagLine, ctx *spec.Context) error {
+					tags = append(tags, tagLine.Tag)
+					if testCase.name == "structural editor filters package and mutates it" && tagLine.Tag == "Summary" {
+						ctx.ReplaceLine("Summary: Structural mutation")
+					}
+
+					return nil
+				}))
+			assert.Equal(t, testCase.expectedTags, tags)
+
+			if testCase.options != nil {
+				var actual bytes.Buffer
+				require.NoError(t, specFile.Serialize(&actual))
+				assert.Contains(t, actual.String(), "Summary: Structural mutation")
+			}
+		})
+	}
+}
+
 func TestSetTag(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -133,7 +280,7 @@ Name: value
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			specFile, err := spec.OpenSpec(strings.NewReader(test.input))
+			specFile, err := spec.OpenSpec(strings.NewReader(test.input), spec.WithEditor(spec.EditorStructural))
 			require.NoError(t, err)
 
 			err = specFile.SetTag(test.packageName, test.tag, test.value)
@@ -241,7 +388,7 @@ Name: value
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			specFile, err := spec.OpenSpec(strings.NewReader(test.input))
+			specFile, err := spec.OpenSpec(strings.NewReader(test.input), spec.WithEditor(spec.EditorStructural))
 			require.NoError(t, err)
 
 			err = specFile.UpdateExistingTag(test.packageName, test.tag, test.value)
@@ -261,6 +408,29 @@ Name: value
 			assert.Equal(t, test.expectedOutput, actualOutput.String())
 		})
 	}
+}
+
+func TestUpdateExistingTagUpdatesRepeatedConditionalTags(t *testing.T) {
+	specFile, err := spec.OpenSpec(strings.NewReader(`Name: example
+%if 0
+Release: 1
+%else
+Release: 2
+%endif
+`), spec.WithEditor(spec.EditorStructural))
+	require.NoError(t, err)
+
+	require.NoError(t, specFile.UpdateExistingTag("", "Release", "3%{?dist}"))
+
+	var actual bytes.Buffer
+	require.NoError(t, specFile.Serialize(&actual))
+	assert.Equal(t, `Name: example
+%if 0
+Release: 3%{?dist}
+%else
+Release: 3%{?dist}
+%endif
+`, actual.String())
 }
 
 func TestRemoveTag(t *testing.T) {
@@ -385,7 +555,7 @@ Name: old
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			specFile, err := spec.OpenSpec(strings.NewReader(test.input))
+			specFile, err := spec.OpenSpec(strings.NewReader(test.input), spec.WithEditor(spec.EditorStructural))
 			require.NoError(t, err)
 
 			err = specFile.RemoveTag(test.packageName, test.tag, test.value)
@@ -500,7 +670,7 @@ BuildRequires: value
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			specFile, err := spec.OpenSpec(strings.NewReader(test.input))
+			specFile, err := spec.OpenSpec(strings.NewReader(test.input), spec.WithEditor(spec.EditorStructural))
 			require.NoError(t, err)
 
 			err = specFile.AddTag(test.packageName, test.tag, test.value)
@@ -522,6 +692,7 @@ BuildRequires: value
 	}
 }
 
+//nolint:maintidx // Table cases document tag insertion behavior.
 func TestInsertTag(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -729,6 +900,85 @@ BuildRequires: gcc
 			value: "macros.azl.macros",
 		},
 		{
+			name: "does not cross description before conditional end",
+			input: `Name: test
+%if %{with extra}
+Source0: extra.tar.gz
+%description
+Extra package description
+%endif
+`,
+			expectedOutput: `Name: test
+%if %{with extra}
+Source0: extra.tar.gz
+Source9999: macros.azl.macros
+%description
+Extra package description
+%endif
+`,
+			tag:   "Source9999",
+			value: "macros.azl.macros",
+		},
+		{
+			name: "insert after last tag in conditional package variants",
+			input: `Name: main
+%if 0
+%package -n test-package
+Source0: first.tar.gz
+%else
+%package -n test-package
+Source1: second.tar.gz
+%endif
+`,
+			expectedOutput: `Name: main
+%if 0
+%package -n test-package
+Source0: first.tar.gz
+%else
+%package -n test-package
+Source1: second.tar.gz
+%endif
+Source9999: macros.azl.macros
+`,
+			packageName: "test-package",
+			tag:         "Source9999",
+			value:       "macros.azl.macros",
+		},
+		{
+			name: "ignore tags in macro bodies",
+			input: `%global generated \
+Source9999: generated.tar.gz
+Name: main
+`,
+			expectedOutput: `%global generated \
+Source9999: generated.tar.gz
+Name: main
+Vendor: Microsoft
+`,
+			tag:   "Vendor",
+			value: "Microsoft",
+		},
+		{
+			name: "insert after nested conditional",
+			input: `Name: main
+%if 1
+%if 1
+Source0: nested.tar.gz
+%endif
+%endif
+`,
+			expectedOutput: `Name: main
+%if 1
+%if 1
+Source0: nested.tar.gz
+%endif
+%endif
+Source9999: macros.azl.macros
+`,
+			tag:   "Source9999",
+			value: "macros.azl.macros",
+		},
+		{
 			name: "insert after Source inside nested conditional",
 			input: `Name: test
 Source0: test-1.0.tar.gz
@@ -750,6 +1000,26 @@ Source32: jit-common.h
 %endif
 Source9999: macros.azl.macros
 BuildRequires: gcc
+`,
+			tag:   "Source9999",
+			value: "macros.azl.macros",
+		},
+		{
+			name: "insert once after ifarch tools alternative",
+			input: `Name: test
+%ifarch x86_64
+Source31: tools-x86_64.tar.gz
+%else
+Source31: tools-generic.tar.gz
+%endif
+`,
+			expectedOutput: `Name: test
+%ifarch x86_64
+Source31: tools-x86_64.tar.gz
+%else
+Source31: tools-generic.tar.gz
+%endif
+Source9999: macros.azl.macros
 `,
 			tag:   "Source9999",
 			value: "macros.azl.macros",
@@ -782,7 +1052,7 @@ BuildRequires: gcc
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			specFile, err := spec.OpenSpec(strings.NewReader(test.input))
+			specFile, err := spec.OpenSpec(strings.NewReader(test.input), spec.WithEditor(spec.EditorStructural))
 			require.NoError(t, err)
 
 			err = specFile.InsertTag(test.packageName, test.tag, test.value)
@@ -813,7 +1083,7 @@ func TestSearchAndReplace(t *testing.T) {
 	build.sh --vendor=contoso
 `
 
-		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		specFile, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(spec.EditorStructural))
 		require.NoError(t, err)
 
 		expected := strings.ReplaceAll(input, "contoso", "azl")
@@ -837,7 +1107,7 @@ func TestSearchAndReplace(t *testing.T) {
 	build.sh --vendor=contoso
 	`
 
-		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		specFile, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(spec.EditorStructural))
 		require.NoError(t, err)
 
 		err = specFile.SearchAndReplace("", "", `vendor=non-existent`, "vendor=azl")
@@ -856,7 +1126,7 @@ func TestSearchAndReplace(t *testing.T) {
 	Something about contoso
 `
 
-		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		specFile, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(spec.EditorStructural))
 		require.NoError(t, err)
 
 		expected := strings.ReplaceAll(input, "Something about contoso", "Something about azl")
@@ -870,6 +1140,89 @@ func TestSearchAndReplace(t *testing.T) {
 		require.NoError(t, err)
 
 		require.Equal(t, expected, actual.String())
+	})
+
+	t.Run("replaces macro definitions and conditional directives", func(t *testing.T) {
+		input := `%global vendor contoso
+%if "%{vendor}" == "contoso"
+%build
+echo contoso
+%endif
+`
+		specFile, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(spec.EditorStructural))
+		require.NoError(t, err)
+
+		err = specFile.SearchAndReplace("", "", "contoso", "azl")
+		require.NoError(t, err)
+
+		var actual bytes.Buffer
+		require.NoError(t, specFile.Serialize(&actual))
+		assert.Equal(t, `%global vendor azl
+%if "%{vendor}" == "azl"
+%build
+echo azl
+%endif
+`, actual.String())
+	})
+
+	t.Run("does not assign loose wrapper content to requested package", func(t *testing.T) {
+		input := `Name: test
+%if 0
+%package tools
+Summary: tools
+%else
+baz
+%endif
+`
+		specFile, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(spec.EditorStructural))
+		require.NoError(t, err)
+
+		err = specFile.SearchAndReplace("", "tools", "baz", "qux")
+		require.ErrorIs(t, err, spec.ErrPatternNotFound)
+
+		var actual bytes.Buffer
+		require.NoError(t, specFile.Serialize(&actual))
+		assert.Equal(t, input, actual.String())
+	})
+
+	t.Run("replaces directive-shaped macro body lines in their enclosing package", func(t *testing.T) {
+		input := `%if 1
+%package tools
+%global backslash body \
+%else backslash-marker
+%global lua %{lua:
+%elif lua-marker
+%endif lua-marker
+}
+%define braces %{expand:
+%else brace-marker
+}
+%else
+%package other
+%endif
+`
+		specFile, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(spec.EditorStructural))
+		require.NoError(t, err)
+
+		require.NoError(t, specFile.SearchAndReplace("", "tools", "marker", "replaced"))
+
+		var actual bytes.Buffer
+		require.NoError(t, specFile.Serialize(&actual))
+		assert.Equal(t, `%if 1
+%package tools
+%global backslash body \
+%else backslash-replaced
+%global lua %{lua:
+%elif lua-replaced
+%endif lua-replaced
+}
+%define braces %{expand:
+%else brace-replaced
+}
+%else
+%package other
+%endif
+`, actual.String())
 	})
 }
 
@@ -888,7 +1241,7 @@ func TestAddChangelogEntry(t *testing.T) {
 Name: test
 `
 
-		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		specFile, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(spec.EditorStructural))
 		require.NoError(t, err)
 
 		err = specFile.AddChangelogEntry(testUser, testEmail, testVersion, testRelease, testTime, []string{"Initial release"})
@@ -902,7 +1255,7 @@ Name: test
 %changelog
 `
 
-		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		specFile, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(spec.EditorStructural))
 		require.NoError(t, err)
 
 		err = specFile.AddChangelogEntry(
@@ -935,7 +1288,7 @@ Name: test
 * Wed Jan 01 2000 Test User <user@example.com> - 0.0.1-1
 - Initial release
 `
-		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		specFile, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(spec.EditorStructural))
 		require.NoError(t, err)
 
 		err = specFile.AddChangelogEntry(testUser, testEmail, testVersion, testRelease, testTime, []string{"Update"})
@@ -961,7 +1314,7 @@ Name: test
 
 func TestPrependLines(t *testing.T) {
 	t.Run("empty spec", func(t *testing.T) {
-		specFile, err := spec.OpenSpec(strings.NewReader(""))
+		specFile, err := spec.OpenSpec(strings.NewReader(""), spec.WithEditor(spec.EditorStructural))
 		require.NoError(t, err)
 
 		specFile.PrependLines([]string{"New line", "Next line"})
@@ -979,7 +1332,7 @@ Next line
 		input := `%description
 A package.
 `
-		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		specFile, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(spec.EditorStructural))
 		require.NoError(t, err)
 
 		specFile.PrependLines([]string{"# top comment"})
@@ -1001,7 +1354,7 @@ Version: 1.0
 %description
 A package.
 `
-		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		specFile, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(spec.EditorStructural))
 		require.NoError(t, err)
 
 		specFile.PrependLines([]string{"# header line 1", "# header line 2"})
@@ -1023,7 +1376,7 @@ A package.
 
 func TestAppendLines(t *testing.T) {
 	t.Run("empty spec", func(t *testing.T) {
-		specFile, err := spec.OpenSpec(strings.NewReader(""))
+		specFile, err := spec.OpenSpec(strings.NewReader(""), spec.WithEditor(spec.EditorStructural))
 		require.NoError(t, err)
 
 		specFile.AppendLines([]string{"New line", "Next line"})
@@ -1047,7 +1400,7 @@ A package.
 * Mon Jan 01 2024 User <user@example.com> - 1.0-1
 - Initial release
 `
-		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		specFile, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(spec.EditorStructural))
 		require.NoError(t, err)
 
 		specFile.AppendLines([]string{"# trailing comment"})
@@ -1071,7 +1424,7 @@ A package.
 	t.Run("preamble only", func(t *testing.T) {
 		input := `Name: test
 `
-		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		specFile, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(spec.EditorStructural))
 		require.NoError(t, err)
 
 		specFile.AppendLines([]string{"# tail"})
@@ -1089,7 +1442,7 @@ A package.
 func TestPrependLinesToSection(t *testing.T) {
 	t.Run("empty spec", func(t *testing.T) {
 		input := ""
-		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		specFile, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(spec.EditorStructural))
 		require.NoError(t, err)
 
 		err = specFile.PrependLinesToSection("", "", []string{"New line", "Next line"})
@@ -1108,7 +1461,7 @@ Next line
 	t.Run("global section", func(t *testing.T) {
 		input := `Name: test
 `
-		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		specFile, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(spec.EditorStructural))
 		require.NoError(t, err)
 
 		err = specFile.PrependLinesToSection("", "", []string{"New line", "Next line"})
@@ -1138,7 +1491,7 @@ This is another package.
 %build
 build.sh
 `
-		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		specFile, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(spec.EditorStructural))
 		require.NoError(t, err)
 
 		err = specFile.PrependLinesToSection("%description", "foo", []string{"New line", "Next line"})
@@ -1169,7 +1522,7 @@ build.sh
 		input := `
 Name: test
 `
-		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		specFile, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(spec.EditorStructural))
 		require.NoError(t, err)
 
 		err = specFile.PrependLinesToSection("%description", "", []string{"New line"})
@@ -1191,7 +1544,7 @@ This is another package.
 %build
 build.sh
 `
-		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		specFile, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(spec.EditorStructural))
 		require.NoError(t, err)
 
 		err = specFile.AppendLinesToSection("%description", "foo", []string{"New line", "Next line"})
@@ -1222,11 +1575,86 @@ build.sh
 		input := `
 Name: test
 `
-		specFile, err := spec.OpenSpec(strings.NewReader(input))
+		specFile, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(spec.EditorStructural))
 		require.NoError(t, err)
 
 		err = specFile.AppendLinesToSection("%description", "", []string{"New line"})
 		require.Error(t, err)
+	})
+	t.Run("stays before a conditional wrapper for the next section", func(t *testing.T) {
+		specFile, err := spec.OpenSpec(strings.NewReader(`%build
+make
+%if 0
+%check
+make check
+%endif
+`), spec.WithEditor(spec.EditorStructural))
+		require.NoError(t, err)
+
+		require.NoError(t, specFile.AppendLinesToSection("%build", "", []string{"make install"}))
+
+		var actual bytes.Buffer
+		require.NoError(t, specFile.Serialize(&actual))
+
+		expected := []string{
+			"%build",
+			"make",
+			"make install",
+			"%if 0",
+			"%check",
+			"make check",
+			"%endif",
+		}
+		assert.Equal(t, strings.Join(expected, "\n")+"\n", actual.String())
+	})
+}
+
+func TestSectionLineEditsApplyToRepeatedConditionalSections(t *testing.T) {
+	input := `%if 0
+%description tools
+disabled
+%else
+%description tools
+enabled
+%endif
+`
+
+	t.Run("prepend", func(t *testing.T) {
+		specFile, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(spec.EditorStructural))
+		require.NoError(t, err)
+		require.NoError(t, specFile.PrependLinesToSection("%description", "tools", []string{"marker"}))
+
+		var actual bytes.Buffer
+		require.NoError(t, specFile.Serialize(&actual))
+		assert.Equal(t, `%if 0
+%description tools
+marker
+disabled
+%else
+%description tools
+marker
+enabled
+%endif
+`, actual.String())
+	})
+
+	t.Run("append", func(t *testing.T) {
+		specFile, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(spec.EditorStructural))
+		require.NoError(t, err)
+		require.NoError(t, specFile.AppendLinesToSection("%description", "tools", []string{"marker"}))
+
+		var actual bytes.Buffer
+		require.NoError(t, specFile.Serialize(&actual))
+		assert.Equal(t, `%if 0
+%description tools
+disabled
+marker
+%else
+%description tools
+enabled
+marker
+%endif
+`, actual.String())
 	})
 }
 
@@ -1265,7 +1693,7 @@ func TestHasSection(t *testing.T) {
 
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			specFile, err := spec.OpenSpec(strings.NewReader(testCase.input))
+			specFile, err := spec.OpenSpec(strings.NewReader(testCase.input), spec.WithEditor(spec.EditorStructural))
 			require.NoError(t, err)
 
 			result, err := specFile.HasSection(testCase.sectionName)
@@ -1330,7 +1758,7 @@ func TestGetHighestPatchTagNumber(t *testing.T) {
 
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			specFile, err := spec.OpenSpec(strings.NewReader(testCase.input))
+			specFile, err := spec.OpenSpec(strings.NewReader(testCase.input), spec.WithEditor(spec.EditorStructural))
 			require.NoError(t, err)
 
 			result, err := specFile.GetHighestPatchTagNumber()
@@ -1397,7 +1825,7 @@ func TestRemoveTagsMatching(t *testing.T) {
 
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			specFile, err := spec.OpenSpec(strings.NewReader(testCase.input))
+			specFile, err := spec.OpenSpec(strings.NewReader(testCase.input), spec.WithEditor(spec.EditorStructural))
 			require.NoError(t, err)
 
 			count, err := specFile.RemoveTagsMatching(testCase.packageName, testCase.matcher)
@@ -1488,7 +1916,7 @@ func TestRemovePatchEntry(t *testing.T) {
 
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			specFile, err := spec.OpenSpec(strings.NewReader(testCase.input))
+			specFile, err := spec.OpenSpec(strings.NewReader(testCase.input), spec.WithEditor(spec.EditorStructural))
 			require.NoError(t, err)
 
 			err = specFile.RemovePatchEntry(testCase.pattern)
@@ -1509,6 +1937,38 @@ func TestRemovePatchEntry(t *testing.T) {
 			assert.Equal(t, testCase.expectedOutput, buf.String())
 		})
 	}
+}
+
+func TestPatchlistEditsApplyToRepeatedSections(t *testing.T) {
+	input := `Name: example
+%if 0
+%patchlist
+old.patch
+%else
+%patchlist
+old.patch
+%endif
+`
+
+	t.Run("add", func(t *testing.T) {
+		specFile, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(spec.EditorStructural))
+		require.NoError(t, err)
+		require.NoError(t, specFile.AddPatchEntry("", "new.patch"))
+
+		var actual bytes.Buffer
+		require.NoError(t, specFile.Serialize(&actual))
+		assert.Equal(t, 2, strings.Count(actual.String(), "new.patch"))
+	})
+
+	t.Run("remove", func(t *testing.T) {
+		specFile, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(spec.EditorStructural))
+		require.NoError(t, err)
+		require.NoError(t, specFile.RemovePatchEntry("old.patch"))
+
+		var actual bytes.Buffer
+		require.NoError(t, specFile.Serialize(&actual))
+		assert.NotContains(t, actual.String(), "old.patch")
+	})
 }
 
 func TestParsePatchTagNumber(t *testing.T) {
@@ -1534,107 +1994,6 @@ func TestParsePatchTagNumber(t *testing.T) {
 			num, ok := spec.ParsePatchTagNumber(testCase.tag)
 			assert.Equal(t, testCase.expectedNum, num)
 			assert.Equal(t, testCase.expectedOK, ok)
-		})
-	}
-}
-
-func TestVisitTags(t *testing.T) {
-	input := `Name: main-pkg
-Version: 1.0
-Patch0: main.patch
-
-%package devel
-Summary: Development files
-Patch1: devel.patch
-
-%package -n other
-Summary: Other package
-Patch2: other.patch
-`
-
-	tests := []struct {
-		name         string
-		expectedTags []string
-	}{
-		{
-			name:         "visits tags across all packages",
-			expectedTags: []string{"Name", "Version", "Patch0", "Summary", "Patch1", "Summary", "Patch2"},
-		},
-	}
-
-	for _, testCase := range tests {
-		t.Run(testCase.name, func(t *testing.T) {
-			sf, err := spec.OpenSpec(strings.NewReader(input))
-			require.NoError(t, err)
-
-			var tags []string
-
-			err = sf.VisitTags(func(tagLine *spec.TagLine, _ *spec.Context) error {
-				tags = append(tags, tagLine.Tag)
-
-				return nil
-			})
-			require.NoError(t, err)
-			assert.Equal(t, testCase.expectedTags, tags)
-		})
-	}
-}
-
-func TestVisitTagsPackage(t *testing.T) {
-	input := `Name: main-pkg
-Version: 1.0
-Patch0: main.patch
-
-%package devel
-Summary: Development files
-Patch1: devel.patch
-
-%package -n other
-Summary: Other package
-Patch2: other.patch
-`
-
-	tests := []struct {
-		name         string
-		packageName  string
-		expectedTags []string
-	}{
-		{
-			name:         "global package only",
-			packageName:  "",
-			expectedTags: []string{"Name", "Version", "Patch0"},
-		},
-		{
-			name:         "devel sub-package only",
-			packageName:  "devel",
-			expectedTags: []string{"Summary", "Patch1"},
-		},
-		{
-			name:         "other sub-package only",
-			packageName:  "other",
-			expectedTags: []string{"Summary", "Patch2"},
-		},
-		{
-			name:         "non-existing package returns no tags",
-			packageName:  "nonexistent",
-			expectedTags: nil,
-		},
-	}
-
-	for _, testCase := range tests {
-		t.Run(testCase.name, func(t *testing.T) {
-			sf, err := spec.OpenSpec(strings.NewReader(input))
-			require.NoError(t, err)
-
-			var tags []string
-
-			err = sf.VisitTagsPackage(testCase.packageName, func(tagLine *spec.TagLine, _ *spec.Context) error {
-				tags = append(tags, tagLine.Tag)
-
-				return nil
-			})
-			require.NoError(t, err)
-			assert.Equal(t, testCase.expectedTags, tags)
 		})
 	}
 }
@@ -1793,7 +2152,7 @@ Main.
 
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			specFile, err := spec.OpenSpec(strings.NewReader(testCase.input))
+			specFile, err := spec.OpenSpec(strings.NewReader(testCase.input), spec.WithEditor(spec.EditorStructural))
 			require.NoError(t, err)
 
 			err = specFile.RemoveSection(testCase.sectionName, testCase.packageName)
@@ -1998,6 +2357,28 @@ Main.
 %files
 /usr/bin/test
 `,
+		},
+		{
+			name: "rejects nested conditional content orphaned by removal",
+			input: `Name: test
+
+%package devel
+Summary: Devel
+
+%if 1
+%if 1
+shared content
+%package tools
+Summary: Tools
+%endif
+%endif
+
+%description tools
+Tools description.
+`,
+			packageName:   "devel",
+			errorExpected: true,
+			errorContains: "conditional block spans across section boundaries",
 		},
 		{
 			name: "trims trailing conditional opener belonging to next section",
@@ -2239,7 +2620,7 @@ Main.
 
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			specFile, err := spec.OpenSpec(strings.NewReader(testCase.input))
+			specFile, err := spec.OpenSpec(strings.NewReader(testCase.input), spec.WithEditor(spec.EditorStructural))
 			require.NoError(t, err)
 
 			err = specFile.RemoveSubpackage(testCase.packageName)
@@ -2250,6 +2631,10 @@ Main.
 				if testCase.errorContains != "" {
 					assert.Contains(t, err.Error(), testCase.errorContains)
 				}
+
+				var actual bytes.Buffer
+				require.NoError(t, specFile.Serialize(&actual))
+				assert.Equal(t, testCase.input, actual.String())
 
 				return
 			}

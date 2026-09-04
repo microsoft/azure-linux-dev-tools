@@ -24,6 +24,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource"
+	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spec"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/dirdiff"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
@@ -105,6 +106,10 @@ func WithDirtyDetection() PreparerOption {
 // Git-tracked files (spec, patches, scripts, configs) are still fetched from
 // the upstream clone. This is useful for rendering, where only the spec and
 // sidecar files are needed and downloading large source tarballs is unnecessary.
+func WithSpecEditor(mode spec.EditorMode) PreparerOption {
+	return func(p *sourcePreparerImpl) { p.specEditor = mode }
+}
+
 func WithSkipLookaside() PreparerOption {
 	return func(p *sourcePreparerImpl) {
 		p.skipLookaside = true
@@ -156,6 +161,7 @@ func WithAllowNoHashes() PreparerOption {
 // Standard implementation of the [SourcePreparer] interface.
 type sourcePreparerImpl struct {
 	sourceManager sourceproviders.SourceManager
+	specEditor    spec.EditorMode
 	fs            opctx.FS
 	eventListener opctx.EventListener
 	dryRunnable   opctx.DryRunnable
@@ -228,6 +234,7 @@ func NewPreparer(
 
 	impl := &sourcePreparerImpl{
 		sourceManager: sourceManager,
+		specEditor:    spec.EditorLegacy,
 		fs:            fs,
 		eventListener: eventListener,
 		dryRunnable:   dryRunnable,
@@ -1390,7 +1397,7 @@ func (p *sourcePreparerImpl) applyOverlayList(
 		}
 
 		if err := ApplyOverlayToSources(
-			p.dryRunnable, p.fs, overlay, sourcesDirPath, absSpecPath,
+			p.dryRunnable, p.fs, overlay, sourcesDirPath, absSpecPath, spec.WithEditor(p.specEditor),
 		); err != nil {
 			return fmt.Errorf("failed to apply %#q overlay:\n%w", overlay.Type, err)
 		}

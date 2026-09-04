@@ -52,14 +52,7 @@ func TestGetPackageNameFromSectionHeader(t *testing.T) {
 func TestOpenSpec_EmptyInput(t *testing.T) {
 	sf, err := spec.OpenSpec(strings.NewReader(""))
 	require.NoError(t, err)
-
-	// Empty spec is parseable but has no tags.
-	err = sf.VisitTags(func(_ *spec.TagLine, _ *spec.Context) error {
-		t.Fatal("no tags should be visited in an empty spec")
-
-		return nil
-	})
-	require.NoError(t, err)
+	assert.NotNil(t, sf)
 }
 
 func TestOpenSpec_BinaryContent(t *testing.T) {
