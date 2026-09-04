@@ -22,6 +22,7 @@ Use subcommands to add, list, query, build, and prepare sources for
 components defined in the project configuration.`,
 	}
 
+	addSpecEditorOption(cmd)
 	app.AddTopLevelCommand(cmd)
 	addOnAppInit(app, cmd)
 	buildOnAppInit(app, cmd)

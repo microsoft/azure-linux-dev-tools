@@ -23,6 +23,7 @@ import (
 
 // DiffSourcesOptions holds the options for the diff-sources command.
 type DiffSourcesOptions struct {
+	componentCommandOptions
 	ComponentFilter components.ComponentFilter
 
 	OutputFile string
@@ -36,7 +37,9 @@ func diffSourcesOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
 func NewDiffSourcesCmd() *cobra.Command {
 	var options DiffSourcesOptions
 
-	cmd := &cobra.Command{
+	var cmd *cobra.Command
+
+	cmd = &cobra.Command{
 		Use:   "diff-sources",
 		Short: "Show the diff that overlays apply to a component's sources",
 		Long: `Computes a unified diff showing the changes that overlays apply to a
@@ -44,6 +47,7 @@ component's sources. Fetches the sources once, copies them, then applies
 overlays to the copy and displays the resulting diff between the two trees.`,
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
 			options.ComponentFilter.ComponentNamePatterns = append(args, options.ComponentFilter.ComponentNamePatterns...)
+			options.SpecEditor = specEditorFromCommand(cmd)
 
 			return DiffComponentSources(env, &options)
 		}),
@@ -98,7 +102,8 @@ func DiffComponentSources(env *azldev.Env, options *DiffSourcesOptions) (interfa
 	}
 
 	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env,
-		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)))
+		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)),
+		sources.WithSpecEditor(options.specEditorMode()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create source preparer:\n%w", err)
 	}

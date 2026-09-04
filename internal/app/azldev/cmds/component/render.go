@@ -19,6 +19,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
+	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spec"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/dirdiff"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
@@ -29,6 +30,7 @@ import (
 
 // RenderOptions holds the options for the render command.
 type RenderOptions struct {
+	componentCommandOptions
 	ComponentFilter   components.ComponentFilter
 	OutputDir         string
 	OutputDirExplicit bool // True when --output-dir was explicitly passed on the CLI.
@@ -88,6 +90,7 @@ valid with -a.`,
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
 			options.ComponentFilter.ComponentNamePatterns = append(args, options.ComponentFilter.ComponentNamePatterns...)
 			options.OutputDirExplicit = cmd.Flags().Changed("output-dir")
+			options.SpecEditor = specEditorFromCommand(cmd)
 
 			return RenderComponents(env, &options)
 		}),
@@ -204,7 +207,7 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 	results := make([]*RenderResult, len(componentList))
 
 	// ── Phase 1: Parallel source preparation ──
-	prepared := parallelPrepare(env, mockProcessor, componentList, stagingDir, options.OutputDir, results)
+	prepared := parallelPrepare(env, mockProcessor, componentList, stagingDir, options, results)
 
 	// ── Phase 2: Batch mock processing ──
 	mockResultMap := batchMockProcess(env, mockProcessor, stagingDir, prepared)
@@ -386,7 +389,7 @@ func parallelPrepare(
 	mockProcessor *sources.MockProcessor,
 	comps []components.Component,
 	stagingDir string,
-	outputDir string,
+	options *RenderOptions,
 	results []*RenderResult,
 ) []*preparedComponent {
 	progressEvent := env.StartEvent("Preparing component sources", "count", len(comps))
@@ -406,7 +409,8 @@ func parallelPrepare(
 			// workerEnv (captured) is the effective context for this call chain;
 			// the parmap-supplied ctx is identical and unused here.
 			//nolint:contextcheck // env carries the ctx
-			return prepareOneComponent(workerEnv, mockProcessor, comp, stagingDir, outputDir)
+			return prepareOneComponent(
+				workerEnv, mockProcessor, comp, stagingDir, options.OutputDir, options.specEditorMode())
 		},
 	)
 
@@ -418,7 +422,7 @@ func parallelPrepare(
 			// Worker never started — ctx ended before parmap reached it.
 			compName := comps[idx].GetName()
 
-			compOutputDir, nameErr := components.RenderedSpecDir(outputDir, compName)
+			compOutputDir, nameErr := components.RenderedSpecDir(options.OutputDir, compName)
 			if nameErr != nil {
 				compOutputDir = "(invalid)"
 			}
@@ -453,6 +457,7 @@ func prepareOneComponent(
 	comp components.Component,
 	stagingDir string,
 	outputDir string,
+	specEditor spec.EditorMode,
 ) prepResult {
 	componentName := comp.GetName()
 
@@ -467,7 +472,7 @@ func prepareOneComponent(
 		}}
 	}
 
-	prep, err := prepareComponentSources(env, mockProcessor, comp, stagingDir)
+	prep, err := prepareComponentSources(env, mockProcessor, comp, stagingDir, specEditor)
 	if err != nil {
 		slog.Error("Failed to prepare component sources",
 			"component", componentName, "error", err)
@@ -493,6 +498,7 @@ func prepareComponentSources(
 	mockProcessor *sources.MockProcessor,
 	comp components.Component,
 	stagingDir string,
+	specEditor spec.EditorMode,
 ) (*preparedComponent, error) {
 	componentName := comp.GetName()
 
@@ -531,7 +537,10 @@ func prepareComponentSources(
 		sources.WithMockProcessor(mockProcessor),
 	}
 
-	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, preparerOpts...)
+	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, append(
+		preparerOpts,
+		sources.WithSpecEditor(specEditor),
+	)...)
 	if err != nil {
 		return nil, fmt.Errorf("creating source preparer for %#q:\n%w", componentName, err)
 	}

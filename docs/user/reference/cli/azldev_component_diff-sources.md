@@ -39,6 +39,7 @@ azldev component diff-sources [flags]
       --permissive-config         do not fail on unknown fields in TOML config files
   -C, --project string            path to Azure Linux project
   -q, --quiet                     only enable minimal output
+      --spec-editor editor        Select the RPM spec editor (legacy or experimental) (default legacy)
   -v, --verbose                   enable verbose output
 ```
 

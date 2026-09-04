@@ -17,6 +17,7 @@ import (
 )
 
 type PrepareSourcesOptions struct {
+	componentCommandOptions
 	ComponentFilter components.ComponentFilter
 
 	OutputDir      string
@@ -34,7 +35,9 @@ func prepareOnAppInit(_ *azldev.App, sourceCmd *cobra.Command) {
 func NewPrepareSourcesCmd() *cobra.Command {
 	var options PrepareSourcesOptions
 
-	cmd := &cobra.Command{
+	var cmd *cobra.Command
+
+	cmd = &cobra.Command{
 		Use:     "prepare-sources",
 		Aliases: []string{"prep-sources"},
 		Short:   "Prepare buildable sources for components",
@@ -53,6 +56,7 @@ Only one component may be selected at a time.`,
   azldev component prep-sources -p curl -o ./build/work/scratch/curl --skip-overlays --force`,
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
 			options.ComponentFilter.ComponentNamePatterns = append(args, options.ComponentFilter.ComponentNamePatterns...)
+			options.SpecEditor = specEditorFromCommand(cmd)
 
 			return nil, PrepareComponentSources(env, &options)
 		}),
@@ -132,7 +136,10 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 
 	preparerOpts := buildPreparerOptions(env, distro, options)
 
-	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, preparerOpts...)
+	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, append(
+		preparerOpts,
+		sources.WithSpecEditor(options.specEditorMode()),
+	)...)
 	if err != nil {
 		return fmt.Errorf("failed to create source preparer:\n%w", err)
 	}
