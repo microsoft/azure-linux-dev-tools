@@ -1,6 +1,6 @@
 module github.com/microsoft/azure-linux-dev-tools
 
-go 1.25.6
+go 1.26.0
 
 require (
 	dario.cat/mergo v1.0.2
@@ -55,8 +55,8 @@ require (
 	github.com/ulikunitz/xz v0.5.16
 	go.szostok.io/version v1.2.0
 	go.uber.org/mock v0.6.0
-	golang.org/x/sync v0.22.0
-	golang.org/x/sys v0.47.0
+	golang.org/x/sync v0.23.0
+	golang.org/x/sys v0.48.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
