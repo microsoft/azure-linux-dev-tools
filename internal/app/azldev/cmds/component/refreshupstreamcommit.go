@@ -70,19 +70,19 @@ The --check-only flag runs the full pipeline but does NOT write TOML files or
 prune orphans. The command exits 0 when nothing would change and exits 1 when
 any component is stale or any generated TOML would be pruned. Intended for CI gates.`,
 		Example: `  # Refresh all components
-  azldev component refresh-upstream-commit -a
+  azldev --without-lockfile component refresh-upstream-commit -a
 
   # Refresh a single component
-  azldev component refresh-upstream-commit -p curl
+  azldev --without-lockfile component refresh-upstream-commit -p curl
 
   # Refresh components in a group
-  azldev component refresh-upstream-commit -g core
+  azldev --without-lockfile component refresh-upstream-commit -g core
 
   # Write generated files to a custom directory
-  azldev component refresh-upstream-commit -a --upstream-commits-dir config/commits
+  azldev --without-lockfile component refresh-upstream-commit -a --upstream-commits-dir config/commits
 
   # CI gate: exit 0 if commit TOMLs are current, 1 if anything would change
-  azldev component refresh-upstream-commit -a --check-only -q`,
+  azldev --without-lockfile component refresh-upstream-commit -a --check-only -q`,
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
 			options.ComponentFilter.ComponentNamePatterns = append(
 				args, options.ComponentFilter.ComponentNamePatterns...,
@@ -349,7 +349,7 @@ func refreshCheckOnlyResult(
 	}
 
 	return display, fmt.Errorf("upstream commit TOML files are stale; %s. "+
-		"Run 'azldev component refresh-upstream-commit -a' to refresh",
+		"Run 'azldev --without-lockfile component refresh-upstream-commit -a' to refresh",
 		strings.Join(parts, "; "))
 }
 

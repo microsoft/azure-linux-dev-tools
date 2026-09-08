@@ -397,7 +397,7 @@ func TestRefreshUpstreamCommits_CheckOnly_StaleReturnsError(t *testing.T) {
 	require.Error(t, err, "stale TOML must produce a non-nil error in --check-only mode")
 	assert.Contains(t, err.Error(), "stale", "error message should mention staleness")
 	assert.Contains(t, err.Error(), "curl", "error message should name the stale component")
-	assert.Contains(t, err.Error(), "azldev component refresh-upstream-commit -a",
+	assert.Contains(t, err.Error(), "azldev --without-lockfile component refresh-upstream-commit -a",
 		"-a-scoped run should suggest the same -a invocation to refresh")
 
 	// Results slice must be returned alongside the error so structured
