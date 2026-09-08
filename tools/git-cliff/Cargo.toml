@@ -11,4 +11,4 @@ edition = "2021"
 publish = false
 
 [dependencies]
-git-cliff = "=2.13.1"
+git-cliff = "=2.14.1"
