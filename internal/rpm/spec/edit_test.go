@@ -5,6 +5,8 @@ package spec_test
 
 import (
 	"bytes"
+	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -1340,6 +1342,81 @@ func TestGetHighestPatchTagNumber(t *testing.T) {
 	}
 }
 
+func TestAddSourceEntry(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "prefers Source9999 when it is free",
+			input:    "Name: test\nSource0: source.tar.gz\nVersion: 1.0\n",
+			expected: "Name: test\nSource0: source.tar.gz\nSource9999: macros.azl.macros\nVersion: 1.0\n",
+		},
+		{
+			name:     "prefers Source9999 when no sources exist",
+			input:    "Name: test\nVersion: 1.0\n",
+			expected: "Name: test\nVersion: 1.0\nSource9999: macros.azl.macros\n",
+		},
+		{
+			name:     "avoids occupied preferred source number",
+			input:    "Name: test\nSource9999: upstream.file\nVersion: 1.0\n",
+			expected: "Name: test\nSource9999: upstream.file\nSource10000: macros.azl.macros\nVersion: 1.0\n",
+		},
+		{
+			name:     "source tags are case insensitive",
+			input:    "Name: test\nSOURCE9999: upstream.file\nsource9998: another.file\n",
+			expected: "Name: test\nSOURCE9999: upstream.file\nsource9998: another.file\nSource10000: macros.azl.macros\n",
+		},
+		{
+			name:     "bare source reserves automatically numbered slot",
+			input:    "Name: test\nSource: source.tar.gz\nSource9999: upstream.file\n",
+			expected: "Name: test\nSource: source.tar.gz\nSource9999: upstream.file\nSource10000: macros.azl.macros\n",
+		},
+		{
+			name:     "allocates after source numbers above preferred range",
+			input:    "Name: test\nSource9999: upstream.file\nSource10133: texlive.file\n",
+			expected: "Name: test\nSource9999: upstream.file\nSource10133: texlive.file\nSource10134: macros.azl.macros\n",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			specFile, err := spec.OpenSpec(strings.NewReader(testCase.input))
+			require.NoError(t, err)
+
+			err = specFile.AddSourceEntry("macros.azl.macros")
+			require.NoError(t, err)
+
+			var output strings.Builder
+			require.NoError(t, specFile.Serialize(&output))
+			assert.Equal(t, testCase.expected, output.String())
+		})
+	}
+}
+
+func TestAddSourceEntry_ManyBareSources(t *testing.T) {
+	input := "Name: test\n" + strings.Repeat("Source: automatically-numbered.tar.gz\n", 10001)
+	specFile, err := spec.OpenSpec(strings.NewReader(input))
+	require.NoError(t, err)
+
+	require.NoError(t, specFile.AddSourceEntry("macros.azl.macros"))
+
+	var output strings.Builder
+	require.NoError(t, specFile.Serialize(&output))
+	assert.Contains(t, output.String(), "Source10001: macros.azl.macros\n")
+}
+
+func TestAddSourceEntry_MaximumIntegerTag(t *testing.T) {
+	// Source9999 occupied forces the fallback path; SourceMaxInt makes highest+1 overflow.
+	input := fmt.Sprintf("Name: test\nSource9999: upstream.file\nSource%d: max.file\n", math.MaxInt)
+	specFile, err := spec.OpenSpec(strings.NewReader(input))
+	require.NoError(t, err)
+
+	err = specFile.AddSourceEntry("macros.azl.macros")
+	require.ErrorContains(t, err, "cannot allocate SourceN tag after maximum integer tag number")
+}
+
 func TestRemoveTagsMatching(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -1532,6 +1609,32 @@ func TestParsePatchTagNumber(t *testing.T) {
 	for _, testCase := range tests {
 		t.Run(testCase.tag, func(t *testing.T) {
 			num, ok := spec.ParsePatchTagNumber(testCase.tag)
+			assert.Equal(t, testCase.expectedNum, num)
+			assert.Equal(t, testCase.expectedOK, ok)
+		})
+	}
+}
+
+func TestParseSourceTagNumber(t *testing.T) {
+	tests := []struct {
+		tag         string
+		expectedNum int
+		expectedOK  bool
+	}{
+		{"Source0", 0, true},
+		{"Source9999", 9999, true},
+		{"source5", 5, true},
+		{"SOURCE10000", 10000, true},
+		{"Source-1", -1, false},
+		{"Source", -1, false},
+		{"SourceFoo", -1, false},
+		{"Patch0", -1, false},
+		{"", -1, false},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.tag, func(t *testing.T) {
+			num, ok := spec.ParseSourceTagNumber(testCase.tag)
 			assert.Equal(t, testCase.expectedNum, num)
 			assert.Equal(t, testCase.expectedOK, ok)
 		})

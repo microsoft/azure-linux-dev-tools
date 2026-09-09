@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -94,11 +95,11 @@ func TestPrepareSources_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, exists, "macros file should not be created when there are no macros")
 
-	// Verify spec does NOT contain macro load or Source9999.
+	// Verify spec does not contain a macro load directive or a macros source entry.
 	specContents, err := fileutils.ReadFile(ctx.FS(), outputSpecPath)
 	require.NoError(t, err)
 	assert.NotContains(t, string(specContents), "%{load:%{_sourcedir}/"+macrosFileName+"}")
-	assert.NotContains(t, string(specContents), "Source9999")
+	assert.NotContains(t, string(specContents), macrosFileName)
 }
 
 // TestPrepareSources_ArchiveOverlayRehashesSourcesEntry is an end-to-end check
@@ -423,14 +424,51 @@ func TestPrepareSources_WritesMacrosFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(contents), "%_with_feature 1")
 
-	// Verify spec has macro load directive and Source9999 tag.
+	// Verify spec has macro load directive and a collision-free source tag.
 	specPath := filepath.Join(testOutputDir, "my-package.spec")
 	specContents, err := fileutils.ReadFile(ctx.FS(), specPath)
 	require.NoError(t, err)
 
 	specStr := string(specContents)
 	assert.Contains(t, specStr, "%{load:%{_sourcedir}/my-package"+sources.MacrosFileExtension+"}")
-	assert.Contains(t, specStr, "Source9999")
+	// Assert the macros file is registered under some SourceN tag, without pinning the number
+	// (the allocator picks the next free source number based on the spec's existing sources).
+	macrosSourcePattern := regexp.MustCompile(
+		`(?m)^Source[0-9]+: my-package` + regexp.QuoteMeta(sources.MacrosFileExtension) + `$`,
+	)
+	assert.Regexp(t, macrosSourcePattern, specStr)
+}
+
+func TestPrepareSources_MacroSourceTagCollision(t *testing.T) {
+	const testOutputDir = "/output"
+
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+	sourceManager := sourceproviders_test.NewMockSourceManager(ctrl)
+	ctx := testctx.NewCtx()
+
+	component.EXPECT().GetName().AnyTimes().Return("my-package")
+	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
+		Build: projectconfig.ComponentBuildConfig{With: []string{"feature"}},
+	})
+	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil)
+	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).DoAndReturn(
+		func(_ interface{}, _ interface{}, outputDir string, _ ...sourceproviders.FetchComponentOption) error {
+			return fileutils.WriteFile(
+				ctx.FS(), filepath.Join(outputDir, "my-package.spec"),
+				[]byte("Name: my-package\nSource9999: upstream.file\n"), fileperms.PublicFile,
+			)
+		},
+	)
+
+	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx)
+	require.NoError(t, err)
+	require.NoError(t, preparer.PrepareSources(ctx, component, testOutputDir, true))
+
+	specContents, err := fileutils.ReadFile(ctx.FS(), filepath.Join(testOutputDir, "my-package.spec"))
+	require.NoError(t, err)
+	assert.Contains(t, string(specContents), "Source9999: upstream.file")
+	assert.Contains(t, string(specContents), "Source10000: my-package"+sources.MacrosFileExtension)
 }
 
 // Tests for GenerateMacrosFileContents - these test content generation in isolation.
