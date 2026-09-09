@@ -11,6 +11,13 @@ The `[images]` section defines system images (VMs, containers, etc.) that azldev
 | Capabilities | `capabilities` | [ImageCapabilities](#image-capabilities) | No | Describes features and properties of this image |
 | Tests | `tests` | [ImageTests](#image-tests) | No | Test configuration for this image |
 | Publish | `publish` | [ImagePublish](#image-publish) | No | Publishing settings for this image |
+| Architectures | `architectures` | string array | No | Architectures supported by this image |
+
+The current supported architectures are `x86_64` and `aarch64`. `architectures` is
+optional; omitting it (or leaving it empty) means the image is unrestricted and
+supports all recognized architectures, which keeps images.toml files written before
+this field existed valid. `azldev image list` reports each image's architecture set,
+and `azldev image build --arch` rejects architectures outside a declared set.
 
 ## Image Definition
 
@@ -64,6 +71,7 @@ The `publish` subtable configures where an image is published. Unlike packages (
 [images.vm-base]
 description = "VM Base Image"
 definition = { type = "kiwi", path = "vm-base/vm-base.kiwi" }
+architectures = ["x86_64", "aarch64"]
 
 [images.vm-base.capabilities]
 machine-bootable = true
@@ -77,6 +85,7 @@ runtime-package-management = true
 [images.container-base]
 description = "Container Base Image"
 definition = { type = "kiwi", path = "container-base/container-base.kiwi" }
+architectures = ["x86_64", "aarch64"]
 
 [images.container-base.capabilities]
 container = true
@@ -88,6 +97,7 @@ container = true
 [images.vm-azure]
 description = "Azure-optimized VM image"
 definition = { type = "kiwi", path = "vm-azure/vm-azure.kiwi", profile = "azure" }
+architectures = ["x86_64"]
 ```
 
 ### Image with test suite references
@@ -96,6 +106,7 @@ definition = { type = "kiwi", path = "vm-azure/vm-azure.kiwi", profile = "azure"
 [images.vm-base]
 description = "VM Base Image"
 definition = { type = "kiwi", path = "vm-base/vm-base.kiwi" }
+architectures = ["x86_64", "aarch64"]
 
 [images.vm-base.capabilities]
 machine-bootable = true
@@ -114,6 +125,7 @@ test-suites = [
 [images.vm-base]
 description = "VM Base Image"
 definition = { type = "kiwi", path = "vm-base/vm-base.kiwi" }
+architectures = ["x86_64", "aarch64"]
 
 [images.vm-base.publish]
 channels = ["registry-prod", "registry-staging"]

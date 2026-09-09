@@ -113,3 +113,54 @@ func TestCreateKiwiRunnerDistroConfigOverride(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateBuildArchitecture(t *testing.T) {
+	imageConfig := &projectconfig.ImageConfig{
+		Name:          "gen1",
+		Architectures: []string{projectconfig.ImageArchitectureX86_64},
+	}
+
+	require.NoError(t, validateBuildArchitecture(
+		imageConfig,
+		ImageArchX86_64,
+		"arm64",
+	))
+	require.NoError(t, validateBuildArchitecture(
+		imageConfig,
+		ImageArchDefault,
+		"amd64",
+	))
+
+	err := validateBuildArchitecture(imageConfig, ImageArchAarch64, "amd64")
+	require.ErrorContains(t, err, "image `gen1` does not support architecture `aarch64`")
+
+	err = validateBuildArchitecture(imageConfig, ImageArchDefault, "arm64")
+	require.ErrorContains(t, err, "image `gen1` does not support architecture `aarch64`")
+
+	err = validateBuildArchitecture(imageConfig, ImageArchDefault, "riscv64")
+	require.ErrorContains(t, err, "unsupported host architecture `riscv64`")
+}
+
+func TestValidateBuildArchitecture_UnrestrictedWhenUnset(t *testing.T) {
+	// An image with no declared Architectures (e.g. from an images.toml written
+	// before this field existed) must remain unrestricted.
+	imageConfig := &projectconfig.ImageConfig{Name: "legacy"}
+
+	require.NoError(t, validateBuildArchitecture(imageConfig, ImageArchX86_64, "amd64"))
+	require.NoError(t, validateBuildArchitecture(imageConfig, ImageArchAarch64, "amd64"))
+}
+
+func TestValidateBuildArchitecture_RejectsUnsupportedExplicitTarget(t *testing.T) {
+	// An unrestricted image (no declared Architectures) must still reject an
+	// explicit --arch value that bypasses ImageArch.Set (e.g. set directly rather
+	// than via flag parsing), instead of silently accepting any string.
+	// SupportsArchitecture rejects it because "riscv64" isn't a recognized
+	// architecture at all, regardless of the image's declared support. The error
+	// must report the recognized architecture set, not the image's empty
+	// declared list (which would misleadingly suggest it supports none).
+	imageConfig := &projectconfig.ImageConfig{Name: "legacy"}
+
+	err := validateBuildArchitecture(imageConfig, ImageArch("riscv64"), "amd64")
+	require.ErrorContains(t, err, "image `legacy` does not support architecture `riscv64`")
+	require.ErrorContains(t, err, `supported architectures: ["x86_64" "aarch64"]`)
+}

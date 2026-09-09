@@ -8,12 +8,15 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"runtime"
+	"slices"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/workdir"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/kiwi"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/qemu"
 	"github.com/spf13/cobra"
 )
 
@@ -150,8 +153,7 @@ func BuildImage(env *azldev.Env, options *ImageBuildOptions) (*ImageBuildResult,
 		return nil, err
 	}
 
-	// Resolve the image from config.
-	imageConfig, err := ResolveImageByName(env, options.ImageName)
+	imageConfig, err := resolveBuildImage(env, options)
 	if err != nil {
 		return nil, err
 	}
@@ -230,6 +232,60 @@ func BuildImage(env *azldev.Env, options *ImageBuildOptions) (*ImageBuildResult,
 		OutputDir:     imageOutputDir,
 		ArtifactPaths: artifactPaths,
 	}, nil
+}
+
+func resolveBuildImage(env *azldev.Env, options *ImageBuildOptions) (*projectconfig.ImageConfig, error) {
+	imageConfig, err := ResolveImageByName(env, options.ImageName)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := validateBuildArchitecture(
+		imageConfig,
+		options.TargetArch,
+		runtime.GOARCH,
+	); err != nil {
+		return nil, err
+	}
+
+	return imageConfig, nil
+}
+
+func validateBuildArchitecture(
+	imageConfig *projectconfig.ImageConfig,
+	targetArch ImageArch,
+	hostGoArch string,
+) error {
+	arch := string(targetArch)
+	if arch == "" {
+		arch = qemu.GoArchToQEMUArch(hostGoArch)
+		if !slices.Contains(qemu.SupportedArchitectures(), arch) {
+			return fmt.Errorf("unsupported host architecture %#q", hostGoArch)
+		}
+	}
+
+	// SupportsArchitecture rejects both architectures the image doesn't declare
+	// support for and architectures azldev doesn't recognize at all (relevant for
+	// an unrestricted image with no declared Architectures, and for an explicit
+	// --arch value that bypassed ImageArch.Set's validation).
+	if !imageConfig.SupportsArchitecture(arch) {
+		supportedArchitectures := imageConfig.Architectures
+		if len(supportedArchitectures) == 0 {
+			// An unrestricted image supports every recognized architecture; report
+			// that set instead of the empty declared list, which would otherwise
+			// misleadingly suggest the image supports none.
+			supportedArchitectures = projectconfig.SupportedImageArchitectures()
+		}
+
+		return fmt.Errorf(
+			"image %#q does not support architecture %#q; supported architectures: %q",
+			imageConfig.Name,
+			arch,
+			supportedArchitectures,
+		)
+	}
+
+	return nil
 }
 
 // checkBuildPrerequisites verifies that required tools are available for building images.

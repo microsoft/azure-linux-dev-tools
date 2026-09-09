@@ -5,10 +5,24 @@ package projectconfig
 
 import (
 	"fmt"
+	"slices"
 
 	"dario.cat/mergo"
 	"github.com/brunoga/deep"
 )
+
+const (
+	// ImageArchitectureX86_64 is the canonical x86-64 architecture name used by image builders.
+	ImageArchitectureX86_64 = "x86_64"
+	// ImageArchitectureAarch64 is the canonical 64-bit Arm architecture name used by image builders.
+	ImageArchitectureAarch64 = "aarch64"
+)
+
+// SupportedImageArchitectures returns the architecture names azldev recognizes as
+// valid for use in an image's Architectures list.
+func SupportedImageArchitectures() []string {
+	return []string{ImageArchitectureX86_64, ImageArchitectureAarch64}
+}
 
 // Defines an image.
 type ImageConfig struct {
@@ -34,6 +48,29 @@ type ImageConfig struct {
 
 	// Publish holds the publish settings for this image.
 	Publish ImagePublishConfig `toml:"publish,omitempty" json:"publish,omitempty" jsonschema:"title=Publish settings,description=Publishing settings for this image"`
+
+	// Architectures lists the architectures this image supports. Optional: an
+	// unset or empty list means the image is unrestricted (supports all
+	// architectures azldev recognizes), preserving compatibility with
+	// images.toml files written before this field existed.
+	Architectures []string `toml:"architectures,omitempty" json:"architectures,omitempty" jsonschema:"title=Architectures,description=Architectures supported by this image (optional; unset means unrestricted),enum=x86_64,enum=aarch64"`
+}
+
+// SupportsArchitecture reports whether the image supports arch. An image with no
+// declared Architectures is treated as unrestricted, for compatibility with
+// images.toml files that predate this field, but arch must still be one of the
+// architectures azldev recognizes (see SupportedImageArchitectures); an
+// unrecognized architecture is never supported, restricted or not.
+func (i *ImageConfig) SupportsArchitecture(arch string) bool {
+	if !slices.Contains(SupportedImageArchitectures(), arch) {
+		return false
+	}
+
+	if len(i.Architectures) == 0 {
+		return true
+	}
+
+	return slices.Contains(i.Architectures, arch)
 }
 
 // ImagePublishConfig holds publish settings for an image. Unlike packages (which target a
@@ -239,6 +276,7 @@ func (i *ImageConfig) WithAbsolutePaths(referenceDir string) *ImageConfig {
 		Capabilities:     deep.MustCopy(i.Capabilities),
 		Tests:            deep.MustCopy(i.Tests),
 		Publish:          deep.MustCopy(i.Publish),
+		Architectures:    deep.MustCopy(i.Architectures),
 	}
 
 	// Fix up paths.

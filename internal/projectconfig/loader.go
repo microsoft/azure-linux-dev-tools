@@ -35,17 +35,8 @@ var (
 func loadAndResolveProjectConfig(
 	fs opctx.FS, permissiveConfigParsing bool, configFilePaths ...string,
 ) (*ProjectConfig, error) {
-	resolvedCfg := &ProjectConfig{
-		ComponentGroups:   make(map[string]ComponentGroupConfig),
-		Components:        make(map[string]ComponentConfig),
-		Images:            make(map[string]ImageConfig),
-		Distros:           make(map[string]DistroDefinition),
-		GroupsByComponent: make(map[string][]string),
-		PackageGroups:     make(map[string]PackageGroupConfig),
-		TestSuites:        make(map[string]TestSuiteConfig),
-		Tests:             make(map[string]TestDefinition),
-		TestGroups:        make(map[string]TestGroup),
-	}
+	defaultConfig := NewProjectConfig()
+	resolvedCfg := &defaultConfig
 
 	for _, configFilePath := range configFilePaths {
 		// Load the project config file and all transitive includes.

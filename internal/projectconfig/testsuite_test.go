@@ -361,8 +361,9 @@ func TestValidateTestSuiteReferences(t *testing.T) {
 		cfg := projectconfig.ProjectConfig{
 			Images: map[string]projectconfig.ImageConfig{
 				"myimage": {
-					Name:  "myimage",
-					Tests: &projectconfig.ImageTestsConfig{TestSuites: []projectconfig.TestSuiteRef{{Name: "smoke"}}},
+					Name:          "myimage",
+					Architectures: []string{"x86_64"},
+					Tests:         &projectconfig.ImageTestsConfig{TestSuites: []projectconfig.TestSuiteRef{{Name: "smoke"}}},
 				},
 			},
 			TestSuites: map[string]projectconfig.TestSuiteConfig{
@@ -407,7 +408,7 @@ func TestValidateTestSuiteReferences(t *testing.T) {
 	t.Run("image with no tests is valid", func(t *testing.T) {
 		cfg := projectconfig.ProjectConfig{
 			Images: map[string]projectconfig.ImageConfig{
-				"myimage": {Name: "myimage"},
+				"myimage": {Name: "myimage", Architectures: []string{"x86_64"}},
 			},
 			TestSuites:        make(map[string]projectconfig.TestSuiteConfig),
 			Components:        make(map[string]projectconfig.ComponentConfig),

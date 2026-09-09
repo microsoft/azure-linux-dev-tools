@@ -37,6 +37,7 @@ Images are declared under `[images.<name>]` (conventionally in an `images.toml`)
 [images.container-base]
 description = "Container base image"
 definition = { type = "kiwi", path = "container-base/container-base.kiwi", profile = "core" }
+architectures = ["x86_64", "aarch64"]
 
   [images.container-base.capabilities]
   container = true
@@ -50,6 +51,9 @@ definition = { type = "kiwi", path = "container-base/container-base.kiwi", profi
   `profile` selects a kiwi profile (optional).
 - `capabilities` are tri-state flags describing the image — `machine-bootable`,
   `container`, `systemd`, `runtime-package-management`. Set only the ones that apply.
+- `architectures = ["x86_64", "aarch64"]` is optional; when unset or empty, the
+   image is treated as unrestricted (all recognized architectures). Set it to
+   restrict which architectures `image build --arch` allows for the image.
 - `tests.test-suites` lists the test suites `azldev image test` runs.
 - `publish.channels` lists the channels the image publishes to.
 

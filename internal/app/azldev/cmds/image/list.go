@@ -36,6 +36,14 @@ type ImageListResult struct {
 	// display.
 	CapabilitiesSummary string `json:"-" table:"Capabilities"`
 
+	// Architectures lists the architectures supported by this image, as declared in
+	// its config. An empty list means the image is unrestricted (all recognized
+	// architectures), since the field is optional.
+	Architectures []string `json:"architectures" table:"-"`
+
+	// ArchitecturesSummary is a comma-separated summary for table display.
+	ArchitecturesSummary string `json:"-" table:"Architectures"`
+
 	// Tests holds the test configuration for this image, matching the original config
 	// structure.
 	Tests *projectconfig.ImageTestsConfig `json:"tests,omitempty" table:"-"`
@@ -135,10 +143,15 @@ func ListImages(env *azldev.Env, options *ListImageOptions) ([]ImageListResult, 
 			Description:         imageConfig.Description,
 			Capabilities:        imageConfig.Capabilities,
 			CapabilitiesSummary: strings.Join(imageConfig.Capabilities.EnabledNames(), ", "),
-			Tests:               imageConfig.Tests,
-			TestsSummary:        strings.Join(imageConfig.TestNames(), ", "),
-			Publish:             imageConfig.Publish,
-			PublishSummary:      strings.Join(imageConfig.Publish.Channels, ", "),
+			Architectures:       imageConfig.Architectures,
+			ArchitecturesSummary: strings.Join(
+				imageConfig.Architectures,
+				", ",
+			),
+			Tests:          imageConfig.Tests,
+			TestsSummary:   strings.Join(imageConfig.TestNames(), ", "),
+			Publish:        imageConfig.Publish,
+			PublishSummary: strings.Join(imageConfig.Publish.Channels, ", "),
 			Definition: ImageDefinitionResult{
 				Type: string(imageConfig.Definition.DefinitionType),
 				Path: imageConfig.Definition.Path,
