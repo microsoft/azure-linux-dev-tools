@@ -97,7 +97,7 @@ func (cfg *ProjectConfig) validate(withoutLockfile bool) error {
 			return err
 		}
 
-		if err := validateComponentConfigs(cfg.Components); err != nil {
+		if err := validateComponentConfigs(cfg.Components, true); err != nil {
 			return err
 		}
 	}

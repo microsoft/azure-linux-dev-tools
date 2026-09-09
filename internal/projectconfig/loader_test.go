@@ -1801,6 +1801,52 @@ upstream-distro = { name = "fedora", version = "rawhide" }
 	require.Error(t, err)
 }
 
+func TestLoadAndResolveProjectConfig_WithoutLockfile_ValidatesCustomScriptBeforeResolvingPath(t *testing.T) {
+	t.Run("valid filename is resolved", func(t *testing.T) {
+		const configContents = `
+[components.abc]
+spec = { type = "upstream", upstream-distro = { name = "fedora", version = "rawhide" } }
+source-files = [
+    { filename = "generated.tar.gz", origin = { type = "custom", script = "generate.sh" } },
+]
+`
+
+		ctx := testctx.NewCtx()
+		require.NoError(t, fileutils.WriteFile(
+			ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile,
+		))
+
+		config, err := loadAndResolveProjectConfig(
+			ctx.FS(), loadOptions{withoutLockfile: true}, testConfigPath,
+		)
+		require.NoError(t, err)
+		require.Len(t, config.Components["abc"].SourceFiles, 1)
+		assert.Equal(t, "/project/generate.sh", config.Components["abc"].SourceFiles[0].Origin.Script)
+	})
+
+	t.Run("unsafe filename is rejected", func(t *testing.T) {
+		const configContents = `
+[components.abc.spec]
+upstream-commit = "abcdef1234567"
+
+[[components.abc.source-files]]
+filename = "generated.tar.gz"
+origin = { type = "custom", script = "../generate.sh" }
+`
+
+		ctx := testctx.NewCtx()
+		require.NoError(t, fileutils.WriteFile(
+			ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile,
+		))
+
+		_, err := loadAndResolveProjectConfig(
+			ctx.FS(), loadOptions{withoutLockfile: true}, testConfigPath,
+		)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid 'script' value")
+	})
+}
+
 func TestLoadAndResolveProjectConfig_WithoutLockfile_RejectsInvalidComponentAfterMerge(t *testing.T) {
 	const configContents = `
 [components.abc.spec]

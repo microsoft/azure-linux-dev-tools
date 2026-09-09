@@ -108,7 +108,7 @@ func (f ConfigFile) Validate() error {
 		return err
 	}
 
-	if err := validateComponentConfigs(f.Components); err != nil {
+	if err := validateComponentConfigs(f.Components, false); err != nil {
 		return err
 	}
 
@@ -128,9 +128,22 @@ func (f ConfigFile) Validate() error {
 // files with override semantics, so a single file may legitimately be
 // incomplete; components are validated once the whole project is assembled.
 func (f ConfigFile) validateNonComponentFields() error {
+	components := f.Components
 	f.Components = nil
 
-	return f.Validate()
+	if err := f.Validate(); err != nil {
+		return err
+	}
+
+	// Source-file entries are atomic slice elements rather than partial nested
+	// definitions, so validate them before their script paths become absolute.
+	for componentName, component := range components {
+		if err := validateSourceFiles(component.SourceFiles, componentName, false); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // validateComponentConfigs validates the parts of a component definition that
@@ -141,7 +154,10 @@ func (f ConfigFile) validateNonComponentFields() error {
 // default-distro. Per-component snapshots would create non-deterministic builds
 // that the lock file cannot reliably track. Use an explicit 'upstream-commit'
 // pin instead.
-func validateComponentConfigs(components map[string]ComponentConfig) error {
+func validateComponentConfigs(
+	components map[string]ComponentConfig,
+	customScriptPathsResolved bool,
+) error {
 	for componentName, component := range components {
 		for i, overlay := range component.Overlays {
 			err := overlay.Validate()
@@ -156,7 +172,11 @@ func validateComponentConfigs(components map[string]ComponentConfig) error {
 			return fmt.Errorf("invalid build config for component %#q:\n%w", componentName, err)
 		}
 
-		if err := validateSourceFiles(component.SourceFiles, componentName); err != nil {
+		if err := validateSourceFiles(
+			component.SourceFiles,
+			componentName,
+			customScriptPathsResolved,
+		); err != nil {
 			return err
 		}
 
@@ -410,7 +430,11 @@ func validateTestRefList(
 //   - Origin must be present and valid for each source file.
 //   - 'replace-upstream' and 'replace-reason' must be set together.
 //   - [OriginTypeOverlay] entries additionally require 'hash', 'hash-type', and 'replace-upstream = true'.
-func validateSourceFiles(sourceFiles []SourceFileReference, componentName string) error {
+func validateSourceFiles(
+	sourceFiles []SourceFileReference,
+	componentName string,
+	customScriptPathsResolved bool,
+) error {
 	seen := make(map[string]bool, len(sourceFiles))
 
 	for _, ref := range sourceFiles {
@@ -443,7 +467,7 @@ func validateSourceFiles(sourceFiles []SourceFileReference, componentName string
 			return err
 		}
 
-		if err := validateCustomSourceRef(ref, componentName); err != nil {
+		if err := validateCustomSourceRef(ref, componentName, customScriptPathsResolved); err != nil {
 			return err
 		}
 
@@ -510,7 +534,11 @@ func validateReplaceUpstream(ref SourceFileReference, componentName string) erro
 //   - 'inputs' must be empty when 'origin.type' is not 'custom'.
 //   - each 'inputs' entry must be a valid filename (no path separators).
 //   - each 'inputs' entry must be unique.
-func validateCustomSourceRef(ref SourceFileReference, componentName string) error {
+func validateCustomSourceRef(
+	ref SourceFileReference,
+	componentName string,
+	customScriptPathResolved bool,
+) error {
 	if ref.Origin.Type == OriginTypeCustom {
 		if ref.Origin.Script == "" {
 			return fmt.Errorf(
@@ -519,13 +547,18 @@ func validateCustomSourceRef(ref SourceFileReference, componentName string) erro
 				ref.Filename, componentName)
 		}
 
-		if err := fileutils.ValidateFilename(ref.Origin.Script); err != nil {
+		scriptName := ref.Origin.Script
+		if customScriptPathResolved {
+			scriptName = ref.Origin.EffectiveScriptName()
+		}
+
+		if err := fileutils.ValidateFilename(scriptName); err != nil {
 			return fmt.Errorf(
 				"invalid 'script' value %#q for source file %#q in component %#q:\n%w",
 				ref.Origin.Script, ref.Filename, componentName, err)
 		}
 
-		if err := validateCustomSourceInputs(ref, componentName); err != nil {
+		if err := validateCustomSourceInputs(ref, componentName, scriptName); err != nil {
 			return err
 		}
 
@@ -556,7 +589,11 @@ func validateCustomSourceRef(ref SourceFileReference, componentName string) erro
 	return nil
 }
 
-func validateCustomSourceInputs(ref SourceFileReference, componentName string) error {
+func validateCustomSourceInputs(
+	ref SourceFileReference,
+	componentName string,
+	scriptName string,
+) error {
 	seen := make(map[string]bool, len(ref.Origin.Inputs))
 
 	for _, input := range ref.Origin.Inputs {
@@ -574,7 +611,7 @@ func validateCustomSourceInputs(ref SourceFileReference, componentName string) e
 
 		seen[input] = true
 
-		if input == ref.Origin.Script {
+		if input == scriptName {
 			return fmt.Errorf(
 				"'inputs' entry %#q for source file %#q in component %#q conflicts with 'script' filename",
 				input, ref.Filename, componentName)
