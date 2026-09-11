@@ -34,4 +34,5 @@ components defined in the project configuration.`,
 	renderOnAppInit(app, cmd)
 	testOnAppInit(app, cmd)
 	updateOnAppInit(app, cmd)
+	metadataOnAppInit(app, cmd)
 }
