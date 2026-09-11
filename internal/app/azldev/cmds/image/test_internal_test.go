@@ -34,59 +34,11 @@ func TestResolveImageTestsToRun_UsesNewTestsRefs(t *testing.T) {
 		},
 	}
 
-	resolved, legacy, err := resolveImageTestsToRun(testEnv.Config, imageCfg, nil)
+	resolved, err := resolveImageTestsToRun(testEnv.Config, imageCfg, nil)
 	require.NoError(t, err)
-	assert.Empty(t, legacy)
 	require.Len(t, resolved, 2)
 	assert.Equal(t, "static-image-checks", resolved[0].Name)
 	assert.Equal(t, "functional_core", resolved[1].Name)
-}
-
-func TestResolveImageTestsToRun_FallsBackToLegacyTestSuites(t *testing.T) {
-	testEnv := testutils.NewTestEnv(t)
-	imageCfg := &projectconfig.ImageConfig{
-		Tests: &projectconfig.ImageTestsConfig{
-			TestSuites: []projectconfig.TestSuiteRef{{Name: "smoke"}, {Name: "integration"}},
-		},
-	}
-
-	resolved, legacy, err := resolveImageTestsToRun(testEnv.Config, imageCfg, nil)
-	require.NoError(t, err)
-	assert.Empty(t, resolved)
-	assert.Equal(t, []string{"smoke", "integration"}, legacy)
-}
-
-func TestResolveImageTestsToRun_WarnsWhenBothTestsAndLegacyTestSuitesPresent(t *testing.T) {
-	var buf bytes.Buffer
-
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
-
-	t.Cleanup(func() { slog.SetDefault(prev) })
-
-	testEnv := testutils.NewTestEnv(t)
-	testEnv.Config.Tests = map[string]projectconfig.TestDefinition{
-		"static-image-checks": {Type: "pytest", Pytest: map[string]any{"working-dir": "/project/tests"}},
-	}
-
-	imageCfg := &projectconfig.ImageConfig{
-		Name: "vm-base",
-		Tests: &projectconfig.ImageTestsConfig{
-			Tests:      []projectconfig.TestRef{{Name: "static-image-checks"}},
-			TestSuites: []projectconfig.TestSuiteRef{{Name: "smoke"}},
-		},
-	}
-
-	resolved, legacy, err := resolveImageTestsToRun(testEnv.Config, imageCfg, nil)
-	require.NoError(t, err)
-	assert.Empty(t, legacy)
-	require.Len(t, resolved, 1)
-	assert.Equal(t, "static-image-checks", resolved[0].Name)
-
-	logs := buf.String()
-	assert.Contains(t, logs, "tests.test-suites")
-	assert.Contains(t, logs, "ignored")
-	assert.Contains(t, logs, "vm-base")
 }
 
 func TestResolveImageTestsToRun_NoWarnWhenOnlyNewTestsPresent(t *testing.T) {
@@ -109,7 +61,7 @@ func TestResolveImageTestsToRun_NoWarnWhenOnlyNewTestsPresent(t *testing.T) {
 		},
 	}
 
-	_, _, err := resolveImageTestsToRun(testEnv.Config, imageCfg, nil)
+	_, err := resolveImageTestsToRun(testEnv.Config, imageCfg, nil)
 	require.NoError(t, err)
 	assert.NotContains(t, buf.String(), "ignored")
 }

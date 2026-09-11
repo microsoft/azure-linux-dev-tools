@@ -43,14 +43,14 @@ definition = { type = "kiwi", path = "container-base/container-base.kiwi", profi
   systemd = false
 
   [images.container-base.tests]
-  test-suites = [{ name = "smoke" }]
+  tests = [{ name = "smoke" }]
 ```
 
 - `definition.type` is `kiwi` (the only type today); `path` points at the `.kiwi` file;
   `profile` selects a kiwi profile (optional).
 - `capabilities` are tri-state flags describing the image — `machine-bootable`,
   `container`, `systemd`, `runtime-package-management`. Set only the ones that apply.
-- `tests.test-suites` lists the test suites `azldev image test` runs.
+- `tests.tests` lists the tests or test groups `azldev image test` runs.
 - `publish.channels` lists the channels the image publishes to.
 
 ## The kiwi definition

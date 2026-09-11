@@ -7,8 +7,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-
-	"dario.cat/mergo"
 )
 
 // TestType indicates the type of test framework used to run a test suite.
@@ -22,8 +20,6 @@ const (
 )
 
 var (
-	// ErrDuplicateTestSuites is returned when duplicate conflicting test suite definitions are found.
-	ErrDuplicateTestSuites = errors.New("duplicate test suite")
 	// ErrDuplicateTests is returned when duplicate conflicting [tests] entries are found.
 	ErrDuplicateTests = errors.New("duplicate test")
 	// ErrDuplicateTestGroups is returned when duplicate conflicting [test-groups] entries are found.
@@ -32,8 +28,6 @@ var (
 	ErrUnknownTestType = errors.New("unknown test type")
 	// ErrMissingTestField is returned when a required test config field is missing.
 	ErrMissingTestField = errors.New("missing required test field")
-	// ErrUndefinedTestSuite is returned when an image references a test suite name that is not defined.
-	ErrUndefinedTestSuite = errors.New("undefined test suite reference")
 	// ErrUndefinedTest is returned when a test reference points to a missing [tests] entry.
 	ErrUndefinedTest = errors.New("undefined test reference")
 	// ErrUndefinedTestGroup is returned when a test reference points to a missing [test-groups] entry.
@@ -81,10 +75,6 @@ type TestSuiteConfig struct {
 	// Lisa holds LISA-specific configuration. Optional for a "lisa" suite; when present
 	// it drives generation and execution of a LISA runbook.
 	Lisa *LisaConfig `toml:"lisa,omitempty" json:"lisa,omitempty" jsonschema:"title=LISA config,description=LISA-specific configuration used to generate and run a LISA runbook (optional)"`
-
-	// Reference to the source config file that this definition came from; not present
-	// in serialized files.
-	SourceConfigFile *ConfigFile `toml:"-" json:"-" table:"-"`
 }
 
 // PytestInstallMode specifies how Python dependencies are installed for a pytest suite.
@@ -282,46 +272,4 @@ func (m PytestInstallMode) isValid() bool {
 	default:
 		return false
 	}
-}
-
-// MergeUpdatesFrom updates the test suite config with overrides present in other.
-func (t *TestSuiteConfig) MergeUpdatesFrom(other *TestSuiteConfig) error {
-	err := mergo.Merge(t, other, mergo.WithOverride, mergo.WithAppendSlice)
-	if err != nil {
-		return fmt.Errorf("failed to merge test suite config:\n%w", err)
-	}
-
-	return nil
-}
-
-// WithAbsolutePaths returns a copy of the test suite config with relative file paths converted
-// to absolute paths (relative to referenceDir).
-func (t *TestSuiteConfig) WithAbsolutePaths(referenceDir string) *TestSuiteConfig {
-	result := &TestSuiteConfig{
-		Name:             t.Name,
-		Description:      t.Description,
-		Type:             t.Type,
-		SourceConfigFile: t.SourceConfigFile,
-	}
-
-	if t.Pytest != nil {
-		result.Pytest = &PytestConfig{
-			WorkingDir: makeAbsolute(referenceDir, t.Pytest.WorkingDir),
-			TestPaths:  append([]string(nil), t.Pytest.TestPaths...),
-			ExtraArgs:  append([]string(nil), t.Pytest.ExtraArgs...),
-			Install:    t.Pytest.Install,
-		}
-	}
-
-	if t.Lisa != nil {
-		result.Lisa = &LisaConfig{
-			Framework:     t.Lisa.Framework,
-			TestCases:     append([]string(nil), t.Lisa.TestCases...),
-			PipPreInstall: append([]string(nil), t.Lisa.PipPreInstall...),
-			PipExtras:     append([]string(nil), t.Lisa.PipExtras...),
-			ExtraArgs:     append([]string(nil), t.Lisa.ExtraArgs...),
-		}
-	}
-
-	return result
 }

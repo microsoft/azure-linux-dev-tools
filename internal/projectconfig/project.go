@@ -6,7 +6,6 @@ package projectconfig
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"sort"
 	"strings"
 
@@ -46,9 +45,6 @@ type ProjectConfig struct {
 	// Definitions of package groups with shared configuration.
 	PackageGroups map[string]PackageGroupConfig `toml:"package-groups,omitempty" json:"packageGroups,omitempty" jsonschema:"title=Package groups,description=Mapping of package group names to configurations for publish-time routing"`
 
-	// Definitions of test suites.
-	TestSuites map[string]TestSuiteConfig `toml:"test-suites,omitempty" json:"testSuites,omitempty" jsonschema:"title=Test Suites,description=Mapping of test suite names to configurations"`
-
 	// Definitions of individual tests.
 	Tests map[string]TestDefinition `toml:"tests,omitempty" json:"tests,omitempty" jsonschema:"title=Tests,description=Mapping of test names to configurations"`
 
@@ -72,7 +68,6 @@ func NewProjectConfig() ProjectConfig {
 		Resources:         ResourcesConfig{RpmRepos: make(map[string]RpmRepoResource)},
 		GroupsByComponent: make(map[string][]string),
 		PackageGroups:     make(map[string]PackageGroupConfig),
-		TestSuites:        make(map[string]TestSuiteConfig),
 		Tests:             make(map[string]TestDefinition),
 		TestGroups:        make(map[string]TestGroup),
 	}
@@ -90,10 +85,6 @@ func (cfg *ProjectConfig) Validate() error {
 	}
 
 	if err := validatePackageGroupMembership(cfg.PackageGroups); err != nil {
-		return err
-	}
-
-	if err := validateImageTestReferences(cfg.Images, cfg.TestSuites); err != nil {
 		return err
 	}
 
@@ -280,33 +271,6 @@ func validatePackageGroupMembership(groups map[string]PackageGroupConfig) error 
 			}
 
 			seenIn[pkg] = groupName
-		}
-	}
-
-	return nil
-}
-
-// validateImageTestReferences checks that every test suite name in an image's
-// [ImageConfig.Tests.TestSuites] list corresponds to a defined entry in the top-level
-// TestSuites map. The legacy [tests.test-suites] image key is deprecated in favor of the
-// new [tests.tests] shape; a warning is emitted for each image still using it.
-func validateImageTestReferences(images map[string]ImageConfig, testSuites map[string]TestSuiteConfig) error {
-	for imageName, image := range images {
-		if image.Tests != nil && len(image.Tests.TestSuites) > 0 {
-			slog.Warn(
-				"image uses deprecated 'tests.test-suites' key; migrate to 'tests.tests' "+
-					"(referencing [tests.X] / [test-groups.X]) as legacy test-suites will be removed",
-				slog.String("image", imageName),
-			)
-		}
-
-		for _, suiteName := range image.TestNames() {
-			if _, ok := testSuites[suiteName]; !ok {
-				return fmt.Errorf(
-					"%w: image %#q references test suite %#q, which is not defined in [test-suites]",
-					ErrUndefinedTestSuite, imageName, suiteName,
-				)
-			}
 		}
 	}
 

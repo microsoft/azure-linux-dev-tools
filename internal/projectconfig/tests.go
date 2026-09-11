@@ -81,21 +81,37 @@ type TestDefinition struct {
 	Lisa   map[string]any `toml:"lisa,omitempty"   json:"lisa,omitempty"   jsonschema:"title=LISA config,description=LISA-specific configuration"`
 	Tmt    map[string]any `toml:"tmt,omitempty"    json:"tmt,omitempty"    jsonschema:"title=TMT config,description=TMT-specific configuration"`
 	Pytest map[string]any `toml:"pytest,omitempty" json:"pytest,omitempty" jsonschema:"title=Pytest config,description=pytest-specific configuration"`
+
+	// dir is the directory of the config file that defined this test. It is not
+	// serialized (so 'azldev config dump' is unaffected) and is populated during
+	// config load to resolve relative pytest paths at test-execution time.
+	dir string
 }
 
-// WithAbsolutePaths returns a copy of the test definition with any relative
-// paths in framework-specific subtables converted to absolute paths.
+// WithAbsolutePaths returns a deep copy of the test definition, recording
+// referenceDir (the defining config file's directory) so relative pytest paths
+// (e.g. 'working-dir') can be resolved at test-execution time. Path values in
+// framework-specific subtables are preserved exactly as authored, so
+// 'azldev config dump' shows the user-defined values; see
+// [TestDefinition.PytestWorkingDir] for the execution-time resolution.
 func (t TestDefinition) WithAbsolutePaths(referenceDir string) TestDefinition {
 	result := t
+	result.dir = referenceDir
 	result.Lisa = cloneStringAnyMap(t.Lisa)
 	result.Tmt = cloneStringAnyMap(t.Tmt)
 	result.Pytest = cloneStringAnyMap(t.Pytest)
 
-	if workingDir, ok := result.Pytest["working-dir"].(string); ok {
-		result.Pytest["working-dir"] = makeAbsolute(referenceDir, workingDir)
-	}
-
 	return result
+}
+
+// PytestWorkingDir returns the pytest 'working-dir' resolved to an absolute path
+// relative to the config file that defined the test. The stored config keeps the
+// authored (possibly relative) value; this resolves it only for execution. An
+// empty 'working-dir' returns "".
+func (t TestDefinition) PytestWorkingDir() string {
+	workingDir, _ := t.Pytest["working-dir"].(string)
+
+	return makeAbsolute(t.dir, workingDir)
 }
 
 // TestGroup is a [test-groups.X] declaration: a named bundle of test references that

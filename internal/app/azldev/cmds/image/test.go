@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
@@ -16,19 +15,18 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/pelletier/go-toml/v2"
-	"github.com/samber/lo"
 	"github.com/spf13/cobra"
 )
 
 // ImageTestOptions holds the options for the 'image test' command.
 type ImageTestOptions struct {
 	// ImageName is the name of the image (positional argument), used to look up its
-	// test suites and optionally resolve the image artifact path.
+	// tests and optionally resolve the image artifact path.
 	ImageName string
 
-	// TestSuites optionally selects specific test names or test-group names to run.
+	// TestSelectors optionally selects specific test names or test-group names to run.
 	// When empty, all tests associated with the image are run.
-	TestSuites []string
+	TestSelectors []string
 
 	// ImagePath is an optional explicit path to the image file. When empty, the image
 	// artifact is resolved from the image name in the output directory.
@@ -57,14 +55,11 @@ func NewImageTestCmd() *cobra.Command {
 		Long: `Run tests against an Azure Linux image using test definitions declared in the
 project configuration.
 
-Images may reference tests directly via [images.NAME.tests.tests] entries, or via
-named [test-groups]. Legacy [test-suites] references are still supported.
+Images reference tests via [images.NAME.tests.tests] entries, which resolve to
+project-level [tests.X] definitions or named [test-groups].
 
 By default, all tests associated with the named image are run. Use
 --test-suite to select specific test names or test-group names (may be repeated).
-For images still configured with legacy [test-suites] (via 'tests.test-suites'),
-the values passed to --test-suite are instead matched against those legacy
-test suite names.
 
 The image artifact can be specified explicitly with --image-path, or resolved
 automatically from the image name in the output directory.
@@ -77,14 +72,13 @@ test-paths are expanded automatically.
 
 For LISA tests, the test runner executes on the host and boots the image in a
 QEMU VM. azldev clones the LISA framework, generates a runbook from the test's
-configured criteria (or, for legacy [test-suites], its test cases), and runs it
-against the image. azldev generates an ephemeral SSH key pair to access the
-booted VM and removes it once the test finishes. New-style [tests.X] LISA
-definitions require a [tests.X.lisa.source] (git-url, ref) to run locally;
-without one, the test is metadata-only and must be run through the LISA
-infrastructure. Use --lisa-dir to run against an already-cloned LISA checkout
-instead of cloning; this also allows running new-style LISA tests that have no
-[tests.X.lisa.source] configured.`,
+configured criteria, and runs it against the image. azldev generates an
+ephemeral SSH key pair to access the booted VM and removes it once the test
+finishes. [tests.X] LISA definitions require a [tests.X.lisa.source] (git-url,
+ref) to run locally; without one, the test is metadata-only and must be run
+through the LISA infrastructure. Use --lisa-dir to run against an already-cloned
+LISA checkout instead of cloning; this also allows running LISA tests that have
+no [tests.X.lisa.source] configured.`,
 		Example: `  # Run all tests for an image (artifact auto-resolved from output dir)
   azldev image test vm-base
 
@@ -108,9 +102,8 @@ instead of cloning; this also allows running new-style LISA tests that have no
 		ValidArgsFunction: generateImageNameCompletions,
 	}
 
-	cmd.Flags().StringSliceVar(&options.TestSuites, "test-suite", nil,
-		"Name of a test or test-group to run (may be repeated; defaults to all tests for the image). "+
-			"For images configured with legacy [test-suites], this instead selects legacy test suite names")
+	cmd.Flags().StringSliceVar(&options.TestSelectors, "test-suite", nil,
+		"Name of a test or test-group to run (may be repeated; defaults to all tests for the image)")
 
 	cmd.Flags().StringVarP(&options.ImagePath, "image-path", "i", "",
 		"Path to the disk image file (resolved from image name if not specified)")
@@ -140,18 +133,18 @@ func runImageTest(env *azldev.Env, options *ImageTestOptions) error {
 		return err
 	}
 
-	resolvedTests, legacySuiteNames, err := resolveImageTestsToRun(cfg, imageConfig, options.TestSuites)
+	resolvedTests, err := resolveImageTestsToRun(cfg, imageConfig, options.TestSelectors)
 	if err != nil {
 		return err
 	}
 
-	if len(resolvedTests) == 0 && len(legacySuiteNames) == 0 {
+	if len(resolvedTests) == 0 {
 		slog.Warn("No tests to run for image", slog.String("image", options.ImageName))
 
 		return nil
 	}
 
-	return runImageTests(env, cfg, imageConfig, options, resolvedTests, legacySuiteNames)
+	return runImageTests(env, imageConfig, options, resolvedTests)
 }
 
 func prepareImageTest(env *azldev.Env, options *ImageTestOptions) (*projectconfig.ImageConfig, error) {
@@ -203,11 +196,9 @@ func resolveImageTestPath(env *azldev.Env, options *ImageTestOptions) (string, e
 
 func runImageTests(
 	env *azldev.Env,
-	cfg *projectconfig.ProjectConfig,
 	imageConfig *projectconfig.ImageConfig,
 	options *ImageTestOptions,
 	resolvedTests []projectconfig.ResolvedTest,
-	legacySuiteNames []string,
 ) error {
 	var testFailures []string
 
@@ -222,27 +213,9 @@ func runImageTests(
 		}
 	}
 
-	for _, suiteName := range legacySuiteNames {
-		suiteConfig, err := resolveTestSuiteByName(cfg, suiteName)
-		if err != nil {
-			return err
-		}
-
-		if err := runTestSuite(env, suiteConfig, imageConfig, options); err != nil {
-			slog.Error("Test suite failed",
-				slog.String("suite", suiteName),
-				slog.Any("error", err),
-			)
-
-			testFailures = append(testFailures, suiteName)
-		}
-	}
-
 	if len(testFailures) > 0 {
-		total := len(resolvedTests) + len(legacySuiteNames)
-
 		return fmt.Errorf("%d of %d test(s) failed: %s",
-			len(testFailures), total, strings.Join(testFailures, ", "))
+			len(testFailures), len(resolvedTests), strings.Join(testFailures, ", "))
 	}
 
 	return nil
@@ -252,54 +225,22 @@ func resolveImageTestsToRun(
 	cfg *projectconfig.ProjectConfig,
 	imageConfig *projectconfig.ImageConfig,
 	explicitSelectors []string,
-) ([]projectconfig.ResolvedTest, []string, error) {
-	if imageConfig.Tests != nil && len(imageConfig.Tests.Tests) > 0 {
-		return resolveCanonicalImageTests(cfg, imageConfig, explicitSelectors)
-	}
-
-	if len(explicitSelectors) > 0 {
-		return nil, explicitSelectors, nil
-	}
-
-	return nil, imageConfig.TestNames(), nil
-}
-
-func resolveCanonicalImageTests(
-	cfg *projectconfig.ProjectConfig,
-	imageConfig *projectconfig.ImageConfig,
-	explicitSelectors []string,
-) ([]projectconfig.ResolvedTest, []string, error) {
-	warnIfLegacyTestSuitesIgnored(imageConfig)
-
+) ([]projectconfig.ResolvedTest, error) {
 	if len(explicitSelectors) > 0 {
 		resolvedTests, err := cfg.ResolveTestSelectors(explicitSelectors)
 		if err != nil {
-			return nil, nil, fmt.Errorf("resolve test selectors: %w", err)
+			return nil, fmt.Errorf("resolve test selectors: %w", err)
 		}
 
-		return resolvedTests, nil, nil
+		return resolvedTests, nil
 	}
 
 	resolvedTests, err := cfg.ResolveImageTests(imageConfig)
 	if err != nil {
-		return nil, nil, fmt.Errorf("resolve image tests: %w", err)
+		return nil, fmt.Errorf("resolve image tests: %w", err)
 	}
 
-	return resolvedTests, nil, nil
-}
-
-func warnIfLegacyTestSuitesIgnored(imageConfig *projectconfig.ImageConfig) {
-	if len(imageConfig.Tests.TestSuites) == 0 {
-		return
-	}
-
-	slog.Warn(
-		"image defines both 'tests.tests' and legacy 'tests.test-suites'; "+
-			"the legacy 'tests.test-suites' entries are ignored and only 'tests.tests' "+
-			"will run. Remove 'tests.test-suites' to silence this warning",
-		slog.String("image", imageConfig.Name),
-		slog.Int("ignored-test-suites", len(imageConfig.Tests.TestSuites)),
-	)
+	return resolvedTests, nil
 }
 
 func runResolvedTest(
@@ -338,6 +279,10 @@ func testDefinitionToSuiteConfig(resolvedTest projectconfig.ResolvedTest) (*proj
 		return nil, fmt.Errorf("decode pytest config for test %#q:\n%w", resolvedTest.Name, err)
 	}
 
+	// The stored config keeps 'working-dir' as authored; resolve it relative to
+	// the defining config file's directory only here, for execution.
+	pytestConfig.WorkingDir = resolvedTest.Definition.PytestWorkingDir()
+
 	suiteConfig := &projectconfig.TestSuiteConfig{
 		Name:        resolvedTest.Name,
 		Description: resolvedTest.Definition.Description,
@@ -368,46 +313,6 @@ func decodePytestConfig(raw map[string]any) (*projectconfig.PytestConfig, error)
 	}
 
 	return pytestConfig, nil
-}
-
-// resolveTestSuiteByName looks up a test suite by name in the project configuration.
-func resolveTestSuiteByName(
-	cfg *projectconfig.ProjectConfig, suiteName string,
-) (*projectconfig.TestSuiteConfig, error) {
-	suiteConfig, ok := cfg.TestSuites[suiteName]
-	if !ok {
-		availableSuites := lo.Keys(cfg.TestSuites)
-		sort.Strings(availableSuites)
-
-		if len(availableSuites) == 0 {
-			return nil, fmt.Errorf(
-				"test suite %#q not found; no test suites defined in project configuration", suiteName)
-		}
-
-		return nil, fmt.Errorf(
-			"test suite %#q not found; available test suites: %s",
-			suiteName, strings.Join(availableSuites, ", "),
-		)
-	}
-
-	return &suiteConfig, nil
-}
-
-// runTestSuite dispatches a single test suite to the appropriate runner.
-func runTestSuite(
-	env *azldev.Env, suiteConfig *projectconfig.TestSuiteConfig,
-	imageConfig *projectconfig.ImageConfig, options *ImageTestOptions,
-) error {
-	switch suiteConfig.Type {
-	case projectconfig.TestTypePytest:
-		return RunPytestSuite(env, suiteConfig, imageConfig, options)
-
-	case projectconfig.TestTypeLisa:
-		return RunLisaSuite(env, suiteConfig, imageConfig, options)
-
-	default:
-		return fmt.Errorf("unsupported test type %#q for test suite %#q", suiteConfig.Type, suiteConfig.Name)
-	}
 }
 
 // validateFileExists returns an error if the path does not point to an existing regular file.

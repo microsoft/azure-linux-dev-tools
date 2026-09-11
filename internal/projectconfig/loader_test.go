@@ -1222,166 +1222,6 @@ rpm-channel = "devel"
 	}
 }
 
-func TestLoadAndResolveProjectConfig_TestSuite(t *testing.T) {
-	const configContents = `
-[test-suites.smoke]
-type = "pytest"
-description = "Smoke tests for images"
-
-[test-suites.smoke.pytest]
-working-dir = "tests"
-test-paths = ["cases/test_*.py"]
-extra-args = ["--image-path", "{image-path}"]
-
-[test-suites.integration]
-type = "lisa"
-description = "LISA integration tests"
-
-[test-suites.integration.lisa]
-test-cases = ["verify_cpu_count", "verify_grub"]
-extra-args = ["-v", "qcow2:{image-path}"]
-
-[test-suites.integration.lisa.framework]
-git-url = "https://github.com/microsoft/lisa.git"
-ref = "abcdef0123456789abcdef0123456789abcdef01"
-`
-
-	configDir := filepath.Dir(testConfigPath)
-
-	ctx := testctx.NewCtx()
-	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
-
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
-	require.NoError(t, err)
-
-	require.Len(t, config.TestSuites, 2)
-
-	// Check pytest test.
-	if assert.Contains(t, config.TestSuites, "smoke") {
-		smokeTest := config.TestSuites["smoke"]
-		assert.Equal(t, "smoke", smokeTest.Name)
-		assert.Equal(t, TestTypePytest, smokeTest.Type)
-		assert.Equal(t, "Smoke tests for images", smokeTest.Description)
-		require.NotNil(t, smokeTest.Pytest)
-		assert.Equal(t, filepath.Join(configDir, "tests"), smokeTest.Pytest.WorkingDir)
-		assert.Equal(t, []string{"cases/test_*.py"}, smokeTest.Pytest.TestPaths)
-		assert.Equal(t, []string{"--image-path", "{image-path}"}, smokeTest.Pytest.ExtraArgs)
-	}
-
-	// Check LISA test.
-	if assert.Contains(t, config.TestSuites, "integration") {
-		lisaTest := config.TestSuites["integration"]
-		assert.Equal(t, "integration", lisaTest.Name)
-		assert.Equal(t, TestTypeLisa, lisaTest.Type)
-		assert.Equal(t, "LISA integration tests", lisaTest.Description)
-		require.NotNil(t, lisaTest.Lisa)
-		assert.Equal(t, "https://github.com/microsoft/lisa.git", lisaTest.Lisa.Framework.GitURL)
-		assert.Equal(t, "abcdef0123456789abcdef0123456789abcdef01", lisaTest.Lisa.Framework.Ref)
-		assert.Equal(t, []string{"verify_cpu_count", "verify_grub"}, lisaTest.Lisa.TestCases)
-		assert.Equal(t, []string{"-v", "qcow2:{image-path}"}, lisaTest.Lisa.ExtraArgs)
-	}
-}
-
-func TestLoadAndResolveProjectConfig_DuplicateTests(t *testing.T) {
-	testFiles := []struct {
-		path     string
-		contents string
-	}{
-		{testConfigPath, `
-includes = ["include.toml"]
-
-[test-suites.smoke]
-type = "pytest"
-
-[test-suites.smoke.pytest]
-working-dir = "tests"
-test-paths = ["cases/"]
-`},
-		{"/project/include.toml", `
-[test-suites.smoke]
-type = "pytest"
-
-[test-suites.smoke.pytest]
-working-dir = "tests"
-test-paths = ["other/"]
-`},
-	}
-
-	ctx := testctx.NewCtx()
-
-	for _, testFile := range testFiles {
-		require.NoError(t, fileutils.MkdirAll(ctx.FS(), filepath.Dir(testFile.path)))
-		require.NoError(t, fileutils.WriteFile(ctx.FS(), testFile.path, []byte(testFile.contents), fileperms.PrivateFile))
-	}
-
-	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testFiles[0].path)
-	require.ErrorIs(t, err, ErrDuplicateTestSuites)
-}
-
-func TestLoadAndResolveProjectConfig_InvalidTestType(t *testing.T) {
-	const configContents = `
-[test-suites.bad]
-type = "unsupported"
-`
-
-	ctx := testctx.NewCtx()
-	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
-
-	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrUnknownTestType)
-}
-
-func TestLoadAndResolveProjectConfig_TestMissingRequiredField(t *testing.T) {
-	const configContents = `
-[test-suites.smoke]
-type = "pytest"
-# Missing [test-suites.smoke.pytest] subtable
-`
-
-	ctx := testctx.NewCtx()
-	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
-
-	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrMissingTestField)
-}
-
-func TestLoadAndResolveProjectConfig_TestSuiteMissingType(t *testing.T) {
-	const configContents = `
-[test-suites.smoke]
-# 'type' intentionally omitted.
-description = "no type set"
-`
-
-	ctx := testctx.NewCtx()
-	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
-
-	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
-	require.Error(t, err)
-	require.ErrorIs(t, err, ErrMissingTestField)
-	assert.Contains(t, err.Error(), "type")
-}
-
-func TestLoadAndResolveProjectConfig_TestSuiteInvalidName(t *testing.T) {
-	// Names containing path separators or traversal segments must be rejected at
-	// config load time since they are used as path components (e.g., venv directories).
-	const configContents = `
-[test-suites."../escape"]
-type = "pytest"
-
-[test-suites."../escape".pytest]
-working-dir = "tests"
-`
-
-	ctx := testctx.NewCtx()
-	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
-
-	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid test suite name")
-}
-
 func TestLoadAndResolveProjectConfig_TestInvalidName(t *testing.T) {
 	// Names containing path separators or traversal segments must be rejected at
 	// config load time since they are used as path components (e.g., venv directories).
@@ -1400,52 +1240,6 @@ test-paths = ["test_smoke.py"]
 	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid test name")
-}
-
-func TestLoadAndResolveProjectConfig_ImageWithValidTestRef(t *testing.T) {
-	const configContents = `
-[test-suites.smoke]
-type = "pytest"
-
-[test-suites.smoke.pytest]
-working-dir = "tests"
-test-paths = ["cases/"]
-
-[images.myimage]
-description = "Test image"
-
-[images.myimage.tests]
-test-suites = [{ name = "smoke" }]
-`
-
-	ctx := testctx.NewCtx()
-	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
-
-	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
-	require.NoError(t, err)
-
-	if assert.Contains(t, config.Images, "myimage") {
-		require.NotNil(t, config.Images["myimage"].Tests)
-		assert.Equal(t, []TestSuiteRef{{Name: "smoke"}}, config.Images["myimage"].Tests.TestSuites)
-	}
-}
-
-func TestLoadAndResolveProjectConfig_ImageWithInvalidTestRef(t *testing.T) {
-	const configContents = `
-[images.myimage]
-description = "Test image"
-
-[images.myimage.tests]
-test-suites = [{ name = "nonexistent" }]
-`
-
-	ctx := testctx.NewCtx()
-	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
-
-	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
-	require.Error(t, err)
-	require.ErrorIs(t, err, ErrUndefinedTestSuite)
-	assert.Contains(t, err.Error(), "nonexistent")
 }
 
 func TestLoadAndResolveProjectConfig_ImageCapabilities_FipsEnabledAndCVM(t *testing.T) {
@@ -1594,14 +1388,13 @@ rpm-channel = "new-channel"
 		"rpm-channel should take precedence over the deprecated channel field")
 }
 
-func TestLoadAndResolveProjectConfig_TestSuiteInstallMode(t *testing.T) {
+func TestLoadAndResolveProjectConfig_PytestWorkingDirPreservedAsAuthored(t *testing.T) {
 	const configContents = `
-[test-suites.smoke]
+[tests.smoke]
 type = "pytest"
 
-[test-suites.smoke.pytest]
+[tests.smoke.pytest]
 working-dir = "tests"
-install = "requirements"
 test-paths = ["cases/"]
 `
 
@@ -1611,29 +1404,14 @@ test-paths = ["cases/"]
 	config, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
 	require.NoError(t, err)
 
-	if assert.Contains(t, config.TestSuites, "smoke") {
-		smokeTest := config.TestSuites["smoke"]
-		require.NotNil(t, smokeTest.Pytest)
-		assert.Equal(t, PytestInstallRequirements, smokeTest.Pytest.Install)
-		assert.Equal(t, PytestInstallRequirements, smokeTest.Pytest.EffectiveInstallMode())
-	}
-}
-
-func TestLoadAndResolveProjectConfig_TestSuiteInvalidInstallMode(t *testing.T) {
-	const configContents = `
-[test-suites.smoke]
-type = "pytest"
-
-[test-suites.smoke.pytest]
-install = "invalid"
-`
-
-	ctx := testctx.NewCtx()
-	require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(configContents), fileperms.PrivateFile))
-
-	_, err := loadAndResolveProjectConfig(ctx.FS(), false, testConfigPath)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrInvalidInstallMode)
+	require.Contains(t, config.Tests, "smoke")
+	// working-dir must be preserved exactly as authored, not rewritten to an
+	// absolute path at load/dump time.
+	assert.Equal(t, "tests", config.Tests["smoke"].Pytest["working-dir"])
+	// ...but it resolves to an absolute path relative to the defining config
+	// file's directory at execution time (via recorded provenance), so relative
+	// paths in included files remain correct.
+	assert.Equal(t, "/project/tests", config.Tests["smoke"].PytestWorkingDir())
 }
 
 func TestLoadAndResolveProjectConfig_CircularInclude(t *testing.T) {

@@ -32,7 +32,7 @@ can evolve independently.
 The `[tests.<name>.lisa]` subtable is mostly opaque to azldev, but it
 recognizes a few keys used to select LISA test cases and, optionally, to
 run the test locally via `azldev image test` (booting the image in a QEMU
-VM, same as legacy `[test-suites]` LISA suites).
+VM).
 
 | Field | TOML Key | Type | Description |
 |-------|----------|------|-------------|
@@ -138,7 +138,6 @@ tests = [
 
 ## Related Resources
 
-- [Test Suites](test-suites.md) - legacy test suite definitions
 - [Components](components.md#component-tests) — per-component `tests` field
 - [Images](images.md#image-tests) — per-image `tests` field
 - [Config File Structure](config-file.md) — top-level config layout
