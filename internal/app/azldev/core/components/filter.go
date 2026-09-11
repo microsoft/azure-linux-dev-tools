@@ -10,6 +10,35 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// LockMode defines how lock files should be handled during component resolution.
+type LockMode int
+
+const (
+	// LockModeValidateAndPopulate validates lock file consistency and populates lock data on components (default).
+	LockModeValidateAndPopulate LockMode = iota
+	// LockModeSkipValidationPopulate skips lock file validation but still populates lock data on components.
+	// Used by commands that build/render components and consume lock data as-is.
+	LockModeSkipValidationPopulate
+	// LockModeSkipBoth skips both lock file validation and population of lock data.
+	// Lock population can only be skipped if validation is also skipped.
+	// Used by read-only commands (list, changed) that don't consume lock data.
+	LockModeSkipBoth
+)
+
+// String returns a string representation of the LockMode.
+func (m LockMode) String() string {
+	switch m {
+	case LockModeValidateAndPopulate:
+		return "validateAndPopulate"
+	case LockModeSkipValidationPopulate:
+		return "skipValidationPopulate"
+	case LockModeSkipBoth:
+		return "skipBoth"
+	default:
+		return "unknown"
+	}
+}
+
 // Describes a filter that selects a subset of components known within the environment's
 // loaded configuration.
 type ComponentFilter struct {
@@ -22,10 +51,10 @@ type ComponentFilter struct {
 	SpecPaths []string
 	// If true, then *all* known components are included in the result set.
 	IncludeAllComponents bool
-	// SkipLockValidation disables lock file consistency checks for this
-	// filter's resolution. Commands that write lock files (update) or are
-	// read-only (list) set this to true.
-	SkipLockValidation bool
+	// LockMode defines how lock file validation and population should be handled during resolution.
+	// Default is LockModeValidateAndPopulate.
+	// Lock population can only be skipped if validation is also skipped (LockModeSkipBoth).
+	LockMode LockMode
 }
 
 // HasNoCriteria returns true if the filter has no criteria set, meaning that it will never
@@ -53,9 +82,8 @@ func AddComponentFilterOptionsToCommand(cmd *cobra.Command, filter *ComponentFil
 	cmd.Flags().StringArrayVarP(&filter.SpecPaths, "spec-path", "s", []string{}, "Spec path")
 	_ = cmd.MarkFlagFilename("spec-path", ".spec")
 
-	cmd.Flags().BoolVar(&filter.SkipLockValidation, "skip-lock-validation",
-		false,
-		"skip lock file consistency checks")
+	// Note: skip-lock-validation flag is added per-command, not here, to allow customization
+	// (e.g., hide for commands that always skip, or pair with skip-lock-population for list)
 }
 
 // Function suitable for use as a [cobra.ValidArgsFunction] in a [cobra.Command]. Intended for use

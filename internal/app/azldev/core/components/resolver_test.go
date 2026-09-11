@@ -857,7 +857,7 @@ func TestFindComponents_ErrorWhenNoLockFile(t *testing.T) {
 	assert.Contains(t, err.Error(), "lock file")
 }
 
-// When SkipLockValidation is set, a missing lock file is tolerated —
+// When LockMode is set to skip validation, a missing lock file is tolerated —
 // the component's Locked field is nil instead of causing an error.
 func TestFindComponents_LockedNilWhenValidationSkipped(t *testing.T) {
 	env := testutils.NewTestEnv(t)
@@ -872,7 +872,7 @@ func TestFindComponents_LockedNilWhenValidationSkipped(t *testing.T) {
 
 	filter := &components.ComponentFilter{
 		IncludeAllComponents: true,
-		SkipLockValidation:   true,
+		LockMode:             components.LockModeSkipValidationPopulate,
 	}
 
 	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
@@ -908,7 +908,7 @@ func TestFindComponents_ExplicitPinPreserved(t *testing.T) {
 
 	filter := &components.ComponentFilter{
 		IncludeAllComponents: true,
-		SkipLockValidation:   true,
+		LockMode:             components.LockModeSkipValidationPopulate,
 	}
 
 	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
@@ -1009,7 +1009,7 @@ func TestFindComponents_CorruptLockSurfaces(t *testing.T) {
 
 	filter := &components.ComponentFilter{
 		IncludeAllComponents: true,
-		SkipLockValidation:   true,
+		LockMode:             components.LockModeSkipValidationPopulate,
 	}
 
 	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
@@ -1043,7 +1043,7 @@ func TestFindComponents_PinDiffersFromLock(t *testing.T) {
 
 	filter := &components.ComponentFilter{
 		IncludeAllComponents: true,
-		SkipLockValidation:   true,
+		LockMode:             components.LockModeSkipValidationPopulate,
 	}
 
 	resolved, err := components.NewResolver(env.Env).FindComponents(filter)
@@ -1098,4 +1098,42 @@ func TestComponentFilter_HasNoCriteria(t *testing.T) {
 		filter := components.ComponentFilter{SpecPaths: []string{"/specs/test.spec"}}
 		assert.False(t, filter.HasNoCriteria())
 	})
+}
+
+// When LockMode is set to LockModeSkipBoth, lock files are not read
+// and Locked remains nil — even when a valid lock file exists on disk.
+func TestFindComponents_SkipLockPopulation(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	env.Config.Components["curl"] = projectconfig.ComponentConfig{
+		Name: "curl",
+		Spec: projectconfig.SpecSource{
+			SourceType:     projectconfig.SpecSourceTypeUpstream,
+			UpstreamCommit: "config-pin-aaa",
+		},
+	}
+
+	// Write a valid lock file that would normally be read.
+	lock := lockfile.New()
+	lock.UpstreamCommit = "lock-commit-bbb"
+
+	env.WriteLock(t, "curl", lock)
+
+	filter := &components.ComponentFilter{
+		IncludeAllComponents: true,
+		LockMode:             components.LockModeSkipBoth,
+	}
+
+	resolver := components.NewResolver(env.Env)
+
+	resolved, err := resolver.FindComponents(filter)
+	require.NoError(t, err)
+
+	comp, ok := resolved.TryGet("curl")
+	require.True(t, ok)
+
+	assert.Nil(t, comp.GetConfig().Locked,
+		"Locked must be nil when LockModeSkipBoth is set, even with a valid lock on disk")
+	assert.Equal(t, "config-pin-aaa", comp.GetConfig().Spec.UpstreamCommit,
+		"spec pin must be preserved regardless")
 }
