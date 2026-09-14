@@ -38,6 +38,7 @@ type RenderOptions struct {
 	Force             bool
 	CleanStale        bool
 	CheckOnly         bool
+	RPMDevBumpspec    bool
 }
 
 func renderOnAppInit(app *azldev.App, parentCmd *cobra.Command) {
@@ -109,8 +110,7 @@ valid with -a.`,
 	cmd.Flags().BoolVar(&options.FailOnError, "fail-on-error", false,
 		"exit with error if any component fails to render (useful for CI)")
 
-	cmd.Flags().BoolVarP(&options.Force, "force", "f", false,
-		"allow overwriting existing rendered component directories")
+	cmd.Flags().BoolVarP(&options.Force, "force", "f", false, "allow overwriting existing rendered component directories")
 
 	cmd.Flags().BoolVar(&options.CleanStale, "clean-stale", false,
 		"prune rendered-spec directories that no longer correspond to a configured "+
@@ -122,6 +122,7 @@ valid with -a.`,
 			"without modifying the output directory. Exits 0 when nothing would change "+
 			"and 1 when any component would drift. With -a + --clean-stale, also fails "+
 			"on orphan rendered-spec directories. Intended for CI gates.")
+	addRPMDevBumpspecFlag(cmd, &options.RPMDevBumpspec)
 
 	// --check-only is a read-only diff against on-disk state; --fail-on-error
 	// is the loud-failure-per-run knob. Combining them is semantically
@@ -410,7 +411,8 @@ func parallelPrepare(
 			// the parmap-supplied ctx is identical and unused here.
 			//nolint:contextcheck // env carries the ctx
 			return prepareOneComponent(
-				workerEnv, mockProcessor, comp, stagingDir, options.OutputDir, options.specEditorMode())
+				workerEnv, mockProcessor, comp, stagingDir, options.OutputDir,
+				options.specEditorMode(), options.RPMDevBumpspec)
 		},
 	)
 
@@ -458,6 +460,7 @@ func prepareOneComponent(
 	stagingDir string,
 	outputDir string,
 	specEditor spec.EditorMode,
+	rpmDevBumpspec bool,
 ) prepResult {
 	componentName := comp.GetName()
 
@@ -472,7 +475,7 @@ func prepareOneComponent(
 		}}
 	}
 
-	prep, err := prepareComponentSources(env, mockProcessor, comp, stagingDir, specEditor)
+	prep, err := prepareComponentSources(env, mockProcessor, comp, stagingDir, specEditor, rpmDevBumpspec)
 	if err != nil {
 		slog.Error("Failed to prepare component sources",
 			"component", componentName, "error", err)
@@ -499,6 +502,7 @@ func prepareComponentSources(
 	comp components.Component,
 	stagingDir string,
 	specEditor spec.EditorMode,
+	rpmDevBumpspec bool,
 ) (*preparedComponent, error) {
 	componentName := comp.GetName()
 
@@ -534,6 +538,9 @@ func prepareComponentSources(
 		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)),
 		sources.WithMockProcessor(mockProcessor),
 	)
+	if rpmDevBumpspec {
+		preparerOpts = append(preparerOpts, sources.WithRPMDevBumpspec(env, env.WorkDir(), ""))
+	}
 
 	preparer, err := newSourcePreparer(sourceManager, env.FS(), env, env, append(
 		preparerOpts,

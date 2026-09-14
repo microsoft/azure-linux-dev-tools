@@ -23,6 +23,7 @@ type PrepareSourcesOptions struct {
 	OutputDir      string
 	SkipOverlays   bool
 	WithoutGitRepo bool
+	RPMDevBumpspec bool
 	Force          bool
 	AllowNoHashes  bool
 	SkipSources    bool
@@ -75,6 +76,8 @@ Only one component may be selected at a time.`,
 	cmd.Flags().BoolVar(&options.SkipOverlays, "skip-overlays", false, "skip applying overlays to prepared sources")
 	cmd.Flags().BoolVar(&options.WithoutGitRepo, "without-git", false,
 		"Disable dist-git repository creation (enabled by default)")
+	addRPMDevBumpspecFlag(cmd, &options.RPMDevBumpspec)
+
 	cmd.Flags().BoolVar(&options.Force, "force", false, "delete and recreate the output directory if it already exists")
 	cmd.Flags().BoolVar(&options.AllowNoHashes, "allow-no-hashes", false,
 		"compute missing hashes by downloading source files from their origin")
@@ -86,6 +89,10 @@ Only one component may be selected at a time.`,
 }
 
 func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) error {
+	if err := validatePrepareSourcesOptions(options); err != nil {
+		return err
+	}
+
 	var comps *components.ComponentSet
 
 	resolver := components.NewResolver(env)
@@ -165,6 +172,10 @@ func buildPreparerOptions(
 		opts = append(opts, gitRepoPreparerOptions(env, distro)...)
 	}
 
+	if options.RPMDevBumpspec {
+		opts = append(opts, sources.WithRPMDevBumpspec(env, env.WorkDir(), ""))
+	}
+
 	opts = append(opts,
 		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)))
 
@@ -177,6 +188,27 @@ func buildPreparerOptions(
 	}
 
 	return opts
+}
+
+func validatePrepareSourcesOptions(options *PrepareSourcesOptions) error {
+	if !options.RPMDevBumpspec {
+		return nil
+	}
+
+	if options.WithoutGitRepo {
+		return errors.New("'--rpmdev-bumpspec' cannot be used with '--without-git'")
+	}
+
+	if options.SkipOverlays {
+		return errors.New("'--rpmdev-bumpspec' cannot be used with '--skip-overlays'")
+	}
+
+	return nil
+}
+
+func addRPMDevBumpspecFlag(cmd *cobra.Command, value *bool) {
+	cmd.Flags().BoolVar(value, "rpmdev-bumpspec", false,
+		"Use rpmdev-bumpspec instead of the legacy static release calculation")
 }
 
 // CheckOutputDir verifies the output directory state before source preparation.
