@@ -30,6 +30,7 @@ type ComponentBuildOptions struct {
 	ContinueOnError   bool
 	NoCheck           bool
 	WithoutGitRepo    bool
+	RPMDevBumpspec    bool
 	SourcePackageOnly bool
 	BuildEnvPolicy    BuildEnvPreservePolicy
 
@@ -133,6 +134,7 @@ builds can consume.`,
 	cmd.Flags().BoolVar(&options.NoCheck, "no-check", false, "Skip package %check tests")
 	cmd.Flags().BoolVar(&options.WithoutGitRepo, "without-git", false,
 		"Skip creating a dist-git repository with synthetic commit history")
+	addRPMDevBumpspecFlag(cmd, &options.RPMDevBumpspec)
 	cmd.Flags().BoolVar(&options.SourcePackageOnly, "srpm-only", false, "Build SRPM (source RPM) *only*")
 	cmd.Flags().Var(&options.BuildEnvPolicy, "preserve-buildenv",
 		fmt.Sprintf("Preserve build environment {%s, %s, %s}",
@@ -273,6 +275,11 @@ func buildComponent(
 			sources.WithGitRepo(env, env.LockReader(), distro.Version.ReleaseVer),
 			sources.WithDirtyDetection(),
 		)
+	}
+
+	if options.RPMDevBumpspec {
+		preparerOpts = append(preparerOpts,
+			sources.WithRPMDevBumpspec(env, env.WorkDir(), options.MockConfigOpts["target_arch"]))
 	}
 
 	preparerOpts = append(preparerOpts,
@@ -453,6 +460,10 @@ func PlaceRPMsByChannel(env *azldev.Env, rpmResults []RPMResult, rpmsDir string)
 
 // validateBuildOptions validates the build options before any work is done.
 func validateBuildOptions(env *azldev.Env, options *ComponentBuildOptions) error {
+	if options.RPMDevBumpspec && options.WithoutGitRepo {
+		return errors.New("'--rpmdev-bumpspec' cannot be used with '--without-git'")
+	}
+
 	// Check for overlap between --local-repo and --local-repo-with-publish.
 	// (Check config errors before tool availability for better UX.)
 	if err := checkLocalRepoPathOverlap(options.LocalRepoPaths, options.LocalRepoWithPublishPath); err != nil {
