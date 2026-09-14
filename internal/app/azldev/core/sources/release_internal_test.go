@@ -221,6 +221,7 @@ func TestTryBumpStaticRelease_StaticBumps(t *testing.T) {
 	})
 
 	require.NoError(t, preparer.tryBumpStaticRelease(comp, filepath.Join(testSourcesDir, "test-pkg"), 3))
+
 	content, err := fileutils.ReadFile(memFS, specPath)
 	require.NoError(t, err)
 	assert.Contains(t, string(content), "Release: 4%{?dist}")
