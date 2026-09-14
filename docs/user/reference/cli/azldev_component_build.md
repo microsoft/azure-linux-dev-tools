@@ -57,6 +57,7 @@ azldev component build [flags]
       --mock-config-opt stringToString   Pass a configuration option through to mock (key=value, can be specified multiple times) (default [])
       --no-check                         Skip package %check tests
       --preserve-buildenv policy         Preserve build environment {on-failure, always, never} (default on-failure)
+      --rpmdev-bumpspec                  Use rpmdev-bumpspec instead of the legacy static release calculation
       --skip-lock-validation             skip lock file consistency checks
   -s, --spec-path stringArray            Spec path
       --srpm-only                        Build SRPM (source RPM) *only*
