@@ -83,6 +83,19 @@ func WithGitRepo(
 	}
 }
 
+// WithRPMDevBumpspec enables deterministic host release bumps using the supplied operation context.
+// scratchDir must be outside component staging directories because synthetic history stages all files
+// below the component source directory. targetArch is optional; an empty value preserves the host RPM
+// default for callers that do not have a resolved build target.
+func WithRPMDevBumpspec(ctx opctx.Ctx, scratchDir, targetArch string) PreparerOption {
+	return func(p *sourcePreparerImpl) {
+		p.releaseStrategy = releaseStrategyRPMDevBumpspec
+		p.bumpspecCtx = ctx
+		p.bumpspecScratchDir = scratchDir
+		p.bumpspecTargetArch = targetArch
+	}
+}
+
 // WithDirtyDetection returns a [PreparerOption] that enables uncommitted-change
 // detection during synthetic history generation. When set, the current input
 // fingerprint is compared against the committed lock file; if they differ, a
@@ -214,6 +227,11 @@ type sourcePreparerImpl struct {
 	// %fedora_upstream_release. Nil disables autorelease resolution (the release
 	// macro is skipped for such specs). Set via [WithMockProcessor].
 	autoreleaseResolver autoreleaseResolver
+
+	releaseStrategy    releaseStrategy
+	bumpspecCtx        opctx.Ctx
+	bumpspecScratchDir string
+	bumpspecTargetArch string
 }
 
 // NewPreparer creates a new [SourcePreparer] instance. All positional arguments
@@ -532,9 +550,9 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 		return nil
 	}
 
-	// Adjust the Release tag before staging changes. See [tryBumpStaticRelease]
+	// Adjust the Release tag before staging changes. See [tryBumpRelease]
 	// for the handling of %autorelease, static integers, and non-standard values.
-	if err := p.tryBumpStaticRelease(component, sourcesDirPath, len(changes)); err != nil {
+	if err := p.tryBumpRelease(ctx, component, sourcesDirPath, changes); err != nil {
 		return fmt.Errorf("failed to apply release bump:\n%w", err)
 	}
 
