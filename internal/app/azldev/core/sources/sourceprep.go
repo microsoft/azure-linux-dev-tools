@@ -446,26 +446,34 @@ func (p *sourcePreparerImpl) applyArchiveOverlayGroup(
 	return repackedArchives, nil
 }
 
-// collectOverlays gathers all overlays for a component into a single ordered slice:
-// macros-load first, then user overlays, followed by check-skip and file-header overlays.
+// collectOverlays gathers all overlays for a component into a single ordered slice: the
+// macros-load directive first, then user overlays, then check-skip overlays, then the
+// macros source registration, and finally the file-header overlay. The macros source
+// registration is deliberately ordered after user overlays so it claims the next free
+// source number without colliding with any sources the user added.
 func (p *sourcePreparerImpl) collectOverlays(
 	component components.Component, macrosFileName string,
 ) ([]projectconfig.ComponentOverlay, error) {
 	config := component.GetConfig()
 
-	var allOverlays []projectconfig.ComponentOverlay
+	var (
+		allOverlays         []projectconfig.ComponentOverlay
+		macroSourceOverlays []projectconfig.ComponentOverlay
+	)
 
 	if macrosFileName != "" {
-		macroOverlays, err := synthesizeMacroLoadOverlays(macrosFileName)
+		loadDirective, sourceRegistration, err := synthesizeMacroLoadOverlays(macrosFileName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compute macros load overlays:\n%w", err)
 		}
 
-		allOverlays = append(allOverlays, macroOverlays...)
+		allOverlays = append(allOverlays, loadDirective...)
+		macroSourceOverlays = sourceRegistration
 	}
 
 	allOverlays = append(allOverlays, config.Overlays...)
 	allOverlays = append(allOverlays, synthesizeCheckSkipOverlays(config.Build.Check)...)
+	allOverlays = append(allOverlays, macroSourceOverlays...)
 	allOverlays = append(allOverlays, generateFileHeaderOverlay()...)
 
 	return allOverlays, nil
@@ -1337,19 +1345,25 @@ func renderMacrosFile(macros map[string]string) string {
 	return strings.Join(lines, "\n") + "\n"
 }
 
-func synthesizeMacroLoadOverlays(macrosFileName string) ([]projectconfig.ComponentOverlay, error) {
+// synthesizeMacroLoadOverlays returns the overlays that wire a component's generated
+// macros file into its spec. The load-directive overlay prepends the %{load:...} line; the
+// source-registration overlay adds the macros file as a numbered Source. They are returned
+// separately so the caller can apply the source registration after user overlays, letting
+// it claim the next free source number without colliding with sources the user added.
+func synthesizeMacroLoadOverlays(
+	macrosFileName string,
+) (loadDirective, sourceRegistration []projectconfig.ComponentOverlay, err error) {
 	// Basic check that the macros file name is valid and doesn't require escaping.
 	if strings.ContainsFunc(macrosFileName, func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '.' && r != '-' && r != '_' && r != '+'
 	}) {
-		return nil, fmt.Errorf(
+		return nil, nil, fmt.Errorf(
 			"macros file name %#q contains invalid characters; does the component name contain invalid characters?",
 			macrosFileName,
 		)
 	}
 
-	// We inject an overlay to prepend a line to the spec to load the macros file.
-	return []projectconfig.ComponentOverlay{
+	loadDirective = []projectconfig.ComponentOverlay{
 		{
 			// Prepend the %{load:...} directive to the spec.
 			Type: projectconfig.ComponentOverlayPrependSpecLines,
@@ -1360,16 +1374,18 @@ func synthesizeMacroLoadOverlays(macrosFileName string) ([]projectconfig.Compone
 				"",
 			},
 		},
+	}
+
+	sourceRegistration = []projectconfig.ComponentOverlay{
 		{
 			// Ensure that the macros file is manifested as a source in the spec so that
 			// mock and other tools know it needs to be present in the build root.
-			// Use InsertSpecTag to place it after the last existing Source* tag, avoiding
-			// misplacement after macros like %fontpkg or inside %if conditionals.
-			Type:  projectconfig.ComponentOverlayInsertSpecTag,
-			Tag:   "Source9999", // Use a high number to avoid conflicts with existing sources.
+			Type:  componentOverlayAddSource,
 			Value: macrosFileName,
 		},
-	}, nil
+	}
+
+	return loadDirective, sourceRegistration, nil
 }
 
 // generateFileHeaderOverlay generates an overlay that prepends a header to the spec.

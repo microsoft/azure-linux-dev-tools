@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -629,6 +630,77 @@ func ParsePatchTagNumber(tag string) (int, bool) {
 	}
 
 	return num, true
+}
+
+// ParseSourceTagNumber checks if the given tag name is a SourceN tag (case-insensitive)
+// and returns the numeric suffix N. Returns -1, false if the tag is not a SourceN tag
+// or the suffix is not a valid non-negative integer.
+func ParseSourceTagNumber(tag string) (int, bool) {
+	suffix, found := strings.CutPrefix(strings.ToLower(tag), "source")
+	if !found || suffix == "" {
+		return -1, false
+	}
+
+	num, err := strconv.Atoi(suffix)
+	if err != nil || num < 0 {
+		return -1, false
+	}
+
+	return num, true
+}
+
+// AddSourceEntry registers a source in the spec. It prefers the conventional high slot
+// (Source9999) when that number is free, matching azldev's historical output so already-rendered
+// specs stay byte-identical (idempotent). When Source9999 is already taken, it falls back to the
+// next number after the highest existing source tag. Automatically numbered bare Source tags are
+// included when determining occupancy and the highest number.
+func (s *Spec) AddSourceEntry(filename string) error {
+	const preferredSourceTagNumber = 9999
+
+	highest := -1
+	unnumberedCount := 0
+	preferredOccupied := false
+
+	err := s.VisitTags(func(tagLine *TagLine, _ *Context) error {
+		num, isSourceTag := ParseSourceTagNumber(tagLine.Tag)
+		if isSourceTag {
+			if num > highest {
+				highest = num
+			}
+
+			if num == preferredSourceTagNumber {
+				preferredOccupied = true
+			}
+		} else if strings.EqualFold(tagLine.Tag, "source") {
+			unnumberedCount++
+		}
+
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to scan for existing source tags:\n%w", err)
+	}
+
+	// Bare Source tags auto-number sequentially from 0, occupying slots 0..unnumberedCount-1.
+	if unnumberedCount-1 > highest {
+		highest = unnumberedCount - 1
+	}
+
+	if unnumberedCount > preferredSourceTagNumber {
+		preferredOccupied = true
+	}
+
+	num := preferredSourceTagNumber
+
+	if preferredOccupied {
+		if highest == math.MaxInt {
+			return errors.New("cannot allocate SourceN tag after maximum integer tag number")
+		}
+
+		num = highest + 1
+	}
+
+	return s.InsertTag("", fmt.Sprintf("Source%d", num), filename)
 }
 
 // HasSection returns true if the spec contains a section with the given name.
