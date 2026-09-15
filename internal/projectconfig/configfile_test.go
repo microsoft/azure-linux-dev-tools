@@ -196,6 +196,7 @@ func TestProjectConfigValidation_InvalidTestReferenceShapeInImage(t *testing.T) 
 	cfg := projectconfig.NewProjectConfig()
 	cfg.Images = map[string]projectconfig.ImageConfig{
 		"base": {
+			Architectures: []string{"x86_64"},
 			Tests: &projectconfig.ImageTestsConfig{
 				Tests: []projectconfig.TestRef{{Name: "smoke", Group: "bvt"}},
 			},
@@ -256,6 +257,7 @@ func TestProjectConfigValidation_DuplicateTestGroupReferenceInImage(t *testing.T
 	}
 	cfg.Images = map[string]projectconfig.ImageConfig{
 		"base": {
+			Architectures: []string{"x86_64"},
 			Tests: &projectconfig.ImageTestsConfig{
 				Tests: []projectconfig.TestRef{
 					{Group: "bvt"},
@@ -287,6 +289,7 @@ func TestProjectConfigValidation_DuplicateTestViaNameAndGroupInImage(t *testing.
 	}
 	cfg.Images = map[string]projectconfig.ImageConfig{
 		"vm-base": {
+			Architectures: []string{"x86_64"},
 			Tests: &projectconfig.ImageTestsConfig{
 				Tests: []projectconfig.TestRef{
 					{Name: "ssh-smoke"},
@@ -333,21 +336,25 @@ func TestProjectConfigValidation_NonContradictingImageCapabilities(t *testing.T)
 	cfg := projectconfig.NewProjectConfig()
 	cfg.Images = map[string]projectconfig.ImageConfig{
 		"vm-base": {
+			Architectures: []string{"x86_64"},
 			Capabilities: projectconfig.ImageCapabilities{
 				MachineBootable: &trueVal,
 			},
 		},
 		"container-base": {
+			Architectures: []string{"x86_64"},
 			Capabilities: projectconfig.ImageCapabilities{
 				Container: &trueVal,
 			},
 		},
 		"wsl": {
+			Architectures: []string{"x86_64"},
 			Capabilities: projectconfig.ImageCapabilities{
 				WSL: &trueVal,
 			},
 		},
 		"vm-iso-installer": {
+			Architectures: []string{"x86_64"},
 			Capabilities: projectconfig.ImageCapabilities{
 				InstallerMedia: &trueVal,
 			},
@@ -356,6 +363,116 @@ func TestProjectConfigValidation_NonContradictingImageCapabilities(t *testing.T)
 
 	err := cfg.Validate()
 	require.NoError(t, err)
+}
+
+func TestProjectConfigValidation_ImageArchitectures(t *testing.T) {
+	tests := []struct {
+		name          string
+		architectures []string
+		want          []string
+		wantErr       string
+	}{
+		{
+			name:          "explicit architectures",
+			architectures: []string{projectconfig.ImageArchitectureX86_64},
+			want:          []string{projectconfig.ImageArchitectureX86_64},
+		},
+		{
+			name: "explicit multiple architectures",
+			architectures: []string{
+				projectconfig.ImageArchitectureX86_64,
+				projectconfig.ImageArchitectureAarch64,
+			},
+			want: []string{
+				projectconfig.ImageArchitectureX86_64,
+				projectconfig.ImageArchitectureAarch64,
+			},
+		},
+		{
+			name: "missing architectures is unrestricted",
+			want: nil,
+		},
+		{
+			name:          "unsupported architecture",
+			architectures: []string{"riscv64"},
+			wantErr:       "unsupported architecture",
+		},
+		{
+			name: "duplicate architecture",
+			architectures: []string{
+				projectconfig.ImageArchitectureX86_64,
+				projectconfig.ImageArchitectureX86_64,
+			},
+			wantErr: "duplicate architecture",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			cfg := projectconfig.NewProjectConfig()
+			cfg.Images["test-image"] = projectconfig.ImageConfig{
+				Architectures: testCase.architectures,
+			}
+
+			err := cfg.Validate()
+			if testCase.wantErr != "" {
+				require.ErrorContains(t, err, testCase.wantErr)
+
+				return
+			}
+
+			require.NoError(t, err)
+
+			imageConfig := cfg.Images["test-image"]
+			assert.Equal(t, testCase.want, imageConfig.Architectures)
+		})
+	}
+}
+
+func TestImageConfig_SupportsArchitecture(t *testing.T) {
+	tests := []struct {
+		name  string
+		image projectconfig.ImageConfig
+		arch  string
+		want  bool
+	}{
+		{
+			name:  "unrestricted image supports recognized architecture",
+			image: projectconfig.ImageConfig{},
+			arch:  projectconfig.ImageArchitectureAarch64,
+			want:  true,
+		},
+		{
+			name:  "unrestricted image rejects unrecognized architecture",
+			image: projectconfig.ImageConfig{},
+			arch:  "riscv64",
+			want:  false,
+		},
+		{
+			name:  "restricted image supports declared architecture",
+			image: projectconfig.ImageConfig{Architectures: []string{projectconfig.ImageArchitectureX86_64}},
+			arch:  projectconfig.ImageArchitectureX86_64,
+			want:  true,
+		},
+		{
+			name:  "restricted image rejects undeclared architecture",
+			image: projectconfig.ImageConfig{Architectures: []string{projectconfig.ImageArchitectureX86_64}},
+			arch:  projectconfig.ImageArchitectureAarch64,
+			want:  false,
+		},
+		{
+			name:  "restricted image rejects unrecognized architecture even if declared",
+			image: projectconfig.ImageConfig{Architectures: []string{"riscv64"}},
+			arch:  "riscv64",
+			want:  false,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			assert.Equal(t, testCase.want, testCase.image.SupportsArchitecture(testCase.arch))
+		})
+	}
 }
 
 func TestProjectConfigValidation_LegacyTestSuitesEmitsDeprecationWarning(t *testing.T) {
@@ -372,6 +489,7 @@ func TestProjectConfigValidation_LegacyTestSuitesEmitsDeprecationWarning(t *test
 	}
 	cfg.Images = map[string]projectconfig.ImageConfig{
 		"legacy-img": {
+			Architectures: []string{"x86_64"},
 			Tests: &projectconfig.ImageTestsConfig{
 				TestSuites: []projectconfig.TestSuiteRef{{Name: "static-image-checks"}},
 			},
@@ -404,6 +522,7 @@ func TestProjectConfigValidation_NewShapeTestsNoDeprecationWarning(t *testing.T)
 	}
 	cfg.Images = map[string]projectconfig.ImageConfig{
 		"new-img": {
+			Architectures: []string{"x86_64"},
 			Tests: &projectconfig.ImageTestsConfig{
 				Tests: []projectconfig.TestRef{{Name: "static-image-checks"}},
 			},

@@ -126,6 +126,14 @@ func TestImageSkillDocumentsRuntimeConfigOverride(t *testing.T) {
 	assert.Contains(t, doc, "`kiwi-config-override`")
 }
 
+func TestImageSkillDocumentsArchitecturesField(t *testing.T) {
+	doc, err := agentskill.SkillDocument("azldev-image", testParams())
+	require.NoError(t, err)
+
+	assert.Contains(t, doc, "architectures = ")
+	assert.Contains(t, doc, "unrestricted")
+}
+
 func TestSkillFrontmatterInvariants(t *testing.T) {
 	layout := agentskill.DefaultLayout()
 
