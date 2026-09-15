@@ -36,13 +36,17 @@ AZURE LINUX 4 PREREQUISITES:
   To run with --provision local, install the host dependencies:
     sudo tdnf install -y python3 python3-pip git sudo
 
+  ('git' is only needed for the default clone path; omit it when using
+  '--from-spec', which runs from the rendered spec directory.)
+
   azldev creates a per-work-directory Python environment and installs the
   pinned TMT version there. The local provisioner uses sudo to install the
   supplied candidate RPMs and execute the plan, so it modifies the host.
 
 azldev creates or reuses an isolated Python environment under --work-dir and
-installs TMT with virtual-provisioner support there. python3 and git must be
-available on the host.
+installs TMT with virtual-provisioner support there. python3 must be available
+on the host; git is also required unless '--from-spec' is used (which runs the
+plan from the rendered spec directory instead of cloning).
 
 ```
 azldev component test COMPONENT [flags]
@@ -67,6 +71,7 @@ azldev component test COMPONENT [flags]
 ### Options
 
 ```
+      --from-spec           Run the plan from the component's rendered spec directory (under the configured 'project.rendered-specs-dir', e.g. 'SPECS/c/curl') instead of cloning the catalog 'source'. Requires 'render.skip-file-filter = true' and a prior 'azldev component render'. Local inner-loop convenience; not used by cloud (TEE) runs.
   -h, --help                help for test
   -i, --image-path string   Path to the qcow2 image under test
       --provision string    TMT provisioner mode: 'virtual' (default) runs tests in QEMU; 'local' runs on this machine (must be Azure Linux 4) (default "virtual")
