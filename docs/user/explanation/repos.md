@@ -137,6 +137,32 @@ source or debug repositories.
 This comparison checks inventory only. It does not compare RPM bytes,
 signatures, checksums, or publication routing.
 
+Use `--missing-from-right` to return package versions present on the left but
+absent from the right, ignoring architecture and artifact kind:
+
+```sh
+azldev repo compare --left koji-build --right pmc-prod --missing-from-right
+```
+
+PMC repositories commonly retain historical versions that are no longer in a
+current Koji snapshot. Add `--ignore-older-added-in-right` to the normal
+comparison to suppress a right-only identity when the left contains a strictly
+newer EVR with the same package name, artifact kind, and RPM architecture:
+
+```sh
+azldev repo compare \
+    --left koji-build \
+    --right pmc-prod \
+    --ignore-older-added-in-right
+```
+
+Add `--stat` to either comparison mode to return only package counts. With
+`--missing-from-right`, it returns only the number of missing package versions:
+
+```sh
+azldev repo compare --left koji-build --right pmc-prod --missing-from-right --stat
+```
+
 ## Load-time vs use-time
 
 Expansion is deterministic and happens once during `ProjectConfig.Validate()`, after **all** config files (project, user, `--config-file` extras) have been merged. This means:

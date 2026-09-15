@@ -168,3 +168,60 @@ func TestRunCompareReportsInventoryDifferences(t *testing.T) {
 		{Name: "right-only", Summary: "added-in-right", RightNEVRs: "right-only-1-1.azl4"},
 	}, findings)
 }
+
+func TestRunCompareStatModes(t *testing.T) {
+	t.Parallel()
+
+	testEnv := testutils.NewTestEnv(t)
+	testEnv.Config.Resources.RpmRepoSetTemplates = map[string]projectconfig.RpmRepoSetTemplate{
+		"layout": {Subrepos: []projectconfig.SubrepoSpec{{
+			Name: "binary", Subpath: "$basearch", Kind: projectconfig.SubrepoKindBinary,
+		}}},
+	}
+	testEnv.Config.Resources.RpmRepoSets = map[string]projectconfig.RpmRepoSet{
+		"left-set":  {Template: "layout", BaseURI: "https://left.example.com"},
+		"right-set": {Template: "layout", BaseURI: "https://right.example.com"},
+	}
+
+	const (
+		leftURL  = "https://left.example.com/x86_64"
+		rightURL = "https://right.example.com/x86_64"
+	)
+
+	repomd := []byte(`<repomd><data type="primary"><location href="repodata/primary.xml"/></data></repomd>`)
+	primary := func(packages string) []byte { return []byte(`<metadata>` + packages + `</metadata>`) }
+	pkg := func(name, version string) string {
+		return `<package><name>` + name + `</name><arch>x86_64</arch>` +
+			`<version epoch="0" ver="` + version + `" rel="1.azl4"/></package>`
+	}
+	fetcher := comparisonMapFetcher{
+		leftURL + "/repodata/repomd.xml":   repomd,
+		leftURL + "/repodata/primary.xml":  primary(pkg("left-only", "1") + pkg("shared", "2")),
+		rightURL + "/repodata/repomd.xml":  repomd,
+		rightURL + "/repodata/primary.xml": primary(pkg("right-only", "1") + pkg("shared", "1")),
+	}
+
+	result, err := runCompare(testEnv.Env, &CompareOptions{
+		Left: "left-set", Right: "right-set", Arches: []string{"x86_64"}, Stat: true,
+	}, fetcher)
+	require.NoError(t, err)
+	assert.Equal(t, repocompare.DiffStat{
+		MissingFromRight: 2, AddedInRight: 2, Total: 3,
+	}, result)
+
+	result, err = runCompare(testEnv.Env, &CompareOptions{
+		Left: "left-set", Right: "right-set", Arches: []string{"x86_64"},
+		MissingFromRight: true, Stat: true,
+	}, fetcher)
+	require.NoError(t, err)
+	assert.Equal(t, repocompare.MissingFromRightStat{MissingFromRight: 2}, result)
+
+	result, err = runCompare(testEnv.Env, &CompareOptions{
+		Left: "left-set", Right: "right-set", Arches: []string{"x86_64"},
+		IgnoreOlderAdded: true, Stat: true,
+	}, fetcher)
+	require.NoError(t, err)
+	assert.Equal(t, repocompare.DiffStat{
+		MissingFromRight: 2, AddedInRight: 1, Total: 3,
+	}, result)
+}

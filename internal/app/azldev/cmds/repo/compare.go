@@ -17,9 +17,12 @@ import (
 
 // CompareOptions are the CLI flags for `azldev repo compare`.
 type CompareOptions struct {
-	Left   string
-	Right  string
-	Arches []string
+	Left             string
+	Right            string
+	Arches           []string
+	MissingFromRight bool
+	IgnoreOlderAdded bool
+	Stat             bool
 }
 
 func compareOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
@@ -38,7 +41,13 @@ func NewCompareCmd() *cobra.Command {
 The command expands each named [resources.rpm-repo-sets] entry using its selected
 template. The report groups differences by package name and shows summary
 statuses plus the complete left and right NEVR inventories. Package content is
-not compared.`,
+not compared.
+
+Use --missing-from-right to return package versions present on the left but
+absent from the right, regardless of architecture or artifact kind. Use
+--ignore-older-added-in-right to suppress historical right-side versions when
+the left has a newer matching package. Use --stat to return only counts for the
+selected comparison mode.`,
 	}
 
 	cmd.RunE = azldev.RunFunc(func(env *azldev.Env) (interface{}, error) {
@@ -49,6 +58,11 @@ not compared.`,
 	cmd.Flags().StringVar(&options.Right, "right", "", "right [resources.rpm-repo-sets] name")
 	cmd.Flags().StringSliceVar(&options.Arches, "arch", repolayout.DefaultArches,
 		"comma-separated target architectures")
+	cmd.Flags().BoolVar(&options.MissingFromRight, "missing-from-right", false,
+		"show package versions absent from the right, ignoring architecture and artifact kind")
+	cmd.Flags().BoolVar(&options.IgnoreOlderAdded, "ignore-older-added-in-right", false,
+		"ignore right-only identities older than a matching left package identity")
+	cmd.Flags().BoolVar(&options.Stat, "stat", false, "show only package-level difference counts")
 
 	for _, name := range []string{"left", "right"} {
 		_ = cmd.MarkFlagRequired(name)
@@ -58,7 +72,7 @@ not compared.`,
 }
 
 // RunCompare loads both repository inventories and returns their package identity differences.
-func RunCompare(env *azldev.Env, options *CompareOptions) ([]repocompare.PackageReport, error) {
+func RunCompare(env *azldev.Env, options *CompareOptions) (interface{}, error) {
 	fetcher := &repocompare.HTTPFetcher{Attempts: env.NetworkRetries()}
 
 	return runCompare(env, options, fetcher)
@@ -68,7 +82,7 @@ func runCompare(
 	env *azldev.Env,
 	options *CompareOptions,
 	fetcher repocompare.Fetcher,
-) ([]repocompare.PackageReport, error) {
+) (interface{}, error) {
 	if options.Left == options.Right {
 		return nil, errors.New("'--left' and '--right' must name different rpm-repo-sets")
 	}
@@ -108,9 +122,24 @@ func runCompare(
 		return nil, fmt.Errorf("loading right repositories:\n%w", err)
 	}
 
-	reports, err := repocompare.Compare(leftPackages, rightPackages)
+	if options.MissingFromRight {
+		missing := repocompare.MissingFromRight(leftPackages, rightPackages)
+		if options.Stat {
+			return repocompare.MissingFromRightStat{MissingFromRight: len(missing)}, nil
+		}
+
+		return missing, nil
+	}
+
+	reports, err := repocompare.CompareWithOptions(leftPackages, rightPackages, repocompare.Options{
+		IgnoreOlderAddedInRight: options.IgnoreOlderAdded,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("comparing repository inventories:\n%w", err)
+	}
+
+	if options.Stat {
+		return repocompare.Summarize(reports), nil
 	}
 
 	return reports, nil
