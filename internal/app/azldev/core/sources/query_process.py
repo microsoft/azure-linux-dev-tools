@@ -8,10 +8,10 @@ Run rpmspec twice per component (once with --srpm for source NEVR, once
 without for binary subpackage names) and write per-component results to a
 JSON file in the scratch directory.
 
-This script is embedded in the azldev Go binary and executed inside a mock chroot
-during ``azldev component query``. It mirrors render_process.py's shape (a
-ThreadPoolExecutor over per-component work, PROGRESS lines on stderr, a
-results.json file in the scratch dir) so the Go-side plumbing can be shared.
+This script is embedded in the azldev Go binary and executed inside a mock
+chroot during ``azldev component query``. It uses a ThreadPoolExecutor over
+per-component work, PROGRESS lines on stderr, and a results.json file in the
+scratch dir.
 
 Usage::
 

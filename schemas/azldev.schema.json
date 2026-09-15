@@ -345,7 +345,7 @@
         "skip-file-filter": {
           "type": "boolean",
           "title": "Skip file filter",
-          "description": "Disable post-render file filtering for specs with unexpandable macros in Source/Patch tags"
+          "description": "Deprecated compatibility setting; ignored because render always preserves every file in the dist-git dir"
         }
       },
       "additionalProperties": false,

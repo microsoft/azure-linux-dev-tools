@@ -55,10 +55,19 @@
 //   - Version           — passed only to the provenance renderer and recorded once in the
 //     central provenance file; it is not substituted into Markdown templates.
 //   - TopLevelCommands  — generated from the Cobra command tree, so the overview skill's
-//     command list never goes stale; substituted into the overview skill template.
-//   - Bindings          — repo-specific paths (LockDir, RenderedSpecsDir, WorkDir) read from
-//     the target azldev.toml, degrading to azldev's defaults when no config is present;
-//     substituted into skill and instruction templates.
+//     command list never goes stale.
+//   - Bindings          — repo-specific paths (LockDir, UpstreamCommitsDir, RenderedSpecsDir,
+//     WorkDir) read from the target azldev.toml, degrading to azldev's defaults when no
+//     config is present.
+//
+// # Modes
+//
+// A [Catalog] selects the content for one of azldev's two modes. The default mode
+// documents the lock-file workflow; the mode selected by the global
+// '--without-lockfile' flag documents the generated upstream-commit workflow. Skills,
+// instruction files, and emitted layout are shared; templates under
+// 'content/withoutlockfile' replace the same-named default template, and a small
+// registry replaces the skills whose subject differs.
 //
 // # Outputs (three sinks, one registry)
 //

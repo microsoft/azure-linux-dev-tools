@@ -23,10 +23,12 @@ It supports:
 1. Install `golang` and other prerequisites via your system's package manager, e.g.:
 
    ```console
-   dnf install -y golang mock dnf-utils mock-rpmautospec kiwi
+   dnf install -y golang mock dnf-utils mock-rpmautospec rpmdevtools kiwi
    ```
 
-   Note: `mock-rpmautospec` plugin hooks `rpmautospec` into mock's build lifecycle. It pulls `rpmautospec` as a dependency which processes `%autorelease` and `%autochangelog` macros in spec files.
+   Note: `mock-rpmautospec` hooks `rpmautospec` into mock's build lifecycle
+   and pulls in the host `rpmautospec` command. `rpmdevtools` provides
+   `rpmdev-bumpspec`; lock-file-free rendering uses both host commands.
 
 1. Install `azldev`:
 

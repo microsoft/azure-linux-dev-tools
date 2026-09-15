@@ -959,6 +959,85 @@ Name: test
 	})
 }
 
+func TestSetAutoreleaseChangelog(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name: "replace existing changelog",
+			input: `Name: test
+
+%changelog
+* Wed Jan 01 2025 Test User <user@example.com> - 1.0-1
+- Initial release
+`,
+			expected: `Name: test
+
+%changelog
+%autochangelog
+`,
+		},
+		{
+			name: "preserve existing autochangelog",
+			input: `Name: test
+
+%changelog
+%autochangelog
+`,
+			expected: `Name: test
+
+%changelog
+%autochangelog
+`,
+		},
+		{
+			name: "append missing changelog",
+			input: `Name: test
+Version: 1.0
+`,
+			expected: `Name: test
+Version: 1.0
+
+%changelog
+%autochangelog
+`,
+		},
+		{
+			name: "preserve following section",
+			input: `Name: test
+
+%changelog
+old entry
+
+%files
+%license LICENSE
+`,
+			expected: `Name: test
+
+%changelog
+%autochangelog
+%files
+%license LICENSE
+`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			openedSpec, err := spec.OpenSpec(strings.NewReader(test.input))
+			require.NoError(t, err)
+
+			openedSpec.SetAutoreleaseChangelog()
+
+			actual := new(bytes.Buffer)
+			require.NoError(t, openedSpec.Serialize(actual))
+			assert.Equal(t, test.expected, actual.String())
+		})
+	}
+}
+
 func TestPrependLines(t *testing.T) {
 	t.Run("empty spec", func(t *testing.T) {
 		specFile, err := spec.OpenSpec(strings.NewReader(""))

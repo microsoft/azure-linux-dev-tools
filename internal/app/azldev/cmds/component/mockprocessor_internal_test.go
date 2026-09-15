@@ -12,23 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCreateMockProcessor_UsesProjectDistroMockConfig(t *testing.T) {
-	testEnv := testutils.NewTestEnv(t)
-
-	processor := createMockProcessor(testEnv.Env)
-
-	require.NotNil(t, processor,
-		"the project distro's mock config should make a processor available independently of any upstream distro")
-	destroyMockProcessor(testEnv.Env, processor)
-}
-
-func TestCreateMockProcessor_ProjectDistroWithoutMockConfig(t *testing.T) {
-	testEnv := testutils.NewTestEnv(t)
-	clearProjectMockConfig(testEnv.Env.Config())
-
-	assert.Nil(t, createMockProcessor(testEnv.Env))
-}
-
 func TestCreateBuildMockProcessor_ReturnsProcessor(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
 

@@ -112,9 +112,9 @@ The `[components.<name>.release]` section controls how azldev manages the Releas
 
 | Mode | Behavior |
 |------|----------|
-| `auto` | Auto-detects from the spec's Release tag value. If `%autorelease` is found, rpmautospec handles it. If a static integer is found, optionally followed by `%{?dist}` or `%{dist}`, it is bumped by the synthetic commit count. |
-| `autorelease` | Explicitly declares the spec uses `%autorelease`. Skips all Release manipulation. Use this for specs with conditional `%autorelease`/`%else` fallbacks that confuse auto-detection. |
-| `static` | Explicitly declares the spec uses a static integer release. Bumps it by the synthetic commit count only when the Release tag is an integer, optionally followed by `%{?dist}` or `%{dist}`. Non-integer or other non-standard Release values (for example, `%{pkg_release}`) require `manual` or an overlay. |
+| `auto` | Auto-detects from the spec's Release tag value. Default-mode rendering uses synthetic history. Lock-file-free rendering preserves local components, initializes upstream `%autorelease` components, and runs `rpmdev-bumpspec` for other upstream releases. |
+| `autorelease` | Explicitly declares that the component uses autorelease behavior. In lock-file-free rendering, local components are preserved; a new upstream rendered dist-git dir gets a generated `changelog` file and `%autochangelog`. |
+| `static` | Explicitly declares that the spec uses a static integer release. Default-mode rendering bumps it by the synthetic commit count. This mode is unsupported by lock-file-free rendering. |
 | `manual` | Skips all automatic Release manipulation. Use for components that manage their own release numbering (e.g. kernel). |
 
 Most components use `auto` (the default) and need no release configuration. Examples:
@@ -129,26 +129,40 @@ calculation = "autorelease"
 calculation = "manual"
 ```
 
+In lock-file-free mode, `component render` does not generate synthetic history:
+
+- Local components must use `auto`, `autorelease`, or `manual`. Their `Release`,
+  spec changelog, and `changelog` file are preserved. For local components,
+  `auto` means `autorelease` when `%autorelease` is detected and `manual`
+  otherwise; both behaviors preserve the files.
+- Upstream `manual` components are also preserved.
+- Upstream `autorelease` components, including `auto` components where
+  `%autorelease` is detected, inspect only whether the rendered dist-git dir
+  exists in `HEAD`. If it does not, render runs `rpmautospec generate-changelog`
+  against the pristine upstream checkout before applying overlays, writes the
+  result to `changelog`, and replaces the rendered spec's `%changelog` body with
+  `%autochangelog`. If the directory already exists in `HEAD`, render makes no
+  release or changelog adjustment.
+- Upstream `auto` components without `%autorelease` run `rpmdev-bumpspec` on the
+  prepared spec. The project `HEAD` author and UTC commit date are passed
+  explicitly for deterministic changelog output.
+
+These commands run directly on the host, not in mock. Lock-file-free render
+rejects explicit `static` calculation.
+
 ## Render Configuration
 
 The `[components.<name>.render]` section controls rendering behavior for a component.
 
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
-| Skip file filter | `skip-file-filter` | boolean | No | Disable post-render file filtering (defaults to `false`) |
+| Skip file filter | `skip-file-filter` | boolean | No | Deprecated compatibility setting; ignored |
 
 ### Skip File Filter
 
-During rendering, azldev uses `spectool` to determine which files are referenced by `Source` and `Patch` tags in the spec, then removes unreferenced files from the rendered output. Some specs use dynamic macros (e.g., `%{fontpkgname1}`) that `spectool` cannot expand, causing it to report incorrect filenames. This results in referenced files being incorrectly removed.
-
-Set `skip-file-filter = true` to preserve all files from the dist-git checkout:
-
-```toml
-[components.dejavu-fonts.render]
-skip-file-filter = true
-```
-
-> **Note:** This should only be used for specs with macros that `spectool` cannot resolve. For most components, the default filtering behavior is correct and keeps the rendered output clean.
+`skip-file-filter` is retained for compatibility with existing configuration
+files but is ignored. Rendering always preserves every file in the prepared
+dist-git dir.
 
 ## Build Configuration
 
@@ -213,9 +227,9 @@ emit-upstream-provenance = true
 | `%fedora_upstream_version` | The `Version` tag from the pristine upstream Fedora spec |
 | `%fedora_upstream_release` | The `Release` tag from the pristine upstream Fedora spec, with `%{?dist}` expanded to the Fedora dist tag (e.g. `.fc43`) |
 
-The values are read from the upstream spec **before** any azldev overlays are applied, so they reflect the true upstream Name-Version-Release, not the Azure Linux–modified spec. The macros are derived fresh at render/build time from the pinned upstream commit and emitted into the component's generated macros file (loaded via `%{load:...}`).
+The values are read from the upstream spec **before** any azldev overlays are applied, so they reflect the true upstream Name-Version-Release, not the Azure Linux–modified spec. The macros are derived fresh during source preparation from the pinned upstream commit and emitted into the component's generated macros file (loaded via `%{load:...}`).
 
-For specs whose `Release` uses rpmautospec (`Release: %autorelease`), the pristine Fedora release number is computed by running `rpmautospec calculate-release` in the project distro's mock chroot against the upstream dist-git checkout (whose history is Fedora's, not azldev's synthetic overlay history). This keeps `rpmautospec` out of azldev's host dependencies. If the project distro has no mock config, or mock resolution fails, `%fedora_upstream_release` is skipped (with a warning) rather than emitting the literal `%autorelease`.
+For builds whose `Release` uses rpmautospec (`Release: %autorelease`), the pristine Fedora release number is computed by running `rpmautospec calculate-release` in the project distro's mock chroot against the upstream dist-git checkout (whose history is Fedora's, not azldev's synthetic overlay history). The render command never runs mock, so it skips `%fedora_upstream_release` for `%autorelease` specs with a warning. Builds also skip the macro if the project distro has no mock config or mock resolution fails.
 
 Example: for a component pinned to Fedora 43's `grub2-2.12-5.fc43`, the spec can reference:
 
@@ -223,13 +237,13 @@ Example: for a component pinned to Fedora 43's `grub2-2.12-5.fc43`, the spec can
 %sbat_generate_metadata ... derived from grub2 %{?fedora_upstream_version}-%{?fedora_upstream_release}
 ```
 
-which expands to `grub2 2.12-5.fc43`. The conditional macro form (`%{?name}`) is recommended because provenance emission is best-effort: `%fedora_upstream_release` is skipped when the upstream spec can't be parsed or when mock cannot resolve `%autorelease`, and the conditional form degrades gracefully (expanding to empty) instead of referencing an undefined macro.
+which expands to `grub2 2.12-5.fc43`. The conditional macro form (`%{?name}`) is recommended because provenance emission is best-effort: `%fedora_upstream_release` is skipped when the upstream spec can't be parsed, when rendering a `%autorelease` spec, or when build-time mock resolution fails. The conditional form degrades gracefully (expanding to empty) instead of referencing an undefined macro.
 
 Notes:
 
 - The flag has no effect on local or SRPM components (they have no upstream provenance) or on non-Fedora upstreams; for those it is silently ignored.
 - If a component defines a macro of the same name via `build.defines`, the user-defined value wins — the injected value does not overwrite it.
-- **How tag values are resolved:** `Version` and `Release` are read as plain text from the pristine upstream spec. `%{?dist}` is substituted with the Fedora dist tag, and `%autorelease` is resolved to a concrete number via `rpmautospec` (see above). Any *other* in-spec macros — e.g. `Version: %{majorver}.%{minorver}` — are emitted into the macros file unexpanded. Because that file is loaded back into the same spec via `%{load:...}`, RPM expands them lazily at build time using the spec's own macro definitions, so the consuming spec still sees the correct fully-expanded value.
+- **How tag values are resolved:** `Version` and `Release` are read as plain text from the pristine upstream spec. `%{?dist}` is substituted with the Fedora dist tag. During builds, `%autorelease` is resolved to a concrete number via `rpmautospec`; during rendering, the release macro is omitted instead. Any *other* in-spec macros — e.g. `Version: %{majorver}.%{minorver}` — are emitted into the macros file unexpanded. Because that file is loaded back into the same spec via `%{load:...}`, RPM expands them lazily at build time using the spec's own macro definitions, so the consuming spec still sees the correct fully-expanded value.
 
 Limitations:
 

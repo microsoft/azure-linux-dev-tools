@@ -108,7 +108,7 @@ hand-picking entries to document.`,
 		ValidArgsFunction: components.GenerateComponentNameCompletions,
 	}
 
-	components.AddComponentFilterOptionsToCommand(cmd, &options.ComponentFilter)
+	addComponentFilterOptions(cmd, &options.ComponentFilter, cmdOptions{})
 
 	cmd.Flags().StringVar(&options.SharedTomlMode, "shared", sharedTomlModeShow,
 		"How to report rows for components that share a TOML file with others: "+
@@ -146,7 +146,7 @@ hand-picking entries to document.`,
 //	build.with, build.without, build.defines, build.undefines,
 //	build.check.skip, spec.source-type, spec.upstream-commit,
 //	spec.upstream-name, spec.upstream-distro, release.calculation,
-//	render.skip-file-filter, packages, source-files,
+//	packages, source-files,
 //	source-files.replace-upstream
 //
 // Adding a Kind is non-breaking; renaming or removing one is breaking.

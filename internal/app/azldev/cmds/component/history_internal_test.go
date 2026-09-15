@@ -85,7 +85,6 @@ func TestCustomizationCollectorsCoverEveryFingerprintableField(t *testing.T) {
 		reflect.TypeFor[projectconfig.SpecSource](),
 		reflect.TypeFor[projectconfig.DistroReference](),
 		reflect.TypeFor[projectconfig.ReleaseConfig](),
-		reflect.TypeFor[projectconfig.ComponentRenderConfig](),
 		reflect.TypeFor[projectconfig.SourceFileReference](),
 		reflect.TypeFor[projectconfig.Origin](),
 	}
@@ -100,7 +99,7 @@ func TestCustomizationCollectorsCoverEveryFingerprintableField(t *testing.T) {
 		"ComponentConfig.Release":     "appendReleaseItems (per-field via ReleaseConfig walk)",
 		"ComponentConfig.Overlays":    "appendOverlayItems (opaque unit per overlay)",
 		"ComponentConfig.Build":       "appendBuildItems (per-field via ComponentBuildConfig walk)",
-		"ComponentConfig.Render":      "appendRenderItems (per-field via ComponentRenderConfig walk)",
+		"ComponentConfig.Render":      "ignored compatibility config",
 		"ComponentConfig.SourceFiles": "appendSourceFileItems (opaque unit per source file)",
 		"ComponentConfig.Packages":    "appendPackageItems (opaque unit per package override)",
 
@@ -129,9 +128,6 @@ func TestCustomizationCollectorsCoverEveryFingerprintableField(t *testing.T) {
 		// ReleaseConfig.
 		"ReleaseConfig.Calculation": "release.calculation (only when non-auto)",
 
-		// ComponentRenderConfig.
-		"ComponentRenderConfig.SkipFileFilter": "render.skip-file-filter",
-
 		// SourceFileReference -- Filename and the ReplaceUpstream toggle each get
 		// their own Kind. Hash/HashType are deliberately NOT emitted as output:
 		// the file's *presence* is the customization signal, and a checksum-only
@@ -157,6 +153,12 @@ func TestCustomizationCollectorsCoverEveryFingerprintableField(t *testing.T) {
 		for i := range st.NumField() {
 			field := st.Field(i)
 			key := st.Name() + "." + field.Name
+
+			// Unexported fields are never fingerprinted: hashstructure skips
+			// them because it cannot read them by reflection.
+			if field.PkgPath != "" {
+				continue
+			}
 
 			// Fields excluded from the fingerprint are operational
 			// metadata (publish channels, build hints, maintenance
@@ -215,7 +217,6 @@ func TestCollectCustomizationsEmitsEveryKind(t *testing.T) {
 		Release: projectconfig.ReleaseConfig{
 			Calculation: projectconfig.ReleaseCalculationAutorelease,
 		},
-		Render: projectconfig.ComponentRenderConfig{SkipFileFilter: true},
 		Packages: map[string]projectconfig.PackageConfig{
 			"libfoo": {},
 		},
@@ -237,7 +238,6 @@ func TestCollectCustomizationsEmitsEveryKind(t *testing.T) {
 		"spec.upstream-name",
 		"spec.upstream-distro",
 		"release.calculation",
-		"render.skip-file-filter",
 		"packages",
 		"source-files",
 		"source-files.replace-upstream",

@@ -59,6 +59,14 @@ type SourcePreparer interface {
 // PreparerOption is a functional option for configuring a [SourcePreparer].
 type PreparerOption func(*sourcePreparerImpl)
 
+// BeforeOverlaysFunc runs after pristine component sources have been fetched
+// and before any generated or configured overlays modify them.
+type BeforeOverlaysFunc func(
+	ctx context.Context,
+	component components.Component,
+	outputDir string,
+) error
+
 // WithGitRepo returns a [PreparerOption] that enables dist-git repository
 // creation during source preparation. When set, the upstream .git directory
 // is preserved and synthetic commit history is generated on top of it. This
@@ -83,6 +91,23 @@ func WithGitRepo(
 	}
 }
 
+// WithPreserveGitRepo returns a [PreparerOption] that preserves the upstream
+// '.git' directory without creating synthetic history. This is used when a
+// caller needs the original dist-git history temporarily.
+func WithPreserveGitRepo() PreparerOption {
+	return func(p *sourcePreparerImpl) {
+		p.preserveGitRepo = true
+	}
+}
+
+// WithBeforeOverlays returns a [PreparerOption] that invokes callback after
+// fetching pristine sources and before applying overlays.
+func WithBeforeOverlays(callback BeforeOverlaysFunc) PreparerOption {
+	return func(p *sourcePreparerImpl) {
+		p.beforeOverlays = callback
+	}
+}
+
 // WithDirtyDetection returns a [PreparerOption] that enables uncommitted-change
 // detection during synthetic history generation. When set, the current input
 // fingerprint is compared against the committed lock file; if they differ, a
@@ -95,6 +120,16 @@ func WithGitRepo(
 func WithDirtyDetection() PreparerOption {
 	return func(p *sourcePreparerImpl) {
 		p.dirtyDetection = true
+	}
+}
+
+// WithoutLockfileHistory returns a [PreparerOption] that derives synthetic history
+// from the component's generated upstream-commit TOML instead of its lock file.
+// It selects the behavior of the global '--without-lockfile' flag; the lock reader
+// and release version passed to [WithGitRepo] are unused in that mode.
+func WithoutLockfileHistory() PreparerOption {
+	return func(p *sourcePreparerImpl) {
+		p.withoutLockfile = true
 	}
 }
 
@@ -164,6 +199,10 @@ type sourcePreparerImpl struct {
 	// upstream .git directory and generating synthetic commit history.
 	withGitRepo bool
 
+	// preserveGitRepo, when true, preserves the upstream .git directory without
+	// enabling synthetic history.
+	preserveGitRepo bool
+
 	// skipLookaside, when true, skips all lookaside cache downloads during
 	// source preparation. Git-tracked files are still fetched.
 	skipLookaside bool
@@ -184,6 +223,11 @@ type sourcePreparerImpl struct {
 	// synthetic history generation. Set via [WithDirtyDetection].
 	dirtyDetection bool
 
+	// withoutLockfile, when true, derives synthetic history from the generated
+	// upstream-commit TOML rather than the lock file. Set via
+	// [WithoutLockfileHistory].
+	withoutLockfile bool
+
 	// releaseVer is the per-component resolved distro release version, not the
 	// project default. Set via [WithGitRepo].
 	releaseVer string
@@ -199,6 +243,10 @@ type sourcePreparerImpl struct {
 	// %fedora_upstream_release. Nil disables autorelease resolution (the release
 	// macro is skipped for such specs). Set via [WithMockProcessor].
 	autoreleaseResolver autoreleaseResolver
+
+	// beforeOverlays runs against the pristine fetched checkout before generated
+	// or configured overlays modify it.
+	beforeOverlays BeforeOverlaysFunc
 }
 
 // NewPreparer creates a new [SourcePreparer] instance. All positional arguments
@@ -239,9 +287,18 @@ func NewPreparer(
 		}
 	}
 
+	if impl.withGitRepo {
+		impl.preserveGitRepo = true
+	}
+
 	if impl.dirtyDetection && !impl.withGitRepo {
 		return nil, errors.New("WithDirtyDetection requires WithGitRepo; " +
 			"dirty detection compares fingerprints against committed lock files in the git history")
+	}
+
+	if impl.dirtyDetection && impl.withoutLockfile {
+		return nil, errors.New("WithDirtyDetection is incompatible with WithoutLockfileHistory; " +
+			"there is no lock file to compare fingerprints against")
 	}
 
 	return impl, nil
@@ -257,11 +314,10 @@ func (p *sourcePreparerImpl) PrepareSources(
 		}
 	}
 
-	// Preserve the upstream .git directory only when dist-git creation is
-	// requested via --with-git. This is required so that overlay commits can be
-	// appended on top of the upstream commit log during synthetic history generation.
+	// Preserve the upstream '.git' directory when synthetic history or another
+	// caller needs the original dist-git history.
 	var fetchOpts []sourceproviders.FetchComponentOption
-	if applyOverlays && p.withGitRepo {
+	if applyOverlays && p.preserveGitRepo {
 		fetchOpts = append(fetchOpts, sourceproviders.WithPreserveGitDir())
 	}
 
@@ -284,23 +340,11 @@ func (p *sourcePreparerImpl) PrepareSources(
 		}
 	}
 
-	fingerprintConfig := component.GetConfig()
-
-	if applyOverlays {
-		repackedArchives, err := p.applyOverlaysToSources(ctx, component, outputDir)
-		if err != nil {
-			return err
-		}
-
-		fingerprintConfig, err = p.updateSourcesFile(component, outputDir, repackedArchives)
-		if err != nil {
-			return fmt.Errorf("failed to update 'sources' file for component %#q:\n%w",
-				component.GetName(), err)
-		}
-	} else {
-		slog.Warn("Sources prepared without applying overlays;"+
-			" 'sources' file will not include entries from the 'source-files' configuration",
-			"component", component.GetName())
+	fingerprintConfig, err := p.prepareOverlays(
+		ctx, component, outputDir, applyOverlays,
+	)
+	if err != nil {
+		return err
 	}
 
 	// Record the changes as synthetic git history when dist-git creation is enabled.
@@ -312,6 +356,41 @@ func (p *sourcePreparerImpl) PrepareSources(
 	}
 
 	return nil
+}
+
+func (p *sourcePreparerImpl) prepareOverlays(
+	ctx context.Context,
+	component components.Component,
+	outputDir string,
+	applyOverlays bool,
+) (*projectconfig.ComponentConfig, error) {
+	if !applyOverlays {
+		slog.Warn("Sources prepared without applying overlays;"+
+			" 'sources' file will not include entries from the 'source-files' configuration",
+			"component", component.GetName())
+
+		return component.GetConfig(), nil
+	}
+
+	if p.beforeOverlays != nil {
+		if err := p.beforeOverlays(ctx, component, outputDir); err != nil {
+			return nil, fmt.Errorf("running pre-overlay processing for component %#q:\n%w",
+				component.GetName(), err)
+		}
+	}
+
+	repackedArchives, err := p.applyOverlaysToSources(ctx, component, outputDir)
+	if err != nil {
+		return nil, err
+	}
+
+	fingerprintConfig, err := p.updateSourcesFile(component, outputDir, repackedArchives)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update 'sources' file for component %#q:\n%w",
+			component.GetName(), err)
+	}
+
+	return fingerprintConfig, nil
 }
 
 func (p *sourcePreparerImpl) validateArchiveOverlayConfig(component components.Component) error {
@@ -500,26 +579,9 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 	config := component.GetConfig()
 	componentName := component.GetName()
 
-	// Compute the current fingerprint for uncommitted-change detection.
-	// Only computed when dirty detection is enabled (e.g., build, render).
-	// An empty fingerprint skips dirty detection in buildSyntheticCommits.
-	var currentFingerprint string
-
-	if p.dirtyDetection {
-		var fpErr error
-
-		currentFingerprint, fpErr = computeCurrentFingerprint(p.fs, fingerprintConfig, p.releaseVer)
-		if fpErr != nil {
-			return fmt.Errorf("dirty detection failed for component %#q:\n%w", componentName, fpErr)
-		}
-	}
-
-	changes, importCommit, err := buildSyntheticCommits(
-		ctx, p.cmdFactory, config, componentName, p.lockReader.LockDir(),
-		currentFingerprint,
-	)
+	changes, importCommit, err := p.findSyntheticChanges(ctx, config, fingerprintConfig, componentName)
 	if err != nil {
-		return fmt.Errorf("failed to build synthetic commits:\n%w", err)
+		return err
 	}
 
 	if len(changes) == 0 {
@@ -568,6 +630,52 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 	}
 
 	return nil
+}
+
+// findSyntheticChanges discovers the component changes that synthetic history
+// should represent, using the source selected by the preparer's mode: the
+// component's lock file by default, or its generated upstream-commit TOML when
+// [WithoutLockfileHistory] is set. The returned import commit bounds the upstream
+// walk; it is always empty in lock-file-free mode, where no fork point is
+// persisted and the repository's first-parent root bounds the walk instead.
+func (p *sourcePreparerImpl) findSyntheticChanges(
+	ctx context.Context,
+	config *projectconfig.ComponentConfig,
+	fingerprintConfig *projectconfig.ComponentConfig,
+	componentName string,
+) (changes []FingerprintChange, importCommit string, err error) {
+	if p.withoutLockfile {
+		changes, err = buildUpstreamCommitSyntheticCommits(ctx, p.cmdFactory, config, componentName)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to build synthetic commits:\n%w", err)
+		}
+
+		return changes, "", nil
+	}
+
+	// Compute the current fingerprint for uncommitted-change detection.
+	// Only computed when dirty detection is enabled (e.g., build, render).
+	// An empty fingerprint skips dirty detection in buildSyntheticCommits.
+	var currentFingerprint string
+
+	if p.dirtyDetection {
+		var fpErr error
+
+		currentFingerprint, fpErr = computeCurrentFingerprint(p.fs, fingerprintConfig, p.releaseVer)
+		if fpErr != nil {
+			return nil, "", fmt.Errorf("dirty detection failed for component %#q:\n%w", componentName, fpErr)
+		}
+	}
+
+	changes, importCommit, err = buildSyntheticCommits(
+		ctx, p.cmdFactory, config, componentName, p.lockReader.LockDir(),
+		currentFingerprint,
+	)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to build synthetic commits:\n%w", err)
+	}
+
+	return changes, importCommit, nil
 }
 
 // computeCurrentFingerprint computes the current input fingerprint for a

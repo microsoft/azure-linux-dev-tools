@@ -26,23 +26,8 @@ func collectCustomizations(name string, config *projectconfig.ComponentConfig) [
 	items = appendBuildItems(items, config.Build)
 	items = appendSpecItems(items, name, config.Spec)
 	items = appendReleaseItems(items, config.Release)
-	items = appendRenderItems(items, config.Render)
 	items = appendPackageItems(items, config.Packages)
 	items = appendSourceFileItems(items, config.SourceFiles)
-
-	return items
-}
-
-// appendRenderItems flags non-default render-config customizations.
-func appendRenderItems(
-	items []CustomizationItem, render projectconfig.ComponentRenderConfig,
-) []CustomizationItem {
-	if render.SkipFileFilter {
-		items = append(items, CustomizationItem{
-			Kind:  "render.skip-file-filter",
-			Value: strconv.FormatBool(true),
-		})
-	}
 
 	return items
 }

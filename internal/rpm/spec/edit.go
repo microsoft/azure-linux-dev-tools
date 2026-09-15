@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -612,6 +613,54 @@ func (s *Spec) AddChangelogEntry(user, email, version, release string, time time
 	}
 
 	return err
+}
+
+// SetAutoreleaseChangelog replaces the contents of the base '%changelog'
+// section with '%autochangelog'. If the section does not exist, it is appended.
+func (s *Spec) SetAutoreleaseChangelog() {
+	changelogStart := -1
+	changelogEnd := len(s.rawLines)
+
+	for lineNumber, line := range s.rawLines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "%") {
+			continue
+		}
+
+		fields := strings.Fields(trimmed)
+		if len(fields) == 0 {
+			continue
+		}
+
+		sectionType, isSection := sectionTypesByName[strings.ToLower(fields[0])]
+		if !isSection {
+			continue
+		}
+
+		if changelogStart >= 0 {
+			changelogEnd = lineNumber
+
+			break
+		}
+
+		if sectionType == ChangelogSection {
+			changelogStart = lineNumber
+		}
+	}
+
+	if changelogStart < 0 {
+		if len(s.rawLines) > 0 && s.rawLines[len(s.rawLines)-1] != "" {
+			s.rawLines = append(s.rawLines, "")
+		}
+
+		s.rawLines = append(s.rawLines, "%changelog", "%autochangelog")
+
+		return
+	}
+
+	s.rawLines = slices.Replace(
+		s.rawLines, changelogStart+1, changelogEnd, "%autochangelog",
+	)
 }
 
 // ParsePatchTagNumber checks if the given tag name is a PatchN tag (case-insensitive)

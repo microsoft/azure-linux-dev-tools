@@ -63,7 +63,7 @@
 tdnf install -y golang ca-certificates glibc-devel
 
 # Install runtime requirements for the azldev tool
-tdnf install -y mock dnf-utils mock-rpmautospec
+tdnf install -y mock dnf-utils mock-rpmautospec rpmdevtools
 
 git clone <URL>
 cd <REPO>

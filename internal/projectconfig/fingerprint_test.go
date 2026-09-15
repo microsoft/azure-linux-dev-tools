@@ -70,6 +70,9 @@ func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
 		// ComponentConfig.Tests — test selection metadata (new schema), not a build input.
 		"ComponentConfig.Tests": true,
 
+		// ComponentRenderConfig.SkipFileFilter — deprecated compatibility setting; ignored.
+		"ComponentRenderConfig.SkipFileFilter": true,
+
 		// ComponentOverlay.Description — human-readable documentation for the overlay.
 		"ComponentOverlay.Description": true,
 		// ComponentOverlay.Source — absolute path that varies by checkout location.

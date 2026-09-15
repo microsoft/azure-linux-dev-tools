@@ -38,22 +38,8 @@ type RenderOptions struct {
 	CheckOnly         bool
 }
 
-func renderOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
-	parentCmd.AddCommand(NewRenderCmd())
-}
-
-// NewRenderCmd constructs a [cobra.Command] for the "component render" CLI subcommand.
-func NewRenderCmd() *cobra.Command {
-	var options RenderOptions
-
-	var cmd *cobra.Command
-
-	cmd = &cobra.Command{
-		Use:   "render",
-		Short: "Render post-overlay specs and sidecar files to a checked-in directory",
-		Long: `Render the final spec and sidecar files for components after applying all
-configured overlays. The output is written to a directory as generated artifacts
-intended for check-in.
+const renderLongDescription = `Render a dist-git dir for each component after applying all configured
+overlays. The output is written as generated artifacts intended for check-in.
 
 The output directory is set via rendered-specs-dir in the project config, or
 via --output-dir on the command line. If neither is set, an error is returned.
@@ -62,8 +48,15 @@ subdirectories based on the first character of their name (e.g., specs/c/curl,
 specs/v/vim).
 
 Unlike prepare-sources, render skips downloading source tarballs from the
-lookaside cache — only spec files, patches, scripts, and other git-tracked
-sidecar files are included. Multiple components can be rendered at once.
+lookaside cache. It preserves the git-tracked contents of each dist-git dir,
+applies configured overlays, and removes any temporary .git metadata.
+Multiple components can be rendered at once.
+
+In --without-lockfile mode, local components preserve their Release and
+changelog. Upstream components use release.calculation: manual preserves both;
+autorelease initializes a new rendered dist-git dir with 'rpmautospec
+generate-changelog' and %autochangelog; auto detects %autorelease or otherwise
+runs rpmdev-bumpspec. Render never runs these tools in mock.
 
 When rendering all components (-a), the --clean-stale flag prunes orphan
 rendered-spec directories (per-component dirs that no longer correspond to
@@ -73,7 +66,22 @@ result table accurately reflects which components actually changed on disk.
 Top-level non-component siblings (e.g. a hand-placed README.md) are
 preserved. When using a custom output directory (--output-dir), --force is
 required alongside --clean-stale as a safety measure. This flag is only
-valid with -a.`,
+valid with -a.`
+
+func renderOnAppInit(app *azldev.App, parentCmd *cobra.Command) {
+	parentCmd.AddCommand(NewRenderCmd(cmdOptionsForApp(app)...))
+}
+
+// NewRenderCmd constructs a [cobra.Command] for the "component render" CLI subcommand.
+func NewRenderCmd(opts ...CmdOption) *cobra.Command {
+	var options RenderOptions
+
+	var cmd *cobra.Command
+
+	cmd = &cobra.Command{
+		Use:   "render",
+		Short: "Render post-overlay dist-git dirs to a checked-in directory",
+		Long:  renderLongDescription,
 		Example: `  # Render all components (output dir from config)
   azldev component render -a
 
@@ -97,7 +105,7 @@ valid with -a.`,
 		},
 	}
 
-	components.AddComponentFilterOptionsToCommand(cmd, &options.ComponentFilter)
+	addComponentFilterOptions(cmd, &options.ComponentFilter, newCmdOptions(opts...))
 
 	cmd.Flags().StringVarP(&options.OutputDir, "output-dir", "o", "",
 		"output directory for rendered specs (overrides rendered-specs-dir from config)")
@@ -145,11 +153,10 @@ const (
 	renderStatusCancelled = "cancelled"
 )
 
-// RenderComponents renders the post-overlay spec and sidecar files for each
-// selected component into the output directory. Processing is done in three phases:
-//  1. Parallel source preparation (clone, overlay, synthetic git)
-//  2. Batch mock processing (rpmautospec + spectool in a single chroot call)
-//  3. Parallel finishing (filter files, remove .git, copy output)
+// RenderComponents renders the post-overlay dist-git dir for each selected
+// component into the output directory. Processing is done in two phases:
+//  1. Parallel source preparation (clone, overlay, optional synthetic git)
+//  2. Parallel finishing (remove .git, copy output)
 func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult, error) {
 	if err := resolveAndValidateOutputDir(env, options); err != nil {
 		return nil, err
@@ -172,19 +179,15 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 		)
 	}
 
-	// Create mock processor for rpmautospec/spectool.
-	mockProcessor := createMockProcessor(env)
-	if mockProcessor == nil {
-		return nil, errors.New(
-			"mock config required for rendering; ensure the project has a valid distro with mock config")
+	componentList := comps.Components()
+
+	if err := validateWithoutLockfileRenderComponents(env, componentList); err != nil {
+		return nil, err
 	}
 
-	defer destroyMockProcessor(env, mockProcessor)
-
 	// Create a shared staging directory. Each component gets a subdirectory
-	// named by component name, enabling a single bind mount for the batch
-	// mock invocation. Use the project work dir instead of /tmp to avoid
-	// filling up tmpfs on large renders.
+	// named by component name. Use the project work dir instead of /tmp to
+	// avoid filling up tmpfs on large renders.
 	if err := env.FS().MkdirAll(env.WorkDir(), fileperms.PublicDir); err != nil {
 		return nil, fmt.Errorf("creating work directory:\n%w", err)
 	}
@@ -200,14 +203,10 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 		}
 	}()
 
-	componentList := comps.Components()
 	results := make([]*RenderResult, len(componentList))
 
 	// ── Phase 1: Parallel source preparation ──
-	prepared := parallelPrepare(env, mockProcessor, componentList, stagingDir, options.OutputDir, results)
-
-	// ── Phase 2: Batch mock processing ──
-	mockResultMap := batchMockProcess(env, mockProcessor, stagingDir, prepared)
+	prepared := parallelPrepare(env, componentList, stagingDir, options.OutputDir, results)
 
 	// Prune orphan component dirs (components removed from config) when
 	// --clean-stale is set. Per-component output dirs that match the resolved
@@ -231,12 +230,11 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 		}
 	}
 
-	// ── Phase 3: Parallel finishing ──
-	parallelFinish(env, prepared, mockResultMap, results, stagingDir,
-		options.Force, options.CheckOnly)
+	// ── Phase 2: Parallel finishing ──
+	parallelFinish(env, prepared, results, stagingDir, options.Force, options.CheckOnly)
 
-	// Write RENDER_FAILED markers for any component that errored in phase 1
-	// (source preparation) or phase 3 (mock result application + copy).
+	// Write RENDER_FAILED markers for any component that errored during source
+	// preparation or while copying the final dist-git dir.
 	// Centralizing this here makes it idempotent with the --clean-stale wipe
 	// (which sits between phases 2 and 3) and keeps the per-phase code free
 	// of bookkeeping. In --check-only mode this verifies that on-disk state
@@ -357,12 +355,10 @@ func checkRenderErrors(results []*RenderResult, failOnError bool) error {
 	return nil
 }
 
-// preparedComponent holds the intermediate state after source preparation,
-// before mock processing.
+// preparedComponent holds the intermediate state after source preparation.
 type preparedComponent struct {
 	index         int
 	comp          components.Component
-	specFilename  string // e.g., "curl.spec"
 	compOutputDir string // validated output path computed in phase 1
 }
 
@@ -383,7 +379,6 @@ type prepResult struct {
 // prepared slice for phase 2 / phase 3.
 func parallelPrepare(
 	env *azldev.Env,
-	mockProcessor *sources.MockProcessor,
 	comps []components.Component,
 	stagingDir string,
 	outputDir string,
@@ -406,7 +401,7 @@ func parallelPrepare(
 			// workerEnv (captured) is the effective context for this call chain;
 			// the parmap-supplied ctx is identical and unused here.
 			//nolint:contextcheck // env carries the ctx
-			return prepareOneComponent(workerEnv, mockProcessor, comp, stagingDir, outputDir)
+			return prepareOneComponent(workerEnv, comp, stagingDir, outputDir)
 		},
 	)
 
@@ -449,7 +444,6 @@ func parallelPrepare(
 // (including ctx cancellation mid-flight) surface as [renderStatusError] here.
 func prepareOneComponent(
 	env *azldev.Env,
-	mockProcessor *sources.MockProcessor,
 	comp components.Component,
 	stagingDir string,
 	outputDir string,
@@ -467,7 +461,7 @@ func prepareOneComponent(
 		}}
 	}
 
-	prep, err := prepareComponentSources(env, mockProcessor, comp, stagingDir)
+	prep, err := prepareComponentSources(env, comp, stagingDir, compOutputDir)
 	if err != nil {
 		slog.Error("Failed to prepare component sources",
 			"component", componentName, "error", err)
@@ -486,13 +480,13 @@ func prepareOneComponent(
 }
 
 // prepareComponentSources resolves the distro, creates a source manager, and
-// prepares sources (clone + overlays + synthetic git) for a single component
+// prepares sources (clone + overlays, plus synthetic git in lock-file mode) for a single component
 // into a subdirectory of stagingDir.
 func prepareComponentSources(
 	env *azldev.Env,
-	mockProcessor *sources.MockProcessor,
 	comp components.Component,
 	stagingDir string,
+	componentOutputDir string,
 ) (*preparedComponent, error) {
 	componentName := comp.GetName()
 
@@ -518,17 +512,22 @@ func prepareComponentSources(
 		return nil, fmt.Errorf("creating component staging directory:\n%w", mkdirErr)
 	}
 
-	// Prepare sources with overlays, skipping lookaside downloads.
-	// WithGitRepo preserves upstream .git and creates synthetic history so
-	// rpmautospec can expand %autorelease and %autochangelog correctly.
-	// WithSkipLookaside avoids expensive tarball downloads — only spec +
-	// sidecar files are needed for rendering.
-	preparerOpts := []sources.PreparerOption{
-		sources.WithGitRepo(env, env.LockReader(), distro.Version.ReleaseVer),
-		sources.WithDirtyDetection(),
+	// Prepare the dist-git dir with overlays, skipping lookaside downloads.
+	// Lock-file mode preserves upstream .git and creates synthetic history.
+	// Lock-file-free render deliberately avoids generated TOML history.
+	// WithSkipLookaside avoids expensive tarball downloads.
+	preparerOpts := append(renderGitRepoPreparerOptions(env, distro),
 		sources.WithSkipLookaside(),
 		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)),
-		sources.WithMockProcessor(mockProcessor),
+	)
+
+	var releaseManager *withoutLockfileRenderReleaseManager
+	if env.WithoutLockfile() {
+		releaseManager = newWithoutLockfileRenderReleaseManager(
+			env, comp, componentOutputDir,
+		)
+		preparerOpts = append(preparerOpts,
+			sources.WithBeforeOverlays(releaseManager.prepareBeforeOverlays))
 	}
 
 	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, preparerOpts...)
@@ -540,77 +539,34 @@ func prepareComponentSources(
 		return nil, fmt.Errorf("preparing sources for %#q:\n%w", componentName, prepErr)
 	}
 
-	// Find the spec file so we can pass the filename to mock.
+	// Ensure the expected spec exists in the prepared dist-git dir.
 	specPath, specErr := findSpecFile(env.FS(), componentDir, componentName)
 	if specErr != nil {
 		return nil, fmt.Errorf("finding spec file for %#q:\n%w", componentName, specErr)
 	}
 
+	if releaseManager != nil {
+		if releaseErr := releaseManager.finalize(componentDir, specPath); releaseErr != nil {
+			return nil, fmt.Errorf("managing release and changelog for %#q:\n%w",
+				componentName, releaseErr)
+		}
+	}
+
 	return &preparedComponent{
-		comp:         comp,
-		specFilename: filepath.Base(specPath),
+		comp: comp,
 	}, nil
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Phase 2: Batch mock processing
+// Phase 2: Parallel finishing
 // ──────────────────────────────────────────────────────────────────────────────
 
-// batchMockProcess runs rpmautospec and spectool for all prepared components in
-// a single mock chroot invocation. Returns a map from component name to result.
-//
-// NOTE: All components share one mock chroot initialized from the project's
-// default distro. Phase 1 resolves distro per-component for source fetching,
-// but the mock environment (macros, rpmautospec version, etc.) is uniform.
-// This matches the current Koji build model where all components target the
-// same distro version.
-func batchMockProcess(
-	env *azldev.Env,
-	mockProcessor *sources.MockProcessor,
-	stagingDir string,
-	prepared []*preparedComponent,
-) map[string]*sources.ComponentMockResult {
-	if len(prepared) == 0 {
-		return nil
-	}
-
-	// Build batch inputs from prepared components.
-	inputs := make([]sources.ComponentInput, len(prepared))
-	for idx, prep := range prepared {
-		inputs[idx] = sources.ComponentInput{
-			Name:         prep.comp.GetName(),
-			SpecFilename: prep.specFilename,
-		}
-	}
-
-	mockResults, err := mockProcessor.BatchProcess(env, env, stagingDir, inputs, env.FS(), env.CPUBoundConcurrency())
-	if err != nil {
-		slog.Error("Batch mock processing failed", "error", err)
-		// Return empty map — all components will get reported as errors in phase 3.
-		return nil
-	}
-
-	// Build lookup map for phase 3.
-	resultMap := make(map[string]*sources.ComponentMockResult, len(mockResults))
-	for idx := range mockResults {
-		resultMap[mockResults[idx].Name] = &mockResults[idx]
-	}
-
-	return resultMap
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Phase 3: Parallel finishing
-// ──────────────────────────────────────────────────────────────────────────────
-
-// parallelFinish applies mock results (file filtering, .git removal) and copies
-// rendered output for all successfully prepared components. In --check-only
-// mode, the copy step is replaced with a tree comparison and no disk writes
-// happen.
+// parallelFinish removes temporary git metadata and copies rendered output for
+// all successfully prepared components. In --check-only mode, the copy step is
+// replaced with a tree comparison and no disk writes happen.
 func parallelFinish(
 	env *azldev.Env,
 	prepared []*preparedComponent,
-	mockResultMap map[string]*sources.ComponentMockResult,
 	results []*RenderResult,
 	stagingDir string,
 	allowOverwrite bool,
@@ -634,7 +590,7 @@ func parallelFinish(
 		prepared,
 		func(done, _ int) { progressEvent.SetProgress(int64(done), total) },
 		func(_ context.Context, prep *preparedComponent) *RenderResult {
-			return finishOneComponent(workerEnv, env, prep, mockResultMap, stagingDir, allowOverwrite, checkOnly)
+			return finishOneComponent(workerEnv, env, prep, stagingDir, allowOverwrite, checkOnly)
 		},
 	)
 
@@ -663,7 +619,6 @@ func finishOneComponent(
 	workerEnv *azldev.Env,
 	env *azldev.Env,
 	prep *preparedComponent,
-	mockResultMap map[string]*sources.ComponentMockResult,
 	stagingDir string,
 	allowOverwrite bool,
 	checkOnly bool,
@@ -688,7 +643,7 @@ func finishOneComponent(
 		Status:    renderStatusOK,
 	}
 
-	drifted, err := finishComponentRender(env, prep, mockResultMap, stagingDir, allowOverwrite, checkOnly)
+	drifted, err := finishComponentRender(env, prep, stagingDir, allowOverwrite, checkOnly)
 	if err != nil {
 		slog.Error("Failed to finish rendering component",
 			"component", componentName, "error", err)
@@ -702,9 +657,9 @@ func finishOneComponent(
 	return result
 }
 
-// finishComponentRender applies mock results, filters unreferenced files,
-// removes .git, diffs the staging tree against the existing on-disk output,
-// and (unless checkOnly is set) copies the staging tree to the output dir.
+// finishComponentRender removes .git, diffs the staging tree against the
+// existing on-disk output, and (unless checkOnly is set) copies the staging
+// tree to the output dir.
 // stagingDir is the root staging directory containing the component's subdirectory.
 //
 // Returns changed=true when the staging tree differs from the existing output
@@ -714,45 +669,14 @@ func finishOneComponent(
 func finishComponentRender(
 	env *azldev.Env,
 	prep *preparedComponent,
-	mockResultMap map[string]*sources.ComponentMockResult,
 	stagingDir string,
 	allowOverwrite bool,
 	checkOnly bool,
 ) (bool, error) {
 	componentName := prep.comp.GetName()
 	componentDir := filepath.Join(stagingDir, componentName)
-	specPath := filepath.Join(componentDir, prep.specFilename)
-
-	// Check mock result.
-	mockResult, hasMockResult := mockResultMap[componentName]
-	if !hasMockResult {
-		return false, fmt.Errorf(
-			"no mock result for %#q (batch mock processing failed; see earlier errors)", componentName)
-	}
-
-	if mockResult.Error != nil {
-		return false, fmt.Errorf(
-			"mock processing failed for %#q:\n%w", componentName, mockResult.Error)
-	}
-
-	// Filter files using spectool result from batch mock.
-	// Skip filtering when:
-	// 1. The component config explicitly opts out via 'skip-file-filter'.
-	// 2. spectool output contains unexpanded RPM macros (%{...}), indicating
-	//    that the reported filenames don't match the real files on disk.
-	if prep.comp.GetConfig().Render.SkipFileFilter {
-		slog.Info("Skipping file filter ('skip-file-filter' is set)", "component", componentName)
-	} else if macro := findUnexpandedMacro(mockResult.SpecFiles); macro != "" {
-		slog.Info("Skipping file filter (spectool output contains unexpanded macros)",
-			"component", componentName, "example", macro)
-	} else if filterErr := removeUnreferencedFiles(
-		env.FS(), componentDir, specPath, mockResult.SpecFiles, componentName,
-	); filterErr != nil {
-		return false, fmt.Errorf("filtering unreferenced files for %#q:\n%w", componentName, filterErr)
-	}
 
 	// Remove .git directory — must not appear in rendered output.
-	// rpmautospec already read it during the batch mock phase.
 	gitDir := filepath.Join(componentDir, ".git")
 	if removeErr := env.FS().RemoveAll(gitDir); removeErr != nil {
 		slog.Debug("Failed to remove .git directory", "path", gitDir, "error", removeErr)
@@ -900,63 +824,6 @@ func copyRenderedOutput(env *azldev.Env, tempDir, componentOutputDir string, all
 
 	if copyErr := fileutils.CopyDirRecursive(env, env.FS(), tempDir, componentOutputDir, copyOptions); copyErr != nil {
 		return fmt.Errorf("copying rendered files to %#q:\n%w", componentOutputDir, copyErr)
-	}
-
-	return nil
-}
-
-// findUnexpandedMacro returns the first filename from specFiles that contains
-// an unexpanded RPM macro (i.e., a literal "%{...}" sequence), or "" if all
-// macros were resolved. When spectool cannot resolve a macro, it emits the raw
-// macro text as part of the filename (e.g., "57-%{fontpkgname1}.xml"), which
-// won't match any real file on disk.
-func findUnexpandedMacro(specFiles []string) string {
-	for _, f := range specFiles {
-		if strings.Contains(f, "%{") {
-			return f
-		}
-	}
-
-	return ""
-}
-
-// removeUnreferencedFiles removes files from the directory that aren't in the keep-list.
-// The keep-list is built from the spec file, the "sources" directory, and all
-// source/patch filenames provided. For paths with subdirectories (e.g., "patches/fix.patch"),
-// the top-level directory ("patches") is kept.
-func removeUnreferencedFiles(fs opctx.FS, tempDir, specPath string, specFiles []string, componentName string) error {
-	keepSet := make(map[string]bool, len(specFiles))
-	keepSet[filepath.Base(specPath)] = true
-	keepSet["sources"] = true // lookaside hashes/signatures; always preserved
-
-	for _, f := range specFiles {
-		// Extract the first path component so subdirectory entries are preserved.
-		topLevel := strings.SplitN(f, string(filepath.Separator), 2)[0] //nolint:mnd // split into at most 2 parts
-		keepSet[topLevel] = true
-	}
-
-	// Walk the temp directory and remove anything not in the keep set.
-	entries, readErr := fileutils.ReadDir(fs, tempDir)
-	if readErr != nil {
-		return fmt.Errorf("reading temp directory %#q:\n%w", tempDir, readErr)
-	}
-
-	for _, entry := range entries {
-		if keepSet[entry.Name()] {
-			continue
-		}
-
-		removePath := filepath.Join(tempDir, entry.Name())
-
-		slog.Debug("Filtering out unreferenced entry",
-			"component", componentName,
-			"file", entry.Name(),
-		)
-
-		if removeErr := fs.RemoveAll(removePath); removeErr != nil {
-			return fmt.Errorf("failed to remove filtered entry %#q for component %#q:\n%w",
-				entry.Name(), componentName, removeErr)
-		}
 	}
 
 	return nil

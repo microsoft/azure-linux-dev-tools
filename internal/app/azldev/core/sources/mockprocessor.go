@@ -5,8 +5,6 @@ package sources
 
 import (
 	"context"
-	_ "embed"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"path"
@@ -18,23 +16,16 @@ import (
 	"github.com/kballard/go-shellquote"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/mock"
-	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spectool"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 )
 
 // chrootProvenanceDir is the in-chroot mount point for the single component's
-// source directory when resolving %autorelease. It is distinct from the batch
-// staging mount so a CalculateRelease call never collides with BatchProcess.
+// source directory when resolving %autorelease.
 const chrootProvenanceDir = "/tmp/provenance"
 
-//go:embed render_process.py
-var renderProcessScript []byte
-
-// MockProcessor provides a shared mock chroot for running rpmautospec and
-// spectool during component source preparation and rendering. The chroot is
-// lazily initialized on first use and supports batch processing of multiple
-// components in a single mock invocation.
+// MockProcessor provides a shared mock chroot for source processing operations
+// that require RPM tooling. The chroot is lazily initialized on first use.
 type MockProcessor struct {
 	mu               sync.Mutex
 	runner           *mock.Runner
@@ -82,55 +73,6 @@ func NewMockProcessor(ctx opctx.Ctx, mockConfigPath string, opts ...MockProcesso
 	return processor
 }
 
-// ComponentInput describes a single component to process in the mock chroot.
-// Name must match the subdirectory name under the staging directory.
-type ComponentInput struct {
-	Name         string // Component name (matches subdirectory in staging dir)
-	SpecFilename string // Just the filename, e.g., "curl.spec"
-}
-
-// ComponentMockResult holds the mock processing result for one component.
-type ComponentMockResult struct {
-	Name      string   // Component name
-	SpecFiles []string // Files listed by spectool (basenames/relative paths)
-	Error     error    // Non-nil if rpmautospec or spectool failed for this component
-}
-
-// validateInputs validates all component inputs before batch processing.
-// Rejects empty names, path traversal, absolute paths, non-basename spec filenames,
-// and duplicate component names.
-func validateInputs(inputs []ComponentInput) error {
-	seen := make(map[string]bool, len(inputs))
-
-	for _, input := range inputs {
-		if err := validateComponentInput(input); err != nil {
-			return err
-		}
-
-		if seen[input.Name] {
-			return fmt.Errorf("duplicate component name %#q", input.Name)
-		}
-
-		seen[input.Name] = true
-	}
-
-	return nil
-}
-
-// validateComponentInput rejects component inputs that could cause path traversal
-// or other safety issues when used to construct paths inside the mock chroot.
-func validateComponentInput(input ComponentInput) error {
-	if err := fileutils.ValidateFilename(input.Name); err != nil {
-		return fmt.Errorf("invalid component name %#q:\n%w", input.Name, err)
-	}
-
-	if err := fileutils.ValidateFilename(input.SpecFilename); err != nil {
-		return fmt.Errorf("invalid spec filename %#q for component %#q:\n%w", input.SpecFilename, input.Name, err)
-	}
-
-	return nil
-}
-
 // initOnce lazily initializes the mock chroot. Caller must hold p.mu.
 func (p *MockProcessor) initOnce(ctx context.Context) error {
 	if p.initialized {
@@ -164,62 +106,6 @@ func (p *MockProcessor) initOnce(ctx context.Context) error {
 	return nil
 }
 
-// BatchProcess runs rpmautospec and spectool for multiple components in a single
-// mock chroot invocation. stagingDir is the host directory containing one
-// subdirectory per component (named by ComponentInput.Name). A single bind
-// mount exposes the entire staging tree to the chroot.
-//
-// Components are processed in parallel inside the chroot by an embedded
-// Python script (render_process.py) which returns a JSON file, and reports
-// per-component progress on stderr (mapped by mock to stdout).
-func (p *MockProcessor) BatchProcess(
-	ctx context.Context, events opctx.EventListener,
-	stagingDir string, inputs []ComponentInput, fs opctx.FS, maxWorkers int,
-) ([]ComponentMockResult, error) {
-	if len(inputs) == 0 {
-		return nil, nil
-	}
-
-	if err := validateInputs(inputs); err != nil {
-		return nil, err
-	}
-
-	jsonInputs := make([]componentInputJSON, len(inputs))
-	for idx, input := range inputs {
-		jsonInputs[idx] = componentInputJSON(input)
-	}
-
-	inputsBytes, err := json.Marshal(jsonInputs)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling inputs:\n%w", err)
-	}
-
-	slog.Info("Batch processing components in mock chroot", "count", len(inputs))
-
-	const chrootStagingPath = "/tmp/render"
-
-	workers := strconv.Itoa(max(1, maxWorkers)) // 1x CPU; mock work is CPU-bound
-
-	rawResults, err := p.runBatchScript(ctx, events, runBatchScriptOptions{
-		Mounts:          []batchBindMount{{Host: stagingDir, InChroot: chrootStagingPath}},
-		ScratchHost:     stagingDir,
-		ScratchInChroot: chrootStagingPath,
-		ScriptName:      "render_process.py",
-		ScriptBytes:     renderProcessScript,
-		InputsJSON:      inputsBytes,
-		ResultsName:     "results.json",
-		ScriptArgs:      []string{chrootStagingPath, workers},
-		ProgressLabel:   "Processing specs in mock chroot",
-		ProgressTotal:   int64(len(inputs)),
-		FS:              fs,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return parseBatchJSON(string(rawResults), inputs)
-}
-
 // batchBindMount describes one host-to-chroot bind mount used by runBatchScript.
 type batchBindMount struct {
 	Host     string
@@ -238,7 +124,7 @@ type runBatchScriptOptions struct {
 	// ScratchInChroot is the in-chroot path that maps to ScratchHost.
 	ScratchInChroot string
 	// ScriptName is the basename used when writing the embedded Python script
-	// into ScratchHost (e.g. "render_process.py").
+	// into ScratchHost.
 	ScriptName  string
 	ScriptBytes []byte
 	// InputsJSON is the JSON-encoded inputs manifest, written as
@@ -262,9 +148,8 @@ type runBatchScriptOptions struct {
 // emit "PROGRESS <i>/<total> <name>" lines and write a results file), and
 // returns the raw results bytes.
 //
-// This is the shared scaffolding for BatchProcess (rendering) and
-// BatchQuerySpecs (querying). Per-operation concerns (input/result shape,
-// embedded script, result parsing) live in the callers.
+// This is shared scaffolding for batched mock operations such as querying
+// specs. Per-operation concerns live in the callers.
 //
 
 func (p *MockProcessor) runBatchScript(
@@ -360,7 +245,7 @@ func (p *MockProcessor) runBatchScript(
 // history; it is bind-mounted read/write into the chroot. specFilename is the
 // spec's basename within that directory. The raw command output is returned;
 // the caller parses and validates it. The chroot is lazily initialized on first
-// use, shared with [MockProcessor.BatchProcess].
+// use.
 func (p *MockProcessor) CalculateRelease(ctx context.Context, specHostDir, specFilename string) (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -396,58 +281,6 @@ func (p *MockProcessor) CalculateRelease(ctx context.Context, specHostDir, specF
 	}
 
 	return out, nil
-}
-
-// componentInputJSON is the JSON-serializable form written to inputs.json.
-type componentInputJSON struct {
-	Name         string `json:"name"`
-	SpecFilename string `json:"specFilename"`
-}
-
-// componentResultJSON mirrors the JSON output from render_process.py.
-type componentResultJSON struct {
-	Name      string  `json:"name"`
-	SpecFiles string  `json:"specFiles"`
-	Error     *string `json:"error"`
-}
-
-// parseBatchJSON parses the JSON array produced by render_process.py into
-// ComponentMockResult values. The spectool output (raw lines) is parsed into
-// individual filenames.
-func parseBatchJSON(stdout string, inputs []ComponentInput) ([]ComponentMockResult, error) {
-	var jsonResults []componentResultJSON
-	if err := json.Unmarshal([]byte(stdout), &jsonResults); err != nil {
-		return nil, fmt.Errorf("parsing batch results JSON:\n%w", err)
-	}
-
-	// Build a lookup map from the JSON results.
-	resultMap := make(map[string]*componentResultJSON, len(jsonResults))
-	for idx := range jsonResults {
-		resultMap[jsonResults[idx].Name] = &jsonResults[idx]
-	}
-
-	results := make([]ComponentMockResult, len(inputs))
-
-	for idx, input := range inputs {
-		results[idx].Name = input.Name
-
-		compResult, ok := resultMap[input.Name]
-		if !ok {
-			results[idx].Error = fmt.Errorf("no result returned for %#q", input.Name)
-
-			continue
-		}
-
-		if compResult.Error != nil {
-			results[idx].Error = fmt.Errorf("%s", *compResult.Error)
-
-			continue
-		}
-
-		results[idx].SpecFiles = spectool.ParseSpectoolOutput(compResult.SpecFiles)
-	}
-
-	return results, nil
 }
 
 // Destroy cleans up the mock chroot. It should be called when source processing is complete.
