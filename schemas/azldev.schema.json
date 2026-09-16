@@ -729,6 +729,18 @@
           "$ref": "#/$defs/ImagePublishConfig",
           "title": "Publish settings",
           "description": "Publishing settings for this image"
+        },
+        "architectures": {
+          "items": {
+            "type": "string",
+            "enum": [
+              "x86_64",
+              "aarch64"
+            ]
+          },
+          "type": "array",
+          "title": "Architectures",
+          "description": "Architectures supported by this image (optional; unset means unrestricted)"
         }
       },
       "additionalProperties": false,

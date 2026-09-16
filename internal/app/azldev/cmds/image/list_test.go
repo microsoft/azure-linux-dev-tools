@@ -46,16 +46,18 @@ func TestListImages_AllImages(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
 	testEnv.Config.Images = map[string]projectconfig.ImageConfig{
 		"image-a": {
-			Name:        "image-a",
-			Description: "Image A description",
+			Name:          "image-a",
+			Description:   "Image A description",
+			Architectures: []string{"x86_64", "aarch64"},
 			Definition: projectconfig.ImageDefinition{
 				DefinitionType: projectconfig.ImageDefinitionTypeKiwi,
 				Path:           "/path/to/image-a.kiwi",
 			},
 		},
 		"image-b": {
-			Name:        "image-b",
-			Description: "Image B description",
+			Name:          "image-b",
+			Description:   "Image B description",
+			Architectures: []string{"x86_64"},
 			Definition: projectconfig.ImageDefinition{
 				DefinitionType: projectconfig.ImageDefinitionTypeKiwi,
 				Path:           "/path/to/image-b.kiwi",
@@ -72,11 +74,31 @@ func TestListImages_AllImages(t *testing.T) {
 	// Results should be sorted alphabetically by name.
 	assert.Equal(t, "image-a", results[0].Name)
 	assert.Equal(t, "Image A description", results[0].Description)
+	assert.Equal(t, []string{"x86_64", "aarch64"}, results[0].Architectures)
+	assert.Equal(t, "x86_64, aarch64", results[0].ArchitecturesSummary)
 	assert.Equal(t, "kiwi", results[0].Definition.Type)
 	assert.Equal(t, "/path/to/image-a.kiwi", results[0].Definition.Path)
 
 	assert.Equal(t, "image-b", results[1].Name)
 	assert.Equal(t, "Image B description", results[1].Description)
+	assert.Equal(t, []string{"x86_64"}, results[1].Architectures)
+	assert.Equal(t, "x86_64", results[1].ArchitecturesSummary)
+}
+
+func TestListImages_ArchitecturesPerImage(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+	testEnv.Config.Images = map[string]projectconfig.ImageConfig{
+		"gen1": {
+			Name:          "gen1",
+			Architectures: []string{"x86_64"},
+		},
+	}
+
+	results, err := image.ListImages(testEnv.Env, &image.ListImageOptions{})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, []string{"x86_64"}, results[0].Architectures)
+	assert.Equal(t, "x86_64", results[0].ArchitecturesSummary)
 }
 
 func TestListImages_WithCapabilitiesAndTests(t *testing.T) {
