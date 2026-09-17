@@ -21,19 +21,40 @@ const (
 	PackageStatusAddedInRight PackageStatus = "added-in-right"
 	// PackageStatusArchitecturesDiffer indicates that matching NEVRs have different architecture sets.
 	PackageStatusArchitecturesDiffer PackageStatus = "architectures-differ"
+	// PackageStatusContentDifferent indicates that matching package identities have different content.
+	PackageStatusContentDifferent PackageStatus = "content-different"
+	// PackageStatusContentComparisonSkipped indicates that matching package identities use different checksum algorithms.
+	PackageStatusContentComparisonSkipped PackageStatus = "content-comparison-skipped"
 )
 
 // Options controls package inventory comparison behavior.
 type Options struct {
 	IgnoreOlderAddedInRight bool
+	CompareChecksums        bool
 }
 
 // PackageReport summarizes both inventories for one differing package name.
 type PackageReport struct {
-	Name       string `json:"name"       table:"Name"`
-	Summary    string `json:"summary"    table:"Summary"`
-	LeftNEVRs  string `json:"leftNevrs"  table:"Left NEVRs"`
-	RightNEVRs string `json:"rightNevrs" table:"Right NEVRs"`
+	Name               string              `json:"name"                         table:"Name"`
+	Summary            string              `json:"summary"                      table:"Summary"`
+	LeftNEVRs          string              `json:"leftNevrs"                    table:"Left NEVRs"`
+	RightNEVRs         string              `json:"rightNevrs"                   table:"Right NEVRs"`
+	ContentDifferences []ContentDifference `json:"contentDifferences,omitempty" table:"-"`
+}
+
+// ContentDifference describes checksum and size differences for one matching package identity.
+type ContentDifference struct {
+	Package string           `json:"package"`
+	Kind    string           `json:"kind"`
+	Left    []PackageContent `json:"left"`
+	Right   []PackageContent `json:"right"`
+}
+
+// PackageContent identifies one checksum and size variant of a package identity.
+type PackageContent struct {
+	ChecksumType string `json:"checksumType"`
+	Checksum     string `json:"checksum"`
+	Size         int64  `json:"size"`
 }
 
 // MissingPackage is a package version present on the left but absent from the right.
@@ -44,10 +65,12 @@ type MissingPackage struct {
 
 // DiffStat summarizes package-level inventory differences.
 type DiffStat struct {
-	MissingFromRight    int `json:"missingFromRight"    table:"Missing from right"`
-	AddedInRight        int `json:"addedInRight"        table:"Added in right"`
-	ArchitecturesDiffer int `json:"architecturesDiffer" table:"Architectures differ"`
-	Total               int `json:"total"               table:"Total"`
+	MissingFromRight         int `json:"missingFromRight"         table:"Missing from right"`
+	AddedInRight             int `json:"addedInRight"             table:"Added in right"`
+	ArchitecturesDiffer      int `json:"architecturesDiffer"      table:"Architectures differ"`
+	ContentDifferent         int `json:"contentDifferent"         table:"Content different"`
+	ContentComparisonSkipped int `json:"contentComparisonSkipped" table:"Content comparison skipped"`
+	Total                    int `json:"total"                    table:"Total"`
 }
 
 // MissingFromRightStat summarizes package versions missing from the right inventory.
@@ -71,7 +94,7 @@ func CompareWithOptions(left, right []Package, options Options) ([]PackageReport
 		leftPackages := leftByName[name]
 		rightPackages := rightByName[name]
 
-		statuses, err := packageStatuses(leftPackages, rightPackages, options)
+		statuses, contentDifferences, err := packageStatuses(leftPackages, rightPackages, options)
 		if err != nil {
 			return nil, fmt.Errorf("comparing package %#q:\n%w", name, err)
 		}
@@ -91,10 +114,11 @@ func CompareWithOptions(left, right []Package, options Options) ([]PackageReport
 		}
 
 		reports = append(reports, PackageReport{
-			Name:       name,
-			Summary:    joinStatuses(statuses),
-			LeftNEVRs:  strings.Join(leftNEVRs, ", "),
-			RightNEVRs: strings.Join(rightNEVRs, ", "),
+			Name:               name,
+			Summary:            joinStatuses(statuses),
+			LeftNEVRs:          strings.Join(leftNEVRs, ", "),
+			RightNEVRs:         strings.Join(rightNEVRs, ", "),
+			ContentDifferences: contentDifferences,
 		})
 	}
 
@@ -116,6 +140,14 @@ func Summarize(reports []PackageReport) DiffStat {
 
 		if report.hasStatus(PackageStatusArchitecturesDiffer) {
 			result.ArchitecturesDiffer++
+		}
+
+		if report.hasStatus(PackageStatusContentDifferent) {
+			result.ContentDifferent++
+		}
+
+		if report.hasStatus(PackageStatusContentComparisonSkipped) {
+			result.ContentComparisonSkipped++
 		}
 	}
 
@@ -155,7 +187,11 @@ func MissingFromRight(left, right []Package) []MissingPackage {
 	return result
 }
 
-func packageStatuses(left, right []Package, options Options) ([]PackageStatus, error) {
+func packageStatuses(
+	left []Package,
+	right []Package,
+	options Options,
+) ([]PackageStatus, []ContentDifference, error) {
 	leftIdentities := identitySet(left)
 	rightIdentities := identitySet(right)
 
@@ -169,7 +205,7 @@ func packageStatuses(left, right []Package, options Options) ([]PackageStatus, e
 		left, right, leftIdentities, options.IgnoreOlderAddedInRight,
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if hasRightAddition {
@@ -180,7 +216,103 @@ func packageStatuses(left, right []Package, options Options) ([]PackageStatus, e
 		statuses = append(statuses, PackageStatusArchitecturesDiffer)
 	}
 
-	return statuses, nil
+	contentDifferent, contentSkipped, contentDifferences := analyzeContent(
+		left, right, options.CompareChecksums,
+	)
+	if contentDifferent {
+		statuses = append(statuses, PackageStatusContentDifferent)
+	}
+
+	if contentSkipped {
+		statuses = append(statuses, PackageStatusContentComparisonSkipped)
+	}
+
+	return statuses, contentDifferences, nil
+}
+
+func analyzeContent(
+	left []Package,
+	right []Package,
+	enabled bool,
+) (different bool, skipped bool, details []ContentDifference) {
+	if !enabled {
+		return false, false, nil
+	}
+
+	leftByIdentity := packagesByIdentity(left)
+	rightByIdentity := packagesByIdentity(right)
+	details = make([]ContentDifference, 0, len(leftByIdentity))
+
+	for identity, leftPackages := range leftByIdentity {
+		rightPackages := rightByIdentity[identity]
+		if len(rightPackages) == 0 {
+			continue
+		}
+
+		leftAlgorithms := checksumAlgorithms(leftPackages)
+
+		rightAlgorithms := checksumAlgorithms(rightPackages)
+		if len(leftAlgorithms) != 1 || len(rightAlgorithms) != 1 ||
+			leftAlgorithms[0] != rightAlgorithms[0] {
+			skipped = true
+
+			continue
+		}
+
+		if equalStrings(checksumVariants(leftPackages), checksumVariants(rightPackages)) {
+			continue
+		}
+
+		different = true
+
+		details = append(details, ContentDifference{
+			Package: leftPackages[0].NEVRA(),
+			Kind:    string(leftPackages[0].Kind),
+			Left:    packageContents(leftPackages),
+			Right:   packageContents(rightPackages),
+		})
+	}
+
+	sort.Slice(details, func(leftIndex, rightIndex int) bool {
+		if details[leftIndex].Package != details[rightIndex].Package {
+			return details[leftIndex].Package < details[rightIndex].Package
+		}
+
+		return details[leftIndex].Kind < details[rightIndex].Kind
+	})
+
+	if len(details) == 0 {
+		details = nil
+	}
+
+	return different, skipped, details
+}
+
+func packageContents(packages []Package) []PackageContent {
+	byVariant := make(map[string]PackageContent)
+
+	for _, pkg := range packages {
+		key := fmt.Sprintf("%s\x00%s\x00%d", pkg.ChecksumType, pkg.Checksum, pkg.Size)
+		byVariant[key] = PackageContent{
+			ChecksumType: pkg.ChecksumType,
+			Checksum:     pkg.Checksum,
+			Size:         pkg.Size,
+		}
+	}
+
+	keys := make([]string, 0, len(byVariant))
+	for key := range byVariant {
+		keys = append(keys, key)
+	}
+
+	sort.Strings(keys)
+
+	result := make([]PackageContent, 0, len(keys))
+	for _, key := range keys {
+		result = append(result, byVariant[key])
+	}
+
+	return result
 }
 
 func hasUnignoredRightAddition(
@@ -246,6 +378,46 @@ func identitySet(packages []Package) map[string]struct{} {
 	for _, pkg := range packages {
 		result[pkg.Identity()] = struct{}{}
 	}
+
+	return result
+}
+
+func packagesByIdentity(packages []Package) map[string][]Package {
+	result := make(map[string][]Package)
+	for _, pkg := range packages {
+		result[pkg.Identity()] = append(result[pkg.Identity()], pkg)
+	}
+
+	return result
+}
+
+func checksumAlgorithms(packages []Package) []string {
+	values := make(map[string]struct{})
+	for _, pkg := range packages {
+		values[pkg.ChecksumType] = struct{}{}
+	}
+
+	return sortedKeys(values)
+}
+
+func checksumVariants(packages []Package) []string {
+	values := make(map[string]struct{})
+
+	for _, pkg := range packages {
+		value := fmt.Sprintf("%s:%s:%d", pkg.ChecksumType, pkg.Checksum, pkg.Size)
+		values[value] = struct{}{}
+	}
+
+	return sortedKeys(values)
+}
+
+func sortedKeys(values map[string]struct{}) []string {
+	result := make([]string, 0, len(values))
+	for value := range values {
+		result = append(result, value)
+	}
+
+	sort.Strings(result)
 
 	return result
 }
@@ -374,13 +546,7 @@ func joinStatuses(statuses []PackageStatus) string {
 }
 
 func (r PackageReport) hasStatus(status PackageStatus) bool {
-	for value := range strings.SplitSeq(r.Summary, ", ") {
-		if value == string(status) {
-			return true
-		}
-	}
-
-	return false
+	return strings.Contains(", "+r.Summary+", ", ", "+string(status)+", ")
 }
 
 func packageVersionKey(pkg Package) string {

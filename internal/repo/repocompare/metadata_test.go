@@ -53,6 +53,8 @@ func TestLoadRepositories(t *testing.T) {
   <package type="rpm">
     <name>bash</name><arch>x86_64</arch>
     <version epoch="" ver="5.3" rel="1.azl4"/>
+		<checksum type="sha256">abc123</checksum>
+		<size package="42"/>
   </package>
 </metadata>`)
 
@@ -84,6 +86,9 @@ func TestLoadRepositories(t *testing.T) {
 	assert.Equal(t, "0", packages[0].Epoch)
 	assert.Equal(t, "bash-5.3-1.azl4.x86_64", packages[0].NEVRA())
 	assert.Equal(t, projectconfig.SubrepoKindBinary, packages[0].Kind)
+	assert.Equal(t, "sha256", packages[0].ChecksumType)
+	assert.Equal(t, "abc123", packages[0].Checksum)
+	assert.Equal(t, int64(42), packages[0].Size)
 }
 
 func TestLoadRepositoriesRejectsMissingPrimaryMetadata(t *testing.T) {

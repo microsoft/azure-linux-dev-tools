@@ -22,6 +22,7 @@ type CompareOptions struct {
 	Arches           []string
 	MissingFromRight bool
 	IgnoreOlderAdded bool
+	CompareChecksums bool
 	Stat             bool
 }
 
@@ -40,14 +41,14 @@ func NewCompareCmd() *cobra.Command {
 
 The command expands each named [resources.rpm-repo-sets] entry using its selected
 template. The report groups differences by package name and shows summary
-statuses plus the complete left and right NEVR inventories. Package content is
-not compared.
+statuses plus the complete left and right NEVR inventories.
 
 Use --missing-from-right to return package versions present on the left but
 absent from the right, regardless of architecture or artifact kind. Use
 --ignore-older-added-in-right to suppress historical right-side versions when
-the left has a newer matching package. Use --stat to return only counts for the
-selected comparison mode.`,
+the left has a newer matching package. Use --compare-checksums to compare
+checksums and sizes for matching identities. Use --stat for counts only. JSON
+output includes exact content variants.`,
 	}
 
 	cmd.RunE = azldev.RunFunc(func(env *azldev.Env) (interface{}, error) {
@@ -62,6 +63,8 @@ selected comparison mode.`,
 		"show package versions absent from the right, ignoring architecture and artifact kind")
 	cmd.Flags().BoolVar(&options.IgnoreOlderAdded, "ignore-older-added-in-right", false,
 		"ignore right-only identities older than a matching left package identity")
+	cmd.Flags().BoolVar(&options.CompareChecksums, "compare-checksums", false,
+		"compare checksum and size for matching package identities")
 	cmd.Flags().BoolVar(&options.Stat, "stat", false, "show only package-level difference counts")
 
 	for _, name := range []string{"left", "right"} {
@@ -123,16 +126,12 @@ func runCompare(
 	}
 
 	if options.MissingFromRight {
-		missing := repocompare.MissingFromRight(leftPackages, rightPackages)
-		if options.Stat {
-			return repocompare.MissingFromRightStat{MissingFromRight: len(missing)}, nil
-		}
-
-		return missing, nil
+		return compareMissingFromRight(leftPackages, rightPackages, options)
 	}
 
 	reports, err := repocompare.CompareWithOptions(leftPackages, rightPackages, repocompare.Options{
 		IgnoreOlderAddedInRight: options.IgnoreOlderAdded,
+		CompareChecksums:        options.CompareChecksums,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("comparing repository inventories:\n%w", err)
@@ -143,6 +142,19 @@ func runCompare(
 	}
 
 	return reports, nil
+}
+
+func compareMissingFromRight(
+	leftPackages []repocompare.Package,
+	rightPackages []repocompare.Package,
+	options *CompareOptions,
+) (interface{}, error) {
+	missing := repocompare.MissingFromRight(leftPackages, rightPackages)
+	if options.Stat {
+		return repocompare.MissingFromRightStat{MissingFromRight: len(missing)}, nil
+	}
+
+	return missing, nil
 }
 
 func comparisonRepositories(

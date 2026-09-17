@@ -10,14 +10,14 @@ Compare package identities in two configured RPM repo sets.
 
 The command expands each named [resources.rpm-repo-sets] entry using its selected
 template. The report groups differences by package name and shows summary
-statuses plus the complete left and right NEVR inventories. Package content is
-not compared.
+statuses plus the complete left and right NEVR inventories.
 
 Use --missing-from-right to return package versions present on the left but
 absent from the right, regardless of architecture or artifact kind. Use
 --ignore-older-added-in-right to suppress historical right-side versions when
-the left has a newer matching package. Use --stat to return only counts for the
-selected comparison mode.
+the left has a newer matching package. Use --compare-checksums to compare
+checksums and sizes for matching identities. Use --stat for counts only. JSON
+output includes exact content variants.
 
 ```
 azldev repo compare [flags]
@@ -27,6 +27,7 @@ azldev repo compare [flags]
 
 ```
       --arch strings                  comma-separated target architectures (default [x86_64,aarch64])
+      --compare-checksums             compare checksum and size for matching package identities
   -h, --help                          help for compare
       --ignore-older-added-in-right   ignore right-only identities older than a matching left package identity
       --left string                   left [resources.rpm-repo-sets] name

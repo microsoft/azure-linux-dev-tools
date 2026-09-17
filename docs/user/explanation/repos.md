@@ -134,8 +134,19 @@ different architecture sets also receive `architectures-differ`. Replicated
 are compared; for example, a binary-only Koji set does not compare against PMC
 source or debug repositories.
 
-This comparison checks inventory only. It does not compare RPM bytes,
-signatures, checksums, or publication routing.
+Use `--compare-checksums` to compare matching package identities by checksum and
+size. If checksum algorithms differ, the report records
+`content-comparison-skipped`. Leave checksum comparison disabled when expected
+transformations such as package signing change complete-RPM bytes.
+
+Use JSON output to inspect exact content differences. Each `content-different`
+package includes a `contentDifferences` array with the matching NEVRA, artifact
+kind, and deduplicated checksum type, checksum, and size variants from each
+side:
+
+```sh
+azldev repo compare --left koji-build --right pmc-prod -O json
+```
 
 Use `--missing-from-right` to return package versions present on the left but
 absent from the right, ignoring architecture and artifact kind:
