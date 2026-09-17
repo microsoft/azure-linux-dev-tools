@@ -74,6 +74,12 @@ Refresh after changing a commit pin, upstream distro or version, or snapshot.
 Overlay, build-config, and metadata changes do not affect the resolved commit, so
 they need only a re-render.
 
+When refreshing multiple components, resolution failures are reported per
+component without discarding successful work. TOML files for successfully
+resolved components are created or updated before the command exits with an
+error. Failed components remain unchanged, and orphan pruning is skipped for
+that run.
+
 Commit the refreshed TOML together with the rendered output: synthetic dist-git
 history — and therefore `%autorelease` and `%autochangelog` expansion — is derived
 from committed changes to the generated file. Unlike the default mode, there is no

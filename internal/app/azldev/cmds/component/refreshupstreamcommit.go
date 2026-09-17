@@ -61,6 +61,11 @@ Configuration is loaded permissively for this command so stale generated pins
 cannot prevent cleanup after a component is removed or changed to another
 source type. Other configuration validation failures are reported as warnings.
 
+If an upstream component fails to resolve and '--check-only' is not set,
+successful components are still written before the command returns an error.
+Failed components are left unchanged, and orphan pruning is skipped for that
+run.
+
 When updating all components (-a), orphan generated TOML files are
 automatically pruned.
 Orphan pruning is skipped when updating individual components to avoid
@@ -171,14 +176,17 @@ func RefreshUpstreamCommits(
 		return results, errors.New("refresh cancelled; upstream commit TOML files not updated")
 	}
 
-	// Check results and bail on errors before saving.
-	if err := checkRefreshErrors(results); err != nil {
-		return filterRefreshDisplayResults(results), err
-	}
-
-	// Write per-component TOML files only on full success.
+	// Write successful per-component results even when other components failed.
+	// Failed and externally-cancelled results are skipped by the save helper.
 	if err := saveUpstreamCommitConfigs(store, results, options.CheckOnly); err != nil {
 		return results, err
+	}
+
+	// Return the aggregate resolution error after preserving successful work.
+	// Do not prune orphans after a partial refresh so a failed run only
+	// persists successful component updates and avoids unrelated cleanup.
+	if err := checkRefreshErrors(results, options.CheckOnly); err != nil {
+		return filterRefreshDisplayResults(results), err
 	}
 
 	// Skipped in --check-only mode -- the "changed" counter would lie about a
@@ -425,8 +433,7 @@ func applyRefreshResult(
 }
 
 // checkRefreshErrors returns an error if any component failed to resolve.
-// Does NOT log a summary; call [logRefreshSummary] after saves are complete.
-func checkRefreshErrors(results []RefreshUpstreamCommitResult) error {
+func checkRefreshErrors(results []RefreshUpstreamCommitResult, checkOnly bool) error {
 	var failedNames []string
 
 	for idx := range results {
@@ -440,8 +447,14 @@ func checkRefreshErrors(results []RefreshUpstreamCommitResult) error {
 			"total", len(results),
 			"errors", len(failedNames))
 
+		if checkOnly {
+			return fmt.Errorf(
+				"%d component(s) failed to resolve during '--check-only'; no upstream commit TOML files were updated:\n  %s",
+				len(failedNames), strings.Join(failedNames, "\n  "))
+		}
+
 		return fmt.Errorf(
-			"%d component(s) failed to resolve; upstream commit TOML files not updated:\n  %s",
+			"%d component(s) failed to resolve; successful upstream commit TOML files were updated:\n  %s",
 			len(failedNames), strings.Join(failedNames, "\n  "))
 	}
 
@@ -521,14 +534,14 @@ func resolveUpstreamCommitsParallel(
 			progressEvent.SetProgress(int64(done), int64(len(comps)))
 		},
 		func(ctx context.Context, item refreshParallelItem) struct{} {
-			resolveAndRecordCommit(ctx, workerEnv, cancel, item.comp, store, &results[item.idx])
+			resolveAndRecordCommit(ctx, workerEnv, item.comp, store, &results[item.idx])
 
 			return struct{}{}
 		},
 	)
 
-	// Items that never acquired a worker slot (ctx cancelled mid-flight) get
-	// marked Skipped — matches the legacy semaphore-select behaviour.
+	// Items that never acquired a worker slot due to external cancellation get
+	// marked skipped. Per-component errors do not cancel the remaining work.
 	for i, pr := range parmapResults {
 		if pr.Cancelled {
 			idx := parallel[i].idx
@@ -550,7 +563,6 @@ type refreshParallelItem struct {
 func resolveAndRecordCommit(
 	ctx context.Context,
 	env *azldev.Env,
-	cancel context.CancelFunc,
 	comp components.Component,
 	store *upstreamcommit.Store,
 	result *RefreshUpstreamCommitResult,
@@ -565,9 +577,6 @@ func resolveAndRecordCommit(
 	commit, resolveErr := resolveUpstreamCommit(ctx, env, comp)
 	if resolveErr != nil {
 		result.Error = resolveErr.Error()
-
-		// Cancel remaining goroutines on first real failure.
-		cancel()
 
 		return
 	}
