@@ -396,6 +396,10 @@ var tagRegex = regexp.MustCompile(`^\s*([^\s:]+):\s*(.*?)\s*$`)
 func parseTagLine(line string) (tag, value string, ok bool) {
 	const reSubmatchCount = 3
 
+	if strings.HasPrefix(strings.TrimSpace(line), "#") {
+		return "", "", false
+	}
+
 	matches := tagRegex.FindStringSubmatch(line)
 	if len(matches) != reSubmatchCount {
 		return "", "", false
