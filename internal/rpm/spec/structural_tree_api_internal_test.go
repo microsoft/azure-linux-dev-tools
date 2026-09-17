@@ -13,6 +13,46 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestParseTagLineRejectsComments(t *testing.T) {
+	tests := []struct {
+		name          string
+		line          string
+		expectedTag   string
+		expectedValue string
+		expectedOK    bool
+	}{
+		{
+			name:          "tag",
+			line:          "Patch0: enabled.patch",
+			expectedTag:   "Patch0",
+			expectedValue: "enabled.patch",
+			expectedOK:    true,
+		},
+		{
+			name: "comment without space",
+			line: "#Patch0: disabled.patch",
+		},
+		{
+			name: "comment with space",
+			line: "# Patch0: disabled.patch",
+		},
+		{
+			name: "indented comment",
+			line: "  #Patch0: disabled.patch",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			tag, value, ok := parseTagLine(testCase.line)
+
+			assert.Equal(t, testCase.expectedTag, tag)
+			assert.Equal(t, testCase.expectedValue, value)
+			assert.Equal(t, testCase.expectedOK, ok)
+		})
+	}
+}
+
 func TestVisitAllLinesTracksPhysicalLineNumbersThroughConditionals(t *testing.T) {
 	tests := []struct {
 		name     string
