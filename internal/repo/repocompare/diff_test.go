@@ -192,3 +192,57 @@ func TestCompareDoesNotIgnoreNewerOrDifferentArchAddedInRight(t *testing.T) {
 		RightNEVRs: "pkg-3-1.azl4, pkg-1-1.azl4",
 	}}, reports)
 }
+
+func TestCompareReportsContentDifference(t *testing.T) {
+	t.Parallel()
+
+	left := testPackage("pkg", "1", "x86_64")
+	left.ChecksumType, left.Checksum, left.Size = "sha256", "left", 10
+	right := left
+	right.Checksum, right.Size = "right", 11
+
+	reports, err := repocompare.CompareWithOptions(
+		[]repocompare.Package{left},
+		[]repocompare.Package{right},
+		repocompare.Options{CompareChecksums: true},
+	)
+	require.NoError(t, err)
+	require.Len(t, reports, 1)
+	assert.Equal(t, "content-different", reports[0].Summary)
+	assert.Equal(t, []repocompare.ContentDifference{{
+		Package: "pkg-1-1.azl4.x86_64",
+		Kind:    "binary",
+		Left: []repocompare.PackageContent{{
+			ChecksumType: "sha256", Checksum: "left", Size: 10,
+		}},
+		Right: []repocompare.PackageContent{{
+			ChecksumType: "sha256", Checksum: "right", Size: 11,
+		}},
+	}}, reports[0].ContentDifferences)
+
+	reports, err = repocompare.CompareWithOptions(
+		[]repocompare.Package{left},
+		[]repocompare.Package{right},
+		repocompare.Options{},
+	)
+	require.NoError(t, err)
+	assert.Empty(t, reports)
+}
+
+func TestCompareReportsSkippedMixedChecksumAlgorithms(t *testing.T) {
+	t.Parallel()
+
+	left := testPackage("pkg", "1", "x86_64")
+	left.ChecksumType, left.Checksum = "sha256", "left"
+	right := left
+	right.ChecksumType, right.Checksum = "sha512", "right"
+
+	reports, err := repocompare.CompareWithOptions(
+		[]repocompare.Package{left},
+		[]repocompare.Package{right},
+		repocompare.Options{CompareChecksums: true},
+	)
+	require.NoError(t, err)
+	require.Len(t, reports, 1)
+	assert.Equal(t, "content-comparison-skipped", reports[0].Summary)
+}
