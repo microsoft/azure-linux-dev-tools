@@ -19,6 +19,8 @@ func TestVisitTags(t *testing.T) {
 	input := `Name: main-pkg
 Version: 1.0
 Patch0: main.patch
+#Patch9: disabled.patch
+# Patch10: disabled.patch
 
 %package devel
 Summary: Development files
