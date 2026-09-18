@@ -142,6 +142,92 @@ func TestUpdateComponents_WritesFingerprint(t *testing.T) {
 	assert.Contains(t, lock.InputFingerprint, "sha256:")
 }
 
+func TestUpdateComponents_ContinuesAfterComponentError(t *testing.T) {
+	tests := []struct {
+		name             string
+		checkOnly        bool
+		expectedError    string
+		expectSuccessful bool
+	}{
+		{
+			name:             "update",
+			expectedError:    "successful lock files were updated",
+			expectSuccessful: true,
+		},
+		{
+			name:          "check only",
+			checkOnly:     true,
+			expectedError: "no lock files were updated",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			env.Env.SetConcurrency(1)
+
+			const (
+				failingComponent    = "a-fails"
+				successfulComponent = "z-succeeds"
+				commit              = "aabbccdd11223344"
+			)
+
+			setupMockGit(env, commit)
+			addUpstreamComponent(env, successfulComponent)
+			env.Config.Components[failingComponent] = projectconfig.ComponentConfig{
+				Name: failingComponent,
+				Spec: projectconfig.SpecSource{
+					SourceType: projectconfig.SpecSourceTypeUpstream,
+					UpstreamDistro: projectconfig.DistroReference{
+						Name: "missing-distro",
+					},
+				},
+			}
+
+			require.NoError(t, fileutils.MkdirAll(env.TestFS, testLockDir))
+			store := lockfile.NewStore(env.TestFS, testLockDir)
+			failingLock := lockfile.New()
+			failingLock.UpstreamCommit = "old-failing-commit"
+			require.NoError(t, store.Save(failingComponent, failingLock))
+
+			results, err := componentcmds.UpdateComponents(
+				env.Env,
+				&componentcmds.UpdateComponentOptions{
+					ComponentFilter: components.ComponentFilter{IncludeAllComponents: true},
+					CheckOnly:       test.checkOnly,
+				},
+			)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), test.expectedError)
+			require.Len(t, results, 2)
+
+			resultsByComponent := make(map[string]componentcmds.UpdateResult, len(results))
+			for _, result := range results {
+				resultsByComponent[result.Component] = result
+			}
+
+			assert.NotEmpty(t, resultsByComponent[failingComponent].Error)
+			assert.False(t, resultsByComponent[failingComponent].Skipped)
+			assert.Equal(t, commit, resultsByComponent[successfulComponent].UpstreamCommit)
+			assert.True(t, resultsByComponent[successfulComponent].Changed)
+
+			store = lockfile.NewStore(env.TestFS, testLockDir)
+			savedFailingLock, loadErr := store.Get(failingComponent)
+			require.NoError(t, loadErr)
+			assert.Equal(t, "old-failing-commit", savedFailingLock.UpstreamCommit)
+
+			successfulLock, loadErr := store.Get(successfulComponent)
+			if test.expectSuccessful {
+				require.NoError(t, loadErr)
+				assert.Equal(t, commit, successfulLock.UpstreamCommit)
+				assert.NotEmpty(t, successfulLock.InputFingerprint)
+			} else {
+				require.Error(t, loadErr)
+			}
+		})
+	}
+}
+
 // TestUpdateComponents_FingerprintLifecycle exercises the full update → modify → re-update
 // flow through the public UpdateComponents API.
 func TestUpdateComponents_FingerprintLifecycle(t *testing.T) {
