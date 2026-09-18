@@ -272,6 +272,47 @@ func TestProjectConfigValidation_DuplicateTestGroupReferenceInImage(t *testing.T
 	assert.Contains(t, err.Error(), "bvt")
 }
 
+func TestProjectConfigValidation_ImageSKUGroup(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.SKUGroups["performance"] = projectconfig.SKUGroup{
+		VMSizes: []string{"Standard_D4s_v5", "Standard_L8s_v3"},
+	}
+	cfg.VMSKUs["Standard_D4s_v5"] = map[string]any{"vcpus": 4}
+	cfg.VMSKUs["Standard_L8s_v3"] = map[string]any{"vcpus": 8}
+	cfg.Images["vm-base"] = projectconfig.ImageConfig{
+		Tests: &projectconfig.ImageTestsConfig{
+			Tests: []projectconfig.TestRef{{Group: "multi-sku", SKUGroup: "performance"}},
+		},
+	}
+	cfg.TestGroups["multi-sku"] = projectconfig.TestGroup{}
+
+	require.NoError(t, cfg.Validate())
+}
+
+func TestProjectConfigValidation_UndefinedImageSKUGroup(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.Images["vm-base"] = projectconfig.ImageConfig{
+		Tests: &projectconfig.ImageTestsConfig{
+			Tests: []projectconfig.TestRef{{Group: "multi-sku", SKUGroup: "missing"}},
+		},
+	}
+	cfg.TestGroups["multi-sku"] = projectconfig.TestGroup{}
+
+	err := cfg.Validate()
+	require.ErrorIs(t, err, projectconfig.ErrUndefinedSKUGroup)
+}
+
+func TestProjectConfigValidation_DuplicateVMSizeInSKUGroup(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.SKUGroups["performance"] = projectconfig.SKUGroup{
+		VMSizes: []string{"Standard_D4s_v5", "Standard_D4s_v5"},
+	}
+	cfg.VMSKUs["Standard_D4s_v5"] = map[string]any{"vcpus": 4}
+
+	err := cfg.Validate()
+	require.ErrorIs(t, err, projectconfig.ErrInvalidSKUGroup)
+}
+
 func TestProjectConfigValidation_DuplicateTestViaNameAndGroupInImage(t *testing.T) {
 	cfg := projectconfig.NewProjectConfig()
 	cfg.Tests = map[string]projectconfig.TestDefinition{

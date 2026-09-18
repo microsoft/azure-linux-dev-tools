@@ -69,6 +69,12 @@ type ConfigFile struct {
 	// Definitions of test groups (new schema, [test-groups.X]).
 	TestGroups map[string]TestGroup `toml:"test-groups,omitempty" validate:"dive" jsonschema:"title=Test Groups,description=Definitions of named bundles of tests"`
 
+	// Definitions of SKU groups used for test fan-out (new schema, [sku-groups.X]).
+	SKUGroups map[string]SKUGroup `toml:"sku-groups,omitempty" validate:"dive" jsonschema:"title=SKU Groups,description=Definitions of named Azure VM size lists for test fan-out"`
+
+	// Metadata keyed by Azure VM size. Values are consumed by external test orchestration.
+	VMSKUs map[string]map[string]any `toml:"vm-skus,omitempty" jsonschema:"title=VM SKUs,description=Per-VM-size metadata used for test parameter resolution"`
+
 	// Internal fields used to track the origin of the config file; `dir` is the directory
 	// that the config file's relative paths are based from.
 	sourcePath string `toml:"-"`

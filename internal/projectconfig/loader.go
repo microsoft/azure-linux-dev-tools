@@ -56,6 +56,8 @@ func loadAndResolveProjectConfig(
 		PackageGroups:     make(map[string]PackageGroupConfig),
 		Tests:             make(map[string]TestDefinition),
 		TestGroups:        make(map[string]TestGroup),
+		SKUGroups:         make(map[string]SKUGroup),
+		VMSKUs:            make(map[string]map[string]any),
 	}
 
 	for _, configFilePath := range configFilePaths {
@@ -166,11 +168,23 @@ func mergeConfigFile(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile, options 
 		return err
 	}
 
+	if err := mergeSKUConfig(resolvedCfg, loadedCfg); err != nil {
+		return err
+	}
+
 	if err := mergeResources(resolvedCfg, loadedCfg); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func mergeSKUConfig(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
+	if err := mergeSKUGroups(resolvedCfg, loadedCfg); err != nil {
+		return err
+	}
+
+	return mergeVMSKUs(resolvedCfg, loadedCfg)
 }
 
 // mergeResources merges the [ResourcesConfig] from a loaded config file into the resolved
@@ -399,6 +413,32 @@ func mergeTestGroups(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
 		}
 
 		resolvedCfg.TestGroups[groupName] = group
+	}
+
+	return nil
+}
+
+// mergeSKUGroups merges named SKU groups from a loaded config file into the
+// resolved config. Duplicate group names are not allowed.
+func mergeSKUGroups(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
+	for groupName, group := range loadedCfg.SKUGroups {
+		if _, ok := resolvedCfg.SKUGroups[groupName]; ok {
+			return fmt.Errorf("%w: SKU group %#q", ErrDuplicateSKUGroups, groupName)
+		}
+
+		resolvedCfg.SKUGroups[groupName] = group
+	}
+
+	return nil
+}
+
+func mergeVMSKUs(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
+	for vmSize, metadata := range loadedCfg.VMSKUs {
+		if _, ok := resolvedCfg.VMSKUs[vmSize]; ok {
+			return fmt.Errorf("duplicate VM SKU %#q", vmSize)
+		}
+
+		resolvedCfg.VMSKUs[vmSize] = metadata
 	}
 
 	return nil

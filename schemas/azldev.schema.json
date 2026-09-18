@@ -458,6 +458,22 @@
           "type": "object",
           "title": "Test Groups",
           "description": "Definitions of named bundles of tests"
+        },
+        "sku-groups": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SKUGroup"
+          },
+          "type": "object",
+          "title": "SKU Groups",
+          "description": "Definitions of named Azure VM size lists for test fan-out"
+        },
+        "vm-skus": {
+          "additionalProperties": {
+            "type": "object"
+          },
+          "type": "object",
+          "title": "VM SKUs",
+          "description": "Per-VM-size metadata used for test parameter resolution"
         }
       },
       "additionalProperties": false,
@@ -1220,6 +1236,29 @@
         "subrepos"
       ]
     },
+    "SKUGroup": {
+      "properties": {
+        "description": {
+          "type": "string",
+          "title": "Description",
+          "description": "Description of this SKU group"
+        },
+        "vm-sizes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "minItems": 1,
+          "title": "VM sizes",
+          "description": "Azure VM sizes in this SKU group"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "vm-sizes"
+      ]
+    },
     "SourceFileReference": {
       "properties": {
         "filename": {
@@ -1562,6 +1601,11 @@
           "pattern": "^\\S",
           "title": "Group",
           "description": "Name of a test group (mutually exclusive with name)"
+        },
+        "sku-group": {
+          "type": "string",
+          "title": "SKU group",
+          "description": "SKU group used by external test orchestration"
         }
       },
       "additionalProperties": false,
