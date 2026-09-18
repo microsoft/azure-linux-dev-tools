@@ -30,6 +30,8 @@ import (
 // overlay that found no matches).
 var ErrOverlayDidNotApply = errors.New("overlay did not apply to target")
 
+const componentOverlayAddSource projectconfig.ComponentOverlayType = "internal-source-add"
+
 // isSpecFile returns true if the given file path refers to a spec file.
 func isSpecFile(filePath string) bool {
 	return strings.HasSuffix(filePath, ".spec")
@@ -46,7 +48,7 @@ func ApplyOverlayToSources(
 	sourcesDirPath, specPath string,
 ) error {
 	// Apply the spec component, if any.
-	if overlay.ModifiesSpec() {
+	if overlay.ModifiesSpec() || overlay.Type == componentOverlayAddSource {
 		err := ApplySpecOverlayToFileInPlace(fs, overlay, specPath)
 		if err != nil {
 			return err
@@ -129,6 +131,11 @@ func ApplySpecOverlay(overlay projectconfig.ComponentOverlay, openedSpec *spec.S
 		err := openedSpec.InsertTag(overlay.PackageName, overlay.Tag, overlay.Value)
 		if err != nil {
 			return fmt.Errorf("failed to insert tag %#q into spec:\n%w", overlay.Tag, err)
+		}
+	case componentOverlayAddSource:
+		err := openedSpec.AddSourceEntry(overlay.Value)
+		if err != nil {
+			return fmt.Errorf("failed to add source entry to spec:\n%w", err)
 		}
 	case projectconfig.ComponentOverlayUpdateSpecTag:
 		err := openedSpec.UpdateExistingTag(overlay.PackageName, overlay.Tag, overlay.Value)
