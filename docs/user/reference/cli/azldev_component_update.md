@@ -14,6 +14,10 @@ For local components, this computes a content hash of the spec directory.
 Subsequent commands (render, build) use the locked state for deterministic,
 reproducible results.
 
+If a component fails to resolve, successful components are still written
+before the command returns an error. Failed components are left unchanged,
+and orphan pruning is skipped for that run.
+
 When updating all components (-a), orphan lock files (locks for components
 that no longer exist in the project config) are automatically pruned.
 Orphan pruning is skipped when updating individual components to avoid
@@ -69,6 +73,7 @@ azldev component update [flags]
 ```
   -y, --accept-all                accept all prompts
       --color mode                output colorization mode {always, auto, never} (default auto)
+      --concurrency int           base concurrency limit (default: number of logical CPUs; minimum 1)
       --config-file stringArray   additional TOML config file(s) to merge (may be repeated)
   -n, --dry-run                   dry run only (do not take action)
       --network-retries int       maximum number of attempts for network operations (minimum 1) (default 3)
@@ -78,6 +83,7 @@ azldev component update [flags]
   -C, --project string            path to Azure Linux project
   -q, --quiet                     only enable minimal output
   -v, --verbose                   enable verbose output
+      --without-lockfile          preview: track resolved upstream commits in generated config instead of lock files
 ```
 
 ### SEE ALSO

@@ -70,13 +70,13 @@ func TestImageConfig_TestNames(t *testing.T) {
 	t.Run("with tests", func(t *testing.T) {
 		img := projectconfig.ImageConfig{
 			Tests: &projectconfig.ImageTestsConfig{
-				TestSuites: []projectconfig.TestSuiteRef{
+				Tests: []projectconfig.TestRef{
 					{Name: "smoke"},
-					{Name: "integration"},
+					{Group: "integration"},
 				},
 			},
 		}
-		assert.Equal(t, []string{"smoke", "integration"}, img.TestNames())
+		assert.Equal(t, []string{"smoke", "group:integration"}, img.TestNames())
 	})
 
 	t.Run("no tests returns empty", func(t *testing.T) {
@@ -318,104 +318,5 @@ func TestPytestConfig_EffectiveInstallMode(t *testing.T) {
 	t.Run("requirements mode", func(t *testing.T) {
 		cfg := &projectconfig.PytestConfig{Install: projectconfig.PytestInstallRequirements}
 		assert.Equal(t, projectconfig.PytestInstallRequirements, cfg.EffectiveInstallMode())
-	})
-}
-
-func TestTestSuiteConfig_MergeUpdatesFrom(t *testing.T) {
-	t.Run("merge overrides non-zero fields", func(t *testing.T) {
-		base := projectconfig.TestSuiteConfig{
-			Name: "smoke",
-			Type: projectconfig.TestTypePytest,
-			Pytest: &projectconfig.PytestConfig{
-				WorkingDir: "tests",
-			},
-		}
-		other := projectconfig.TestSuiteConfig{
-			Description: "Updated description",
-		}
-		require.NoError(t, base.MergeUpdatesFrom(&other))
-		assert.Equal(t, "Updated description", base.Description)
-		assert.Equal(t, "tests", base.Pytest.WorkingDir)
-	})
-
-	t.Run("merge appends test-paths", func(t *testing.T) {
-		base := projectconfig.TestSuiteConfig{
-			Name: "smoke",
-			Type: projectconfig.TestTypePytest,
-			Pytest: &projectconfig.PytestConfig{
-				TestPaths: []string{"cases/"},
-			},
-		}
-		other := projectconfig.TestSuiteConfig{
-			Pytest: &projectconfig.PytestConfig{
-				TestPaths: []string{"extra/"},
-			},
-		}
-		require.NoError(t, base.MergeUpdatesFrom(&other))
-		assert.Equal(t, []string{"cases/", "extra/"}, base.Pytest.TestPaths)
-	})
-}
-
-func TestValidateTestSuiteReferences(t *testing.T) {
-	t.Run("valid references", func(t *testing.T) {
-		cfg := projectconfig.ProjectConfig{
-			Images: map[string]projectconfig.ImageConfig{
-				"myimage": {
-					Name:  "myimage",
-					Tests: &projectconfig.ImageTestsConfig{TestSuites: []projectconfig.TestSuiteRef{{Name: "smoke"}}},
-				},
-			},
-			TestSuites: map[string]projectconfig.TestSuiteConfig{
-				"smoke": {
-					Name: "smoke",
-					Type: projectconfig.TestTypePytest,
-					Pytest: &projectconfig.PytestConfig{
-						WorkingDir: "tests",
-					},
-				},
-			},
-			Components:        make(map[string]projectconfig.ComponentConfig),
-			ComponentGroups:   make(map[string]projectconfig.ComponentGroupConfig),
-			Distros:           make(map[string]projectconfig.DistroDefinition),
-			GroupsByComponent: make(map[string][]string),
-			PackageGroups:     make(map[string]projectconfig.PackageGroupConfig),
-		}
-		assert.NoError(t, cfg.Validate())
-	})
-
-	t.Run("undefined test reference", func(t *testing.T) {
-		cfg := projectconfig.ProjectConfig{
-			Images: map[string]projectconfig.ImageConfig{
-				"myimage": {
-					Name:  "myimage",
-					Tests: &projectconfig.ImageTestsConfig{TestSuites: []projectconfig.TestSuiteRef{{Name: "nonexistent"}}},
-				},
-			},
-			TestSuites:        make(map[string]projectconfig.TestSuiteConfig),
-			Components:        make(map[string]projectconfig.ComponentConfig),
-			ComponentGroups:   make(map[string]projectconfig.ComponentGroupConfig),
-			Distros:           make(map[string]projectconfig.DistroDefinition),
-			GroupsByComponent: make(map[string][]string),
-			PackageGroups:     make(map[string]projectconfig.PackageGroupConfig),
-		}
-		err := cfg.Validate()
-		require.Error(t, err)
-		require.ErrorIs(t, err, projectconfig.ErrUndefinedTestSuite)
-		assert.Contains(t, err.Error(), "nonexistent")
-	})
-
-	t.Run("image with no tests is valid", func(t *testing.T) {
-		cfg := projectconfig.ProjectConfig{
-			Images: map[string]projectconfig.ImageConfig{
-				"myimage": {Name: "myimage"},
-			},
-			TestSuites:        make(map[string]projectconfig.TestSuiteConfig),
-			Components:        make(map[string]projectconfig.ComponentConfig),
-			ComponentGroups:   make(map[string]projectconfig.ComponentGroupConfig),
-			Distros:           make(map[string]projectconfig.DistroDefinition),
-			GroupsByComponent: make(map[string][]string),
-			PackageGroups:     make(map[string]projectconfig.PackageGroupConfig),
-		}
-		assert.NoError(t, cfg.Validate())
 	})
 }

@@ -86,6 +86,8 @@ Component definitions are merged additively. If the same component name (e.g., `
 
 > **Note:** Slice fields (like `overlays`) are **appended**, not replaced, following the same merge behavior used by component configuration inheritance.
 
+> **Preview:** With the global `--without-lockfile` flag, component definitions merge with override semantics instead, and component validation runs only after every included file has been merged, so an individual file may hold a partial component definition. See [Preview the Lock-File-Free Mode](../how-to/preview-without-lockfile.md).
+
 ### Component Groups and Images
 
 These are strict-union maps: each name may appear in exactly one config file across the entire include tree. If two files both define `[component-groups.my-group]` or `[images.my-image]`, azldev reports an error. This prevents accidental shadowing and makes it clear where each definition lives.

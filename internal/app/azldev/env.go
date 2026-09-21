@@ -33,6 +33,12 @@ type EnvOptions struct {
 	// The loaded configuration for the project.
 	Config *projectconfig.ProjectConfig
 
+	// WithoutLockfile selects the preview lock-file-free mode, in which
+	// component state is tracked by generated upstream-commit config instead
+	// of per-component lock files. Set from the global '--without-lockfile'
+	// flag; false selects the default lock-file behavior.
+	WithoutLockfile bool
+
 	// Injected dependencies.
 	DryRunnable   opctx.DryRunnable
 	EventListener opctx.EventListener
@@ -71,8 +77,10 @@ type Env struct {
 	quiet                   bool
 	promptsAllowed          bool
 	acceptAllPrompts        bool
+	concurrency             int
 	networkRetries          int
 	permissiveConfigParsing bool
+	withoutLockfile         bool
 
 	// Injected dependencies.
 	cmdFactory    opctx.CmdFactory
@@ -96,7 +104,8 @@ type Env struct {
 	fixSuggestions *fixSuggestionState
 
 	// lockStore provides cached access to per-component lock files.
-	// Nil when no project directory is configured.
+	// Nil when no project directory is configured, or when lock-file-free
+	// mode is selected.
 	lockStore *lockfile.Store
 }
 
@@ -166,7 +175,9 @@ func NewEnv(ctx context.Context, options EnvOptions) *Env {
 		verbose:                 false,
 		quiet:                   false,
 		promptsAllowed:          isatty.IsTerminal(os.Stdin.Fd()),
+		concurrency:             defaultConcurrency(),
 		permissiveConfigParsing: false,
+		withoutLockfile:         options.WithoutLockfile,
 
 		// Start time.
 		constructionTime: time.Now(),
@@ -174,8 +185,9 @@ func NewEnv(ctx context.Context, options EnvOptions) *Env {
 		// No fix suggestions to start.
 		fixSuggestions: &fixSuggestionState{},
 
-		// Lock store: created when we have a project directory.
-		lockStore: newLockStore(options.ProjectDir, options.Config, options.Interfaces.FileSystemFactory),
+		// Lock store: created when we have a project directory, unless
+		// lock-file-free mode is selected.
+		lockStore: newLockStore(options, options.Interfaces.FileSystemFactory),
 	}
 }
 
@@ -230,6 +242,28 @@ func (env *Env) SetNetworkRetries(retries int) {
 	env.networkRetries = retries
 }
 
+// Concurrency returns the base concurrency limit used to derive worker counts.
+func (env *Env) Concurrency() int {
+	return env.concurrency
+}
+
+// SetConcurrency sets the base concurrency limit used to derive worker counts.
+// A value of zero selects the default logical CPU count. Negative values are
+// clamped to 1.
+func (env *Env) SetConcurrency(concurrency int) {
+	if concurrency == 0 {
+		concurrency = defaultConcurrency()
+	} else if concurrency < 0 {
+		concurrency = 1
+	}
+
+	env.concurrency = concurrency
+}
+
+func defaultConcurrency() int {
+	return max(1, runtime.NumCPU())
+}
+
 // PermissiveConfigParsing returns whether permissive parsing of configuration files
 // is enabled, where unknown fields are ignored instead of causing an error.
 func (env *Env) PermissiveConfigParsing() bool {
@@ -240,6 +274,13 @@ func (env *Env) PermissiveConfigParsing() bool {
 // configuration files, where unknown fields are ignored instead of causing an error.
 func (env *Env) SetPermissiveConfigParsing(permissive bool) {
 	env.permissiveConfigParsing = permissive
+}
+
+// WithoutLockfile reports whether the preview lock-file-free mode is active.
+// In that mode azldev tracks resolved upstream commits in generated component
+// config instead of per-component lock files, and no lock store is available.
+func (env *Env) WithoutLockfile() bool {
+	return env.withoutLockfile
 }
 
 // SetEventListener registers the event listener to be used in this environment.
@@ -385,36 +426,38 @@ func (env *Env) LockReader() lockfile.LockReader {
 }
 
 // newLockStore creates a lock store from the project config's lock-dir.
-// Returns nil when the project directory, filesystem, or config is unavailable,
-// or when the config's lock-dir is empty.
+// Returns nil when lock-file-free mode is selected, or when the project
+// directory, filesystem, or config is unavailable, or when the config's
+// lock-dir is empty.
 func newLockStore(
-	projectDir string,
-	config *projectconfig.ProjectConfig,
+	options EnvOptions,
 	fsFactory opctx.FileSystemFactory,
 ) *lockfile.Store {
-	if projectDir == "" || fsFactory == nil || config == nil || config.Project.LockDir == "" {
+	config := options.Config
+	if options.WithoutLockfile || options.ProjectDir == "" || fsFactory == nil ||
+		config == nil || config.Project.LockDir == "" {
 		return nil
 	}
 
 	return lockfile.NewStore(fsFactory.FS(), config.Project.LockDir)
 }
 
-// CPUBoundConcurrency returns the recommended concurrency limit for CPU-bound tasks.
-// Returns [runtime.NumCPU], minimum 1.
+// CPUBoundConcurrency returns the concurrency limit for CPU-bound tasks.
+// Returns the configured base concurrency, minimum 1.
 func (env *Env) CPUBoundConcurrency() int {
-	return max(1, runtime.NumCPU())
+	return env.concurrency
 }
 
 // IOBoundConcurrency returns the recommended concurrency limit for I/O-bound tasks
-// (network clones, file copies). Returns 2× [runtime.NumCPU], minimum 1.
+// (network clones, file copies). Returns 2× the configured base concurrency.
 func (env *Env) IOBoundConcurrency() int {
-	return max(1, 2*runtime.NumCPU()) //nolint:mnd // 2x CPU
+	return 2 * env.concurrency //nolint:mnd // 2x base concurrency
 }
 
 // FastConcurrency returns the recommended concurrency limit for tasks that can benefit from higher parallelism.
-// Returns 4× [runtime.NumCPU], minimum 1.
+// Returns 4× the configured base concurrency.
 func (env *Env) FastConcurrency() int {
-	return max(1, 4*runtime.NumCPU()) //nolint:mnd // 4x CPU
+	return 4 * env.concurrency //nolint:mnd // 4x base concurrency
 }
 
 // Enables or disables "accept all prompts" mode.

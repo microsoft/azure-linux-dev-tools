@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -72,6 +73,7 @@ func TestNewEnv(t *testing.T) {
 	assert.False(t, env.Quiet())
 	assert.False(t, env.Verbose())
 	assert.False(t, env.PermissiveConfigParsing())
+	assert.Equal(t, runtime.NumCPU(), env.Concurrency())
 
 	// Confirm that our parameters were appropriately wrapped.
 	assert.Equal(t, testProjectRoot, env.ProjectDir())
@@ -107,6 +109,32 @@ func TestSetNetworkRetries(t *testing.T) {
 			testEnv := testutils.NewTestEnv(t)
 			testEnv.Env.SetNetworkRetries(tt.input)
 			assert.Equal(t, tt.expected, testEnv.Env.NetworkRetries())
+		})
+	}
+}
+
+func TestSetConcurrency(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    int
+		expected int
+	}{
+		{"positive value is preserved", 5, 5},
+		{"one is preserved", 1, 1},
+		{"zero selects logical CPU count", 0, runtime.NumCPU()},
+		{"negative value is clamped to 1", -1, 1},
+		{"large negative is clamped to 1", -100, 1},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			testEnv := testutils.NewTestEnv(t)
+			testEnv.Env.SetConcurrency(testCase.input)
+
+			assert.Equal(t, testCase.expected, testEnv.Env.Concurrency())
+			assert.Equal(t, testCase.expected, testEnv.Env.CPUBoundConcurrency())
+			assert.Equal(t, 2*testCase.expected, testEnv.Env.IOBoundConcurrency())
+			assert.Equal(t, 4*testCase.expected, testEnv.Env.FastConcurrency())
 		})
 	}
 }

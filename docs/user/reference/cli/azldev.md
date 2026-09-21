@@ -19,6 +19,7 @@ lives), or use -C to point to one.
 ```
   -y, --accept-all                accept all prompts
       --color mode                output colorization mode {always, auto, never} (default auto)
+      --concurrency int           base concurrency limit (default: number of logical CPUs; minimum 1)
       --config-file stringArray   additional TOML config file(s) to merge (may be repeated)
   -n, --dry-run                   dry run only (do not take action)
   -h, --help                      help for azldev
@@ -29,6 +30,7 @@ lives), or use -C to point to one.
   -C, --project string            path to Azure Linux project
   -q, --quiet                     only enable minimal output
   -v, --verbose                   enable verbose output
+      --without-lockfile          preview: track resolved upstream commits in generated config instead of lock files
 ```
 
 ### SEE ALSO
