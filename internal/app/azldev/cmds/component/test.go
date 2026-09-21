@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -34,6 +35,7 @@ type ComponentTestOptions struct {
 	Tests     []string
 	WorkDir   string
 	Provision string
+	FromSpec  bool
 }
 
 type tmtSource struct {
@@ -58,6 +60,10 @@ type tmtRunSettings struct {
 	WorkDir        string
 	TMTProgramPath string
 	Provision      string
+	// FromSpec runs the plan from the component's rendered spec directory
+	// instead of cloning the catalog 'source'. SpecDir is that directory.
+	FromSpec bool
+	SpecDir  string
 }
 
 const (
@@ -137,13 +143,17 @@ AZURE LINUX 4 PREREQUISITES:
   To run with --provision local, install the host dependencies:
     sudo tdnf install -y python3 python3-pip git sudo
 
+  ('git' is only needed for the default clone path; omit it when using
+  '--from-spec', which runs from the rendered spec directory.)
+
   azldev creates a per-work-directory Python environment and installs the
   pinned TMT version there. The local provisioner uses sudo to install the
   supplied candidate RPMs and execute the plan, so it modifies the host.
 
 azldev creates or reuses an isolated Python environment under --work-dir and
-installs TMT with virtual-provisioner support there. python3 and git must be
-available on the host.`,
+installs TMT with virtual-provisioner support there. python3 must be available
+on the host; git is also required unless '--from-spec' is used (which runs the
+plan from the rendered spec directory instead of cloning).`,
 		Example: `  # Build the component first
   azldev component build buildah
 
@@ -161,6 +171,12 @@ available on the host.`,
 		}),
 	}
 
+	registerComponentTestFlags(cmd, options)
+
+	return cmd
+}
+
+func registerComponentTestFlags(cmd *cobra.Command, options *ComponentTestOptions) {
 	cmd.Flags().StringVarP(&options.ImagePath, "image-path", "i", "", "Path to the qcow2 image under test")
 	_ = cmd.MarkFlagFilename("image-path")
 	cmd.Flags().StringSliceVarP(
@@ -177,9 +193,12 @@ available on the host.`,
 	_ = cmd.MarkFlagDirname("work-dir")
 	cmd.Flags().StringVar(&options.Provision, "provision", tmtProvisionVirtual,
 		"TMT provisioner mode: 'virtual' (default) runs tests in QEMU; 'local' runs on this machine (must be Azure Linux 4)")
+	cmd.Flags().BoolVar(&options.FromSpec, "from-spec", false,
+		"Run the plan from the component's rendered spec directory (under the configured "+
+			"'project.rendered-specs-dir', e.g. 'SPECS/c/curl') instead of cloning the catalog "+
+			"'source'. Requires 'render.skip-file-filter = true' and a prior "+
+			"'azldev component render'. Local inner-loop convenience; not used by cloud (TEE) runs.")
 	_ = cmd.MarkFlagRequired("rpm")
-
-	return cmd
 }
 
 func runComponentTMTTests(env *azldev.Env, componentName string, options *ComponentTestOptions) error {
@@ -197,12 +216,20 @@ func runComponentTMTTests(env *azldev.Env, componentName string, options *Compon
 		return err
 	}
 
-	resolved, err := resolveComponentTMTTests(env, componentName, options.Tests)
+	resolved, specDir, err := resolveComponentTMTTests(env, componentName, options.Tests)
 	if err != nil {
 		return err
 	}
 
-	workDir, tmtProgramPath, err := prepareTMTEnvironment(env, options.WorkDir, options.Provision)
+	// Validate the rendered spec dir up front so '--from-spec' fails fast, before
+	// prepareTMTEnvironment creates a venv and pip-installs TMT under --work-dir.
+	if options.FromSpec {
+		if _, err := resolveSpecRunDir(env, specDir); err != nil {
+			return err
+		}
+	}
+
+	workDir, tmtProgramPath, err := prepareTMTEnvironment(env, options.WorkDir, options.Provision, options.FromSpec)
 	if err != nil {
 		return err
 	}
@@ -213,6 +240,8 @@ func runComponentTMTTests(env *azldev.Env, componentName string, options *Compon
 		WorkDir:        workDir,
 		TMTProgramPath: tmtProgramPath,
 		Provision:      options.Provision,
+		FromSpec:       options.FromSpec,
+		SpecDir:        specDir,
 	}
 
 	for _, test := range resolved {
@@ -275,32 +304,36 @@ func resolveTMTImagePath(env *azldev.Env, provision string, configuredImagePath 
 
 func resolveComponentTMTTests(
 	env *azldev.Env, componentName string, selectors []string,
-) ([]projectconfig.ResolvedTest, error) {
+) ([]projectconfig.ResolvedTest, string, error) {
 	resolver := components.NewResolver(env)
 
 	set, err := resolver.FindComponents(&components.ComponentFilter{ComponentNamePatterns: []string{componentName}})
 	if err != nil {
-		return nil, fmt.Errorf("resolve component %#q:\n%w", componentName, err)
+		return nil, "", fmt.Errorf("resolve component %#q:\n%w", componentName, err)
 	}
 
 	if set.Len() != 1 {
-		return nil, fmt.Errorf("expected exactly one component named %#q, found %d", componentName, set.Len())
+		return nil, "", fmt.Errorf("expected exactly one component named %#q, found %d", componentName, set.Len())
 	}
 
-	resolved, err := env.Config().ResolveComponentTests(set.Components()[0].GetConfig())
+	componentConfig := set.Components()[0].GetConfig()
+
+	resolved, err := env.Config().ResolveComponentTests(componentConfig)
 	if err != nil {
-		return nil, fmt.Errorf("resolve tests for component %#q:\n%w", componentName, err)
+		return nil, "", fmt.Errorf("resolve tests for component %#q:\n%w", componentName, err)
 	}
 
 	resolved = selectTMTTests(resolved, selectors)
 	if len(resolved) == 0 {
-		return nil, fmt.Errorf("component %#q has no selected TMT tests", componentName)
+		return nil, "", fmt.Errorf("component %#q has no selected TMT tests", componentName)
 	}
 
-	return resolved, nil
+	return resolved, componentConfig.RenderedSpecDir, nil
 }
 
-func prepareTMTEnvironment(env *azldev.Env, configuredWorkDir string, provision string) (string, string, error) {
+func prepareTMTEnvironment(
+	env *azldev.Env, configuredWorkDir string, provision string, fromSpec bool,
+) (string, string, error) {
 	workDir, err := componentTMTWorkDir(env, configuredWorkDir)
 	if err != nil {
 		return "", "", fmt.Errorf("resolve work directory:\n%w", err)
@@ -315,7 +348,7 @@ func prepareTMTEnvironment(env *azldev.Env, configuredWorkDir string, provision 
 		return "", "", fmt.Errorf("create work directory:\n%w", err)
 	}
 
-	tmtProgramPath, err = ensureTMTVenv(env, workDir, provision)
+	tmtProgramPath, err = ensureTMTVenv(env, workDir, provision, fromSpec)
 	if err != nil {
 		return "", "", err
 	}
@@ -324,18 +357,23 @@ func prepareTMTEnvironment(env *azldev.Env, configuredWorkDir string, provision 
 }
 
 // ensureTMTVenv creates or reuses an isolated TMT installation. This follows
-// the local LISA runner pattern: Python and git are explicit host
-// prerequisites, while the test framework itself is installed in a venv under
-// the selected work directory rather than assumed to be packaged by the host
-// distribution. For virtual provisioning, the testcloud plugin supplies
-// provisioner support. For local provisioning, only base TMT is required.
-func ensureTMTVenv(env *azldev.Env, workDir string, provision string) (string, error) {
+// the local LISA runner pattern: Python (and git, unless --from-spec avoids
+// cloning) are explicit host prerequisites, while the test framework itself is
+// installed in a venv under the selected work directory rather than assumed to
+// be packaged by the host distribution. For virtual provisioning, the testcloud
+// plugin supplies provisioner support. For local provisioning, only base TMT is
+// required.
+func ensureTMTVenv(env *azldev.Env, workDir string, provision string, fromSpec bool) (string, error) {
 	if err := prereqs.RequireExecutable(env, tmtPythonProgram, nil); err != nil {
 		return "", fmt.Errorf("python3 is required to run TMT tests:\n%w", err)
 	}
 
-	if err := prereqs.RequireExecutable(env, "git", nil); err != nil {
-		return "", fmt.Errorf("git is required to clone TMT test metadata:\n%w", err)
+	// --from-spec runs the plan from the rendered spec directory and never clones,
+	// so git is only a prerequisite for the default (clone) path.
+	if !fromSpec {
+		if err := prereqs.RequireExecutable(env, "git", nil); err != nil {
+			return "", fmt.Errorf("git is required to clone TMT test metadata:\n%w", err)
+		}
 	}
 
 	venvDir := filepath.Join(workDir, "tmt", tmtVenvDirName)
@@ -468,18 +506,28 @@ func runOneTMTTest(env *azldev.Env, test projectconfig.ResolvedTest, settings tm
 		return err
 	}
 
-	if err := runHostCommand(env, testDir, "git", "clone", "--no-checkout", config.Source.GitURL, repoDir); err != nil {
-		return fmt.Errorf("clone test metadata:\n%w", err)
-	}
+	// runDir is the fmf tree tmt runs against: either the freshly cloned catalog
+	// source (default) or the component's rendered spec directory (--from-spec).
+	runDir := repoDir
+	if settings.FromSpec {
+		runDir, err = resolveSpecRunDir(env, settings.SpecDir)
+		if err != nil {
+			return err
+		}
+	} else {
+		if err := runHostCommand(env, testDir, "git", "clone", "--no-checkout", config.Source.GitURL, repoDir); err != nil {
+			return fmt.Errorf("clone test metadata:\n%w", err)
+		}
 
-	if err := runHostCommand(env, repoDir, "git", "checkout", "--detach", config.Source.Ref); err != nil {
-		return fmt.Errorf("checkout test metadata:\n%w", err)
+		if err := runHostCommand(env, repoDir, "git", "checkout", "--detach", config.Source.Ref); err != nil {
+			return fmt.Errorf("checkout test metadata:\n%w", err)
+		}
 	}
 
 	var hardwareArgs []string
 	if settings.Provision == tmtProvisionVirtual {
 		hardwareArgs, err = resolvedPlanHardwareArgs(
-			env, repoDir, settings.TMTProgramPath, config.Plan,
+			env, runDir, settings.TMTProgramPath, config.Plan,
 		)
 		if err != nil {
 			return fmt.Errorf("resolve hardware for TMT plan %#q:\n%w", config.Plan, err)
@@ -488,11 +536,50 @@ func runOneTMTTest(env *azldev.Env, test projectconfig.ResolvedTest, settings tm
 
 	args := componentTMTArgs(config, tmtWorkDir, settings.Provision, settings.ImagePath, hardwareArgs, settings.RPMs)
 
-	if err := runTMTCommand(env, repoDir, pluginDir, settings.TMTProgramPath, settings.Provision, args...); err != nil {
+	if err := runTMTCommand(env, runDir, pluginDir, settings.TMTProgramPath, settings.Provision, args...); err != nil {
 		return fmt.Errorf("run TMT plan %#q (artifacts: %#q):\n%w", config.Plan, tmtWorkDir, err)
 	}
 
 	return nil
+}
+
+// resolveSpecRunDir validates that the component's rendered spec directory
+// exists and carries an fmf root, returning it as the tmt run directory. It
+// backs the --from-spec flow, which runs a plan straight from the component's
+// rendered spec directory (derived from the project 'rendered-specs-dir'
+// setting, e.g. 'SPECS/c/curl') instead of cloning the catalog 'source'. tmt
+// writes its run artifacts under a separate --workdir-root, so the rendered
+// tree is only read.
+func resolveSpecRunDir(env *azldev.Env, specDir string) (string, error) {
+	if specDir == "" {
+		return "", errors.New(
+			"'--from-spec' requires a rendered spec directory; ensure 'project.rendered-specs-dir' is set")
+	}
+
+	fmfVersion := filepath.Join(specDir, ".fmf", "version")
+
+	// Require a regular file: fmf's version marker is a file, and a directory (or
+	// other node) at this path is not valid fmf metadata.
+	info, err := env.FS().Stat(fmfVersion)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf(
+				"no fmf metadata in rendered spec dir %#q (missing %#q); set "+
+					"'render.skip-file-filter = true' on the component and run "+
+					"'azldev component render' before using '--from-spec'",
+				specDir, filepath.Join(".fmf", "version"))
+		}
+
+		return "", fmt.Errorf("check fmf root %#q:\n%w", fmfVersion, err)
+	}
+
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf(
+			"invalid fmf metadata in rendered spec dir %#q: %#q must be a regular file",
+			specDir, filepath.Join(".fmf", "version"))
+	}
+
+	return specDir, nil
 }
 
 // prepareTMTTestDir creates the per-test directory and, for virtual runs, the

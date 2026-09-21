@@ -34,38 +34,6 @@ const (
 	lisaGeneratedRunbookPrefix = "azldev-generated-"
 )
 
-// RunLisaSuite runs a LISA-based test suite by cloning the framework repo, setting up a
-// venv, generating a runbook from the configured test cases, and invoking LISA.
-func RunLisaSuite(
-	env *azldev.Env, suiteConfig *projectconfig.TestSuiteConfig,
-	imageConfig *projectconfig.ImageConfig, options *ImageTestOptions,
-) error {
-	lisaConfig := suiteConfig.Lisa
-	if lisaConfig == nil {
-		return fmt.Errorf(
-			"test suite %#q of type %#q cannot be run locally: it has no [test-suites.%s.lisa] "+
-				"subtable; add one with 'framework' (git-url, ref), 'test-cases', and optional "+
-				"'extra-args' to enable local execution",
-			suiteConfig.Name, projectconfig.TestTypeLisa, suiteConfig.Name,
-		)
-	}
-
-	slog.Info("Running LISA test suite",
-		slog.String("name", suiteConfig.Name),
-		slog.String("framework-ref", lisaConfig.Framework.Ref),
-		slog.Int("test-cases", len(lisaConfig.TestCases)),
-		slog.String("image-path", options.ImagePath),
-	)
-
-	criteria := []lisaCriteria{{Name: strings.Join(lisaConfig.TestCases, "|")}}
-
-	return runLisaLocally(
-		env, suiteConfig.Name, &lisaConfig.Framework, criteria,
-		lisaConfig.PipPreInstall, lisaConfig.PipExtras, lisaConfig.ExtraArgs,
-		imageConfig, options,
-	)
-}
-
 // RunLisaTestDefinition runs a new-style [tests.X] LISA test definition locally, generating
 // a runbook from the test's configured criteria and invoking LISA. It requires either
 // options.LisaDir (an already-cloned LISA checkout) or the test's [tests.X.lisa] subtable
@@ -136,10 +104,9 @@ func RunLisaTestDefinition(
 }
 
 // runLisaLocally sets up the LISA framework and venv, generates a runbook from the given
-// criteria, and invokes LISA against the given image. It is shared by RunLisaSuite (legacy
-// [test-suites] suites) and RunLisaTestDefinition (new-style [tests] definitions). If
-// options.LisaDir is set, that checkout is used directly instead of cloning framework; in
-// that case framework may be nil.
+// criteria, and invokes LISA against the given image. It backs RunLisaTestDefinition
+// (new-style [tests] definitions). If options.LisaDir is set, that checkout is used directly
+// instead of cloning framework; in that case framework may be nil.
 func runLisaLocally(
 	env *azldev.Env, name string, framework *projectconfig.GitSourceConfig, criteria []lisaCriteria,
 	pipPreInstall, pipExtras, extraArgs []string,

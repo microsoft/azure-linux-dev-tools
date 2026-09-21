@@ -108,7 +108,7 @@ hand-picking entries to document.`,
 		ValidArgsFunction: components.GenerateComponentNameCompletions,
 	}
 
-	components.AddComponentFilterOptionsToCommand(cmd, &options.ComponentFilter)
+	addComponentFilterOptions(cmd, &options.ComponentFilter, cmdOptions{})
 
 	cmd.Flags().StringVar(&options.SharedTomlMode, "shared", sharedTomlModeShow,
 		"How to report rows for components that share a TOML file with others: "+

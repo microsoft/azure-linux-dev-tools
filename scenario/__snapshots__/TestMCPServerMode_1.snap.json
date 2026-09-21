@@ -35,6 +35,11 @@
        "description": "Component group name",
        "type": "string"
       },
+      "concurrency": {
+       "default": 0,
+       "description": "base concurrency limit (default: number of logical CPUs; minimum 1)",
+       "type": "number"
+      },
       "config-file": {
        "description": "additional TOML config file(s) to merge (may be repeated)",
        "type": "string"
@@ -96,6 +101,11 @@
        "default": false,
        "description": "enable verbose output",
        "type": "boolean"
+      },
+      "without-lockfile": {
+       "default": false,
+       "description": "preview: track resolved upstream commits in generated config instead of lock files",
+       "type": "boolean"
       }
      },
      "required": [
@@ -136,6 +146,11 @@
       "component-group": {
        "description": "Component group name",
        "type": "string"
+      },
+      "concurrency": {
+       "default": 0,
+       "description": "base concurrency limit (default: number of logical CPUs; minimum 1)",
+       "type": "number"
       },
       "config-file": {
        "description": "additional TOML config file(s) to merge (may be repeated)",
@@ -193,6 +208,11 @@
        "default": false,
        "description": "enable verbose output",
        "type": "boolean"
+      },
+      "without-lockfile": {
+       "default": false,
+       "description": "preview: track resolved upstream commits in generated config instead of lock files",
+       "type": "boolean"
       }
      },
      "required": [],
@@ -231,6 +251,11 @@
       "component-group": {
        "description": "Component group name",
        "type": "string"
+      },
+      "concurrency": {
+       "default": 0,
+       "description": "base concurrency limit (default: number of logical CPUs; minimum 1)",
+       "type": "number"
       },
       "config-file": {
        "description": "additional TOML config file(s) to merge (may be repeated)",
@@ -288,6 +313,11 @@
        "default": false,
        "description": "enable verbose output",
        "type": "boolean"
+      },
+      "without-lockfile": {
+       "default": false,
+       "description": "preview: track resolved upstream commits in generated config instead of lock files",
+       "type": "boolean"
       }
      },
      "required": [],
@@ -326,6 +356,11 @@
       "component-group": {
        "description": "Component group name",
        "type": "string"
+      },
+      "concurrency": {
+       "default": 0,
+       "description": "base concurrency limit (default: number of logical CPUs; minimum 1)",
+       "type": "number"
       },
       "config-file": {
        "description": "additional TOML config file(s) to merge (may be repeated)",
@@ -373,6 +408,11 @@
        "default": false,
        "description": "enable verbose output",
        "type": "boolean"
+      },
+      "without-lockfile": {
+       "default": false,
+       "description": "preview: track resolved upstream commits in generated config instead of lock files",
+       "type": "boolean"
       }
      },
      "required": [],
@@ -398,6 +438,11 @@
       "color": {
        "description": "output colorization mode {always, auto, never}",
        "type": "string"
+      },
+      "concurrency": {
+       "default": 0,
+       "description": "base concurrency limit (default: number of logical CPUs; minimum 1)",
+       "type": "number"
       },
       "config-file": {
        "description": "additional TOML config file(s) to merge (may be repeated)",
@@ -445,6 +490,11 @@
        "default": false,
        "description": "enable verbose output",
        "type": "boolean"
+      },
+      "without-lockfile": {
+       "default": false,
+       "description": "preview: track resolved upstream commits in generated config instead of lock files",
+       "type": "boolean"
       }
      },
      "required": [],
@@ -470,6 +520,11 @@
       "color": {
        "description": "output colorization mode {always, auto, never}",
        "type": "string"
+      },
+      "concurrency": {
+       "default": 0,
+       "description": "base concurrency limit (default: number of logical CPUs; minimum 1)",
+       "type": "number"
       },
       "config-file": {
        "description": "additional TOML config file(s) to merge (may be repeated)",
@@ -513,6 +568,11 @@
        "default": false,
        "description": "enable verbose output",
        "type": "boolean"
+      },
+      "without-lockfile": {
+       "default": false,
+       "description": "preview: track resolved upstream commits in generated config instead of lock files",
+       "type": "boolean"
       }
      },
      "required": [],
@@ -538,6 +598,11 @@
       "color": {
        "description": "output colorization mode {always, auto, never}",
        "type": "string"
+      },
+      "concurrency": {
+       "default": 0,
+       "description": "base concurrency limit (default: number of logical CPUs; minimum 1)",
+       "type": "number"
       },
       "config-file": {
        "description": "additional TOML config file(s) to merge (may be repeated)",
@@ -586,6 +651,11 @@
        "default": false,
        "description": "enable verbose output",
        "type": "boolean"
+      },
+      "without-lockfile": {
+       "default": false,
+       "description": "preview: track resolved upstream commits in generated config instead of lock files",
+       "type": "boolean"
       }
      },
      "required": [],
@@ -611,6 +681,11 @@
       "color": {
        "description": "output colorization mode {always, auto, never}",
        "type": "string"
+      },
+      "concurrency": {
+       "default": 0,
+       "description": "base concurrency limit (default: number of logical CPUs; minimum 1)",
+       "type": "number"
       },
       "config-file": {
        "description": "additional TOML config file(s) to merge (may be repeated)",
@@ -669,6 +744,11 @@
        "default": false,
        "description": "enable verbose output",
        "type": "boolean"
+      },
+      "without-lockfile": {
+       "default": false,
+       "description": "preview: track resolved upstream commits in generated config instead of lock files",
+       "type": "boolean"
       }
      },
      "required": [
@@ -696,6 +776,11 @@
       "color": {
        "description": "output colorization mode {always, auto, never}",
        "type": "string"
+      },
+      "concurrency": {
+       "default": 0,
+       "description": "base concurrency limit (default: number of logical CPUs; minimum 1)",
+       "type": "number"
       },
       "config-file": {
        "description": "additional TOML config file(s) to merge (may be repeated)",
@@ -739,6 +824,11 @@
        "default": false,
        "description": "enable verbose output",
        "type": "boolean"
+      },
+      "without-lockfile": {
+       "default": false,
+       "description": "preview: track resolved upstream commits in generated config instead of lock files",
+       "type": "boolean"
       }
      },
      "required": [],
@@ -769,6 +859,11 @@
       "color": {
        "description": "output colorization mode {always, auto, never}",
        "type": "string"
+      },
+      "concurrency": {
+       "default": 0,
+       "description": "base concurrency limit (default: number of logical CPUs; minimum 1)",
+       "type": "number"
       },
       "config-file": {
        "description": "additional TOML config file(s) to merge (may be repeated)",
@@ -825,6 +920,11 @@
       "verbose": {
        "default": false,
        "description": "enable verbose output",
+       "type": "boolean"
+      },
+      "without-lockfile": {
+       "default": false,
+       "description": "preview: track resolved upstream commits in generated config instead of lock files",
        "type": "boolean"
       }
      },

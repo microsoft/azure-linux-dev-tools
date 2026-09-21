@@ -17,6 +17,10 @@ import (
 // may make use of the provided temporary directory, with the expectation that the caller is responsible
 // for cleaning it up -- but not until after it is done using the loaded configuration. The loaded
 // configuration may implicitly depend on the contents of the temporary directory.
+//
+// When withoutLockfile is set, component definitions merge with override semantics,
+// are validated only once the whole project is assembled, and the project's lock
+// directory is left unset.
 func LoadProjectConfig(
 	fs opctx.FS,
 	osEnv opctx.OSEnv,
@@ -25,6 +29,7 @@ func LoadProjectConfig(
 	tempDirPath string,
 	extraConfigFilePaths []string,
 	permissiveConfigParsing bool,
+	withoutLockfile bool,
 ) (projectDir string, config *ProjectConfig, err error) {
 	// Look for project root and azldev.toml file.
 	projectDir, projectFilePath, err := FindProjectRootAndConfigFile(fs, referenceDir)
@@ -79,7 +84,12 @@ func LoadProjectConfig(
 	//
 	// NOTE: We don't wrap the error returned back here (if one is returned) because we already have
 	// a decent one coming from this function.
-	config, err = loadAndResolveProjectConfig(fs, permissiveConfigParsing, configFilePaths...)
+	options := loadOptions{
+		permissiveConfigParsing: permissiveConfigParsing,
+		withoutLockfile:         withoutLockfile,
+	}
+
+	config, err = loadAndResolveProjectConfig(fs, options, configFilePaths...)
 	if err != nil {
 		return "", nil, err
 	}
@@ -89,6 +99,13 @@ func LoadProjectConfig(
 
 	// Apply project-relative defaults for any unset path fields.
 	config.Project.ApplyProjectDefaults(projectDir)
+
+	// Lock-file-free mode never reads or writes lock files, so the lock directory
+	// is left unset. A project may still declare 'lock-dir' for compatibility with
+	// azldev's default mode; the value is simply ignored here.
+	if withoutLockfile {
+		config.Project.LockDir = ""
+	}
 
 	return projectDir, config, nil
 }

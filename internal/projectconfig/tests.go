@@ -81,21 +81,36 @@ type TestDefinition struct {
 	Lisa   map[string]any `toml:"lisa,omitempty"   json:"lisa,omitempty"   jsonschema:"title=LISA config,description=LISA-specific configuration"`
 	Tmt    map[string]any `toml:"tmt,omitempty"    json:"tmt,omitempty"    jsonschema:"title=TMT config,description=TMT-specific configuration"`
 	Pytest map[string]any `toml:"pytest,omitempty" json:"pytest,omitempty" jsonschema:"title=Pytest config,description=pytest-specific configuration"`
+
+	// dir is the directory of the config file that defined this test. It is not
+	// serialized (so 'azldev config dump' is unaffected) and is populated during
+	// config load to resolve relative pytest paths at test-execution time.
+	dir string
 }
 
-// WithAbsolutePaths returns a copy of the test definition with any relative
-// paths in framework-specific subtables converted to absolute paths.
-func (t TestDefinition) WithAbsolutePaths(referenceDir string) TestDefinition {
+// WithConfigDir returns a copy of the test definition that records referenceDir
+// (the defining config file's directory) so relative pytest paths (e.g.
+// 'working-dir') can be resolved at test-execution time. It does not rewrite any
+// path values — framework-specific subtables are preserved exactly as authored,
+// so 'azldev config dump' shows the user-defined values; see
+// [TestDefinition.PytestWorkingDir] for the execution-time resolution. The
+// returned copy shares the framework maps and RequiredCapabilities slice with the
+// source, which are treated as read-only after config load.
+func (t TestDefinition) WithConfigDir(referenceDir string) TestDefinition {
 	result := t
-	result.Lisa = cloneStringAnyMap(t.Lisa)
-	result.Tmt = cloneStringAnyMap(t.Tmt)
-	result.Pytest = cloneStringAnyMap(t.Pytest)
-
-	if workingDir, ok := result.Pytest["working-dir"].(string); ok {
-		result.Pytest["working-dir"] = makeAbsolute(referenceDir, workingDir)
-	}
+	result.dir = referenceDir
 
 	return result
+}
+
+// PytestWorkingDir returns the pytest 'working-dir' resolved to an absolute path
+// relative to the config file that defined the test. The stored config keeps the
+// authored (possibly relative) value; this resolves it only for execution. An
+// empty 'working-dir' returns "".
+func (t TestDefinition) PytestWorkingDir() string {
+	workingDir, _ := t.Pytest["working-dir"].(string)
+
+	return makeAbsolute(t.dir, workingDir)
 }
 
 // TestGroup is a [test-groups.X] declaration: a named bundle of test references that
@@ -218,19 +233,6 @@ func (cfg *ProjectConfig) ResolveComponentTests(component *ComponentConfig) ([]R
 	}
 
 	return cfg.ResolveTestRefs(component.Tests.Tests)
-}
-
-func cloneStringAnyMap(input map[string]any) map[string]any {
-	if input == nil {
-		return nil
-	}
-
-	result := make(map[string]any, len(input))
-	for key, value := range input {
-		result[key] = value
-	}
-
-	return result
 }
 
 // Validate checks that exactly one framework subtable is set and it matches Type.

@@ -161,33 +161,28 @@ func (c *ImageCapabilities) EnabledNames() []string {
 
 // ImageTestsConfig holds the test-related configuration for an image.
 type ImageTestsConfig struct {
-	// TestSuites is the list of test suite references that apply to this image. Each
-	// reference identifies a test suite defined in the top-level [test-suites] section
-	// and may carry per-test metadata in the future (e.g., required vs optional).
-	TestSuites []TestSuiteRef `toml:"test-suites,omitempty" json:"testSuites,omitempty" jsonschema:"title=Test Suites,description=List of test suite references that apply to this image"`
-
-	// Tests is the new-shape list of test or test-group references that apply to this
+	// Tests is the list of test or test-group references that apply to this
 	// image. References must resolve to entries in the project-level [tests] or
 	// [test-groups] maps; resolution is the responsibility of the test layer.
 	Tests []TestRef `toml:"tests,omitempty" json:"tests,omitempty" jsonschema:"title=Tests,description=List of test or test-group references that apply to this image"`
 }
 
-// TestSuiteRef is a reference to a named test suite. Using a structured type (rather than
-// a bare string) allows per-test metadata to be added later without a breaking config change.
-type TestSuiteRef struct {
-	// Name is the key into the top-level [test-suites] map.
-	Name string `toml:"name" json:"name" jsonschema:"required,title=Name,description=Name of the test suite (must match a key in [test-suites])"`
-}
-
-// TestNames returns the test suite names referenced by this image.
+// TestNames returns the test and test-group reference labels for this image, for
+// display/summary purposes. Group references are prefixed with "group:".
 func (i *ImageConfig) TestNames() []string {
 	if i.Tests == nil {
 		return nil
 	}
 
-	names := make([]string, len(i.Tests.TestSuites))
-	for idx, ref := range i.Tests.TestSuites {
-		names[idx] = ref.Name
+	names := make([]string, 0, len(i.Tests.Tests))
+
+	for _, ref := range i.Tests.Tests {
+		switch {
+		case ref.Name != "":
+			names = append(names, ref.Name)
+		case ref.Group != "":
+			names = append(names, "group:"+ref.Group)
+		}
 	}
 
 	return names

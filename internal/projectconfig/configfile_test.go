@@ -358,35 +358,6 @@ func TestProjectConfigValidation_NonContradictingImageCapabilities(t *testing.T)
 	require.NoError(t, err)
 }
 
-func TestProjectConfigValidation_LegacyTestSuitesEmitsDeprecationWarning(t *testing.T) {
-	var buf bytes.Buffer
-
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
-
-	t.Cleanup(func() { slog.SetDefault(prev) })
-
-	cfg := projectconfig.NewProjectConfig()
-	cfg.TestSuites = map[string]projectconfig.TestSuiteConfig{
-		"static-image-checks": {},
-	}
-	cfg.Images = map[string]projectconfig.ImageConfig{
-		"legacy-img": {
-			Tests: &projectconfig.ImageTestsConfig{
-				TestSuites: []projectconfig.TestSuiteRef{{Name: "static-image-checks"}},
-			},
-		},
-	}
-
-	err := cfg.Validate()
-	require.NoError(t, err)
-
-	logs := buf.String()
-	assert.Contains(t, logs, "deprecated")
-	assert.Contains(t, logs, "tests.test-suites")
-	assert.Contains(t, logs, "legacy-img")
-}
-
 func TestProjectConfigValidation_NewShapeTestsNoDeprecationWarning(t *testing.T) {
 	var buf bytes.Buffer
 

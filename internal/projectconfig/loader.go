@@ -29,11 +29,23 @@ var (
 	ErrCircularInclude = errors.New("circular include detected")
 )
 
+// loadOptions carries the load-time modes that change how configuration files are
+// parsed, merged, and validated.
+type loadOptions struct {
+	// permissiveConfigParsing ignores unknown fields and downgrades validation
+	// failures to warnings.
+	permissiveConfigParsing bool
+
+	// withoutLockfile selects lock-file-free mode, where component definitions are
+	// merged with override semantics and validated only once fully assembled.
+	withoutLockfile bool
+}
+
 // Loads and resolves the project configuration files located at the given path. Referenced include files
 // are recursively loaded and appropriately merged. If multiple file paths are provided, they are each
 // fully loaded and merged in specified order, with later files overriding earlier ones.
 func loadAndResolveProjectConfig(
-	fs opctx.FS, permissiveConfigParsing bool, configFilePaths ...string,
+	fs opctx.FS, options loadOptions, configFilePaths ...string,
 ) (*ProjectConfig, error) {
 	resolvedCfg := &ProjectConfig{
 		ComponentGroups:   make(map[string]ComponentGroupConfig),
@@ -42,14 +54,13 @@ func loadAndResolveProjectConfig(
 		Distros:           make(map[string]DistroDefinition),
 		GroupsByComponent: make(map[string][]string),
 		PackageGroups:     make(map[string]PackageGroupConfig),
-		TestSuites:        make(map[string]TestSuiteConfig),
 		Tests:             make(map[string]TestDefinition),
 		TestGroups:        make(map[string]TestGroup),
 	}
 
 	for _, configFilePath := range configFilePaths {
 		// Load the project config file and all transitive includes.
-		err := loadAndMergeConfigWithIncludes(resolvedCfg, fs, configFilePath, permissiveConfigParsing)
+		err := loadAndMergeConfigWithIncludes(resolvedCfg, fs, configFilePath, options)
 		if err != nil {
 			return nil, err
 		}
@@ -61,9 +72,9 @@ func loadAndResolveProjectConfig(
 	}
 
 	// Validate the resulting configuration.
-	err := resolvedCfg.Validate()
+	err := resolvedCfg.validate(options.withoutLockfile)
 	if err != nil {
-		if permissiveConfigParsing {
+		if options.permissiveConfigParsing {
 			slog.Warn(
 				"Project config validation failed; continuing due to '--permissive-config'",
 				"configFiles", configFilePaths,
@@ -79,16 +90,16 @@ func loadAndResolveProjectConfig(
 
 func loadAndMergeConfigWithIncludes(
 	configToUpdate *ProjectConfig, fs opctx.FS, filePath string,
-	permissiveConfigParsing bool,
+	options loadOptions,
 ) error {
 	// Load the project config file and all transitive includes.
-	loadedCfgs, err := loadProjectConfigWithIncludes(fs, filePath, permissiveConfigParsing, nil)
+	loadedCfgs, err := loadProjectConfigWithIncludes(fs, filePath, options, nil)
 	if err != nil {
 		return err
 	}
 
 	// Go through all the loaded configs and merge them into the resolved config.
-	err = mergeConfigFiles(configToUpdate, loadedCfgs)
+	err = mergeConfigFiles(configToUpdate, loadedCfgs, options)
 	if err != nil {
 		return err
 	}
@@ -96,9 +107,9 @@ func loadAndMergeConfigWithIncludes(
 	return nil
 }
 
-func mergeConfigFiles(resolvedCfg *ProjectConfig, loadedCfgs []*ConfigFile) error {
+func mergeConfigFiles(resolvedCfg *ProjectConfig, loadedCfgs []*ConfigFile, options loadOptions) error {
 	for _, loadedCfg := range loadedCfgs {
-		err := mergeConfigFile(resolvedCfg, loadedCfg)
+		err := mergeConfigFile(resolvedCfg, loadedCfg, options)
 		if err != nil {
 			return err
 		}
@@ -107,7 +118,7 @@ func mergeConfigFiles(resolvedCfg *ProjectConfig, loadedCfgs []*ConfigFile) erro
 	return nil
 }
 
-func mergeConfigFile(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
+func mergeConfigFile(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile, options loadOptions) error {
 	if loadedCfg.Project != nil {
 		err := resolvedCfg.Project.MergeUpdatesFrom(loadedCfg.Project.WithAbsolutePaths(loadedCfg.dir))
 		if err != nil {
@@ -123,7 +134,7 @@ func mergeConfigFile(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
 		return err
 	}
 
-	if err := mergeComponents(resolvedCfg, loadedCfg); err != nil {
+	if err := mergeComponents(resolvedCfg, loadedCfg, options); err != nil {
 		return err
 	}
 
@@ -144,10 +155,6 @@ func mergeConfigFile(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
 	}
 
 	if err := mergePackageGroups(resolvedCfg, loadedCfg); err != nil {
-		return err
-	}
-
-	if err := mergeTestSuites(resolvedCfg, loadedCfg); err != nil {
 		return err
 	}
 
@@ -226,10 +233,20 @@ func mergeComponentGroups(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) err
 	return nil
 }
 
-// mergeComponents merges component definitions from a loaded config file into
-// the resolved config. Components support additive merging: if a component
+// mergeComponents merges component definitions from a loaded config file into the
+// resolved config, using the merge semantics selected by the load mode.
+func mergeComponents(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile, options loadOptions) error {
+	if options.withoutLockfile {
+		return mergeComponentsWithOverride(resolvedCfg, loadedCfg)
+	}
+
+	return mergeComponentsAdditively(resolvedCfg, loadedCfg)
+}
+
+// mergeComponentsAdditively merges component definitions from a loaded config file
+// into the resolved config. Components support additive merging: if a component
 // already exists, its fields are updated from the new definition.
-func mergeComponents(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
+func mergeComponentsAdditively(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
 	for componentName, component := range loadedCfg.Components {
 		// Fill out fields not explicitly serialized.
 		component.Name = componentName
@@ -251,6 +268,38 @@ func mergeComponents(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
 			resolvedCfg.Components[componentName] = existing
 		} else {
 			resolvedCfg.Components[componentName] = *resolved
+		}
+	}
+
+	return nil
+}
+
+// mergeComponentsWithOverride merges component definitions from a loaded config
+// file into the resolved config so that later definitions override fields from
+// earlier files. Lock-file-free mode relies on this so that a generated
+// upstream-commit config can replace a component's configured commit pin.
+func mergeComponentsWithOverride(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
+	for componentName, component := range loadedCfg.Components {
+		// Fill out fields not explicitly serialized.
+		component.Name = componentName
+		component.SourceConfigFile = loadedCfg
+
+		// Track commit provenance separately from the component's primary TOML.
+		// Synthetic history must follow the file that actually changed the pin,
+		// even when another partial component definition is merged later.
+		if component.Spec.UpstreamCommit != "" {
+			component.upstreamCommitConfigFile = loadedCfg
+		}
+
+		resolvedComponent := component.WithAbsolutePaths(loadedCfg.dir)
+		if existing, ok := resolvedCfg.Components[componentName]; ok {
+			if err := existing.MergeOverridesFrom(resolvedComponent); err != nil {
+				return fmt.Errorf("failed to merge component %#q:\n%w", componentName, err)
+			}
+
+			resolvedCfg.Components[componentName] = existing
+		} else {
+			resolvedCfg.Components[componentName] = *resolvedComponent
 		}
 	}
 
@@ -327,24 +376,6 @@ func mergePackageGroups(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error
 	return nil
 }
 
-// mergeTestSuites merges test suite definitions from a loaded config file into the
-// resolved config. Duplicate test suite names are not allowed.
-func mergeTestSuites(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
-	for suiteName, suite := range loadedCfg.TestSuites {
-		if _, ok := resolvedCfg.TestSuites[suiteName]; ok {
-			return fmt.Errorf("%w: test suite %#q", ErrDuplicateTestSuites, suiteName)
-		}
-
-		// Fill out fields not explicitly serialized.
-		suite.Name = suiteName
-		suite.SourceConfigFile = loadedCfg
-
-		resolvedCfg.TestSuites[suiteName] = *(suite.WithAbsolutePaths(loadedCfg.dir))
-	}
-
-	return nil
-}
-
 // mergeTests merges individual test definitions from a loaded config file into the
 // resolved config. Duplicate test names are not allowed.
 func mergeTests(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
@@ -353,7 +384,7 @@ func mergeTests(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
 			return fmt.Errorf("%w: test %#q", ErrDuplicateTests, testName)
 		}
 
-		resolvedCfg.Tests[testName] = testDef.WithAbsolutePaths(loadedCfg.dir)
+		resolvedCfg.Tests[testName] = testDef.WithConfigDir(loadedCfg.dir)
 	}
 
 	return nil
@@ -374,7 +405,7 @@ func mergeTestGroups(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
 }
 
 func loadProjectConfigWithIncludes(
-	fs opctx.FS, filePath string, permissiveConfigParsing bool,
+	fs opctx.FS, filePath string, options loadOptions,
 	seen map[string]bool,
 ) ([]*ConfigFile, error) {
 	absFilePath, err := filepath.Abs(filePath)
@@ -396,7 +427,7 @@ func loadProjectConfigWithIncludes(
 	seen[absFilePath] = true
 
 	// Load the immediate config file.
-	cfg, err := loadProjectConfigFile(fs, filePath, permissiveConfigParsing)
+	cfg, err := loadProjectConfigFile(fs, filePath, options)
 	if err != nil {
 		return nil, err
 	}
@@ -429,7 +460,7 @@ func loadProjectConfigWithIncludes(
 			absIncludePath := makeAbsolute(cfg.dir, includePath)
 
 			includeCfgs, err := loadProjectConfigWithIncludes(
-				fs, absIncludePath, permissiveConfigParsing, seen,
+				fs, absIncludePath, options, seen,
 			)
 			if err != nil {
 				return nil, err
@@ -443,7 +474,7 @@ func loadProjectConfigWithIncludes(
 }
 
 func loadProjectConfigFile(
-	fs opctx.FS, filePath string, permissiveConfigParsing bool,
+	fs opctx.FS, filePath string, options loadOptions,
 ) (*ConfigFile, error) {
 	slog.Debug("Loading project config", "filePath", filePath)
 
@@ -459,7 +490,7 @@ func loadProjectConfigFile(
 
 	decoder := toml.NewDecoder(projectFile)
 
-	if !permissiveConfigParsing {
+	if !options.permissiveConfigParsing {
 		decoder.DisallowUnknownFields()
 	}
 
@@ -487,8 +518,16 @@ func loadProjectConfigFile(
 	cfg.sourcePath = absFilePath
 	cfg.dir = filepath.Dir(absFilePath)
 
-	// Make sure that the read data is internally consistent.
-	err = cfg.Validate()
+	// Make sure that the read data is internally consistent. In lock-file-free
+	// mode, component definitions support override merging across files, so they
+	// are validated only after the complete project configuration is assembled.
+	// Syntax and unknown fields were already checked by the TOML decoder.
+	if options.withoutLockfile {
+		err = cfg.validateNonComponentFields()
+	} else {
+		err = cfg.Validate()
+	}
+
 	if err != nil {
 		return nil, err
 	}
