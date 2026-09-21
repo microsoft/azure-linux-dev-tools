@@ -18,6 +18,8 @@ import (
 	//mage:import
 	_ "github.com/microsoft/azure-linux-dev-tools/magefiles/magerelease"
 	//mage:import
+	_ "github.com/microsoft/azure-linux-dev-tools/magefiles/magerpm"
+	//mage:import
 	_ "github.com/microsoft/azure-linux-dev-tools/magefiles/magemutation"
 	//mage:import
 	"github.com/microsoft/azure-linux-dev-tools/magefiles/magescenario"

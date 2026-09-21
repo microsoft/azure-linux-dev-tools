@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **go 1.25+** - Required for building and running the application
+- **Go 1.26+** - Required for building the application
 - **git** - For version control and submitting changes
 - **mage** - Our build automation tool
 
@@ -107,7 +107,7 @@ See the [testing documentation](./testing.md) for detailed guidelines on writing
 
 ### Common Issues
 
-- **Build failures**: Ensure Go version is 1.25+ and all dependencies are installed. Try running `mage build -v`. Ensure `GOPATH` is configured.
+- **Build failures**: Ensure Go version is 1.26+ and all dependencies are installed. Try running `mage build -v`. Ensure `GOPATH` is configured.
 - **Test failures**: Run `mage generate` to ensure generated code is up to date
 - **Lint errors**: Address specific linting issues or discuss exceptions with maintainers
 - **Command not found**: Run `mage install`, ensure `GOPATH` is in your `$PATH`.
