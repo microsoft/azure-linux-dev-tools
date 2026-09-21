@@ -63,9 +63,6 @@ type ConfigFile struct {
 	// to be applied to sets of binary packages.
 	PackageGroups map[string]PackageGroupConfig `toml:"package-groups,omitempty" validate:"dive" jsonschema:"title=Package groups,description=Definitions of package groups for shared binary package configuration"`
 
-	// Definitions of test suites.
-	TestSuites map[string]TestSuiteConfig `toml:"test-suites,omitempty" validate:"dive" jsonschema:"title=Test Suites,description=Definitions of test suites for this project"`
-
 	// Definitions of individual tests (new schema, [tests.X]).
 	Tests map[string]TestDefinition `toml:"tests,omitempty" validate:"dive" jsonschema:"title=Tests,description=Definitions of individual tests"`
 
@@ -108,14 +105,53 @@ func (f ConfigFile) Validate() error {
 		return err
 	}
 
-	// Per-component snapshot timestamps are not allowed. Components inherit
-	// the snapshot from the distro/group default-component-config or the
-	// project's default-distro. Per-component snapshots would create
-	// non-deterministic builds that the lock file cannot reliably track.
-	// Use an explicit 'upstream-commit' pin instead.
+	if err := validateComponentConfigs(f.Components, false); err != nil {
+		return err
+	}
 
-	// Validate overlay configurations for each component.
-	for componentName, component := range f.Components {
+	if err := validateTestDefinitions(f.Tests); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateNonComponentFields validates every field except the component
+// definitions. Lock-file-free mode merges component definitions across config
+// files with override semantics, so a single file may legitimately be
+// incomplete; components are validated once the whole project is assembled.
+func (f ConfigFile) validateNonComponentFields() error {
+	components := f.Components
+	f.Components = nil
+
+	if err := f.Validate(); err != nil {
+		return err
+	}
+
+	// Source-file entries are atomic slice elements rather than partial nested
+	// definitions, so validate them before their script paths become absolute.
+	for componentName, component := range components {
+		if err := validateSourceFiles(component.SourceFiles, componentName, false); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateComponentConfigs validates the parts of a component definition that
+// the struct validator cannot express.
+//
+// Per-component snapshot timestamps are not allowed. Components inherit the
+// snapshot from the distro/group default-component-config or the project's
+// default-distro. Per-component snapshots would create non-deterministic builds
+// that the lock file cannot reliably track. Use an explicit 'upstream-commit'
+// pin instead.
+func validateComponentConfigs(
+	components map[string]ComponentConfig,
+	customScriptPathsResolved bool,
+) error {
+	for componentName, component := range components {
 		for i, overlay := range component.Overlays {
 			err := overlay.Validate()
 			if err != nil {
@@ -129,7 +165,11 @@ func (f ConfigFile) Validate() error {
 			return fmt.Errorf("invalid build config for component %#q:\n%w", componentName, err)
 		}
 
-		if err := validateSourceFiles(component.SourceFiles, componentName); err != nil {
+		if err := validateSourceFiles(
+			component.SourceFiles,
+			componentName,
+			customScriptPathsResolved,
+		); err != nil {
 			return err
 		}
 
@@ -139,33 +179,6 @@ func (f ConfigFile) Validate() error {
 					"snapshots should be set on the distro or group default-component-config, "+
 					"or use 'upstream-commit' to pin a specific commit",
 				componentName)
-		}
-	}
-
-	if err := validateTestSuites(f.TestSuites); err != nil {
-		return err
-	}
-
-	if err := validateTestDefinitions(f.Tests); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func validateTestSuites(testSuites map[string]TestSuiteConfig) error {
-	for suiteName, suite := range testSuites {
-		// Suite names are used as path components (e.g., for the per-suite venv directory),
-		// so reject anything that could escape the intended directory or otherwise be unsafe
-		// across platforms.
-		if err := fileutils.ValidateFilename(suiteName); err != nil {
-			return fmt.Errorf("invalid test suite name %#q:\n%w", suiteName, err)
-		}
-
-		suite.Name = suiteName
-
-		if err := suite.Validate(); err != nil {
-			return fmt.Errorf("invalid test suite %#q:\n%w", suiteName, err)
 		}
 	}
 
@@ -391,7 +404,11 @@ func validateTestRefList(
 //   - Origin must be present and valid for each source file.
 //   - 'replace-upstream' and 'replace-reason' must be set together.
 //   - [OriginTypeOverlay] entries additionally require 'hash', 'hash-type', and 'replace-upstream = true'.
-func validateSourceFiles(sourceFiles []SourceFileReference, componentName string) error {
+func validateSourceFiles(
+	sourceFiles []SourceFileReference,
+	componentName string,
+	customScriptPathsResolved bool,
+) error {
 	seen := make(map[string]bool, len(sourceFiles))
 
 	for _, ref := range sourceFiles {
@@ -424,7 +441,7 @@ func validateSourceFiles(sourceFiles []SourceFileReference, componentName string
 			return err
 		}
 
-		if err := validateCustomSourceRef(ref, componentName); err != nil {
+		if err := validateCustomSourceRef(ref, componentName, customScriptPathsResolved); err != nil {
 			return err
 		}
 
@@ -491,7 +508,11 @@ func validateReplaceUpstream(ref SourceFileReference, componentName string) erro
 //   - 'inputs' must be empty when 'origin.type' is not 'custom'.
 //   - each 'inputs' entry must be a valid filename (no path separators).
 //   - each 'inputs' entry must be unique.
-func validateCustomSourceRef(ref SourceFileReference, componentName string) error {
+func validateCustomSourceRef(
+	ref SourceFileReference,
+	componentName string,
+	customScriptPathResolved bool,
+) error {
 	if ref.Origin.Type == OriginTypeCustom {
 		if ref.Origin.Script == "" {
 			return fmt.Errorf(
@@ -500,13 +521,18 @@ func validateCustomSourceRef(ref SourceFileReference, componentName string) erro
 				ref.Filename, componentName)
 		}
 
-		if err := fileutils.ValidateFilename(ref.Origin.Script); err != nil {
+		scriptName := ref.Origin.Script
+		if customScriptPathResolved {
+			scriptName = ref.Origin.EffectiveScriptName()
+		}
+
+		if err := fileutils.ValidateFilename(scriptName); err != nil {
 			return fmt.Errorf(
 				"invalid 'script' value %#q for source file %#q in component %#q:\n%w",
 				ref.Origin.Script, ref.Filename, componentName, err)
 		}
 
-		if err := validateCustomSourceInputs(ref, componentName); err != nil {
+		if err := validateCustomSourceInputs(ref, componentName, scriptName); err != nil {
 			return err
 		}
 
@@ -537,7 +563,11 @@ func validateCustomSourceRef(ref SourceFileReference, componentName string) erro
 	return nil
 }
 
-func validateCustomSourceInputs(ref SourceFileReference, componentName string) error {
+func validateCustomSourceInputs(
+	ref SourceFileReference,
+	componentName string,
+	scriptName string,
+) error {
 	seen := make(map[string]bool, len(ref.Origin.Inputs))
 
 	for _, input := range ref.Origin.Inputs {
@@ -555,7 +585,7 @@ func validateCustomSourceInputs(ref SourceFileReference, componentName string) e
 
 		seen[input] = true
 
-		if input == ref.Origin.Script {
+		if input == scriptName {
 			return fmt.Errorf(
 				"'inputs' entry %#q for source file %#q in component %#q conflicts with 'script' filename",
 				input, ref.Filename, componentName)
@@ -648,6 +678,22 @@ func (f ConfigFile) Serialize(fs opctx.FS, filePath string) error {
 	err = fileutils.WriteFile(fs, filePath, bytes, defaultPerms)
 	if err != nil {
 		return fmt.Errorf("failed to write project config:\n%w", err)
+	}
+
+	return nil
+}
+
+// validateComponentStructs runs the struct validator over each component
+// definition. Config files declare components with a 'dive' validation tag, so
+// this is only needed when component validation is deferred until the whole
+// project has been merged (lock-file-free mode).
+func validateComponentStructs(components map[string]ComponentConfig) error {
+	validate := validator.New()
+
+	for componentName, component := range components {
+		if err := validate.Struct(&component); err != nil {
+			return fmt.Errorf("invalid component %#q:\n%w", componentName, err)
+		}
 	}
 
 	return nil

@@ -90,7 +90,7 @@ func TestListImages_WithCapabilitiesAndTests(t *testing.T) {
 				Systemd:         lo.ToPtr(true),
 			},
 			Tests: &projectconfig.ImageTestsConfig{
-				TestSuites: []projectconfig.TestSuiteRef{
+				Tests: []projectconfig.TestRef{
 					{Name: "smoke"},
 					{Name: "integration"},
 				},
@@ -106,7 +106,7 @@ func TestListImages_WithCapabilitiesAndTests(t *testing.T) {
 				Container: lo.ToPtr(true),
 			},
 			Tests: &projectconfig.ImageTestsConfig{
-				TestSuites: []projectconfig.TestSuiteRef{
+				Tests: []projectconfig.TestRef{
 					{Name: "smoke"},
 				},
 			},
@@ -133,7 +133,7 @@ func TestListImages_WithCapabilitiesAndTests(t *testing.T) {
 	assert.Equal(t, "container", results[0].CapabilitiesSummary)
 	require.NotNil(t, results[0].Tests)
 	assert.Equal(t, projectconfig.ImageTestsConfig{
-		TestSuites: []projectconfig.TestSuiteRef{{Name: "smoke"}},
+		Tests: []projectconfig.TestRef{{Name: "smoke"}},
 	}, *results[0].Tests)
 	assert.Equal(t, "smoke", results[0].TestsSummary)
 	assert.Equal(t, projectconfig.ImagePublishConfig{
@@ -157,7 +157,7 @@ func TestListImages_WithCapabilitiesAndTests(t *testing.T) {
 	assert.Equal(t, "machine-bootable, systemd", results[2].CapabilitiesSummary)
 	require.NotNil(t, results[2].Tests)
 	assert.Equal(t, projectconfig.ImageTestsConfig{
-		TestSuites: []projectconfig.TestSuiteRef{{Name: "smoke"}, {Name: "integration"}},
+		Tests: []projectconfig.TestRef{{Name: "smoke"}, {Name: "integration"}},
 	}, *results[2].Tests)
 	assert.Equal(t, "smoke, integration", results[2].TestsSummary)
 	assert.Equal(t, projectconfig.ImagePublishConfig{

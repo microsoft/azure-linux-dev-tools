@@ -14,7 +14,6 @@ All config files share the same schema — there is no distinction between a "ro
 | `components` | map of objects | Component (package) definitions | [Components](components.md) |
 | `component-groups` | map of objects | Named groups of components with shared defaults | [Component Groups](component-groups.md) |
 | `images` | map of objects | Image definitions (VMs, containers) | [Images](images.md) |
-| `test-suites` | map of objects | Named test suite definitions referenced by images | [Test Suites](test-suites.md) |
 | `tests` | map of objects | Named test definitions (new-shape, parse-only) | [Tests and Test Groups](tests.md) |
 | `test-groups` | map of objects | Named bundles of test references (new-shape, parse-only) | [Tests and Test Groups](tests.md) |
 | `tools` | object | Configuration for external tools used by azldev | [Tools](tools.md) |
@@ -37,6 +36,8 @@ includes = ["distro/distro.toml", "base/project.toml"]
 Glob patterns that match no files are silently ignored. Literal filenames (no wildcards) that do not exist produce an error.
 
 Includes are resolved recursively — included files can themselves declare further includes. For a detailed explanation of load order and merge semantics, see [Configuration System](../../explanation/config-system.md).
+
+> **Preview:** With the global `--without-lockfile` flag, the generated upstream-commit files must be included before any component-specific TOML configuration, so that later component definitions supply the remaining `spec` fields and may explicitly override a generated pin. See [Preview the Lock-File-Free Mode](../../how-to/preview-without-lockfile.md).
 
 ## Minimal Example
 

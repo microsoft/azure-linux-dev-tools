@@ -59,6 +59,10 @@ For local components, this computes a content hash of the spec directory.
 Subsequent commands (render, build) use the locked state for deterministic,
 reproducible results.
 
+If a component fails to resolve, successful components are still written
+before the command returns an error. Failed components are left unchanged,
+and orphan pruning is skipped for that run.
+
 When updating all components (-a), orphan lock files (locks for components
 that no longer exist in the project config) are automatically pruned.
 Orphan pruning is skipped when updating individual components to avoid
@@ -96,7 +100,7 @@ Cannot be combined with --bump.`,
 		ValidArgsFunction: components.GenerateComponentNameCompletions,
 	}
 
-	components.AddComponentFilterOptionsToCommand(cmd, &options.ComponentFilter)
+	addComponentFilterOptions(cmd, &options.ComponentFilter, cmdOptions{})
 
 	cmd.Flags().BoolVar(&options.Bump, "bump", false,
 		"increment the manual-rebuild counter to trigger a new release")
@@ -208,15 +212,18 @@ func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]Updat
 		return filterDisplayResults(results), errors.New("update cancelled; lock files not updated")
 	}
 
-	// Check results and bail on errors before saving.
-	if err := checkUpdateErrors(results); err != nil {
-		return filterDisplayResults(results), err
-	}
-
-	// Write per-component lock files only on full success.
+	// Write successful per-component results even when other components failed.
+	// Failed and externally-cancelled results are skipped by the save helper.
 	// saveComponentLocks may flip Changed for fingerprint-only diffs.
 	// In --check-only mode it computes everything but skips disk writes.
 	if err := saveComponentLocks(env, store, results, options.CheckOnly); err != nil {
+		return filterDisplayResults(results), err
+	}
+
+	// Return the aggregate resolution error after preserving successful work.
+	// Do not prune orphans after a partial update so a failed run only
+	// persists successful component updates and avoids unrelated cleanup.
+	if err := checkUpdateErrors(results, options.CheckOnly); err != nil {
 		return filterDisplayResults(results), err
 	}
 
@@ -256,42 +263,43 @@ func handleOrphanLocks(
 	comps []components.Component,
 	options *UpdateComponentOptions,
 ) ([]string, error) {
-	if !options.ComponentFilter.IncludeAllComponents {
-		return nil, nil
+	return handleOrphans(
+		lockOrphanStore{store: store},
+		comps,
+		options.ComponentFilter.IncludeAllComponents,
+		options.CheckOnly,
+		orphanMessages{
+			noComponents: "all existing lock files",
+			pruned:       "Pruned orphan lock files",
+		},
+	)
+}
+
+// lockOrphanStore adapts [lockfile.Store] to [orphanStore].
+type lockOrphanStore struct {
+	store *lockfile.Store
+}
+
+func (s lockOrphanStore) findOrphans(
+	resolved map[string]projectconfig.ComponentConfig,
+) ([]string, error) {
+	orphans, err := s.store.FindOrphanLockFiles(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("finding orphan lock files:\n%w", err)
 	}
 
-	if len(comps) == 0 {
-		if options.CheckOnly {
-			slog.Warn("No components resolved; all existing lock files would be treated as orphans")
-		} else {
-			slog.Warn("No components resolved; all existing lock files will be treated as orphans")
-		}
+	return orphans, nil
+}
+
+func (s lockOrphanStore) pruneOrphans(
+	resolved map[string]projectconfig.ComponentConfig,
+) (int, error) {
+	pruned, err := s.store.PruneOrphans(resolved)
+	if err != nil {
+		return 0, fmt.Errorf("pruning orphan lock files:\n%w", err)
 	}
 
-	resolvedNames := make(map[string]projectconfig.ComponentConfig, len(comps))
-	for _, comp := range comps {
-		resolvedNames[comp.GetName()] = *comp.GetConfig()
-	}
-
-	if options.CheckOnly {
-		orphans, findErr := store.FindOrphanLockFiles(resolvedNames)
-		if findErr != nil {
-			return nil, fmt.Errorf("finding orphan lock files:\n%w", findErr)
-		}
-
-		return orphans, nil
-	}
-
-	pruned, pruneErr := store.PruneOrphans(resolvedNames)
-	if pruneErr != nil {
-		return nil, fmt.Errorf("pruning orphan lock files:\n%w", pruneErr)
-	}
-
-	if pruned > 0 {
-		slog.Info("Pruned orphan lock files", "count", pruned)
-	}
-
-	return nil, nil
+	return pruned, nil
 }
 
 // checkOnlyResult inspects the results of a --check-only update run and
@@ -614,9 +622,7 @@ func resolveLockedSourceIdentity(
 }
 
 // checkUpdateErrors returns an error if any component failed to resolve.
-// Does NOT log a summary — call [logUpdateSummary] after saves are complete
-// so that Changed counts include fingerprint-only diffs.
-func checkUpdateErrors(results []UpdateResult) error {
+func checkUpdateErrors(results []UpdateResult, checkOnly bool) error {
 	var failedNames []string
 
 	for idx := range results {
@@ -630,8 +636,14 @@ func checkUpdateErrors(results []UpdateResult) error {
 			"total", len(results),
 			"errors", len(failedNames))
 
+		if checkOnly {
+			return fmt.Errorf(
+				"%d component(s) failed to resolve during '--check-only'; no lock files were updated:\n  %s",
+				len(failedNames), strings.Join(failedNames, "\n  "))
+		}
+
 		return fmt.Errorf(
-			"%d component(s) failed to resolve; lock files not updated:\n  %s",
+			"%d component(s) failed to resolve; successful lock files were updated:\n  %s",
 			len(failedNames), strings.Join(failedNames, "\n  "))
 	}
 
@@ -713,14 +725,14 @@ func resolveSourceIdentitiesParallel(
 			progressEvent.SetProgress(syncCompleted+int64(done), total)
 		},
 		func(ctx context.Context, item parallelItem) struct{} {
-			resolveAndRecordIdentity(ctx, workerEnv, cancel, item.comp, store, &results[item.idx])
+			resolveAndRecordIdentity(ctx, workerEnv, item.comp, store, &results[item.idx])
 
 			return struct{}{}
 		},
 	)
 
-	// Items that never acquired a worker slot (ctx cancelled mid-flight) get
-	// marked Skipped — matches the legacy semaphore-select behaviour.
+	// Items that never acquired a worker slot due to external cancellation get
+	// marked skipped. Per-component errors do not cancel the remaining work.
 	for i, pr := range parmapResults {
 		if pr.Cancelled {
 			idx := parallel[i].idx
@@ -800,7 +812,6 @@ func classifyForResolution(
 func resolveAndRecordIdentity(
 	ctx context.Context,
 	env *azldev.Env,
-	cancel context.CancelFunc,
 	comp components.Component,
 	store *lockfile.Store,
 	result *UpdateResult,
@@ -814,9 +825,6 @@ func resolveAndRecordIdentity(
 	identity, resolveErr := resolveOneSourceIdentity(ctx, env, comp)
 	if resolveErr != nil {
 		result.Error = resolveErr.Error()
-
-		// Cancel remaining goroutines on first real failure.
-		cancel()
 
 		return
 	}

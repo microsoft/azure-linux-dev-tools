@@ -21,6 +21,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const testRenderedSpecDir = "/project/specs/u/util-linux"
+
 func TestDecodeTMTConfig(t *testing.T) {
 	config, err := decodeTMTConfig(map[string]any{
 		"source": map[string]any{
@@ -246,7 +248,7 @@ func TestPrepareTMTEnvironmentDryRunAvoidsFilesystemChanges(t *testing.T) {
 	dryRunOptions.Interfaces = testEnv.TestInterfaces
 	dryRunEnv := azldev.NewEnv(t.Context(), dryRunOptions)
 
-	workDir, tmtProgramPath, err := prepareTMTEnvironment(dryRunEnv, "artifacts", tmtProvisionVirtual)
+	workDir, tmtProgramPath, err := prepareTMTEnvironment(dryRunEnv, "artifacts", tmtProvisionVirtual, false)
 
 	require.NoError(t, err)
 	assert.Equal(t, "/project/artifacts", workDir)
@@ -264,7 +266,7 @@ func TestNewComponentTestCmd(t *testing.T) {
 	assert.NotNil(t, cmd.RunE)
 
 	for _, name := range []string{
-		"image-path", "rpm", "test", "work-dir", "provision",
+		"image-path", "rpm", "test", "work-dir", "provision", "from-spec",
 	} {
 		assert.NotNil(t, cmd.Flags().Lookup(name), "%s flag should be registered", name)
 	}
@@ -273,6 +275,97 @@ func TestNewComponentTestCmd(t *testing.T) {
 	for _, name := range []string{"memory", "firmware", "connection", "user"} {
 		assert.Nil(t, cmd.Flags().Lookup(name), "%s flag should not be registered", name)
 	}
+}
+
+func TestResolveSpecRunDir(t *testing.T) {
+	t.Run("returns the spec dir when an fmf root is present", func(t *testing.T) {
+		testEnv := testutils.NewTestEnv(t)
+		specDir := testRenderedSpecDir
+		require.NoError(t, fileutils.WriteFile(
+			testEnv.TestFS, filepath.Join(specDir, ".fmf", "version"), []byte("1\n"), fileperms.PrivateFile,
+		))
+
+		runDir, err := resolveSpecRunDir(testEnv.Env, specDir)
+
+		require.NoError(t, err)
+		assert.Equal(t, specDir, runDir)
+	})
+
+	t.Run("rejects a spec dir without an fmf root", func(t *testing.T) {
+		testEnv := testutils.NewTestEnv(t)
+		specDir := testRenderedSpecDir
+		require.NoError(t, testEnv.TestFS.MkdirAll(specDir, fileperms.PublicDir))
+
+		_, err := resolveSpecRunDir(testEnv.Env, specDir)
+
+		require.ErrorContains(t, err, "no fmf metadata")
+		assert.ErrorContains(t, err, "skip-file-filter")
+	})
+
+	t.Run("rejects a non-regular fmf version marker", func(t *testing.T) {
+		testEnv := testutils.NewTestEnv(t)
+		specDir := testRenderedSpecDir
+		require.NoError(t, testEnv.TestFS.MkdirAll(filepath.Join(specDir, ".fmf", "version"), fileperms.PublicDir))
+
+		_, err := resolveSpecRunDir(testEnv.Env, specDir)
+
+		require.ErrorContains(t, err, "must be a regular file")
+	})
+
+	t.Run("rejects an empty spec dir", func(t *testing.T) {
+		testEnv := testutils.NewTestEnv(t)
+
+		_, err := resolveSpecRunDir(testEnv.Env, "")
+
+		require.ErrorContains(t, err, "rendered-specs-dir")
+	})
+}
+
+func TestRunOneTMTTestFromSpecDoesNotClone(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	specDir := testRenderedSpecDir
+	require.NoError(t, fileutils.WriteFile(
+		testEnv.TestFS, filepath.Join(specDir, ".fmf", "version"), []byte("1\n"), fileperms.PrivateFile,
+	))
+
+	test := projectconfig.ResolvedTest{
+		Name: "tmt-util-linux-ci",
+		Definition: projectconfig.TestDefinition{
+			Type: "tmt",
+			Tmt: map[string]any{
+				"source": map[string]any{
+					"git-url": "https://example.test/util-linux.git",
+					"ref":     "0123456789012345678901234567890123456789",
+				},
+				"plan": "/plans/ci",
+			},
+		},
+	}
+
+	settings := tmtRunSettings{
+		WorkDir:        "/project/work",
+		TMTProgramPath: "/project/work/tmt/venv/bin/tmt",
+		Provision:      tmtProvisionLocal,
+		FromSpec:       true,
+		SpecDir:        specDir,
+	}
+
+	require.NoError(t, runOneTMTTest(testEnv.Env, test, settings))
+
+	ranTMT := false
+
+	for _, args := range testEnv.CommandsExecuted {
+		require.NotEmpty(t, args)
+		assert.NotEqual(t, "git", filepath.Base(args[0]),
+			"--from-spec must not invoke git, but ran: %v", args)
+
+		if filepath.Base(args[0]) == tmtProgram {
+			ranTMT = true
+		}
+	}
+
+	assert.True(t, ranTMT, "expected the tmt run command to be invoked from the spec dir")
 }
 
 func TestComponentTestCmdNoMatch(t *testing.T) {

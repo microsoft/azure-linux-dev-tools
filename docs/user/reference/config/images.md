@@ -39,11 +39,10 @@ The `capabilities` subtable describes what the image supports. All fields are op
 
 ## Image Tests
 
-The `tests` subtable links an image to one or more test suites defined in the top-level [`[test-suites]`](test-suites.md) section, and/or to entries from the new-shape [`[tests]` / `[test-groups]`](tests.md) sections.
+The `tests` subtable links an image to one or more tests or test groups defined in the top-level [`[tests]` / `[test-groups]`](tests.md) sections.
 
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
-| Test Suites | `test-suites` | array of inline tables | No | List of test suite references. Each entry must have a `name` field matching a key in `[test-suites]`. |
 | Tests | `tests` | array of [TestRef](tests.md#test-reference) | No | References to `[tests.<name>]` entries or `[test-groups.<name>]` entries (parse-only; see [Tests and Test Groups](tests.md)). |
 
 ## Image Publish
@@ -90,7 +89,7 @@ description = "Azure-optimized VM image"
 definition = { type = "kiwi", path = "vm-azure/vm-azure.kiwi", profile = "azure" }
 ```
 
-### Image with test suite references
+### Image with test references
 
 ```toml
 [images.vm-base]
@@ -102,9 +101,9 @@ machine-bootable = true
 systemd = true
 
 [images.vm-base.tests]
-test-suites = [
-  { name = "smoke" },
-  { name = "integration" },
+tests = [
+  { name = "static-image-checks" },
+  { group = "vm-base-functional" },
 ]
 ```
 
@@ -122,6 +121,5 @@ channels = ["registry-prod", "registry-staging"]
 ## Related Resources
 
 - [Config File Structure](config-file.md) — top-level config file layout
-- [Test Suites](test-suites.md) — test suite definitions
 - [Tests and Test Groups](tests.md) — new-shape test/group definitions referenced by `[images.<name>.tests]`
 - [Tools](tools.md) — Image Customizer tool configuration

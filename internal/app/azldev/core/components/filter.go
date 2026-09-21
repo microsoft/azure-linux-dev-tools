@@ -52,7 +52,12 @@ func AddComponentFilterOptionsToCommand(cmd *cobra.Command, filter *ComponentFil
 
 	cmd.Flags().StringArrayVarP(&filter.SpecPaths, "spec-path", "s", []string{}, "Spec path")
 	_ = cmd.MarkFlagFilename("spec-path", ".spec")
+}
 
+// AddLockValidationFlagToCommand adds the '--skip-lock-validation' flag to a command.
+// Only azldev's default mode validates lock files, so lock-file-free mode leaves the
+// flag unregistered rather than accepting an option that does nothing.
+func AddLockValidationFlagToCommand(cmd *cobra.Command, filter *ComponentFilter) {
 	cmd.Flags().BoolVar(&filter.SkipLockValidation, "skip-lock-validation",
 		false,
 		"skip lock file consistency checks")
