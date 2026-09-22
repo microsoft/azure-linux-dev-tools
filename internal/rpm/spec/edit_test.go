@@ -231,6 +231,92 @@ func TestStructuralVisitTagsPreservesMutationsBeforeVisitorError(t *testing.T) {
 	}
 }
 
+func TestStructuralVisitTagsRollsBackInvalidMutations(t *testing.T) {
+	callbackErr := errors.New("stop visiting tags")
+
+	tests := []struct {
+		name            string
+		input           string
+		mutatedTag      string
+		failingTag      string
+		recoveryPackage string
+		recoveryTag     string
+		expected        string
+		visit           func(*spec.Spec, func(*spec.TagLine, *spec.Context) error) error
+	}{
+		{
+			name:        "all packages without callback error",
+			input:       "Name: original\nVersion: 1\n",
+			mutatedTag:  "Name",
+			recoveryTag: "Name",
+			expected:    "Name: recovered\nVersion: 1\n",
+			visit: func(specFile *spec.Spec, visitor func(*spec.TagLine, *spec.Context) error) error {
+				return specFile.VisitTags(visitor)
+			},
+		},
+		{
+			name:        "all packages with callback error",
+			input:       "Name: original\nVersion: 1\n",
+			mutatedTag:  "Name",
+			failingTag:  "Version",
+			recoveryTag: "Name",
+			expected:    "Name: recovered\nVersion: 1\n",
+			visit: func(specFile *spec.Spec, visitor func(*spec.TagLine, *spec.Context) error) error {
+				return specFile.VisitTags(visitor)
+			},
+		},
+		{
+			name:            "selected package with callback error",
+			input:           "Name: original\n%package devel\nSummary: original\nPatch0: devel.patch\n",
+			mutatedTag:      "Summary",
+			failingTag:      "Patch0",
+			recoveryPackage: "devel",
+			recoveryTag:     "Summary",
+			expected:        "Name: original\n%package devel\nSummary: recovered\nPatch0: devel.patch\n",
+			visit: func(specFile *spec.Spec, visitor func(*spec.TagLine, *spec.Context) error) error {
+				return specFile.VisitTagsPackage("devel", visitor)
+			},
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			specFile, err := spec.OpenSpec(
+				strings.NewReader(testCase.input),
+				spec.WithEditor(spec.EditorStructural),
+			)
+			require.NoError(t, err)
+
+			err = testCase.visit(specFile, func(tagLine *spec.TagLine, ctx *spec.Context) error {
+				switch tagLine.Tag {
+				case testCase.mutatedTag:
+					ctx.ReplaceLine("%if 1")
+				case testCase.failingTag:
+					return callbackErr
+				}
+
+				return nil
+			})
+			require.Error(t, err)
+			require.ErrorContains(t, err, "validating mutated spec tree")
+
+			if testCase.failingTag != "" {
+				require.ErrorIs(t, err, callbackErr)
+			}
+
+			var rolledBack bytes.Buffer
+			require.NoError(t, specFile.Serialize(&rolledBack))
+			assert.Equal(t, testCase.input, rolledBack.String())
+
+			require.NoError(t, specFile.SetTag(testCase.recoveryPackage, testCase.recoveryTag, "recovered"))
+
+			var recovered bytes.Buffer
+			require.NoError(t, specFile.Serialize(&recovered))
+			assert.Equal(t, testCase.expected, recovered.String())
+		})
+	}
+}
+
 func TestVisitPreservesMutationsBeforeVisitorError(t *testing.T) {
 	visitorErr := errors.New("stop visiting")
 	input := "Name: example\nVersion: 1\n"

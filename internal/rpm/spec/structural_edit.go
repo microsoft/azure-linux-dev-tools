@@ -140,19 +140,18 @@ func (s *structuralSpec) VisitTags(visitor func(tagLine *TagLine, ctx *Context) 
 	})
 
 	lines := serializeTree(root)
-	if visitErr != nil {
-		s.rawLines = lines
-
-		return visitErr
-	}
-
 	if _, err := parseTree(lines); err != nil {
-		return fmt.Errorf("validating mutated spec tree:\n%w", err)
+		validationErr := fmt.Errorf("validating mutated spec tree:\n%w", err)
+		if visitErr != nil {
+			return errors.Join(visitErr, validationErr)
+		}
+
+		return validationErr
 	}
 
 	s.rawLines = lines
 
-	return nil
+	return visitErr
 }
 
 // VisitTagsPackage iterates over all tag lines in the given package, calling the visitor
