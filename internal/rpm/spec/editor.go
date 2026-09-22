@@ -72,6 +72,14 @@ type Spec struct {
 	editor specEditor
 }
 
+func (s *Spec) activeEditor() specEditor {
+	if s.editor == nil {
+		s.editor = &legacySpec{}
+	}
+
+	return s.editor
+}
+
 // OpenSpec reads a spec and selects its editor once. With no option, it preserves
 // the established legacy behavior.
 func OpenSpec(reader io.Reader, options ...OpenOption) (*Spec, error) {
@@ -105,28 +113,28 @@ func OpenSpec(reader io.Reader, options ...OpenOption) (*Spec, error) {
 //
 //nolint:wrapcheck // Preserve errors returned by the selected editor.
 func (s *Spec) Serialize(writer io.Writer) error {
-	return s.editor.Serialize(writer)
+	return s.activeEditor().Serialize(writer)
 }
 
 // ReplaceLine replaces the line at the specified 0-indexed line number.
 func (s *Spec) ReplaceLine(lineNumber int, replacement string) {
-	s.editor.ReplaceLine(lineNumber, replacement)
+	s.activeEditor().ReplaceLine(lineNumber, replacement)
 }
 
 // RemoveLine removes the line at the specified 0-indexed line number.
-func (s *Spec) RemoveLine(lineNumber int) { s.editor.RemoveLine(lineNumber) }
+func (s *Spec) RemoveLine(lineNumber int) { s.activeEditor().RemoveLine(lineNumber) }
 
 // RemoveLines removes the lines in the specified 0-indexed range.
-func (s *Spec) RemoveLines(start, end int) { s.editor.RemoveLines(start, end) }
+func (s *Spec) RemoveLines(start, end int) { s.activeEditor().RemoveLines(start, end) }
 
 // InsertLinesAt inserts lines before the specified 0-indexed line number.
 func (s *Spec) InsertLinesAt(lines []string, lineNumber int) {
-	s.editor.InsertLinesAt(lines, lineNumber)
+	s.activeEditor().InsertLinesAt(lines, lineNumber)
 }
 
 //nolint:wrapcheck // Preserve errors returned by the selected editor.
 func (s *Spec) Visit(visitor Visitor) error {
-	return s.editor.Visit(visitor)
+	return s.activeEditor().Visit(visitor)
 }
 
 // VisitTags iterates over all tag lines across all packages, calling the visitor function
@@ -134,7 +142,7 @@ func (s *Spec) Visit(visitor Visitor) error {
 //
 //nolint:wrapcheck // Preserve errors returned by the selected editor.
 func (s *Spec) VisitTags(visitor func(tagLine *TagLine, ctx *Context) error) error {
-	return s.editor.VisitTags(visitor)
+	return s.activeEditor().VisitTags(visitor)
 }
 
 // VisitTagsPackage iterates over all tag lines in the given package, calling the visitor
@@ -142,137 +150,137 @@ func (s *Spec) VisitTags(visitor func(tagLine *TagLine, ctx *Context) error) err
 //
 //nolint:wrapcheck // Preserve errors returned by the selected editor.
 func (s *Spec) VisitTagsPackage(packageName string, visitor func(tagLine *TagLine, ctx *Context) error) error {
-	return s.editor.VisitTagsPackage(packageName, visitor)
+	return s.activeEditor().VisitTagsPackage(packageName, visitor)
 }
 
 // SetTag sets the value of a tag in the specified package.
 //
 //nolint:wrapcheck // Preserve errors returned by the selected editor.
 func (s *Spec) SetTag(pkg, tag, value string) error {
-	return s.editor.SetTag(pkg, tag, value)
+	return s.activeEditor().SetTag(pkg, tag, value)
 }
 
 // UpdateExistingTag updates every matching tag in the specified package.
 //
 //nolint:wrapcheck // Preserve errors returned by the selected editor.
 func (s *Spec) UpdateExistingTag(pkg, tag, value string) error {
-	return s.editor.UpdateExistingTag(pkg, tag, value)
+	return s.activeEditor().UpdateExistingTag(pkg, tag, value)
 }
 
 // RemoveTag removes matching tags from the specified package.
 //
 //nolint:wrapcheck // Preserve errors returned by the selected editor.
 func (s *Spec) RemoveTag(pkg, tag, value string) error {
-	return s.editor.RemoveTag(pkg, tag, value)
+	return s.activeEditor().RemoveTag(pkg, tag, value)
 }
 
 // RemoveTagsMatching removes tags matched by matcher from the specified package.
 //
 //nolint:wrapcheck // Preserve errors returned by the selected editor.
 func (s *Spec) RemoveTagsMatching(pkg string, matcher func(string, string) bool) (int, error) {
-	return s.editor.RemoveTagsMatching(pkg, matcher)
+	return s.activeEditor().RemoveTagsMatching(pkg, matcher)
 }
 
 // AddTag adds a tag to the specified package.
 //
 //nolint:wrapcheck // Preserve errors returned by the selected editor.
 func (s *Spec) AddTag(pkg, tag, value string) error {
-	return s.editor.AddTag(pkg, tag, value)
+	return s.activeEditor().AddTag(pkg, tag, value)
 }
 
 // InsertTag inserts a tag in the specified package.
 //
 //nolint:wrapcheck // Preserve errors returned by the selected editor.
 func (s *Spec) InsertTag(pkg, tag, value string) error {
-	return s.editor.InsertTag(pkg, tag, value)
+	return s.activeEditor().InsertTag(pkg, tag, value)
 }
 
 // PrependLines adds lines at the start of the spec.
-func (s *Spec) PrependLines(lines []string) { s.editor.PrependLines(lines) }
+func (s *Spec) PrependLines(lines []string) { s.activeEditor().PrependLines(lines) }
 
 // AppendLines adds lines at the end of the spec.
-func (s *Spec) AppendLines(lines []string) { s.editor.AppendLines(lines) }
+func (s *Spec) AppendLines(lines []string) { s.activeEditor().AppendLines(lines) }
 
 // PrependLinesToSection adds lines at the start of a section.
 //
 //nolint:wrapcheck // Preserve errors returned by the selected editor.
 func (s *Spec) PrependLinesToSection(section, pkg string, lines []string) error {
-	return s.editor.PrependLinesToSection(section, pkg, lines)
+	return s.activeEditor().PrependLinesToSection(section, pkg, lines)
 }
 
 // AppendLinesToSection adds lines at the end of a section.
 //
 //nolint:wrapcheck // Preserve errors returned by the selected editor.
 func (s *Spec) AppendLinesToSection(section, pkg string, lines []string) error {
-	return s.editor.AppendLinesToSection(section, pkg, lines)
+	return s.activeEditor().AppendLinesToSection(section, pkg, lines)
 }
 
 // SearchAndReplace replaces matching content in a section.
 //
 //nolint:wrapcheck // Preserve errors returned by the selected editor.
 func (s *Spec) SearchAndReplace(section, pkg, regex, replacement string) error {
-	return s.editor.SearchAndReplace(section, pkg, regex, replacement)
+	return s.activeEditor().SearchAndReplace(section, pkg, regex, replacement)
 }
 
 // AddChangelogEntry adds an entry to the changelog section.
 //
 //nolint:wrapcheck // Preserve errors returned by the selected editor.
 func (s *Spec) AddChangelogEntry(user, email, version, release string, at time.Time, details []string) error {
-	return s.editor.AddChangelogEntry(user, email, version, release, at, details)
+	return s.activeEditor().AddChangelogEntry(user, email, version, release, at, details)
 }
 
 // HasSection reports whether a section exists.
 //
 //nolint:wrapcheck // Preserve errors returned by the selected editor.
 func (s *Spec) HasSection(section string) (bool, error) {
-	return s.editor.HasSection(section)
+	return s.activeEditor().HasSection(section)
 }
 
 // AddPatchEntry registers a patch in the spec.
 //
 //nolint:wrapcheck // Preserve errors returned by the selected editor.
 func (s *Spec) AddPatchEntry(pkg, filename string) error {
-	return s.editor.AddPatchEntry(pkg, filename)
+	return s.activeEditor().AddPatchEntry(pkg, filename)
 }
 
 // RemovePatchEntry removes patch references matching pattern.
 //
 //nolint:wrapcheck // Preserve errors returned by the selected editor.
 func (s *Spec) RemovePatchEntry(pattern string) error {
-	return s.editor.RemovePatchEntry(pattern)
+	return s.activeEditor().RemovePatchEntry(pattern)
 }
 
 // GetHighestPatchTagNumber returns the highest PatchN tag number.
 //
 //nolint:wrapcheck // Preserve errors returned by the selected editor.
 func (s *Spec) GetHighestPatchTagNumber() (int, error) {
-	return s.editor.GetHighestPatchTagNumber()
+	return s.activeEditor().GetHighestPatchTagNumber()
 }
 
 // RemoveSection removes a section from the specified package.
 //
 //nolint:wrapcheck // Preserve errors returned by the selected editor.
 func (s *Spec) RemoveSection(section, pkg string) error {
-	return s.editor.RemoveSection(section, pkg)
+	return s.activeEditor().RemoveSection(section, pkg)
 }
 
 // RemoveSubpackage removes all sections for a sub-package.
 //
 //nolint:wrapcheck // Preserve errors returned by the selected editor.
 func (s *Spec) RemoveSubpackage(pkg string) error {
-	return s.editor.RemoveSubpackage(pkg)
+	return s.activeEditor().RemoveSubpackage(pkg)
 }
 
 // GetTag returns the first matching tag in the specified package.
 //
 //nolint:wrapcheck // Preserve errors returned by the selected editor.
 func (s *Spec) GetTag(pkg, tag string) (string, error) {
-	return s.editor.GetTag(pkg, tag)
+	return s.activeEditor().GetTag(pkg, tag)
 }
 
 // GetLastTag returns the final matching tag in the specified package.
 //
 //nolint:wrapcheck // Preserve errors returned by the selected editor.
 func (s *Spec) GetLastTag(pkg, tag string) (string, error) {
-	return s.editor.GetLastTag(pkg, tag)
+	return s.activeEditor().GetLastTag(pkg, tag)
 }
