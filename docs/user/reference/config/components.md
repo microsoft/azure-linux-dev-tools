@@ -129,6 +129,21 @@ calculation = "autorelease"
 calculation = "manual"
 ```
 
+### Optional `rpmdev-bumpspec` preview
+
+By default, build, render, and `prepare-sources` use the legacy static Release
+calculation above. It supports only a bare integer or an integer followed by
+`%{?dist}` or `%{dist}`. Other static forms, such as dotted releases or custom
+macros, retain the existing non-standard Release error and require `manual` or
+a `spec-set-tag` overlay.
+
+Use `--rpmdev-bumpspec` on `azldev component build`, `azldev component render`,
+or `azldev component prepare-sources` to preview transactional
+`rpmdev-bumpspec` handling instead. This temporary Azure Linux migration flag
+uses the existing fixed changelog metadata and requires `rpmdev-bumpspec`,
+`rpmdev-packager`, `rpm`, `rpmspec`, and Python with the RPM module only when
+explicitly selected. `%autorelease` behavior is unchanged.
+
 ## Render Configuration
 
 The `[components.<name>.render]` section controls rendering behavior for a component.

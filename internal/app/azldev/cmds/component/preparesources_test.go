@@ -34,6 +34,11 @@ func TestNewPrepareSourcesCmd(t *testing.T) {
 	assert.Equal(t, "false", withoutGitFlag.DefValue, "dist-git flow should be enabled by default")
 	assert.Contains(t, withoutGitFlag.Usage, "dist-git")
 
+	rpmDevBumpspecFlag := cmd.Flags().Lookup("rpmdev-bumpspec")
+	require.NotNil(t, rpmDevBumpspecFlag)
+	assert.Equal(t, "false", rpmDevBumpspecFlag.DefValue)
+	assert.Equal(t, "Use rpmdev-bumpspec instead of the legacy static release calculation", rpmDevBumpspecFlag.Usage)
+
 	skipSourcesFlag := cmd.Flags().Lookup("skip-sources")
 	require.NotNil(t, skipSourcesFlag, "--skip-sources flag should be registered")
 	assert.Equal(t, "false", skipSourcesFlag.DefValue)
@@ -56,6 +61,31 @@ func TestPrepareSourcesCmd_NoMatch(t *testing.T) {
 
 	// We expect an error because we haven't set up any components.
 	require.Error(t, err)
+}
+
+func TestPrepareSourcesOptions_RejectRPMDevBumpspecInvalidCombinationsBeforeDiscovery(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+	for _, testCase := range []struct {
+		name    string
+		options component.PrepareSourcesOptions
+		message string
+	}{
+		{
+			"without git",
+			component.PrepareSourcesOptions{RPMDevBumpspec: true, WithoutGitRepo: true},
+			"'--rpmdev-bumpspec' cannot be used with '--without-git'",
+		},
+		{
+			"skip overlays",
+			component.PrepareSourcesOptions{RPMDevBumpspec: true, SkipOverlays: true},
+			"'--rpmdev-bumpspec' cannot be used with '--skip-overlays'",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := component.PrepareComponentSources(testEnv.Env, &testCase.options)
+			require.EqualError(t, err, testCase.message)
+		})
+	}
 }
 
 func TestCheckOutputDir(t *testing.T) {
