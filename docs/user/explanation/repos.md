@@ -130,9 +130,11 @@ from the right; `added-in-right` means at least one right identity is absent
 from the left. Identity includes name, normalized epoch, version, release, RPM
 architecture, and artifact kind (binary, debug, or source). Matching NEVRs with
 different architecture sets also receive `architectures-differ`. Replicated
-`noarch` packages are counted once. Only artifact kinds available on both sides
-are compared; for example, a binary-only Koji set does not compare against PMC
-source or debug repositories.
+`noarch` packages are counted once. The left repo set defines which artifact
+kinds are compared, and right-side repositories of other kinds are ignored. For
+example, selecting only binary subrepos on the left excludes right-side source
+and debug repositories while a left-side kind absent from the right is reported
+as `missing-from-right`.
 
 Use `--compare-checksums` to compare matching package identities by checksum and
 size. If checksum algorithms differ, the report records

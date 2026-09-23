@@ -74,7 +74,7 @@ output includes exact content variants.`,
 	return cmd
 }
 
-// RunCompare loads both repository inventories and returns their package identity differences.
+// RunCompare loads both repository inventories and returns the requested comparison result.
 func RunCompare(env *azldev.Env, options *CompareOptions) (interface{}, error) {
 	fetcher := &repocompare.HTTPFetcher{Attempts: env.NetworkRetries()}
 
@@ -110,10 +110,7 @@ func runCompare(
 		return nil, fmt.Errorf("resolving right repositories:\n%w", err)
 	}
 
-	leftRepositories, rightRepositories = filterToSharedKinds(leftRepositories, rightRepositories)
-	if len(leftRepositories) == 0 {
-		return nil, errors.New("the selected rpm-repo-sets have no shared artifact kinds")
-	}
+	rightRepositories = filterRightToLeftKinds(leftRepositories, rightRepositories)
 
 	leftPackages, err := repocompare.LoadRepositories(env, fetcher, leftRepositories)
 	if err != nil {
@@ -233,33 +230,21 @@ func archAllowed(allowlist []string, arch string) bool {
 	return false
 }
 
-func filterToSharedKinds(
+func filterRightToLeftKinds(
 	left []repocompare.Repository,
 	right []repocompare.Repository,
-) ([]repocompare.Repository, []repocompare.Repository) {
+) []repocompare.Repository {
 	leftKinds := make(map[projectconfig.SubrepoKind]struct{})
 	for _, repository := range left {
 		leftKinds[repository.Kind] = struct{}{}
 	}
 
-	rightKinds := make(map[projectconfig.SubrepoKind]struct{})
+	result := make([]repocompare.Repository, 0, len(right))
 	for _, repository := range right {
-		rightKinds[repository.Kind] = struct{}{}
-	}
-
-	filter := func(
-		repositories []repocompare.Repository,
-		otherKinds map[projectconfig.SubrepoKind]struct{},
-	) []repocompare.Repository {
-		result := make([]repocompare.Repository, 0, len(repositories))
-		for _, repository := range repositories {
-			if _, ok := otherKinds[repository.Kind]; ok {
-				result = append(result, repository)
-			}
+		if _, ok := leftKinds[repository.Kind]; ok {
+			result = append(result, repository)
 		}
-
-		return result
 	}
 
-	return filter(left, rightKinds), filter(right, leftKinds)
+	return result
 }
