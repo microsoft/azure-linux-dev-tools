@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-24
+
 ### Added
 
 - **`--without-lockfile` preview mode.** Add a global `--without-lockfile`
@@ -17,11 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   flag defaults to off; without it azldev's behavior, command set, and
   configuration handling are unchanged. The preview surface is not stable and
   may change.
+  ([#323](https://github.com/microsoft/azure-linux-dev-tools/pull/323))
 - **Generated upstream commit configuration.** With `--without-lockfile`,
   record snapshot-selected upstream commits as normal layered TOML under
   `base/upstream-commits`. Generated pin files participate in standard
   configuration loading, merging, provenance tracking, and validation, and the
   project's `lock-dir` setting is accepted but ignored.
+  ([#323](https://github.com/microsoft/azure-linux-dev-tools/pull/323))
 - **Upstream commit refresh command.** With `--without-lockfile`, `azldev
   component refresh-upstream-commit` resolves and records upstream commits. It
   supports check-only operation, removes obsolete pins for selected
@@ -29,6 +33,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   components are selected. Configuration is loaded permissively for this
   command so stale generated pins can be removed after a component is deleted
   or converted to another source type.
+  ([#323](https://github.com/microsoft/azure-linux-dev-tools/pull/323))
+- **Component TMT tests.** Run configured TMT plans locally with `azldev
+  component test`, using either a disposable QEMU VM or the local Azure Linux
+  host. Tests can install locally built RPMs and run from cloned metadata or a
+  rendered spec directory with `--from-spec`.
+  ([#330](https://github.com/microsoft/azure-linux-dev-tools/pull/330),
+  [#347](https://github.com/microsoft/azure-linux-dev-tools/pull/347))
+- **RPM repository comparison.** Compare package inventories across two
+  configured RPM repo sets with `azldev repo compare`, including multi-arch
+  repositories and left- or right-only NEVRA differences.
+  ([#338](https://github.com/microsoft/azure-linux-dev-tools/pull/338))
+- **Generated agent provenance.** Record the generator version and installation
+  mode once in `.azldev-generated.json`, keeping generated skill and instruction
+  Markdown stable across version-only upgrades.
+  ([#331](https://github.com/microsoft/azure-linux-dev-tools/pull/331))
+- **Global concurrency control.** Add `--concurrency` as the shared base limit
+  for parallel operations, with workload-specific scaling and a default based
+  on the number of logical CPUs.
+  ([#356](https://github.com/microsoft/azure-linux-dev-tools/pull/356))
+- **Per-image architecture selection.** Add the optional
+  `[images.<name>].architectures` field and enforce it when listing or building
+  images, allowing definitions to exclude unsupported architectures.
+  ([#346](https://github.com/microsoft/azure-linux-dev-tools/pull/346))
 
 ### Changed
 
@@ -36,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   component update`, `component history`, and `component query` are replaced by
   hidden no-op shims, and the lock-file-only `--skip-lock-validation` flag is
   not registered. All of them are unchanged in the default mode.
+  ([#323](https://github.com/microsoft/azure-linux-dev-tools/pull/323))
 - **Configuration-based component change detection.** With
   `--without-lockfile`, `azldev component changed` loads each historical
   project configuration independently and compares normalized build inputs
@@ -43,14 +71,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resolves recursive includes and inherited defaults at each ref, compares
   local source and overlay content, and reports rendered `sources` changes
   separately.
+  ([#323](https://github.com/microsoft/azure-linux-dev-tools/pull/323))
 - **Synthetic source history.** With `--without-lockfile`, synthetic dist-git
   history is built from configured upstream commit transitions and walks
   first-parent history to the repository root instead of relying on
   lock-recorded import commits.
+  ([#323](https://github.com/microsoft/azure-linux-dev-tools/pull/323))
 - **Component workflow guidance.** Agent skills, instruction files, and MCP
   tools describe the workflow of the mode azldev runs in. The generated CLI
   reference continues to document the default mode; the preview mode is
   documented in the user guide.
+  ([#323](https://github.com/microsoft/azure-linux-dev-tools/pull/323))
+- **Test configuration cleanup.** Remove the legacy `test-suites` configuration
+  shape in favor of `tests` and `test-groups`, and preserve pytest working
+  directories as authored until runtime resolution.
+  ([#350](https://github.com/microsoft/azure-linux-dev-tools/pull/350))
+
+### Fixed
+
+- **Custom source script paths.** Resolve scripts relative to the TOML file
+  that declares them before component definitions are merged, while preserving
+  portable script names in chroot execution and serialized output.
+  ([#319](https://github.com/microsoft/azure-linux-dev-tools/pull/319))
+- **Batch component updates.** Continue processing components after individual
+  `component update -a` and `component refresh-upstream-commit -a` failures,
+  then report all failures together.
+  ([#359](https://github.com/microsoft/azure-linux-dev-tools/pull/359))
+- **Inherited upstream source validation.** Accept commit-only component
+  definitions that inherit their upstream source type from project or distro
+  defaults, without recursively merging source back-references.
+  ([#361](https://github.com/microsoft/azure-linux-dev-tools/pull/361))
 
 ## [0.4.0] - 2026-09-01
 
