@@ -20,22 +20,33 @@ It supports:
 
 ### Quick start
 
-1. Install `golang` and other prerequisites via your system's package manager, e.g.:
+1. Enable the Fedora COPR repository and install `azldev`:
 
    ```console
-   dnf install -y golang mock dnf-utils mock-rpmautospec kiwi
+   sudo dnf install dnf-plugins-core
+   sudo dnf copr enable liunan/azure-linux-dev-tools
+   sudo dnf install azldev
    ```
 
-   Note: `mock-rpmautospec` plugin hooks `rpmautospec` into mock's build lifecycle. It pulls `rpmautospec` as a dependency which processes `%autorelease` and `%autochangelog` macros in spec files.
+   See [Install azldev](./docs/user/how-to/install-azldev.md) for removal and
+   verification instructions.
 
-1. Install `azldev`:
+   Alternatively, install from source with Go 1.26 or newer:
 
-    ```console
-    go install github.com/microsoft/azure-linux-dev-tools/cmd/azldev@latest
-    ```
+   ```console
+   go install github.com/microsoft/azure-linux-dev-tools/cmd/azldev@latest
+   ```
 
    To pin a specific release instead of tracking the latest, replace `@latest`
    with a version tag, e.g. `@v0.1.0`.
+
+1. Install command-specific prerequisites as needed, e.g.:
+
+   ```console
+   sudo dnf install mock dnf-utils mock-rpmautospec kiwi
+   ```
+
+   Note: `mock-rpmautospec` plugin hooks `rpmautospec` into mock's build lifecycle. It pulls `rpmautospec` as a dependency which processes `%autorelease` and `%autochangelog` macros in spec files.
 
 1. To ensure you can build using `mock` you must be a member of the `mock` group, e.g.:
 
@@ -55,6 +66,12 @@ eval "$(azldev completion bash)"
 ```
 
 Similar support exists for `fish` and `zsh`.
+
+### RPM packaging
+
+Maintainers can build a vendored source RPM and publish it through Fedora COPR.
+See [Package azldev for Fedora COPR](./docs/developer/how-to/package-for-copr.md)
+for the package workflow and the one-time COPR setup.
 
 ### User documentation
 
