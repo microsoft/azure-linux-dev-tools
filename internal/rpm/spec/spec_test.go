@@ -52,14 +52,55 @@ func TestGetPackageNameFromSectionHeader(t *testing.T) {
 func TestOpenSpec_EmptyInput(t *testing.T) {
 	sf, err := spec.OpenSpec(strings.NewReader(""))
 	require.NoError(t, err)
+	assert.NotNil(t, sf)
+}
 
-	// Empty spec is parseable but has no tags.
-	err = sf.VisitTags(func(_ *spec.TagLine, _ *spec.Context) error {
-		t.Fatal("no tags should be visited in an empty spec")
+func TestSpecZeroValueUsesLegacyEditor(t *testing.T) {
+	var specification spec.Spec
+
+	var output bytes.Buffer
+	require.NoError(t, specification.Serialize(&output))
+	assert.Empty(t, output.String())
+
+	lines := []string{
+		"Name: main",
+		`%global hidden() \`,
+		"Name: macro-body",
+	}
+	specification.AppendLines(lines)
+
+	var tags []string
+
+	require.NoError(t, specification.VisitTags(func(tagLine *spec.TagLine, _ *spec.Context) error {
+		tags = append(tags, tagLine.Tag)
 
 		return nil
-	})
+	}))
+	assert.Equal(t, []string{"Name", "Name"}, tags)
+
+	output.Reset()
+	require.NoError(t, specification.Serialize(&output))
+	assert.Equal(t, strings.Join(lines, "\n")+"\n", output.String())
+}
+
+func TestOpenSpecStructuralEditorDoesNotUseZeroValueFallback(t *testing.T) {
+	input := strings.Join([]string{
+		"Name: main",
+		`%global hidden() \`,
+		"Name: macro-body",
+	}, "\n") + "\n"
+
+	specification, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(spec.EditorStructural))
 	require.NoError(t, err)
+
+	var tags []string
+
+	require.NoError(t, specification.VisitTags(func(tagLine *spec.TagLine, _ *spec.Context) error {
+		tags = append(tags, tagLine.Tag)
+
+		return nil
+	}))
+	assert.Equal(t, []string{"Name"}, tags)
 }
 
 func TestOpenSpec_BinaryContent(t *testing.T) {
