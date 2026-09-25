@@ -20,6 +20,25 @@ type ResolvedTest struct {
 	Definition TestDefinition
 }
 
+// SKUArch enumerates the CPU architectures a [SKUGroup] can target. External
+// orchestration uses it to pair a group only with an image of the same arch.
+const (
+	SKUArchAMD64 = "amd64"
+	SKUArchARM64 = "arm64"
+)
+
+// SKUGroup is a named list of Azure VM sizes used by external test
+// orchestration to fan out an image test group.
+type SKUGroup struct {
+	Description string `toml:"description,omitempty" json:"description,omitempty" jsonschema:"title=Description,description=Description of this SKU group"`
+
+	// Arch is the CPU architecture of every VM size in this group. Required so an
+	// image test group is only fanned out onto SKUs of the image's architecture.
+	Arch string `toml:"arch" json:"arch" jsonschema:"required,title=Architecture,description=CPU architecture of the VM sizes in this group,enum=amd64,enum=arm64"`
+
+	VMSizes []string `toml:"vm-sizes" json:"vmSizes" validate:"required,min=1,dive,required" jsonschema:"required,minItems=1,title=VM sizes,description=Azure VM sizes in this SKU group"`
+}
+
 // TestKind indicates what kind of behavior a test exercises.
 type TestKind string
 
@@ -133,6 +152,10 @@ type TestRef struct {
 
 	// Group references a [test-groups.X] entry.
 	Group string `toml:"group,omitempty" json:"group,omitempty" jsonschema:"title=Group,description=Name of a test group (mutually exclusive with name)"`
+
+	// SKUGroup references a [sku-groups.X] entry. External orchestration fans
+	// this test or test group out once per listed Azure VM size.
+	SKUGroup string `toml:"sku-group,omitempty" json:"skuGroup,omitempty" jsonschema:"title=SKU group,description=SKU group used by external test orchestration"`
 }
 
 // ComponentTestsConfig holds the new-shape per-component tests block:

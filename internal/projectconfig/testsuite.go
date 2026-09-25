@@ -24,6 +24,12 @@ var (
 	ErrDuplicateTests = errors.New("duplicate test")
 	// ErrDuplicateTestGroups is returned when duplicate conflicting [test-groups] entries are found.
 	ErrDuplicateTestGroups = errors.New("duplicate test group")
+	// ErrDuplicateSKUGroups is returned when duplicate conflicting [sku-groups] entries are found.
+	ErrDuplicateSKUGroups = errors.New("duplicate SKU group")
+	// ErrInvalidSKUGroup is returned when a SKU group contains invalid VM sizes.
+	ErrInvalidSKUGroup = errors.New("invalid SKU group")
+	// ErrUndefinedSKUGroup is returned when an image references a missing SKU group.
+	ErrUndefinedSKUGroup = errors.New("undefined SKU group reference")
 	// ErrUnknownTestType is returned for unrecognized test types.
 	ErrUnknownTestType = errors.New("unknown test type")
 	// ErrMissingTestField is returned when a required test config field is missing.

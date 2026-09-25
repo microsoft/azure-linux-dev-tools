@@ -74,6 +74,12 @@ type ConfigFile struct {
 	// Definitions of test groups (new schema, [test-groups.X]).
 	TestGroups map[string]TestGroup `toml:"test-groups,omitempty" validate:"dive" jsonschema:"title=Test Groups,description=Definitions of named bundles of tests"`
 
+	// Definitions of SKU groups used for test fan-out (new schema, [sku-groups.X]).
+	SKUGroups map[string]SKUGroup `toml:"sku-groups,omitempty" validate:"dive" jsonschema:"title=SKU Groups,description=Definitions of named Azure VM size lists for test fan-out"`
+
+	// Metadata keyed by Azure VM size. Values are consumed by external test orchestration.
+	VMSKUs map[string]map[string]any `toml:"vm-skus,omitempty" jsonschema:"title=VM SKUs,description=Per-VM-size metadata used for test parameter resolution"`
+
 	// Internal fields used to track the origin of the config file; `dir` is the directory
 	// that the config file's relative paths are based from.
 	sourcePath string `toml:"-"`
@@ -319,20 +325,41 @@ func validateTestGroupMembers(
 	return nil
 }
 
+// testRefDedupKey identifies a resolved test for duplicate detection. SKUGroup is
+// part of the identity so the same test or test-group may be referenced once per
+// SKU group (e.g. a dual-arch image fanning a multi-SKU group over both an amd64
+// and an arm64 SKU group). Refs without a SKU group still collide as before.
+type testRefDedupKey struct {
+	test     string
+	skuGroup string
+}
+
+// testRefDesc describes a ref for duplicate-error messages, including the SKU
+// group only when set.
+func testRefDesc(scope string, idx int, kind, value, skuGroup string) string {
+	if skuGroup == "" {
+		return fmt.Sprintf("%s[%d] (%s=%#q)", scope, idx, kind, value)
+	}
+
+	return fmt.Sprintf("%s[%d] (%s=%#q, sku-group=%#q)", scope, idx, kind, value, skuGroup)
+}
+
 func validateTestRefList(
 	scope string,
 	refs []TestRef,
 	tests map[string]TestDefinition,
 	groups map[string]TestGroup,
 ) error {
-	// seenTests maps a resolved (post-group-expansion) test name to a description of
-	// the ref that first contributed it, so that a name ref and a group ref (or two
-	// group refs) which both resolve to the same underlying test are caught, not just
-	// two textually-identical refs.
-	seenTests := make(map[string]string, len(refs))
+	// seenTests maps a resolved (post-group-expansion) test plus its SKU group to a
+	// description of the ref that first contributed it, so that a name ref and a
+	// group ref (or two group refs) which both resolve to the same underlying test
+	// and SKU group are caught, while the same test under different SKU groups is
+	// allowed.
+	seenTests := make(map[testRefDedupKey]string, len(refs))
 
-	checkDuplicate := func(testName, desc string) error {
-		if firstDesc, exists := seenTests[testName]; exists {
+	checkDuplicate := func(testName, skuGroup, desc string) error {
+		key := testRefDedupKey{test: testName, skuGroup: skuGroup}
+		if firstDesc, exists := seenTests[key]; exists {
 			return fmt.Errorf(
 				"%w: %s duplicates %s (both resolve to test %#q)",
 				ErrDuplicateTestRef,
@@ -342,7 +369,7 @@ func validateTestRefList(
 			)
 		}
 
-		seenTests[testName] = desc
+		seenTests[key] = desc
 
 		return nil
 	}
@@ -371,8 +398,8 @@ func validateTestRefList(
 				)
 			}
 
-			desc := fmt.Sprintf("%s[%d] (name=%#q)", scope, idx, ref.Name)
-			if err := checkDuplicate(ref.Name, desc); err != nil {
+			desc := testRefDesc(scope, idx, "name", ref.Name, ref.SKUGroup)
+			if err := checkDuplicate(ref.Name, ref.SKUGroup, desc); err != nil {
 				return err
 			}
 
@@ -390,10 +417,10 @@ func validateTestRefList(
 			)
 		}
 
-		desc := fmt.Sprintf("%s[%d] (group=%#q)", scope, idx, ref.Group)
+		desc := testRefDesc(scope, idx, "group", ref.Group, ref.SKUGroup)
 
 		for _, groupRef := range group.Tests {
-			if err := checkDuplicate(groupRef.Name, desc); err != nil {
+			if err := checkDuplicate(groupRef.Name, ref.SKUGroup, desc); err != nil {
 				return err
 			}
 		}
