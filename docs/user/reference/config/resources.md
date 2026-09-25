@@ -67,7 +67,7 @@ Defined under `[resources.rpm-repo-set-templates.<name>]`.
 |---|---|---|---|
 | Name | `name` | string | Stable short identifier; combined with the set's `name-prefix` to form the resulting repo ID. Same grammar as a top-level repo name. |
 | Sub-path | `subpath` | string | Path relative to the set's `base-uri`. May contain `$basearch` (passed through verbatim). |
-| Kind | `kind` | string (`binary` \| `debug` \| `source`) | Classification of what the sub-repo carries: signed binary RPMs (`binary`), debuginfo/debugsource RPMs (`debug`), or SRPMs (`source`). Defaults to `binary`. Diagnostic only today; reserved for future filtering features. |
+| Kind | `kind` | string (`binary` \| `debug` \| `source`) | Classification of what the sub-repo carries: signed binary RPMs (`binary`), debuginfo/debugsource RPMs (`debug`), or SRPMs (`source`). Defaults to `binary`. Used to align repository comparisons. |
 
 ### Example
 
