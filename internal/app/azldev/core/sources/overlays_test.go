@@ -139,6 +139,22 @@ BuildRequires: gcc
 `,
 		},
 		{
+			name: "add source avoids occupied preferred number",
+			overlay: projectconfig.ComponentOverlay{
+				Type:  projectconfig.ComponentOverlayType("internal-source-add"),
+				Value: "macros.azl.macros",
+			},
+			spec: `Name: name
+Source9999: upstream.file
+BuildRequires: gcc
+`,
+			result: `Name: name
+Source9999: upstream.file
+Source10000: macros.azl.macros
+BuildRequires: gcc
+`,
+		},
+		{
 			name: "insert tag to non-existent package",
 			overlay: projectconfig.ComponentOverlay{
 				Type:        projectconfig.ComponentOverlayInsertSpecTag,
