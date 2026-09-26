@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -68,5 +69,29 @@ func resolveSymlinks(path string) (string, error) {
 		return "", err
 	}
 
-	return filepath.Join(resolvedParent, filepath.Base(path)), nil
+	joined := filepath.Join(resolvedParent, filepath.Base(path))
+
+	info, err := os.Lstat(joined)
+	if errors.Is(err, fs.ErrNotExist) {
+		return joined, nil
+	}
+
+	if err != nil {
+		return "", fmt.Errorf("inspecting %#q:\n%w", joined, err)
+	}
+
+	if info.Mode()&fs.ModeSymlink == 0 {
+		return joined, nil
+	}
+
+	target, err := os.Readlink(joined)
+	if err != nil {
+		return "", fmt.Errorf("reading symlink %#q:\n%w", joined, err)
+	}
+
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(resolvedParent, target)
+	}
+
+	return resolveSymlinks(target)
 }

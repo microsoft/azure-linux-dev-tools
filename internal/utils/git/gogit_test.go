@@ -23,6 +23,7 @@ func TestRepoRelPath(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(realRepoDir, "locks"), fileperms.PrivateDir))
 	require.NoError(t, os.WriteFile(filepath.Join(realRepoDir, "locks", "curl.lock"), nil, fileperms.PrivateFile))
 	require.NoError(t, os.Symlink(filepath.Join(tempDir, "real"), filepath.Join(tempDir, "link")))
+	require.NoError(t, os.Symlink(filepath.Join("locks", "pending"), filepath.Join(realRepoDir, "pending")))
 
 	testCases := []struct {
 		name     string
@@ -55,6 +56,12 @@ func TestRepoRelPath(t *testing.T) {
 			expected: filepath.Join("locks", "new", "openssl.lock"),
 		},
 		{
+			name:     "dangling symlink inside repository",
+			repoRoot: realRepoDir,
+			absPath:  filepath.Join(linkedRepoDir, "pending", "openssl.lock"),
+			expected: filepath.Join("locks", "pending", "openssl.lock"),
+		},
+		{
 			name:     "repository root itself",
 			repoRoot: realRepoDir,
 			absPath:  linkedRepoDir,
@@ -78,10 +85,17 @@ func TestRepoRelPath_EscapesRoot(t *testing.T) {
 	require.NoError(t, os.MkdirAll(repoDir, fileperms.PrivateDir))
 
 	require.NoError(t, os.Symlink(tempDir, filepath.Join(repoDir, "outside")))
+	require.NoError(t, os.Symlink(filepath.Join(tempDir, "missing"), filepath.Join(repoDir, "dangling")))
+	require.NoError(t, os.Symlink(filepath.Join("..", "missing"), filepath.Join(repoDir, "dangling-relative")))
+	require.NoError(t, os.Symlink("dangling", filepath.Join(repoDir, "dangling-chain")))
 
 	for _, absPath := range []string{
 		filepath.Join(tempDir, "other", "curl.lock"),
 		filepath.Join(repoDir, "outside", "other", "curl.lock"),
+		filepath.Join(repoDir, "dangling"),
+		filepath.Join(repoDir, "dangling", "curl.lock"),
+		filepath.Join(repoDir, "dangling-relative", "curl.lock"),
+		filepath.Join(repoDir, "dangling-chain", "curl.lock"),
 	} {
 		_, err := git.RepoRelPath(repoDir, absPath)
 		require.Error(t, err, absPath)
