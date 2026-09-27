@@ -804,6 +804,123 @@ BuildRequires: gcc
 	}
 }
 
+func TestAddPatchEntry(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		expectedOutput string
+	}{
+		{
+			name: "groups with existing Patch tag",
+			input: `Name: test
+Source0: test-1.0.tar.gz
+Patch: fix-build.patch
+BuildRequires: gcc
+%if %{with zchunk}
+BuildRequires: zchunk-devel
+%endif
+
+%description
+Test
+`,
+			expectedOutput: `Name: test
+Source0: test-1.0.tar.gz
+Patch: fix-build.patch
+Patch1: new.patch
+BuildRequires: gcc
+%if %{with zchunk}
+BuildRequires: zchunk-devel
+%endif
+
+%description
+Test
+`,
+		},
+		{
+			name: "groups after last of multiple numbered Patch tags",
+			input: `Name: test
+Patch0: first.patch
+Patch1: second.patch
+BuildRequires: gcc
+`,
+			expectedOutput: `Name: test
+Patch0: first.patch
+Patch1: second.patch
+Patch2: new.patch
+BuildRequires: gcc
+`,
+		},
+		{
+			name: "placed after conditional containing last Patch tag",
+			input: `Name: test
+Patch0: first.patch
+%if 0%{?fedora}
+Patch1: fedora.patch
+%endif
+BuildRequires: gcc
+`,
+			expectedOutput: `Name: test
+Patch0: first.patch
+%if 0%{?fedora}
+Patch1: fedora.patch
+%endif
+Patch2: new.patch
+BuildRequires: gcc
+`,
+		},
+		{
+			name: "appends to patchlist when present",
+			input: `Name: test
+BuildRequires: gcc
+
+%patchlist
+first.patch
+`,
+			expectedOutput: `Name: test
+BuildRequires: gcc
+
+%patchlist
+first.patch
+new.patch
+`,
+		},
+		{
+			name: "appends to end of preamble without existing Patch tags",
+			input: `Name: test
+Source0: test-1.0.tar.gz
+BuildRequires: gcc
+
+%description
+Test
+`,
+			expectedOutput: `Name: test
+Source0: test-1.0.tar.gz
+BuildRequires: gcc
+
+Patch0: new.patch
+%description
+Test
+`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			specFile, err := spec.OpenSpec(strings.NewReader(test.input))
+			require.NoError(t, err)
+
+			require.NoError(t, specFile.AddPatchEntry("", "new.patch"))
+
+			actualOutput := new(bytes.Buffer)
+
+			err = specFile.Serialize(actualOutput)
+			require.NoError(t, err)
+
+			assert.Equal(t, test.expectedOutput, actualOutput.String())
+		})
+	}
+}
+
 func TestSearchAndReplace(t *testing.T) {
 	t.Run("globally replace", func(t *testing.T) {
 		input := `
