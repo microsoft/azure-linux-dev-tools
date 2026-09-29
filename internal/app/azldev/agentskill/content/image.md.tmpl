@@ -54,7 +54,13 @@ architectures = ["x86_64", "aarch64"]
 - `architectures = ["x86_64", "aarch64"]` is optional; when unset or empty, the
    image is treated as unrestricted (all recognized architectures). Set it to
    restrict which architectures `image build --arch` allows for the image.
-- `tests.tests` lists the tests or test groups `azldev image test` runs.
+- `tests.tests` lists the tests or test groups `azldev image test` runs locally.
+  An image ref may also set `sku-group = "<name>"` to fan a test or group out
+  across the VM sizes of a `[sku-groups.<name>]` entry; that fan-out is done by
+  external test orchestration, not by local `azldev image test`. Do not map a
+  `sku-group` onto arbitrary LISA tests: LISA tests carry their own requirements
+  and are skipped when the SKU does not meet them, so this is meaningful only for
+  the special case of multi-SKU performance tests.
 - `publish.channels` lists the channels the image publishes to.
 
 ## The kiwi definition

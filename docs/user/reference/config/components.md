@@ -343,7 +343,8 @@ rpm-channel = "none"
 
 The `[components.<name>.tests]` subtable lists test or test-group
 references that apply to the component. Each entry is a [TestRef](tests.md#test-reference)
-with exactly one of `name` or `group`.
+with exactly one of `name` or `group`. The `sku-group` field is **not** allowed
+here — it applies only to image test references.
 
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|

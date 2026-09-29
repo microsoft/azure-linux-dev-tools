@@ -134,6 +134,15 @@ func TestImageSkillDocumentsArchitecturesField(t *testing.T) {
 	assert.Contains(t, doc, "unrestricted")
 }
 
+func TestImageSkillDocumentsSKUGroupGuidance(t *testing.T) {
+	doc, err := agentskill.SkillDocument("azldev-image", testParams())
+	require.NoError(t, err)
+
+	assert.Contains(t, doc, "sku-group = ")
+	assert.Contains(t, doc, "[sku-groups.<name>]")
+	assert.Contains(t, doc, "multi-SKU performance tests")
+}
+
 func TestSkillFrontmatterInvariants(t *testing.T) {
 	layout := agentskill.DefaultLayout()
 

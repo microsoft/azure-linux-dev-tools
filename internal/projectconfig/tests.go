@@ -20,6 +20,50 @@ type ResolvedTest struct {
 	Definition TestDefinition
 }
 
+// SKUArch enumerates the CPU architectures a [SKUGroup] can target. External
+// orchestration uses it to pair a group only with an image of the same arch.
+const (
+	// SKUArchAMD64 is the x86-64 architecture token.
+	SKUArchAMD64 = "amd64"
+	// SKUArchARM64 is the AArch64 architecture token.
+	SKUArchARM64 = "arm64"
+)
+
+// SKUGroup is a named list of Azure VM sizes used by external test
+// orchestration to fan out an image test group.
+type SKUGroup struct {
+	Description string `toml:"description,omitempty" json:"description,omitempty" jsonschema:"title=Description,description=Description of this SKU group"`
+
+	// Arch is the CPU architecture of every VM size in this group. Required so an
+	// image test group is only fanned out onto SKUs of the image's architecture.
+	Arch string `toml:"arch" json:"arch" jsonschema:"required,title=Architecture,description=CPU architecture of the VM sizes in this group,enum=amd64,enum=arm64"`
+
+	VMSizes []string `toml:"vm-sizes" json:"vmSizes" validate:"required,min=1,dive,required" jsonschema:"required,minItems=1,title=VM sizes,description=Azure VM sizes in this SKU group"`
+}
+
+// JSONSchemaExtend tightens [SKUGroup.VMSizes] so editor-time validation matches
+// the runtime checks in validateSKUGroups: each VM size must be non-empty with no
+// surrounding whitespace, and the list must not contain duplicates.
+func (SKUGroup) JSONSchemaExtend(schema *jsonschema.Schema) {
+	if schema == nil || schema.Properties == nil {
+		return
+	}
+
+	vmSizes, ok := schema.Properties.Get("vm-sizes")
+	if !ok || vmSizes == nil {
+		return
+	}
+
+	minLen := uint64(1)
+	vmSizes.UniqueItems = true
+	vmSizes.Items = &jsonschema.Schema{
+		Type:      "string",
+		MinLength: &minLen,
+		// Reject empty or surrounding-whitespace values (matches strings.TrimSpace).
+		Pattern: "^\\S(.*\\S)?$",
+	}
+}
+
 // TestKind indicates what kind of behavior a test exercises.
 type TestKind string
 
@@ -133,6 +177,10 @@ type TestRef struct {
 
 	// Group references a [test-groups.X] entry.
 	Group string `toml:"group,omitempty" json:"group,omitempty" jsonschema:"title=Group,description=Name of a test group (mutually exclusive with name)"`
+
+	// SKUGroup references a [sku-groups.X] entry. External orchestration fans
+	// this test or test group out once per listed Azure VM size.
+	SKUGroup string `toml:"sku-group,omitempty" json:"skuGroup,omitempty" jsonschema:"title=SKU group,description=SKU group used by external test orchestration"`
 }
 
 // ComponentTestsConfig holds the new-shape per-component tests block:
@@ -218,12 +266,43 @@ func (cfg *ProjectConfig) ResolveTestSelectors(selectors []string) ([]ResolvedTe
 }
 
 // ResolveImageTests expands the new-style test refs associated with an image.
+//
+// SKU groups drive external fan-out only; local `azldev image test` ignores them
+// and runs every returned ResolvedTest once. Because validation permits the same
+// test to be referenced once per SKU group, those refs resolve to identical
+// ResolvedTests here, so they are collapsed by name to avoid running the same
+// test repeatedly locally. The per-SKU identity is preserved on the raw
+// [TestRef.SKUGroup] values, which external orchestration consumes directly.
 func (cfg *ProjectConfig) ResolveImageTests(image *ImageConfig) ([]ResolvedTest, error) {
 	if image == nil || image.Tests == nil {
 		return nil, nil
 	}
 
-	return cfg.ResolveTestRefs(image.Tests.Tests)
+	resolved, err := cfg.ResolveTestRefs(image.Tests.Tests)
+	if err != nil {
+		return nil, err
+	}
+
+	return dedupeResolvedTestsByName(resolved), nil
+}
+
+// dedupeResolvedTestsByName collapses ResolvedTests that share a name to their
+// first occurrence, preserving order.
+func dedupeResolvedTestsByName(tests []ResolvedTest) []ResolvedTest {
+	seen := make(map[string]struct{}, len(tests))
+	deduped := make([]ResolvedTest, 0, len(tests))
+
+	for _, test := range tests {
+		if _, ok := seen[test.Name]; ok {
+			continue
+		}
+
+		seen[test.Name] = struct{}{}
+
+		deduped = append(deduped, test)
+	}
+
+	return deduped
 }
 
 // ResolveComponentTests expands the new-style test refs associated with a component.
@@ -389,9 +468,51 @@ func (TestGroup) JSONSchemaExtend(schema *jsonschema.Schema) {
 		Type:       "object",
 		Properties: itemProps,
 		Required:   []string{"name"},
-		Not: &jsonschema.Schema{
-			Required: []string{"group"},
+		// Closed object: only 'name' is allowed, so 'group', 'sku-group' and any
+		// misspelled field are rejected, matching validateTestGroupMembers.
+		AdditionalProperties: jsonschema.FalseSchema,
+	}
+}
+
+// JSONSchemaExtend narrows [ComponentTestsConfig.Tests] so editor-time validation
+// matches runtime behavior: component test refs may set 'name' or 'group' but not
+// 'sku-group', which is rejected at load time ([ErrSKUGroupNotAllowed]) and is
+// only meaningful on image test references.
+func (ComponentTestsConfig) JSONSchemaExtend(schema *jsonschema.Schema) {
+	if schema == nil || schema.Properties == nil {
+		return
+	}
+
+	testsProp, ok := schema.Properties.Get("tests")
+	if !ok || testsProp == nil {
+		return
+	}
+
+	minLen := uint64(1)
+	itemProps := orderedmap.New[string, *jsonschema.Schema]()
+	itemProps.Set("name", &jsonschema.Schema{
+		Type:        "string",
+		MinLength:   &minLen,
+		Pattern:     "^\\S",
+		Description: "Name of a test (mutually exclusive with group)",
+	})
+	itemProps.Set("group", &jsonschema.Schema{
+		Type:        "string",
+		MinLength:   &minLen,
+		Pattern:     "^\\S",
+		Description: "Name of a test group (mutually exclusive with name)",
+	})
+
+	testsProp.Items = &jsonschema.Schema{
+		Type:       "object",
+		Properties: itemProps,
+		OneOf: []*jsonschema.Schema{
+			{Required: []string{"name"}, Not: &jsonschema.Schema{Required: []string{"group"}}},
+			{Required: []string{"group"}, Not: &jsonschema.Schema{Required: []string{"name"}}},
 		},
+		// Keep the item a closed object (like the generated TestRef) so misspelled
+		// or unsupported fields — including the image-only sku-group — are rejected.
+		AdditionalProperties: jsonschema.FalseSchema,
 	}
 }
 

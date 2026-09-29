@@ -52,6 +52,19 @@ The `tests` subtable links an image to one or more tests or test groups defined 
 |-------|----------|------|----------|-------------|
 | Tests | `tests` | array of [TestRef](tests.md#test-reference) | No | References to `[tests.<name>]` entries or `[test-groups.<name>]` entries (parse-only; see [Tests and Test Groups](tests.md)). |
 
+Image test references may additionally set [`sku-group`](tests.md#test-reference) to fan a test or group out across the Azure VM sizes of a [`[sku-groups.<name>]`](tests.md#sku-groups) entry:
+
+```toml
+[images.marketplace-gen2.tests]
+tests = [{ group = "multi-sku-tests", sku-group = "multi-sku-amd64" }]
+```
+
+> **Note:** `sku-group` cannot be mapped to arbitrary LISA tests. LISA tests
+> carry their own requirements and are skipped when the SKU does not satisfy
+> them, so fanning a normal test across a SKU group only yields skips on
+> non-matching SKUs. SKU mapping is meaningful only for the special case of
+> multi-SKU performance tests. See [SKU Groups](tests.md#sku-groups).
+
 ## Image Publish
 
 The `publish` subtable configures where an image is published. Unlike packages (which target a single channel), images may be published to multiple channels simultaneously.

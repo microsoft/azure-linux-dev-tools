@@ -16,6 +16,8 @@ All config files share the same schema — there is no distinction between a "ro
 | `images` | map of objects | Image definitions (VMs, containers) | [Images](images.md) |
 | `tests` | map of objects | Named test definitions (new-shape, parse-only) | [Tests and Test Groups](tests.md) |
 | `test-groups` | map of objects | Named bundles of test references (new-shape, parse-only) | [Tests and Test Groups](tests.md) |
+| `sku-groups` | map of objects | Named Azure VM size lists for image test fan-out | [Tests — SKU Groups](tests.md#sku-groups) |
+| `vm-skus` | map of objects | Per-VM-size metadata for external test orchestration | [Tests — VM SKUs](tests.md#vm-skus) |
 | `tools` | object | Configuration for external tools used by azldev | [Tools](tools.md) |
 | `default-package-config` | object | Project-wide default applied to all binary packages | [Package Groups — Resolution Order](package-groups.md#resolution-order) |
 | `package-groups` | map of objects | Named groups of binary packages with shared config | [Package Groups](package-groups.md) |

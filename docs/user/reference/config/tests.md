@@ -134,6 +134,7 @@ references that callers can target as a single unit.
 |-------|----------|------|-------------|
 | Name | `name` | string | References a `[tests.<name>]` entry |
 | Group | `group` | string | References a `[test-groups.<name>]` entry |
+| SKU group | `sku-group` | string | **Image test references only.** References a [`[sku-groups.<name>]`](#sku-groups) entry; external orchestration fans the referenced test or group out once per Azure VM size in that SKU group. Rejected on component tests and on `[test-groups]` members. |
 
 ## Referencing from Components and Images
 
@@ -146,6 +147,59 @@ tests = [{ group = "kernel-bvt" }, { name = "kdump-smoke" }]
 
 [images.vm-base.tests]
 tests = [{ group = "bvt" }]
+```
+
+An **image** reference may additionally carry `sku-group` to fan the test or
+group out across the VM sizes of a [SKU group](#sku-groups):
+
+```toml
+[images.marketplace-gen2.tests]
+tests = [{ group = "multi-sku-tests", sku-group = "multi-sku-amd64" }]
+```
+
+`sku-group` is only valid on image test references; it is rejected on component
+tests and on `[test-groups]` members.
+
+## SKU Groups
+
+`[sku-groups.<name>]` defines a named list of Azure VM sizes used to fan out an
+image's tests across multiple SKUs. External test orchestration runs the
+referenced test (or test group) once per VM size. SKU groups are referenced only
+from **image** test references via the [`sku-group`](#test-reference) field.
+
+| Field | TOML Key | Type | Required | Description |
+|-------|----------|------|----------|-------------|
+| Description | `description` | string | No | Human-readable description |
+| Arch | `arch` | string | Yes | CPU architecture of every VM size in the group; one of `amd64` or `arm64`. Lets orchestration pair a group only with an image of the same architecture. |
+| VM sizes | `vm-sizes` | string array | Yes | Azure VM size names (e.g. `Standard_D4s_v5`). Must be non-empty with no duplicate entries. |
+
+SKU group names must be unique across all config files; a duplicate name is an
+error.
+
+```toml
+[sku-groups.multi-sku-amd64]
+description = "x86-64 VM sizes for multi-SKU coverage"
+arch = "amd64"
+vm-sizes = ["Standard_D4s_v5", "Standard_L8s_v3"]
+```
+
+> **Note:** A `sku-group` cannot be mapped to arbitrary LISA tests. LISA tests
+> declare their own requirements (CPU count, memory, features such as NVMe, etc.)
+> and LISA skips a test when the SKU it runs on does not satisfy those
+> requirements. Fanning a normal test out across a SKU group therefore just
+> produces skips on SKUs that do not match. SKU mapping is only meaningful for
+> the special case of multi-SKU performance tests, which are written to run
+> across the SKUs in a group and report per-SKU results.
+
+## VM SKUs
+
+`[vm-skus.<vm-size>]` carries free-form per-VM-size metadata consumed by external
+test orchestration to resolve test parameters; azldev does not interpret the
+values. Each VM size may be defined only once across all config files.
+
+```toml
+[vm-skus.Standard_D4s_v5]
+vcpus = 4
 ```
 
 ## Example

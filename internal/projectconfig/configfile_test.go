@@ -274,6 +274,197 @@ func TestProjectConfigValidation_DuplicateTestGroupReferenceInImage(t *testing.T
 	assert.Contains(t, err.Error(), "bvt")
 }
 
+func TestProjectConfigValidation_SameGroupDifferentSKUGroupsAllowed(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.Tests = map[string]projectconfig.TestDefinition{
+		"smoke": {
+			Type:   "pytest",
+			Pytest: map[string]any{"working-dir": "tests", "test-paths": []any{"test_smoke.py"}},
+		},
+	}
+	cfg.TestGroups = map[string]projectconfig.TestGroup{
+		"bvt": {Tests: []projectconfig.TestRef{{Name: "smoke"}}},
+	}
+	cfg.SKUGroups["amd"] = projectconfig.SKUGroup{Arch: projectconfig.SKUArchAMD64, VMSizes: []string{"Standard_D4s_v5"}}
+	cfg.SKUGroups["arm"] = projectconfig.SKUGroup{Arch: projectconfig.SKUArchARM64, VMSizes: []string{"Standard_D4ps_v5"}}
+	cfg.Images = map[string]projectconfig.ImageConfig{
+		"base": {
+			Tests: &projectconfig.ImageTestsConfig{
+				Tests: []projectconfig.TestRef{
+					{Group: "bvt", SKUGroup: "amd"},
+					{Group: "bvt", SKUGroup: "arm"},
+				},
+			},
+		},
+	}
+
+	// Same group fanned over two different SKU groups is allowed.
+	require.NoError(t, cfg.Validate())
+}
+
+func TestProjectConfigValidation_SameGroupSameSKUGroupDuplicate(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.Tests = map[string]projectconfig.TestDefinition{
+		"smoke": {
+			Type:   "pytest",
+			Pytest: map[string]any{"working-dir": "tests", "test-paths": []any{"test_smoke.py"}},
+		},
+	}
+	cfg.TestGroups = map[string]projectconfig.TestGroup{
+		"bvt": {Tests: []projectconfig.TestRef{{Name: "smoke"}}},
+	}
+	cfg.SKUGroups["amd"] = projectconfig.SKUGroup{Arch: projectconfig.SKUArchAMD64, VMSizes: []string{"Standard_D4s_v5"}}
+	cfg.Images = map[string]projectconfig.ImageConfig{
+		"base": {
+			Tests: &projectconfig.ImageTestsConfig{
+				Tests: []projectconfig.TestRef{
+					{Group: "bvt", SKUGroup: "amd"},
+					{Group: "bvt", SKUGroup: "amd"},
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	require.ErrorIs(t, err, projectconfig.ErrDuplicateTestRef)
+	assert.Contains(t, err.Error(), "sku-group")
+}
+
+func TestProjectConfigValidation_ImageSKUGroup(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.SKUGroups["performance"] = projectconfig.SKUGroup{
+		Arch:    projectconfig.SKUArchAMD64,
+		VMSizes: []string{"Standard_D4s_v5", "Standard_L8s_v3"},
+	}
+	cfg.VMSKUs["Standard_D4s_v5"] = map[string]any{"vcpus": 4}
+	cfg.VMSKUs["Standard_L8s_v3"] = map[string]any{"vcpus": 8}
+	cfg.Images["vm-base"] = projectconfig.ImageConfig{
+		Tests: &projectconfig.ImageTestsConfig{
+			Tests: []projectconfig.TestRef{{Group: "multi-sku", SKUGroup: "performance"}},
+		},
+	}
+	cfg.TestGroups["multi-sku"] = projectconfig.TestGroup{}
+
+	require.NoError(t, cfg.Validate())
+}
+
+func TestProjectConfigValidation_UndefinedImageSKUGroup(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.Images["vm-base"] = projectconfig.ImageConfig{
+		Tests: &projectconfig.ImageTestsConfig{
+			Tests: []projectconfig.TestRef{{Group: "multi-sku", SKUGroup: "missing"}},
+		},
+	}
+	cfg.TestGroups["multi-sku"] = projectconfig.TestGroup{}
+
+	err := cfg.Validate()
+	require.ErrorIs(t, err, projectconfig.ErrUndefinedSKUGroup)
+}
+
+func TestProjectConfigValidation_DuplicateVMSizeInSKUGroup(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.SKUGroups["performance"] = projectconfig.SKUGroup{
+		Arch:    projectconfig.SKUArchAMD64,
+		VMSizes: []string{"Standard_D4s_v5", "Standard_D4s_v5"},
+	}
+	cfg.VMSKUs["Standard_D4s_v5"] = map[string]any{"vcpus": 4}
+
+	err := cfg.Validate()
+	require.ErrorIs(t, err, projectconfig.ErrInvalidSKUGroup)
+}
+
+func TestProjectConfigValidation_SKUGroupMissingArch(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.SKUGroups["performance"] = projectconfig.SKUGroup{
+		VMSizes: []string{"Standard_D4s_v5"},
+	}
+	cfg.VMSKUs["Standard_D4s_v5"] = map[string]any{"vcpus": 4}
+
+	err := cfg.Validate()
+	require.ErrorIs(t, err, projectconfig.ErrInvalidSKUGroup)
+	assert.Contains(t, err.Error(), "arch")
+}
+
+func TestProjectConfigValidation_SKUGroupInvalidArch(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.SKUGroups["performance"] = projectconfig.SKUGroup{
+		Arch:    "x86",
+		VMSizes: []string{"Standard_D4s_v5"},
+	}
+	cfg.VMSKUs["Standard_D4s_v5"] = map[string]any{"vcpus": 4}
+
+	err := cfg.Validate()
+	require.ErrorIs(t, err, projectconfig.ErrInvalidSKUGroup)
+	assert.Contains(t, err.Error(), "invalid arch")
+}
+
+func TestProjectConfigValidation_SKUGroupEmptyVMSizes(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	// VMSizes intentionally omitted; ProjectConfig.Validate does not dive into
+	// SKUGroups via the struct validator, so this must be caught explicitly.
+	cfg.SKUGroups["performance"] = projectconfig.SKUGroup{Arch: projectconfig.SKUArchAMD64}
+
+	err := cfg.Validate()
+	require.ErrorIs(t, err, projectconfig.ErrInvalidSKUGroup)
+	assert.Contains(t, err.Error(), "at least one")
+}
+
+func TestProjectConfigValidation_SKUGroupWhitespaceVMSize(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.SKUGroups["performance"] = projectconfig.SKUGroup{
+		Arch:    projectconfig.SKUArchAMD64,
+		VMSizes: []string{" Standard_D4s_v5 "},
+	}
+
+	err := cfg.Validate()
+	require.ErrorIs(t, err, projectconfig.ErrInvalidSKUGroup)
+	assert.Contains(t, err.Error(), "surrounding whitespace")
+}
+
+func TestProjectConfigValidation_SKUGroupOnComponentRefRejected(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.Tests = map[string]projectconfig.TestDefinition{
+		"smoke": {
+			Type:   "pytest",
+			Pytest: map[string]any{"working-dir": "tests", "test-paths": []any{"test_smoke.py"}},
+		},
+	}
+	cfg.SKUGroups["performance"] = projectconfig.SKUGroup{
+		Arch:    projectconfig.SKUArchAMD64,
+		VMSizes: []string{"Standard_D4s_v5"},
+	}
+	cfg.Components = map[string]projectconfig.ComponentConfig{
+		"bash": {
+			Tests: &projectconfig.ComponentTestsConfig{
+				Tests: []projectconfig.TestRef{{Name: "smoke", SKUGroup: "performance"}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	require.ErrorIs(t, err, projectconfig.ErrSKUGroupNotAllowed)
+}
+
+func TestProjectConfigValidation_SKUGroupOnTestGroupMemberRejected(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.Tests = map[string]projectconfig.TestDefinition{
+		"smoke": {
+			Type:   "pytest",
+			Pytest: map[string]any{"working-dir": "tests", "test-paths": []any{"test_smoke.py"}},
+		},
+	}
+	cfg.SKUGroups["performance"] = projectconfig.SKUGroup{
+		Arch:    projectconfig.SKUArchAMD64,
+		VMSizes: []string{"Standard_D4s_v5"},
+	}
+	cfg.TestGroups = map[string]projectconfig.TestGroup{
+		"bvt": {Tests: []projectconfig.TestRef{{Name: "smoke", SKUGroup: "performance"}}},
+	}
+
+	err := cfg.Validate()
+	require.ErrorIs(t, err, projectconfig.ErrSKUGroupNotAllowed)
+}
+
 func TestProjectConfigValidation_DuplicateTestViaNameAndGroupInImage(t *testing.T) {
 	cfg := projectconfig.NewProjectConfig()
 	cfg.Tests = map[string]projectconfig.TestDefinition{
@@ -560,6 +751,33 @@ func TestProjectConfigResolveImageTests_ExpandsGroups(t *testing.T) {
 		resolved[1].Name,
 		resolved[2].Name,
 	})
+}
+
+func TestProjectConfigResolveImageTests_DedupesAcrossSKUGroups(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.Tests = map[string]projectconfig.TestDefinition{
+		"multi-sku-boot": {Type: "lisa", Lisa: map[string]any{"criteria": map[string]any{"area": "boot"}}},
+	}
+	cfg.TestGroups = map[string]projectconfig.TestGroup{
+		"multi-sku-tests": {Tests: []projectconfig.TestRef{{Name: "multi-sku-boot"}}},
+	}
+
+	// Same group referenced under two SKU groups (allowed by validation, fans out
+	// externally). Local resolution must collapse it to a single ResolvedTest so
+	// `azldev image test` does not run it twice.
+	imageCfg := &projectconfig.ImageConfig{
+		Tests: &projectconfig.ImageTestsConfig{
+			Tests: []projectconfig.TestRef{
+				{Group: "multi-sku-tests", SKUGroup: "multi-sku-amd64"},
+				{Group: "multi-sku-tests", SKUGroup: "multi-sku-arm64"},
+			},
+		},
+	}
+
+	resolved, err := cfg.ResolveImageTests(imageCfg)
+	require.NoError(t, err)
+	require.Len(t, resolved, 1)
+	assert.Equal(t, "multi-sku-boot", resolved[0].Name)
 }
 
 func TestProjectConfigResolveComponentTests_ExpandsGroups(t *testing.T) {
