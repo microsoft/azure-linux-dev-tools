@@ -1,0 +1,50 @@
+name: "Build RPM package"
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel in-progress runs of this workflow if a new run is triggered.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  rpm:
+    name: "Fedora 43"
+    runs-on: ubuntu-latest
+    container: fedora:43@sha256:a651ddf48ea28a06ed4e1e6519f51c9f47e7a5a138722ade87369b8fbb7e5b42
+    permissions:
+      contents: read
+    steps:
+      - name: Install packaging tools
+        run: >-
+          dnf install -y
+          findutils
+          git-core
+          go-rpm-macros
+          golang
+          gzip
+          rpm-build
+          tar
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # The container runs as a different user than the checkout owner, so git
+      # refuses to operate on the tree until it is marked as safe.
+      - name: Trust the workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Build source RPM
+        run: go run magefile.go srpm
+
+      - name: Build binary RPM
+        run: rpmbuild --rebuild out/rpm/azldev-*.src.rpm

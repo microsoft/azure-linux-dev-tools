@@ -9,12 +9,13 @@ Releases run through CI — the recommended path, with nothing to install
 locally:
 
 1. Trigger the [**Prepare release** workflow][prepare-release-run]
-   (**Run workflow** → `main`). It drafts the next changelog section and pushes
-   a `release/vX.Y.Z` branch.
+  (**Run workflow** → `main`). It drafts the next changelog section, updates
+  the RPM spec to the same version, and pushes a `release/vX.Y.Z` branch.
 2. Wait ~30 seconds, the output summary of the workflow will generate a link to create the PR.
 3. Edit the draft changelog into user-facing notes, then merge the PR to `main`. Consider using '@copilot Update the new changelog section into user-facing release notes' in GitHub to help rewrite the changelog.
 4. On merge, the [**release** workflow][release-run] tags `vX.Y.Z` and publishes
-   a GitHub Release from the changelog — no further action needed.
+  a GitHub Release from the changelog. Packit then builds that tag and publishes
+  its RPM to COPR. Monitor both jobs; no artifact upload is needed.
 
 See [Automated releases (CI)](#automated-releases-ci) for what each workflow
 does.
@@ -69,19 +70,27 @@ pkg.go.dev fetch directly from this repository's Git tags:
 * pkg.go.dev renders the package doc comments plus this repo's `README.md`. Our
   `LICENSE` (MIT) marks the module redistributable so docs are shown. Only the
   public `cmd/` and `pkg/` packages appear; `internal/` is hidden by design.
+* Packit receives the GitHub Release event, creates the vendored source RPM from
+  the release tag, and submits it to `liunan/azure-linux-dev-tools` in COPR.
+  COPR signs successful RPMs and refreshes the DNF repository.
 
 ## Cut a release
 
 1. Make sure `main` is green and up to date locally.
 
 2. Generate and curate the changelog. Run `mage changelog` to prepend a draft
-   section for the next version to [`CHANGELOG.md`](../../../CHANGELOG.md), then
-   edit it down into user-facing notes. See [Changelog](#changelog) below.
+  section for the next version to [`CHANGELOG.md`](../../../CHANGELOG.md). The
+  same command updates `Version` in [`packaging/azldev.spec`](../../../packaging/azldev.spec),
+  resets its RPM `Release` to 1, and prepends a matching `%changelog` entry.
+  The RPM entry is a concise release marker; detailed notes remain in
+  `CHANGELOG.md`. Edit the Markdown draft down into user-facing notes. See
+  [Changelog](#changelog) below.
 
 3. Tag the release. Once the changelog change is on `main`, run `mage release`:
    it reads the version from the top `## [X.Y.Z]` heading in
-   [`CHANGELOG.md`](../../../CHANGELOG.md) and creates a matching annotated tag
-   (`vX.Y.Z`), so the tag and the changelog can't disagree. Then push the tag:
+  [`CHANGELOG.md`](../../../CHANGELOG.md), verifies that
+  [`packaging/azldev.spec`](../../../packaging/azldev.spec) has the same version,
+  and creates a matching annotated tag (`vX.Y.Z`). Then push the tag:
 
    ```console
    mage release
@@ -126,8 +135,9 @@ mage changelog
 ```
 
 This prepends a `## [X.Y.Z]` section (the version is inferred from the commits)
-above the previous release, skipping internal commit types — docs, test, chore,
-build, ci, style, refactor, and dependency bumps — per
+above the previous release and synchronizes the RPM spec version and changelog.
+It skips internal commit types — docs, test, chore, build, ci, style, refactor,
+and dependency bumps — per
 [`cliff.toml`](../../../cliff.toml). The result is a **draft**: git-cliff emits
 commit subjects, not release prose, so prune and reword the entries into
 user-facing notes before committing.
@@ -147,24 +157,35 @@ cargo binstall git-cliff   # or: cargo install git-cliff --locked, or: brew inst
 
 ## Automated releases (CI)
 
-Two workflows automate the manual steps above, reusing the same mage targets so
-there is no second code path:
+Two workflows and Packit automate the manual steps above, reusing the same Mage
+targets so there is no second packaging path:
 
 * [`prepare-release.yml`](../../../.github/workflows/prepare-release.yml)
   (manual **Run workflow**): checks out the repo's default branch (`main`),
   installs the pinned git-cliff, runs `mage changelog`, and pushes a
-  `release/vX.Y.Z` branch. It does **not** open the PR — open it yourself from
-  that branch, curate the draft, and merge.
+  `release/vX.Y.Z` branch containing both the changelog draft and RPM spec bump.
+  It does **not** open the PR — open it yourself from that branch, curate the
+  draft, and merge.
 * [`release.yml`](../../../.github/workflows/release.yml) (on pushes to `main`
   that change `CHANGELOG.md`): runs `mage release`, pushes the tag, and publishes
   a GitHub Release whose notes are that version's `CHANGELOG.md` section. The path
   filter keeps ordinary merges from triggering it; it also stays idempotent — a
   `CHANGELOG.md` edit that doesn't bump the version is a no-op because the top
   version is already tagged.
+* [`.packit.yaml`](../../../.packit.yaml) (`release` event): checks out the
+  released tag, creates the deterministic vendored archive with `mage archive`,
+  builds the SRPM, and submits it to the permanent COPR project. Packit reports
+  the COPR result as a GitHub check.
 
 Both push with the default `GITHUB_TOKEN` (`contents: write`) — no PAT needed.
-A tag pushed by `GITHUB_TOKEN` does not itself trigger further workflows, which
-only matters if a tag-triggered build is added later.
+A tag pushed by `GITHUB_TOKEN` does not itself trigger further GitHub Actions
+workflows. Packit listens for the subsequent GitHub Release event through its
+GitHub App, so COPR publication does not depend on a tag-triggered workflow.
+
+Packit and COPR require one-time external configuration: install the Packit
+GitHub App, grant the `packit` Fedora account builder permission, allow-list the
+GitHub repository in the COPR project settings, and enable the configured
+chroot. See [Package azldev for Fedora COPR](./package-for-copr.md).
 
 ## Fixing a bad release
 
