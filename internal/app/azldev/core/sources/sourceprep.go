@@ -24,6 +24,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource"
+	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spec"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/dirdiff"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
@@ -83,6 +84,19 @@ func WithGitRepo(
 	}
 }
 
+// WithRPMDevBumpspec enables deterministic host release bumps using the supplied operation context.
+// scratchDir must be outside component staging directories because synthetic history stages all files
+// below the component source directory. targetArch is optional; an empty value preserves the host RPM
+// default for callers that do not have a resolved build target.
+func WithRPMDevBumpspec(ctx opctx.Ctx, scratchDir, targetArch string) PreparerOption {
+	return func(p *sourcePreparerImpl) {
+		p.releaseStrategy = releaseStrategyRPMDevBumpspec
+		p.bumpspecCtx = ctx
+		p.bumpspecScratchDir = scratchDir
+		p.bumpspecTargetArch = targetArch
+	}
+}
+
 // WithDirtyDetection returns a [PreparerOption] that enables uncommitted-change
 // detection during synthetic history generation. When set, the current input
 // fingerprint is compared against the committed lock file; if they differ, a
@@ -106,6 +120,11 @@ func WithoutLockfileHistory() PreparerOption {
 	return func(p *sourcePreparerImpl) {
 		p.withoutLockfile = true
 	}
+}
+
+// WithSpecEditor selects the [spec.EditorMode] used for source preparation.
+func WithSpecEditor(mode spec.EditorMode) PreparerOption {
+	return func(p *sourcePreparerImpl) { p.specEditor = mode }
 }
 
 // WithSkipLookaside returns a [PreparerOption] that skips all lookaside cache
@@ -166,6 +185,7 @@ func WithAllowNoHashes() PreparerOption {
 // Standard implementation of the [SourcePreparer] interface.
 type sourcePreparerImpl struct {
 	sourceManager sourceproviders.SourceManager
+	specEditor    spec.EditorMode
 	fs            opctx.FS
 	eventListener opctx.EventListener
 	dryRunnable   opctx.DryRunnable
@@ -214,6 +234,11 @@ type sourcePreparerImpl struct {
 	// %fedora_upstream_release. Nil disables autorelease resolution (the release
 	// macro is skipped for such specs). Set via [WithMockProcessor].
 	autoreleaseResolver autoreleaseResolver
+
+	releaseStrategy    releaseStrategy
+	bumpspecCtx        opctx.Ctx
+	bumpspecScratchDir string
+	bumpspecTargetArch string
 }
 
 // NewPreparer creates a new [SourcePreparer] instance. All positional arguments
@@ -243,6 +268,7 @@ func NewPreparer(
 
 	impl := &sourcePreparerImpl{
 		sourceManager: sourceManager,
+		specEditor:    spec.EditorLegacy,
 		fs:            fs,
 		eventListener: eventListener,
 		dryRunnable:   dryRunnable,
@@ -532,9 +558,9 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 		return nil
 	}
 
-	// Adjust the Release tag before staging changes. See [tryBumpStaticRelease]
+	// Adjust the Release tag before staging changes. See [tryBumpRelease]
 	// for the handling of %autorelease, static integers, and non-standard values.
-	if err := p.tryBumpStaticRelease(component, sourcesDirPath, len(changes)); err != nil {
+	if err := p.tryBumpRelease(ctx, component, sourcesDirPath, changes); err != nil {
 		return fmt.Errorf("failed to apply release bump:\n%w", err)
 	}
 
@@ -1439,7 +1465,7 @@ func (p *sourcePreparerImpl) applyOverlayList(
 		}
 
 		if err := ApplyOverlayToSources(
-			p.dryRunnable, p.fs, overlay, sourcesDirPath, absSpecPath,
+			p.dryRunnable, p.fs, overlay, sourcesDirPath, absSpecPath, spec.WithEditor(p.specEditor),
 		); err != nil {
 			return fmt.Errorf("failed to apply %#q overlay:\n%w", overlay.Type, err)
 		}

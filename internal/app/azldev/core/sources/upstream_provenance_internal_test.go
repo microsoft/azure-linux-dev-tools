@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spec"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/spf13/afero"
@@ -77,6 +78,48 @@ func TestParseSpecVersionRelease(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "2.12", version)
 	assert.Equal(t, "5%{?dist}", release, "release is captured verbatim, dist is expanded later")
+}
+
+func TestParseSpecVersionReleaseReadsFirstRepeatedConditionalRelease(t *testing.T) {
+	memFS := afero.NewMemMapFs()
+	require.NoError(t, fileutils.MkdirAll(memFS, provenanceWorkDir))
+	require.NoError(t, fileutils.WriteFile(memFS, filepath.Join(provenanceWorkDir, "grub2.spec"), []byte(`Name: grub2
+Version: 2.12
+%if 0
+Release: 5%{?dist}
+%else
+Release: 6%{?dist}
+%endif
+`), fileperms.PublicFile))
+
+	version, release, err := parseSpecVersionRelease(memFS, filepath.Join(provenanceWorkDir, "grub2.spec"))
+	require.NoError(t, err)
+	assert.Equal(t, "2.12", version)
+	assert.Equal(t, "5%{?dist}", release)
+}
+
+func TestParseSpecVersionReleaseSkipsEmptyRepeatedConditionalTags(t *testing.T) {
+	for _, editor := range []spec.EditorMode{spec.EditorLegacy, spec.EditorStructural} {
+		t.Run(string(editor), func(t *testing.T) {
+			memFS := afero.NewMemMapFs()
+			require.NoError(t, fileutils.MkdirAll(memFS, provenanceWorkDir))
+			require.NoError(t, fileutils.WriteFile(memFS, filepath.Join(provenanceWorkDir, "grub2.spec"), []byte(`Name: grub2
+%if 0
+Version:
+Release:
+%endif
+Version: 2.12
+Release: 5%{?dist}
+`), fileperms.PublicFile))
+
+			version, release, err := parseSpecVersionRelease(
+				memFS, filepath.Join(provenanceWorkDir, "grub2.spec"), spec.WithEditor(editor),
+			)
+			require.NoError(t, err)
+			assert.Equal(t, "2.12", version)
+			assert.Equal(t, "5%{?dist}", release)
+		})
+	}
 }
 
 func TestParseSpecVersionRelease_MissingFile(t *testing.T) {

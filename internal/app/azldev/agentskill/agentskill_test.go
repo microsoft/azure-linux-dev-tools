@@ -134,6 +134,23 @@ func TestImageSkillDocumentsArchitecturesField(t *testing.T) {
 	assert.Contains(t, doc, "unrestricted")
 }
 
+func TestBuildComponentSkillDocumentsRPMDevBumpspecPreview(t *testing.T) {
+	doc, err := agentskill.SkillDocument("azldev-build-component", testParams())
+	require.NoError(t, err)
+	assert.Contains(t, doc, "non-standard `Release` tag")
+	assert.Contains(t, doc, "temporary `--rpmdev-bumpspec` preview")
+	assert.Contains(t, doc, "`rpmdev-packager`, `rpm`, `rpmspec`,\n   `python3`, or the Python RPM module")
+	assert.Contains(t, doc, "Without the flag, azldev keeps the legacy static Release calculation.")
+	assert.NotContains(t, doc, "rpmdev-bumpspec` or RPM macros")
+}
+
+func TestComponentTomlSkillDocumentsRPMDevBumpspecPreview(t *testing.T) {
+	doc, err := agentskill.SkillDocument("azldev-comp-toml", testParams())
+	require.NoError(t, err)
+	assert.Contains(t, doc, "The temporary `--rpmdev-bumpspec` flag")
+	assert.Contains(t, doc, "no bumpspec runtime discovery occurs")
+}
+
 func TestSkillFrontmatterInvariants(t *testing.T) {
 	layout := agentskill.DefaultLayout()
 

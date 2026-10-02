@@ -16,7 +16,8 @@ components defined in the project configuration.
 ### Options
 
 ```
-  -h, --help   help for component
+  -h, --help                 help for component
+      --spec-editor editor   Select the RPM spec editor (legacy or experimental) (default legacy)
 ```
 
 ### Options inherited from parent commands
