@@ -17,6 +17,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spec"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/spf13/afero"
@@ -535,4 +536,19 @@ func TestTryBumpRelease_UsesRPMDevBumpspecOnlyWhenConfigured(t *testing.T) {
 	require.NoError(t, preparer.tryBumpRelease(context.Background(), comp,
 		filepath.Join(testSourcesDir, "test-pkg"), testChanges()[:1]))
 	assert.Equal(t, 1, bumps)
+}
+
+func TestTryBumpRPMDevBumpspec_UsesConfiguredSpecEditor(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	preparer, ctx := rpmdevReleaseTestPreparer(t)
+	preparer.specEditor = spec.EditorMode("unsupported")
+
+	writeTestSpec(t, ctx.FS(), "test-pkg", "Name: test-pkg\nVersion: 1.0\nRelease: 4\n")
+
+	comp := mockReleaseComponent(ctrl, "test-pkg", projectconfig.ReleaseCalculationAuto)
+
+	err := preparer.tryBumpRPMDevBumpspec(
+		context.Background(), comp, filepath.Join(testSourcesDir, "test-pkg"), testChanges()[:1])
+	require.ErrorContains(t, err, "unknown spec editor")
+	assert.ErrorContains(t, err, "unsupported")
 }

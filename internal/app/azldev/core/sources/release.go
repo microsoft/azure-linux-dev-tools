@@ -242,7 +242,7 @@ func (p *sourcePreparerImpl) tryBumpRPMDevBumpspec(
 		return err
 	}
 
-	releaseValue, err := GetReleaseTagValue(p.fs, specPath)
+	releaseValue, err := GetReleaseTagValue(p.fs, specPath, spec.WithEditor(p.specEditor))
 	if err != nil {
 		return fmt.Errorf("failed to read Release tag for component %#q:\n%w", component.GetName(), err)
 	}

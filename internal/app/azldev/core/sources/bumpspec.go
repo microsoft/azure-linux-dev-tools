@@ -258,9 +258,9 @@ func shellQuote(value string) string {
 }
 
 func evaluateRPMDevBumpspecSourceEVR(ctx opctx.Ctx, request RPMDevBumpspecRequest) (RPMDevBumpspecSourceEVR, error) {
-	args := append(rpmdevBumpspecContextArgs(request),
+	args := append([]string{"--define", "dist %{nil}"}, rpmdevBumpspecContextArgs(request)...)
+	args = append(args,
 		"-q", "--srpm",
-		"--define", "dist %{nil}",
 		"--qf", rpmdevBumpspecEVRQueryFormat,
 		request.SpecPath,
 	)

@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -123,6 +124,42 @@ func TestRunRPMDevBumpspec_UsesHostEVRAndFixedContext(t *testing.T) {
 	assert.NotContains(t, string(wrapper), "'--without'")
 	assert.Contains(t, string(wrapper),
 		"'--define' '_with_feature 1' '--define' '_without_legacy 1' '--define' 'alpha 1' '--define' 'zeta 2'")
+	assert.Equal(t, 2, queries)
+}
+
+func TestRunRPMDevBumpspec_EVRQueryPreservesExplicitDist(t *testing.T) {
+	ctx := newBumpspecCtx()
+	request := newBumpspecRequest()
+	request.Build.Defines["dist"] = ".custom"
+
+	writeBumpspecSpec(t, ctx, testBumpspecOriginalSpec)
+
+	queries := 0
+	ctx.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+		switch {
+		case isEVRQuery(cmd):
+			defaultDist := slices.Index(cmd.Args, "dist %{nil}")
+			explicitDist := slices.Index(cmd.Args, "dist .custom")
+
+			require.NotEqual(t, -1, defaultDist)
+			require.NotEqual(t, -1, explicitDist)
+			assert.Less(t, defaultDist, explicitDist)
+
+			queries++
+			_, _ = fmt.Fprint(cmd.Stdout, evrOutput("component", "0", strconv.Itoa(3+queries)))
+		case cmd.Path == RPMDevBumpspecBinary:
+			return fileutils.WriteFile(ctx.FS(), testBumpspecPath,
+				[]byte("Name: component\nVersion: 1.0\nRelease: 5\n"), fileperms.PublicFile)
+		case isReleaseComparison(cmd):
+			_, _ = fmt.Fprintln(cmd.Stdout, "-1")
+		default:
+			return fmt.Errorf("unexpected command: %#v", cmd.Args)
+		}
+
+		return nil
+	}
+
+	require.NoError(t, RunRPMDevBumpspec(ctx, request))
 	assert.Equal(t, 2, queries)
 }
 
