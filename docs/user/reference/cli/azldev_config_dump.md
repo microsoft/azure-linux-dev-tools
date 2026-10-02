@@ -9,9 +9,11 @@ Dump the current configuration
 Dump the fully resolved project configuration.
 
 Shows the merged result of all config files (embedded defaults, project
-config, includes, and any extra --config-file arguments) after inheritance
-and merge rules have been applied. Useful for debugging configuration
-issues or inspecting effective values.
+config, includes, and any extra --config-file arguments). Component entries
+include inherited defaults and overlays expanded from 'overlay-files'.
+
+The output is an inspection snapshot for debugging and scripting, not project
+configuration intended to be loaded again.
 
 ```
 azldev config dump [flags]
