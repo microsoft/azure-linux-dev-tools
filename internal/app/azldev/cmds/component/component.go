@@ -35,6 +35,7 @@ components defined in the project configuration.`,
 	prepareOnAppInit(app, cmd)
 	renderOnAppInit(app, cmd)
 	testOnAppInit(app, cmd)
+	metadataOnAppInit(app, cmd)
 
 	// The commands that maintain resolved component state differ by mode: the
 	// default mode maintains lock files, while lock-file-free mode maintains
