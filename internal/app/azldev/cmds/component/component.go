@@ -10,6 +10,10 @@ import (
 
 // Called once when the app is initialized; registers any commands or callbacks with the app.
 func OnAppInit(app *azldev.App) {
+	app.AddTopLevelCommand(newComponentCmd(app))
+}
+
+func newComponentCmd(app *azldev.App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "component",
 		Aliases: []string{"comp"},
@@ -22,7 +26,7 @@ Use subcommands to add, list, query, build, and prepare sources for
 components defined in the project configuration.`,
 	}
 
-	app.AddTopLevelCommand(cmd)
+	addSpecEditorOption(cmd)
 	addOnAppInit(app, cmd)
 	buildOnAppInit(app, cmd)
 	changedOnAppInit(app, cmd)
@@ -31,6 +35,7 @@ components defined in the project configuration.`,
 	prepareOnAppInit(app, cmd)
 	renderOnAppInit(app, cmd)
 	testOnAppInit(app, cmd)
+	metadataOnAppInit(app, cmd)
 
 	// The commands that maintain resolved component state differ by mode: the
 	// default mode maintains lock files, while lock-file-free mode maintains
@@ -44,4 +49,6 @@ components defined in the project configuration.`,
 		queryOnAppInit(app, cmd)
 		updateOnAppInit(app, cmd)
 	}
+
+	return cmd
 }
