@@ -48,6 +48,13 @@ func TestNewRenderCmd_Flags(t *testing.T) {
 	checkOnlyFlag := cmd.Flags().Lookup("check-only")
 	require.NotNil(t, checkOnlyFlag, "check-only flag should be registered")
 	assert.Equal(t, "false", checkOnlyFlag.DefValue)
+
+	rpmDevBumpspecFlag := cmd.Flags().Lookup("rpmdev-bumpspec")
+	require.NotNil(t, rpmDevBumpspecFlag)
+	assert.Equal(t, "false", rpmDevBumpspecFlag.DefValue)
+	assert.Equal(t, "Use rpmdev-bumpspec instead of the legacy static release calculation", rpmDevBumpspecFlag.Usage)
+
+	assert.Nil(t, componentcmds.NewDiffSourcesCmd().Flags().Lookup("rpmdev-bumpspec"))
 }
 
 func TestRenderCmd_NoComponents(t *testing.T) {
