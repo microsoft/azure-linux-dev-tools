@@ -25,11 +25,13 @@ import (
 )
 
 type ComponentBuildOptions struct {
+	componentCommandOptions
 	ComponentFilter components.ComponentFilter
 
 	ContinueOnError   bool
 	NoCheck           bool
 	WithoutGitRepo    bool
+	RPMDevBumpspec    bool
 	SourcePackageOnly bool
 	BuildEnvPolicy    BuildEnvPreservePolicy
 
@@ -88,7 +90,9 @@ func NewBuildCmd(opts ...CmdOption) *cobra.Command {
 		BuildEnvPolicy: BuildEnvPreserveOnFailure,
 	}
 
-	cmd := &cobra.Command{
+	var cmd *cobra.Command
+
+	cmd = &cobra.Command{
 		Use:   "build",
 		Short: "Build packages for components",
 		Long: `Build RPM packages for one or more components using mock.
@@ -121,6 +125,7 @@ builds can consume.`,
   azldev component build --local-repo-with-publish ./base/out -p liba -p libb`,
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
 			options.ComponentFilter.ComponentNamePatterns = append(options.ComponentFilter.ComponentNamePatterns, args...)
+			options.SpecEditor = specEditorFromCommand(cmd)
 
 			return SelectAndBuildComponents(env, options)
 		}),
@@ -133,6 +138,7 @@ builds can consume.`,
 	cmd.Flags().BoolVar(&options.NoCheck, "no-check", false, "Skip package %check tests")
 	cmd.Flags().BoolVar(&options.WithoutGitRepo, "without-git", false,
 		"Skip creating a dist-git repository with synthetic commit history")
+	addRPMDevBumpspecFlag(cmd, &options.RPMDevBumpspec)
 	cmd.Flags().BoolVar(&options.SourcePackageOnly, "srpm-only", false, "Build SRPM (source RPM) *only*")
 	cmd.Flags().Var(&options.BuildEnvPolicy, "preserve-buildenv",
 		fmt.Sprintf("Preserve build environment {%s, %s, %s}",
@@ -272,12 +278,20 @@ func buildComponent(
 		preparerOpts = append(preparerOpts, gitRepoPreparerOptions(env, distro)...)
 	}
 
+	if options.RPMDevBumpspec {
+		preparerOpts = append(preparerOpts,
+			sources.WithRPMDevBumpspec(env, env.WorkDir(), options.MockConfigOpts["target_arch"]))
+	}
+
 	preparerOpts = append(preparerOpts,
 		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)))
 
 	preparerOpts = append(preparerOpts, sources.WithMockProcessor(mockProcessor))
 
-	sourcePreparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, preparerOpts...)
+	sourcePreparer, err := newSourcePreparer(sourceManager, env.FS(), env, env, append(
+		preparerOpts,
+		sources.WithSpecEditor(options.specEditorMode()),
+	)...)
 	if err != nil {
 		return ComponentBuildResults{},
 			fmt.Errorf("failed to create source preparer for component %q:\n%w", component.GetName(), err)
@@ -450,6 +464,10 @@ func PlaceRPMsByChannel(env *azldev.Env, rpmResults []RPMResult, rpmsDir string)
 
 // validateBuildOptions validates the build options before any work is done.
 func validateBuildOptions(env *azldev.Env, options *ComponentBuildOptions) error {
+	if options.RPMDevBumpspec && options.WithoutGitRepo {
+		return errors.New("'--rpmdev-bumpspec' cannot be used with '--without-git'")
+	}
+
 	// Check for overlap between --local-repo and --local-repo-with-publish.
 	// (Check config errors before tool availability for better UX.)
 	if err := checkLocalRepoPathOverlap(options.LocalRepoPaths, options.LocalRepoWithPublishPath); err != nil {
