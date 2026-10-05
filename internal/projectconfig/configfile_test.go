@@ -670,12 +670,14 @@ func TestProjectConfigValidation_NonContradictingImageCapabilities(t *testing.T)
 			Capabilities: projectconfig.ImageCapabilities{
 				MachineBootable: &trueVal,
 			},
+			Properties: map[string]string{"openssl-fips-provider": "upstream"},
 		},
 		"container-base": {
 			Architectures: []string{"x86_64"},
 			Capabilities: projectconfig.ImageCapabilities{
 				Container: &trueVal,
 			},
+			Properties: map[string]string{"openssl-fips-provider": "symcrypt"},
 		},
 		"wsl": {
 			Architectures: []string{"x86_64"},

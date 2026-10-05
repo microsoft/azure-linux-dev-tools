@@ -19,6 +19,7 @@ func TestBuildLisaArgs(t *testing.T) {
 			MachineBootable: lo.ToPtr(true),
 			Systemd:         lo.ToPtr(true),
 		},
+		Properties: map[string]string{"openssl-fips-provider": "symcrypt"},
 	}
 
 	options := &ImageTestOptions{
@@ -26,17 +27,19 @@ func TestBuildLisaArgs(t *testing.T) {
 		ImagePath: "relative/image.qcow2",
 	}
 
-	args := buildLisaArgs(
+	args, err := buildLisaArgs(
 		"/work/lisa/framework/abc/azldev-generated-suite.yml",
 		[]string{
 			"--image", "{image-path}",
 			"--name", "{image-name}",
 			"--caps", "{capabilities}",
+			"--properties", "{properties}",
 			"-v",
 		},
 		imageConfig,
 		options,
 	)
+	require.NoError(t, err)
 
 	absImagePath, err := filepath.Abs("relative/image.qcow2")
 	require.NoError(t, err)
@@ -46,6 +49,7 @@ func TestBuildLisaArgs(t *testing.T) {
 		"--image", absImagePath,
 		"--name", "vm-base",
 		"--caps", "machine-bootable,systemd",
+		"--properties", `{"openssl-fips-provider":"symcrypt"}`,
 		"-v",
 	}
 
@@ -56,7 +60,8 @@ func TestBuildLisaArgs_NoExtraArgs(t *testing.T) {
 	imageConfig := &projectconfig.ImageConfig{}
 	options := &ImageTestOptions{ImageName: "vm-base", ImagePath: "/abs/image.qcow2"}
 
-	args := buildLisaArgs("/runbook.yml", nil, imageConfig, options)
+	args, err := buildLisaArgs("/runbook.yml", nil, imageConfig, options)
+	require.NoError(t, err)
 
 	assert.Equal(t, []string{"-r", "/runbook.yml"}, args)
 }
@@ -65,9 +70,20 @@ func TestBuildLisaArgs_EmptyCapabilities(t *testing.T) {
 	imageConfig := &projectconfig.ImageConfig{}
 	options := &ImageTestOptions{ImageName: "vm-base", ImagePath: "/abs/image.qcow2"}
 
-	args := buildLisaArgs("/runbook.yml", []string{"{capabilities}"}, imageConfig, options)
+	args, err := buildLisaArgs("/runbook.yml", []string{"{capabilities}"}, imageConfig, options)
+	require.NoError(t, err)
 
 	assert.Equal(t, []string{"-r", "/runbook.yml", ""}, args)
+}
+
+func TestBuildLisaArgs_EmptyProperties(t *testing.T) {
+	imageConfig := &projectconfig.ImageConfig{}
+	options := &ImageTestOptions{ImageName: "vm-base", ImagePath: "/abs/image.qcow2"}
+
+	args, err := buildLisaArgs("/runbook.yml", []string{"{properties}"}, imageConfig, options)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"-r", "/runbook.yml", "{}"}, args)
 }
 
 func TestRequireQcow2Image(t *testing.T) {

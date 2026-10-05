@@ -4,6 +4,7 @@
 package image
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -32,6 +33,8 @@ const (
 	imageNamePlaceholder = "{image-name}"
 	// capabilitiesPlaceholder is the placeholder token for the comma-delimited capabilities.
 	capabilitiesPlaceholder = "{capabilities}"
+	// propertiesPlaceholder is the placeholder token for the JSON-encoded image properties.
+	propertiesPlaceholder = "{properties}"
 )
 
 // RunPytestSuite runs a pytest-based test suite natively using a Python venv.
@@ -74,7 +77,10 @@ func RunPytestSuite(
 	}
 
 	// Build the pytest command: expand test paths, substitute placeholders in extra args.
-	pytestArgs := BuildNativePytestArgs(env.FS(), pytestConfig, imageConfig, options)
+	pytestArgs, err := BuildNativePytestArgs(env.FS(), pytestConfig, imageConfig, options)
+	if err != nil {
+		return err
+	}
 
 	slog.Info("Running pytest", slog.Any("args", pytestArgs))
 
@@ -291,10 +297,15 @@ func BuildNativePytestArgs(
 	pytestConfig *projectconfig.PytestConfig,
 	imageConfig *projectconfig.ImageConfig,
 	options *ImageTestOptions,
-) []string {
+) ([]string, error) {
 	absImagePath, err := filepath.Abs(options.ImagePath)
 	if err != nil {
 		absImagePath = options.ImagePath
+	}
+
+	properties, err := serializeImageProperties(imageConfig.Properties)
+	if err != nil {
+		return nil, err
 	}
 
 	// Build a replacer for all known placeholders.
@@ -302,6 +313,7 @@ func BuildNativePytestArgs(
 		imagePlaceholder, absImagePath,
 		imageNamePlaceholder, options.ImageName,
 		capabilitiesPlaceholder, strings.Join(imageConfig.Capabilities.EnabledNames(), ","),
+		propertiesPlaceholder, properties,
 	)
 
 	args := make([]string, 0, len(pytestConfig.TestPaths)+len(pytestConfig.ExtraArgs))
@@ -323,7 +335,20 @@ func BuildNativePytestArgs(
 		args = append(args, "--junit-xml", options.JUnitXMLPath)
 	}
 
-	return args
+	return args, nil
+}
+
+func serializeImageProperties(properties map[string]string) (string, error) {
+	if properties == nil {
+		properties = map[string]string{}
+	}
+
+	serialized, err := json.Marshal(properties)
+	if err != nil {
+		return "", fmt.Errorf("failed to serialize image properties:\n%w", err)
+	}
+
+	return string(serialized), nil
 }
 
 // expandGlob expands a glob pattern relative to workingDir using [fileutils.Glob], which

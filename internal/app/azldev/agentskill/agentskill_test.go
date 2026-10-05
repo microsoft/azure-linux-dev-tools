@@ -508,6 +508,31 @@ func TestOverlayMetadataSkillCoversSchemaEnums(t *testing.T) {
 	}
 }
 
+// TestImageSkillCoversCapabilities is a drift guard: the azldev-image skill must
+// document every boolean capability and the extensible properties bag.
+func TestImageSkillCoversCapabilities(t *testing.T) {
+	doc, err := agentskill.SkillDocument("azldev-image", agentskill.Params{})
+	require.NoError(t, err)
+
+	capabilitiesType := reflect.TypeOf(projectconfig.ImageCapabilities{})
+	boolPointerType := reflect.TypeOf((*bool)(nil))
+
+	for i := range capabilitiesType.NumField() {
+		field := capabilitiesType.Field(i)
+		if field.Type != boolPointerType {
+			continue
+		}
+
+		tomlName, _, _ := strings.Cut(field.Tag.Get("toml"), ",")
+		require.NotEmptyf(t, tomlName, "expected TOML name for ImageCapabilities.%s", field.Name)
+		assert.Containsf(t, doc, "`"+tomlName+"`",
+			"azldev-image skill must document boolean capability %q", tomlName)
+	}
+
+	assert.Contains(t, doc, "`properties`")
+	assert.Contains(t, doc, "openssl-fips-provider")
+}
+
 // TestCatalog_SkillsByMode verifies that each mode advertises the skill describing
 // how it maintains resolved component state, and only that one.
 func TestCatalog_SkillsByMode(t *testing.T) {

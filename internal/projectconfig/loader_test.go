@@ -1242,7 +1242,7 @@ test-paths = ["test_smoke.py"]
 	assert.Contains(t, err.Error(), "invalid test name")
 }
 
-func TestLoadAndResolveProjectConfig_ImageCapabilities_FipsEnabledAndCVM(t *testing.T) {
+func TestLoadAndResolveProjectConfig_ImageCapabilitiesAndProperties(t *testing.T) {
 	const configContents = `
 [images.myimage]
 description = "Test image"
@@ -1252,6 +1252,9 @@ architectures = ["x86_64"]
 machine-bootable = true
 fips-enabled = true
 cvm = true
+
+[images.myimage.properties]
+openssl-fips-provider = "upstream"
 `
 
 	ctx := testctx.NewCtx()
@@ -1261,11 +1264,15 @@ cvm = true
 	require.NoError(t, err)
 
 	if assert.Contains(t, config.Images, "myimage") {
-		caps := config.Images["myimage"].Capabilities
+		image := config.Images["myimage"]
+		caps := image.Capabilities
 		assert.True(t, caps.IsFipsEnabled())
 		assert.True(t, caps.IsCVM())
 		assert.Contains(t, caps.EnabledNames(), "fips-enabled")
 		assert.Contains(t, caps.EnabledNames(), "cvm")
+		assert.Equal(t, map[string]string{
+			"openssl-fips-provider": "upstream",
+		}, image.Properties)
 	}
 }
 

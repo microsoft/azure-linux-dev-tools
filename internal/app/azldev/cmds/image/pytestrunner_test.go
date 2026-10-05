@@ -33,6 +33,21 @@ func hostFS() opctx.FS {
 	return testctx.NewCtx(testctx.WithHostFS()).FS()
 }
 
+func mustBuildNativePytestArgs(
+	t *testing.T,
+	fs opctx.FS,
+	pytestConfig *projectconfig.PytestConfig,
+	imageConfig *projectconfig.ImageConfig,
+	options *image.ImageTestOptions,
+) []string {
+	t.Helper()
+
+	args, err := image.BuildNativePytestArgs(fs, pytestConfig, imageConfig, options)
+	require.NoError(t, err)
+
+	return args
+}
+
 func TestBuildNativePytestArgs_BasicTestPaths(t *testing.T) {
 	pytestConfig := &projectconfig.PytestConfig{
 		TestPaths: []string{"cases/", "other/"},
@@ -42,7 +57,7 @@ func TestBuildNativePytestArgs_BasicTestPaths(t *testing.T) {
 		ImagePath: "/images/test.raw",
 	}
 
-	args := image.BuildNativePytestArgs(hostFS(), pytestConfig, testImageConfig(), options)
+	args := mustBuildNativePytestArgs(t, hostFS(), pytestConfig, testImageConfig(), options)
 
 	assert.Equal(t, []string{"cases/", "other/", "--image-path", "/images/test.raw"}, args)
 }
@@ -65,7 +80,7 @@ func TestBuildNativePytestArgs_GlobExpansion(t *testing.T) {
 		ImagePath: "/images/test.raw",
 	}
 
-	args := image.BuildNativePytestArgs(hostFS(), pytestConfig, testImageConfig(), options)
+	args := mustBuildNativePytestArgs(t, hostFS(), pytestConfig, testImageConfig(), options)
 
 	assert.Contains(t, args, filepath.Join("cases", "test_alpha.py"))
 	assert.Contains(t, args, filepath.Join("cases", "test_beta.py"))
@@ -85,7 +100,7 @@ func TestBuildNativePytestArgs_GlobNoMatch(t *testing.T) {
 		ImagePath: "/images/test.raw",
 	}
 
-	args := image.BuildNativePytestArgs(hostFS(), pytestConfig, testImageConfig(), options)
+	args := mustBuildNativePytestArgs(t, hostFS(), pytestConfig, testImageConfig(), options)
 
 	// Original pattern preserved when no matches.
 	assert.Equal(t, []string{"cases/test_*.py"}, args)
@@ -99,7 +114,7 @@ func TestBuildNativePytestArgs_ExtraArgsNeverGlobExpanded(t *testing.T) {
 		ImagePath: "/images/test.raw",
 	}
 
-	args := image.BuildNativePytestArgs(hostFS(), pytestConfig, testImageConfig(), options)
+	args := mustBuildNativePytestArgs(t, hostFS(), pytestConfig, testImageConfig(), options)
 
 	// Glob chars in extra-args should be passed verbatim.
 	assert.Equal(t, []string{"--pattern", "test_*.py"}, args)
@@ -115,7 +130,7 @@ func TestBuildNativePytestArgs_JUnitXMLAppended(t *testing.T) {
 		JUnitXMLPath: "/output/results.xml",
 	}
 
-	args := image.BuildNativePytestArgs(hostFS(), pytestConfig, testImageConfig(), options)
+	args := mustBuildNativePytestArgs(t, hostFS(), pytestConfig, testImageConfig(), options)
 
 	assert.Equal(t, []string{
 		"cases/",
@@ -132,7 +147,7 @@ func TestBuildNativePytestArgs_NoJUnitXMLWhenNotRequested(t *testing.T) {
 		ImagePath: "/images/test.raw",
 	}
 
-	args := image.BuildNativePytestArgs(hostFS(), pytestConfig, testImageConfig(), options)
+	args := mustBuildNativePytestArgs(t, hostFS(), pytestConfig, testImageConfig(), options)
 
 	assert.NotContains(t, args, "--junit-xml")
 }
@@ -143,7 +158,7 @@ func TestBuildNativePytestArgs_EmptyConfig(t *testing.T) {
 		ImagePath: "/images/test.raw",
 	}
 
-	args := image.BuildNativePytestArgs(hostFS(), pytestConfig, testImageConfig(), options)
+	args := mustBuildNativePytestArgs(t, hostFS(), pytestConfig, testImageConfig(), options)
 	assert.Empty(t, args)
 }
 
@@ -156,7 +171,7 @@ func TestBuildNativePytestArgs_PlaceholderNotInTestPaths(t *testing.T) {
 		ImagePath: "/images/test.raw",
 	}
 
-	args := image.BuildNativePytestArgs(hostFS(), pytestConfig, testImageConfig(), options)
+	args := mustBuildNativePytestArgs(t, hostFS(), pytestConfig, testImageConfig(), options)
 
 	assert.Equal(t, []string{"{image-path}"}, args)
 }
@@ -170,7 +185,7 @@ func TestBuildNativePytestArgs_ImageNamePlaceholder(t *testing.T) {
 		ImagePath: "/images/test.raw",
 	}
 
-	args := image.BuildNativePytestArgs(hostFS(), pytestConfig, testImageConfig(), options)
+	args := mustBuildNativePytestArgs(t, hostFS(), pytestConfig, testImageConfig(), options)
 
 	assert.Equal(t, []string{"--image-name", "vm-base"}, args)
 }
@@ -192,9 +207,36 @@ func TestBuildNativePytestArgs_CapabilitiesPlaceholder(t *testing.T) {
 		ImagePath: "/images/test.raw",
 	}
 
-	args := image.BuildNativePytestArgs(hostFS(), pytestConfig, imgConfig, options)
+	args := mustBuildNativePytestArgs(t, hostFS(), pytestConfig, imgConfig, options)
 
-	assert.Equal(t, []string{"--capabilities", "machine-bootable,systemd,runtime-package-management"}, args)
+	assert.Equal(t, []string{
+		"--capabilities",
+		"machine-bootable,systemd,runtime-package-management",
+	}, args)
+}
+
+func TestBuildNativePytestArgs_PropertiesPlaceholder(t *testing.T) {
+	imgConfig := &projectconfig.ImageConfig{
+		Name: "vm-base",
+		Properties: map[string]string{
+			"openssl-fips-provider": "upstream",
+			"release-channel":       `preview "quoted"`,
+			"control-character":     "\x01",
+		},
+	}
+	pytestConfig := &projectconfig.PytestConfig{
+		ExtraArgs: []string{"--properties", "{properties}"},
+	}
+	options := &image.ImageTestOptions{
+		ImagePath: "/images/test.raw",
+	}
+
+	args := mustBuildNativePytestArgs(t, hostFS(), pytestConfig, imgConfig, options)
+
+	assert.Equal(t, []string{
+		"--properties",
+		`{"control-character":"\u0001","openssl-fips-provider":"upstream","release-channel":"preview \"quoted\""}`,
+	}, args)
 }
 
 func TestBuildNativePytestArgs_CapabilitiesEmpty(t *testing.T) {
@@ -213,7 +255,7 @@ func TestBuildNativePytestArgs_CapabilitiesEmpty(t *testing.T) {
 		ImagePath: "/images/test.raw",
 	}
 
-	args := image.BuildNativePytestArgs(hostFS(), pytestConfig, imgConfig, options)
+	args := mustBuildNativePytestArgs(t, hostFS(), pytestConfig, imgConfig, options)
 
 	assert.Equal(t, []string{"--capabilities", "container"}, args)
 }

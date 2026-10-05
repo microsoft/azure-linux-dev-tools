@@ -46,7 +46,7 @@ VM).
 | Testcase names | `testcase-names` | string array | Shorthand for a single criteria matching multiple test cases by name (joined as an OR). |
 | Pip pre-install | `pip-pre-install` | string array | Pip packages to install before the framework (for overriding version pins); used only for local execution. |
 | Pip extras | `pip-extras` | string array | Pip extras to install from the LISA framework package; used only for local execution. |
-| Extra args | `extra-args` | string array | Additional arguments passed to LISA. Supports `{image-path}`, `{image-name}`, `{capabilities}` placeholders; used only for local execution. |
+| Extra args | `extra-args` | string array | Additional arguments passed to LISA. Supports `{image-path}`, `{image-name}`, `{capabilities}`, `{properties}` placeholders; used only for local execution. |
 
 At least one of `criteria`, `name`, `testcase-name`, or `testcase-names` is
 required.
@@ -114,7 +114,8 @@ substituted at run time. They are **not** substituted in `test-paths`.
 |-------------|--------------|
 | `{image-path}` | Absolute path to the image artifact under test |
 | `{image-name}` | Name of the image being tested |
-| `{capabilities}` | Comma-separated list of capability names enabled on the image |
+| `{capabilities}` | Comma-separated names of enabled boolean capabilities |
+| `{properties}` | JSON object containing the image's string properties |
 
 ## Test Group
 

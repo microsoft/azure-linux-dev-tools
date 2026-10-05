@@ -29,12 +29,17 @@ type ImageListResult struct {
 	// Description of the image.
 	Description string `json:"description"`
 
-	// Capabilities describes the features and properties of this image.
+	// Capabilities describes the features supported by this image.
 	Capabilities projectconfig.ImageCapabilities `json:"capabilities" table:"-"`
 
-	// CapabilitiesSummary is a comma-separated summary of enabled capabilities for table
-	// display.
+	// CapabilitiesSummary is a comma-separated summary of enabled capabilities.
 	CapabilitiesSummary string `json:"-" table:"Capabilities"`
+
+	// Properties holds extensible string metadata describing the image.
+	Properties map[string]string `json:"properties,omitempty" table:"-"`
+
+	// PropertiesSummary is the JSON-encoded property bag for table display.
+	PropertiesSummary string `json:"-" table:"Properties"`
 
 	// Architectures lists the architectures supported by this image, as declared in
 	// its config. An empty list means the image is unrestricted (all recognized
@@ -138,11 +143,18 @@ func ListImages(env *azldev.Env, options *ListImageOptions) ([]ImageListResult, 
 
 		imageConfig := cfg.Images[name]
 
+		propertiesSummary, err := serializeImageProperties(imageConfig.Properties)
+		if err != nil {
+			return nil, err
+		}
+
 		results = append(results, ImageListResult{
 			Name:                name,
 			Description:         imageConfig.Description,
 			Capabilities:        imageConfig.Capabilities,
 			CapabilitiesSummary: strings.Join(imageConfig.Capabilities.EnabledNames(), ", "),
+			Properties:          imageConfig.Properties,
+			PropertiesSummary:   propertiesSummary,
 			Architectures:       imageConfig.Architectures,
 			ArchitecturesSummary: strings.Join(
 				imageConfig.Architectures,

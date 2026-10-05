@@ -9,7 +9,8 @@ The `[images]` section defines system images (VMs, containers, etc.) that azldev
 | Description | `description` | string | No | Human-readable description of the image |
 | Definition | `definition` | [ImageDefinition](#image-definition) | No | Specifies the image definition format, file path, and optional profile |
 | Architectures | `architectures` | string array | No | Architectures supported by this image |
-| Capabilities | `capabilities` | [ImageCapabilities](#image-capabilities) | No | Describes features and properties of this image |
+| Capabilities | `capabilities` | [ImageCapabilities](#image-capabilities) | No | Describes features supported by this image |
+| Properties | `properties` | string-to-string table | No | Extensible metadata describing this image |
 | Tests | `tests` | [ImageTests](#image-tests) | No | Test configuration for this image |
 | Publish | `publish` | [ImagePublish](#image-publish) | No | Publishing settings for this image |
 
@@ -31,7 +32,7 @@ The `definition` field tells azldev where to find the image definition file and 
 
 ## Image Capabilities
 
-The `capabilities` subtable describes what the image supports. All fields are optional booleans using tri-state semantics: `true` (explicitly enabled), `false` (explicitly disabled), or omitted (unspecified / inherit from defaults).
+The `capabilities` subtable describes what the image supports. Boolean fields use tri-state semantics: `true` (explicitly enabled), `false` (explicitly disabled), or omitted (unspecified).
 
 | Field | TOML Key | Type | Default | Description |
 |-------|----------|------|---------|-------------|
@@ -43,6 +44,22 @@ The `capabilities` subtable describes what the image supports. All fields are op
 | Installer Media | `installer-media` | bool | unset | Whether the image is installer media (e.g. an ISO) that installs another OS, rather than a directly runnable end-state image |
 | FIPS Enabled | `fips-enabled` | bool | unset | Whether the image is built or configured to run in FIPS mode |
 | CVM | `cvm` | bool | unset | Whether the image supports running as a Confidential VM (CVM) |
+
+## Image Properties
+
+The `properties` subtable is an open string-to-string property bag for image metadata
+that is useful to tests or external orchestration but is not interpreted by azldev.
+Adding a property does not require an azldev schema change.
+
+```toml
+[images.vm-base.properties]
+openssl-fips-provider = "upstream"
+release-channel = "preview"
+```
+
+The `{properties}` test-runner placeholder serializes the complete property bag as a
+JSON object. The existing `{capabilities}` placeholder remains a comma-separated list
+of enabled boolean capability names.
 
 ## Image Tests
 
@@ -89,6 +106,9 @@ architectures = ["x86_64", "aarch64"]
 machine-bootable = true
 systemd = true
 runtime-package-management = true
+
+[images.vm-base.properties]
+openssl-fips-provider = "upstream"
 ```
 
 ### Container image with capabilities
