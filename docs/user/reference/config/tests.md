@@ -46,23 +46,23 @@ VM).
 | Testcase names | `testcase-names` | string array | Shorthand for a single criteria matching multiple test cases by name (joined as an OR). |
 | Pip pre-install | `pip-pre-install` | string array | Pip packages to install before the framework (for overriding version pins); used only for local execution. |
 | Pip extras | `pip-extras` | string array | Pip extras to install from the LISA framework package; used only for local execution. |
-| Extra args | `extra-args` | string array | Additional arguments passed to LISA. Supports `{image-path}`, `{image-name}`, `{capabilities}` placeholders; used only for local execution. |
+| Extra args | `extra-args` | string array | Additional arguments passed to LISA. Supports `{image-path}`, `{image-name}`, `{capabilities}`, `{properties}` placeholders; used only for local execution. |
 
 At least one of `criteria`, `name`, `testcase-name`, or `testcase-names` is
 required.
 
 ### TMT Fields
 
-The `[tests.<name>.tmt]` subtable identifies a pinned upstream TMT plan. It is
-also used by [`azldev component test`](../cli/azldev_component_test.md) to run
-the mapped plan locally in a QEMU VM. Local execution clones the source at the
+The `[tests.<name>.tmt]` subtable identifies an upstream TMT plan. It is also
+used by [`azldev component test`](../cli/azldev_component_test.md) to run the
+mapped plan locally in a QEMU VM. Local execution clones the source at the
 configured commit, provisions the supplied image with TMT/testcloud, and
 installs the RPMs passed through `--rpm` before the plan runs.
 
 | Field | TOML Key | Type | Description |
 |-------|----------|------|-------------|
-| Source | `source` | table (`git-url`, `ref`) | Git repository containing the plan. Required; `ref` must be a full 40-character hex commit SHA. |
-| Plan | `plan` | string | Absolute TMT plan name to run. Required. |
+| Source | `source` | table (`git-url`, `ref`) | Git repository containing the plan. Optional; when omitted, the test source must instead be supplied directly with `--source-dir`. When present, `ref` must be a full 40-character hex commit SHA. |
+| Plan | `plan` | string | Absolute TMT plan name to run. Optional; when omitted, tmt discovers and runs every enabled plan it finds (see [TMT Tests & fmf Metadata](../../explanation/tmt-tests.md)). `--provision virtual` always requires an explicit plan (via this field or `--plan`), since hardware export is resolved per-plan. |
 
 For example, define a plan as follows:
 
@@ -114,7 +114,8 @@ substituted at run time. They are **not** substituted in `test-paths`.
 |-------------|--------------|
 | `{image-path}` | Absolute path to the image artifact under test |
 | `{image-name}` | Name of the image being tested |
-| `{capabilities}` | Comma-separated list of capability names enabled on the image |
+| `{capabilities}` | Comma-separated names of enabled boolean capabilities |
+| `{properties}` | JSON object containing the image's string properties |
 
 ## Test Group
 

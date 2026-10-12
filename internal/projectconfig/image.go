@@ -71,8 +71,8 @@ type ImageConfig struct {
 	// Where to find its definition.
 	Definition ImageDefinition `toml:"definition,omitempty" json:"definition,omitempty" jsonschema:"title=Definition,description=Identifies where to find the definition for this image"`
 
-	// Capabilities describes the features and properties of this image.
-	Capabilities ImageCapabilities `toml:"capabilities,omitempty" json:"capabilities,omitempty" jsonschema:"title=Capabilities,description=Features and properties of this image"`
+	// Capabilities describes the features supported by this image.
+	Capabilities ImageCapabilities `toml:"capabilities,omitempty" json:"capabilities,omitempty" jsonschema:"title=Capabilities,description=Features supported by this image"`
 
 	// Tests holds the test configuration for this image, including which test suites
 	// apply to it.
@@ -86,6 +86,9 @@ type ImageConfig struct {
 	// architectures azldev recognizes), preserving compatibility with
 	// images.toml files written before this field existed.
 	Architectures []string `toml:"architectures,omitempty" json:"architectures,omitempty" jsonschema:"title=Architectures,description=Architectures supported by this image (optional; unset means unrestricted),enum=x86_64,enum=aarch64"`
+
+	// Properties holds extensible string metadata describing the image.
+	Properties map[string]string `toml:"properties,omitempty" json:"properties,omitempty" jsonschema:"title=Properties,description=Extensible string properties describing this image"`
 }
 
 // SupportsArchitecture reports whether the image supports arch. An image with no
@@ -112,10 +115,9 @@ type ImagePublishConfig struct {
 	Channels []string `toml:"channels,omitempty" json:"channels,omitempty" validate:"dive,required,ne=.,ne=..,excludesall=/\\" jsonschema:"title=Channels,description=List of publish channels for this image"`
 }
 
-// ImageCapabilities describes the features and properties of an image. Boolean fields
-// use *bool to distinguish "explicitly true", "explicitly false", and "unspecified"
-// (nil). This tristate enables correct merge semantics (unspecified inherits, false
-// overrides) and detection of underspecification.
+// ImageCapabilities describes the features supported by an image. Pointer fields
+// distinguish explicit values from unspecified values so configuration merging can
+// preserve inheritance and explicit overrides.
 type ImageCapabilities struct {
 	// MachineBootable indicates whether the image can be booted on a machine (bare metal,
 	// VM, etc.). Images that lack a kernel are not machine-bootable.
@@ -304,6 +306,7 @@ func (i *ImageConfig) WithAbsolutePaths(referenceDir string) *ImageConfig {
 		Tests:            deep.MustCopy(i.Tests),
 		Publish:          deep.MustCopy(i.Publish),
 		Architectures:    deep.MustCopy(i.Architectures),
+		Properties:       deep.MustCopy(i.Properties),
 	}
 
 	// Fix up paths.

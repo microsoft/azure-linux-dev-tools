@@ -35,7 +35,20 @@ type ComponentTestOptions struct {
 	Tests     []string
 	WorkDir   string
 	Provision string
-	FromSpec  bool
+	// SourceDir points tmt straight at a local fmf tree instead of cloning the
+	// catalog 'source' — any directory with an fmf root works, whether produced
+	// by 'azldev component render' (with render.skip-file-filter=true) or
+	// 'azldev component prepare-sources'.
+	SourceDir string
+	// Plan overrides 'tmt.plan' from the catalog. Empty means tmt itself
+	// discovers and runs every enabled plan it finds, instead of a fixed name
+	// (the virtual provisioner is the one exception: it requires an explicit
+	// plan, since hardware export is resolved per-plan).
+	Plan string
+	// FromSpec is deprecated: use SourceDir instead. When set, it resolves to
+	// the component's rendered spec directory, preserving the pre-rename
+	// '--from-spec' behavior for existing invocations.
+	FromSpec bool
 }
 
 type tmtSource struct {
@@ -45,7 +58,9 @@ type tmtSource struct {
 
 type tmtConfig struct {
 	Source tmtSource `toml:"source"`
-	Plan   string    `toml:"plan"`
+	// Plan is optional: empty means tmt discovers and runs every enabled plan
+	// (mirrors Fedora Testing Farm's own default of no pinned plan name).
+	Plan string `toml:"plan"`
 }
 
 type tmtPlanExport struct {
@@ -60,10 +75,9 @@ type tmtRunSettings struct {
 	WorkDir        string
 	TMTProgramPath string
 	Provision      string
-	// FromSpec runs the plan from the component's rendered spec directory
-	// instead of cloning the catalog 'source'. SpecDir is that directory.
-	FromSpec bool
-	SpecDir  string
+	// SourceDir, when set, runs tmt straight from this local fmf tree instead of
+	// cloning the catalog 'source' (see ComponentTestOptions.SourceDir).
+	SourceDir string
 }
 
 const (
@@ -136,15 +150,26 @@ REQUIRED RPMs:
 PROVISIONER MODES:
   - virtual (default): Runs tests in a QEMU/testcloud VM using the Azure Linux
                        image. Most flexible; guest is isolated. Requires --image-path.
+                       Requires an explicit plan (tmt.plan or --plan): hardware
+                       constraints are resolved per-plan.
   - local: Runs tests directly on this machine. Host must be Azure Linux 4.
            Useful for quick testing; modifies host state.
+
+PLAN SELECTION:
+  By default tmt discovers and runs every enabled plan it finds in the test
+  source (mirrors Fedora Testing Farm's own default of no pinned plan name).
+  Set 'tmt.plan' in the catalog entry, or pass --plan, to run one specific
+  plan instead. --plan always takes precedence over a catalog entry's
+  'tmt.plan' when both are given.
 
 AZURE LINUX 4 PREREQUISITES:
   To run with --provision local, install the host dependencies:
     sudo tdnf install -y python3 python3-pip git sudo
 
-  ('git' is only needed for the default clone path; omit it when using
-  '--from-spec', which runs from the rendered spec directory.)
+  ('git' is only needed for azldev's own clone path; omit it when using
+  '--source-dir' to skip that clone. The selected plan's own 'discover' step may
+  still invoke git itself, e.g. via an fmf 'discover.url' pointing at another
+  repo, independent of this prerequisite.)
 
   azldev creates a per-work-directory Python environment and installs the
   pinned TMT version there. The local provisioner uses sudo to install the
@@ -152,8 +177,9 @@ AZURE LINUX 4 PREREQUISITES:
 
 azldev creates or reuses an isolated Python environment under --work-dir and
 installs TMT with virtual-provisioner support there. python3 must be available
-on the host; git is also required unless '--from-spec' is used (which runs the
-plan from the rendered spec directory instead of cloning).`,
+on the host; git is required for azldev's own catalog clone unless
+'--source-dir' is used, though the selected plan's 'discover' step may still
+invoke git itself regardless of '--source-dir'.`,
 		Example: `  # Build the component first
   azldev component build buildah
 
@@ -193,11 +219,21 @@ func registerComponentTestFlags(cmd *cobra.Command, options *ComponentTestOption
 	_ = cmd.MarkFlagDirname("work-dir")
 	cmd.Flags().StringVar(&options.Provision, "provision", tmtProvisionVirtual,
 		"TMT provisioner mode: 'virtual' (default) runs tests in QEMU; 'local' runs on this machine (must be Azure Linux 4)")
+	cmd.Flags().StringVar(&options.SourceDir, "source-dir", "",
+		"Run tmt straight from this local fmf tree instead of cloning the catalog 'source'. Accepts the "+
+			"output of either 'azldev component render' (with 'render.skip-file-filter = true') or "+
+			"'azldev component prepare-sources'. Local inner-loop convenience; not used by cloud (TEE) runs.")
+	_ = cmd.MarkFlagDirname("source-dir")
+	cmd.Flags().StringVar(&options.Plan, "plan", "",
+		"Absolute fmf plan name to run, overriding the catalog entry's 'tmt.plan'. Defaults to running "+
+			"every enabled plan tmt discovers in the test source. Required with '--provision virtual', since "+
+			"hardware export is resolved per-plan.")
 	cmd.Flags().BoolVar(&options.FromSpec, "from-spec", false,
-		"Run the plan from the component's rendered spec directory (under the configured "+
-			"'project.rendered-specs-dir', e.g. 'SPECS/c/curl') instead of cloning the catalog "+
-			"'source'. Requires 'render.skip-file-filter = true' and a prior "+
-			"'azldev component render'. Local inner-loop convenience; not used by cloud (TEE) runs.")
+		"Deprecated: use '--source-dir' instead, pointed at the component's rendered spec directory "+
+			"(e.g. 'SPECS/c/curl' under 'project.rendered-specs-dir'). Kept only for compatibility with "+
+			"existing invocations; cannot be combined with '--source-dir'.")
+	_ = cmd.Flags().MarkDeprecated("from-spec", "use '--source-dir' instead, pointed at the component's "+
+		"rendered spec directory")
 	_ = cmd.MarkFlagRequired("rpm")
 }
 
@@ -216,20 +252,48 @@ func runComponentTMTTests(env *azldev.Env, componentName string, options *Compon
 		return err
 	}
 
-	resolved, specDir, err := resolveComponentTMTTests(env, componentName, options.Tests)
+	sourceDir, err := effectiveSourceDir(env, componentName, options)
 	if err != nil {
 		return err
 	}
 
-	// Validate the rendered spec dir up front so '--from-spec' fails fast, before
-	// prepareTMTEnvironment creates a venv and pip-installs TMT under --work-dir.
-	if options.FromSpec {
-		if _, err := resolveSpecRunDir(env, specDir); err != nil {
+	if sourceDir != "" {
+		preflightWorkDir, err := componentTMTWorkDir(env, options.WorkDir)
+		if err != nil {
+			return fmt.Errorf("resolve work directory:\n%w", err)
+		}
+
+		if dirsOverlap(sourceDir, preflightWorkDir) {
+			return fmt.Errorf(
+				"'--source-dir' (%#q) and the work directory (%#q) must not overlap: azldev creates "+
+					"per-test directories and TMT writes run artifacts under the work directory, which "+
+					"would otherwise modify the supplied source tree", sourceDir, preflightWorkDir)
+		}
+	}
+
+	resolved, err := resolveComponentTMTTests(env, componentName, options.Tests, sourceDir, options.Plan)
+	if err != nil {
+		return err
+	}
+
+	// Preflight every selected test's decoded config against sourceDir and the
+	// provisioner before any environment setup begins (venv creation, pip
+	// install, cloning), so these deterministic input errors surface
+	// immediately instead of after network work and on-disk artifacts.
+	if err := preflightTMTTests(resolved, sourceDir, options.Provision); err != nil {
+		return err
+	}
+
+	// Validate the source dir up front so '--source-dir'/'--from-spec' fail fast,
+	// before prepareTMTEnvironment creates a venv and pip-installs TMT under
+	// --work-dir.
+	if sourceDir != "" {
+		if _, err := resolveSourceRunDir(env, sourceDir); err != nil {
 			return err
 		}
 	}
 
-	workDir, tmtProgramPath, err := prepareTMTEnvironment(env, options.WorkDir, options.Provision, options.FromSpec)
+	workDir, tmtProgramPath, err := prepareTMTEnvironment(env, options.WorkDir, options.Provision, sourceDir != "")
 	if err != nil {
 		return err
 	}
@@ -240,8 +304,7 @@ func runComponentTMTTests(env *azldev.Env, componentName string, options *Compon
 		WorkDir:        workDir,
 		TMTProgramPath: tmtProgramPath,
 		Provision:      options.Provision,
-		FromSpec:       options.FromSpec,
-		SpecDir:        specDir,
+		SourceDir:      sourceDir,
 	}
 
 	for _, test := range resolved {
@@ -302,37 +365,135 @@ func resolveTMTImagePath(env *azldev.Env, provision string, configuredImagePath 
 	return imagePath, nil
 }
 
-func resolveComponentTMTTests(
-	env *azldev.Env, componentName string, selectors []string,
-) ([]projectconfig.ResolvedTest, string, error) {
+// effectiveSourceDir resolves the local fmf tree to run tmt from, honoring the
+// deprecated '--from-spec' alongside '--source-dir'. '--from-spec' resolves to
+// the component's rendered spec directory, matching its pre-rename behavior.
+func effectiveSourceDir(env *azldev.Env, componentName string, options *ComponentTestOptions) (string, error) {
+	if !options.FromSpec {
+		if options.SourceDir == "" {
+			return "", nil
+		}
+
+		// Resolve relative to the project directory, like --image-path, --rpm,
+		// and --work-dir: 'azldev -C' selects the project without changing the
+		// process working directory, so a relative path must not be read as
+		// relative to the caller's own directory.
+		sourceDir, err := absoluteProjectPath(env.ProjectDir(), options.SourceDir)
+		if err != nil {
+			return "", fmt.Errorf("resolve source dir:\n%w", err)
+		}
+
+		return sourceDir, nil
+	}
+
+	if options.SourceDir != "" {
+		return "", errors.New("'--from-spec' is deprecated and cannot be combined with '--source-dir'; " +
+			"pass only '--source-dir'")
+	}
+
+	renderedSpecDir, err := resolveComponentRenderedSpecDir(env, componentName)
+	if err != nil {
+		return "", err
+	}
+
+	if renderedSpecDir == "" {
+		return "", errors.New(
+			"'--from-spec' requires a rendered spec directory; ensure 'project.rendered-specs-dir' is set")
+	}
+
+	return renderedSpecDir, nil
+}
+
+// resolveComponentRenderedSpecDir looks up the component's rendered spec
+// directory (e.g. 'SPECS/c/curl'), as populated by the component resolver.
+func resolveComponentRenderedSpecDir(env *azldev.Env, componentName string) (string, error) {
 	resolver := components.NewResolver(env)
 
 	set, err := resolver.FindComponents(&components.ComponentFilter{ComponentNamePatterns: []string{componentName}})
 	if err != nil {
-		return nil, "", fmt.Errorf("resolve component %#q:\n%w", componentName, err)
+		return "", fmt.Errorf("resolve component %#q:\n%w", componentName, err)
 	}
 
 	if set.Len() != 1 {
-		return nil, "", fmt.Errorf("expected exactly one component named %#q, found %d", componentName, set.Len())
+		return "", fmt.Errorf("expected exactly one component named %#q, found %d", componentName, set.Len())
+	}
+
+	return set.Components()[0].GetConfig().RenderedSpecDir, nil
+}
+
+func resolveComponentTMTTests(
+	env *azldev.Env, componentName string, selectors []string, sourceDir string, planOverride string,
+) ([]projectconfig.ResolvedTest, error) {
+	resolver := components.NewResolver(env)
+
+	set, err := resolver.FindComponents(&components.ComponentFilter{ComponentNamePatterns: []string{componentName}})
+	if err != nil {
+		return nil, fmt.Errorf("resolve component %#q:\n%w", componentName, err)
+	}
+
+	if set.Len() != 1 {
+		return nil, fmt.Errorf("expected exactly one component named %#q, found %d", componentName, set.Len())
 	}
 
 	componentConfig := set.Components()[0].GetConfig()
 
-	resolved, err := env.Config().ResolveComponentTests(componentConfig)
+	allTests, err := env.Config().ResolveComponentTests(componentConfig)
 	if err != nil {
-		return nil, "", fmt.Errorf("resolve tests for component %#q:\n%w", componentName, err)
+		return nil, fmt.Errorf("resolve tests for component %#q:\n%w", componentName, err)
 	}
 
-	resolved = selectTMTTests(resolved, selectors)
-	if len(resolved) == 0 {
-		return nil, "", fmt.Errorf("component %#q has no selected TMT tests", componentName)
+	// A selector (--test) that matches nothing is always an error, whether or
+	// not the component has any catalog tmt tests at all: silently falling
+	// through to ad-hoc synthesis would mask a typo'd --test name.
+	resolved := selectTMTTests(allTests, selectors)
+
+	switch {
+	case len(resolved) > 0:
+		// Use the selected catalog test(s) as-is.
+	case len(selectors) > 0:
+		return nil, fmt.Errorf("component %#q has no selected TMT tests", componentName)
+	case sourceDir == "":
+		return nil, fmt.Errorf(
+			"component %#q has no TMT tests in the catalog; pass '--source-dir' to run an ad-hoc test", componentName)
+	default:
+		// No catalog [tests.X] entry at all is fine when the caller supplies the
+		// test source directly: synthesize one ad-hoc test named after the
+		// component itself, with no 'source' (unused once a source dir is given).
+		resolved = []projectconfig.ResolvedTest{{
+			Name:       componentName,
+			Definition: projectconfig.TestDefinition{Type: "tmt", Tmt: map[string]any{"plan": planOverride}},
+		}}
 	}
 
-	return resolved, componentConfig.RenderedSpecDir, nil
+	if planOverride != "" {
+		resolved = overrideTMTPlan(resolved, planOverride)
+	}
+
+	return resolved, nil
+}
+
+// overrideTMTPlan returns a copy of tests with 'tmt.plan' set to plan,
+// regardless of whatever the catalog declared. Copies each test's Tmt map
+// before mutating it, since it may be shared with the loaded project config.
+func overrideTMTPlan(tests []projectconfig.ResolvedTest, plan string) []projectconfig.ResolvedTest {
+	result := make([]projectconfig.ResolvedTest, len(tests))
+
+	for index, test := range tests {
+		tmt := make(map[string]any, len(test.Definition.Tmt)+1)
+		for key, value := range test.Definition.Tmt {
+			tmt[key] = value
+		}
+
+		tmt["plan"] = plan
+		test.Definition.Tmt = tmt
+		result[index] = test
+	}
+
+	return result
 }
 
 func prepareTMTEnvironment(
-	env *azldev.Env, configuredWorkDir string, provision string, fromSpec bool,
+	env *azldev.Env, configuredWorkDir string, provision string, fromSourceDir bool,
 ) (string, string, error) {
 	workDir, err := componentTMTWorkDir(env, configuredWorkDir)
 	if err != nil {
@@ -348,7 +509,7 @@ func prepareTMTEnvironment(
 		return "", "", fmt.Errorf("create work directory:\n%w", err)
 	}
 
-	tmtProgramPath, err = ensureTMTVenv(env, workDir, provision, fromSpec)
+	tmtProgramPath, err = ensureTMTVenv(env, workDir, provision, fromSourceDir)
 	if err != nil {
 		return "", "", err
 	}
@@ -357,20 +518,20 @@ func prepareTMTEnvironment(
 }
 
 // ensureTMTVenv creates or reuses an isolated TMT installation. This follows
-// the local LISA runner pattern: Python (and git, unless --from-spec avoids
+// the local LISA runner pattern: Python (and git, unless --source-dir avoids
 // cloning) are explicit host prerequisites, while the test framework itself is
 // installed in a venv under the selected work directory rather than assumed to
 // be packaged by the host distribution. For virtual provisioning, the testcloud
 // plugin supplies provisioner support. For local provisioning, only base TMT is
 // required.
-func ensureTMTVenv(env *azldev.Env, workDir string, provision string, fromSpec bool) (string, error) {
+func ensureTMTVenv(env *azldev.Env, workDir string, provision string, fromSourceDir bool) (string, error) {
 	if err := prereqs.RequireExecutable(env, tmtPythonProgram, nil); err != nil {
 		return "", fmt.Errorf("python3 is required to run TMT tests:\n%w", err)
 	}
 
-	// --from-spec runs the plan from the rendered spec directory and never clones,
-	// so git is only a prerequisite for the default (clone) path.
-	if !fromSpec {
+	// --source-dir runs the plan from a local fmf tree and never clones, so git
+	// is only a prerequisite for the default (clone) path.
+	if !fromSourceDir {
 		if err := prereqs.RequireExecutable(env, "git", nil); err != nil {
 			return "", fmt.Errorf("git is required to clone TMT test metadata:\n%w", err)
 		}
@@ -437,6 +598,29 @@ func absoluteProjectPath(projectDir string, path string) (string, error) {
 	return absolutePath, nil
 }
 
+// dirsOverlap reports whether a and b are the same directory, or one contains
+// the other. Both must already be absolute.
+func dirsOverlap(a string, b string) bool {
+	return isAncestorOrSame(a, b) || isAncestorOrSame(b, a)
+}
+
+// isAncestorOrSame reports whether path is ancestor itself, or nested under it.
+func isAncestorOrSame(ancestor string, path string) bool {
+	ancestor = filepath.Clean(ancestor)
+	path = filepath.Clean(path)
+
+	if ancestor == path {
+		return true
+	}
+
+	rel, err := filepath.Rel(ancestor, path)
+	if err != nil {
+		return false
+	}
+
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 func absoluteRegularFiles(env *azldev.Env, paths []string, kind string) ([]string, error) {
 	result := make([]string, 0, len(paths))
 	for _, path := range paths {
@@ -472,6 +656,38 @@ func removePreviousTMTRepository(env *azldev.Env, repoDir string) error {
 	return nil
 }
 
+// preflightTMTTests validates every selected test's decoded tmt config against
+// sourceDir and the provisioner before runComponentTMTTests prepares the TMT
+// environment (venv creation, pip install) or runOneTMTTest clones metadata.
+// Mirrors the equivalent checks in runOneTMTTest, run here up front so these
+// deterministic input errors (missing source, missing plan for the virtual
+// provisioner) surface immediately rather than after network work and
+// on-disk artifacts.
+func preflightTMTTests(resolved []projectconfig.ResolvedTest, sourceDir string, provision string) error {
+	for _, test := range resolved {
+		config, err := decodeTMTConfig(test.Definition.Tmt)
+		if err != nil {
+			return err
+		}
+
+		if err := validateTMTTestName(test.Name); err != nil {
+			return err
+		}
+
+		if sourceDir == "" && (config.Source.GitURL == "" || config.Source.Ref == "") {
+			return fmt.Errorf("test %#q: 'tmt.source' (git-url, ref) is required unless '--source-dir' is set", test.Name)
+		}
+
+		if provision == tmtProvisionVirtual && config.Plan == "" {
+			return fmt.Errorf(
+				"test %#q: 'tmt.plan' (or '--plan') is required with '--provision virtual'; "+
+					"hardware constraints are resolved per-plan", test.Name)
+		}
+	}
+
+	return nil
+}
+
 func selectTMTTests(tests []projectconfig.ResolvedTest, selectors []string) []projectconfig.ResolvedTest {
 	result := make([]projectconfig.ResolvedTest, 0, len(tests))
 	for _, test := range tests {
@@ -497,6 +713,10 @@ func runOneTMTTest(env *azldev.Env, test projectconfig.ResolvedTest, settings tm
 		return err
 	}
 
+	if settings.SourceDir == "" && (config.Source.GitURL == "" || config.Source.Ref == "") {
+		return fmt.Errorf("test %#q: 'tmt.source' (git-url, ref) is required unless '--source-dir' is set", test.Name)
+	}
+
 	testDir := filepath.Join(settings.WorkDir, test.Name)
 	repoDir := filepath.Join(testDir, "repo")
 	tmtWorkDir := filepath.Join(testDir, "tmt")
@@ -507,10 +727,10 @@ func runOneTMTTest(env *azldev.Env, test projectconfig.ResolvedTest, settings tm
 	}
 
 	// runDir is the fmf tree tmt runs against: either the freshly cloned catalog
-	// source (default) or the component's rendered spec directory (--from-spec).
+	// source (default) or a local fmf tree (--source-dir).
 	runDir := repoDir
-	if settings.FromSpec {
-		runDir, err = resolveSpecRunDir(env, settings.SpecDir)
+	if settings.SourceDir != "" {
+		runDir, err = resolveSourceRunDir(env, settings.SourceDir)
 		if err != nil {
 			return err
 		}
@@ -525,7 +745,14 @@ func runOneTMTTest(env *azldev.Env, test projectconfig.ResolvedTest, settings tm
 	}
 
 	var hardwareArgs []string
+
 	if settings.Provision == tmtProvisionVirtual {
+		if config.Plan == "" {
+			return fmt.Errorf(
+				"test %#q: 'tmt.plan' (or '--plan') is required with '--provision virtual'; "+
+					"hardware constraints are resolved per-plan", test.Name)
+		}
+
 		hardwareArgs, err = resolvedPlanHardwareArgs(
 			env, runDir, settings.TMTProgramPath, config.Plan,
 		)
@@ -537,26 +764,31 @@ func runOneTMTTest(env *azldev.Env, test projectconfig.ResolvedTest, settings tm
 	args := componentTMTArgs(config, tmtWorkDir, settings.Provision, settings.ImagePath, hardwareArgs, settings.RPMs)
 
 	if err := runTMTCommand(env, runDir, pluginDir, settings.TMTProgramPath, settings.Provision, args...); err != nil {
-		return fmt.Errorf("run TMT plan %#q (artifacts: %#q):\n%w", config.Plan, tmtWorkDir, err)
+		return fmt.Errorf("run TMT plan %#q (artifacts: %#q):\n%w", tmtPlanDescription(config.Plan), tmtWorkDir, err)
 	}
 
 	return nil
 }
 
-// resolveSpecRunDir validates that the component's rendered spec directory
-// exists and carries an fmf root, returning it as the tmt run directory. It
-// backs the --from-spec flow, which runs a plan straight from the component's
-// rendered spec directory (derived from the project 'rendered-specs-dir'
-// setting, e.g. 'SPECS/c/curl') instead of cloning the catalog 'source'. tmt
-// writes its run artifacts under a separate --workdir-root, so the rendered
-// tree is only read.
-func resolveSpecRunDir(env *azldev.Env, specDir string) (string, error) {
-	if specDir == "" {
-		return "", errors.New(
-			"'--from-spec' requires a rendered spec directory; ensure 'project.rendered-specs-dir' is set")
+// tmtPlanDescription returns a human-readable plan selection for error
+// messages, since config.Plan may be empty (every enabled plan runs).
+func tmtPlanDescription(plan string) string {
+	if plan == "" {
+		return "<all enabled plans>"
 	}
 
-	fmfVersion := filepath.Join(specDir, ".fmf", "version")
+	return plan
+}
+
+// resolveSourceRunDir validates that the given directory carries an fmf root,
+// returning it as the tmt run directory. It backs the --source-dir flow,
+// which runs a plan straight from a local fmf tree — the output of either
+// 'azldev component render' (with 'render.skip-file-filter = true') or
+// 'azldev component prepare-sources' — instead of cloning the catalog
+// 'source'. tmt writes its run artifacts under a separate --workdir-root, so
+// the given tree is only read.
+func resolveSourceRunDir(env *azldev.Env, sourceDir string) (string, error) {
+	fmfVersion := filepath.Join(sourceDir, ".fmf", "version")
 
 	// Require a regular file: fmf's version marker is a file, and a directory (or
 	// other node) at this path is not valid fmf metadata.
@@ -564,10 +796,9 @@ func resolveSpecRunDir(env *azldev.Env, specDir string) (string, error) {
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return "", fmt.Errorf(
-				"no fmf metadata in rendered spec dir %#q (missing %#q); set "+
-					"'render.skip-file-filter = true' on the component and run "+
-					"'azldev component render' before using '--from-spec'",
-				specDir, filepath.Join(".fmf", "version"))
+				"no fmf metadata in %#q (missing %#q); produce it with 'azldev component render' "+
+					"(with 'render.skip-file-filter = true') or 'azldev component prepare-sources' first",
+				sourceDir, filepath.Join(".fmf", "version"))
 		}
 
 		return "", fmt.Errorf("check fmf root %#q:\n%w", fmfVersion, err)
@@ -575,11 +806,11 @@ func resolveSpecRunDir(env *azldev.Env, specDir string) (string, error) {
 
 	if !info.Mode().IsRegular() {
 		return "", fmt.Errorf(
-			"invalid fmf metadata in rendered spec dir %#q: %#q must be a regular file",
-			specDir, filepath.Join(".fmf", "version"))
+			"invalid fmf metadata in %#q: %#q must be a regular file",
+			sourceDir, filepath.Join(".fmf", "version"))
 	}
 
-	return specDir, nil
+	return sourceDir, nil
 }
 
 // prepareTMTTestDir creates the per-test directory and, for virtual runs, the
@@ -596,9 +827,15 @@ func prepareTMTTestDir(env *azldev.Env, testDir string, repoDir string, settings
 
 	// A caller may intentionally reuse --work-dir after a failed or completed
 	// run. Metadata is always cloned at the pinned ref, so remove only the
-	// previous checkout while retaining TMT artifacts for diagnosis.
-	if err := removePreviousTMTRepository(env, repoDir); err != nil {
-		return "", fmt.Errorf("remove previous test metadata checkout:\n%w", err)
+	// previous checkout while retaining TMT artifacts for diagnosis. repoDir is
+	// only ever populated by our own clone step, so this is skipped entirely for
+	// '--source-dir': that flow never clones into repoDir, and the caller's
+	// supplied tree must never be touched, even if it happens to coincide with
+	// (or contain) the managed repoDir path.
+	if settings.SourceDir == "" {
+		if err := removePreviousTMTRepository(env, repoDir); err != nil {
+			return "", fmt.Errorf("remove previous test metadata checkout:\n%w", err)
+		}
 	}
 
 	if settings.Provision != tmtProvisionVirtual {
@@ -639,11 +876,18 @@ func componentTMTArgs(
 	// Both provisioners need --become: candidate RPM installation and most plans'
 	// execute steps require root, and neither the testcloud guest user nor the
 	// invoking local user is root. TMT escalates with passwordless sudo.
-	args = append(args,
-		"run", "--all", "--keep", "--workdir-root", tmtWorkDir,
-		"plan", "--name", config.Plan,
-		"provision", "--how", provision, "--become",
-	)
+	args = append(args, "run", "--all", "--keep", "--workdir-root", tmtWorkDir)
+
+	// Omitting '--name' entirely (plan empty) makes tmt discover and run every
+	// enabled plan it finds — the same default Fedora's own Testing Farm uses,
+	// instead of a fixed guessed name.
+	if config.Plan != "" {
+		args = append(args, "plan", "--name", config.Plan)
+	} else {
+		args = append(args, "plan")
+	}
+
+	args = append(args, "provision", "--how", provision, "--become")
 
 	// Only the virtual provisioner boots an image, so the disk and hardware
 	// constraints are meaningless for a local run.
@@ -817,25 +1061,44 @@ func flattenHardwareConstraints(prefix string, value any) ([]string, error) {
 }
 
 func decodeTMTConfig(raw map[string]any) (tmtConfig, error) {
-	source, ok := raw["source"].(map[string]any)
-	if !ok {
-		return tmtConfig{}, errors.New("missing 'tmt.source'")
+	var sourceConfig projectconfig.GitSourceConfig
+
+	// Optional means absent, not invalid: a present-but-malformed 'source' (e.g.
+	// a string instead of a table) is rejected rather than silently treated the
+	// same as an omitted one.
+	if rawSourceValue, hasSource := raw["source"]; hasSource {
+		rawSource, ok := rawSourceValue.(map[string]any)
+		if !ok {
+			return tmtConfig{}, fmt.Errorf("'tmt.source' must be a table with 'git-url' and 'ref', got %T", rawSourceValue)
+		}
+
+		gitURL, _ := rawSource["git-url"].(string)
+		ref, _ := rawSource["ref"].(string)
+		sourceConfig = projectconfig.GitSourceConfig{GitURL: gitURL, Ref: ref}
+
+		if err := sourceConfig.Validate("'tmt.source'"); err != nil {
+			return tmtConfig{}, fmt.Errorf("validate 'tmt.source':\n%w", err)
+		}
 	}
 
-	gitURL, _ := source["git-url"].(string)
-	ref, _ := source["ref"].(string)
+	// Plan is optional: empty means tmt discovers and runs every enabled plan
+	// (see tmtConfig.Plan). As with 'source' above, a present-but-malformed
+	// value (not a string) is rejected rather than silently treated as absent.
+	var plan string
 
-	sourceConfig := projectconfig.GitSourceConfig{GitURL: gitURL, Ref: ref}
-	if err := sourceConfig.Validate("'tmt.source'"); err != nil {
-		return tmtConfig{}, fmt.Errorf("validate 'tmt.source':\n%w", err)
+	if rawPlanValue, hasPlan := raw["plan"]; hasPlan {
+		planStr, ok := rawPlanValue.(string)
+		if !ok {
+			return tmtConfig{}, fmt.Errorf("'tmt.plan' must be a string, got %T", rawPlanValue)
+		}
+
+		plan = planStr
+		if plan != "" && !strings.HasPrefix(plan, "/") {
+			return tmtConfig{}, errors.New("'tmt.plan' must be an absolute plan name")
+		}
 	}
 
-	plan, _ := raw["plan"].(string)
-	if !strings.HasPrefix(plan, "/") {
-		return tmtConfig{}, errors.New("'tmt.plan' must be an absolute plan name")
-	}
-
-	return tmtConfig{Source: tmtSource{GitURL: gitURL, Ref: ref}, Plan: plan}, nil
+	return tmtConfig{Source: tmtSource{GitURL: sourceConfig.GitURL, Ref: sourceConfig.Ref}, Plan: plan}, nil
 }
 
 func validateTMTProvision(provision string) error {

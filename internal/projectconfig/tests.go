@@ -407,22 +407,23 @@ func validatePytestConfig(pytest map[string]any, testName string) error {
 	return nil
 }
 
-// validateTmtConfig checks that a [tests.X.tmt] subtable sets both 'plan' and
-// 'source' (git-url, ref), which are mandatory for tmt tests.
+// validateTmtConfig checks a [tests.X.tmt] subtable's optional 'plan' and
+// 'source' (git-url, ref) fields. Both may be omitted entirely: a missing
+// 'plan' lets tmt discover and run every enabled plan it finds, and a missing
+// 'source' is only valid when the caller supplies the test source directly
+// (e.g. 'azldev component test --source-dir'). When present, each field must
+// still have the expected shape.
 func validateTmtConfig(tmt map[string]any, testName string) error {
-	if !isNonEmptyString(tmt["plan"]) {
+	if rawPlan, hasPlan := tmt["plan"]; hasPlan && !isNonEmptyString(rawPlan) {
 		return fmt.Errorf(
-			"%w: test %#q tmt.plan is required and must be a non-empty string",
+			"%w: test %#q tmt.plan must be a non-empty string when present",
 			ErrInvalidTmtConfig, testName,
 		)
 	}
 
 	rawSource, hasSource := tmt["source"]
 	if !hasSource {
-		return fmt.Errorf(
-			"%w: test %#q tmt.source (git-url, ref) is required",
-			ErrInvalidTmtConfig, testName,
-		)
+		return nil
 	}
 
 	sourceMap, ok := rawSource.(map[string]any)

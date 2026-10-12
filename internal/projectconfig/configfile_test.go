@@ -51,6 +51,73 @@ func TestProjectConfigFileValidation_TestDefinitionMatchingSubtable(t *testing.T
 	assert.NoError(t, file.Validate())
 }
 
+func TestProjectConfigFileValidation_TmtTestDefinitionPlanAndSourceOptional(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Tests: map[string]projectconfig.TestDefinition{
+			"hostname": {
+				Type: "tmt",
+				// Neither 'plan' nor 'source' set: valid when the caller supplies
+				// the test source directly (e.g. 'azldev component test --source-dir').
+				Tmt: map[string]any{},
+			},
+		},
+	}
+
+	assert.NoError(t, file.Validate())
+}
+
+func TestProjectConfigFileValidation_TmtTestDefinitionValidPlanAndSource(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Tests: map[string]projectconfig.TestDefinition{
+			"bash-fedora-shell": {
+				Type: "tmt",
+				Tmt: map[string]any{
+					"plan": "/plans/shell",
+					"source": map[string]any{
+						"git-url": "https://example.com/tmt-tests.git",
+						"ref":     "0123456789abcdef0123456789abcdef01234567",
+					},
+				},
+			},
+		},
+	}
+
+	assert.NoError(t, file.Validate())
+}
+
+func TestProjectConfigFileValidation_TmtTestDefinitionEmptyPlanRejected(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Tests: map[string]projectconfig.TestDefinition{
+			"hostname": {
+				Type: "tmt",
+				Tmt:  map[string]any{"plan": ""},
+			},
+		},
+	}
+
+	err := file.Validate()
+	require.Error(t, err)
+	require.ErrorIs(t, err, projectconfig.ErrInvalidTmtConfig)
+	assert.Contains(t, err.Error(), "tmt.plan")
+}
+
+func TestProjectConfigFileValidation_TmtTestDefinitionNonTableSourceRejected(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Tests: map[string]projectconfig.TestDefinition{
+			"hostname": {
+				Type: "tmt",
+				Tmt:  map[string]any{"source": "https://example.com/tmt-tests.git"},
+			},
+		},
+	}
+
+	err := file.Validate()
+	require.Error(t, err)
+	require.ErrorIs(t, err, projectconfig.ErrInvalidTmtConfig)
+	assert.Contains(t, err.Error(), "tmt.source")
+	assert.Contains(t, err.Error(), "table")
+}
+
 func TestProjectConfigFileValidation_TestDefinitionRequiredSubtablePresentButEmpty(t *testing.T) {
 	file := projectconfig.ConfigFile{
 		Tests: map[string]projectconfig.TestDefinition{
@@ -670,12 +737,14 @@ func TestProjectConfigValidation_NonContradictingImageCapabilities(t *testing.T)
 			Capabilities: projectconfig.ImageCapabilities{
 				MachineBootable: &trueVal,
 			},
+			Properties: map[string]string{"openssl-fips-provider": "upstream"},
 		},
 		"container-base": {
 			Architectures: []string{"x86_64"},
 			Capabilities: projectconfig.ImageCapabilities{
 				Container: &trueVal,
 			},
+			Properties: map[string]string{"openssl-fips-provider": "symcrypt"},
 		},
 		"wsl": {
 			Architectures: []string{"x86_64"},

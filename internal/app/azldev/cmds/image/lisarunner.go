@@ -175,7 +175,10 @@ func runLisaLocally(
 	}()
 
 	// Build LISA arguments with placeholder expansion.
-	lisaArgs := buildLisaArgs(runbookPath, extraArgs, imageConfig, options)
+	lisaArgs, err := buildLisaArgs(runbookPath, extraArgs, imageConfig, options)
+	if err != nil {
+		return err
+	}
 
 	return runLisaCommand(env, venvDir, frameworkDir, lisaArgs)
 }
@@ -516,16 +519,22 @@ func buildLisaArgs(
 	extraArgs []string,
 	imageConfig *projectconfig.ImageConfig,
 	options *ImageTestOptions,
-) []string {
+) ([]string, error) {
 	absImagePath, err := filepath.Abs(options.ImagePath)
 	if err != nil {
 		absImagePath = options.ImagePath
+	}
+
+	properties, err := serializeImageProperties(imageConfig.Properties)
+	if err != nil {
+		return nil, err
 	}
 
 	replacer := strings.NewReplacer(
 		imagePlaceholder, absImagePath,
 		imageNamePlaceholder, options.ImageName,
 		capabilitiesPlaceholder, strings.Join(imageConfig.Capabilities.EnabledNames(), ","),
+		propertiesPlaceholder, properties,
 	)
 
 	baseArgs := []string{"-r", runbookPath}
@@ -536,5 +545,5 @@ func buildLisaArgs(
 		args = append(args, replacer.Replace(arg))
 	}
 
-	return args
+	return args, nil
 }

@@ -29,15 +29,26 @@ REQUIRED RPMs:
 PROVISIONER MODES:
   - virtual (default): Runs tests in a QEMU/testcloud VM using the Azure Linux
                        image. Most flexible; guest is isolated. Requires --image-path.
+                       Requires an explicit plan (tmt.plan or --plan): hardware
+                       constraints are resolved per-plan.
   - local: Runs tests directly on this machine. Host must be Azure Linux 4.
            Useful for quick testing; modifies host state.
+
+PLAN SELECTION:
+  By default tmt discovers and runs every enabled plan it finds in the test
+  source (mirrors Fedora Testing Farm's own default of no pinned plan name).
+  Set 'tmt.plan' in the catalog entry, or pass --plan, to run one specific
+  plan instead. --plan always takes precedence over a catalog entry's
+  'tmt.plan' when both are given.
 
 AZURE LINUX 4 PREREQUISITES:
   To run with --provision local, install the host dependencies:
     sudo tdnf install -y python3 python3-pip git sudo
 
-  ('git' is only needed for the default clone path; omit it when using
-  '--from-spec', which runs from the rendered spec directory.)
+  ('git' is only needed for azldev's own clone path; omit it when using
+  '--source-dir' to skip that clone. The selected plan's own 'discover' step may
+  still invoke git itself, e.g. via an fmf 'discover.url' pointing at another
+  repo, independent of this prerequisite.)
 
   azldev creates a per-work-directory Python environment and installs the
   pinned TMT version there. The local provisioner uses sudo to install the
@@ -45,8 +56,9 @@ AZURE LINUX 4 PREREQUISITES:
 
 azldev creates or reuses an isolated Python environment under --work-dir and
 installs TMT with virtual-provisioner support there. python3 must be available
-on the host; git is also required unless '--from-spec' is used (which runs the
-plan from the rendered spec directory instead of cloning).
+on the host; git is required for azldev's own catalog clone unless
+'--source-dir' is used, though the selected plan's 'discover' step may still
+invoke git itself regardless of '--source-dir'.
 
 ```
 azldev component test COMPONENT [flags]
@@ -71,11 +83,12 @@ azldev component test COMPONENT [flags]
 ### Options
 
 ```
-      --from-spec           Run the plan from the component's rendered spec directory (under the configured 'project.rendered-specs-dir', e.g. 'SPECS/c/curl') instead of cloning the catalog 'source'. Requires 'render.skip-file-filter = true' and a prior 'azldev component render'. Local inner-loop convenience; not used by cloud (TEE) runs.
   -h, --help                help for test
   -i, --image-path string   Path to the qcow2 image under test
+      --plan string         Absolute fmf plan name to run, overriding the catalog entry's 'tmt.plan'. Defaults to running every enabled plan tmt discovers in the test source. Required with '--provision virtual', since hardware export is resolved per-plan.
       --provision string    TMT provisioner mode: 'virtual' (default) runs tests in QEMU; 'local' runs on this machine (must be Azure Linux 4) (default "virtual")
   -r, --rpm strings         Local RPM to install before testing (required; may be repeated). Typically include the main package and -tests package.
+      --source-dir string   Run tmt straight from this local fmf tree instead of cloning the catalog 'source'. Accepts the output of either 'azldev component render' (with 'render.skip-file-filter = true') or 'azldev component prepare-sources'. Local inner-loop convenience; not used by cloud (TEE) runs.
   -t, --test strings        Mapped TMT test name to run (may be repeated; defaults to all)
       --work-dir string     Directory for cloned metadata and TMT artifacts (default: current directory)
 ```

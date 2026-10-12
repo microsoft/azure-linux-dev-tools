@@ -743,7 +743,7 @@
         "capabilities": {
           "$ref": "#/$defs/ImageCapabilities",
           "title": "Capabilities",
-          "description": "Features and properties of this image"
+          "description": "Features supported by this image"
         },
         "tests": {
           "$ref": "#/$defs/ImageTestsConfig",
@@ -766,6 +766,14 @@
           "type": "array",
           "title": "Architectures",
           "description": "Architectures supported by this image (optional; unset means unrestricted)"
+        },
+        "properties": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "title": "Properties",
+          "description": "Extensible string properties describing this image"
         }
       },
       "additionalProperties": false,

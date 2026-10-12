@@ -13,6 +13,7 @@
 
 - [Configuration System](./explanation/config-system.md) — how config files are loaded, merged, and how inheritance works
 - [RPM Repos & Repo Sets](./explanation/repos.md) — modeling RPM repositories and reusable layout templates
+- [TMT Tests & fmf Metadata](./explanation/tmt-tests.md) — how azldev pins and runs TMT plans, and running them locally
 
 ## Reference
 

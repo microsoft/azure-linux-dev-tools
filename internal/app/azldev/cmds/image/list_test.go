@@ -111,6 +111,7 @@ func TestListImages_WithCapabilitiesAndTests(t *testing.T) {
 				MachineBootable: lo.ToPtr(true),
 				Systemd:         lo.ToPtr(true),
 			},
+			Properties: map[string]string{"openssl-fips-provider": "upstream"},
 			Tests: &projectconfig.ImageTestsConfig{
 				Tests: []projectconfig.TestRef{
 					{Name: "smoke"},
@@ -153,6 +154,8 @@ func TestListImages_WithCapabilitiesAndTests(t *testing.T) {
 	assert.Equal(t, lo.ToPtr(true), results[0].Capabilities.Container)
 	assert.Nil(t, results[0].Capabilities.MachineBootable)
 	assert.Equal(t, "container", results[0].CapabilitiesSummary)
+	assert.Empty(t, results[0].Properties)
+	assert.Equal(t, "{}", results[0].PropertiesSummary)
 	require.NotNil(t, results[0].Tests)
 	assert.Equal(t, projectconfig.ImageTestsConfig{
 		Tests: []projectconfig.TestRef{{Name: "smoke"}},
@@ -167,6 +170,8 @@ func TestListImages_WithCapabilitiesAndTests(t *testing.T) {
 	assert.Nil(t, results[1].Capabilities.MachineBootable)
 	assert.Nil(t, results[1].Capabilities.Container)
 	assert.Empty(t, results[1].CapabilitiesSummary)
+	assert.Empty(t, results[1].Properties)
+	assert.Equal(t, "{}", results[1].PropertiesSummary)
 	assert.Nil(t, results[1].Tests)
 	assert.Empty(t, results[1].TestsSummary)
 	assert.Empty(t, results[1].Publish.Channels)
@@ -177,6 +182,8 @@ func TestListImages_WithCapabilitiesAndTests(t *testing.T) {
 	assert.Equal(t, lo.ToPtr(true), results[2].Capabilities.Systemd)
 	assert.Nil(t, results[2].Capabilities.Container)
 	assert.Equal(t, "machine-bootable, systemd", results[2].CapabilitiesSummary)
+	assert.Equal(t, map[string]string{"openssl-fips-provider": "upstream"}, results[2].Properties)
+	assert.JSONEq(t, `{"openssl-fips-provider":"upstream"}`, results[2].PropertiesSummary)
 	require.NotNil(t, results[2].Tests)
 	assert.Equal(t, projectconfig.ImageTestsConfig{
 		Tests: []projectconfig.TestRef{{Name: "smoke"}, {Name: "integration"}},

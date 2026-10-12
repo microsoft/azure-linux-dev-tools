@@ -7,7 +7,49 @@ All notable changes to `azldev` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.1.0] - 2026-10-08
+
+### Added
+
+- **Selectable RPM spec editor.** Use the global `--spec-editor experimental`
+  option to run component workflows with the structure-aware spec editor while
+  the line-oriented `legacy` editor remains the default.
+  ([#335](https://github.com/microsoft/azure-linux-dev-tools/pull/335))
+- **Component metadata inspection.** Use `azldev component metadata` to list
+  documentation metadata from component overlays and groups, filter it by
+  category or upstream status, and emit table or JSON output.
+  ([#279](https://github.com/microsoft/azure-linux-dev-tools/pull/279))
+- **Focused RPM repository comparisons.** `azldev repo compare` can now report
+  only versions missing from the right side, return summary counts, ignore
+  historical right-side versions, and optionally compare checksums and sizes.
+  Repository kinds selected on the left determine which right-side kinds are
+  compared.
+  ([#339](https://github.com/microsoft/azure-linux-dev-tools/pull/339))
+- **VM SKU test fan-out.** Define reusable `[sku-groups]` and per-SKU metadata,
+  then attach SKU groups to image test references for external orchestration
+  across multiple Azure VM sizes and architectures.
+  ([#357](https://github.com/microsoft/azure-linux-dev-tools/pull/357))
+- **Extensible image properties.** Add free-form string metadata under
+  `[images.<name>.properties]`, expose it in image listings, and pass it to
+  pytest or LISA arguments through the `{properties}` JSON placeholder.
+  ([#368](https://github.com/microsoft/azure-linux-dev-tools/pull/368))
+
+### Changed
+
+- **Optional `rpmdev-bumpspec` release updates.** Component build, render, and
+  source-preparation workflows accept `--rpmdev-bumpspec` to preview
+  transactional release updates for static release formats that the legacy
+  calculator cannot handle.
+  ([#349](https://github.com/microsoft/azure-linux-dev-tools/pull/349))
+
+### Fixed
+
+- **Safer structural spec editing.** The experimental editor no longer treats
+  commented tag lines as active RPM tags, preserves legacy behavior for
+  zero-value spec instances, and rolls back malformed visitor mutations even
+  when the visitor also returns an error.
+  ([#335](https://github.com/microsoft/azure-linux-dev-tools/pull/335),
+  [#333](https://github.com/microsoft/azure-linux-dev-tools/pull/333))
 
 ## [1.0.0] - 2026-09-24
 
