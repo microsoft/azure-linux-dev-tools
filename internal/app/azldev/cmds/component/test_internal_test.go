@@ -91,8 +91,9 @@ func TestValidateTMTProvisionOptions(t *testing.T) {
 	require.ErrorContains(t, validateTMTProvisionOptions("container", ""), "must be either")
 }
 
-func TestTMTPipRequirementPinsTMTVersion(t *testing.T) {
-	assert.Equal(t, "tmt[provision-virtual]==1.78.0", tmtPipRequirement)
+func TestTMTInstallRequirementUsesProvisionerExtra(t *testing.T) {
+	assert.Equal(t, "tmt", tmtInstallRequirement(tmtProvisionLocal))
+	assert.Equal(t, "tmt[provision-virtual]", tmtInstallRequirement(tmtProvisionVirtual))
 }
 
 func TestSelectTMTTests(t *testing.T) {

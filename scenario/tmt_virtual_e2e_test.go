@@ -6,7 +6,6 @@
 package scenario_tests
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -78,7 +77,11 @@ func TestTMTVirtualProvisioning(t *testing.T) {
 		WithExtraMounts(tmtVirtualMounts(inputs, externalInputs, artifactDir))
 
 	test.AddDirRecursive(t, "fixture", filepath.Join("testdata", "tmt-virtual"))
-	test.AddFileContents("testcloud-constraints.txt", bytes.NewBufferString("testcloud==0.12.0\n"))
+	requirementsPath, err := filepath.Abs(filepath.Join(
+		"..", "internal", "app", "azldev", "cmds", "component", "requirements.txt",
+	))
+	require.NoError(t, err)
+	test.AddSingleFile("tmt-requirements.txt", requirementsPath)
 
 	results, runErr := test.Run(t)
 	require.NoError(t, os.WriteFile(filepath.Join(artifactDir, "container.stdout"),
