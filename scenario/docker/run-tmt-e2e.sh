@@ -16,7 +16,6 @@ chmod 0700 "${work_root}" "${artifact_dir}"
 # cleanup.
 export XDG_RUNTIME_DIR="/tmp/azltmt-${AZL_TMT_RUN_ID}"
 export LIBVIRT_DEFAULT_URI="qemu:///session"
-export PIP_CONSTRAINT="/workdir/testcloud-constraints.txt"
 mkdir -m 0700 "${XDG_RUNTIME_DIR}"
 
 {
@@ -53,6 +52,13 @@ azldev component test azldev-tmt-probe \
     --image-path "${image_path}" \
     --rpm "${rpm_path}" \
     2>&1 | tee "${artifact_dir}/azldev.log"
+
+venv_python="${tmt_work_dir}/tmt/venv/bin/python3"
+"${venv_python}" -m pip freeze >"${artifact_dir}/python-freeze"
+while IFS= read -r requirement; do
+    [[ -n "${requirement}" && "${requirement}" != \#* ]] || continue
+    grep -Fxi "${requirement}" "${artifact_dir}/python-freeze"
+done <"/workdir/tmt-requirements.txt"
 
 results_file="$(find "${tmt_work_dir}" -type f -name results.yaml -print -quit)"
 [[ -n "${results_file}" ]] || {

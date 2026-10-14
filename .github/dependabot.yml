@@ -105,3 +105,16 @@ updates:
         applies-to: version-updates
         patterns:
           - "*"
+
+  # TMT component-test runtime
+  - package-ecosystem: "pip"
+    directory: "/internal/app/azldev/cmds/component"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      dependabot-tmt:
+        applies-to: version-updates
+        patterns:
+          - "*"
