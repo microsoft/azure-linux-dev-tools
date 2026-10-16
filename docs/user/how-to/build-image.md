@@ -52,7 +52,17 @@ After building, boot the image in a QEMU VM for testing:
 azldev image boot -i <path-to-image> -f <format> --test-password <password>
 ```
 
-Supported formats: `raw`, `qcow2`, `vhdx`.
+`--image-path` (`-i`) selects the disk file; `--format` (`-f`) specifies how QEMU
+interprets it, overriding the filename extension. If `--format` is omitted, the
+format is inferred from the extension. Supply `--format` for files with no extension
+or an unrecognized extension.
+
+```bash
+azldev image boot --image-path /image.raw --format raw --memory 2G --cpus 2
+```
+
+Supported formats: `raw`, `qcow2`, `vhdx`, `vhd`. When booting by image name instead,
+`--format` selects which built image format to look up.
 
 ## Customize a Pre-Built Image
 

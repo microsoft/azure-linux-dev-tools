@@ -26,7 +26,10 @@ Images are selected by their **name as a positional argument** (not `-p`).
 `--arch` to target an architecture. When the selected distro version defines
 `kiwi-config-override`, azldev passes it to KIWI with `--config`. These top-level
 overrides have highest precedence. `azldev image boot` takes a built image name, or an
-explicit `--image-path` / `--iso`. Confirm current flags with
+explicit `--image-path` / `--iso`. Combine `--image-path` with `--format` to specify
+the disk format; otherwise it is inferred from the filename extension.
+When booting by name, `--format` selects the built artifact format.
+Confirm current flags with
 `azldev image <command> --help` (there are more subcommands, e.g. `inject-files`).
 
 ## Registering an image
