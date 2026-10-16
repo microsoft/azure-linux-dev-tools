@@ -161,7 +161,7 @@ func collectUniqueTomlRelPathsFromStubs(repoRoot string, stubs []historyStub) []
 			continue
 		}
 
-		relPath, err := repoRelPath(repoRoot, absPath)
+		relPath, err := git.RepoRelPath(repoRoot, absPath)
 		if err != nil {
 			continue
 		}
@@ -223,7 +223,7 @@ func populateTomlMetrics(
 	tomlAbsPath := config.SourceConfigFile.SourcePath()
 	result.SharedToml = tomlSharing[tomlAbsPath] > 1
 
-	tomlRelPath, err := repoRelPath(ctx.repoRoot, tomlAbsPath)
+	tomlRelPath, err := git.RepoRelPath(ctx.repoRoot, tomlAbsPath)
 	if err != nil {
 		// A TOML file outside the repo isn't a hard error -- record a
 		// warning and leave path/commit counts empty.
@@ -327,7 +327,7 @@ func populateLockMetrics(
 		return
 	}
 
-	lockRelPath, err := repoRelPath(ctx.repoRoot, lockAbsPath)
+	lockRelPath, err := git.RepoRelPath(ctx.repoRoot, lockAbsPath)
 	if err != nil {
 		// Lock dir lives outside the repo: nothing to count.
 		result.Warnings = append(result.Warnings,
