@@ -25,6 +25,20 @@ import (
 // RunMCPServer starts the azldev MCP server, advertising the exported commands as
 // tools over stdio until the context is canceled.
 func RunMCPServer(env *azldev.Env, cmd *cobra.Command) error {
+	stdioServer := newStdioServer(env, cmd)
+
+	slog.Info("Starting MCP server")
+
+	// Run the server until canceled.
+	err := stdioServer.Listen(cmd.Context(), os.Stdin, os.Stdout)
+	if err != nil {
+		return fmt.Errorf("failed to start MCP server:\n%w", err)
+	}
+
+	return nil
+}
+
+func newStdioServer(env *azldev.Env, cmd *cobra.Command) *server.StdioServer {
 	srv := server.NewMCPServer(cmd.Root().Name(), version.Get().Version,
 		server.WithLogging(),
 		server.WithRecovery(),
@@ -56,15 +70,7 @@ func RunMCPServer(env *azldev.Env, cmd *cobra.Command) error {
 	// serialize instead of corrupting each other's output.
 	server.WithWorkerPoolSize(1)(stdioServer)
 
-	slog.Info("Starting MCP server")
-
-	// Run the server until canceled.
-	err := stdioServer.Listen(cmd.Context(), os.Stdin, os.Stdout)
-	if err != nil {
-		return fmt.Errorf("failed to start MCP server:\n%w", err)
-	}
-
-	return nil
+	return stdioServer
 }
 
 //

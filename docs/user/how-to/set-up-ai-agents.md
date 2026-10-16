@@ -59,6 +59,14 @@ With the server configured, an agent can call `docs-agent-show` (a read-only too
 that most agent frameworks can auto-approve) to load the full azldev skill on
 demand.
 
+### Troubleshoot MCP discovery timeouts
+
+If an MCP client pauses for 60 seconds while discovering azldev tools, update
+azldev to a build using `mcp-go` v1.1.1 or later, then restart the MCP server in
+the client. The older v1.0.0 dependency can block its stdio reader when a client
+opens a change-notification subscription using MCP protocol `2026-07-28`,
+preventing subsequent tool-list requests from being processed.
+
 ## Emit Without the MCP Server
 
 If the target environment will not run the azldev MCP server, inline the full skill
