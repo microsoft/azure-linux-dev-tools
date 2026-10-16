@@ -60,8 +60,13 @@ or component package overrides).
 Use --rpm-file <file> to enumerate all source packages (SRPMs) and their binary RPMs
 from a JSON RPM source map file (an array of {"packageName":"bash","sourcePackageName":"bash"} records).
 Each SRPM is resolved against the component with the same name; each binary RPM is
-resolved using the full publish-channel stack. Results include a 'type' column
+resolved against the source package that produced it. Results include a 'type' column
 ("srpm" or "rpm") to distinguish the two.
+
+Rows are unique by (packageName, type, component), not by package name alone: when a
+binary name is produced by several components, each producer is reported separately with
+its own publish channel. Scripts must key on the pair — keying on the package name alone
+silently drops a producer.
 
 Use -p (or positional args) to look up one or more specific packages by exact name —
 including packages that are not explicitly configured (they resolve using only project
@@ -296,7 +301,9 @@ func ListPackages(env *azldev.Env, options *ListPackageOptions) ([]PackageListRe
 	}
 
 	for pkgName := range toResolve {
-		result, err := resolvePackageListResult(pkgName, compOf, pkgGroupOf, compGroupsOf, proj)
+		compName := resolveComponentName(pkgName, compOf, proj)
+
+		result, err := resolvePackageListResult(pkgName, compName, pkgGroupOf, compGroupsOf, proj)
 		if err != nil {
 			return nil, err
 		}
@@ -324,14 +331,18 @@ func ListPackages(env *azldev.Env, options *ListPackageOptions) ([]PackageListRe
 
 // resolvePackageListResult resolves the publish channel and component membership for a single
 // package and returns a [PackageListResult].
+//
+// compName is the component that owns this package in the requested context. Callers resolve it
+// themselves — via [resolveComponentName] for project-driven listings, or from the source package
+// being expanded for '--rpm-file' listings — because one binary package name can belong to
+// different components depending on which source package produced it.
 func resolvePackageListResult(
 	pkgName string,
-	compOf map[string]string,
+	compName string,
 	pkgGroupOf map[string][]string,
 	compGroupsOf map[string][]string,
 	proj *projectconfig.ProjectConfig,
 ) (PackageListResult, error) {
-	compName := resolveComponentName(pkgName, compOf, proj)
 	compConfig := resolveComponentConfig(compName, proj)
 
 	// Apply inherited defaults (project → groups → component) so that
@@ -490,9 +501,12 @@ func resolveSourcePackageListResult(
 
 // resolveFromRPMFile loads a source map file and resolves all SRPMs and their RPMs.
 // Returns a flat list of SRPM and RPM entries derived from the file. The returned slice is
-// not ordered by contract; callers may sort or otherwise reorder the flattened results. The
-// JSON file is parsed once by [loadRPMFile] to produce both the SRPM → RPMs map and the
-// authoritative RPM → component index.
+// not ordered by contract; callers may sort or otherwise reorder the flattened results.
+//
+// A binary package name produced by more than one source package yields one RPM entry per
+// producing source, each resolved against that source's component. The component is taken from
+// the source package being expanded rather than looked up by package name, so the result does
+// not depend on the order of entries in the file.
 func resolveFromRPMFile(
 	fs opctx.FS,
 	path string,
@@ -500,7 +514,7 @@ func resolveFromRPMFile(
 	compGroupsOf map[string][]string,
 	proj *projectconfig.ProjectConfig,
 ) ([]PackageListResult, error) {
-	srpmMap, rpmCompOf, err := loadRPMFile(fs, path)
+	srpmMap, err := loadRPMFile(fs, path)
 	if err != nil {
 		return nil, err
 	}
@@ -516,7 +530,9 @@ func resolveFromRPMFile(
 		results = append(results, srpmResult)
 
 		for _, rpmName := range rpmNames {
-			rpmResult, resolveErr := resolvePackageListResult(rpmName, rpmCompOf, pkgGroupOf, compGroupsOf, proj)
+			// The SRPM name is the component name by definition, so the producing source is
+			// the component for every binary it emits.
+			rpmResult, resolveErr := resolvePackageListResult(rpmName, srpmName, pkgGroupOf, compGroupsOf, proj)
 			if resolveErr != nil {
 				return nil, resolveErr
 			}
@@ -530,36 +546,32 @@ func resolveFromRPMFile(
 
 // loadRPMFile reads and parses a JSON RPM source map from path on fs.
 // The file is a JSON array of [rpmSourceEntry] records.
-// Returns:
-//   - srpmMap: source package name → ordered list of binary RPM names it produces
-//   - rpmCompOf: binary RPM name → source package (component) name
+// Returns srpmMap: source package name → ordered list of the binary RPM names it produces.
 //
-// Both maps are built in a single pass over the JSON entries. If the same
-// binary package name appears more than once, the first entry wins and later
-// entries are skipped, keeping srpmMap and rpmCompOf aligned. Identical
-// duplicates are skipped silently; conflicting duplicates (same packageName
-// with a different sourcePackageName) emit a warning so operators can detect
-// and remediate bad inputs.
-func loadRPMFile(fs opctx.FS, path string) (srpmMap map[string][]string, rpmCompOf map[string]string, err error) {
+// A binary package name may legitimately appear under more than one source package — several
+// components can emit an RPM of the same name, and they may publish to different channels. Each
+// such pair is preserved under its own source, so the caller can report one entry per
+// (packageName, sourcePackageName). Exact duplicate pairs are collapsed silently.
+func loadRPMFile(fs opctx.FS, path string) (srpmMap map[string][]string, err error) {
 	data, readErr := fileutils.ReadFile(fs, path)
 	if readErr != nil {
-		return nil, nil, fmt.Errorf("reading RPM source map %#q:\n%w", path, readErr)
+		return nil, fmt.Errorf("reading RPM source map %#q:\n%w", path, readErr)
 	}
 
 	var entries []rpmSourceEntry
 	if err := json.Unmarshal(data, &entries); err != nil {
-		return nil, nil, fmt.Errorf("parsing RPM source map %#q:\n%w", path, err)
+		return nil, fmt.Errorf("parsing RPM source map %#q:\n%w", path, err)
 	}
 
 	srpmMap = make(map[string][]string)
-	rpmCompOf = make(map[string]string, len(entries))
+	seen := make(map[rpmSourcePair]struct{}, len(entries))
 
 	for idx, e := range entries {
 		packageName := e.PackageName
 		sourcePackageName := e.SourcePackageName
 
 		if packageName == "" {
-			return nil, nil, fmt.Errorf(
+			return nil, fmt.Errorf(
 				"invalid RPM source map %#q entry %d:\nmissing non-empty 'packageName'",
 				path,
 				idx,
@@ -567,7 +579,7 @@ func loadRPMFile(fs opctx.FS, path string) (srpmMap map[string][]string, rpmComp
 		}
 
 		if sourcePackageName == "" {
-			return nil, nil, fmt.Errorf(
+			return nil, fmt.Errorf(
 				"invalid RPM source map %#q entry %d for package %#q:\nmissing non-empty 'sourcePackageName'",
 				path,
 				idx,
@@ -575,35 +587,26 @@ func loadRPMFile(fs opctx.FS, path string) (srpmMap map[string][]string, rpmComp
 			)
 		}
 
-		if existingSource, exists := rpmCompOf[packageName]; exists {
-			// First mapping wins. Skipping later entries keeps [srpmMap] and
-			// [rpmCompOf] aligned: each binary RPM appears exactly once in
-			// [srpmMap] under exactly the source package recorded in [rpmCompOf].
-			//
-			//nolint:godox // intentional temporary workaround documented below.
-			// TODO: this is a temporary workaround tolerating
-			// upstream RPM source maps that list the same packageName under different
-			// sourcePackageName values. Once those duplicates are resolved at the
-			// source, restore the stricter behavior: error on conflicting
-			// sourcePackageName, only dedup identical mappings.
-			if existingSource != sourcePackageName {
-				slog.Warn(
-					"RPM source map contains conflicting source package mappings; first mapping wins",
-					"path", path,
-					"packageName", packageName,
-					"keptSourcePackageName", existingSource,
-					"skippedSourcePackageName", sourcePackageName,
-				)
-			}
-
+		pair := rpmSourcePair{PackageName: packageName, SourcePackageName: sourcePackageName}
+		if _, exists := seen[pair]; exists {
+			// An exact repeat carries no extra information; collapse it so a package is not
+			// reported twice for the same source.
 			continue
 		}
 
+		seen[pair] = struct{}{}
 		srpmMap[sourcePackageName] = append(srpmMap[sourcePackageName], packageName)
-		rpmCompOf[packageName] = sourcePackageName
 	}
 
-	return srpmMap, rpmCompOf, nil
+	return srpmMap, nil
+}
+
+// rpmSourcePair identifies one binary package as produced by one source package. It is the unit
+// of uniqueness in an RPM source map: the same packageName under a different sourcePackageName is
+// a different fact, not a duplicate.
+type rpmSourcePair struct {
+	PackageName       string
+	SourcePackageName string
 }
 
 // synthesizeDebugPackages augments results with synthetic '-debuginfo' packages (one per

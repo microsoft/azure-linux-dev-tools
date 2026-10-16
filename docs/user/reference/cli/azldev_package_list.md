@@ -14,8 +14,13 @@ or component package overrides).
 Use --rpm-file <file> to enumerate all source packages (SRPMs) and their binary RPMs
 from a JSON RPM source map file (an array of {"packageName":"bash","sourcePackageName":"bash"} records).
 Each SRPM is resolved against the component with the same name; each binary RPM is
-resolved using the full publish-channel stack. Results include a 'type' column
+resolved against the source package that produced it. Results include a 'type' column
 ("srpm" or "rpm") to distinguish the two.
+
+Rows are unique by (packageName, type, component), not by package name alone: when a
+binary name is produced by several components, each producer is reported separately with
+its own publish channel. Scripts must key on the pair — keying on the package name alone
+silently drops a producer.
 
 Use -p (or positional args) to look up one or more specific packages by exact name —
 including packages that are not explicitly configured (they resolve using only project
