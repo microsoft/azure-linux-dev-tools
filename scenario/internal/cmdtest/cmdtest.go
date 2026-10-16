@@ -56,6 +56,18 @@ type containerTestParams struct {
 
 	// Dockerfile selects an alternate scenario container definition.
 	Dockerfile string
+
+	Init bool
+
+	Devices []containerDevice
+
+	SupplementalGroups []string
+}
+
+type containerDevice struct {
+	hostPath      string
+	containerPath string
+	permissions   string
 }
 
 // NewScenarioTest creates a new test with the specified arguments. It will default to invoking the azldev
@@ -240,6 +252,33 @@ func (cParams *containerTestParams) WithDockerfile(dockerfile string) *container
 	return cParams
 }
 
+// WithInit enables Docker's minimal init process.
+func (cParams *containerTestParams) WithInit() *containerTestParams {
+	cParams.Init = true
+
+	return cParams
+}
+
+// WithDevice maps a host device into the container.
+func (cParams *containerTestParams) WithDevice(
+	hostPath, containerPath, permissions string,
+) *containerTestParams {
+	cParams.Devices = append(cParams.Devices, containerDevice{
+		hostPath:      hostPath,
+		containerPath: containerPath,
+		permissions:   permissions,
+	})
+
+	return cParams
+}
+
+// WithSupplementalGroup adds a supplemental group to the container process.
+func (cParams *containerTestParams) WithSupplementalGroup(group string) *containerTestParams {
+	cParams.SupplementalGroups = append(cParams.SupplementalGroups, group)
+
+	return cParams
+}
+
 // Run runs the test as configured.
 func (params *localTestParams) Run(t *testing.T) (results testhelpers.TestResults, err error) {
 	t.Helper()
@@ -336,6 +375,18 @@ func (cParams *containerTestParams) Run(t *testing.T) (results testhelpers.TestR
 
 	if cParams.Dockerfile != "" {
 		collateral = collateral.WithDockerfile(cParams.Dockerfile)
+	}
+
+	if cParams.Init {
+		collateral = collateral.WithInit()
+	}
+
+	for _, device := range cParams.Devices {
+		collateral = collateral.WithDevice(device.hostPath, device.containerPath, device.permissions)
+	}
+
+	for _, group := range cParams.SupplementalGroups {
+		collateral = collateral.WithSupplementalGroup(group)
 	}
 
 	var cmd []string
