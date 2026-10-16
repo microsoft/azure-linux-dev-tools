@@ -5,6 +5,7 @@ package component
 
 import (
 	"bytes"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -86,13 +87,15 @@ const (
 	tmtProgram          = "tmt"
 	tmtProvisionLocal   = "local"
 	tmtProvisionVirtual = "virtual"
-	// Keep the TMT CLI behavior stable for a given azldev revision. Update this
-	// pin deliberately after validating component test execution with the newer
-	// version.
-	tmtVersion                     = "1.78.0"
-	tmtPipRequirement              = "tmt[provision-virtual]==" + tmtVersion
-	tmtCandidateRPMPrepareStepName = "azldev-candidate-rpms"
 )
+
+const (
+	tmtCandidateRPMPrepareStepName = "azldev-candidate-rpms"
+	tmtRequirementsFileName        = "requirements.txt"
+)
+
+//go:embed requirements.txt
+var tmtRequirements []byte
 
 const testcloudPluginTemplate = `import tmt.steps.provision.testcloud as testcloud
 from tmt.guest import GuestSsh
@@ -556,20 +559,36 @@ func ensureTMTVenv(env *azldev.Env, workDir string, provision string, fromSource
 		slog.Info("Reusing TMT Python venv", slog.String("path", venvDir))
 	}
 
-	requirement := "tmt==" + tmtVersion
-	if provision == tmtProvisionVirtual {
-		requirement = tmtPipRequirement
+	requirement := tmtInstallRequirement(provision)
+
+	requirementsPath := filepath.Join(filepath.Dir(venvDir), tmtRequirementsFileName)
+	if err := fileutils.WriteFile(env.FS(), requirementsPath, tmtRequirements, fileperms.PrivateFile); err != nil {
+		return "", fmt.Errorf("write TMT requirements:\n%w", err)
 	}
 
-	slog.Info("Installing TMT", slog.String("venv", venvDir), slog.String("requirement", requirement))
+	slog.Info(
+		"Installing TMT",
+		slog.String("venv", venvDir),
+		slog.String("requirement", requirement),
+		slog.String("constraints", requirementsPath),
+	)
 
 	if err := runHostCommand(
-		env, "", venvPython, "-m", "pip", "install", "--quiet", requirement,
+		env, "", venvPython, "-m", "pip", "install", "--quiet",
+		"--constraint", requirementsPath, requirement,
 	); err != nil {
 		return "", fmt.Errorf("install TMT:\n%w", err)
 	}
 
 	return tmtProgramPath, nil
+}
+
+func tmtInstallRequirement(provision string) string {
+	if provision == tmtProvisionVirtual {
+		return "tmt[provision-virtual]"
+	}
+
+	return "tmt"
 }
 
 func componentTMTWorkDir(env *azldev.Env, configuredWorkDir string) (string, error) {

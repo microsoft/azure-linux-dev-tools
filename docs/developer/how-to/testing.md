@@ -65,6 +65,8 @@ image-construction test; ordinary scenario and e2e containers remain unchanged.
 `azldev component test` flow with TMT 1.78.0, testcloud 0.12.0, and a tiny
 test-only probe RPM. The non-privileged TMT runner maps `/dev/kvm`, uses private
 session-libvirt state, and retains diagnostics under `out/tmt-virtual-e2e/`.
+Production and test dependency pins share
+`internal/app/azldev/cmds/component/requirements.txt`, which Dependabot tracks.
 
 This regression is temporarily quarantined while the known testcloud readiness
 failure is fixed. The normal `mage e2e` suite compiles the test but skips it;
