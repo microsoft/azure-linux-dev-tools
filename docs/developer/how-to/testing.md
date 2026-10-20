@@ -54,8 +54,8 @@ The GitHub Actions workflow runs three E2E shards in parallel:
 - `mage e2e -target=full-render` runs the full Azure Linux render idempotency
   check, which dominates the suite runtime.
 
-`mage e2e -target=tmt` runs the temporarily quarantined virtual TMT
-regression; add it to the CI matrix when the readiness fix lands.
+`mage e2e -target=tmt` selects the local and virtual TMT tests. It is not yet in
+the CI matrix; the virtual test remains quarantined.
 
 ### Azure Linux image build
 
@@ -70,20 +70,26 @@ container. Only the resolved source revision and checked qcow2 are written to a
 host artifact mount. The privileged container is restricted to this
 image-construction test; ordinary scenario and e2e containers remain unchanged.
 
-### Virtual TMT provisioning regression
+### TMT tests
 
-`mage e2e -target=tmt` builds the current Azure Linux image, then runs the real
-`azldev component test` flow with TMT 1.78.0, testcloud 0.12.0, and a tiny
-test-only probe RPM. The non-privileged TMT runner maps `/dev/kvm`, uses private
-session-libvirt state, and retains diagnostics under `out/tmt-virtual-e2e/`.
-Production and test dependency pins share
-`internal/app/azldev/cmds/component/requirements.txt`, which Dependabot tracks.
+```bash
+mage e2e -target=tmt
+```
 
-This regression is temporarily quarantined while the known testcloud readiness
-failure is fixed. The normal `mage e2e` suite compiles the test but skips it;
-`mage e2e -target=tmt` explicitly enables and executes the known-red path. Remove the
-temporary environment guard once the provisioning fixes land so the standard
-E2E job enforces the regression.
+Local reporting runs in a disposable, unprivileged AZL4 container without KVM.
+Do not use the local provisioner directly on your development host: it installs
+packages and executes tests there. Diagnostics remain under `out/tmt-local-e2e/`.
+
+Virtual provisioning is quarantined pending the testcloud readiness fix. Set
+`TESTING_ENABLE_TMT_VIRTUAL_E2E=1` with the same command to reproduce it. Once
+enabled, it skips if `/dev/kvm` is missing and checks access before building an
+image; access errors fail the test. Image construction uses a **privileged**
+container. Virtual diagnostics remain under `out/tmt-virtual-e2e/`.
+
+Remove the temporary environment guard when the virtual test is fixed. Both
+tests share the production pins in
+`internal/app/azldev/cmds/component/requirements.txt`. Broad `mage e2e` also runs
+the privileged image-builder test independently of the virtual quarantine.
 
 ## Mutation Testing
 

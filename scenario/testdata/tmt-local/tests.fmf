@@ -1,0 +1,33 @@
+/probe:
+  require:
+    - jq
+  test: |
+    set -eu
+    echo noisy-probe-stdout
+    echo noisy-probe-stderr >&2
+    test "$(id -u)" = 0
+    expected="$(rpm -qp --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}' /opt/azldev-tmt-fixtures/candidate.rpm)"
+    test "$(rpm -q azldev-tmt-probe)" = "${expected}"
+    test "$(rpm -qf /usr/bin/azldev-tmt-probe)" = "${expected}"
+    jq -ne '1 + 1 == 2'
+    printf 'probe round trip\n' >"${TMT_TEST_DATA}/input"
+    azldev-tmt-probe "${TMT_TEST_DATA}/input" "${TMT_TEST_DATA}/output"
+    grep -qx 'PROBE ROUND TRIP' "${TMT_TEST_DATA}/output"
+/fail:
+  test: echo controlled-assertion-failure; exit 1
+/skip:
+  result: custom
+  test: |
+    printf '[{"name": "/", "result": "skip"}]\n' >"${TMT_TEST_DATA}/results.json"
+/info:
+  result: custom
+  test: |
+    printf '[{"name": "/", "result": "info"}]\n' >"${TMT_TEST_DATA}/results.json"
+/warn:
+  result: custom
+  test: |
+    printf '[{"name": "/", "result": "warn"}]\n' >"${TMT_TEST_DATA}/results.json"
+/error:
+  result: custom
+  test: |
+    printf '[{"name": "/", "result": "error"}]\n' >"${TMT_TEST_DATA}/results.json"

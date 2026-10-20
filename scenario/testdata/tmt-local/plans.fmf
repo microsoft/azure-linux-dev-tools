@@ -1,0 +1,48 @@
+discover:
+  how: fmf
+execute:
+  how: tmt
+report:
+  - how: display
+  - how: junit
+    name: supplied-junit
+    include-output-log: false
+/pass:
+  discover+:
+    test: ^/tests/probe$
+/mixed:
+  discover+:
+    test: ^/tests/(probe|fail|skip|info|warn|error)$
+/skip:
+  discover+:
+    test: ^/tests/skip$
+/fail:
+  discover+:
+    test: ^/tests/fail$
+/warn:
+  discover+:
+    test: ^/tests/warn$
+/with.dots:
+  discover+:
+    test: ^/tests/probe$
+/empty:
+  discover+:
+    test: ^/tests/does-not-exist$
+/prepare-failure:
+  discover+:
+    test: ^/tests/probe$
+  prepare:
+    how: shell
+    script: echo controlled-prepare-failure >&2; exit 1
+/finish-failure:
+  discover+:
+    test: ^/tests/probe$
+  finish:
+    how: shell
+    script: echo controlled-finish-failure >&2; exit 1
+/report-failure:
+  discover+:
+    test: ^/tests/probe$
+  report:
+    how: junit
+    file: /nonexistent-parent/junit.xml
