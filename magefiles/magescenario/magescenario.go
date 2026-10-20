@@ -96,12 +96,9 @@ func E2E(target *string) error {
 		options.testSelector = "^(TestAzureLinuxComponentUpdateIsIdempotent|" +
 			"TestAzureLinuxComponentRenderSubsetIsIdempotent)$"
 	case e2eTargetTMT:
-		options.label = "virtual TMT end-to-end"
+		options.label = "TMT end-to-end"
 		options.timeout = "45m"
-		options.testSelector = "^TestTMTVirtualProvisioning$"
-		options.additionalEnv = map[string]string{
-			"TESTING_ENABLE_TMT_VIRTUAL_E2E": "1",
-		}
+		options.testSelector = "^TestTMT(LocalReporting|VirtualProvisioning)$"
 	default:
 		return fmt.Errorf(
 			"%w: unknown end-to-end target %#q; available targets: %q",
@@ -172,8 +169,6 @@ type scenarioGoTestOptions struct {
 	// testSelector, when set, is passed to 'go test -run' to execute one
 	// focused test without running the rest of the selected tier.
 	testSelector string
-	// additionalEnv adds target-specific environment variables to the test process.
-	additionalEnv map[string]string
 }
 
 func runScenarioGoTest(options scenarioGoTestOptions) error {
@@ -192,10 +187,6 @@ func runScenarioGoTest(options scenarioGoTestOptions) error {
 	env := map[string]string{
 		buildtestenv.TestingAzldevBinPathEnvVar: path.Join(mageutil.BinDir(), "azldev"),
 	}
-	for name, value := range options.additionalEnv {
-		env[name] = value
-	}
-
 	if options.doSnapshotUpdate {
 		env[buildtestenv.TestingUpdateSnapshotsEnvVar] = buildtestenv.TestingUpdateSnapshotsEnvValue
 	}

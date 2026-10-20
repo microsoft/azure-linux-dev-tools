@@ -143,6 +143,52 @@ The same technique works locally: `createrepo_c` the built RPMs, then
 (dnf accepts a local directory as the `--repofrompath` baseurl) resolves conflicts
 for you instead of a hand-rolled `--rpm` filter.
 
+## Structured reports and diagnostic files
+
+Use JSON output to locate retained reports and logs:
+
+```bash
+azldev component test example --provision virtual \
+  --image-path ./image.qcow2 --rpm ./example.rpm --plan /plans/smoke \
+  --work-dir ./test-artifacts -O json >artifacts.json
+status=$?
+```
+
+The output lists attempted catalog entries; execution stops at the first failure.
+Diagnostics go to stderr. Example (paths are illustrative):
+
+```json
+[
+  {
+    "test": "smoke",
+    "exitCode": 0,
+    "artifactDir": "/work/test-artifacts/azldev-test-123",
+    "junit": ["001-smoke/native/plans/smoke/report/azldev-junit/junit.xml"]
+  }
+]
+```
+
+`artifactDir` is a fresh directory containing `setup.log`, each invocation's
+`runner.log`, and its native TMT run directory. JUnit paths are relative to it;
+copy the whole directory to retain diagnostics outside a container.
+
+TMT's native JUnit reporter is added without replacing existing reporters.
+Its default mapping is lossy (`info` becomes skipped; `warn` and `pending`
+become errors); native results and detailed logs remain in the artifact directory.
+Early failures or interruption can leave no JUnit. Available artifacts are
+returned alongside the command error, not reconstructed after execution.
+
+azldev exits **0 on success, 1 on failure**, including TMT's all-skipped and
+no-results exits. `exitCode` records the native TMT value, or `null` before
+startup/on signal termination. Capture/output failures can fail azldev even if
+TMT exited zero. Validation can fail before any artifact row exists.
+
+`--dry-run` previews commands without execution or artifact creation; rows have
+an empty directory/report list and null exit code. Cancellation bounds waiting
+for inherited output pipes, not guest teardown. SIGKILL cannot guarantee output.
+Artifacts persist until the caller removes them. Logs and stderr can contain
+sensitive test output or credentials; restrict access before sharing.
+
 ## Where plans and tests can live
 
 Because `source` pins the **plan** and `discover` resolves the **tests**, the two
