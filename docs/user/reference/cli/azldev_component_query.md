@@ -59,6 +59,7 @@ azldev component query [flags]
   -C, --project string            path to Azure Linux project
   -q, --quiet                     only enable minimal output
       --spec-editor editor        Select the RPM spec editor (legacy or experimental) (default legacy)
+      --unique-mockroot           use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters)
   -v, --verbose                   enable verbose output
       --without-lockfile          preview: track resolved upstream commits in generated config instead of lock files
 ```

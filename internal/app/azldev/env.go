@@ -23,6 +23,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/mock"
 )
 
 // Parameters used to construct an [Env].
@@ -225,6 +226,24 @@ func (env *Env) Verbose() bool {
 // SetVerbose enables or disables "verbose" mode.
 func (env *Env) SetVerbose(verbose bool) {
 	env.verbose = verbose
+}
+
+// SetUniqueMockRoot configures unique mock roots for the current CLI action.
+func (env *Env) SetUniqueMockRoot(enabled bool, action string) {
+	env.ctx = mock.WithUniqueRoots(env.ctx, enabled, action)
+}
+
+// WithMockRootComponents returns a shallow copy with component-specific mock root labels.
+func (env *Env) WithMockRootComponents(names ...string) *Env {
+	return env.WithContext(mock.WithRootComponents(env.ctx, names...))
+}
+
+// WithContext returns a shallow copy using the supplied context for cancellation and values.
+func (env *Env) WithContext(ctx context.Context) *Env {
+	childEnv := *env
+	childEnv.ctx = ctx
+
+	return &childEnv
 }
 
 // NetworkRetries returns the maximum number of attempts for network operations.

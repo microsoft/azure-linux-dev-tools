@@ -17,6 +17,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
+	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/mock"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/parmap"
 	"github.com/spf13/cobra"
 )
@@ -886,7 +887,9 @@ func resolveOneSourceIdentity(
 		return "", fmt.Errorf("resolving distro for %#q:\n%w", componentName, err)
 	}
 
-	sourceManager, err := sourceproviders.NewSourceManager(env, distro)
+	//nolint:contextcheck // The cloned operational Env carries ctx and component-specific root labels.
+	sourceManager, err := sourceproviders.NewSourceManager(
+		env.WithContext(mock.WithRootComponents(ctx, componentName)), distro)
 	if err != nil {
 		return "", fmt.Errorf("creating source manager for %#q:\n%w", componentName, err)
 	}
