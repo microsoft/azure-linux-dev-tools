@@ -35,6 +35,58 @@ func TestNewShellCmd(t *testing.T) {
 	assert.Equal(t, "shell", cmd.Use)
 }
 
+func TestAdvancedUniqueMockRoots(t *testing.T) {
+	tests := []struct {
+		name       string
+		action     string
+		configPath string
+		prefix     string
+	}{
+		{name: "shell explicit config", action: "shell", configPath: "/mock.cfg", prefix: "shl-curl-1-0-rpm-"},
+		{name: "shell project config", action: "shell", prefix: "shl-curl-1-0-rpm-"},
+		{name: "build explicit config", action: "build-rpms", configPath: "/mock.cfg", prefix: "bld-curl-1-0-src-"},
+		{name: "build project config", action: "build-rpms", prefix: "bld-curl-1-0-src-"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			env.Env.SetUniqueMockRoot(true, test.action)
+			env.CmdFactory.RegisterCommandInSearchPath("mock")
+
+			var extensions []string
+
+			env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+				idx := slices.Index(cmd.Args, "--uniqueext")
+				require.Positive(t, idx)
+				require.Less(t, idx+1, len(cmd.Args))
+				extensions = append(extensions, cmd.Args[idx+1])
+
+				return nil
+			}
+
+			common := advanced.MockCmdOptions{MockConfigPath: test.configPath}
+			if test.action == "shell" {
+				require.NoError(t, advanced.RunShell(env.Env, &advanced.ShellOptions{
+					MockCmdOptions: common,
+					PackagesToAdd:  []string{"/rpms/curl-1.0.rpm"},
+				}, []string{"true"}))
+				require.Len(t, extensions, 2)
+				assert.Equal(t, extensions[0], extensions[1])
+			} else {
+				_, err := advanced.BuildRPMS(env.Env, &advanced.BuildRPMOptions{
+					MockCmdOptions: common,
+					SRPMPath:       "/srpms/curl-1.0.src.rpm",
+					OutputDirPath:  "/rpms",
+				})
+				require.NoError(t, err)
+				require.Len(t, extensions, 1)
+			}
+
+			assert.Regexp(t, "^"+test.prefix+`[a-z2-7]{6}$`, extensions[0])
+		})
+	}
+}
+
 func TestBuildRPMS(t *testing.T) {
 	const (
 		testMockConfigPath = "/mock/mock.cfg"

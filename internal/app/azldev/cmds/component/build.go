@@ -201,6 +201,8 @@ func BuildComponents(
 		return nil, fmt.Errorf("failed to create work dir factory:\n%w", err)
 	}
 
+	env = env.WithMockRootComponents(components.Names()...)
+
 	mockProcessor := createBuildMockProcessor(env)
 	defer destroyMockProcessor(env, mockProcessor)
 
@@ -229,6 +231,8 @@ func BuildComponent(
 	workDirFactory *workdir.Factory,
 	options *ComponentBuildOptions,
 ) (ComponentBuildResults, error) {
+	env = env.WithMockRootComponents(component.GetName())
+
 	mockProcessor := createBuildMockProcessor(env)
 	defer destroyMockProcessor(env, mockProcessor)
 
@@ -242,6 +246,7 @@ func buildComponent(
 	mockProcessor *sources.MockProcessor,
 	options *ComponentBuildOptions,
 ) (results ComponentBuildResults, err error) {
+	env = env.WithMockRootComponents(component.GetName())
 	// Resolve the effective distro for this component before creating the source manager.
 	distro, err := sourceproviders.ResolveDistro(env, component)
 	if err != nil {
