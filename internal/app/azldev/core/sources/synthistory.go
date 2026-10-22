@@ -486,7 +486,7 @@ func buildSyntheticCommits(
 		return nil, "", fmt.Errorf("resolving lock file path for %#q:\n%w", componentName, err)
 	}
 
-	lockFileRelPath, err := filepath.Rel(projectRepoDir, lockFileAbsPath)
+	lockFileRelPath, err := git.RepoRelPath(projectRepoDir, lockFileAbsPath)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to compute repo-relative lock path for %#q:\n%w",
 			lockFileAbsPath, err)
