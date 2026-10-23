@@ -1,0 +1,3 @@
+summary: Verify the probe candidate on an unmodified Azure Linux 4 guest
+test: bash test.sh
+duration: 5m

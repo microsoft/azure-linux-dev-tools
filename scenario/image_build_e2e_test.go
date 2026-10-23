@@ -28,10 +28,24 @@ const (
 	imageBuildTimeout       = 15 * time.Minute
 )
 
+type azureLinuxImageFixture struct {
+	imagePath string
+	revision  string
+	sha256    string
+}
+
 func TestAzureLinuxImageBuild(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping long test")
 	}
+
+	fixture := buildAzureLinuxImage(t)
+	t.Logf("Built Azure Linux image revision %s with SHA-256 %s", fixture.revision, fixture.sha256)
+}
+
+func buildAzureLinuxImage(t *testing.T) azureLinuxImageFixture {
+	t.Helper()
+
 	if os.Getenv(buildtestenv.TestingDisableNetworkTestsEnvVar) != "" {
 		t.Skip("skipping image build because network tests are disabled")
 	}
@@ -84,4 +98,10 @@ func TestAzureLinuxImageBuild(t *testing.T) {
 		info.Size(),
 		sha,
 	)
+
+	return azureLinuxImageFixture{
+		imagePath: imagePath,
+		revision:  revision,
+		sha256:    sha,
+	}
 }
