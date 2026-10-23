@@ -93,7 +93,7 @@ func TestRunRPMDevBumpspec_UsesHostEVRAndFixedContext(t *testing.T) {
 			}
 
 			_, _ = fmt.Fprint(cmd.Stdout, evrOutput("component", "0", release))
-		case cmd.Path == RPMDevBumpspecBinary:
+		case cmd.Args[0] == RPMDevBumpspecBinary:
 			assert.Equal(t, []string{
 				RPMDevBumpspecBinary, "-c", "- rebuilt", "-u",
 				"Azure Linux Packaging Team <azurelinux@microsoft.com>", "-d", "Mon Jan 06 2025",
@@ -147,7 +147,7 @@ func TestRunRPMDevBumpspec_EVRQueryPreservesExplicitDist(t *testing.T) {
 
 			queries++
 			_, _ = fmt.Fprint(cmd.Stdout, evrOutput("component", "0", strconv.Itoa(3+queries)))
-		case cmd.Path == RPMDevBumpspecBinary:
+		case cmd.Args[0] == RPMDevBumpspecBinary:
 			return fileutils.WriteFile(ctx.FS(), testBumpspecPath,
 				[]byte("Name: component\nVersion: 1.0\nRelease: 5\n"), fileperms.PublicFile)
 		case isReleaseComparison(cmd):
@@ -186,7 +186,7 @@ func TestRunRPMDevBumpspec_RestoresOriginalBytesOnEveryFailure(t *testing.T) {
 
 					return nil
 				}
-				if cmd.Path == RPMDevBumpspecBinary {
+				if cmd.Args[0] == RPMDevBumpspecBinary {
 					require.NoError(t, fileutils.WriteFile(ctx.FS(), testBumpspecPath,
 						[]byte("Name: component\nVersion: 1.0\nRelease: 5\n"), fileperms.PublicFile))
 
@@ -207,7 +207,7 @@ func TestRunRPMDevBumpspec_RestoresOriginalBytesOnEveryFailure(t *testing.T) {
 
 					return nil
 				}
-				if cmd.Path == RPMDevBumpspecBinary {
+				if cmd.Args[0] == RPMDevBumpspecBinary {
 					return fileutils.WriteFile(ctx.FS(), testBumpspecPath,
 						[]byte("Name: component\nVersion: 1.0\nRelease: 5\n"), fileperms.PublicFile)
 				}
@@ -227,7 +227,7 @@ func TestRunRPMDevBumpspec_RestoresOriginalBytesOnEveryFailure(t *testing.T) {
 
 					return nil
 				}
-				if cmd.Path == RPMDevBumpspecBinary {
+				if cmd.Args[0] == RPMDevBumpspecBinary {
 					return fileutils.WriteFile(ctx.FS(), testBumpspecPath,
 						[]byte("Name: component\nVersion: 1.0\nRelease: 5\n"), fileperms.PublicFile)
 				}
@@ -247,7 +247,7 @@ func TestRunRPMDevBumpspec_RestoresOriginalBytesOnEveryFailure(t *testing.T) {
 
 					return nil
 				}
-				if cmd.Path == RPMDevBumpspecBinary {
+				if cmd.Args[0] == RPMDevBumpspecBinary {
 					return fileutils.WriteFile(ctx.FS(), testBumpspecPath,
 						[]byte("Name: component\nVersion: 1.0\nRelease: 5\n"), fileperms.PublicFile)
 				}
@@ -308,7 +308,7 @@ func TestRunRPMDevBumpspec_RequiresRPMReleaseIncrease(t *testing.T) {
 					}
 
 					_, _ = fmt.Fprint(cmd.Stdout, evrOutput("component", "(none)", release))
-				case cmd.Path == RPMDevBumpspecBinary:
+				case cmd.Args[0] == RPMDevBumpspecBinary:
 					return fileutils.WriteFile(ctx.FS(), testBumpspecPath, []byte(after), fileperms.PublicFile)
 				case isReleaseComparison(cmd):
 					if testCase.comparisonErr != nil {
@@ -356,7 +356,7 @@ func TestRunRPMDevBumpspec_RuntimeAndDryRun(t *testing.T) {
 
 		writeBumpspecSpec(t, ctx, "Name: component\nVersion: 1.0\nRelease: 4\n")
 		ctx.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
-			assert.Equal(t, RPMDevBumpspecBinary, cmd.Path)
+			assert.Equal(t, RPMDevBumpspecBinary, cmd.Args[0])
 
 			return nil
 		}
@@ -438,7 +438,7 @@ func TestRunRPMDevBumpspec_RestoresOriginalBytesAfterMalformedEVROutput(t *testi
 					} else {
 						_, _ = fmt.Fprint(cmd.Stdout, malformedOutput)
 					}
-				case cmd.Path == RPMDevBumpspecBinary:
+				case cmd.Args[0] == RPMDevBumpspecBinary:
 					return fileutils.WriteFile(ctx.FS(), testBumpspecPath, []byte(after), fileperms.PublicFile)
 				}
 
@@ -471,7 +471,7 @@ func TestRunRPMDevBumpspec_UsesOneSRPMRecordAndRollsBackMultipleRecords(t *testi
 				}
 
 				_, _ = fmt.Fprint(cmd.Stdout, evrOutput("component", "0", release))
-			case cmd.Path == RPMDevBumpspecBinary:
+			case cmd.Args[0] == RPMDevBumpspecBinary:
 				return fileutils.WriteFile(ctx.FS(), testBumpspecPath, []byte(after), fileperms.PublicFile)
 			case isReleaseComparison(cmd):
 				_, _ = fmt.Fprintln(cmd.Stdout, "-1")
@@ -530,7 +530,7 @@ func TestRunRPMDevBumpspec_AppliesTargetToQueryAndWrapper(t *testing.T) {
 					}
 
 					_, _ = fmt.Fprint(cmd.Stdout, evrOutput("component", "0", release))
-				case cmd.Path == RPMDevBumpspecBinary:
+				case cmd.Args[0] == RPMDevBumpspecBinary:
 					return fileutils.WriteFile(ctx.FS(), testBumpspecPath,
 						[]byte("Name: component\nVersion: 1.0\nRelease: changed\n"), fileperms.PublicFile)
 				case isReleaseComparison(cmd):
