@@ -10,6 +10,9 @@ report:
 /pass:
   discover+:
     test: ^/tests/probe$
+/private-data:
+  discover+:
+    test: ^/tests/private-data$
 /mixed:
   discover+:
     test: ^/tests/(probe|fail|skip|info|warn|error)$

@@ -17,7 +17,7 @@ for format in json table; do
     test ! -e /artifacts/dry-run
 done
 
-for case in pass mixed skip fail warn with.dots empty prepare-failure finish-failure report-failure multi pass-empty root; do
+for case in pass private-data mixed skip fail warn with.dots empty prepare-failure finish-failure report-failure multi pass-empty root; do
     source=/workdir/fixture
     plan="/plans/${case}$"
     case "${case}" in

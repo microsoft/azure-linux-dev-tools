@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	iofs "io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -15,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bmatcuk/doublestar/v4"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
@@ -74,51 +74,64 @@ func executeComponentTMTTests(
 
 		runErr := runOneTMTTest(env, test, settings, &results[index])
 		if !env.DryRun() {
-			results[index].JUnit, err = collectTMTJUnit(env.FS(), root, filepath.Join(settings.WorkDir, "native"))
+			results[index].JUnit = collectTMTJUnit(env.FS(), root, filepath.Join(settings.WorkDir, "native"))
 		}
 
-		if err := errors.Join(runErr, err); err != nil {
-			return results, fmt.Errorf("TMT test %#q:\n%w", test.Name, err)
+		if runErr != nil {
+			return results, fmt.Errorf("TMT test %#q:\n%w", test.Name, runErr)
 		}
 	}
 
 	return results, nil
 }
 
-func collectTMTJUnit(fs opctx.FS, root string, native string) ([]string, error) {
+func collectTMTJUnit(fs opctx.FS, root string, native string) []string {
 	reports := []string{}
 
 	info, err := lstatIfPossible(fs, native)
 	if errors.Is(err, os.ErrNotExist) {
-		return reports, nil
+		return reports
 	}
 
 	if err != nil {
-		return reports, fmt.Errorf("inspect TMT run directory:\n%w", err)
+		slog.Warn("Unable to inspect TMT artifacts", "path", native, "error", err)
+
+		return reports
 	}
 
 	if !info.IsDir() {
-		return reports, fmt.Errorf("TMT run path %#q is not a directory", native)
+		slog.Warn("Skipping TMT artifacts: not a directory", "path", native)
+
+		return reports
 	}
 
-	paths, err := fileutils.Glob(afero.NewBasePathFs(fs, native),
-		"**/report/"+tmtJUnitPhase+"/junit.xml", doublestar.WithNoFollow(), doublestar.WithFailOnIOErrors())
-	if err != nil {
-		return reports, fmt.Errorf("find TMT JUnit reports:\n%w", err)
-	}
+	nativeFS := afero.NewIOFS(afero.NewBasePathFs(fs, native))
 
-	var failures []error
-
-	for _, path := range paths {
-		rel, err := retainedTMTReport(fs, root, filepath.Join(native, path))
+	err = iofs.WalkDir(nativeFS, ".", func(path string, entry iofs.DirEntry, err error) error {
 		if err != nil {
-			failures = append(failures, err)
-		} else {
-			reports = append(reports, rel)
+			slog.Warn("Skipping unreadable TMT artifacts", "path", filepath.Join(native, path), "error", err)
+
+			return nil
 		}
+
+		phaseDir := filepath.Dir(path)
+		if entry.Name() == "junit.xml" && filepath.Base(phaseDir) == tmtJUnitPhase &&
+			filepath.Base(filepath.Dir(phaseDir)) == "report" {
+			rel, err := retainedTMTReport(fs, root, filepath.Join(native, path))
+			if err != nil {
+				slog.Warn("Skipping invalid TMT report", "path", filepath.Join(native, path), "error", err)
+			} else {
+				reports = append(reports, rel)
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		slog.Warn("Unable to finish TMT report discovery", "path", native, "error", err)
 	}
 
-	return reports, errors.Join(failures...)
+	return reports
 }
 
 func retainedTMTReport(fs opctx.FS, root string, path string) (string, error) {
@@ -208,7 +221,7 @@ func runCapturedTMTCommand(
 	}
 
 	stdout := env.ReportFile()
-	if env.DefaultReportFormat() == azldev.ReportFormatJSON {
+	if env.DefaultReportFormat() == azldev.ReportFormatJSON || env.DefaultReportFormat() == azldev.ReportFormatCSV {
 		stdout = os.Stderr
 	}
 

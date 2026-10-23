@@ -46,16 +46,16 @@ general end-to-end suite with:
 mage e2e
 ```
 
-The GitHub Actions workflow runs three E2E shards in parallel:
+The GitHub Actions workflow runs four E2E shards in parallel:
 
 - `mage e2e -target=component-idempotency` runs update idempotency and subset render
   idempotency.
 - `mage e2e -target=image` runs Azure Linux image construction.
 - `mage e2e -target=full-render` runs the full Azure Linux render idempotency
   check, which dominates the suite runtime.
+- `mage e2e -target=tmt` runs local TMT reporting; virtual provisioning stays
+  quarantined unless explicitly enabled.
 
-`mage e2e -target=tmt` selects the local and virtual TMT tests. It is not yet in
-the CI matrix; the virtual test remains quarantined.
 
 ### Azure Linux image build
 

@@ -38,7 +38,8 @@ func TestTMTLocalReporting(t *testing.T) {
 	base, err := filepath.Abs(filepath.Join("..", "out", "tmt-local-e2e"))
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(base, fileperms.PrivateDir))
-	artifacts, err := os.MkdirTemp(base, "run-")
+	// Keep retained private payloads out of Go's recursive package discovery.
+	artifacts, err := os.MkdirTemp(base, "_run-")
 	require.NoError(t, err)
 	t.Logf("Retained local TMT artifacts: %s", artifacts)
 
@@ -69,6 +70,7 @@ func TestTMTLocalReporting(t *testing.T) {
 		pass, fail, skip, errors     int
 	}{
 		{"pass", 0, 0, 1, 1, 0, 0, 0},
+		{"private-data", 0, 0, 1, 1, 0, 0, 0},
 		{"mixed", 1, 2, 1, 1, 1, 2, 2},
 		{"skip", 1, 4, 1, 0, 0, 1, 0},
 		{"fail", 1, 1, 1, 0, 1, 0, 0},
@@ -124,6 +126,14 @@ func TestTMTLocalReporting(t *testing.T) {
 			runnerLog := filepath.Join(root, "001-azldev-tmt-probe", "runner.log")
 			log, err := os.ReadFile(runnerLog)
 			require.NoError(t, err)
+			if tc.name == "private-data" {
+				privateDirs, globErr := filepath.Glob(filepath.Join(root,
+					"*/native/plans/private-data/execute/data/guest/*/tests/private-data-*/data/private"))
+				require.NoError(t, globErr)
+				require.Len(t, privateDirs, 1)
+				_, readErr := os.ReadDir(privateDirs[0])
+				require.ErrorIs(t, readErr, os.ErrPermission, "private payload must remain unreadable")
+			}
 			if tc.name == "pass" {
 				assert.Contains(t, string(log), "azldev-junit")
 				testLogs, globErr := filepath.Glob(filepath.Join(root,
