@@ -59,6 +59,19 @@ container. Only the resolved source revision and checked qcow2 are written to a
 host artifact mount. The privileged container is restricted to this
 image-construction test; ordinary scenario and e2e containers remain unchanged.
 
+### Virtual TMT provisioning regression
+
+`mage e2e -target=tmt` builds the current Azure Linux image, then runs the real
+`azldev component test` flow with TMT 1.78.0, testcloud 0.12.0, and a tiny
+test-only probe RPM. The non-privileged TMT runner maps `/dev/kvm`, uses private
+session-libvirt state, and retains diagnostics under `out/tmt-virtual-e2e/`.
+
+This regression is temporarily quarantined while the known testcloud readiness
+failure is fixed. The normal `mage e2e` suite compiles the test but skips it;
+`mage e2e -target=tmt` explicitly enables and executes the known-red path. Remove the
+temporary environment guard once the provisioning fixes land so the standard
+E2E job enforces the regression.
+
 ## Mutation Testing
 
 Mutation testing measures how good the tests actually are (as opposed to mere line coverage) by
