@@ -174,6 +174,10 @@ copy the whole directory to retain diagnostics outside a container. Test-created
 payloads may retain restrictive permissions; report discovery does not change them.
 Discovery is best-effort: unreadable or invalid artifact paths produce warnings
 and are omitted, without changing the command's execution result.
+It matches the `report/azldev-junit/junit.xml` path suffix, not report provenance:
+test data or copied sources containing the same layout can also appear in `junit`.
+Consumers publishing these files should account for that limitation; discovery
+does not override TMT's exit status.
 
 TMT's native JUnit reporter is added without replacing existing reporters.
 Its default mapping is lossy (`info` becomes skipped; `warn` and `pending`
