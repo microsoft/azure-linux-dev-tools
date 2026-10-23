@@ -149,6 +149,11 @@ func CommitInterleavedHistory(
 		return err
 	}
 
+	changes, err = remapEquivalentUpstreamChanges(repo, upstreamCommits, changes)
+	if err != nil {
+		return err
+	}
+
 	// Stage overlay changes and capture the resulting tree hash.
 	overlayTreeHash, err := stageAndCaptureOverlayTree(repo)
 	if err != nil {
@@ -159,6 +164,98 @@ func CommitInterleavedHistory(
 	sequence := buildInterleavedSequence(upstreamCommits, changes)
 
 	return replayInterleavedHistory(repo, sequence, overlayTreeHash)
+}
+
+// remapEquivalentUpstreamChanges preserves history tied to a cherry-picked
+// upstream change after switching dist-git branches. Both the authored change
+// and its packaging tree must match; only the root '.gitignore' is ignored.
+func remapEquivalentUpstreamChanges(
+	repo *gogit.Repository,
+	upstreamCommits []*object.Commit,
+	changes []FingerprintChange,
+) ([]FingerprintChange, error) {
+	known := make(map[string]bool, len(upstreamCommits))
+	for _, commit := range upstreamCommits {
+		known[commit.Hash.String()] = true
+	}
+
+	result := slices.Clone(changes)
+	for idx, change := range result {
+		if change.UpstreamCommit == "" || known[change.UpstreamCommit] {
+			continue
+		}
+
+		original, err := repo.CommitObject(plumbing.NewHash(change.UpstreamCommit))
+		if errors.Is(err, plumbing.ErrObjectNotFound) {
+			continue // The existing orphan warning is emitted when the sequence is built.
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("reading historical upstream commit %#q:\n%w", change.UpstreamCommit, err)
+		}
+
+		matches, err := equivalentUpstreamCommits(original, upstreamCommits)
+		if err != nil {
+			return nil, err
+		}
+
+		if len(matches) != 1 {
+			continue
+		}
+
+		result[idx].UpstreamCommit = matches[0].Hash.String()
+		slog.Info("Preserving synthetic history through an equivalent upstream commit",
+			"originalUpstreamCommit", change.UpstreamCommit,
+			"upstreamCommit", result[idx].UpstreamCommit,
+			"projectCommit", change.Hash)
+	}
+
+	return result, nil
+}
+
+func equivalentUpstreamCommits(
+	original *object.Commit,
+	candidates []*object.Commit,
+) ([]*object.Commit, error) {
+	originalTree, err := upstreamHistoryTree(original)
+	if err != nil {
+		return nil, err
+	}
+
+	var matches []*object.Commit
+
+	for _, candidate := range candidates {
+		if candidate.Message != original.Message ||
+			candidate.Author.Name != original.Author.Name ||
+			candidate.Author.Email != original.Author.Email ||
+			!candidate.Author.When.Equal(original.Author.When) {
+			continue
+		}
+
+		candidateTree, err := upstreamHistoryTree(candidate)
+		if err != nil {
+			return nil, err
+		}
+
+		if slices.Equal(originalTree, candidateTree) {
+			matches = append(matches, candidate)
+		}
+	}
+
+	return matches, nil
+}
+
+func upstreamHistoryTree(commit *object.Commit) ([]object.TreeEntry, error) {
+	tree, err := commit.Tree()
+	if err != nil {
+		return nil, fmt.Errorf("reading tree for upstream commit %#q:\n%w", commit.Hash.String(), err)
+	}
+
+	// Dist-git branches can list different old tarballs in '.gitignore'
+	// while retaining identical specs, sources, patches, modes and subtrees.
+	return slices.DeleteFunc(slices.Clone(tree.Entries), func(entry object.TreeEntry) bool {
+		return entry.Name == ".gitignore"
+	}), nil
 }
 
 // stageAndCaptureOverlayTree stages all working tree changes and creates a
