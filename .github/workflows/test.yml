@@ -74,8 +74,8 @@ jobs:
       fail-fast: false
       matrix:
         host: [ubuntu-latest]
-        # Add 'tmt' once the quarantined readiness regression is fixed.
-        target: [component-idempotency, image, full-render]
+        # The tmt target runs local coverage; virtual provisioning remains quarantined.
+        target: [component-idempotency, image, full-render, tmt]
     runs-on: ${{ matrix.host }}
     permissions:
       contents: read

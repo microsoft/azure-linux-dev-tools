@@ -4,9 +4,11 @@
 package component
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -145,6 +147,107 @@ func TestComponentTestArtifacts(t *testing.T) {
 	}
 }
 
+func TestComponentTestCSVWithNoisyCommands(t *testing.T) {
+	env := reportTestEnv(t)
+	env.Env.SetDefaultReportFormat(azldev.ReportFormatCSV)
+
+	var output strings.Builder
+	env.Env.SetReportFile(&output)
+	env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+		_, err := io.WriteString(cmd.Stdout, "<diagnostic>not a CSV header</diagnostic>\n")
+
+		return err
+	}
+	cmd := NewComponentTestCmd()
+	cmd.SetArgs([]string{
+		testTMTComponentName, "--image-path", testImagePath, "--rpm", testRPMPath,
+		"--source-dir", "/source", "--work-dir", "/work", "--plan", "/plans/all",
+	})
+	require.NoError(t, cmd.ExecuteContext(env.Env))
+
+	rows, err := csv.NewReader(strings.NewReader(output.String())).ReadAll()
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	assert.Equal(t, []string{"test", "artifactDir"}, rows[0])
+	assert.Equal(t, testTMTComponentName, rows[1][0])
+	assert.NotContains(t, output.String(), "<diagnostic>")
+}
+
+type unreadableArtifactFS struct {
+	opctx.FS
+	blocked string
+	err     error
+}
+
+func (fs unreadableArtifactFS) Open(path string) (afero.File, error) {
+	if path == fs.blocked {
+		return nil, &os.PathError{Op: "open", Path: path, Err: fs.err}
+	}
+
+	return fs.FS.Open(path)
+}
+
+func (fs unreadableArtifactFS) Stat(path string) (os.FileInfo, error) {
+	if strings.HasPrefix(path, fs.blocked+string(filepath.Separator)) {
+		return nil, &os.PathError{Op: "stat", Path: path, Err: fs.err}
+	}
+
+	return fs.FS.Stat(path)
+}
+
+func TestCollectTMTJUnitUnreadableDirectories(t *testing.T) {
+	const (
+		root   = "/owned"
+		native = "/owned/native"
+	)
+	// Directory names here are legitimate plan hierarchy, not lifecycle steps.
+	goodReport := "native/execute/data/report/nested/report/azldev-junit/junit.xml"
+	otherReport := "native/other/report/azldev-junit/junit.xml"
+
+	for _, testCase := range []struct {
+		name, blocked string
+		readErr       error
+		want          []string
+	}{
+		{"private test data", "other/execute/data/private", os.ErrPermission, []string{goodReport, otherReport}},
+		{
+			"private payload named report", "other/execute/data/report", os.ErrPermission,
+			[]string{goodReport, otherReport},
+		},
+		{"private report directory", "other/report", os.ErrPermission, []string{goodReport}},
+		{"private reporter directory", "other/report/azldev-junit", os.ErrPermission, []string{goodReport}},
+		{"private run directory", "", os.ErrPermission, []string{}},
+		{"payload IO failure", "other/execute/data/private", io.ErrUnexpectedEOF, []string{goodReport, otherReport}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+
+			var warnings strings.Builder
+
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&warnings, nil)))
+			t.Cleanup(func() { slog.SetDefault(prev) })
+
+			for _, path := range []string{goodReport, otherReport} {
+				require.NoError(t, fileutils.WriteFile(env.TestFS, filepath.Join(root, path),
+					[]byte("<testsuites/>"), fileperms.PrivateFile))
+			}
+
+			blocked := filepath.Join(native, testCase.blocked)
+			require.NoError(t, env.TestFS.MkdirAll(blocked, fileperms.PrivateDir))
+
+			reports := collectTMTJUnit(unreadableArtifactFS{
+				FS: env.TestFS, blocked: blocked, err: testCase.readErr,
+			}, root, native)
+
+			assert.Equal(t, testCase.want, reports)
+			assert.Contains(t, warnings.String(), "level=WARN")
+			assert.Contains(t, warnings.String(), blocked)
+			assert.Contains(t, warnings.String(), testCase.readErr.Error())
+		})
+	}
+}
+
 func TestComponentTestFreshArtifactsAndFailFast(t *testing.T) {
 	env := reportTestEnv(t)
 	comp := env.Config.Components[testTMTComponentName]
@@ -176,6 +279,37 @@ func TestComponentTestFreshArtifactsAndFailFast(t *testing.T) {
 	assert.NotEqual(t, roots[0], roots[1])
 	assert.NotEqual(t, first[0].ArtifactDir, second[0].ArtifactDir)
 	assert.Equal(t, "first", first[0].Test, "no rows for unattempted entries")
+}
+
+func TestComponentTestDiscoveryPreservesRunnerError(t *testing.T) {
+	runnerErr := errors.New("test runner failed")
+	for _, runErr := range []error{nil, runnerErr} {
+		env := reportTestEnv(t)
+		filesystem := &unreadableArtifactFS{FS: env.TestFS, blocked: "/unused", err: os.ErrPermission}
+		configureReportTestEnv(t, env, filesystem, false)
+		env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+			if filepath.Base(cmd.Args[0]) != tmtProgram {
+				return nil
+			}
+
+			native := cmd.Args[slices.Index(cmd.Args, "--id")+1]
+			require.NoError(t, env.TestFS.MkdirAll(native, fileperms.PrivateDir))
+			filesystem.blocked = native
+
+			return runErr
+		}
+
+		results, err := executeReportTest(t, env)
+		if runErr == nil {
+			require.NoError(t, err, "discovery must not turn a successful run into a failure")
+		} else {
+			require.ErrorIs(t, err, runnerErr, "discovery must not replace the runner error")
+		}
+
+		require.Len(t, results, 1)
+		assert.NotEmpty(t, results[0].ArtifactDir)
+		assert.Empty(t, results[0].JUnit)
+	}
 }
 
 type reportFSFactory struct{ filesystem opctx.FS }

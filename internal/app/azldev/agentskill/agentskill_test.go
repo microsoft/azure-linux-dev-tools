@@ -144,6 +144,17 @@ func TestBuildComponentSkillDocumentsRPMDevBumpspecPreview(t *testing.T) {
 	assert.NotContains(t, doc, "rpmdev-bumpspec` or RPM macros")
 }
 
+func TestBuildComponentSkillDocumentsTMTArtifactsInBothModes(t *testing.T) {
+	for _, withoutLockfile := range []bool{false, true} {
+		doc, err := agentskill.NewCatalog(withoutLockfile).SkillDocument("azldev-build-component", testParams())
+		require.NoError(t, err)
+		assert.Contains(t, doc, "-O json")
+		assert.Contains(t, doc, "relative JUnit paths")
+		assert.Contains(t, doc, "early failures may have logs but no JUnit")
+		assert.Contains(t, doc, "disposable Azure Linux 4 test container")
+	}
+}
+
 func TestComponentTomlSkillDocumentsRPMDevBumpspecPreview(t *testing.T) {
 	doc, err := agentskill.SkillDocument("azldev-comp-toml", testParams())
 	require.NoError(t, err)

@@ -15,6 +15,12 @@
     grep -qx 'PROBE ROUND TRIP' "${TMT_TEST_DATA}/output"
 /fail:
   test: echo controlled-assertion-failure; exit 1
+/private-data:
+  test: |
+    set -eu
+    test "$(id -u)" = 0
+    mkdir -m 0700 "${TMT_TEST_DATA}/private" "${TMT_TEST_DATA}/report"
+    echo private-payload >"${TMT_TEST_DATA}/private/output.txt"
 /skip:
   result: custom
   test: |

@@ -155,7 +155,7 @@ status=$?
 ```
 
 The output lists attempted catalog entries; execution stops at the first failure.
-Diagnostics go to stderr. Example (paths are illustrative):
+JSON and CSV keep diagnostics on stderr. Example (paths are illustrative):
 
 ```json
 [
@@ -170,7 +170,10 @@ Diagnostics go to stderr. Example (paths are illustrative):
 
 `artifactDir` is a fresh directory containing `setup.log`, each invocation's
 `runner.log`, and its native TMT run directory. JUnit paths are relative to it;
-copy the whole directory to retain diagnostics outside a container.
+copy the whole directory to retain diagnostics outside a container. Test-created
+payloads may retain restrictive permissions; report discovery does not change them.
+Discovery is best-effort: unreadable or invalid artifact paths produce warnings
+and are omitted, without changing the command's execution result.
 
 TMT's native JUnit reporter is added without replacing existing reporters.
 Its default mapping is lossy (`info` becomes skipped; `warn` and `pending`
