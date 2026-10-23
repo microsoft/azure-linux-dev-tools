@@ -55,6 +55,7 @@ type App struct {
 	configFiles             []string
 	colorMode               ColorMode
 	withoutLockfile         bool
+	uniqueMockRoot          bool
 
 	// Root command for the CLI.
 	cmd cobra.Command
@@ -141,6 +142,7 @@ lives), or use -C to point to one.`,
 			env.SetConcurrency(app.concurrency)
 			env.SetNetworkRetries(app.networkRetries)
 			env.SetPermissiveConfigParsing(app.permissiveConfigEnabled())
+			env.SetUniqueMockRoot(app.uniqueMockRoot, command.Name())
 
 			return nil
 		},
@@ -193,6 +195,8 @@ func (app *App) registerGlobalFlags() {
 		false, "do not fail on unknown fields in TOML config files")
 	app.cmd.PersistentFlags().BoolVar(&app.withoutLockfile, "without-lockfile", false,
 		"preview: track resolved upstream commits in generated config instead of lock files")
+	app.cmd.PersistentFlags().BoolVar(&app.uniqueMockRoot, "unique-mockroot", false,
+		"use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters)")
 }
 
 // addAdvancedCommandHint embeds a hint about the hidden "advanced" command group

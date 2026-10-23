@@ -9,6 +9,7 @@ import (
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/workdir"
+	"github.com/microsoft/azure-linux-dev-tools/internal/buildenv"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -58,4 +59,29 @@ func Test_Create(t *testing.T) {
 	stat, statErr := env.TestFS.Stat(dirPath)
 	require.NoError(t, statErr)
 	assert.True(t, stat.IsDir())
+}
+
+func TestMkComponentBuildEnvironmentUniqueRoots(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	env.Env.SetUniqueMockRoot(true, "build")
+	factory, err := workdir.NewFactory(env.FS(), env.Env.WorkDir(), env.Env.ConstructionTime())
+	require.NoError(t, err)
+
+	names := []string{"curl", "zlib", "curl"}
+
+	extensions := make([]string, 0, len(names))
+	for _, name := range names {
+		root, createErr := workdir.MkComponentBuildEnvironment(env.Env, factory,
+			&projectconfig.ComponentConfig{Name: name}, "build", nil)
+		require.NoError(t, createErr)
+
+		mockRoot, ok := root.(*buildenv.MockRoot)
+		require.True(t, ok)
+
+		extension := mockRoot.GetRunner().UniqueExtension()
+		assert.Regexp(t, `^bld-`+name+`-[a-z2-7]{6}$`, extension)
+		assert.Equal(t, extension, mockRoot.GetRunner().UniqueExtension())
+		assert.NotContains(t, extensions, extension)
+		extensions = append(extensions, extension)
+	}
 }

@@ -144,6 +144,18 @@ func TestBuildComponentSkillDocumentsRPMDevBumpspecPreview(t *testing.T) {
 	assert.NotContains(t, doc, "rpmdev-bumpspec` or RPM macros")
 }
 
+func TestSkillsDocumentUniqueMockRoots(t *testing.T) {
+	for _, name := range []string{"azldev-build-component", "azldev-mock"} {
+		t.Run(name, func(t *testing.T) {
+			doc, err := agentskill.SkillDocument(name, testParams())
+			require.NoError(t, err)
+			assert.Contains(t, doc, "--unique-mockroot")
+			assert.Contains(t, doc, "at most 24 characters")
+			assert.Contains(t, doc, "--uniqueext <extension> --shell")
+		})
+	}
+}
+
 func TestComponentTomlSkillDocumentsRPMDevBumpspecPreview(t *testing.T) {
 	doc, err := agentskill.SkillDocument("azldev-comp-toml", testParams())
 	require.NoError(t, err)

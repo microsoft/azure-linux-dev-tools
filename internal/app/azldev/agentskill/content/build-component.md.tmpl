@@ -21,6 +21,14 @@ Build foundational packages before their dependents. RPMs land in the project's
 configured output directory (`out` by default). `-q` quiets output but hides build
 progress — use it only for inner-loop builds you expect to succeed.
 
+Use the global `--unique-mockroot` flag to isolate mock roots from other azldev
+operations. Extensions contain abbreviated action/component labels and a random
+suffix, use at most 24 characters total (up to 12 for the component label), and
+remain stable through each root's cleanup.
+To inspect a preserved unique root, use
+`mock -r <mock-config> --uniqueext <extension> --shell` with the extension from
+the verbose command log; a new azldev shell invocation creates a different root.
+
 ## The inner loop
 
 investigate → modify → render → build → test → inspect
