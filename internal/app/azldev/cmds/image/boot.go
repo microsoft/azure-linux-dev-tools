@@ -123,7 +123,7 @@ type ImageBootOptions struct {
 	// an empty disk is created if no image is specified).
 	ImageName string      // Positional arg: look up image in project config to find its path.
 	ImagePath string      // --image-path: explicit path to a disk image (overrides lookup).
-	Format    ImageFormat // --format: explicit format hint for image-name lookup.
+	Format    ImageFormat // --format: disk format override or format hint for image-name lookup.
 
 	// --iso: bootable ISO (e.g., livecd, installer, rescue media). Attached as a
 	// bootable CD-ROM alongside the disk. Optional; independent of cloud-init.
@@ -272,9 +272,6 @@ func addBootFlags(cmd *cobra.Command, options *ImageBootOptions) {
 		func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
 			return qemu.SupportedArchitectures(), cobra.ShellCompDirectiveNoFileComp
 		})
-
-	// '--format' only affects image-name lookup; it conflicts with an explicit path.
-	cmd.MarkFlagsMutuallyExclusive("image-path", "format")
 }
 
 // bootFlagsExplicit tracks which flags were explicitly set on the command line
@@ -451,9 +448,12 @@ func resolveDiskSource(env *azldev.Env, options *ImageBootOptions) (imagePath, i
 
 	switch {
 	case options.ImagePath != "":
-		imageFormat, err = InferImageFormat(options.ImagePath)
-		if err != nil {
-			return "", "", err
+		imageFormat = string(options.Format)
+		if imageFormat == "" {
+			imageFormat, err = InferImageFormat(options.ImagePath)
+			if err != nil {
+				return "", "", err
+			}
 		}
 
 		// InferImageFormat recognizes all known image formats (including non-bootable
