@@ -8,7 +8,7 @@ require (
 	github.com/acobaugh/osrelease v0.1.0
 	github.com/auribuo/stylishcobra v1.0.1
 	github.com/binalyze/ctxio v0.0.0-20210917063359-64c39a15e009
-	github.com/bmatcuk/doublestar/v4 v4.10.2
+	github.com/bmatcuk/doublestar/v4 v4.10.3
 	github.com/briandowns/spinner v1.23.2
 	github.com/brunoga/deep v1.3.1
 	github.com/cavaliergopher/cpio v1.0.1
@@ -26,14 +26,15 @@ require (
 	github.com/google/renameio v1.0.1
 	github.com/google/uuid v1.6.0
 	github.com/h2non/gock v1.2.0
+	github.com/hashicorp/go-version v1.7.0
 	github.com/invopop/jsonschema v0.14.0
 	github.com/jedib0t/go-pretty/v6 v6.8.3
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51
-	github.com/klauspost/compress v1.20.1
+	github.com/klauspost/compress v1.20.3
 	github.com/knqyf263/go-rpm-version v0.0.0-20240918084003-2afd7dc6a38f
 	github.com/lmittmann/tint v1.2.1
 	github.com/magefile/mage v1.17.2
-	github.com/mark3labs/mcp-go v1.1.1
+	github.com/mark3labs/mcp-go v1.2.1
 	github.com/mattn/go-isatty v0.0.24
 	github.com/mitchellh/hashstructure/v2 v2.0.2
 	github.com/moby/moby/api v1.56.1

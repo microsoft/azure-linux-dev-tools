@@ -10,6 +10,12 @@ azldev drives the build from a kiwi-ng definition; the `.kiwi` file itself is
 **upstream KIWI NG** ([docs](https://osinside.github.io/kiwi/)) and azldev does not
 own its schema.
 
+Use KIWI 11.0.0 or newer with this azldev release. Image builds check the version
+used by sudo and reject older versions, including 11.0.0 prereleases. Migrate
+existing runtime configuration files from KIWI 10's list format to KIWI 11's
+mapping format. azldev does not migrate configuration files and
+does not automatically change installed tool versions.
+
 ## Commands
 
 Images are selected by their **name as a positional argument** (not `-p`).
@@ -26,7 +32,10 @@ Images are selected by their **name as a positional argument** (not `-p`).
 `--arch` to target an architecture. When the selected distro version defines
 `kiwi-config-override`, azldev passes it to KIWI with `--config`. These top-level
 overrides have highest precedence. `azldev image boot` takes a built image name, or an
-explicit `--image-path` / `--iso`. Confirm current flags with
+explicit `--image-path` / `--iso`. Combine `--image-path` with `--format` to specify
+the disk format; otherwise it is inferred from the filename extension.
+When booting by name, `--format` selects the built artifact format.
+Confirm current flags with
 `azldev image <command> --help` (there are more subcommands, e.g. `inject-files`).
 
 ## Registering an image

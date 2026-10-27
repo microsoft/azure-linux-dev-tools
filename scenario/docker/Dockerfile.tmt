@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/azurelinux/core:4@sha256:9c68c83b4b6cd6c24b40fc107074885f70847c43dcf36b5b2f58624f9b993104
+FROM mcr.microsoft.com/azurelinux/core:4@sha256:9cb8f13bbf4d189984948ea8c20e27b88ee99b99507ffd9930a41acf76ae1a5a
 SHELL ["/bin/bash", "-c"]
 
 ARG UID
