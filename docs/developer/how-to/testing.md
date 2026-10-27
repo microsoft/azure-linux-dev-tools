@@ -32,6 +32,7 @@ This document provides guidelines for writing and maintaining tests within the A
 ## Scenario Tests
 
 - Use the scenario testing framework in `scenario/`
+- Containerized scenario tests use the Azure Linux 4.0 core image
 - Test realistic user workflows
 - Include both positive and negative test cases
 - Use `mage scenarioUpdate` when test expectations change and snapshots need updating

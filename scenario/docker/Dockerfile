@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/azurelinux/base/core:3.0@sha256:bd88359666e3f20296e7fe639a480dfd3c3c8eba299b21f26e4560353e21a656
+FROM mcr.microsoft.com/azurelinux/core:4-2026111703@sha256:73a393085f44f1024d13578f97a638aad1af9d98f498c6b01d10741ce205ed56
 SHELL ["/bin/bash", "-c"]
 
 ARG UID
@@ -30,7 +30,7 @@ RUN tdnf -y install \
     git \
     mock \
     mock-rpmautospec \
-    moby-containerd \
+    containerd \
     moby-engine \
     docker-cli \
     sudo
