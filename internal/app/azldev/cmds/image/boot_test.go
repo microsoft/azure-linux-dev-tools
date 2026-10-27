@@ -48,6 +48,19 @@ func TestNewImageBootCmd_DiskSizeDefault(t *testing.T) {
 	assert.Equal(t, "10G", diskSizeFlag.DefValue)
 }
 
+func TestNewImageBootCmd_ImagePathWithFormat(t *testing.T) {
+	for _, format := range image.BootableImageFormats() {
+		t.Run(format, func(t *testing.T) {
+			cmd := image.NewImageBootCmd()
+			err := cmd.ParseFlags([]string{
+				"--image-path", "/image.raw", "--format", format, "--memory", "2G", "--cpus", "2",
+			})
+			require.NoError(t, err)
+			assert.NoError(t, cmd.ValidateFlagGroups())
+		})
+	}
+}
+
 func TestNewImageBootCmd_NoImageSourceErrors(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
 
