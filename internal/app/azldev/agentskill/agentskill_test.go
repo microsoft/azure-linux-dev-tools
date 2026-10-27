@@ -155,9 +155,14 @@ func TestImageSkillDocumentsSKUGroupGuidance(t *testing.T) {
 	doc, err := agentskill.SkillDocument("azldev-image", testParams())
 	require.NoError(t, err)
 
+	fields := parseFrontmatter(t, doc)
+	assert.Equal(t, "azldev-image", fields["name"])
 	assert.Contains(t, doc, "sku-groups = ")
 	assert.Contains(t, doc, "[sku-groups.<name>]")
 	assert.Contains(t, doc, "multi-SKU performance tests")
+	assert.Contains(t, strings.Join(strings.Fields(doc), " "),
+		"Combine `--image-path` with `--format` to specify the disk format; "+
+			"otherwise it is inferred from the filename extension.")
 }
 
 func TestSkillFrontmatterInvariants(t *testing.T) {
