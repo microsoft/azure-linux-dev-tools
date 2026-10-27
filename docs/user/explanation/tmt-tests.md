@@ -121,6 +121,26 @@ the selected plan(s). **The plan's own `discover` step then decides where the
 tests come from** — azldev does not model that; it only pins (or locally
 materializes) the plan's repo.
 
+### Host Python prerequisites
+
+The pinned TMT 1.79.0 requires **Python 3.12 or newer** on the host for both
+`--provision virtual` and `--provision local`. The `python3` executable on
+`PATH` must meet this minimum and provide `venv` and `pip` support. Check the
+interpreter before running tests:
+
+```bash
+python3 --version
+```
+
+azldev creates or reuses an isolated environment at `<work-dir>/tmt/venv`,
+where `<work-dir>` is selected by `--work-dir` (the current working directory
+if omitted). Upgrading the host Python does not replace an existing virtual
+environment. If that environment was created with Python 3.9-3.11, first make
+sure `python3` on `PATH` is version 3.12 or newer, remove only the
+`<work-dir>/tmt/venv` directory, and rerun the same `azldev component test`
+command with the same work directory. azldev will recreate the environment
+with `python3 -m venv` and install the pinned TMT dependencies.
+
 ### Candidate RPMs: `--rpm` (loose files) vs. build repos
 
 `azldev component test --rpm` installs **exactly** the RPM files you pass, as

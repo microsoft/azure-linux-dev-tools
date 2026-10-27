@@ -178,11 +178,13 @@ AZURE LINUX 4 PREREQUISITES:
   pinned TMT version there. The local provisioner uses sudo to install the
   supplied candidate RPMs and execute the plan, so it modifies the host.
 
-azldev creates or reuses an isolated Python environment under --work-dir and
-installs TMT with virtual-provisioner support there. python3 must be available
-on the host; git is required for azldev's own catalog clone unless
-'--source-dir' is used, though the selected plan's 'discover' step may still
-invoke git itself regardless of '--source-dir'.`,
+azldev creates or reuses <work-dir>/tmt/venv and installs the pinned TMT there.
+Both provisioner modes require the host's python3 to be Python 3.12 or newer
+(TMT 1.79.0), with venv and pip support. For a venv created with older Python,
+first ensure python3 meets this minimum, remove only <work-dir>/tmt/venv, and
+rerun with the same --work-dir. Upgrading host Python does not recreate the venv.
+git is required for azldev's catalog clone unless '--source-dir' is used; the
+plan's 'discover' step may still invoke git regardless of '--source-dir'.`,
 		Example: `  # Build the component first
   azldev component build buildah
 
