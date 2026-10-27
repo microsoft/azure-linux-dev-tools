@@ -145,16 +145,20 @@ func TestNetworkOn(t *testing.T) {
 	collateral := containertest.NewContainerTestCollateral(t).WithNetwork()
 
 	// Networking can be unreliable, so set a timeout and retry a few times.
-	const maxRetries = 10
-	const timeout = 5 * time.Second
+	const (
+		maxRetries       = 10
+		containerTimeout = 20 * time.Second
+		retryDelay       = 5 * time.Second
+	)
+	curlCmd := []string{"curl", "--connect-timeout", "10", "--max-time", "15", referenceUri}
 	gotGoodResult := false
-	for range maxRetries {
+	for attempt := range maxRetries {
 		results, err := containertest.RunCmdInContainer(
-			t, collateral, []string{"curl", referenceUri}, timeout)
-		if err != nil {
-			if errors.Is(err, containertest.ErrTimeout) {
-				continue
-			}
+			t, collateral, curlCmd, containerTimeout)
+		if errors.Is(err, containertest.ErrTimeout) {
+			t.Logf("curl attempt %d/%d exceeded the %v container timeout:\n%v\nstderr:\n%s",
+				attempt+1, maxRetries, containerTimeout, err, results.Stderr)
+			continue
 		}
 		require.NoError(t, err)
 
@@ -163,7 +167,9 @@ func TestNetworkOn(t *testing.T) {
 			break
 		}
 
-		time.Sleep(timeout)
+		t.Logf("curl attempt %d/%d exited with code %d:\n%s",
+			attempt+1, maxRetries, results.ExitCode, results.Stderr)
+		time.Sleep(retryDelay)
 	}
 
 	assert.Truef(t, gotGoodResult, "curl failed to reach %s", referenceUri)
