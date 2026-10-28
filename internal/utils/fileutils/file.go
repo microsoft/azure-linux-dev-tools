@@ -55,6 +55,29 @@ func DirExists(fs opctx.FS, path string) (bool, error) {
 	return afero.DirExists(fs, path)
 }
 
+// ValidateFileExists checks that path exists and is not a directory.
+func ValidateFileExists(fs opctx.FS, path string) error {
+	isDir, err := DirExists(fs, path)
+	if err != nil {
+		return fmt.Errorf("cannot access %#q:\n%w", path, err)
+	}
+
+	if isDir {
+		return fmt.Errorf("%#q is a directory, expected a file", path)
+	}
+
+	exists, err := Exists(fs, path)
+	if err != nil {
+		return fmt.Errorf("cannot access %#q:\n%w", path, err)
+	}
+
+	if !exists {
+		return fmt.Errorf("file not found: %#q", path)
+	}
+
+	return nil
+}
+
 // ValidateFilename ensures a filename is safe for use as a destination path.
 // It rejects filenames that could escape the destination directory via path traversal.
 func ValidateFilename(filename string) error {

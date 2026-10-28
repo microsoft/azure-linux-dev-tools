@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
-	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/imagebuilder"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/pelletier/go-toml/v2"
@@ -148,8 +148,9 @@ func runImageTest(env *azldev.Env, options *ImageTestOptions) error {
 }
 
 func prepareImageTest(env *azldev.Env, options *ImageTestOptions) (*projectconfig.ImageConfig, error) {
-	imageConfig, err := ResolveImageByName(env, options.ImageName)
+	imageConfig, err := imagebuilder.ResolveImageByName(env, options.ImageName)
 	if err != nil {
+		//nolint:wrapcheck // Preserve the existing command-facing error unchanged.
 		return nil, err
 	}
 
@@ -158,7 +159,7 @@ func prepareImageTest(env *azldev.Env, options *ImageTestOptions) (*projectconfi
 		return nil, err
 	}
 
-	if err := validateFileExists(env.FS(), imagePath); err != nil {
+	if err := fileutils.ValidateFileExists(env.FS(), imagePath); err != nil {
 		return nil, fmt.Errorf("image path:\n%w", err)
 	}
 
@@ -313,27 +314,4 @@ func decodePytestConfig(raw map[string]any) (*projectconfig.PytestConfig, error)
 	}
 
 	return pytestConfig, nil
-}
-
-// validateFileExists returns an error if the path does not point to an existing regular file.
-func validateFileExists(fs opctx.FS, path string) error {
-	isDir, err := fileutils.DirExists(fs, path)
-	if err != nil {
-		return fmt.Errorf("cannot access %#q:\n%w", path, err)
-	}
-
-	if isDir {
-		return fmt.Errorf("%#q is a directory, expected a file", path)
-	}
-
-	exists, err := fileutils.Exists(fs, path)
-	if err != nil {
-		return fmt.Errorf("cannot access %#q:\n%w", path, err)
-	}
-
-	if !exists {
-		return fmt.Errorf("file not found: %#q", path)
-	}
-
-	return nil
 }
