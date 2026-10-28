@@ -13,8 +13,8 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/imagebuilder"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/pytest"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
-	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
 )
 
@@ -252,12 +252,12 @@ func runResolvedTest(
 ) error {
 	switch resolvedTest.Definition.Type {
 	case string(projectconfig.TestTypePytest):
-		suiteConfig, err := testDefinitionToSuiteConfig(resolvedTest)
-		if err != nil {
-			return err
-		}
-
-		return RunPytestSuite(env, suiteConfig, imageConfig, options)
+		//nolint:wrapcheck // Preserve the existing command-facing error unchanged.
+		return pytest.RunTestDefinition(env, resolvedTest, imageConfig, &pytest.Options{
+			ImageName:    options.ImageName,
+			ImagePath:    options.ImagePath,
+			JUnitXMLPath: options.JUnitXMLPath,
+		})
 
 	case string(projectconfig.TestTypeLisa):
 		return RunLisaTestDefinition(env, resolvedTest, imageConfig, options)
@@ -272,46 +272,4 @@ func runResolvedTest(
 	default:
 		return fmt.Errorf("unsupported test type %#q for test %#q", resolvedTest.Definition.Type, resolvedTest.Name)
 	}
-}
-
-func testDefinitionToSuiteConfig(resolvedTest projectconfig.ResolvedTest) (*projectconfig.TestSuiteConfig, error) {
-	pytestConfig, err := decodePytestConfig(resolvedTest.Definition.Pytest)
-	if err != nil {
-		return nil, fmt.Errorf("decode pytest config for test %#q:\n%w", resolvedTest.Name, err)
-	}
-
-	// The stored config keeps 'working-dir' as authored; resolve it relative to
-	// the defining config file's directory only here, for execution.
-	pytestConfig.WorkingDir = resolvedTest.Definition.PytestWorkingDir()
-
-	suiteConfig := &projectconfig.TestSuiteConfig{
-		Name:        resolvedTest.Name,
-		Description: resolvedTest.Definition.Description,
-		Type:        projectconfig.TestTypePytest,
-		Pytest:      pytestConfig,
-	}
-
-	if err := suiteConfig.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid pytest test %#q:\n%w", resolvedTest.Name, err)
-	}
-
-	return suiteConfig, nil
-}
-
-func decodePytestConfig(raw map[string]any) (*projectconfig.PytestConfig, error) {
-	if raw == nil {
-		return nil, errors.New("missing [pytest] subtable")
-	}
-
-	bytes, err := toml.Marshal(raw)
-	if err != nil {
-		return nil, fmt.Errorf("marshal pytest config:\n%w", err)
-	}
-
-	pytestConfig := &projectconfig.PytestConfig{}
-	if err := toml.Unmarshal(bytes, pytestConfig); err != nil {
-		return nil, fmt.Errorf("unmarshal pytest config:\n%w", err)
-	}
-
-	return pytestConfig, nil
 }

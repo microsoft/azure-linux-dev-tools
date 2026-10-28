@@ -17,6 +17,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/git"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/prereqs"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/pythonenv"
 )
 
 const (
@@ -114,7 +115,7 @@ func runLisaLocally(
 ) error {
 	// Ensure python3 is available; git is only needed when azldev clones the framework
 	// itself (i.e., --lisa-dir was not given).
-	if err := prereqs.RequireExecutable(env, pythonProgram, nil); err != nil {
+	if err := prereqs.RequireExecutable(env, pythonenv.Program, nil); err != nil {
 		return fmt.Errorf("python3 is required to run LISA tests:\n%w", err)
 	}
 
@@ -446,7 +447,7 @@ func ensureLisaVenv(
 ) (string, error) {
 	venvDir := filepath.Join(env.WorkDir(), lisaDirName, lisaVenvDirName, suiteName)
 
-	venvPython := filepath.Join(venvDir, "bin", pythonProgram)
+	venvPython := filepath.Join(venvDir, "bin", pythonenv.Program)
 
 	venvExists, err := fileutils.Exists(env.FS(), venvPython)
 	if err != nil {
@@ -456,7 +457,8 @@ func ensureLisaVenv(
 	if !venvExists {
 		slog.Info("Creating LISA Python venv", slog.String("path", venvDir))
 
-		if err := createPythonVenv(env, venvDir); err != nil {
+		if err := pythonenv.Create(env, venvDir); err != nil {
+			//nolint:wrapcheck // Preserve the existing venv-creation error unchanged.
 			return "", err
 		}
 	} else {
@@ -525,16 +527,17 @@ func buildLisaArgs(
 		absImagePath = options.ImagePath
 	}
 
-	properties, err := serializeImageProperties(imageConfig.Properties)
+	properties, err := imageConfig.PropertiesJSON()
 	if err != nil {
+		//nolint:wrapcheck // Preserve the existing property-serialization error unchanged.
 		return nil, err
 	}
 
 	replacer := strings.NewReplacer(
-		imagePlaceholder, absImagePath,
-		imageNamePlaceholder, options.ImageName,
-		capabilitiesPlaceholder, strings.Join(imageConfig.Capabilities.EnabledNames(), ","),
-		propertiesPlaceholder, properties,
+		projectconfig.ImagePlaceholder, absImagePath,
+		projectconfig.ImageNamePlaceholder, options.ImageName,
+		projectconfig.CapabilitiesPlaceholder, strings.Join(imageConfig.Capabilities.EnabledNames(), ","),
+		projectconfig.PropertiesPlaceholder, properties,
 	)
 
 	baseArgs := []string{"-r", runbookPath}

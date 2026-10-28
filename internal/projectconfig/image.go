@@ -4,6 +4,7 @@
 package projectconfig
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 
@@ -89,6 +90,21 @@ type ImageConfig struct {
 
 	// Properties holds extensible string metadata describing the image.
 	Properties map[string]string `toml:"properties,omitempty" json:"properties,omitempty" jsonschema:"title=Properties,description=Extensible string properties describing this image"`
+}
+
+// PropertiesJSON encodes the image property bag for test arguments and listings.
+func (i *ImageConfig) PropertiesJSON() (string, error) {
+	properties := i.Properties
+	if properties == nil {
+		properties = map[string]string{}
+	}
+
+	serialized, err := json.Marshal(properties)
+	if err != nil {
+		return "", fmt.Errorf("failed to serialize image properties:\n%w", err)
+	}
+
+	return string(serialized), nil
 }
 
 // SupportsArchitecture reports whether the image supports arch. An image with no

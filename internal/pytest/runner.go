@@ -1,10 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-package image
+package pytest
 
 import (
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -18,29 +17,23 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/prereqs"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/pythonenv"
 )
 
-const (
-	// pythonProgram is the Python interpreter used to create venvs and run pytest.
-	pythonProgram = "python3"
+// venvDirName is the name of the venv directory created under the azldev work dir.
+const venvDirName = "pytest-venv"
 
-	// venvDirName is the name of the venv directory created under the azldev work dir.
-	venvDirName = "pytest-venv"
-
-	// imagePlaceholder is the placeholder token for the image path.
-	imagePlaceholder = "{image-path}"
-	// imageNamePlaceholder is the placeholder token for the image name.
-	imageNamePlaceholder = "{image-name}"
-	// capabilitiesPlaceholder is the placeholder token for the comma-delimited capabilities.
-	capabilitiesPlaceholder = "{capabilities}"
-	// propertiesPlaceholder is the placeholder token for the JSON-encoded image properties.
-	propertiesPlaceholder = "{properties}"
-)
+// Options holds the image inputs and report destination for a pytest run.
+type Options struct {
+	ImageName    string
+	ImagePath    string
+	JUnitXMLPath string
+}
 
 // RunPytestSuite runs a pytest-based test suite natively using a Python venv.
 func RunPytestSuite(
 	env *azldev.Env, suiteConfig *projectconfig.TestSuiteConfig,
-	imageConfig *projectconfig.ImageConfig, options *ImageTestOptions,
+	imageConfig *projectconfig.ImageConfig, options *Options,
 ) error {
 	pytestConfig := suiteConfig.Pytest
 	if pytestConfig == nil {
@@ -66,7 +59,7 @@ func RunPytestSuite(
 	}
 
 	// Ensure python3 is available.
-	if err := prereqs.RequireExecutable(env, pythonProgram, nil); err != nil {
+	if err := prereqs.RequireExecutable(env, pythonenv.Program, nil); err != nil {
 		return fmt.Errorf("python3 is required to run pytest tests:\n%w", err)
 	}
 
@@ -84,7 +77,7 @@ func RunPytestSuite(
 
 	slog.Info("Running pytest", slog.Any("args", pytestArgs))
 
-	venvPython := filepath.Join(venvDir, "bin", pythonProgram)
+	venvPython := filepath.Join(venvDir, "bin", pythonenv.Program)
 
 	cmdArgs := append([]string{"-m", "pytest"}, pytestArgs...)
 
@@ -128,7 +121,7 @@ func ensurePytestVenv(
 
 	venvDir := filepath.Join(workDir, venvDirName, testName)
 
-	venvPython := filepath.Join(venvDir, "bin", pythonProgram)
+	venvPython := filepath.Join(venvDir, "bin", pythonenv.Program)
 
 	venvExists, err := fileutils.Exists(env.FS(), venvPython)
 	if err != nil {
@@ -136,7 +129,8 @@ func ensurePytestVenv(
 	}
 
 	if !venvExists {
-		if err := createPythonVenv(env, venvDir); err != nil {
+		if err := pythonenv.Create(env, venvDir); err != nil {
+			//nolint:wrapcheck // Preserve the existing venv-creation error unchanged.
 			return "", err
 		}
 	} else {
@@ -149,26 +143,6 @@ func ensurePytestVenv(
 	}
 
 	return venvDir, nil
-}
-
-// createPythonVenv creates a new Python virtual environment at venvDir.
-func createPythonVenv(env *azldev.Env, venvDir string) error {
-	slog.Info("Creating Python venv", slog.String("path", venvDir))
-
-	venvCmd := exec.CommandContext(env, pythonProgram, "-m", "venv", venvDir)
-	venvCmd.Stdout = os.Stdout
-	venvCmd.Stderr = os.Stderr
-
-	cmd, err := env.Command(venvCmd)
-	if err != nil {
-		return fmt.Errorf("failed to create venv command:\n%w", err)
-	}
-
-	if err := cmd.Run(env); err != nil {
-		return fmt.Errorf("failed to create Python venv at %#q:\n%w", venvDir, err)
-	}
-
-	return nil
 }
 
 // installPytestDependencies installs Python dependencies into the venv according to the
@@ -296,24 +270,25 @@ func BuildNativePytestArgs(
 	fs opctx.FS,
 	pytestConfig *projectconfig.PytestConfig,
 	imageConfig *projectconfig.ImageConfig,
-	options *ImageTestOptions,
+	options *Options,
 ) ([]string, error) {
 	absImagePath, err := filepath.Abs(options.ImagePath)
 	if err != nil {
 		absImagePath = options.ImagePath
 	}
 
-	properties, err := serializeImageProperties(imageConfig.Properties)
+	properties, err := imageConfig.PropertiesJSON()
 	if err != nil {
+		//nolint:wrapcheck // Preserve the existing property-serialization error unchanged.
 		return nil, err
 	}
 
 	// Build a replacer for all known placeholders.
 	replacer := strings.NewReplacer(
-		imagePlaceholder, absImagePath,
-		imageNamePlaceholder, options.ImageName,
-		capabilitiesPlaceholder, strings.Join(imageConfig.Capabilities.EnabledNames(), ","),
-		propertiesPlaceholder, properties,
+		projectconfig.ImagePlaceholder, absImagePath,
+		projectconfig.ImageNamePlaceholder, options.ImageName,
+		projectconfig.CapabilitiesPlaceholder, strings.Join(imageConfig.Capabilities.EnabledNames(), ","),
+		projectconfig.PropertiesPlaceholder, properties,
 	)
 
 	args := make([]string, 0, len(pytestConfig.TestPaths)+len(pytestConfig.ExtraArgs))
@@ -336,19 +311,6 @@ func BuildNativePytestArgs(
 	}
 
 	return args, nil
-}
-
-func serializeImageProperties(properties map[string]string) (string, error) {
-	if properties == nil {
-		properties = map[string]string{}
-	}
-
-	serialized, err := json.Marshal(properties)
-	if err != nil {
-		return "", fmt.Errorf("failed to serialize image properties:\n%w", err)
-	}
-
-	return string(serialized), nil
 }
 
 // expandGlob expands a glob pattern relative to workingDir using [fileutils.Glob], which
