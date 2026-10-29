@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-package image
+package lisa
 
 import (
 	"fmt"
@@ -16,6 +16,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/git"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/imageformat"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/prereqs"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/pythonenv"
 )
@@ -35,15 +36,22 @@ const (
 	lisaGeneratedRunbookPrefix = "azldev-generated-"
 )
 
-// RunLisaTestDefinition runs a new-style [tests.X] LISA test definition locally, generating
+// Options holds the image inputs and optional framework checkout for a LISA run.
+type Options struct {
+	ImageName string
+	ImagePath string
+	LisaDir   string
+}
+
+// RunTestDefinition runs a new-style [tests.X] LISA test definition locally, generating
 // a runbook from the test's configured criteria and invoking LISA. It requires either
 // options.LisaDir (an already-cloned LISA checkout) or the test's [tests.X.lisa] subtable
 // to include a 'source' (git-url, ref) identifying the LISA framework to clone; tests with
 // neither are metadata-only and cannot be run locally (they must be run through external
 // orchestration).
-func RunLisaTestDefinition(
+func RunTestDefinition(
 	env *azldev.Env, resolvedTest projectconfig.ResolvedTest,
-	imageConfig *projectconfig.ImageConfig, options *ImageTestOptions,
+	imageConfig *projectconfig.ImageConfig, options *Options,
 ) error {
 	lisa := resolvedTest.Definition.Lisa
 	if lisa == nil {
@@ -105,13 +113,13 @@ func RunLisaTestDefinition(
 }
 
 // runLisaLocally sets up the LISA framework and venv, generates a runbook from the given
-// criteria, and invokes LISA against the given image. It backs RunLisaTestDefinition
+// criteria, and invokes LISA against the given image. It backs RunTestDefinition
 // (new-style [tests] definitions). If options.LisaDir is set, that checkout is used directly
 // instead of cloning framework; in that case framework may be nil.
 func runLisaLocally(
 	env *azldev.Env, name string, framework *projectconfig.GitSourceConfig, criteria []lisaCriteria,
 	pipPreInstall, pipExtras, extraArgs []string,
-	imageConfig *projectconfig.ImageConfig, options *ImageTestOptions,
+	imageConfig *projectconfig.ImageConfig, options *Options,
 ) error {
 	// Ensure python3 is available; git is only needed when azldev clones the framework
 	// itself (i.e., --lisa-dir was not given).
@@ -190,7 +198,7 @@ func runLisaLocally(
 // introducing any git-source metadata requirement for the test. framework may be nil only
 // when options.LisaDir is set.
 func resolveLisaFrameworkDir(
-	env *azldev.Env, name, lisaBaseDir string, framework *projectconfig.GitSourceConfig, options *ImageTestOptions,
+	env *azldev.Env, name, lisaBaseDir string, framework *projectconfig.GitSourceConfig, options *Options,
 ) (string, error) {
 	if options.LisaDir != "" {
 		absDir, err := filepath.Abs(options.LisaDir)
@@ -295,12 +303,13 @@ func writeGeneratedRunbook(
 // generated LISA runbook requires (LISA's qemu platform boots qcow2 disks). Any other
 // format is rejected.
 func requireQcow2Image(imagePath string) error {
-	format, err := InferImageFormat(imagePath)
+	format, err := imageformat.Infer(imagePath)
 	if err != nil {
+		//nolint:wrapcheck // Preserve the existing image-format diagnostic unchanged.
 		return err
 	}
 
-	if format != string(ImageFormatQcow2) {
+	if format != imageformat.Qcow2 {
 		return fmt.Errorf(
 			"unsupported image format %#q for %#q: LISA requires a qcow2 image",
 			format, imagePath,
@@ -520,7 +529,7 @@ func buildLisaArgs(
 	runbookPath string,
 	extraArgs []string,
 	imageConfig *projectconfig.ImageConfig,
-	options *ImageTestOptions,
+	options *Options,
 ) ([]string, error) {
 	absImagePath, err := filepath.Abs(options.ImagePath)
 	if err != nil {

@@ -15,6 +15,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/imagebuilder"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/cloudinit"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/imageformat"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/iso"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/qemu"
 	"github.com/samber/lo"
@@ -39,25 +40,14 @@ type ImageFormat string
 
 const (
 	// ImageFormatRaw is the raw disk image format.
-	ImageFormatRaw ImageFormat = "raw"
+	ImageFormatRaw ImageFormat = imageformat.Raw
 	// ImageFormatQcow2 is the QEMU copy-on-write v2 format.
-	ImageFormatQcow2 ImageFormat = "qcow2"
+	ImageFormatQcow2 ImageFormat = imageformat.Qcow2
 	// ImageFormatVhd is the Hyper-V VHD format (QEMU driver: vpc).
-	ImageFormatVhd ImageFormat = "vhd"
+	ImageFormatVhd ImageFormat = imageformat.Vhd
 	// ImageFormatVhdx is the Hyper-V virtual hard disk format.
-	ImageFormatVhdx ImageFormat = "vhdx"
-	// ImageFormatOCI is an OCI container image tarball.
-	ImageFormatOCI ImageFormat = "oci"
+	ImageFormatVhdx ImageFormat = imageformat.Vhdx
 )
-
-// AllImageFormats returns all supported image formats in priority order.
-func AllImageFormats() []string {
-	return []string{
-		string(ImageFormatRaw), string(ImageFormatQcow2),
-		string(ImageFormatVhdx), string(ImageFormatVhd),
-		string(ImageFormatOCI),
-	}
-}
 
 // BootableImageFormats returns the subset of image formats that can be booted in a VM.
 func BootableImageFormats() []string {
@@ -450,13 +440,14 @@ func resolveDiskSource(env *azldev.Env, options *ImageBootOptions) (imagePath, i
 	case options.ImagePath != "":
 		imageFormat = string(options.Format)
 		if imageFormat == "" {
-			imageFormat, err = InferImageFormat(options.ImagePath)
+			imageFormat, err = imageformat.Infer(options.ImagePath)
 			if err != nil {
+				//nolint:wrapcheck // Preserve the existing image-format diagnostic unchanged.
 				return "", "", err
 			}
 		}
 
-		// InferImageFormat recognizes all known image formats (including non-bootable
+		// imageformat.Infer recognizes all known image formats (including non-bootable
 		// ones like OCI tarballs); reject formats that QEMU can't boot here.
 		if !lo.Contains(BootableImageFormats(), imageFormat) {
 			return "", "", fmt.Errorf(
@@ -598,7 +589,7 @@ func fileExtensionsForFormat(format string) []string {
 	switch format {
 	case string(ImageFormatVhd):
 		return []string{"vhd", "vhdfixed"}
-	case string(ImageFormatOCI):
+	case imageformat.OCI:
 		return []string{"oci.tar.xz", "oci.tar.gz", "oci.tar"}
 	default:
 		return []string{format}
@@ -680,43 +671,6 @@ func findImageArtifact(
 		"no image artifact found in %#q; supported formats: %v",
 		imageOutputDir, searchFormats,
 	)
-}
-
-// InferImageFormat determines the image format from the file extension.
-// Returns an error if the extension does not match a supported format.
-func InferImageFormat(imagePath string) (string, error) {
-	lower := strings.ToLower(imagePath)
-
-	// Check multi-part extensions first (e.g., ".oci.tar.xz").
-	for _, ext := range []string{".oci.tar.xz", ".oci.tar.gz", ".oci.tar"} {
-		if strings.HasSuffix(lower, ext) {
-			return string(ImageFormatOCI), nil
-		}
-	}
-
-	ext := strings.ToLower(filepath.Ext(imagePath))
-	if ext == "" {
-		return "", fmt.Errorf(
-			"cannot infer image format from %#q: no file extension",
-			imagePath,
-		)
-	}
-
-	// Strip the leading dot (e.g., ".vhdfixed" → "vhdfixed").
-	format := ext[1:]
-	if format == "vhdfixed" {
-		format = string(ImageFormatVhd)
-	}
-
-	// Validate the inferred format is supported.
-	if !lo.Contains(AllImageFormats(), format) {
-		return "", fmt.Errorf(
-			"unsupported image format %#q inferred from %#q; supported formats: %v",
-			format, imagePath, AllImageFormats(),
-		)
-	}
-
-	return format, nil
 }
 
 // listImageArtifacts returns a list of image artifact filenames in the given directory.

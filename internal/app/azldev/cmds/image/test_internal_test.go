@@ -10,7 +10,6 @@ import (
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
-	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -64,35 +63,4 @@ func TestResolveImageTestsToRun_NoWarnWhenOnlyNewTestsPresent(t *testing.T) {
 	_, err := resolveImageTestsToRun(testEnv.Config, imageCfg, nil)
 	require.NoError(t, err)
 	assert.NotContains(t, buf.String(), "ignored")
-}
-
-func TestResolveLisaFrameworkDir_UsesLisaDirWhenSet(t *testing.T) {
-	testEnv := testutils.NewTestEnv(t)
-	require.NoError(t, fileutils.MkdirAll(testEnv.Env.FS(), "/checkouts/lisa"))
-
-	options := &ImageTestOptions{LisaDir: "/checkouts/lisa"}
-
-	dir, err := resolveLisaFrameworkDir(testEnv.Env, "my-test", "/work/lisa", nil, options)
-	require.NoError(t, err)
-	assert.Equal(t, "/checkouts/lisa", dir)
-}
-
-func TestResolveLisaFrameworkDir_LisaDirMissingReturnsError(t *testing.T) {
-	testEnv := testutils.NewTestEnv(t)
-
-	options := &ImageTestOptions{LisaDir: "/does/not/exist"}
-
-	_, err := resolveLisaFrameworkDir(testEnv.Env, "my-test", "/work/lisa", nil, options)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "does not exist")
-}
-
-func TestResolveLisaFrameworkDir_NoLisaDirAndNoFrameworkReturnsError(t *testing.T) {
-	testEnv := testutils.NewTestEnv(t)
-
-	options := &ImageTestOptions{}
-
-	_, err := resolveLisaFrameworkDir(testEnv.Env, "my-test", "/work/lisa", nil, options)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--lisa-dir")
 }

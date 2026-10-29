@@ -83,3 +83,65 @@ func TestImageTestPreservesPytestOptions(t *testing.T) {
 		"--path", "/images/candidate.raw", "--junit-xml", "/reports/results.xml",
 	}}, commands)
 }
+
+func TestImageTestPreservesLISAOptions(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+	testEnv.Config.Tests["smoke"] = projectconfig.TestDefinition{
+		Type: string(projectconfig.TestTypeLisa),
+		Lisa: map[string]any{
+			"name": "selected-case",
+			"extra-args": []any{
+				"--image", "{image-name}", "--path", "{image-path}",
+			},
+		},
+	}
+	testEnv.Config.Images["selected-image"] = projectconfig.ImageConfig{
+		Name: "configured-image",
+		Tests: &projectconfig.ImageTestsConfig{
+			Tests: []projectconfig.TestRef{{Name: "smoke"}},
+		},
+	}
+
+	frameworkDir := "/checkouts/lisa"
+
+	venvDir := filepath.Join(testEnv.Env.WorkDir(), "lisa", "venv", "smoke")
+	for _, directory := range []string{frameworkDir, "/images", filepath.Join(venvDir, "bin")} {
+		require.NoError(t, fileutils.MkdirAll(testEnv.TestFS, directory))
+	}
+
+	require.NoError(t, fileutils.WriteFile(
+		testEnv.TestFS, filepath.Join(venvDir, "bin", "python3"), nil, fileperms.PublicExecutable,
+	))
+	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, "/images/candidate.qcow2", nil, fileperms.PublicFile))
+	testEnv.CmdFactory.RegisterCommandInSearchPath("python3")
+	testEnv.CmdFactory.RegisterCommandInSearchPath("ssh-keygen")
+
+	runbookPath := filepath.Join(frameworkDir, "azldev-generated-smoke.yml")
+
+	var lisaCommands [][]string
+
+	testEnv.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+		if filepath.Base(cmd.Args[0]) == "lisa" {
+			require.Equal(t, filepath.Join(frameworkDir, "lisa"), cmd.Dir)
+			lisaCommands = append(lisaCommands, cmd.Args)
+			runbook, err := fileutils.ReadFile(testEnv.TestFS, runbookPath)
+			require.NoError(t, err)
+			assert.Contains(t, string(runbook), "selected-case")
+			assert.Contains(t, string(runbook), "/images/candidate.qcow2")
+		}
+
+		return nil
+	}
+	cmd := image.NewImageTestCmd()
+	cmd.SetArgs([]string{
+		"selected-image", "--image-path", "/images/candidate.qcow2", "--lisa-dir", frameworkDir,
+	})
+	require.NoError(t, cmd.ExecuteContext(testEnv.Env))
+	require.Equal(t, [][]string{{
+		filepath.Join(venvDir, "bin", "lisa"), "-r", runbookPath,
+		"--image", "selected-image", "--path", "/images/candidate.qcow2",
+	}}, lisaCommands)
+	exists, err := fileutils.Exists(testEnv.TestFS, runbookPath)
+	require.NoError(t, err)
+	assert.False(t, exists, "generated runbook should still be removed")
+}

@@ -12,9 +12,11 @@ import (
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/imagebuilder"
+	"github.com/microsoft/azure-linux-dev-tools/internal/lisa"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/pytest"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/imageformat"
 	"github.com/spf13/cobra"
 )
 
@@ -182,7 +184,7 @@ func resolveImageTestPath(env *azldev.Env, options *ImageTestOptions) (string, e
 		return options.ImagePath, nil
 	}
 
-	imagePath, _, err := findImageArtifact(env, options.ImageName, "", AllImageFormats())
+	imagePath, _, err := findImageArtifact(env, options.ImageName, "", imageformat.All())
 	if err != nil {
 		return "", err
 	}
@@ -260,7 +262,12 @@ func runResolvedTest(
 		})
 
 	case string(projectconfig.TestTypeLisa):
-		return RunLisaTestDefinition(env, resolvedTest, imageConfig, options)
+		//nolint:wrapcheck // Preserve the existing command-facing diagnostic unchanged.
+		return lisa.RunTestDefinition(env, resolvedTest, imageConfig, &lisa.Options{
+			ImageName: options.ImageName,
+			ImagePath: options.ImagePath,
+			LisaDir:   options.LisaDir,
+		})
 
 	case "tmt":
 		return fmt.Errorf(
