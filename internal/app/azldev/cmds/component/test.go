@@ -4,12 +4,10 @@
 package component
 
 import (
-	"bytes"
 	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -29,7 +27,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// ComponentTestOptions holds options for running component TMT tests locally.
+// ComponentTestOptions holds options for running component TMT tests.
 type ComponentTestOptions struct {
 	ImagePath string
 	RPMPaths  []string
@@ -79,6 +77,7 @@ type tmtRunSettings struct {
 	// SourceDir, when set, runs tmt straight from this local fmf tree instead of
 	// cloning the catalog 'source' (see ComponentTestOptions.SourceDir).
 	SourceDir string
+	SetupLog  string
 }
 
 const (
@@ -182,7 +181,9 @@ azldev creates or reuses an isolated Python environment under --work-dir and
 installs TMT with virtual-provisioner support there. python3 must be available
 on the host; git is required for azldev's own catalog clone unless
 '--source-dir' is used, though the selected plan's 'discover' step may still
-invoke git itself regardless of '--source-dir'.`,
+invoke git itself regardless of '--source-dir'.
+
+Reports and logs stay under --work-dir. Use -O json for artifact paths and TMT exit codes, including on failure.`,
 		Example: `  # Build the component first
   azldev component build buildah
 
@@ -196,7 +197,7 @@ invoke git itself regardless of '--source-dir'.`,
     --rpm ./base/out/rpms/rpm-base/buildah-tests-1.29.0-5.x86_64.rpm`,
 		Args: cobra.ExactArgs(1),
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
-			return nil, runComponentTMTTests(env, args[0], options)
+			return runComponentTMTTests(env, args[0], options)
 		}),
 	}
 
@@ -217,7 +218,8 @@ func registerComponentTestFlags(cmd *cobra.Command, options *ComponentTestOption
 		&options.Tests, "test", "t", nil, "Mapped TMT test name to run (may be repeated; defaults to all)",
 	)
 	cmd.Flags().StringVar(
-		&options.WorkDir, "work-dir", "", "Directory for cloned metadata and TMT artifacts (default: current directory)",
+		&options.WorkDir, "work-dir", "", "Parent for the reusable TMT venv and fresh retained test artifacts "+
+			"(default: current directory)",
 	)
 	_ = cmd.MarkFlagDirname("work-dir")
 	cmd.Flags().StringVar(&options.Provision, "provision", tmtProvisionVirtual,
@@ -240,34 +242,36 @@ func registerComponentTestFlags(cmd *cobra.Command, options *ComponentTestOption
 	_ = cmd.MarkFlagRequired("rpm")
 }
 
-func runComponentTMTTests(env *azldev.Env, componentName string, options *ComponentTestOptions) error {
+func runComponentTMTTests(
+	env *azldev.Env, componentName string, options *ComponentTestOptions,
+) ([]azldev.TestRunResult, error) {
 	if err := validateComponentTestOptions(env, options); err != nil {
-		return err
+		return nil, err
 	}
 
 	imagePath, err := resolveTMTImagePath(env, options.Provision, options.ImagePath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	rpms, err := absoluteRegularFiles(env, options.RPMPaths, "rpm")
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	sourceDir, err := effectiveSourceDir(env, componentName, options)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if sourceDir != "" {
 		preflightWorkDir, err := componentTMTWorkDir(env, options.WorkDir)
 		if err != nil {
-			return fmt.Errorf("resolve work directory:\n%w", err)
+			return nil, fmt.Errorf("resolve work directory:\n%w", err)
 		}
 
 		if dirsOverlap(sourceDir, preflightWorkDir) {
-			return fmt.Errorf(
+			return nil, fmt.Errorf(
 				"'--source-dir' (%#q) and the work directory (%#q) must not overlap: azldev creates "+
 					"per-test directories and TMT writes run artifacts under the work directory, which "+
 					"would otherwise modify the supplied source tree", sourceDir, preflightWorkDir)
@@ -276,7 +280,7 @@ func runComponentTMTTests(env *azldev.Env, componentName string, options *Compon
 
 	resolved, err := resolveComponentTMTTests(env, componentName, options.Tests, sourceDir, options.Plan)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Preflight every selected test's decoded config against sourceDir and the
@@ -284,7 +288,7 @@ func runComponentTMTTests(env *azldev.Env, componentName string, options *Compon
 	// install, cloning), so these deterministic input errors surface
 	// immediately instead of after network work and on-disk artifacts.
 	if err := preflightTMTTests(resolved, sourceDir, options.Provision); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Validate the source dir up front so '--source-dir'/'--from-spec' fail fast,
@@ -292,31 +296,18 @@ func runComponentTMTTests(env *azldev.Env, componentName string, options *Compon
 	// --work-dir.
 	if sourceDir != "" {
 		if _, err := resolveSourceRunDir(env, sourceDir); err != nil {
-			return err
+			return nil, err
 		}
-	}
-
-	workDir, tmtProgramPath, err := prepareTMTEnvironment(env, options.WorkDir, options.Provision, sourceDir != "")
-	if err != nil {
-		return err
 	}
 
 	settings := tmtRunSettings{
-		ImagePath:      imagePath,
-		RPMs:           rpms,
-		WorkDir:        workDir,
-		TMTProgramPath: tmtProgramPath,
-		Provision:      options.Provision,
-		SourceDir:      sourceDir,
+		ImagePath: imagePath,
+		RPMs:      rpms,
+		Provision: options.Provision,
+		SourceDir: sourceDir,
 	}
 
-	for _, test := range resolved {
-		if err := runOneTMTTest(env, test, settings); err != nil {
-			return fmt.Errorf("TMT test %#q:\n%w", test.Name, err)
-		}
-	}
-
-	return nil
+	return executeComponentTMTTests(env, options.WorkDir, resolved, settings)
 }
 
 func validateComponentTestOptions(env *azldev.Env, options *ComponentTestOptions) error {
@@ -496,7 +487,7 @@ func overrideTMTPlan(tests []projectconfig.ResolvedTest, plan string) []projectc
 }
 
 func prepareTMTEnvironment(
-	env *azldev.Env, configuredWorkDir string, provision string, fromSourceDir bool,
+	env *azldev.Env, configuredWorkDir string, provision string, fromSourceDir bool, setupLog string,
 ) (string, string, error) {
 	workDir, err := componentTMTWorkDir(env, configuredWorkDir)
 	if err != nil {
@@ -512,7 +503,7 @@ func prepareTMTEnvironment(
 		return "", "", fmt.Errorf("create work directory:\n%w", err)
 	}
 
-	tmtProgramPath, err = ensureTMTVenv(env, workDir, provision, fromSourceDir)
+	tmtProgramPath, err = ensureTMTVenv(env, workDir, provision, fromSourceDir, setupLog)
 	if err != nil {
 		return "", "", err
 	}
@@ -525,9 +516,10 @@ func prepareTMTEnvironment(
 // cloning) are explicit host prerequisites, while the test framework itself is
 // installed in a venv under the selected work directory rather than assumed to
 // be packaged by the host distribution. For virtual provisioning, the testcloud
-// plugin supplies provisioner support. For local provisioning, only base TMT is
-// required.
-func ensureTMTVenv(env *azldev.Env, workDir string, provision string, fromSourceDir bool) (string, error) {
+// plugin supplies provisioner support. Both modes include native JUnit export.
+func ensureTMTVenv(
+	env *azldev.Env, workDir string, provision string, fromSourceDir bool, setupLog string,
+) (string, error) {
 	if err := prereqs.RequireExecutable(env, tmtPythonProgram, nil); err != nil {
 		return "", fmt.Errorf("python3 is required to run TMT tests:\n%w", err)
 	}
@@ -552,7 +544,7 @@ func ensureTMTVenv(env *azldev.Env, workDir string, provision string, fromSource
 	if !venvExists {
 		slog.Info("Creating TMT Python venv", slog.String("path", venvDir))
 
-		if err := runHostCommand(env, "", tmtPythonProgram, "-m", "venv", venvDir); err != nil {
+		if err := runHostCommand(env, setupLog, "", tmtPythonProgram, "-m", "venv", venvDir); err != nil {
 			return "", fmt.Errorf("create TMT Python venv at %#q:\n%w", venvDir, err)
 		}
 	} else {
@@ -574,7 +566,7 @@ func ensureTMTVenv(env *azldev.Env, workDir string, provision string, fromSource
 	)
 
 	if err := runHostCommand(
-		env, "", venvPython, "-m", "pip", "install", "--quiet",
+		env, setupLog, "", venvPython, "-m", "pip", "install", "--quiet",
 		"--constraint", requirementsPath, requirement,
 	); err != nil {
 		return "", fmt.Errorf("install TMT:\n%w", err)
@@ -585,10 +577,10 @@ func ensureTMTVenv(env *azldev.Env, workDir string, provision string, fromSource
 
 func tmtInstallRequirement(provision string) string {
 	if provision == tmtProvisionVirtual {
-		return "tmt[provision-virtual]"
+		return "tmt[provision-virtual,report-junit]"
 	}
 
-	return "tmt"
+	return "tmt[report-junit]"
 }
 
 func componentTMTWorkDir(env *azldev.Env, configuredWorkDir string) (string, error) {
@@ -667,14 +659,6 @@ func absoluteRegularFiles(env *azldev.Env, paths []string, kind string) ([]strin
 	return result, nil
 }
 
-func removePreviousTMTRepository(env *azldev.Env, repoDir string) error {
-	if err := env.FS().RemoveAll(repoDir); err != nil {
-		return fmt.Errorf("remove test metadata repository %#q:\n%w", repoDir, err)
-	}
-
-	return nil
-}
-
 // preflightTMTTests validates every selected test's decoded tmt config against
 // sourceDir and the provisioner before runComponentTMTTests prepares the TMT
 // environment (venv creation, pip install) or runOneTMTTest clones metadata.
@@ -710,7 +694,7 @@ func preflightTMTTests(resolved []projectconfig.ResolvedTest, sourceDir string, 
 func selectTMTTests(tests []projectconfig.ResolvedTest, selectors []string) []projectconfig.ResolvedTest {
 	result := make([]projectconfig.ResolvedTest, 0, len(tests))
 	for _, test := range tests {
-		if test.Definition.Type != "tmt" {
+		if test.Definition.Type != tmtProgram {
 			continue
 		}
 
@@ -722,7 +706,9 @@ func selectTMTTests(tests []projectconfig.ResolvedTest, selectors []string) []pr
 	return result
 }
 
-func runOneTMTTest(env *azldev.Env, test projectconfig.ResolvedTest, settings tmtRunSettings) error {
+func runOneTMTTest(
+	env *azldev.Env, test projectconfig.ResolvedTest, settings tmtRunSettings, result *azldev.TestRunResult,
+) error {
 	config, err := decodeTMTConfig(test.Definition.Tmt)
 	if err != nil {
 		return err
@@ -736,11 +722,11 @@ func runOneTMTTest(env *azldev.Env, test projectconfig.ResolvedTest, settings tm
 		return fmt.Errorf("test %#q: 'tmt.source' (git-url, ref) is required unless '--source-dir' is set", test.Name)
 	}
 
-	testDir := filepath.Join(settings.WorkDir, test.Name)
+	testDir := settings.WorkDir
 	repoDir := filepath.Join(testDir, "repo")
-	tmtWorkDir := filepath.Join(testDir, "tmt")
+	tmtWorkDir := filepath.Join(testDir, "native")
 
-	pluginDir, err := prepareTMTTestDir(env, testDir, repoDir, settings)
+	pluginDir, err := prepareTMTTestDir(env, testDir, settings)
 	if err != nil {
 		return err
 	}
@@ -754,11 +740,15 @@ func runOneTMTTest(env *azldev.Env, test projectconfig.ResolvedTest, settings tm
 			return err
 		}
 	} else {
-		if err := runHostCommand(env, testDir, "git", "clone", "--no-checkout", config.Source.GitURL, repoDir); err != nil {
+		if err := runHostCommand(
+			env, settings.SetupLog, testDir, "git", "clone", "--no-checkout", config.Source.GitURL, repoDir,
+		); err != nil {
 			return fmt.Errorf("clone test metadata:\n%w", err)
 		}
 
-		if err := runHostCommand(env, repoDir, "git", "checkout", "--detach", config.Source.Ref); err != nil {
+		if err := runHostCommand(
+			env, settings.SetupLog, repoDir, "git", "checkout", "--detach", config.Source.Ref,
+		); err != nil {
 			return fmt.Errorf("checkout test metadata:\n%w", err)
 		}
 	}
@@ -773,7 +763,7 @@ func runOneTMTTest(env *azldev.Env, test projectconfig.ResolvedTest, settings tm
 		}
 
 		hardwareArgs, err = resolvedPlanHardwareArgs(
-			env, runDir, settings.TMTProgramPath, config.Plan,
+			env, runDir, settings.TMTProgramPath, config.Plan, settings.SetupLog,
 		)
 		if err != nil {
 			return fmt.Errorf("resolve hardware for TMT plan %#q:\n%w", config.Plan, err)
@@ -782,21 +772,11 @@ func runOneTMTTest(env *azldev.Env, test projectconfig.ResolvedTest, settings tm
 
 	args := componentTMTArgs(config, tmtWorkDir, settings.Provision, settings.ImagePath, hardwareArgs, settings.RPMs)
 
-	if err := runTMTCommand(env, runDir, pluginDir, settings.TMTProgramPath, settings.Provision, args...); err != nil {
-		return fmt.Errorf("run TMT plan %#q (artifacts: %#q):\n%w", tmtPlanDescription(config.Plan), tmtWorkDir, err)
-	}
+	result.ExitCode, err = runTMTCommand(
+		env, filepath.Join(testDir, "runner.log"), runDir, pluginDir, settings.TMTProgramPath, settings.Provision, args...,
+	)
 
-	return nil
-}
-
-// tmtPlanDescription returns a human-readable plan selection for error
-// messages, since config.Plan may be empty (every enabled plan runs).
-func tmtPlanDescription(plan string) string {
-	if plan == "" {
-		return "<all enabled plans>"
-	}
-
-	return plan
+	return err
 }
 
 // resolveSourceRunDir validates that the given directory carries an fmf root,
@@ -835,26 +815,13 @@ func resolveSourceRunDir(env *azldev.Env, sourceDir string) (string, error) {
 // prepareTMTTestDir creates the per-test directory and, for virtual runs, the
 // testcloud plugin. It returns the plugin directory, which is empty when no
 // plugin is needed.
-func prepareTMTTestDir(env *azldev.Env, testDir string, repoDir string, settings tmtRunSettings) (string, error) {
+func prepareTMTTestDir(env *azldev.Env, testDir string, settings tmtRunSettings) (string, error) {
 	if env.DryRun() {
 		return "", nil
 	}
 
 	if err := env.FS().MkdirAll(testDir, fileperms.PublicDir); err != nil {
 		return "", fmt.Errorf("create test directory:\n%w", err)
-	}
-
-	// A caller may intentionally reuse --work-dir after a failed or completed
-	// run. Metadata is always cloned at the pinned ref, so remove only the
-	// previous checkout while retaining TMT artifacts for diagnosis. repoDir is
-	// only ever populated by our own clone step, so this is skipped entirely for
-	// '--source-dir': that flow never clones into repoDir, and the caller's
-	// supplied tree must never be touched, even if it happens to coincide with
-	// (or contain) the managed repoDir path.
-	if settings.SourceDir == "" {
-		if err := removePreviousTMTRepository(env, repoDir); err != nil {
-			return "", fmt.Errorf("remove previous test metadata checkout:\n%w", err)
-		}
 	}
 
 	if settings.Provision != tmtProvisionVirtual {
@@ -880,8 +847,7 @@ func validateTMTTestName(name string) error {
 
 // componentTMTArgs builds a run which changes only the provisioner and adds the
 // candidate RPM installation. In particular, it deliberately leaves discover,
-// execute, and report to the selected plan: upstream Fedora plans commonly use
-// non-default plugins or scripts for those steps.
+// and execute to the selected plan, and retains its existing reporters.
 func componentTMTArgs(
 	config tmtConfig,
 	tmtWorkDir string,
@@ -895,7 +861,8 @@ func componentTMTArgs(
 	// Both provisioners need --become: candidate RPM installation and most plans'
 	// execute steps require root, and neither the testcloud guest user nor the
 	// invoking local user is root. TMT escalates with passwordless sudo.
-	args = append(args, "run", "--all", "--keep", "--workdir-root", tmtWorkDir)
+	args = append(args, "run", "--all", "--keep", "--id", tmtWorkDir,
+		"--workdir-root", filepath.Join(filepath.Dir(tmtWorkDir), "workdir-root"))
 
 	// Omitting '--name' entirely (plan empty) makes tmt discover and run every
 	// enabled plan it finds — the same default Fedora's own Testing Farm uses,
@@ -927,6 +894,8 @@ func componentTMTArgs(
 		args = append(args, "--package", rpm)
 	}
 
+	args = append(args, "report", "--insert", "--how", "junit", "--name", tmtJUnitPhase, "--no-include-output-log")
+
 	return args
 }
 
@@ -936,7 +905,7 @@ func componentTMTArgs(
 // resolved constraints retains requirements such as memory, CPU topology, and
 // disk size while adding UEFI firmware.
 func resolvedPlanHardwareArgs(
-	env *azldev.Env, repoDir string, tmtProgramPath string, plan string,
+	env *azldev.Env, repoDir string, tmtProgramPath string, plan string, setupLog string,
 ) ([]string, error) {
 	// The plan export command produces no output in dry-run mode. In that case,
 	// emit only boot.method so the printed invocation represents what would run.
@@ -944,7 +913,7 @@ func resolvedPlanHardwareArgs(
 		return []string{"boot.method = uefi"}, nil
 	}
 
-	hardware, err := exportedPlanHardware(env, repoDir, tmtProgramPath, plan)
+	hardware, err := exportedPlanHardware(env, repoDir, tmtProgramPath, plan, setupLog)
 	if err != nil {
 		return nil, err
 	}
@@ -952,8 +921,10 @@ func resolvedPlanHardwareArgs(
 	return mergePlanHardwareArgs(hardware)
 }
 
-func exportedPlanHardware(env *azldev.Env, repoDir string, tmtProgramPath string, plan string) (map[string]any, error) {
-	output, err := runHostCommandOutput(env, repoDir, tmtProgramPath, "plan", "export", plan, "--how", "json")
+func exportedPlanHardware(
+	env *azldev.Env, repoDir string, tmtProgramPath string, plan string, setupLog string,
+) (map[string]any, error) {
+	output, err := runHostCommandOutput(env, setupLog, repoDir, tmtProgramPath, "plan", "export", plan, "--how", "json")
 	if err != nil {
 		return nil, err
 	}
@@ -1140,78 +1111,35 @@ func validateTMTProvisionOptions(provision string, imagePath string) error {
 	return nil
 }
 
-func runHostCommand(env *azldev.Env, dir string, program string, args ...string) error {
+func runHostCommand(env *azldev.Env, logPath string, dir string, program string, args ...string) error {
 	command := exec.CommandContext(env, program, args...)
 	command.Dir = dir
-	command.Stdout = os.Stdout
+	_, _, err := runCapturedTMTCommand(env, command, logPath, false)
 
-	var stderr bytes.Buffer
-
-	command.Stderr = io.MultiWriter(os.Stderr, &stderr)
-
-	wrapped, err := env.Command(command)
-	if err != nil {
-		return fmt.Errorf("wrap host command %#q:\n%w", program, err)
-	}
-
-	if err := wrapped.Run(env); err != nil {
-		if trimmedStderr := strings.TrimSpace(stderr.String()); trimmedStderr != "" {
-			return fmt.Errorf("run host command %#q:\n%s\n%w", program, trimmedStderr, err)
-		}
-
-		return fmt.Errorf("run host command %#q:\n%w", program, err)
-	}
-
-	return nil
+	return err
 }
 
-func runHostCommandOutput(env *azldev.Env, dir string, program string, args ...string) ([]byte, error) {
+func runHostCommandOutput(env *azldev.Env, logPath string, dir string, program string, args ...string) ([]byte, error) {
 	command := exec.CommandContext(env, program, args...)
 	command.Dir = dir
+	output, _, err := runCapturedTMTCommand(env, command, logPath, true)
 
-	var stderr bytes.Buffer
-
-	command.Stderr = &stderr
-
-	wrapped, err := env.Command(command)
-	if err != nil {
-		return nil, fmt.Errorf("wrap host command %#q:\n%w", program, err)
-	}
-
-	output, err := wrapped.RunAndGetOutput(env)
-	if err != nil {
-		if trimmedStderr := strings.TrimSpace(stderr.String()); trimmedStderr != "" {
-			return nil, fmt.Errorf("run host command %#q:\n%s\n%w", program, trimmedStderr, err)
-		}
-
-		return nil, fmt.Errorf("run host command %#q:\n%w", program, err)
-	}
-
-	return []byte(output), nil
+	return []byte(output), err
 }
 
 // runTMTCommand runs the TMT CLI with the environment produced by
-// [tmtCommandEnv] layered on top of the inherited process environment.
+// [tmtCommandEnv] layered on top of the inherited process environment. The exit
+// code is absent if the process did not start or was terminated by a signal.
 func runTMTCommand(
-	env *azldev.Env, dir string, pluginDir string, tmtProgramPath string, provision string, args ...string,
-) error {
+	env *azldev.Env, logPath string, dir string, pluginDir string, tmtProgramPath string, provision string, args ...string,
+) (*int, error) {
 	command := exec.CommandContext(env, tmtProgramPath, args...)
 	command.Dir = dir
-	command.Stdout = os.Stdout
-	command.Stderr = os.Stderr
 
 	command.Env = append(os.Environ(), tmtCommandEnv(env, pluginDir, provision)...)
+	_, exitCode, err := runCapturedTMTCommand(env, command, logPath, false)
 
-	wrapped, err := env.Command(command)
-	if err != nil {
-		return fmt.Errorf("wrap tmt command:\n%w", err)
-	}
-
-	if err := wrapped.Run(env); err != nil {
-		return fmt.Errorf("run tmt command:\n%w", err)
-	}
-
-	return nil
+	return exitCode, err
 }
 
 // tmtCommandEnv returns the environment variables azldev adds on top of the
