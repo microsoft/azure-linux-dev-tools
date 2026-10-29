@@ -95,6 +95,7 @@ func TestValidateTMTProvisionOptions(t *testing.T) {
 func TestTMTInstallRequirementUsesProvisionerExtra(t *testing.T) {
 	assert.Equal(t, "tmt[report-junit]", tmtInstallRequirement(tmtProvisionLocal))
 	assert.Equal(t, "tmt[provision-virtual,report-junit]", tmtInstallRequirement(ProvisionVirtual))
+	assert.Equal(t, "tmt[report-junit]", tmtInstallRequirement(ProvisionConnect))
 }
 
 func TestSelectTMTTests(t *testing.T) {
@@ -712,10 +713,9 @@ func TestComponentTMTArgsPreservesNativePlanSteps(t *testing.T) {
 	args := componentTMTArgs(
 		tmtConfig{Plan: "/plans/smoke"},
 		"/work/tmt",
-		ProvisionVirtual,
-		"/path/to/image.qcow2",
+		tmtRunSettings{Provision: ProvisionVirtual, ImagePath: "/path/to/image.qcow2",
+			RPMs: []string{"/rpms/component.rpm", "/rpms/component-tests.rpm"}},
 		[]string{"memory >= 4 GB", "boot.method = uefi"},
-		[]string{"/rpms/component.rpm", "/rpms/component-tests.rpm"},
 	)
 
 	assert.Equal(t, []string{
@@ -737,10 +737,9 @@ func TestComponentTMTArgsVirtualProvisioner(t *testing.T) {
 	args := componentTMTArgs(
 		tmtConfig{Plan: "/plans/smoke"},
 		"/work/tmt",
-		ProvisionVirtual,
-		"/path/to/image.qcow2",
+		tmtRunSettings{Provision: ProvisionVirtual, ImagePath: "/path/to/image.qcow2",
+			RPMs: []string{"/rpms/component.rpm"}},
 		[]string{"boot.method = uefi"},
-		[]string{"/rpms/component.rpm"},
 	)
 
 	assert.Equal(t, []string{
@@ -761,10 +760,9 @@ func TestComponentTMTArgsLocalProvisioner(t *testing.T) {
 	args := componentTMTArgs(
 		tmtConfig{Plan: "/plans/smoke"},
 		"/work/tmt",
-		tmtProvisionLocal,
-		"/path/to/image.qcow2",
+		tmtRunSettings{Provision: tmtProvisionLocal, ImagePath: "/path/to/image.qcow2",
+			RPMs: []string{"/rpms/component.rpm"}},
 		[]string{"memory >= 4 GB", "boot.method = uefi"},
-		[]string{"/rpms/component.rpm"},
 	)
 
 	assert.Equal(t, []string{
@@ -783,10 +781,8 @@ func TestComponentTMTArgsOmitsNameWhenPlanIsEmpty(t *testing.T) {
 	args := componentTMTArgs(
 		tmtConfig{},
 		"/work/tmt",
-		tmtProvisionLocal,
-		"",
+		tmtRunSettings{Provision: tmtProvisionLocal, RPMs: []string{"/rpms/component.rpm"}},
 		nil,
-		[]string{"/rpms/component.rpm"},
 	)
 
 	assert.Equal(t, []string{
