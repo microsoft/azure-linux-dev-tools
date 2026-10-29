@@ -154,6 +154,8 @@ func QueryComponents(
 			comps.Len())
 	}
 
+	env = env.WithMockRootComponents(comps.Names()...)
+
 	mockProcessor := createQueryMockProcessor(env)
 	if mockProcessor == nil {
 		return nil, errors.New(
