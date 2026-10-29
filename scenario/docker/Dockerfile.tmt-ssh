@@ -1,0 +1,12 @@
+FROM mcr.microsoft.com/azurelinux/core:4@sha256:e75907a2bfb30e26e3cb6f95803a9aea32811907c33f42cdf1e837dcd85d80bd
+
+RUN tdnf -y install openssh-server rsync sudo shadow-utils && tdnf clean all \
+    && useradd -m tester \
+    && passwd -d tester \
+    && mkdir -p /etc/sudoers.d /run/sshd /home/tester/.ssh \
+    && echo 'tester ALL=(ALL) NOPASSWD: ALL' >/etc/sudoers.d/tester \
+    && chmod 0440 /etc/sudoers.d/tester \
+    && chown -R tester:tester /home/tester/.ssh \
+    && chmod 0700 /home/tester/.ssh
+
+CMD ["/bin/bash", "-ec", "ssh-keygen -A; exec /usr/sbin/sshd -D -e -p 2222 -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -o PermitRootLogin=no"]

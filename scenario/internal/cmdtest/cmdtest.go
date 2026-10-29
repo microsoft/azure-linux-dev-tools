@@ -46,7 +46,8 @@ type containerTestParams struct {
 	commonTestParams
 
 	// Enable networking in the container.
-	Network bool
+	Network  bool
+	Networks []string
 
 	// Run the container in privileged mode.
 	Privileged bool
@@ -238,9 +239,10 @@ func (cParams *containerTestParams) WithExtraMounts(extraMounts []containertest.
 	return cParams
 }
 
-// WithNetwork enables networking in the container. This is disabled by default.
-func (cParams *containerTestParams) WithNetwork() *containerTestParams {
+// WithNetwork enables networking, optionally on the named Docker networks. Disabled by default.
+func (cParams *containerTestParams) WithNetwork(names ...string) *containerTestParams {
 	cParams.Network = true
+	cParams.Networks = names
 
 	return cParams
 }
@@ -362,7 +364,7 @@ func (cParams *containerTestParams) Run(t *testing.T) (results testhelpers.TestR
 		WithEnv(cParams.Env)
 
 	if cParams.Network {
-		collateral = collateral.WithNetwork()
+		collateral = collateral.WithNetwork(cParams.Networks...)
 	}
 
 	if cParams.Privileged {

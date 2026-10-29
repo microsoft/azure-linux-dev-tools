@@ -54,7 +54,7 @@ The GitHub Actions workflow runs three E2E shards in parallel:
 - `mage e2e -target=full-render` runs the full Azure Linux render idempotency
   check, which dominates the suite runtime.
 
-`mage e2e -target=tmt` selects the local and virtual TMT tests. It is not yet in
+`mage e2e -target=tmt` selects the local, SSH connect, and virtual TMT tests. It is not yet in
 the CI matrix; the virtual test remains quarantined.
 
 ### Azure Linux image build
@@ -80,13 +80,24 @@ Local reporting runs in a disposable, unprivileged AZL4 container without KVM.
 Do not use the local provisioner directly on your development host: it installs
 packages and executes tests there. Diagnostics remain under `out/tmt-local-e2e/`.
 
+The same TMT target includes native SSH connect coverage: a runner
+using `Dockerfile.tmt` and a separate disposable AZL4 SSH server on a private
+Docker network, with no shared guest filesystem or KVM. It checks nonroot SSH
+on port 2222, passwordless sudo, strict ephemeral host-key trust (including
+unknown-host rejection before any tests execute), root-level helper copying,
+installation of an initially absent `jq` requirement and an optional candidate
+RPM, and pass/fail/exit-2 error JSON/JUnit and logs. The guest user can create
+the absolute `/var/tmp/azldev-connect` work root. Containers, network, and keys
+are removed on completion; credential-free diagnostics remain under
+`out/tmt-connect-e2e/`. Requires Docker and network access to package repositories.
+
 Virtual provisioning is quarantined pending the testcloud readiness fix. Set
 `TESTING_ENABLE_TMT_VIRTUAL_E2E=1` with the same command to reproduce it. Once
 enabled, it skips if `/dev/kvm` is missing and checks access before building an
 image; access errors fail the test. Image construction uses a **privileged**
 container. Virtual diagnostics remain under `out/tmt-virtual-e2e/`.
 
-Remove the temporary environment guard when the virtual test is fixed. Both
+Remove the temporary environment guard when the virtual test is fixed. These
 tests share the production pins in
 `internal/app/azldev/cmds/component/requirements.txt`. Broad `mage e2e` also runs
 the privileged image-builder test independently of the virtual quarantine.
