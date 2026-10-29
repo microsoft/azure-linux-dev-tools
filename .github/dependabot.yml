@@ -108,7 +108,7 @@ updates:
 
   # TMT component-test runtime
   - package-ecosystem: "pip"
-    directory: "/internal/app/azldev/cmds/component"
+    directory: "/internal/tmt"
     schedule:
       interval: "weekly"
     cooldown:

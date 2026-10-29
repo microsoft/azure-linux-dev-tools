@@ -73,11 +73,11 @@ image-construction test; ordinary scenario and e2e containers remain unchanged.
 ### Virtual TMT provisioning regression
 
 `mage e2e -target=tmt` builds the current Azure Linux image, then runs the real
-`azldev component test` flow with TMT 1.78.0, testcloud 0.12.0, and a tiny
+`azldev component test` flow with the pinned TMT/testcloud runtime and a tiny
 test-only probe RPM. The non-privileged TMT runner maps `/dev/kvm`, uses private
 session-libvirt state, and retains diagnostics under `out/tmt-virtual-e2e/`.
 Production and test dependency pins share
-`internal/app/azldev/cmds/component/requirements.txt`, which Dependabot tracks.
+`internal/tmt/requirements.txt`, which Dependabot tracks.
 
 This regression is temporarily quarantined while the known testcloud readiness
 failure is fixed. The normal `mage e2e` suite compiles the test but skips it;

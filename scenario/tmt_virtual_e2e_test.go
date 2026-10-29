@@ -78,7 +78,7 @@ func TestTMTVirtualProvisioning(t *testing.T) {
 
 	test.AddDirRecursive(t, "fixture", filepath.Join("testdata", "tmt-virtual"))
 	requirementsPath, err := filepath.Abs(filepath.Join(
-		"..", "internal", "app", "azldev", "cmds", "component", "requirements.txt",
+		"..", "internal", "tmt", "requirements.txt",
 	))
 	require.NoError(t, err)
 	test.AddSingleFile("tmt-requirements.txt", requirementsPath)
