@@ -98,7 +98,7 @@ func E2E(target *string) error {
 	case e2eTargetTMT:
 		options.label = "TMT end-to-end"
 		options.timeout = "45m"
-		options.testSelector = "^TestTMT(LocalReporting|VirtualProvisioning)$"
+		options.testSelector = "^TestTMT(LocalReporting|VirtualProvisioning|ConnectProvisioning)$"
 	default:
 		return fmt.Errorf(
 			"%w: unknown end-to-end target %#q; available targets: %q",

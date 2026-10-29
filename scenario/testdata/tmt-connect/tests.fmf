@@ -1,0 +1,18 @@
+/pass:
+  require: [jq]
+  test: |
+    set -eu
+    . "$TMT_TREE/helper.sh"
+    echo connect-pass-stdout
+    echo connect-pass-stderr >&2
+    echo pass >>/home/tester/executed
+/fail:
+  test: |
+    echo fail >>/home/tester/executed
+    echo controlled-connect-failure
+    exit 1
+/error:
+  test: |
+    echo error >>/home/tester/executed
+    echo controlled-connect-error
+    exit 2

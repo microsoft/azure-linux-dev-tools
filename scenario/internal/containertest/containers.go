@@ -61,6 +61,7 @@ type ContainerCmdTestCollateral struct {
 	workdir          string
 	testBinaryPath   *string
 	network          bool
+	networks         []string
 	privileged       bool
 	filesDstSrc      map[string]string
 	filesDstContents map[string]io.Reader
@@ -96,9 +97,10 @@ func (c *ContainerCmdTestCollateral) WithTestBinaryPath(path string) *ContainerC
 	return c
 }
 
-// WithNetwork sets the container command to run with networking enabled.
-func (c *ContainerCmdTestCollateral) WithNetwork() *ContainerCmdTestCollateral {
+// WithNetwork enables networking, optionally on the named Docker networks.
+func (c *ContainerCmdTestCollateral) WithNetwork(names ...string) *ContainerCmdTestCollateral {
 	c.network = true
+	c.networks = names
 
 	return c
 }
@@ -333,6 +335,9 @@ func runCmdInContainerImpl(
 			WaitingFor: getTimeoutConfig(t, timeout),
 		},
 		Started: true,
+	}
+	if len(collateral.networks) > 0 {
+		req.Networks = collateral.networks
 	}
 
 	return generateResults(t, req, logger, collateral.workdir)
