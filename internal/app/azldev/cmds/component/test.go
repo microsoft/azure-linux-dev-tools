@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -29,11 +30,12 @@ import (
 
 // ComponentTestOptions holds options for running component TMT tests.
 type ComponentTestOptions struct {
-	ImagePath string
-	RPMPaths  []string
-	Tests     []string
-	WorkDir   string
-	Provision string
+	ImagePath  string
+	RPMPaths   []string
+	Tests      []string
+	WorkDir    string
+	Provision  string
+	Connection tmtConnectionOptions
 	// SourceDir points tmt straight at a local fmf tree instead of cloning the
 	// catalog 'source' — any directory with an fmf root works, whether produced
 	// by 'azldev component render' (with render.skip-file-filter=true) or
@@ -48,6 +50,13 @@ type ComponentTestOptions struct {
 	// the component's rendered spec directory, preserving the pre-rename
 	// '--from-spec' behavior for existing invocations.
 	FromSpec bool
+}
+
+type tmtConnectionOptions struct {
+	Guest string
+	Port  int
+	User  string
+	Key   string
 }
 
 type tmtSource struct {
@@ -74,6 +83,7 @@ type tmtRunSettings struct {
 	WorkDir        string
 	TMTProgramPath string
 	Provision      string
+	Connection     tmtConnectionOptions
 	// SourceDir, when set, runs tmt straight from this local fmf tree instead of
 	// cloning the catalog 'source' (see ComponentTestOptions.SourceDir).
 	SourceDir string
@@ -86,6 +96,7 @@ const (
 	tmtProgram          = "tmt"
 	tmtProvisionLocal   = "local"
 	tmtProvisionVirtual = "virtual"
+	tmtProvisionConnect = "connect"
 )
 
 const (
@@ -128,19 +139,19 @@ func NewComponentTestCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "test COMPONENT",
-		Short: "Run a component's TMT tests in a local QEMU VM",
-		Long: `Run TMT test definitions associated with a component against an Azure Linux
-image using TMT's virtual provisioner (QEMU/testcloud).
+		Short: "Run a component's TMT tests in a VM, on this host, or over SSH",
+		Long: `Run TMT test definitions associated with a component using TMT's virtual
+(QEMU/testcloud), local, or connect (SSH) provisioner.
 
-The image must be a local qcow2 file. Every RPM supplied with --rpm is copied
+For virtual, the image must be a local qcow2 file. Every RPM supplied with --rpm is copied
 into the guest and installed by TMT before the selected plan executes. This
 ensures the test validates the locally built package rather than the version
 already present in the image. The guest can be modified by test preparation and
 execution; a disposable testcloud overlay is used for the virtual disk.
 
-REQUIRED RPMs:
+RPMs (required for virtual/local, optional for connect):
   After building a component with 'azldev component build COMPONENT', built RPMs
-  are typically located in base/out/rpms/rpm-base/. You must pass at minimum:
+  are typically located in base/out/rpms/rpm-base/. For virtual/local, pass at minimum:
   - The main package (e.g., buildah-1.0.0-1.x86_64.rpm)
   - The -tests package (e.g., buildah-tests-1.0.0-1.x86_64.rpm)
 
@@ -156,6 +167,14 @@ PROVISIONER MODES:
                        constraints are resolved per-plan.
   - local: Runs tests directly on this machine. Host must be Azure Linux 4.
            Useful for quick testing; modifies host state.
+  - connect: Runs tests on an existing SSH guest; no VM lifecycle or image.
+             Requires --guest, --user, and --key; --port defaults to 22.
+             Use a non-root account with passwordless sudo. Preparation and
+             tests modify the guest. Candidate RPMs are optional.
+             Caller TMT_SSH_* environment settings are inherited unchanged.
+             TMT copies the absolute work path to the same path on the guest
+             as the SSH user. That user must be able to create/write it;
+             normally use --work-dir /var/tmp/azldev-connect.
 
 PLAN SELECTION:
   By default tmt discovers and runs every enabled plan it finds in the test
@@ -194,8 +213,26 @@ Reports and logs stay under --work-dir. Use -O json for artifact paths and TMT e
   azldev component test buildah \
     --image-path ./base/out/images/vm-base/azl4-vm-base.x86_64.qcow2 \
     --rpm ./base/out/rpms/rpm-base/buildah-1.29.0-5.x86_64.rpm \
-    --rpm ./base/out/rpms/rpm-base/buildah-tests-1.29.0-5.x86_64.rpm`,
+    --rpm ./base/out/rpms/rpm-base/buildah-tests-1.29.0-5.x86_64.rpm
+
+  # Run on an existing disposable SSH guest
+  azldev component test buildah --provision connect \
+    --guest 127.0.0.1 --port 22429 --user tester --key ./test-key \
+    --source-dir ./test-tree --work-dir /var/tmp/azldev-connect -O json`,
 		Args: cobra.ExactArgs(1),
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
+			if options.Provision != tmtProvisionConnect {
+				for _, flag := range []string{"guest", "port", "user", "key"} {
+					if cmd.Flags().Changed(flag) {
+						return fmt.Errorf("'--%s' requires '--provision connect'", flag)
+					}
+				}
+			} else if cmd.Flags().Changed("image-path") {
+				return errors.New("'--image-path' cannot be used with '--provision connect'")
+			}
+
+			return nil
+		},
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
 			return runComponentTMTTests(env, args[0], options)
 		}),
@@ -210,7 +247,7 @@ func registerComponentTestFlags(cmd *cobra.Command, options *ComponentTestOption
 	cmd.Flags().StringVarP(&options.ImagePath, "image-path", "i", "", "Path to the qcow2 image under test")
 	_ = cmd.MarkFlagFilename("image-path")
 	cmd.Flags().StringSliceVarP(
-		&options.RPMPaths, "rpm", "r", nil, "Local RPM to install before testing (required; may be repeated). "+
+		&options.RPMPaths, "rpm", "r", nil, "Local RPM to install before testing (required for virtual/local; may be repeated). "+
 			"Typically include the main package and -tests package.",
 	)
 	_ = cmd.MarkFlagFilename("rpm")
@@ -223,7 +260,12 @@ func registerComponentTestFlags(cmd *cobra.Command, options *ComponentTestOption
 	)
 	_ = cmd.MarkFlagDirname("work-dir")
 	cmd.Flags().StringVar(&options.Provision, "provision", tmtProvisionVirtual,
-		"TMT provisioner mode: 'virtual' (default) runs tests in QEMU; 'local' runs on this machine (must be Azure Linux 4)")
+		"TMT provisioner: 'virtual' (default) uses QEMU; 'local' uses this Azure Linux 4 host; 'connect' uses SSH")
+	cmd.Flags().StringVar(&options.Connection.Guest, "guest", "", "SSH guest hostname or address (required for connect)")
+	cmd.Flags().IntVar(&options.Connection.Port, "port", 22, "SSH port (connect only; 1..65535)")
+	cmd.Flags().StringVar(&options.Connection.User, "user", "", "SSH user with passwordless sudo (required for connect)")
+	cmd.Flags().StringVar(&options.Connection.Key, "key", "", "SSH private key file, relative to the project (required for connect)")
+	_ = cmd.MarkFlagFilename("key")
 	cmd.Flags().StringVar(&options.SourceDir, "source-dir", "",
 		"Run tmt straight from this local fmf tree instead of cloning the catalog 'source'. Accepts the "+
 			"output of either 'azldev component render' (with 'render.skip-file-filter = true') or "+
@@ -239,7 +281,6 @@ func registerComponentTestFlags(cmd *cobra.Command, options *ComponentTestOption
 			"existing invocations; cannot be combined with '--source-dir'.")
 	_ = cmd.Flags().MarkDeprecated("from-spec", "use '--source-dir' instead, pointed at the component's "+
 		"rendered spec directory")
-	_ = cmd.MarkFlagRequired("rpm")
 }
 
 func runComponentTMTTests(
@@ -247,6 +288,23 @@ func runComponentTMTTests(
 ) ([]azldev.TestRunResult, error) {
 	if err := validateComponentTestOptions(env, options); err != nil {
 		return nil, err
+	}
+
+	connection := options.Connection
+	if options.Provision == tmtProvisionConnect {
+		keyPath, err := absoluteProjectPath(env.ProjectDir(), connection.Key)
+		if err != nil {
+			return nil, fmt.Errorf("resolve SSH key path:\n%w", err)
+		}
+
+		info, err := env.FS().Stat(keyPath)
+		if err != nil {
+			return nil, fmt.Errorf("SSH key path %#q:\n%w", keyPath, err)
+		}
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("SSH key path %#q must be a regular file", keyPath)
+		}
+		connection.Key = keyPath
 	}
 
 	imagePath, err := resolveTMTImagePath(env, options.Provision, options.ImagePath)
@@ -301,10 +359,11 @@ func runComponentTMTTests(
 	}
 
 	settings := tmtRunSettings{
-		ImagePath: imagePath,
-		RPMs:      rpms,
-		Provision: options.Provision,
-		SourceDir: sourceDir,
+		ImagePath:  imagePath,
+		RPMs:       rpms,
+		Provision:  options.Provision,
+		SourceDir:  sourceDir,
+		Connection: connection,
 	}
 
 	return executeComponentTMTTests(env, options.WorkDir, resolved, settings)
@@ -313,6 +372,27 @@ func runComponentTMTTests(
 func validateComponentTestOptions(env *azldev.Env, options *ComponentTestOptions) error {
 	if err := validateTMTProvisionOptions(options.Provision, options.ImagePath); err != nil {
 		return err
+	}
+
+	if options.Provision == tmtProvisionConnect {
+		for _, field := range []struct{ name, value string }{
+			{"guest", options.Connection.Guest}, {"user", options.Connection.User}, {"key", options.Connection.Key},
+		} {
+			if strings.TrimSpace(field.value) == "" {
+				return fmt.Errorf("'--%s' is required with '--provision connect'", field.name)
+			}
+		}
+		if options.Connection.Port < 1 || options.Connection.Port > 65535 {
+			return errors.New("'--port' must be between 1 and 65535")
+		}
+	} else {
+		if options.Connection.Guest != "" || options.Connection.User != "" || options.Connection.Key != "" ||
+			(options.Connection.Port != 0 && options.Connection.Port != 22) {
+			return errors.New("'--guest', '--port', '--user', and '--key' require '--provision connect'")
+		}
+		if len(options.RPMPaths) == 0 {
+			return errors.New("'--rpm' is required with '--provision virtual' or '--provision local'")
+		}
 	}
 
 	// The local provisioner runs the plan's prepare and execute steps directly on
@@ -770,7 +850,7 @@ func runOneTMTTest(
 		}
 	}
 
-	args := componentTMTArgs(config, tmtWorkDir, settings.Provision, settings.ImagePath, hardwareArgs, settings.RPMs)
+	args := componentTMTArgs(config, tmtWorkDir, settings, hardwareArgs)
 
 	result.ExitCode, err = runTMTCommand(
 		env, filepath.Join(testDir, "runner.log"), runDir, pluginDir, settings.TMTProgramPath, settings.Provision, args...,
@@ -851,14 +931,12 @@ func validateTMTTestName(name string) error {
 func componentTMTArgs(
 	config tmtConfig,
 	tmtWorkDir string,
-	provision string,
-	imagePath string,
+	settings tmtRunSettings,
 	hardwareArgs []string,
-	rpms []string,
 ) []string {
-	args := make([]string, 0, 32+len(hardwareArgs)+len(rpms))
+	args := make([]string, 0, 32+len(hardwareArgs)+len(settings.RPMs))
 
-	// Both provisioners need --become: candidate RPM installation and most plans'
+	// All provisioners need --become: candidate RPM installation and most plans'
 	// execute steps require root, and neither the testcloud guest user nor the
 	// invoking local user is root. TMT escalates with passwordless sudo.
 	args = append(args, "run", "--all", "--keep", "--id", tmtWorkDir,
@@ -873,12 +951,16 @@ func componentTMTArgs(
 		args = append(args, "plan")
 	}
 
-	args = append(args, "provision", "--how", provision, "--become")
+	args = append(args, "provision", "--how", settings.Provision, "--become")
+	if settings.Provision == tmtProvisionConnect {
+		args = append(args, "--guest", settings.Connection.Guest, "--port", strconv.Itoa(settings.Connection.Port),
+			"--user", settings.Connection.User, "--key", settings.Connection.Key)
+	}
 
 	// Only the virtual provisioner boots an image, so the disk and hardware
 	// constraints are meaningless for a local run.
-	if provision == tmtProvisionVirtual {
-		args = append(args, "--image", imagePath)
+	if settings.Provision == tmtProvisionVirtual {
+		args = append(args, "--image", settings.ImagePath)
 
 		// Emit hardware constraints from the plan, plus boot.method for UEFI.
 		for _, hardwareArg := range hardwareArgs {
@@ -889,8 +971,10 @@ func componentTMTArgs(
 	// Insert a distinct step rather than updating the plan's preparation. An
 	// update can inherit a plan entry's `when` conditions and skip candidate
 	// RPM installation entirely.
-	args = append(args, "prepare", "--insert", "--how", "install", "--name", tmtCandidateRPMPrepareStepName)
-	for _, rpm := range rpms {
+	if len(settings.RPMs) > 0 {
+		args = append(args, "prepare", "--insert", "--how", "install", "--name", tmtCandidateRPMPrepareStepName)
+	}
+	for _, rpm := range settings.RPMs {
 		args = append(args, "--package", rpm)
 	}
 
@@ -1092,8 +1176,9 @@ func decodeTMTConfig(raw map[string]any) (tmtConfig, error) {
 }
 
 func validateTMTProvision(provision string) error {
-	if provision != tmtProvisionLocal && provision != tmtProvisionVirtual {
-		return fmt.Errorf("'--provision' must be either %q or %q", tmtProvisionLocal, tmtProvisionVirtual)
+	if provision != tmtProvisionLocal && provision != tmtProvisionVirtual && provision != tmtProvisionConnect {
+		return fmt.Errorf("'--provision' must be either %q, %q, or %q",
+			tmtProvisionLocal, tmtProvisionVirtual, tmtProvisionConnect)
 	}
 
 	return nil
@@ -1104,8 +1189,8 @@ func validateTMTProvisionOptions(provision string, imagePath string) error {
 		return err
 	}
 
-	if provision == tmtProvisionLocal && imagePath != "" {
-		return errors.New("'--image-path' cannot be used with '--provision local'")
+	if provision != tmtProvisionVirtual && imagePath != "" {
+		return fmt.Errorf("'--image-path' cannot be used with '--provision %s'", provision)
 	}
 
 	return nil

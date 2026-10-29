@@ -94,6 +94,7 @@ func TestValidateTMTProvisionOptions(t *testing.T) {
 
 func TestTMTInstallRequirementUsesProvisionerExtra(t *testing.T) {
 	assert.Equal(t, "tmt[report-junit]", tmtInstallRequirement(tmtProvisionLocal))
+	assert.Equal(t, "tmt[report-junit]", tmtInstallRequirement(tmtProvisionConnect))
 	assert.Equal(t, "tmt[provision-virtual,report-junit]", tmtInstallRequirement(tmtProvisionVirtual))
 }
 
@@ -277,6 +278,7 @@ func TestNewComponentTestCmd(t *testing.T) {
 
 	for _, name := range []string{
 		"image-path", "rpm", "test", "work-dir", "provision", "source-dir", "plan", "from-spec",
+		"guest", "port", "user", "key",
 	} {
 		assert.NotNil(t, cmd.Flags().Lookup(name), "%s flag should be registered", name)
 	}
@@ -285,8 +287,8 @@ func TestNewComponentTestCmd(t *testing.T) {
 	require.NotNil(t, fromSpec)
 	assert.NotEmpty(t, fromSpec.Deprecated, "--from-spec should be marked deprecated")
 
-	// Removed flags: memory, firmware, connection, user
-	for _, name := range []string{"memory", "firmware", "connection", "user"} {
+	// Removed flags: memory, firmware, connection
+	for _, name := range []string{"memory", "firmware", "connection"} {
 		assert.Nil(t, cmd.Flags().Lookup(name), "%s flag should not be registered", name)
 	}
 }
@@ -749,10 +751,9 @@ func TestComponentTMTArgsPreservesNativePlanSteps(t *testing.T) {
 	args := componentTMTArgs(
 		tmtConfig{Plan: "/plans/smoke"},
 		"/work/tmt",
-		tmtProvisionVirtual,
-		"/path/to/image.qcow2",
+		tmtRunSettings{Provision: tmtProvisionVirtual, ImagePath: "/path/to/image.qcow2",
+			RPMs: []string{"/rpms/component.rpm", "/rpms/component-tests.rpm"}},
 		[]string{"memory >= 4 GB", "boot.method = uefi"},
-		[]string{"/rpms/component.rpm", "/rpms/component-tests.rpm"},
 	)
 
 	assert.Equal(t, []string{
@@ -774,10 +775,9 @@ func TestComponentTMTArgsVirtualProvisioner(t *testing.T) {
 	args := componentTMTArgs(
 		tmtConfig{Plan: "/plans/smoke"},
 		"/work/tmt",
-		tmtProvisionVirtual,
-		"/path/to/image.qcow2",
+		tmtRunSettings{Provision: tmtProvisionVirtual, ImagePath: "/path/to/image.qcow2",
+			RPMs: []string{"/rpms/component.rpm"}},
 		[]string{"boot.method = uefi"},
-		[]string{"/rpms/component.rpm"},
 	)
 
 	assert.Equal(t, []string{
@@ -798,10 +798,9 @@ func TestComponentTMTArgsLocalProvisioner(t *testing.T) {
 	args := componentTMTArgs(
 		tmtConfig{Plan: "/plans/smoke"},
 		"/work/tmt",
-		tmtProvisionLocal,
-		"/path/to/image.qcow2",
+		tmtRunSettings{Provision: tmtProvisionLocal, ImagePath: "/path/to/image.qcow2",
+			RPMs: []string{"/rpms/component.rpm"}},
 		[]string{"memory >= 4 GB", "boot.method = uefi"},
-		[]string{"/rpms/component.rpm"},
 	)
 
 	assert.Equal(t, []string{
@@ -820,10 +819,8 @@ func TestComponentTMTArgsOmitsNameWhenPlanIsEmpty(t *testing.T) {
 	args := componentTMTArgs(
 		tmtConfig{},
 		"/work/tmt",
-		tmtProvisionLocal,
-		"",
+		tmtRunSettings{Provision: tmtProvisionLocal, RPMs: []string{"/rpms/component.rpm"}},
 		nil,
-		[]string{"/rpms/component.rpm"},
 	)
 
 	assert.Equal(t, []string{
