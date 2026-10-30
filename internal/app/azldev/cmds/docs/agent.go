@@ -89,8 +89,9 @@ MCP server.
 Directory paths in the emitted content (such as the lock, generated
 upstream-commit, and rendered-spec directories) are resolved from the loaded
 azldev.toml, falling back to azldev's built-in defaults when no configuration is
-found. The emitted content also reflects the mode azldev runs in, so pass
---without-lockfile to describe the lock-file-free workflow. The bindings reflect
+found. By default, the content includes both lock-file and lockless workflows
+selected per component by lockless-components.txt. Pass --without-lockfile to
+describe an entirely lockless project. The bindings reflect
 the project azldev runs in, so pair --output-dir with -C pointing at the target
 repository when scaffolding a different repo.`,
 		Example: `  # Write agent files into the current repository

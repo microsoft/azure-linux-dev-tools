@@ -15,6 +15,8 @@ Report three independent change-activity signals per component:
 Use this to find which packages get the most attention (for documentation,
 review prioritization, or refactoring planning).
 
+Components using the lockless workflow via lockless-components.txt are skipped.
+
 When a component shares its source TOML with other components (e.g., a bare
 entry in a shared components.toml), the toml-commit count is coarse and the
 component is marked 'toml-shared'. Use --shared=omit to drop those rows.

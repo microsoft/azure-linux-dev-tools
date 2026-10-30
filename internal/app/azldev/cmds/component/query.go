@@ -53,6 +53,8 @@ single shared mock chroot, batching all specs into one chroot invocation with
 parallel per-spec processing. For each component, it reports the source NEVR
 and the list of binary subpackages the spec would produce when built.
 
+Components using the lockless workflow via lockless-components.txt are skipped.
+
 The rendered-specs-dir must exist on disk; if it doesn't, run
 'azldev component render' first. Components that previously failed to render
 (those with a RENDER_FAILED marker file) are skipped with a warning.`,
@@ -110,6 +112,18 @@ type componentDetails struct {
 func QueryComponents(
 	env *azldev.Env, options *QueryComponentsOptions,
 ) ([]*componentDetails, error) {
+	resolver := components.NewResolver(env)
+	comps, resolveErr := resolver.FindComponents(&options.ComponentFilter)
+
+	// Preserve directory diagnostics unless the selection is entirely lockless.
+	var lockedComps []components.Component
+	if resolveErr == nil {
+		lockedComps = componentsForLockMode(env, comps.Components(), false)
+		if comps.Len() > 0 && len(lockedComps) == 0 {
+			return []*componentDetails{}, nil
+		}
+	}
+
 	renderedSpecsDir := env.Config().Project.RenderedSpecsDir
 	if renderedSpecsDir == "" {
 		return nil, errors.New(
@@ -128,11 +142,8 @@ func QueryComponents(
 			renderedSpecsDir)
 	}
 
-	resolver := components.NewResolver(env)
-
-	comps, err := resolver.FindComponents(&options.ComponentFilter)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve components:\n%w", err)
+	if resolveErr != nil {
+		return nil, fmt.Errorf("failed to resolve components:\n%w", resolveErr)
 	}
 
 	cfg := env.Config()
@@ -142,7 +153,7 @@ func QueryComponents(
 			"please use command-line options to indicate which components to query")
 	}
 
-	inputs, _, err := buildSpecQueryInputs(env, comps.Components(), renderedSpecsDir)
+	inputs, _, err := buildSpecQueryInputs(env, lockedComps, renderedSpecsDir)
 	if err != nil {
 		return nil, err
 	}

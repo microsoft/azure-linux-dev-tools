@@ -22,9 +22,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// These tests cover the opt-in lock-file-free mode selected by the global
-// '--without-lockfile' flag, and assert that omitting the flag keeps azldev's
-// default lock-file behavior.
+// These tests cover the global lockless override and per-component selection
+// through 'lockless-components.txt'.
 
 // TestWithoutLockfile_GlobalFlagIsDocumented verifies that the preview flag is part
 // of the CLI surface and defaults to off.
@@ -42,8 +41,7 @@ func TestWithoutLockfile_GlobalFlagIsDocumented(t *testing.T) {
 }
 
 // TestWithoutLockfile_ComponentCommandsByMode verifies that the component command
-// set matches the selected mode: the lock-file commands by default, and the
-// refresh-upstream-commit command when the preview flag is passed.
+// set exposes both workflows by default and the lockless workflow with the flag.
 func TestWithoutLockfile_ComponentCommandsByMode(t *testing.T) {
 	t.Parallel()
 
@@ -60,14 +58,12 @@ func TestWithoutLockfile_ComponentCommandsByMode(t *testing.T) {
 		{
 			name:        "default mode",
 			args:        []string{"component", "--help"},
-			expected:    []string{"update", "history", "query"},
-			notExpected: []string{"refresh-upstream-commit"},
+			expected:    []string{"update", "history", "query", "refresh-upstream-commit"},
 		},
 		{
 			name:        "explicitly disabled",
 			args:        []string{"--without-lockfile=false", "component", "--help"},
-			expected:    []string{"update", "history", "query"},
-			notExpected: []string{"refresh-upstream-commit"},
+			expected:    []string{"update", "history", "query", "refresh-upstream-commit"},
 		},
 		{
 			name:     "lock-file-free mode",
@@ -150,7 +146,7 @@ func TestWithoutLockfile_AgentSkillsByMode(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, defaultResults.ExitCode)
 	assert.Contains(t, defaultResults.Stdout, "azldev-update-component")
-	assert.NotContains(t, defaultResults.Stdout, "azldev-refresh-upstream-commit")
+	assert.Contains(t, defaultResults.Stdout, "azldev-refresh-upstream-commit")
 
 	previewResults, err := cmdtest.NewScenarioTest(
 		"--without-lockfile", "docs", "agent", "show",
@@ -178,6 +174,22 @@ func TestWithoutLockfile_ComponentChanged(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping long test")
 	}
+
+	testLocklessComponentChanged(t, true)
+}
+
+func TestLocklessComponents_ComponentChanged(t *testing.T) {
+	t.Parallel()
+
+	if testing.Short() {
+		t.Skip("skipping long test")
+	}
+
+	testLocklessComponentChanged(t, false)
+}
+
+func testLocklessComponentChanged(t *testing.T, global bool) {
+	t.Helper()
 
 	azldevBin, err := testhelpers.FindTestBinary()
 	require.NoError(t, err)
@@ -216,6 +228,10 @@ func TestWithoutLockfile_ComponentChanged(t *testing.T) {
 
 	project.Serialize(t, projectDir)
 	patchProjectForLocal(t, projectDir)
+	if !global {
+		require.NoError(t, os.WriteFile(filepath.Join(projectDir, "lockless-components.txt"),
+			[]byte("curl\n"), fileperms.PublicFile))
+	}
 
 	gitInDir(t, projectDir, "init")
 	gitInDir(t, projectDir, "config", "user.email", "test@test.com")
@@ -238,10 +254,14 @@ func TestWithoutLockfile_ComponentChanged(t *testing.T) {
 	gitInDir(t, projectDir, "add", filepath.Join("specs", "curl", "curl.spec"))
 	gitInDir(t, projectDir, "-c", "commit.gpgsign=false", "commit", "-m", "change curl")
 
-	cmd := exec.CommandContext(t.Context(),
-		azldevBin, "--without-lockfile", "-C", projectDir, "--no-default-config",
+	args := []string{
+		"-C", projectDir, "--no-default-config",
 		"component", "changed", "--from", fromRef, "-a", "--include-unchanged", "-q", "-O", "json",
-	)
+	}
+	if global {
+		args = append([]string{"--without-lockfile"}, args...)
+	}
+	cmd := exec.CommandContext(t.Context(), azldevBin, args...)
 
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "azldev failed: %s", string(out))

@@ -41,6 +41,86 @@ func writeProjectConfig(t *testing.T, ctx *testctx.TestCtx, contents string) {
 		[]byte(contents), fileperms.PublicFile))
 }
 
+func TestLoadProjectConfig_PerComponentLockModes(t *testing.T) {
+	ctx := newTestCtxWithXDGConfigHome()
+	writeProjectConfig(t, ctx, `
+includes = ["pins.toml", "components.toml"]
+
+[components.curl.spec]
+type = "upstream"
+upstream-commit = "aaa1111"
+
+[components.rust-asyncband.spec]
+type = "upstream"
+upstream-commit = "bbb1111"
+`)
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), filepath.Join(testProjectDir, "pins.toml"), []byte(`
+[components.curl.spec]
+upstream-commit = "aaa2222"
+[components.rust-asyncband.spec]
+upstream-commit = "bbb2222"
+`), fileperms.PublicFile))
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), filepath.Join(testProjectDir, "components.toml"), []byte(`
+[components.curl.release]
+calculation = "static"
+[components.rust-asyncband.release]
+calculation = "static"
+`), fileperms.PublicFile))
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), filepath.Join(testProjectDir, "lockless-components.txt"),
+		[]byte("rust-asyncband\n"), fileperms.PublicFile))
+
+	for _, global := range []bool{false, true} {
+		_, config, err := projectconfig.LoadProjectConfig(
+			ctx.FS(), ctx.OSEnv(), testProjectDir, true, "/tmp", nil, false, global,
+		)
+		require.NoError(t, err)
+		assert.Equal(t, map[string]bool{"rust-asyncband": true}, config.LocklessComponents)
+		rustComponent := config.Components["rust-asyncband"]
+		assert.Equal(t, "bbb2222", rustComponent.Spec.UpstreamCommit)
+		assert.Equal(t, filepath.Join(testProjectDir, "pins.toml"),
+			rustComponent.UpstreamCommitConfigFile().SourcePath())
+
+		curlComponent := config.Components["curl"]
+		assert.Equal(t, "aaa2222", curlComponent.Spec.UpstreamCommit)
+
+		expectedSource := "components.toml"
+		if global {
+			expectedSource = "pins.toml"
+		}
+
+		assert.Equal(t, filepath.Join(testProjectDir, expectedSource),
+			curlComponent.UpstreamCommitConfigFile().SourcePath())
+	}
+}
+
+func TestLoadProjectConfig_LockModesValidation(t *testing.T) {
+	for _, listed := range []string{"rust-asyncband", "curl"} {
+		t.Run(listed, func(t *testing.T) {
+			ctx := newTestCtxWithXDGConfigHome()
+			writeProjectConfig(t, ctx, `
+includes = ["later.toml"]
+[components.rust-asyncband.release]
+calculation = "invalid"
+`)
+			require.NoError(t, fileutils.WriteFile(ctx.FS(), filepath.Join(testProjectDir, "later.toml"), []byte(`
+[components.rust-asyncband.release]
+calculation = "static"
+`), fileperms.PublicFile))
+			require.NoError(t, fileutils.WriteFile(ctx.FS(), filepath.Join(testProjectDir, "lockless-components.txt"),
+				[]byte(listed+"\n"), fileperms.PublicFile))
+
+			_, _, err := projectconfig.LoadProjectConfig(
+				ctx.FS(), ctx.OSEnv(), testProjectDir, true, "/tmp", nil, false, false,
+			)
+			if listed == "rust-asyncband" {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err, "unlisted component definitions must still be validated per file")
+			}
+		})
+	}
+}
+
 // TestLoadProjectConfig_NoUserConfig verifies that loading succeeds (and produces a
 // project-derived value) when no user-level config file is present.
 func TestLoadProjectConfig_NoUserConfig(t *testing.T) {
@@ -173,9 +253,8 @@ description = "`+testUserDesc+`"
 	assert.Equal(t, testUserDesc, config.Project.Description)
 }
 
-// TestLoadProjectConfig_LockDirByMode verifies that the project's lock directory is
-// defaulted in azldev's default mode and left unset in lock-file-free mode, where an
-// explicitly configured 'lock-dir' is accepted but ignored.
+// TestLoadProjectConfig_LockDirByMode verifies that the project's lock directory
+// remains available in either global mode for per-component rendering.
 func TestLoadProjectConfig_LockDirByMode(t *testing.T) {
 	testCases := []struct {
 		name            string
@@ -183,7 +262,7 @@ func TestLoadProjectConfig_LockDirByMode(t *testing.T) {
 		expected        string
 	}{
 		{name: "default mode", withoutLockfile: false, expected: filepath.Join(testProjectDir, "legacy-locks")},
-		{name: "lock-file-free mode", withoutLockfile: true, expected: ""},
+		{name: "lock-file-free mode", withoutLockfile: true, expected: filepath.Join(testProjectDir, "legacy-locks")},
 	}
 
 	for _, testCase := range testCases {

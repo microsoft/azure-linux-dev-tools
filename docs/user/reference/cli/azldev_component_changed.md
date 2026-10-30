@@ -12,6 +12,11 @@ input fingerprint changed (any change). For components whose fingerprint
 changed, it also reports whether the rendered sources file changed (sources
 change).
 
+For components listed in lockless-components.txt beside the current checkout's
+top-level azldev.toml, compare resolved project build inputs at both refs instead
+of stored locks. The global --without-lockfile flag selects that comparison for
+every component.
+
 This is useful for CI/CD pipelines to determine which components need to be
 rebuilt or have their lookaside tarballs re-uploaded after a PR merge.
 

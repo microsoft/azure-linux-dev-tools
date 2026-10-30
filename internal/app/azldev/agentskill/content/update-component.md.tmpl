@@ -11,6 +11,11 @@ an input fingerprint computed from the component's render inputs — its TOML co
 overlays, the pinned upstream commit, and the distro release version. If any of
 those change, the lock is stale.
 
+This workflow applies only to components not listed in `lockless-components.txt`
+beside the top-level `azldev.toml`. Listed components use the
+`azldev-refresh-upstream-commit` skill instead; `comp update` skips them.
+The global `--without-lockfile` flag makes every component lockless.
+
 ## When to run `update`
 
 | Situation | Run `update`? |

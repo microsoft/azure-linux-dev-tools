@@ -41,12 +41,12 @@ type RenderOptions struct {
 	RPMDevBumpspec    bool
 }
 
-func renderOnAppInit(app *azldev.App, parentCmd *cobra.Command) {
-	parentCmd.AddCommand(NewRenderCmd(cmdOptionsForApp(app)...))
+func renderOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
+	parentCmd.AddCommand(NewRenderCmd())
 }
 
 // NewRenderCmd constructs a [cobra.Command] for the "component render" CLI subcommand.
-func NewRenderCmd(opts ...CmdOption) *cobra.Command {
+func NewRenderCmd(_ ...CmdOption) *cobra.Command {
 	var options RenderOptions
 
 	var cmd *cobra.Command
@@ -67,6 +67,12 @@ specs/v/vim).
 Unlike prepare-sources, render skips downloading source tarballs from the
 lookaside cache — only spec files, patches, scripts, and other git-tracked
 sidecar files are included. Multiple components can be rendered at once.
+
+Render mode is selected per component by lockless-components.txt beside the
+top-level azldev.toml. Each nonempty line names one component to render without
+its lock file, using configured upstream commits and their TOML history instead.
+All other components use lock files. A missing or empty file means all components
+use lock files. The global --without-lockfile flag makes every component lockless.
 
 When rendering all components (-a), the --clean-stale flag prunes orphan
 rendered-spec directories (per-component dirs that no longer correspond to
@@ -101,8 +107,13 @@ valid with -a.`,
 		},
 	}
 
-	addComponentFilterOptions(cmd, &options.ComponentFilter, newCmdOptions(opts...))
+	addComponentFilterOptions(cmd, &options.ComponentFilter, cmdOptions{})
+	addRenderOptions(cmd, &options)
 
+	return cmd
+}
+
+func addRenderOptions(cmd *cobra.Command, options *RenderOptions) {
 	cmd.Flags().StringVarP(&options.OutputDir, "output-dir", "o", "",
 		"output directory for rendered specs (overrides rendered-specs-dir from config)")
 	_ = cmd.MarkFlagDirname("output-dir")
@@ -129,8 +140,6 @@ valid with -a.`,
 	// muddled (CI would fail on stale failures even when on-disk markers
 	// already record them) and forcing a choice keeps the contract crisp.
 	cmd.MarkFlagsMutuallyExclusive("fail-on-error", "check-only")
-
-	return cmd
 }
 
 // RenderResult holds the result of rendering a single component.
@@ -414,7 +423,8 @@ func parallelPrepare(
 			//nolint:contextcheck // env carries the ctx
 			return prepareOneComponent(
 				workerEnv, mockProcessor, comp, stagingDir, options.OutputDir,
-				options.specEditorMode(), options.RPMDevBumpspec)
+				options.specEditorMode(), options.RPMDevBumpspec,
+				env.ComponentWithoutLockfile(comp.GetName()))
 		},
 	)
 
@@ -463,6 +473,7 @@ func prepareOneComponent(
 	outputDir string,
 	specEditor spec.EditorMode,
 	rpmDevBumpspec bool,
+	lockless bool,
 ) prepResult {
 	componentName := comp.GetName()
 
@@ -477,7 +488,7 @@ func prepareOneComponent(
 		}}
 	}
 
-	prep, err := prepareComponentSources(env, mockProcessor, comp, stagingDir, specEditor, rpmDevBumpspec)
+	prep, err := prepareComponentSources(env, mockProcessor, comp, stagingDir, specEditor, rpmDevBumpspec, lockless)
 	if err != nil {
 		slog.Error("Failed to prepare component sources",
 			"component", componentName, "error", err)
@@ -505,6 +516,7 @@ func prepareComponentSources(
 	stagingDir string,
 	specEditor spec.EditorMode,
 	rpmDevBumpspec bool,
+	lockless bool,
 ) (*preparedComponent, error) {
 	componentName := comp.GetName()
 
@@ -535,7 +547,7 @@ func prepareComponentSources(
 	// rpmautospec can expand %autorelease and %autochangelog correctly.
 	// WithSkipLookaside avoids expensive tarball downloads — only spec +
 	// sidecar files are needed for rendering.
-	preparerOpts := append(gitRepoPreparerOptions(env, distro),
+	preparerOpts := append(gitRepoPreparerOptionsForMode(env, distro, lockless),
 		sources.WithSkipLookaside(),
 		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)),
 		sources.WithMockProcessor(mockProcessor),

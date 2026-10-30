@@ -60,6 +60,10 @@ For local components, this computes a content hash of the spec directory.
 Subsequent commands (render, build) use the locked state for deterministic,
 reproducible results.
 
+Components listed in lockless-components.txt beside the top-level azldev.toml
+are skipped, including with --bump. Use refresh-upstream-commit for them.
+Their existing lock files are left untouched.
+
 If a component fails to resolve, successful components are still written
 before the command returns an error. Failed components are left unchanged,
 and orphan pruning is skipped for that run.
@@ -162,6 +166,14 @@ func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]Updat
 		return nil, fmt.Errorf("%w: --bump and --check-only are mutually exclusive", azldev.ErrInvalidUsage)
 	}
 
+	if env.WithoutLockfile() {
+		return []UpdateResult{}, nil
+	}
+
+	return updateLockedComponents(env, options)
+}
+
+func updateLockedComponents(env *azldev.Env, options *UpdateComponentOptions) ([]UpdateResult, error) {
 	resolver := components.NewResolver(env)
 	// Suppress staleness warnings — we're about to refresh the locks ourselves,
 	// so warning the user to "run component update" would be self-referential noise.
@@ -185,6 +197,8 @@ func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]Updat
 		return nil, errors.New("no components matched the filter")
 	}
 
+	lockedComps := componentsForLockMode(env, comps, false)
+
 	// Resolve upstream commits in parallel (no-op for empty list).
 	store := env.LockStore()
 	if store == nil {
@@ -196,7 +210,7 @@ func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]Updat
 	// existing locks and should not delete entries for components that may
 	// have been removed.
 	if options.Bump {
-		results, bumpErr := bumpComponents(env, store, comps, options)
+		results, bumpErr := bumpComponents(env, store, lockedComps, options)
 		if bumpErr != nil {
 			return filterDisplayResults(results), bumpErr
 		}
@@ -206,7 +220,7 @@ func UpdateComponents(env *azldev.Env, options *UpdateComponentOptions) ([]Updat
 		return filterDisplayResults(results), nil
 	}
 
-	results := resolveSourceIdentitiesParallel(env, comps, store)
+	results := resolveSourceIdentitiesParallel(env, lockedComps, store)
 
 	// Don't save if the context was cancelled (Ctrl+C).
 	if env.Context().Err() != nil {

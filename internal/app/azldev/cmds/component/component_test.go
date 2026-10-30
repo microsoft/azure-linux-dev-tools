@@ -9,7 +9,10 @@ import (
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/component"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx/opctx_test"
+	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -34,7 +37,7 @@ func TestOnAppInit_CommandsByMode(t *testing.T) {
 		args            []string
 		refreshExpected bool
 	}{
-		{name: "default mode", args: nil, refreshExpected: false},
+		{name: "default mode", args: nil, refreshExpected: true},
 		{name: "lock-file-free mode", args: []string{"--without-lockfile"}, refreshExpected: true},
 	}
 
@@ -73,6 +76,28 @@ func TestNewComponentCommands_LockValidationFlagByMode(t *testing.T) {
 
 	withoutLockfile := component.WithoutLockfileFlags()
 	assert.Nil(t, component.NewBuildCmd(withoutLockfile).Flags().Lookup("skip-lock-validation"))
-	assert.Nil(t, component.NewRenderCmd(withoutLockfile).Flags().Lookup("skip-lock-validation"))
+	assert.NotNil(t, component.NewRenderCmd(withoutLockfile).Flags().Lookup("skip-lock-validation"),
+		"render selects lock behavior per component, independently of the global mode")
 	assert.Nil(t, component.NewComponentListCommand(withoutLockfile).Flags().Lookup("skip-lock-validation"))
+}
+
+func TestLocklessComponents_SkipLegacyHistoryAndQuery(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	env.Config.LocklessComponents = map[string]bool{"rust-asyncband": true}
+	env.Config.Components["rust-asyncband"] = projectconfig.ComponentConfig{
+		Name: "rust-asyncband",
+		Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeUpstream},
+	}
+	filter := components.ComponentFilter{IncludeAllComponents: true}
+
+	history, err := component.ComponentHistory(env.Env, &component.HistoryOptions{
+		ComponentFilter: filter,
+		SharedTomlMode:  "show",
+	})
+	require.NoError(t, err)
+	assert.Empty(t, history)
+
+	query, err := component.QueryComponents(env.Env, &component.QueryComponentsOptions{ComponentFilter: filter})
+	require.NoError(t, err)
+	assert.Empty(t, query)
 }

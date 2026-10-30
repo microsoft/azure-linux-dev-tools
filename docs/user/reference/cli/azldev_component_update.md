@@ -14,6 +14,10 @@ For local components, this computes a content hash of the spec directory.
 Subsequent commands (render, build) use the locked state for deterministic,
 reproducible results.
 
+Components listed in lockless-components.txt beside the top-level azldev.toml
+are skipped, including with --bump. Use refresh-upstream-commit for them.
+Their existing lock files are left untouched.
+
 If a component fails to resolve, successful components are still written
 before the command returns an error. Failed components are left unchanged,
 and orphan pruning is skipped for that run.

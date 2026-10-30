@@ -456,6 +456,31 @@ func TestValidateUpstreamCommit(t *testing.T) {
 }
 
 func TestValidateConsistency(t *testing.T) {
+	t.Run("ignored components skip validation but preserve orphan detection", func(t *testing.T) {
+		memFS := afero.NewMemMapFs()
+		store := lockfile.NewStore(memFS, testLockDir)
+		components := map[string]projectconfig.ComponentConfig{
+			"missing": {},
+			"corrupt": {},
+			"stale":   {Spec: projectconfig.SpecSource{UpstreamCommit: "new-commit"}},
+			"locked":  {},
+		}
+
+		require.NoError(t, fileutils.WriteFile(
+			memFS, mustLockPath(t, "corrupt"), []byte("not valid TOML"), fileperms.PublicFile,
+		))
+
+		lock := lockfile.New()
+		lock.UpstreamCommit = testCommitHash
+		require.NoError(t, store.Save("stale", lock))
+		require.NoError(t, store.Save("orphan", lock))
+
+		stale, orphans, err := store.ValidateConsistency(components, true, "missing", "corrupt", "stale")
+		require.Error(t, err)
+		assert.Equal(t, []string{"locked"}, stale)
+		assert.Equal(t, []string{"orphan"}, orphans)
+	})
+
 	t.Run("all valid", func(t *testing.T) {
 		memFS := afero.NewMemMapFs()
 		store := lockfile.NewStore(memFS, testLockDir)

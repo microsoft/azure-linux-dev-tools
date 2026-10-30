@@ -34,6 +34,11 @@ images assemble RPMs into bootable artifacts.
 
 ## Common commands
 
+`lockless-components.txt` beside the top-level `azldev.toml` selects the lockless
+workflow per component for all commands. Listed components ignore locks and use
+generated upstream-commit TOML instead. All others use locks. The global
+`--without-lockfile` flag makes every component lockless.
+
 Top-level commands in this build:
 
 {{ range .TopLevelCommands }}- `azldev {{ .Name }}` — {{ .Short }}
@@ -48,6 +53,7 @@ Everyday tasks (add `-q -O json` when scripting):
 | Build a component | `azldev comp build -p <name>` |
 | Render specs | `azldev comp render -p <name>` (or `-a`) |
 | Refresh a lock | `azldev comp update -p <name>` |
+| Refresh a lockless component | `azldev comp refresh-upstream-commit -p <name>` |
 | List / build images | `azldev image list` / `azldev image build` |
 
 `comp` is an alias for `component`. Always confirm current syntax with
@@ -65,6 +71,7 @@ mock helpers; it is intentionally omitted from normal help.
 - Build, iterate, and debug a component — read the `azldev-build-component` skill.
 - Build, boot, and register images — read the `azldev-image` skill.
 - Refresh a lock and finalize for a PR — read the `azldev-update-component` skill.
+- Refresh a lockless component — read the `azldev-refresh-upstream-commit` skill.
 - Remove a component — read the `azldev-remove-component` skill.
 - Test built RPMs in a chroot — read the `azldev-mock` skill.
 
@@ -72,7 +79,7 @@ mock helpers; it is intentionally omitted from normal help.
 
 - **Never edit generated output** — rendered specs and the output/work/log dirs are
   produced by azldev. Change the source config and re-render.
-- **Re-run `azldev comp update` before opening a PR** — the lock fingerprint covers
+- **For locked components, re-run `azldev comp update` before opening a PR** — the lock fingerprint covers
   the whole component config, and lock / rendered-spec CI checks run on committed state.
 - **Every overlay needs a `description`** explaining why the change is needed.
 

@@ -268,6 +268,40 @@ upstream-commit = "abcdef1234567"
 	assert.Equal(t, []string{"curl"}, project.componentGroups["core"])
 }
 
+func TestLoadHistoricalProject_OnlyBuildsInputsForLocklessComponents(t *testing.T) {
+	rootConfig := []byte(`
+[project]
+default-distro = { name = "testdistro", version = "1.0" }
+rendered-specs-dir = "SPECS"
+
+[distros.testdistro]
+description = "Test distro"
+[distros.testdistro.versions."1.0"]
+release-ver = "1.0"
+
+[components.rust-asyncband.spec]
+type = "upstream"
+upstream-commit = "abcdef1234567"
+
+[components.curl.spec]
+type = "local"
+path = "unavailable/curl.spec"
+`)
+	repo, hashes := testRepoWithCommits(t, []testRepoCommit{
+		{files: map[string][]byte{"azldev.toml": rootConfig}},
+	})
+	tree, err := resolveTree(repo, hashes[0])
+	require.NoError(t, err)
+	env := testutils.NewTestEnv(t)
+	env.Config.LocklessComponents = map[string]bool{"rust-asyncband": true}
+
+	project, err := loadHistoricalProject(env.Env, tree, ".")
+	require.NoError(t, err, "locked component inputs must not be read for the lockless comparison")
+	assert.Contains(t, project.components, "curl")
+	assert.NotContains(t, project.comparisonInputs, "curl")
+	assert.Equal(t, "abcdef1234567", project.comparisonInputs["rust-asyncband"].SourceIdentity)
+}
+
 func TestSelectHistoricalComponentNames_UsesBothRefs(t *testing.T) {
 	fromProject := &historicalProject{
 		components: map[string]projectconfig.ComponentConfig{

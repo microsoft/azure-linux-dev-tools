@@ -55,6 +55,11 @@ files before component-specific TOML configuration so subsequent commands use
 the generated commit unless the component configuration explicitly overrides
 it.
 
+Without --without-lockfile, only components listed in lockless-components.txt
+beside the top-level azldev.toml are refreshed. Other components are skipped
+and their generated TOML files are preserved. With the global flag, every
+component uses the lockless workflow.
+
 All TOML configuration is resolved before the source type is checked. Selected
 components whose effective spec.type is not "upstream" do not contact an
 upstream provider, and any generated upstream-commit TOML for them is removed.
@@ -76,19 +81,19 @@ The --check-only flag runs the full pipeline but does NOT write TOML files or
 prune orphans. The command exits 0 when nothing would change and exits 1 when
 any component is stale or any generated TOML would be pruned. Intended for CI gates.`,
 		Example: `  # Refresh all components
-  azldev --without-lockfile component refresh-upstream-commit -a
+  azldev component refresh-upstream-commit -a
 
   # Refresh a single component
-  azldev --without-lockfile component refresh-upstream-commit -p curl
+  azldev component refresh-upstream-commit -p curl
 
   # Refresh components in a group
-  azldev --without-lockfile component refresh-upstream-commit -g core
+  azldev component refresh-upstream-commit -g core
 
   # Write generated files to a custom directory
-  azldev --without-lockfile component refresh-upstream-commit -a --upstream-commits-dir config/commits
+  azldev component refresh-upstream-commit -a --upstream-commits-dir config/commits
 
   # CI gate: exit 0 if commit TOMLs are current, 1 if anything would change
-  azldev --without-lockfile component refresh-upstream-commit -a --check-only -q`,
+  azldev component refresh-upstream-commit -a --check-only -q`,
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
 			options.ComponentFilter.ComponentNamePatterns = append(
 				args, options.ComponentFilter.ComponentNamePatterns...,
@@ -135,6 +140,8 @@ func RefreshUpstreamCommits(
 	env *azldev.Env, options *RefreshUpstreamCommitOptions,
 ) ([]RefreshUpstreamCommitResult, error) {
 	resolver := components.NewResolver(env)
+	options.ComponentFilter.SkipLockValidation = true
+	resolver.SuppressLockWarnings = true
 
 	resolved, err := resolver.FindComponents(&options.ComponentFilter)
 	if err != nil {
@@ -165,7 +172,9 @@ func RefreshUpstreamCommits(
 	// selected component has an upstream identity. Non-upstream components
 	// never contact a provider; an existing generated pin is marked for
 	// removal instead.
-	upstreamComps, results, inspectErr := inspectSelectedComponents(allComps, store)
+	upstreamComps, results, inspectErr := inspectSelectedComponents(
+		componentsForLockMode(env, allComps, true), store,
+	)
 	if inspectErr != nil {
 		return results, inspectErr
 	}

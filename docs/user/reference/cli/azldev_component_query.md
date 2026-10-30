@@ -14,6 +14,8 @@ single shared mock chroot, batching all specs into one chroot invocation with
 parallel per-spec processing. For each component, it reports the source NEVR
 and the list of binary subpackages the spec would produce when built.
 
+Components using the lockless workflow via lockless-components.txt are skipped.
+
 The rendered-specs-dir must exist on disk; if it doesn't, run
 'azldev component render' first. Components that previously failed to render
 (those with a RENDER_FAILED marker file) are skipped with a warning.

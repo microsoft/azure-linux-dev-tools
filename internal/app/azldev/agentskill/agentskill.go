@@ -231,7 +231,7 @@ func (c Catalog) Skills() []Skill {
 	result := slices.Clone(skills)
 
 	if !c.withoutLockfile {
-		return result
+		return append(result, withoutLockfileSkills[updateComponentSkillName])
 	}
 
 	for idx := range result {

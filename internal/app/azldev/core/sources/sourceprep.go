@@ -114,7 +114,7 @@ func WithDirtyDetection() PreparerOption {
 
 // WithoutLockfileHistory returns a [PreparerOption] that derives synthetic history
 // from the component's generated upstream-commit TOML instead of its lock file.
-// It selects the behavior of the global '--without-lockfile' flag; the lock reader
+// It selects lockless component behavior; the lock reader
 // and release version passed to [WithGitRepo] are unused in that mode.
 func WithoutLockfileHistory() PreparerOption {
 	return func(p *sourcePreparerImpl) {

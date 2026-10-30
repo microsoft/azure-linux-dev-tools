@@ -1,41 +1,71 @@
 # How To: Preview the Lock-File-Free Mode
 
-`--without-lockfile` is a **preview** global flag. It selects an alternative way of
-tracking a component's resolved upstream commit: instead of per-component lock
-files, azldev records the commit in generated component TOML that the project
-includes like any other config file.
+The **preview** lockless workflow tracks a component's resolved upstream commit
+in generated component TOML instead of per-component lock files. Select it for
+individual components using `lockless-components.txt`, or for every component
+using the global `--without-lockfile` flag.
 
-The flag is opt-in and defaults to off. Without it, azldev behaves exactly as it
-always has — lock files, `component update`, `component history`, and
-`component query` are unchanged. Nothing in the preview mode is stable yet; both
-the command surface and the generated file layout may change.
+The file applies to every command, not just rendering. Nothing in the preview
+workflow is stable yet; both the command surface and generated layout may change.
 
 ```bash
-# Default behavior: lock files.
+# Use curl's selected workflow.
 azldev component render -p curl
 
-# Preview behavior: generated upstream-commit config.
-azldev --without-lockfile component render -p curl
+# Refresh curl's generated commit if curl is listed in lockless-components.txt.
+azldev component refresh-upstream-commit -p curl
 ```
 
-Pass the flag on every invocation that should use the preview mode, before the
-command name. `--without-lockfile=false` explicitly selects the default mode.
+The flag overrides the file: when set, every component is lockless, including
+unlisted components. With the flag absent or set to `false`, the file selects
+each component's mode.
+
+## Select Lock Mode Per Component
+
+Create `lockless-components.txt` beside the top-level `azldev.toml`. List one
+exact, case-sensitive component name per line:
+
+```text
+curl
+rust-asyncband
+```
+
+Rendering, builds, and source preparation ignore existing locks and lock
+validation for listed components. They use configured upstream commits, with
+synthetic history derived from committed upstream-commit TOML changes.
+Unlisted components use lock files, lock validation, and fingerprint-derived
+synthetic history. Both kinds can be processed together.
+
+A missing or empty file means all components use lock files. Blank lines and
+surrounding whitespace are ignored; names are not glob patterns. A file read
+error stops configuration loading.
+
+Both `component update` and `component refresh-upstream-commit` are available
+without the flag. Update (including `--bump`) skips listed components and leaves
+their locks untouched; refresh skips unlisted components and preserves their
+generated TOML files. All-component scans still prune files for components that
+no longer exist, not files belonging to components using the other mode.
+`component history` and `component query` skip listed components, matching the
+existing lockless no-op behavior. `component changed` compares resolved project
+inputs for listed components and stored fingerprints for unlisted components;
+the current checkout's list determines which comparison to use.
 
 ## What Changes
 
-| Area | Default | `--without-lockfile` |
+| Area | Locked component | Lockless component |
 |------|---------|----------------------|
 | Resolved commit storage | `locks/<name>.lock` | `base/upstream-commits/<name>.toml` |
 | Refresh command | `azldev component update` | `azldev component refresh-upstream-commit` |
 | Inspecting resolved state | `azldev component history`, `azldev component query` | read the generated TOML; no equivalent commands |
-| Lock consistency checks | On, with `--skip-lock-validation` to opt out | Not applicable; the flag is not registered |
+| Lock consistency checks | On, with `--skip-lock-validation` to opt out | Skipped |
 | `component changed` | Compares stored input fingerprints | Compares project configuration resolved at each ref |
 | Synthetic dist-git history | Derived from lock-file fingerprint changes | Derived from generated upstream-commit TOML changes |
-| Agent skills and MCP tools | Describe the lock-file workflow | Describe the upstream-commit workflow |
+| Agent skills and MCP tools | Both workflows are available for mixed projects | The global flag selects the entirely lockless catalog |
 
 `component update`, `component history`, and `component query` remain registered
 in preview mode as hidden no-ops so that existing scripts report clearly that the
-commands do nothing, rather than failing with "unknown command".
+commands do nothing, rather than failing with "unknown command". Without the
+global flag, they process only locked components.
 
 ## Configure the Project
 
@@ -51,23 +81,24 @@ includes = [
 
 Generated files hold only `spec.upstream-commit`; the component's own TOML
 supplies the source type and everything else. Because a single file may hold a
-partial component definition in this mode, component validation runs after all
-config files have been merged.
+partial component definition for a lockless component, its validation runs after
+all config files have been merged. Unlisted components retain normal additive
+merging and per-file validation.
 
-An existing `[project] lock-dir` setting is accepted and ignored in preview mode,
-so the same project config works in both modes.
+`[project] lock-dir` still configures the directory used for locked components.
+Lockless components do not read or write their lock files.
 
 ## Refresh a Component
 
 ```bash
 # Resolve and record the upstream commit for one component.
-azldev --without-lockfile component refresh-upstream-commit -p curl
+azldev component refresh-upstream-commit -p curl
 
 # Refresh everything and prune generated files for components that no longer exist.
-azldev --without-lockfile component refresh-upstream-commit -a
+azldev component refresh-upstream-commit -a
 
 # CI gate: exit 1 when any generated file is out of date.
-azldev --without-lockfile component refresh-upstream-commit -a --check-only -q
+azldev component refresh-upstream-commit -a --check-only -q
 ```
 
 Refresh after changing a commit pin, upstream distro or version, or snapshot.
@@ -89,10 +120,10 @@ produce a synthetic commit.
 ## Detect Changed Components
 
 ```bash
-azldev --without-lockfile component changed --from main -a -q -O json
+azldev component changed --from main -a -q -O json
 ```
 
-In preview mode this loads the project configuration independently at both refs
+For lockless components this loads the project configuration independently at both refs
 and compares the resolved component build inputs: normalized component
 configuration, upstream commit or local spec-directory contents, overlay source
 filenames and contents, and the effective distro release version. Documentation,
@@ -101,8 +132,8 @@ fields do not mark a component as changed.
 
 ## Emit Agent Files for the Preview Mode
 
-`azldev docs agent install` emits the content for the mode it runs in, so pass the
-flag when the target repository uses the preview workflow:
+`azldev docs agent install` includes both workflows for mixed projects. Pass the
+flag to emit content for an entirely lockless project:
 
 ```bash
 azldev --without-lockfile docs agent install

@@ -185,6 +185,16 @@ func TestComponentTomlSkillDocumentsRPMDevBumpspecPreview(t *testing.T) {
 	assert.Contains(t, doc, "no bumpspec runtime discovery occurs")
 }
 
+func TestComponentTomlSkillDocumentsPerComponentRenderModes(t *testing.T) {
+	for _, withoutLockfile := range []bool{false, true} {
+		doc, err := agentskill.NewCatalog(withoutLockfile).SkillDocument("azldev-comp-toml", testParams())
+		require.NoError(t, err)
+		assert.Contains(t, doc, "`lockless-components.txt` beside the top-level `azldev.toml`")
+		assert.Contains(t, doc, "all others use lock files")
+		assert.Contains(t, doc, "for every command")
+	}
+}
+
 func TestImageSkillDocumentsSKUGroupGuidance(t *testing.T) {
 	doc, err := agentskill.SkillDocument("azldev-image", testParams())
 	require.NoError(t, err)
@@ -573,18 +583,18 @@ func TestImageSkillCoversCapabilities(t *testing.T) {
 }
 
 // TestCatalog_SkillsByMode verifies that each mode advertises the skill describing
-// how it maintains resolved component state, and only that one.
+// how it maintains resolved component state, including both workflows by default.
 func TestCatalog_SkillsByMode(t *testing.T) {
 	defaultNames := skillNamesOf(agentskill.NewCatalog(false))
 	assert.Contains(t, defaultNames, "azldev-update-component")
-	assert.NotContains(t, defaultNames, "azldev-refresh-upstream-commit")
+	assert.Contains(t, defaultNames, "azldev-refresh-upstream-commit")
 
 	withoutLockfileNames := skillNamesOf(agentskill.NewCatalog(true))
 	assert.Contains(t, withoutLockfileNames, "azldev-refresh-upstream-commit")
 	assert.NotContains(t, withoutLockfileNames, "azldev-update-component")
 
 	// The two catalogs otherwise describe the same set of skills, in the same order.
-	assert.Len(t, withoutLockfileNames, len(defaultNames))
+	assert.Len(t, withoutLockfileNames, len(defaultNames)-1)
 }
 
 // TestCatalog_SkillContentByMode verifies that the rendered skill bodies describe

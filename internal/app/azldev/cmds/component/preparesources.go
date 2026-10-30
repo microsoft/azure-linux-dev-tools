@@ -141,7 +141,7 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 			"synthetic history requires overlays to be applied")
 	}
 
-	preparerOpts := buildPreparerOptions(env, distro, options)
+	preparerOpts := buildPreparerOptions(env, distro, options, component.GetName())
 
 	preparer, err := newSourcePreparer(sourceManager, env.FS(), env, env, append(
 		preparerOpts,
@@ -165,11 +165,12 @@ func buildPreparerOptions(
 	env *azldev.Env,
 	distro sourceproviders.ResolvedDistro,
 	options *PrepareSourcesOptions,
+	componentName string,
 ) []sources.PreparerOption {
 	var opts []sources.PreparerOption
 
 	if !options.WithoutGitRepo && !options.SkipOverlays {
-		opts = append(opts, gitRepoPreparerOptions(env, distro)...)
+		opts = append(opts, gitRepoPreparerOptions(env, distro, componentName)...)
 	}
 
 	if options.RPMDevBumpspec {

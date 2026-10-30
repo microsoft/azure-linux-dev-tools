@@ -86,6 +86,12 @@ calculation = "manual"
 
 ## Render configuration
 
+azldev reads `lockless-components.txt` beside the top-level `azldev.toml`.
+Listed component names use the lockless workflow for every command;
+all others use lock files. A missing or empty list means all components use
+locks. The global `--without-lockfile` flag makes every component lockless.
+Use `comp refresh-upstream-commit` for lockless components.
+
 `render.skip-file-filter = true` keeps all source and patch files during render.
 azldev normally prunes files not referenced by the rendered spec; set this only for
 the rare spec whose `Source`/`Patch` filenames use macros the filter cannot expand.

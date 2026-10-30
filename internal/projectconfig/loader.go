@@ -38,7 +38,12 @@ type loadOptions struct {
 
 	// withoutLockfile selects lock-file-free mode, where component definitions are
 	// merged with override semantics and validated only once fully assembled.
-	withoutLockfile bool
+	withoutLockfile    bool
+	locklessComponents map[string]bool
+}
+
+func (options loadOptions) componentWithoutLockfile(name string) bool {
+	return options.withoutLockfile || options.locklessComponents[name]
 }
 
 // Loads and resolves the project configuration files located at the given path. Referenced include files
@@ -48,6 +53,7 @@ func loadAndResolveProjectConfig(
 	fs opctx.FS, options loadOptions, configFilePaths ...string,
 ) (*ProjectConfig, error) {
 	defaultConfig := NewProjectConfig()
+	defaultConfig.LocklessComponents = options.locklessComponents
 	resolvedCfg := &defaultConfig
 
 	for _, configFilePath := range configFilePaths {
@@ -244,7 +250,23 @@ func mergeComponents(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile, options 
 		return mergeComponentsWithOverride(resolvedCfg, loadedCfg)
 	}
 
-	return mergeComponentsAdditively(resolvedCfg, loadedCfg)
+	locked, lockless := *loadedCfg, *loadedCfg
+	locked.Components = make(map[string]ComponentConfig)
+
+	lockless.Components = make(map[string]ComponentConfig)
+	for name, component := range loadedCfg.Components {
+		if options.componentWithoutLockfile(name) {
+			lockless.Components[name] = component
+		} else {
+			locked.Components[name] = component
+		}
+	}
+
+	if err := mergeComponentsAdditively(resolvedCfg, &locked); err != nil {
+		return err
+	}
+
+	return mergeComponentsWithOverride(resolvedCfg, &lockless)
 }
 
 // mergeComponentsAdditively merges component definitions from a loaded config file
@@ -548,16 +570,10 @@ func loadProjectConfigFile(
 	cfg.sourcePath = absFilePath
 	cfg.dir = filepath.Dir(absFilePath)
 
-	// Make sure that the read data is internally consistent. In lock-file-free
-	// mode, component definitions support override merging across files, so they
-	// are validated only after the complete project configuration is assembled.
+	// Lockless component definitions support override merging across files, so
+	// validate them only after the complete configuration is assembled.
 	// Syntax and unknown fields were already checked by the TOML decoder.
-	if options.withoutLockfile {
-		err = cfg.validateNonComponentFields()
-	} else {
-		err = cfg.Validate()
-	}
-
+	err = cfg.validateForLockModes(options)
 	if err != nil {
 		return nil, err
 	}

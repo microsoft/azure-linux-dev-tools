@@ -37,10 +37,8 @@ components defined in the project configuration.`,
 	testOnAppInit(app, cmd)
 	metadataOnAppInit(app, cmd)
 
-	// The commands that maintain resolved component state differ by mode: the
-	// default mode maintains lock files, while lock-file-free mode maintains
-	// generated upstream-commit config. Registering only the commands that
-	// belong to the active mode keeps help, docs, and MCP tools honest.
+	// Mixed projects need both state writers. The global override keeps the
+	// existing entirely lockless command surface and legacy no-ops.
 	if app.WithoutLockfile() {
 		legacyOnAppInit(app, cmd)
 		refreshUpstreamCommitOnAppInit(app, cmd)
@@ -48,6 +46,7 @@ components defined in the project configuration.`,
 		historyOnAppInit(app, cmd)
 		queryOnAppInit(app, cmd)
 		updateOnAppInit(app, cmd)
+		refreshUpstreamCommitOnAppInit(app, cmd)
 	}
 
 	return cmd

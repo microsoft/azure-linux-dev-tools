@@ -307,6 +307,12 @@ func (env *Env) WithoutLockfile() bool {
 	return env.withoutLockfile
 }
 
+// ComponentWithoutLockfile reports the selected component's mode. The global
+// '--without-lockfile' flag overrides the project's per-component list.
+func (env *Env) ComponentWithoutLockfile(name string) bool {
+	return env.withoutLockfile || (env.config != nil && env.config.LocklessComponents[name])
+}
+
 // SetEventListener registers the event listener to be used in this environment.
 func (env *Env) SetEventListener(eventListener opctx.EventListener) {
 	env.eventListener = eventListener

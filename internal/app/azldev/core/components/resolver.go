@@ -581,6 +581,12 @@ func (r *Resolver) createComponentFromConfig(componentConfig *projectconfig.Comp
 // goes into the separate Locked field, preserving the manifest/lock boundary:
 // Spec.UpstreamCommit = user intent, Locked.UpstreamCommit = resolved reality.
 func (r *Resolver) populateFromLock(config *projectconfig.ComponentConfig) {
+	if r.env.ComponentWithoutLockfile(config.Name) {
+		config.Locked = nil
+
+		return
+	}
+
 	reader := r.env.LockReader()
 	if reader == nil {
 		return
@@ -912,11 +918,17 @@ func (r *Resolver) validateLockFiles(resolved *ComponentSet, checkOrphans bool, 
 
 	// Build resolved config map from the component set.
 	resolvedConfigs := make(map[string]projectconfig.ComponentConfig, resolved.Len())
+
+	var ignoredComponents []string
+
 	for _, comp := range resolved.Components() {
 		resolvedConfigs[comp.GetName()] = *comp.GetConfig()
+		if r.env.ComponentWithoutLockfile(comp.GetName()) {
+			ignoredComponents = append(ignoredComponents, comp.GetName())
+		}
 	}
 
-	stale, orphans, err := reader.ValidateConsistency(resolvedConfigs, checkOrphans)
+	stale, orphans, err := reader.ValidateConsistency(resolvedConfigs, checkOrphans, ignoredComponents...)
 	if err == nil {
 		return nil
 	}

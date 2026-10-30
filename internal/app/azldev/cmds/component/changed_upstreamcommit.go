@@ -85,6 +85,10 @@ func changedComponentsFromProjectConfigs(
 		return nil, fmt.Errorf("selecting components:\n%w", err)
 	}
 
+	names = slices.DeleteFunc(names, func(name string) bool {
+		return !env.ComponentWithoutLockfile(name)
+	})
+
 	return buildHistoricalResults(
 		names, fromProject, toProject, fromTree, toTree,
 		options.IncludeUnchanged, options.ComponentFilter.IncludeAllComponents,
@@ -177,7 +181,7 @@ func loadHistoricalProject(
 	}
 
 	if err := populateHistoricalComponents(
-		result, snapshotFS, historicalEnv, resolvedComponents,
+		result, snapshotFS, historicalEnv, resolvedComponents, env,
 	); err != nil {
 		return nil, err
 	}
@@ -225,9 +229,13 @@ func populateHistoricalComponents(
 	fs opctx.FS,
 	env *azldev.Env,
 	resolvedComponents *components.ComponentSet,
+	selectionEnv *azldev.Env,
 ) error {
 	for _, component := range resolvedComponents.Components() {
 		project.components[component.GetName()] = *component.GetConfig()
+		if !selectionEnv.ComponentWithoutLockfile(component.GetName()) {
+			continue
+		}
 
 		inputs, err := buildComponentComparisonInputs(fs, env, component.GetConfig())
 		if err != nil {

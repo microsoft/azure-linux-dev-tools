@@ -20,6 +20,12 @@ Unlike prepare-sources, render skips downloading source tarballs from the
 lookaside cache — only spec files, patches, scripts, and other git-tracked
 sidecar files are included. Multiple components can be rendered at once.
 
+Render mode is selected per component by lockless-components.txt beside the
+top-level azldev.toml. Each nonempty line names one component to render without
+its lock file, using configured upstream commits and their TOML history instead.
+All other components use lock files. A missing or empty file means all components
+use lock files. The global --without-lockfile flag makes every component lockless.
+
 When rendering all components (-a), the --clean-stale flag prunes orphan
 rendered-spec directories (per-component dirs that no longer correspond to
 any component in the project config). Per-component dirs that ARE in config
