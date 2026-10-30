@@ -293,12 +293,20 @@ func (s *structuralSpec) AddTag(packageName string, tag string, value string) (e
 func (s *structuralSpec) InsertTag(packageName string, tag string, value string) error {
 	slog.Debug("Inserting tag to spec", "package", packageName, "tag", tag, "value", value)
 
+	return s.insertTagAfterFamily(packageName, tag, value, true)
+}
+
+func (s *structuralSpec) insertTagAfterFamily(
+	packageName, tag, value string, fallbackToAnyTag bool,
+) error {
 	sectionName := ""
 	if packageName != "" {
 		sectionName = packageSectionName
 	}
 
-	insertAfter, found, err := findLinearTagInsertPosition(s.rawLines, sectionName, packageName, structuralTagFamily(tag))
+	insertAfter, found, err := findLinearTagInsertPosition(
+		s.rawLines, sectionName, packageName, structuralTagFamily(tag), fallbackToAnyTag,
+	)
 	if err != nil {
 		return err
 	}
@@ -325,7 +333,9 @@ func (s *structuralSpec) InsertTag(packageName string, tag string, value string)
 // ignoring directive-shaped macro bodies.
 //
 //nolint:cyclop,gocognit,nestif // One pass keeps macro, section, and conditional state synchronized.
-func findLinearTagInsertPosition(lines []string, sectionName, packageName, family string) (int, bool, error) {
+func findLinearTagInsertPosition(
+	lines []string, sectionName, packageName, family string, fallbackToAnyTag bool,
+) (int, bool, error) {
 	lastAny, lastFamily := -1, -1
 	lastAnyConditional, lastFamilyConditional := -1, -1
 	currentName, currentPackage := "", ""
@@ -384,9 +394,13 @@ func findLinearTagInsertPosition(lines []string, sectionName, packageName, famil
 			sectionName, packageName, ErrSectionNotFound)
 	}
 
-	insertAfter, conditionalStart := lastAny, lastAnyConditional
-	if lastFamily >= 0 {
+	insertAfter, conditionalStart := -1, -1
+
+	switch {
+	case lastFamily >= 0:
 		insertAfter, conditionalStart = lastFamily, lastFamilyConditional
+	case fallbackToAnyTag:
+		insertAfter, conditionalStart = lastAny, lastAnyConditional
 	}
 
 	if insertAfter < 0 {
@@ -745,7 +759,7 @@ func (s *structuralSpec) AddPatchEntry(packageName, filename string) error {
 		return fmt.Errorf("failed to scan for existing patch tags:\n%w", err)
 	}
 
-	return s.AddTag(packageName, fmt.Sprintf("Patch%d", highest+1), filename)
+	return s.insertTagAfterFamily(packageName, fmt.Sprintf("Patch%d", highest+1), filename, false)
 }
 
 // RemovePatchEntry removes all references to patches matching the given pattern from the spec.
