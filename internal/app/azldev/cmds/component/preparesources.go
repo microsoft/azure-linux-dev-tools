@@ -29,11 +29,11 @@ type PrepareSourcesOptions struct {
 	SkipSources    bool
 }
 
-func prepareOnAppInit(app *azldev.App, sourceCmd *cobra.Command) {
-	sourceCmd.AddCommand(NewPrepareSourcesCmd(cmdOptionsForApp(app)...))
+func prepareOnAppInit(_ *azldev.App, sourceCmd *cobra.Command) {
+	sourceCmd.AddCommand(NewPrepareSourcesCmd())
 }
 
-func NewPrepareSourcesCmd(opts ...CmdOption) *cobra.Command {
+func NewPrepareSourcesCmd() *cobra.Command {
 	var options PrepareSourcesOptions
 
 	var cmd *cobra.Command
@@ -67,7 +67,7 @@ Only one component may be selected at a time.`,
 		},
 	}
 
-	addComponentFilterOptions(cmd, &options.ComponentFilter, newCmdOptions(opts...))
+	addComponentFilterOptions(cmd, &options.ComponentFilter)
 
 	cmd.Flags().StringVarP(&options.OutputDir, "output-dir", "o", "", "output directory")
 	_ = cmd.MarkFlagRequired("output-dir")

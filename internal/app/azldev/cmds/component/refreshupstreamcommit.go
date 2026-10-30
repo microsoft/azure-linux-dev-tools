@@ -55,10 +55,9 @@ files before component-specific TOML configuration so subsequent commands use
 the generated commit unless the component configuration explicitly overrides
 it.
 
-Without --without-lockfile, only components listed in lockless-components.txt
+Only components listed in lockless-components.txt
 beside the top-level azldev.toml are refreshed. Other components are skipped
-and their generated TOML files are preserved. With the global flag, every
-component uses the lockless workflow.
+and their generated TOML files are preserved.
 
 All TOML configuration is resolved before the source type is checked. Selected
 components whose effective spec.type is not "upstream" do not contact an
@@ -367,7 +366,7 @@ func refreshCheckOnlyResult(
 	}
 
 	return display, fmt.Errorf("upstream commit TOML files are stale; %s. "+
-		"Run 'azldev --without-lockfile component refresh-upstream-commit -a' to refresh",
+		"Run 'azldev component refresh-upstream-commit -a' to refresh",
 		strings.Join(parts, "; "))
 }
 

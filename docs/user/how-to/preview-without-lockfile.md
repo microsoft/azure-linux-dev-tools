@@ -2,8 +2,8 @@
 
 The **preview** lockless workflow tracks a component's resolved upstream commit
 in generated component TOML instead of per-component lock files. Select it for
-individual components using `lockless-components.txt`, or for every component
-using the global `--without-lockfile` flag.
+individual components using `lockless-components.txt`. To use it for the whole
+project, list every component.
 
 The file applies to every command, not just rendering. Nothing in the preview
 workflow is stable yet; both the command surface and generated layout may change.
@@ -15,10 +15,6 @@ azldev component render -p curl
 # Refresh curl's generated commit if curl is listed in lockless-components.txt.
 azldev component refresh-upstream-commit -p curl
 ```
-
-The flag overrides the file: when set, every component is lockless, including
-unlisted components. With the flag absent or set to `false`, the file selects
-each component's mode.
 
 ## Select Lock Mode Per Component
 
@@ -40,8 +36,8 @@ A missing or empty file means all components use lock files. Blank lines and
 surrounding whitespace are ignored; names are not glob patterns. A file read
 error stops configuration loading.
 
-Both `component update` and `component refresh-upstream-commit` are available
-without the flag. Update (including `--bump`) skips listed components and leaves
+Both `component update` and `component refresh-upstream-commit` are available.
+Update (including `--bump`) skips listed components and leaves
 their locks untouched; refresh skips unlisted components and preserves their
 generated TOML files. All-component scans still prune files for components that
 no longer exist, not files belonging to components using the other mode.
@@ -60,12 +56,7 @@ the current checkout's list determines which comparison to use.
 | Lock consistency checks | On, with `--skip-lock-validation` to opt out | Skipped |
 | `component changed` | Compares stored input fingerprints | Compares project configuration resolved at each ref |
 | Synthetic dist-git history | Derived from lock-file fingerprint changes | Derived from generated upstream-commit TOML changes |
-| Agent skills and MCP tools | Both workflows are available for mixed projects | The global flag selects the entirely lockless catalog |
-
-`component update`, `component history`, and `component query` remain registered
-in preview mode as hidden no-ops so that existing scripts report clearly that the
-commands do nothing, rather than failing with "unknown command". Without the
-global flag, they process only locked components.
+| Agent skills and MCP tools | Both workflows are available | Both workflows are available |
 
 ## Configure the Project
 
@@ -132,15 +123,14 @@ fields do not mark a component as changed.
 
 ## Emit Agent Files for the Preview Mode
 
-`azldev docs agent install` includes both workflows for mixed projects. Pass the
-flag to emit content for an entirely lockless project:
+`azldev docs agent install` includes both workflows, selected per component by
+the project's list:
 
 ```bash
-azldev --without-lockfile docs agent install
+azldev docs agent install
 ```
 
 ## Reference Documentation
 
 The generated CLI reference under [reference/cli/](../reference/cli/azldev.md)
-documents azldev's default mode. Use `azldev --without-lockfile <command> --help`
-to see the preview mode's command surface and help text.
+documents both workflows. Use `azldev <command> --help` for command syntax.

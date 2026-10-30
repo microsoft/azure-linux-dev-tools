@@ -99,7 +99,7 @@ used. `%autorelease` behavior is unchanged on either path.
 azldev reads `lockless-components.txt` beside the top-level `azldev.toml`.
 Listed component names use the lockless workflow for every command;
 all others use lock files. A missing or empty list means all components use
-locks. The global `--without-lockfile` flag makes every component lockless.
+locks. List every component to use a fully lockless workflow.
 Use `comp refresh-upstream-commit` for listed components and `comp update`
 for unlisted components; each command skips the other mode.
 

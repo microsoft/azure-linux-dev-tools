@@ -82,11 +82,11 @@ type ComponentBuildResults struct {
 	RPMs []RPMResult `json:"rpms" table:"-"`
 }
 
-func buildOnAppInit(app *azldev.App, parent *cobra.Command) {
-	parent.AddCommand(NewBuildCmd(cmdOptionsForApp(app)...))
+func buildOnAppInit(_ *azldev.App, parent *cobra.Command) {
+	parent.AddCommand(NewBuildCmd())
 }
 
-func NewBuildCmd(opts ...CmdOption) *cobra.Command {
+func NewBuildCmd() *cobra.Command {
 	// Fill out options defaults.
 	options := &ComponentBuildOptions{
 		BuildEnvPolicy: BuildEnvPreserveOnFailure,
@@ -134,7 +134,7 @@ builds can consume.`,
 		ValidArgsFunction: components.GenerateComponentNameCompletions,
 	}
 
-	addComponentFilterOptions(cmd, &options.ComponentFilter, newCmdOptions(opts...))
+	addComponentFilterOptions(cmd, &options.ComponentFilter)
 	cmd.Flags().BoolVarP(&options.ContinueOnError, "continue-on-error", "k", false,
 		"Continue building when some components fail")
 	cmd.Flags().BoolVar(&options.NoCheck, "no-check", false, "Skip package %check tests")

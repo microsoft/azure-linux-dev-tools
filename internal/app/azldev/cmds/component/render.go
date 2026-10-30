@@ -46,7 +46,7 @@ func renderOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
 }
 
 // NewRenderCmd constructs a [cobra.Command] for the "component render" CLI subcommand.
-func NewRenderCmd(_ ...CmdOption) *cobra.Command {
+func NewRenderCmd() *cobra.Command {
 	var options RenderOptions
 
 	var cmd *cobra.Command
@@ -72,7 +72,7 @@ Render mode is selected per component by lockless-components.txt beside the
 top-level azldev.toml. Each nonempty line names one component to render without
 its lock file, using configured upstream commits and their TOML history instead.
 All other components use lock files. A missing or empty file means all components
-use lock files. The global --without-lockfile flag makes every component lockless.
+use lock files.
 
 When rendering all components (-a), the --clean-stale flag prunes orphan
 rendered-spec directories (per-component dirs that no longer correspond to
@@ -107,7 +107,7 @@ valid with -a.`,
 		},
 	}
 
-	addComponentFilterOptions(cmd, &options.ComponentFilter, cmdOptions{})
+	addComponentFilterOptions(cmd, &options.ComponentFilter)
 	addRenderOptions(cmd, &options)
 
 	return cmd

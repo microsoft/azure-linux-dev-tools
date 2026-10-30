@@ -71,7 +71,7 @@ The rendered-specs-dir must exist on disk; if it doesn't, run
 		ValidArgsFunction: components.GenerateComponentNameCompletions,
 	}
 
-	addComponentFilterOptions(cmd, &options.ComponentFilter, cmdOptions{})
+	addComponentFilterOptions(cmd, &options.ComponentFilter)
 
 	cmd.Flags().Var(&options.Arch, "arch",
 		"Target architecture passed to rpmspec via --target (x86_64, aarch64). "+

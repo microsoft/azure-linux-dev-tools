@@ -19,12 +19,12 @@ type ListComponentOptions struct {
 	ComponentFilter components.ComponentFilter
 }
 
-func listOnAppInit(app *azldev.App, parentCmd *cobra.Command) {
-	parentCmd.AddCommand(NewComponentListCommand(cmdOptionsForApp(app)...))
+func listOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
+	parentCmd.AddCommand(NewComponentListCommand())
 }
 
 // Constructs a [cobra.Command] for "component list" CLI subcommand.
-func NewComponentListCommand(opts ...CmdOption) *cobra.Command {
+func NewComponentListCommand() *cobra.Command {
 	options := &ListComponentOptions{}
 
 	cmd := &cobra.Command{
@@ -55,14 +55,11 @@ Component name patterns support glob syntax (*, ?, []).`,
 
 	azldev.ExportAsReadOnlyMCPTool(cmd)
 
-	cmdOptions := newCmdOptions(opts...)
-	addComponentFilterOptions(cmd, &options.ComponentFilter, cmdOptions)
+	addComponentFilterOptions(cmd, &options.ComponentFilter)
 
 	// List always skips lock validation (read-only), so the flag is
 	// meaningless here. Hide it to avoid confusion.
-	if !cmdOptions.withoutLockfile {
-		_ = cmd.Flags().MarkHidden("skip-lock-validation")
-	}
+	_ = cmd.Flags().MarkHidden("skip-lock-validation")
 
 	return cmd
 }

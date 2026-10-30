@@ -37,17 +37,10 @@ components defined in the project configuration.`,
 	testOnAppInit(app, cmd)
 	metadataOnAppInit(app, cmd)
 
-	// Mixed projects need both state writers. The global override keeps the
-	// existing entirely lockless command surface and legacy no-ops.
-	if app.WithoutLockfile() {
-		legacyOnAppInit(app, cmd)
-		refreshUpstreamCommitOnAppInit(app, cmd)
-	} else {
-		historyOnAppInit(app, cmd)
-		queryOnAppInit(app, cmd)
-		updateOnAppInit(app, cmd)
-		refreshUpstreamCommitOnAppInit(app, cmd)
-	}
+	historyOnAppInit(app, cmd)
+	queryOnAppInit(app, cmd)
+	updateOnAppInit(app, cmd)
+	refreshUpstreamCommitOnAppInit(app, cmd)
 
 	return cmd
 }

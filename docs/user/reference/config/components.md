@@ -151,8 +151,7 @@ The `[components.<name>.render]` section controls rendering behavior for a compo
 Lock mode for every command is selected by `lockless-components.txt` beside the
 top-level `azldev.toml`: listed components use the lockless workflow, and
 unlisted components use lock files. A missing or empty list selects lock-file
-behavior for every component. The global `--without-lockfile` flag overrides
-the list and makes every component lockless. See
+behavior for every component. List every component for a fully lockless project. See
 [per-component lock modes](../../how-to/preview-without-lockfile.md#select-lock-mode-per-component).
 
 | Field | TOML Key | Type | Required | Description |

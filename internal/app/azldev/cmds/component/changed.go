@@ -31,35 +31,12 @@ type ChangedComponentOptions struct {
 	IncludeUnchanged bool
 }
 
-func changedOnAppInit(app *azldev.App, parentCmd *cobra.Command) {
-	parentCmd.AddCommand(NewChangedCmd(cmdOptionsForApp(app)...))
+func changedOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
+	parentCmd.AddCommand(NewChangedCmd())
 }
 
-// changedCommandLong returns the long help for 'component changed', which
-// describes the comparison performed by the active mode.
-func changedCommandLong(options cmdOptions) string {
-	if options.withoutLockfile {
-		return `Load the project configuration independently at two git refs and compare the
-resolved component build inputs. Normal project TOML parsing is used at each
-ref, including recursive includes, config merging, component defaults, and
-generated upstream-commit TOMLs included by the project.
-
-For each selected component, the command reports whether the build inputs
-changed: normalized component configuration, upstream commit or local
-spec-directory contents, overlay source filenames and contents, and effective
-distro release version.
-
-Documentation, publishing, test-selection, scheduling-hint, snapshot-time, and
-checkout-path-only fields do not trigger a component change. For components
-whose build inputs changed, the sourcesChange field separately compares the raw
-committed sources manifests at the rendered spec directories configured by each
-ref. All-component scans use the union of components in both refs, so added and
-deleted components are reported without consulting the current checkout.
-
-This is useful for CI/CD pipelines to determine which components need to be
-rebuilt or have their lookaside tarballs re-uploaded after a PR merge.`
-	}
-
+// changedCommandLong describes the per-component comparisons.
+func changedCommandLong() string {
 	return `Compare component lock files and rendered sources between two git refs to
 determine which components changed. For each component, reports whether its
 input fingerprint changed (any change). For components whose fingerprint
@@ -68,8 +45,7 @@ change).
 
 For components listed in lockless-components.txt beside the current checkout's
 top-level azldev.toml, compare resolved project build inputs at both refs instead
-of stored locks. The global --without-lockfile flag selects that comparison for
-every component.
+of stored locks.
 
 This is useful for CI/CD pipelines to determine which components need to be
 rebuilt or have their lookaside tarballs re-uploaded after a PR merge.
@@ -82,14 +58,13 @@ detected via lock file presence in the compared refs when using -a.`
 }
 
 // NewChangedCmd constructs a [cobra.Command] for the "component changed" CLI subcommand.
-func NewChangedCmd(opts ...CmdOption) *cobra.Command {
+func NewChangedCmd() *cobra.Command {
 	options := &ChangedComponentOptions{}
-	cmdOptions := newCmdOptions(opts...)
 
 	cmd := &cobra.Command{
 		Use:   "changed",
 		Short: "Detect which components changed between two git refs",
-		Long:  changedCommandLong(cmdOptions),
+		Long:  changedCommandLong(),
 		Example: `  # Show changed components between a branch and HEAD
   azldev component changed --from main -a
 
@@ -109,7 +84,7 @@ func NewChangedCmd(opts ...CmdOption) *cobra.Command {
 		ValidArgsFunction: components.GenerateComponentNameCompletions,
 	}
 
-	addComponentFilterOptions(cmd, &options.ComponentFilter, cmdOptions)
+	addComponentFilterOptions(cmd, &options.ComponentFilter)
 
 	cmd.Flags().StringVar(&options.From, "from", "", "Git ref to compare from (required)")
 	cmd.Flags().StringVar(&options.To, "to", "HEAD", "Git ref to compare to")
@@ -120,9 +95,7 @@ func NewChangedCmd(opts ...CmdOption) *cobra.Command {
 
 	// Hide inherited flag -- this command always skips lock validation since
 	// it inspects historical locks at arbitrary refs.
-	if !cmdOptions.withoutLockfile {
-		_ = cmd.Flags().MarkHidden("skip-lock-validation")
-	}
+	_ = cmd.Flags().MarkHidden("skip-lock-validation")
 
 	azldev.ExportAsReadOnlyMCPTool(cmd)
 

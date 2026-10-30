@@ -15,10 +15,9 @@ files before component-specific TOML configuration so subsequent commands use
 the generated commit unless the component configuration explicitly overrides
 it.
 
-Without --without-lockfile, only components listed in lockless-components.txt
+Only components listed in lockless-components.txt
 beside the top-level azldev.toml are refreshed. Other components are skipped
-and their generated TOML files are preserved. With the global flag, every
-component uses the lockless workflow.
+and their generated TOML files are preserved.
 
 All TOML configuration is resolved before the source type is checked. Selected
 components whose effective spec.type is not "upstream" do not contact an
@@ -67,11 +66,11 @@ azldev component refresh-upstream-commit [flags]
 ### Options
 
 ```
-  -a, --all-components                Include all components
-      --check-only                    resolve upstream commits but do not write TOML files or prune orphans. Exits 0 when nothing would change and 1 when any component is stale (or, with --all-components, when any orphan generated TOML would be pruned). Intended for CI gates
+  -a, --all-components[=true|false]   Include all components
+      --check-only[=true|false]       resolve upstream commits but do not write TOML files or prune orphans. Exits 0 when nothing would change and 1 when any component is stale (or, with --all-components, when any orphan generated TOML would be pruned). Intended for CI gates
   -p, --component stringArray         Component name pattern
   -g, --component-group stringArray   Component group name
-  -h, --help                          help for refresh-upstream-commit
+  -h, --help[=true|false]             help for refresh-upstream-commit
   -s, --spec-path stringArray         Spec path
       --upstream-commits-dir string   directory for generated per-component upstream-commit TOML files (default "base/upstream-commits")
 ```
@@ -79,20 +78,20 @@ azldev component refresh-upstream-commit [flags]
 ### Options inherited from parent commands
 
 ```
-  -y, --accept-all                accept all prompts
-      --color mode                output colorization mode {always, auto, never} (default auto)
-      --concurrency int           base concurrency limit (default: number of logical CPUs; minimum 1)
-      --config-file stringArray   additional TOML config file(s) to merge (may be repeated)
-  -n, --dry-run                   dry run only (do not take action)
-      --network-retries int       maximum number of attempts for network operations (minimum 1) (default 3)
-      --no-default-config         disable default configuration
-  -O, --output-format fmt         output format {csv, json, markdown, table} (default table)
-      --permissive-config         do not fail on unknown fields in TOML config files
-  -C, --project string            path to Azure Linux project
-  -q, --quiet                     only enable minimal output
-      --spec-editor editor        Select the RPM spec editor (legacy or experimental) (default legacy)
-  -v, --verbose                   enable verbose output
-      --without-lockfile          preview: track resolved upstream commits in generated config instead of lock files
+  -y, --accept-all[=true|false]          accept all prompts
+      --color mode                       output colorization mode {always, auto, never} (default auto)
+      --concurrency int                  base concurrency limit (default: number of logical CPUs; minimum 1)
+      --config-file stringArray          additional TOML config file(s) to merge (may be repeated)
+  -n, --dry-run[=true|false]             dry run only (do not take action)
+      --network-retries int              maximum number of attempts for network operations (minimum 1) (default 3)
+      --no-default-config[=true|false]   disable default configuration
+  -O, --output-format fmt                output format {csv, json, markdown, table} (default table)
+      --permissive-config[=true|false]   do not fail on unknown fields in TOML config files
+  -C, --project string                   path to Azure Linux project
+  -q, --quiet[=true|false]               only enable minimal output
+      --spec-editor editor               Select the RPM spec editor (legacy or experimental) (default legacy)
+      --unique-mockroot[=true|false]     use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently
+  -v, --verbose[=true|false]             enable verbose output
 ```
 
 ### SEE ALSO

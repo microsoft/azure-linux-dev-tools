@@ -211,8 +211,8 @@ type Catalog struct {
 	withoutLockfile bool
 }
 
-// NewCatalog returns the catalog for the selected mode. Pass true to describe
-// lock-file-free mode, as selected by the global '--without-lockfile' flag.
+// NewCatalog returns the default mixed-workflow catalog, or an internal
+// all-lockless variant when withoutLockfile is true. The CLI uses the default.
 func NewCatalog(withoutLockfile bool) Catalog {
 	return Catalog{withoutLockfile: withoutLockfile}
 }

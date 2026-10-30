@@ -41,9 +41,8 @@ Add `-O json` for machine-readable output when debugging.
 ## Finalizing component changes
 
 Select this workflow by listing the component's exact name in
-`lockless-components.txt` beside the top-level `azldev.toml`, or pass
-`--without-lockfile` to make every component lockless. Without the flag,
-refresh skips unlisted components and preserves their generated TOML files.
+`lockless-components.txt` beside the top-level `azldev.toml`.
+Refresh skips unlisted components and preserves their generated TOML files.
 
 For edits that do not change source resolution, render and commit the result.
 The generated upstream commit TOML does not change:

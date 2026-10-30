@@ -35,8 +35,8 @@ type InstalledAgentFile struct {
 }
 
 // Called once when the app is initialized; registers the 'agent' command tree under 'docs'.
-func agentOnAppInit(app *azldev.App, parentCmd *cobra.Command) {
-	parentCmd.AddCommand(newAgentCmd(agentskill.NewCatalog(app.WithoutLockfile())))
+func agentOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
+	parentCmd.AddCommand(newAgentCmd(agentskill.NewCatalog(false)))
 }
 
 func newAgentCmd(catalog agentskill.Catalog) *cobra.Command {
@@ -90,8 +90,7 @@ Directory paths in the emitted content (such as the lock, generated
 upstream-commit, and rendered-spec directories) are resolved from the loaded
 azldev.toml, falling back to azldev's built-in defaults when no configuration is
 found. By default, the content includes both lock-file and lockless workflows
-selected per component by lockless-components.txt. Pass --without-lockfile to
-describe an entirely lockless project. The bindings reflect
+selected per component by lockless-components.txt. The bindings reflect
 the project azldev runs in, so pair --output-dir with -C pointing at the target
 repository when scaffolding a different repo.`,
 		Example: `  # Write agent files into the current repository
@@ -152,7 +151,7 @@ skill to list the available skills.`,
 			return fmt.Errorf("failed to get command environment:\n%w", err)
 		}
 
-		name, list, err := resolveShowSkill(agentSkillCatalog(env), skillName)
+		name, list, err := resolveShowSkill(agentskill.NewCatalog(false), skillName)
 		if err != nil {
 			return err
 		}
@@ -166,7 +165,7 @@ skill to list the available skills.`,
 			return nil
 		}
 
-		doc, err := agentSkillCatalog(env).SkillDocument(name, agentSkillParams(env, cmd.Root()))
+		doc, err := agentskill.NewCatalog(false).SkillDocument(name, agentSkillParams(env, cmd.Root()))
 		if err != nil {
 			return fmt.Errorf("failed to render azldev skill:\n%w", err)
 		}
@@ -194,7 +193,7 @@ func InstallAgentFiles(
 		return nil, err
 	}
 
-	files, err := agentSkillCatalog(env).Files(layout, agentSkillParams(env, rootCmd), options.Full)
+	files, err := agentskill.NewCatalog(false).Files(layout, agentSkillParams(env, rootCmd), options.Full)
 	if err != nil {
 		return nil, fmt.Errorf("failed to render azldev agent files:\n%w", err)
 	}
@@ -319,12 +318,6 @@ func emitMCPConfig(
 	}
 
 	return InstalledAgentFile{Path: destPath, Written: true}, nil
-}
-
-// agentSkillCatalog returns the skill catalog describing the mode azldev is running
-// in, so the emitted and served content matches the commands the user actually has.
-func agentSkillCatalog(env *azldev.Env) agentskill.Catalog {
-	return agentskill.NewCatalog(env != nil && env.WithoutLockfile())
 }
 
 // agentSkillParams gathers the dynamic values injected into the emitted and served agent content,

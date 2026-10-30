@@ -14,8 +14,7 @@ change).
 
 For components listed in lockless-components.txt beside the current checkout's
 top-level azldev.toml, compare resolved project build inputs at both refs instead
-of stored locks. The global --without-lockfile flag selects that comparison for
-every component.
+of stored locks.
 
 This is useful for CI/CD pipelines to determine which components need to be
 rebuilt or have their lookaside tarballs re-uploaded after a PR merge.
@@ -76,7 +75,6 @@ azldev component changed [flags]
       --spec-editor editor               Select the RPM spec editor (legacy or experimental) (default legacy)
       --unique-mockroot[=true|false]     use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently
   -v, --verbose[=true|false]             enable verbose output
-      --without-lockfile[=true|false]    preview: track resolved upstream commits in generated config instead of lock files
 ```
 
 ### SEE ALSO

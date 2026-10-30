@@ -87,8 +87,8 @@ func TestRenderComponentsSelectsLockModeFromFile(t *testing.T) {
 		name            string
 		withoutLockfile bool
 	}{
-		{name: "default global mode"},
-		{name: "lockless global mode", withoutLockfile: true},
+		{name: "project component list"},
+		{name: "internal whole-project override", withoutLockfile: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			env := testutils.NewTestEnv(t)
@@ -153,7 +153,7 @@ func TestRenderComponentsSelectsLockModeFromFile(t *testing.T) {
 			require.Len(t, observed, 2)
 
 			if testCase.withoutLockfile {
-				assert.Nil(t, observed["curl"], "the global flag overrides the component list")
+				assert.Nil(t, observed["curl"], "the internal override applies to every component")
 			} else {
 				require.NotNil(t, observed["curl"])
 				assert.Equal(t, "configured-commit", observed["curl"].UpstreamCommit)

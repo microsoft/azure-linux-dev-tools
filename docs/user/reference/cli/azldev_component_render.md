@@ -24,7 +24,7 @@ Render mode is selected per component by lockless-components.txt beside the
 top-level azldev.toml. Each nonempty line names one component to render without
 its lock file, using configured upstream commits and their TOML history instead.
 All other components use lock files. A missing or empty file means all components
-use lock files. The global --without-lockfile flag makes every component lockless.
+use lock files.
 
 When rendering all components (-a), the --clean-stale flag prunes orphan
 rendered-spec directories (per-component dirs that no longer correspond to
@@ -90,7 +90,6 @@ azldev component render [flags]
       --spec-editor editor               Select the RPM spec editor (legacy or experimental) (default legacy)
       --unique-mockroot[=true|false]     use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently
   -v, --verbose[=true|false]             enable verbose output
-      --without-lockfile[=true|false]    preview: track resolved upstream commits in generated config instead of lock files
 ```
 
 ### SEE ALSO

@@ -55,22 +55,12 @@ func TestRefreshUpstreamCommitCmd_CleansPinsThatInvalidateStrictConfig(t *testin
 	testCases := []struct {
 		name            string
 		componentConfig string
-		withoutLockfile bool
 	}{
 		{
-			name:            "removed component",
-			withoutLockfile: true,
+			name: "removed component",
 		},
 		{
-			name:            "converted to local",
-			withoutLockfile: true,
-			componentConfig: `[components.test-component.spec]
-type = "local"
-path = "../../specs/test-component.spec"
-`,
-		},
-		{
-			name: "listed component converted to local",
+			name: "converted to local",
 			componentConfig: `[components.test-component.spec]
 type = "local"
 path = "../../specs/test-component.spec"
@@ -80,7 +70,7 @@ path = "../../specs/test-component.spec"
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			testEnv := testutils.NewTestEnvWithoutLockfile(t)
+			testEnv := testutils.NewTestEnv(t)
 
 			rootConfig := `includes = [
     "base/upstream-commits/*.toml",
@@ -103,10 +93,8 @@ release-ver = "1.0"
 				fileperms.PublicFile,
 			))
 
-			if !testCase.withoutLockfile {
-				require.NoError(t, fileutils.WriteFile(testEnv.TestFS, "/project/lockless-components.txt",
-					[]byte("test-component\n"), fileperms.PublicFile))
-			}
+			require.NoError(t, fileutils.WriteFile(testEnv.TestFS, "/project/lockless-components.txt",
+				[]byte("test-component\n"), fileperms.PublicFile))
 
 			if testCase.componentConfig != "" {
 				require.NoError(t, fileutils.WriteFile(
@@ -126,9 +114,6 @@ release-ver = "1.0"
 			)
 
 			args := []string{"component", "refresh-upstream-commit", "--all-components"}
-			if testCase.withoutLockfile {
-				args = append([]string{"--without-lockfile"}, args...)
-			}
 
 			app.PreParseGlobalFlags(args)
 			componentcmds.OnAppInit(app)
@@ -438,7 +423,7 @@ func TestRefreshUpstreamCommits_CheckOnly_StaleReturnsError(t *testing.T) {
 	require.Error(t, err, "stale TOML must produce a non-nil error in --check-only mode")
 	assert.Contains(t, err.Error(), "stale", "error message should mention staleness")
 	assert.Contains(t, err.Error(), "curl", "error message should name the stale component")
-	assert.Contains(t, err.Error(), "azldev --without-lockfile component refresh-upstream-commit -a",
+	assert.Contains(t, err.Error(), "azldev component refresh-upstream-commit -a",
 		"-a-scoped run should suggest the same -a invocation to refresh")
 
 	// Results slice must be returned alongside the error so structured

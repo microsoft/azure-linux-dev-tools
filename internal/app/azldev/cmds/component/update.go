@@ -105,7 +105,7 @@ Cannot be combined with --bump.`,
 		ValidArgsFunction: components.GenerateComponentNameCompletions,
 	}
 
-	addComponentFilterOptions(cmd, &options.ComponentFilter, cmdOptions{})
+	addComponentFilterOptions(cmd, &options.ComponentFilter)
 
 	cmd.Flags().BoolVar(&options.Bump, "bump", false,
 		"increment the manual-rebuild counter to trigger a new release")

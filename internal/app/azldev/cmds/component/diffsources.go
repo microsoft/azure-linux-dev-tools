@@ -29,12 +29,12 @@ type DiffSourcesOptions struct {
 	OutputFile string
 }
 
-func diffSourcesOnAppInit(app *azldev.App, parentCmd *cobra.Command) {
-	parentCmd.AddCommand(NewDiffSourcesCmd(cmdOptionsForApp(app)...))
+func diffSourcesOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
+	parentCmd.AddCommand(NewDiffSourcesCmd())
 }
 
 // NewDiffSourcesCmd constructs a [cobra.Command] for the "component diff-sources" CLI subcommand.
-func NewDiffSourcesCmd(opts ...CmdOption) *cobra.Command {
+func NewDiffSourcesCmd() *cobra.Command {
 	var options DiffSourcesOptions
 
 	var cmd *cobra.Command
@@ -54,7 +54,7 @@ overlays to the copy and displays the resulting diff between the two trees.`,
 		ValidArgsFunction: components.GenerateComponentNameCompletions,
 	}
 
-	addComponentFilterOptions(cmd, &options.ComponentFilter, newCmdOptions(opts...))
+	addComponentFilterOptions(cmd, &options.ComponentFilter)
 
 	cmd.Flags().StringVar(&options.OutputFile, "output-file", "",
 		"write the diff output to a file instead of stdout")

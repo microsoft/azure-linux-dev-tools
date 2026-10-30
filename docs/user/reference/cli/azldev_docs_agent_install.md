@@ -32,8 +32,7 @@ Directory paths in the emitted content (such as the lock, generated
 upstream-commit, and rendered-spec directories) are resolved from the loaded
 azldev.toml, falling back to azldev's built-in defaults when no configuration is
 found. By default, the content includes both lock-file and lockless workflows
-selected per component by lockless-components.txt. Pass --without-lockfile to
-describe an entirely lockless project. The bindings reflect
+selected per component by lockless-components.txt. The bindings reflect
 the project azldev runs in, so pair --output-dir with -C pointing at the target
 repository when scaffolding a different repo.
 
@@ -76,7 +75,6 @@ azldev docs agent install [flags]
   -q, --quiet[=true|false]               only enable minimal output
       --unique-mockroot[=true|false]     use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently
   -v, --verbose[=true|false]             enable verbose output
-      --without-lockfile[=true|false]    preview: track resolved upstream commits in generated config instead of lock files
 ```
 
 ### SEE ALSO
