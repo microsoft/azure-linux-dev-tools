@@ -10,6 +10,7 @@ import (
 	"slices"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/cobra"
@@ -63,9 +64,11 @@ func newDumpCmd() *cobra.Command {
 		Long: `Dump the fully resolved project configuration.
 
 Shows the merged result of all config files (embedded defaults, project
-config, includes, and any extra --config-file arguments) after inheritance
-and merge rules have been applied. Useful for debugging configuration
-issues or inspecting effective values.`,
+config, includes, and any extra --config-file arguments). Component entries
+include inherited defaults and overlays expanded from 'overlay-files'.
+
+The output is an inspection snapshot for debugging and scripting, not project
+configuration intended to be loaded again.`,
 		Example: `  # Dump config as TOML (default)
   azldev config dump
 
@@ -100,7 +103,10 @@ issues or inspecting effective values.`,
 }
 
 func DumpConfig(env *azldev.Env, format configDumpFormat) (string, error) {
-	config := portableConfigCopy(env.Config())
+	config, err := resolvedConfigCopy(env)
+	if err != nil {
+		return "", err
+	}
 
 	switch format {
 	case ConfigDumpFormatTOML:
@@ -120,6 +126,26 @@ func DumpConfig(env *azldev.Env, format configDumpFormat) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported format: %#q", format)
 	}
+}
+
+func resolvedConfigCopy(env *azldev.Env) (*projectconfig.ProjectConfig, error) {
+	resolved, err := components.NewResolver(env).FindAllComponents()
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve components:\n%w", err)
+	}
+
+	config := *env.Config()
+
+	config.Components = make(map[string]projectconfig.ComponentConfig, resolved.Len())
+	for _, component := range resolved.Components() {
+		componentConfig := *component.GetConfig()
+		// Drop resolver-populated runtime state so it doesn't leak into the JSON dump.
+		componentConfig.Locked = nil
+		componentConfig.RenderedSpecDir = ""
+		config.Components[component.GetName()] = componentConfig
+	}
+
+	return portableConfigCopy(&config), nil
 }
 
 func portableConfigCopy(config *projectconfig.ProjectConfig) *projectconfig.ProjectConfig {
