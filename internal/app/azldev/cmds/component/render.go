@@ -531,8 +531,8 @@ func prepareComponentSources(
 	// Prepare sources with overlays, skipping lookaside downloads.
 	// WithGitRepo preserves upstream .git and creates synthetic history so
 	// rpmautospec can expand %autorelease and %autochangelog correctly.
-	// WithSkipLookaside avoids expensive tarball downloads — only spec +
-	// sidecar files are needed for rendering.
+	// WithSkipLookaside avoids tarball downloads unless Go vendoring requires
+	// the prepared sources to generate the archive and cumulative license.
 	preparerOpts := append(gitRepoPreparerOptions(env, distro),
 		sources.WithSkipLookaside(),
 		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)),
@@ -542,7 +542,7 @@ func prepareComponentSources(
 		preparerOpts = append(preparerOpts, sources.WithRPMDevBumpspec(env, env.WorkDir(), ""))
 	}
 
-	preparer, err := newSourcePreparer(sourceManager, env.FS(), env, env, append(
+	preparer, err := newComponentSourcePreparer(env, comp, sourceManager, nil, append(
 		preparerOpts,
 		sources.WithSpecEditor(specEditor),
 	)...)

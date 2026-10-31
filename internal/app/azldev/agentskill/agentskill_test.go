@@ -160,6 +160,17 @@ func TestComponentTomlSkillDocumentsRPMDevBumpspecPreview(t *testing.T) {
 	assert.Contains(t, doc, "no bumpspec runtime discovery occurs")
 }
 
+func TestComponentTomlSkillDocumentsGoVendoring(t *testing.T) {
+	for _, withoutLockfile := range []bool{false, true} {
+		doc, err := agentskill.NewCatalog(withoutLockfile).SkillDocument("azldev-comp-toml", testParams())
+		require.NoError(t, err)
+		assert.Contains(t, doc, "go-vendor.enabled")
+		assert.Contains(t, doc, "does\nnot run `go2rpm`")
+		assert.Contains(t, doc, "Rendering and source diffs also generate")
+		assert.Contains(t, doc, "reviewed license exceptions")
+	}
+}
+
 func TestImageSkillDocumentsSKUGroupGuidance(t *testing.T) {
 	doc, err := agentskill.SkillDocument("azldev-image", testParams())
 	require.NoError(t, err)

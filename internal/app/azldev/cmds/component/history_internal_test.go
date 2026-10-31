@@ -88,6 +88,7 @@ func TestCustomizationCollectorsCoverEveryFingerprintableField(t *testing.T) {
 		reflect.TypeFor[projectconfig.ComponentRenderConfig](),
 		reflect.TypeFor[projectconfig.SourceFileReference](),
 		reflect.TypeFor[projectconfig.Origin](),
+		reflect.TypeFor[projectconfig.GoVendorConfig](),
 	}
 
 	// Maps "StructName.FieldName" -> short note describing how the field
@@ -103,6 +104,11 @@ func TestCustomizationCollectorsCoverEveryFingerprintableField(t *testing.T) {
 		"ComponentConfig.Render":      "appendRenderItems (per-field via ComponentRenderConfig walk)",
 		"ComponentConfig.SourceFiles": "appendSourceFileItems (opaque unit per source file)",
 		"ComponentConfig.Packages":    "appendPackageItems (opaque unit per package override)",
+		"ComponentConfig.GoVendor":    "appendGoVendorItems",
+		"GoVendorConfig.Enabled":      "go-vendor.enabled",
+		"GoVendorConfig.ModuleDir":    "go-vendor.module-dir",
+		"GoVendorConfig.ToolConfig":   "go-vendor.tool-config",
+		"GoVendorConfig.PrepPackages": "go-vendor.prep-packages",
 
 		// ComponentBuildConfig.
 		"ComponentBuildConfig.With":                   "build.with",

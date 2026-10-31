@@ -374,6 +374,8 @@ type ComponentLockData struct {
 }
 
 // Defines a component.
+//
+//nolint:recvcheck // HashInclude must also support configs passed to hashstructure by value.
 type ComponentConfig struct {
 	// The component's name; not actually present in serialized files.
 	Name string `toml:"-" json:"name" table:",sortkey" fingerprint:"-"`
@@ -432,6 +434,9 @@ type ComponentConfig struct {
 	// Source file references for this component.
 	SourceFiles []SourceFileReference `toml:"source-files,omitempty" json:"sourceFiles,omitempty" table:"-" jsonschema:"title=Source files,description=Source files to download for this component"`
 
+	// GoVendor converts supported Go application specs and generates their vendored sources.
+	GoVendor *GoVendorConfig `toml:"go-vendor,omitempty" json:"goVendor,omitempty" table:"-" jsonschema:"title=Go vendoring,description=Convert a Go application spec and generate its vendor archive during source preparation"`
+
 	// Per-package configuration overrides, keyed by exact binary package name.
 	// Takes precedence over package-group defaults.
 	Packages map[string]PackageConfig `toml:"packages,omitempty" json:"packages,omitempty" table:"-" validate:"dive" jsonschema:"title=Package overrides,description=Per-package configuration overrides keyed by exact binary package name"`
@@ -448,6 +453,11 @@ type ComponentConfig struct {
 	// References must resolve to entries in the project-level [tests] or
 	// [test-groups] maps; resolution is the responsibility of the test layer.
 	Tests *ComponentTestsConfig `toml:"tests,omitempty" json:"tests,omitempty" table:"-" jsonschema:"title=Tests,description=Per-component test or test-group references" fingerprint:"-"`
+}
+
+// HashInclude preserves existing fingerprints when Go vendoring is not configured.
+func (c ComponentConfig) HashInclude(field string, _ any) (bool, error) {
+	return field != "GoVendor" || c.GoVendor != nil, nil
 }
 
 // AllowedSourceFilesHashTypes defines the set of hash types that are supported
@@ -480,7 +490,18 @@ func (c *ComponentConfig) MergeUpdatesFrom(other *ComponentConfig) error {
 		c.OverlayFiles = otherOverlayFiles
 	}
 
+	c.overrideGoVendorEnabled(other)
+
 	return nil
+}
+
+func (c *ComponentConfig) overrideGoVendorEnabled(other *ComponentConfig) {
+	if other.GoVendor != nil && other.GoVendor.Enabled != nil {
+		config := *c.GoVendor
+		enabled := *other.GoVendor.Enabled
+		config.Enabled = &enabled
+		c.GoVendor = &config
+	}
 }
 
 func (c *ComponentConfig) resolveLocalCustomScriptPaths() {
@@ -548,6 +569,8 @@ func (c *ComponentConfig) MergeOverridesFrom(other *ComponentConfig) error {
 	if other.OverlayFiles != nil {
 		c.OverlayFiles = otherOverlayFiles
 	}
+
+	c.overrideGoVendorEnabled(other)
 
 	return nil
 }

@@ -32,6 +32,23 @@ Add sub-tables only for what you change. The fields you will reach for most:
 | `build.defines` / `build.with` / `build.without` | RPM macro and bcond build tweaks |
 | `release.calculation` | how the `Release` tag is managed |
 | `render.skip-file-filter` | rendering edge-case escape hatch |
+| `go-vendor.enabled` | opt-in Go application spec conversion and vendor archive generation |
+
+## Go application vendoring
+
+Set `[components.<name>.go-vendor]` with `enabled = true` to preserve the upstream
+spec while converting supported application packaging to bundled modules.
+Preparation runs the patched upstream `%prep` before `go_vendor_archive`; it does
+not run `go2rpm`. Rendering and source diffs also generate the vendor archive and
+require downloads. Review the generated cumulative `License:` expression.
+
+Use `module-dir` for a module below the final prep working directory,
+`prep-packages` for additional chroot tools, and inline `tool-config` for
+go-vendor-tools dependency overrides or reviewed license exceptions.
+Generated `<component>-vendor.tar.bz2` and `azldev-go-vendor.toml` must not also be
+declared as `source-files`. Unsupported constructs (notably automatic Go devel
+subpackages, flagged `%gocheck`, or ambiguous sections) require explicit overlays;
+never replace the upstream spec wholesale to bypass a conversion error.
 
 ## Spec source
 

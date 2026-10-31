@@ -171,6 +171,10 @@ func validateComponentConfigs(
 		}
 
 		// Validate build configuration.
+		if err := component.GoVendor.Validate(); err != nil {
+			return fmt.Errorf("invalid 'go-vendor' config for component %#q:\n%w", componentName, err)
+		}
+
 		err := component.Build.Validate()
 		if err != nil {
 			return fmt.Errorf("invalid build config for component %#q:\n%w", componentName, err)
