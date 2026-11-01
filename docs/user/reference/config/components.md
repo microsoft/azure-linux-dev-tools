@@ -182,7 +182,7 @@ enabled = true
 | `enabled` | boolean | `false` | Enable conversion and vendor archive generation. An explicit `false` overrides inherited enablement. |
 | `module-dir` | string | `""` | Relative directory containing `go.mod`, resolved from the working directory at the end of the upstream `%prep` section. Empty uses that directory itself. No absolute paths, traversal, or RPM macros. |
 | `prep-packages` | array of string | `[]` | Additional RPM packages needed by upstream `%prep` commands or the selected license detector. Installed only in the isolated generation chroot. |
-| `tool-config` | string | `""` | Inline [go-vendor-tools TOML](https://fedora.gitlab.io/sigs/go/go-vendor-tools/config/), for dependency overrides, archive options, and reviewed license exceptions. Use `module-dir`, not `general.go_mod_dir`. |
+| `tool-config` | string | `""` | Inline [go-vendor-tools TOML](https://fedora.gitlab.io/sigs/go/go-vendor-tools/config/), for dependency overrides, archive options, and reviewed license exceptions. When omitted for an already-vendored spec, reuse its upstream tool configuration. An explicit value replaces it. Use `module-dir`, not `general.go_mod_dir`. |
 
 The tool configuration is inline so its contents participate in component
 fingerprinting without checkout-dependent paths. Configured command hooks execute
@@ -198,12 +198,17 @@ tool-config = '''
 '''
 ```
 
-Preparation emits `<component>-vendor.tar.bz2` and `azldev-go-vendor.toml`,
+For previously unbundled specs, preparation emits `<component>-vendor.tar.bz2` and `azldev-go-vendor.toml`,
 allocating unused `Source` numbers automatically. These names are reserved for
 generated output; do not also declare them in `source-files` or supply them through
 overlays. The archive's SHA-512 digest is recorded in the prepared `sources` file.
 Generation runs afresh on every preparation; there is no filename-based cache.
 The recorded digest identifies that output, not a separately pinned vendor lock.
+
+For supported specs already using go-vendor-tools, preparation instead regenerates
+the existing vendor source, retaining its Source number, RPM-expanded filename,
+and configuration sidecar. It updates that archive's `sources` entry in place and
+verifies the existing `License:` expression without rewriting it.
 
 All archive/spec/loose-file overlays run before conversion. Source preparation,
 builds, rendering (including `--check-only`), and source diffs use the same

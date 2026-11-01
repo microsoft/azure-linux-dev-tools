@@ -644,28 +644,12 @@ func ResolveComponentConfig(
 // Returns a copy of the component config with relative file paths converted to absolute
 // file paths (relative to referenceDir, not the current working directory).
 func (c *ComponentConfig) WithAbsolutePaths(referenceDir string) *ComponentConfig {
-	// Deep copy the input to avoid unexpected sharing. Make sure *not* to deep-copy
-	// the SourceConfigFile, as we *do* want to alias that pointer, sharing it across
-	// all configs that came from that source config file.
-	result := &ComponentConfig{
-		Name:                     c.Name,
-		SourceConfigFile:         c.SourceConfigFile,
-		upstreamCommitConfigFile: c.upstreamCommitConfigFile,
-		RenderedSpecDir:          c.RenderedSpecDir,
-		Locked:                   deep.MustCopy(c.Locked),
-		Release:                  c.Release,
-		Spec:                     deep.MustCopy(c.Spec),
-		Build:                    deep.MustCopy(c.Build),
-		Render:                   c.Render,
-		SourceFiles:              deep.MustCopy(c.SourceFiles),
-		Packages:                 deep.MustCopy(c.Packages),
-		Publish:                  deep.MustCopy(c.Publish),
-		// OverlayFiles is consumed after component config resolution; preserve it verbatim
-		// here so inherited patterns can be interpreted relative to the concrete component
-		// config file.
-		OverlayFiles: slices.Clone(c.OverlayFiles),
-		Tests:        deep.MustCopy(c.Tests),
-	}
+	// Copy all configuration fields, excluding shared back-references which can
+	// point back into the component map and must retain their identity.
+	input := *c
+	input.SourceConfigFile, input.upstreamCommitConfigFile = nil, nil
+	result := deep.MustCopy(&input)
+	result.SourceConfigFile, result.upstreamCommitConfigFile = c.SourceConfigFile, c.upstreamCommitConfigFile
 
 	// Fix up paths.
 	result.Spec.Path = makeAbsolute(referenceDir, result.Spec.Path)
@@ -677,13 +661,8 @@ func (c *ComponentConfig) WithAbsolutePaths(referenceDir string) *ComponentConfi
 		}
 	}
 
-	// Copy and fix up overlays.
-	if c.Overlays != nil {
-		result.Overlays = make([]ComponentOverlay, len(c.Overlays))
-
-		for i := range result.Overlays {
-			result.Overlays[i] = *c.Overlays[i].WithAbsolutePaths(referenceDir)
-		}
+	for i := range result.Overlays {
+		result.Overlays[i] = *result.Overlays[i].WithAbsolutePaths(referenceDir)
 	}
 
 	return result

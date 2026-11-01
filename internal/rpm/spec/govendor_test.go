@@ -97,7 +97,10 @@ func TestConvertGoVendorPreservesUpstream(t *testing.T) {
 			assert.Contains(t, string(result.PrepSpec), "Release: %autorelease")
 			assert.Contains(t, string(result.PrepSpec), `pwd -P > "%{_topdir}/azldev-go-module-root"`)
 			assert.Contains(t, string(result.PrepSpec), "sed -i 's/old/new/' go.mod")
-			assert.NotContains(t, string(result.PrepSpec), "app-vendor.tar.bz2")
+			assert.NotContains(t, string(result.PrepSpec), "Source2: app-vendor.tar.bz2")
+			assert.Contains(t, string(result.PrepSpec), "%{shescape:app-vendor.tar.bz2}")
+			assert.False(t, result.AllowReplacement)
+			assert.Empty(t, result.ExpectedLicense)
 			assert.Contains(t, string(result.PrepSpec), "%autochangelog")
 
 			_, err = spec.OpenSpec(strings.NewReader(output), spec.WithEditor(spec.EditorStructural))

@@ -14,6 +14,7 @@ import (
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components/components_testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
+	"github.com/microsoft/azure-linux-dev-tools/internal/govendor"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource"
@@ -83,6 +84,7 @@ func TestPrepareSourcesGoVendor(t *testing.T) {
 
 				for name, content := range map[string]string{
 					"app-vendor.tar.bz2": "generated archive",
+					"archive-name":       "app-vendor.tar.bz2\n",
 					"license":            "Apache-2.0 AND MIT\n",
 					"sources-list":       "Source0: app.tar.gz\nPatch0: fix.patch\n",
 				} {
@@ -144,7 +146,7 @@ func TestGoVendorFailuresDoNotPublishSpec(t *testing.T) {
 
 	for _, stage := range []string{
 		"init", "install", "generate", "missing-archive", "empty-archive",
-		"license", "missing-source", "source-list", "scrub",
+		"license", "missing-source", "source-list", "scrub", "archive-name", "unexpected-name",
 	} {
 		t.Run(stage, func(t *testing.T) {
 			ctx := newMockProcessorTestCtx()
@@ -172,6 +174,7 @@ func TestGoVendorFailuresDoNotPublishSpec(t *testing.T) {
 				staging := goVendorTestStaging(t, ctx)
 				files := map[string]string{
 					"app-vendor.tar.bz2": "archive", "license": "MIT\n", "sources-list": "Source0: app.tar.gz\n",
+					"archive-name": "app-vendor.tar.bz2\n",
 				}
 
 				switch stage {
@@ -185,6 +188,10 @@ func TestGoVendorFailuresDoNotPublishSpec(t *testing.T) {
 					files["sources-list"] += "Patch0: absent.patch\n"
 				case "source-list":
 					files["sources-list"] = "Source0: /etc/passwd\n"
+				case "archive-name":
+					files["archive-name"] = "../outside.tar.bz2\n"
+				case "unexpected-name":
+					files["archive-name"] = "other.tar.bz2\n"
 				}
 
 				for name, data := range files {
@@ -208,20 +215,8 @@ func TestGoVendorFailuresDoNotPublishSpec(t *testing.T) {
 	}
 }
 
-func TestGoVendorScriptOrdering(t *testing.T) {
-	script := goVendorScript("app-vendor.tar.bz2", "cmd/app", "aarch64", "app.spec")
-	assert.Less(t, strings.Index(script, "rpmautospec"), strings.Index(script, "rpmbuild"))
-	assert.Less(t, strings.Index(script, "rpmbuild"), strings.Index(script, "go_vendor_archive"))
-	assert.Less(t, strings.Index(script, "go_vendor_archive"), strings.Index(script, "go_vendor_license"))
-	assert.Contains(t, script, "cd cmd/app")
-	assert.Contains(t, script, "--target aarch64")
-	assert.Contains(t, script, "--no-prompt")
-	assert.Contains(t, script, "--autofill off")
-	assert.NotContains(t, script, "--idempotent")
-}
-
 func TestGoVendorSourceCollisions(t *testing.T) {
-	for _, name := range []string{"app-vendor.tar.bz2", goVendorConfig, "sources", "invalid-sources"} {
+	for _, name := range []string{"app-vendor.tar.bz2", govendor.ConfigFilename, "sources", "invalid-sources"} {
 		t.Run(name, func(t *testing.T) {
 			ctx := testctx.NewCtx()
 			preparer := &sourcePreparerImpl{fs: ctx.FS()}
@@ -238,7 +233,7 @@ func TestGoVendorSourceCollisions(t *testing.T) {
 			}
 
 			require.NoError(t, fileutils.WriteFile(ctx.FS(), "/output/"+filename, []byte(content), fileperms.PublicFile))
-			require.Error(t, preparer.checkGoVendorSourceCollision("/output", "app-vendor.tar.bz2"))
+			require.Error(t, preparer.checkGoVendorSourceCollision("/output", "app-vendor.tar.bz2", govendor.ConfigFilename))
 		})
 	}
 }

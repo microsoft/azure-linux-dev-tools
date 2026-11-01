@@ -4,37 +4,24 @@
 package sources
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"strings"
-	"time"
 
-	"github.com/kballard/go-shellquote"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
-	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/govendor"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/mock"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spec"
-	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spectool"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 )
 
-const (
-	goVendorMount          = "/azldev-go-vendor"
-	goVendorTopDir         = "/tmp/azldev-go-rpm"
-	goVendorBuild          = goVendorTopDir + "/BUILD"
-	goVendorConfig         = "azldev-go-vendor.toml"
-	goVendorScratch        = "/azldev-go-scratch"
-	goVendorCleanupTimeout = 5 * time.Minute
-)
-
-// WithGoVendorRunner provides a template runner. Every conversion uses a fresh,
-// isolated root; only the component staging directory is exposed to it.
+// WithGoVendorRunner provides a template for an isolated generation root.
 func WithGoVendorRunner(runner *mock.Runner) PreparerOption {
 	return func(p *sourcePreparerImpl) { p.goVendorRunner = runner }
 }
@@ -52,7 +39,7 @@ func (p *sourcePreparerImpl) prepareGoVendor(
 	}
 
 	if p.dryRunnable.DryRun() {
-		slog.Info("Dry run; skipping Go vendor conversion and archive generation", "component", component.GetName())
+		slog.Info("Dry run; skipping Go vendor generation", "component", component.GetName())
 
 		return nil
 	}
@@ -60,8 +47,6 @@ func (p *sourcePreparerImpl) prepareGoVendor(
 	if p.goVendorRunner == nil {
 		return errors.New("go vendoring requires a mock runner with the project's build distro configuration")
 	}
-
-	archiveName := component.GetName() + "-vendor.tar.bz2"
 
 	specPath, err := p.resolveSpecPath(component, outputDir)
 	if err != nil {
@@ -73,14 +58,16 @@ func (p *sourcePreparerImpl) prepareGoVendor(
 		return fmt.Errorf("reading Go spec:\n%w", err)
 	}
 
-	converted, err := spec.ConvertGoVendor(data, spec.GoVendorOptions{
-		ArchiveName: archiveName, ConfigName: goVendorConfig, ModuleDir: config.ModuleDir,
+	plan, err := spec.ConvertGoVendor(data, spec.GoVendorOptions{
+		ArchiveName: component.GetName() + "-vendor.tar.bz2",
+		ConfigName:  govendor.ConfigFilename, ModuleDir: config.ModuleDir,
 	})
 	if err != nil {
-		return fmt.Errorf("converting Go spec for %#q:\n%w", component.GetName(), err)
+		return fmt.Errorf("planning Go vendoring for %#q:\n%w", component.GetName(), err)
 	}
 
-	if err := p.checkGoVendorSourceCollision(outputDir, archiveName); err != nil {
+	toolConfig, err := p.resolveGoVendorConfig(outputDir, plan, config.ToolConfig)
+	if err != nil {
 		return err
 	}
 
@@ -90,200 +77,76 @@ func (p *sourcePreparerImpl) prepareGoVendor(
 	}
 	defer fileutils.RemoveAllAndUpdateErrorIfNil(p.fs, scratch, &err)
 
-	staging := filepath.Join(scratch, "work")
-	if err := fileutils.MkdirAll(p.fs, staging); err != nil {
-		return fmt.Errorf("creating Go vendor staging directory:\n%w", err)
+	slog.Info("Generating Go vendor archive", "spec", filepath.Base(specPath), "regenerating", plan.AllowReplacement)
+
+	artifact, err := govendor.Generate(ctx, p.fs, p.goVendorRunner, govendor.Request{
+		SourceDir: outputDir, WorkDir: scratch, SpecName: filepath.Base(specPath), PrepSpec: plan.PrepSpec,
+		ArchiveFile: plan.ArchiveFile, ArchiveSuffix: plan.ArchiveSuffix, ModuleDir: config.ModuleDir,
+		ToolConfig: toolConfig, Packages: config.PrepPackages, ExpectedLicense: plan.ExpectedLicense,
+	})
+	if err != nil {
+		return fmt.Errorf("generating Go vendor sources:\n%w", err)
 	}
 
-	sourceCopy := filepath.Join(scratch, "sources")
-	if err := p.stageGoVendorInputs(outputDir, sourceCopy, staging, filepath.Base(specPath),
-		converted.PrepSpec, config.ToolConfig); err != nil {
-		return err
-	}
-
-	runner := p.goVendorRunner.Clone().WithBaseDir(filepath.Join(scratch, "mock")).
-		EnableNetwork().WithUnprivileged()
-	runner.AddBindMount(sourceCopy, goVendorMount)
-	runner.AddBindMount(staging, goVendorScratch)
-
-	if err := p.runGoVendor(ctx, runner, archiveName, filepath.Base(specPath), config); err != nil {
-		return err
-	}
-
-	if err := p.validateGoVendorInputs(staging, outputDir); err != nil {
-		return err
-	}
-
-	return p.publishGoVendor(staging, outputDir, specPath, archiveName, converted.Spec, config.ToolConfig)
+	return p.publishGoVendor(outputDir, filepath.Base(specPath), toolConfig, plan, artifact)
 }
 
-func (p *sourcePreparerImpl) stageGoVendorInputs(
-	outputDir, sourceCopy, staging, specFilename string, prepSpec []byte, toolConfig string,
-) error {
-	if err := fileutils.CopyDirRecursive(p.dryRunnable, p.fs, outputDir, sourceCopy,
-		fileutils.CopyDirOptions{CopyFileOptions: fileutils.CopyFileOptions{PreserveFileMode: true}}); err != nil {
-		return fmt.Errorf("copying Go sources for isolated prep:\n%w", err)
+func (p *sourcePreparerImpl) resolveGoVendorConfig(
+	outputDir string, plan *spec.GoVendorSpec, configured string,
+) (string, error) {
+	if !plan.AllowReplacement {
+		if err := p.checkGoVendorSourceCollision(outputDir, plan.ArchiveFile, plan.ConfigName); err != nil {
+			return "", err
+		}
 	}
 
-	if err := fileutils.WriteFile(p.fs,
-		filepath.Join(sourceCopy, specFilename), prepSpec, fileperms.PublicFile); err != nil {
-		return fmt.Errorf("staging Go prep spec:\n%w", err)
+	if configured != "" || !plan.AllowReplacement {
+		return configured, nil
 	}
 
-	if err := fileutils.WriteFile(p.fs, filepath.Join(staging, goVendorConfig),
-		[]byte(toolConfig), fileperms.PublicFile); err != nil {
-		return fmt.Errorf("staging Go vendor tool configuration:\n%w", err)
+	data, err := fileutils.ReadFile(p.fs, filepath.Join(outputDir, plan.ConfigName))
+	if err != nil {
+		return "", fmt.Errorf("reading upstream Go vendor configuration:\n%w", err)
 	}
 
-	return nil
+	return string(data), nil
 }
 
 func (p *sourcePreparerImpl) publishGoVendor(
-	staging, outputDir, specPath, archiveName string, data []byte, toolConfig string,
+	outputDir, specName, toolConfig string, plan *spec.GoVendorSpec, artifact govendor.Artifact,
 ) error {
-	archiveInfo, err := p.fs.Stat(filepath.Join(staging, archiveName))
+	if !plan.AllowReplacement && artifact.Name != plan.ArchiveFile {
+		return fmt.Errorf("generated Go archive %#q does not match planned name %#q", artifact.Name, plan.ArchiveFile)
+	}
+
+	finalSpec, err := plan.FinalizeLicense(artifact.License)
 	if err != nil {
-		return fmt.Errorf("missing generated Go vendor archive:\n%w", err)
+		return fmt.Errorf("finalizing Go vendor spec:\n%w", err)
 	}
 
-	if !archiveInfo.Mode().IsRegular() || archiveInfo.Size() == 0 {
-		return errors.New("generated Go vendor archive must be a nonempty regular file")
-	}
-
-	license, err := fileutils.ReadFile(p.fs, filepath.Join(staging, "license"))
-	if err != nil {
-		return fmt.Errorf("reading Go vendor license report:\n%w", err)
-	}
-
-	expression := strings.TrimSpace(string(license))
-	if expression == "" || strings.ContainsAny(expression, "\r\n%") {
-		return fmt.Errorf("invalid license expression returned by 'go_vendor_license': %#q", expression)
-	}
-
-	editor, err := spec.OpenSpec(bytes.NewReader(data), spec.WithEditor(spec.EditorStructural))
-	if err != nil {
-		return fmt.Errorf("reading converted Go spec:\n%w", err)
-	}
-
-	if err := editor.UpdateExistingTag("", "License", expression); err != nil {
-		return fmt.Errorf("updating bundled Go licenses:\n%w", err)
-	}
-
-	var finalSpec bytes.Buffer
-	if err := editor.Serialize(&finalSpec); err != nil {
-		return fmt.Errorf("serializing converted Go spec:\n%w", err)
-	}
-	// Publish only after generation and license detection succeed.
-	if err := fileutils.CopyFile(p.dryRunnable, p.fs,
-		filepath.Join(staging, archiveName), filepath.Join(outputDir, archiveName), fileutils.CopyFileOptions{}); err != nil {
+	if err := fileutils.CopyFile(p.dryRunnable, p.fs, artifact.Path,
+		filepath.Join(outputDir, artifact.Name), fileutils.CopyFileOptions{}); err != nil {
 		return fmt.Errorf("publishing Go vendor archive:\n%w", err)
 	}
 
-	for name, contents := range map[string][]byte{
-		filepath.Base(specPath): finalSpec.Bytes(),
-		goVendorConfig:          []byte(toolConfig),
-	} {
+	for name, contents := range map[string][]byte{specName: finalSpec, plan.ConfigName: []byte(toolConfig)} {
 		if err := fileutils.WriteFile(p.fs, filepath.Join(outputDir, name), contents, fileperms.PublicFile); err != nil {
 			return fmt.Errorf("publishing Go vendor file %#q:\n%w", name, err)
 		}
 	}
 
-	return p.recordGoVendorArchive(outputDir, archiveName)
+	return p.recordGoVendorArchive(outputDir, artifact, plan.AllowReplacement)
 }
 
-func (p *sourcePreparerImpl) runGoVendor(
-	ctx context.Context, runner *mock.Runner, archiveName, specFilename string, config *projectconfig.GoVendorConfig,
-) (err error) {
-	defer func() {
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), goVendorCleanupTimeout)
-		defer cancel()
-
-		if scrubErr := runner.ScrubRoot(cleanupCtx); scrubErr != nil {
-			slog.Error("Failed to clean Go vendor mock root", "error", scrubErr)
-
-			if err == nil {
-				err = scrubErr
-			}
-		}
-	}()
-
-	if err := runner.InitRoot(ctx); err != nil {
-		return fmt.Errorf("initializing Go vendor mock root:\n%w", err)
-	}
-
-	packages := append([]string{
-		"go-vendor-tools", "askalono-cli", "golang", "go-rpm-macros", "rpm-build", "rpmdevtools",
-		"rpmautospec", "git", "python3-click",
-	}, config.PrepPackages...)
-	if err := runner.InstallPackages(ctx, packages); err != nil {
-		return fmt.Errorf("installing Go vendor prerequisites:\n%w", err)
-	}
-
-	cmd, err := runner.CmdInChroot(ctx, []string{
-		"bash", "-euo", "pipefail", "-c",
-		goVendorScript(archiveName, config.ModuleDir, runner.ConfigOpts()["target_arch"], specFilename),
-	}, false)
-	if err != nil {
-		return fmt.Errorf("constructing Go vendor command:\n%w", err)
-	}
-
-	output, err := cmd.RunAndGetOutput(ctx)
-	if err != nil {
-		return fmt.Errorf("go vendor generation or license detection failed; use 'prep-packages' for missing prep tools "+
-			"and 'tool-config' for reviewed license exceptions:\n%s\n%w", output, err)
-	}
-
-	return nil
-}
-
-func goVendorScript(archiveName, moduleDir, targetArch, specFilename string) string {
-	if moduleDir == "" {
-		moduleDir = "."
-	}
-
-	quote := shellquote.Join
-
-	prepArgs := []string{
-		"rpmbuild", "-bp", "--nodeps", "--define", "_topdir /tmp/azldev-go-rpm",
-		"--define", "_builddir " + goVendorBuild, "--define", "_sourcedir " + goVendorMount,
-	}
-	if targetArch != "" {
-		prepArgs = append(prepArgs, "--target", targetArch)
-	}
-
-	prepArgs = append(prepArgs, goVendorMount+"/"+specFilename)
-
-	return strings.Join([]string{
-		"cd " + goVendorMount,
-		"mkdir -p " + goVendorBuild,
-		quote("git", "config", "--global", "--add", "safe.directory", goVendorMount),
-		quote("rpmautospec", "process-distgit", specFilename, specFilename),
-		quote(prepArgs...),
-		`IFS= read -r module_root < ` + goVendorTopDir + "/azldev-go-module-root",
-		`cd "$module_root"`,
-		"cd " + quote(moduleDir),
-		"test -f go.mod",
-		"export GOTOOLCHAIN=local",
-		quote("go_vendor_archive", "create", "--config", goVendorScratch+"/"+goVendorConfig,
-			"--output", goVendorScratch+"/"+archiveName, "."),
-		quote("tar", "-xf", goVendorScratch+"/"+archiveName),
-		quote("go_vendor_license", "--config", goVendorScratch+"/"+goVendorConfig, "--path", ".",
-			"report", "--no-prompt", "--autofill", "off", "expression") + " > " + goVendorScratch + "/license",
-		"cd " + goVendorMount,
-		quote("spectool", "--define", "_sourcedir "+goVendorMount, "-l", "-a",
-			specFilename) + " > " + goVendorScratch + "/sources-list",
-	}, "\n")
-}
-
-func (p *sourcePreparerImpl) checkGoVendorSourceCollision(outputDir, name string) error {
-	for _, filename := range []string{name, goVendorConfig} {
-		exists, err := fileutils.Exists(p.fs, filepath.Join(outputDir, filename))
+func (p *sourcePreparerImpl) checkGoVendorSourceCollision(outputDir string, names ...string) error {
+	for _, name := range names {
+		exists, err := fileutils.Exists(p.fs, filepath.Join(outputDir, name))
 		if err != nil {
 			return fmt.Errorf("checking generated Go source path:\n%w", err)
 		}
 
 		if exists {
-			return fmt.Errorf("generated Go vendor file %#q conflicts with an existing source", filename)
+			return fmt.Errorf("generated Go vendor file %#q conflicts with an existing source", name)
 		}
 	}
 
@@ -298,36 +161,34 @@ func (p *sourcePreparerImpl) checkGoVendorSourceCollision(outputDir, name string
 	}
 
 	for _, line := range lines {
-		if line.Entry != nil && line.Entry.Filename == name {
-			return fmt.Errorf("generated Go vendor archive %#q conflicts with an upstream 'sources' entry", name)
+		if line.Entry != nil && slices.Contains(names, line.Entry.Filename) {
+			return fmt.Errorf("generated Go vendor file %#q conflicts with an upstream 'sources' entry", line.Entry.Filename)
 		}
 	}
 
 	return nil
 }
 
-func (p *sourcePreparerImpl) recordGoVendorArchive(outputDir, name string) error {
-	hash, err := fileutils.ComputeFileHash(p.fs, fileutils.HashTypeSHA512, filepath.Join(outputDir, name))
-	if err != nil {
-		return fmt.Errorf("hashing generated Go vendor archive:\n%w", err)
-	}
+func (p *sourcePreparerImpl) recordGoVendorArchive(outputDir string, artifact govendor.Artifact, replace bool) error {
+	path := filepath.Join(outputDir, fedorasource.SourcesFileName)
 
-	content, err := p.readSourcesFileIfExists(filepath.Join(outputDir, fedorasource.SourcesFileName))
+	content, err := p.readSourcesFileIfExists(path)
 	if err != nil {
 		return err
 	}
 
-	content = strings.TrimRight(content, "\n")
-	if content != "" {
-		content += "\n"
+	content, err = upsertGoVendorEntry(content, artifact, replace)
+	if err != nil {
+		return err
 	}
 
-	content += fedorasource.FormatSourcesEntry(name, fileutils.HashTypeSHA512, hash) + "\n"
-	if err := fileutils.WriteFile(p.fs, filepath.Join(outputDir, fedorasource.SourcesFileName),
-		[]byte(content), fileperms.PublicFile); err != nil {
+	if err := fileutils.WriteFile(p.fs, path, []byte(content), fileperms.PublicFile); err != nil {
 		return fmt.Errorf("recording Go vendor digest:\n%w", err)
 	}
-	// Generated payloads belong in lookaside storage, not synthetic git commits.
+
+	slog.Info("Recorded generated Go vendor archive", "filename", artifact.Name,
+		"hashType", fileutils.HashTypeSHA512, "hash", artifact.Digest)
+
 	ignorePath := filepath.Join(outputDir, ".gitignore")
 
 	ignore, err := p.readSourcesFileIfExists(ignorePath)
@@ -335,39 +196,46 @@ func (p *sourcePreparerImpl) recordGoVendorArchive(outputDir, name string) error
 		return err
 	}
 
+	for _, line := range strings.Split(ignore, "\n") {
+		if strings.TrimPrefix(line, "/") == artifact.Name {
+			return nil
+		}
+	}
+
 	if err := fileutils.WriteFile(p.fs, ignorePath,
-		[]byte(strings.TrimRight(ignore, "\n")+"\n/"+name+"\n"), fileperms.PublicFile); err != nil {
+		[]byte(strings.TrimRight(ignore, "\n")+"\n/"+artifact.Name+"\n"), fileperms.PublicFile); err != nil {
 		return fmt.Errorf("ignoring generated Go archive in git:\n%w", err)
 	}
 
 	return nil
 }
 
-func (p *sourcePreparerImpl) validateGoVendorInputs(scratch, outputDir string) error {
-	data, err := fileutils.ReadFile(p.fs, filepath.Join(scratch, "sources-list"))
+func upsertGoVendorEntry(content string, artifact govendor.Artifact, replace bool) (string, error) {
+	lines, err := fedorasource.ReadSourcesFile(strings.TrimRight(content, "\n"))
 	if err != nil {
-		return fmt.Errorf("reading prepared Go source list:\n%w", err)
+		return "", fmt.Errorf("parsing Go vendor source manifest:\n%w", err)
 	}
 
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		if line == "" {
-			continue
+	entry := fedorasource.FormatSourcesEntry(artifact.Name, fileutils.HashTypeSHA512, artifact.Digest)
+	raw := make([]string, 0, len(lines)+1)
+	found := false
+
+	for _, line := range lines {
+		value := line.Raw
+		if line.Entry != nil && line.Entry.Filename == artifact.Name {
+			if !replace {
+				return "", fmt.Errorf("go vendor source %#q already exists", artifact.Name)
+			}
+
+			value, found = entry, true
 		}
 
-		files := spectool.ParseSpectoolOutput(line)
-		if len(files) != 1 || strings.Contains(files[0], "%") {
-			return fmt.Errorf("cannot resolve Go source/patch reference %#q", line)
-		}
-
-		info, err := p.fs.Stat(filepath.Join(outputDir, files[0]))
-		if err != nil {
-			return fmt.Errorf("missing prepared Go source/patch %#q:\n%w", files[0], err)
-		}
-
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("go source/patch %#q is not a regular file", files[0])
-		}
+		raw = append(raw, value)
 	}
 
-	return nil
+	if !found {
+		raw = append(raw, entry)
+	}
+
+	return strings.Join(raw, "\n") + "\n", nil
 }

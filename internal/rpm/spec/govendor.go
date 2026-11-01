@@ -22,11 +22,15 @@ type GoVendorOptions struct {
 	ModuleDir   string
 }
 
-// GoVendorSpec contains the converted spec and the otherwise identical prep-only
-// spec used to obtain the patched module tree before a vendor archive exists.
+// GoVendorSpec is the common plan for converting or refreshing Go vendoring.
 type GoVendorSpec struct {
-	Spec     []byte
-	PrepSpec []byte
+	Spec             []byte
+	PrepSpec         []byte
+	ArchiveFile      string // Filename used inside generation staging.
+	ArchiveSuffix    string // Required suffix of the RPM-expanded destination name, if any.
+	ConfigName       string
+	ExpectedLicense  string // Empty: detect and update. Otherwise: verify and preserve.
+	AllowReplacement bool   // Permit replacing the existing vendor payload and configuration.
 }
 
 const goVendorEnvironment = `export GO111MODULE=on GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local
@@ -55,6 +59,16 @@ func ConvertGoVendor(data []byte, options GoVendorOptions) (*GoVendorSpec, error
 	}
 
 	tree := &specTree{root: root}
+
+	configSource, err := existingVendorConfigSource(tree)
+	if err != nil {
+		return nil, err
+	}
+
+	if configSource != "" {
+		return prepareExistingGoVendor(tree, configSource)
+	}
+
 	if err := validateGoVendorTree(tree); err != nil {
 		return nil, err
 	}
@@ -69,7 +83,7 @@ func ConvertGoVendor(data []byte, options GoVendorOptions) (*GoVendorSpec, error
 	prep.PrependLines([]string{"export GOTOOLCHAIN=local"})
 	prep.AppendLines([]string{"", `pwd -P > "%{_topdir}/azldev-go-module-root"`})
 
-	prepSpec := serializeGoVendorTree(tree)
+	prepSpec := goVendorPrepSpec(tree, options.ArchiveName)
 
 	sourceNumber, err := freeGoVendorSources(tree, options)
 	if err != nil {
@@ -97,7 +111,10 @@ func ConvertGoVendor(data []byte, options GoVendorOptions) (*GoVendorSpec, error
 
 	addGoVendorBuildSections(tree, options, configRef)
 
-	return &GoVendorSpec{Spec: serializeGoVendorTree(tree), PrepSpec: prepSpec}, nil
+	return &GoVendorSpec{
+		Spec: serializeGoVendorTree(tree), PrepSpec: prepSpec,
+		ArchiveFile: options.ArchiveName, ConfigName: options.ConfigName,
+	}, nil
 }
 
 func addGoVendorBuildSections(tree *specTree, options GoVendorOptions, configRef string) {
@@ -111,11 +128,7 @@ func addGoVendorBuildSections(tree *specTree, options GoVendorOptions, configRef
 
 	requires.PrependLines([]string{"%go_vendor_license_buildrequires -c " + configRef})
 
-	for _, name := range []string{"%build", "%install", "%check", "%generate_buildrequires"} {
-		if section := tree.Section(name, ""); section != nil {
-			section.PrependLines([]string{goVendorEnvironment})
-		}
-	}
+	addGoVendorEnvironment(tree)
 
 	tree.Section("%install", "").AppendLines([]string{
 		"", goVendorInModule(options.ModuleDir, "%go_vendor_license_install -c "+configRef),
@@ -154,6 +167,45 @@ func (o GoVendorOptions) validate() error {
 
 func serializeGoVendorTree(tree *specTree) []byte {
 	return []byte(strings.Join(serializeTree(tree.root), "\n") + "\n")
+}
+
+func addGoVendorEnvironment(tree *specTree) {
+	for _, name := range []string{"%build", "%install", "%check", "%generate_buildrequires"} {
+		if section := tree.Section(name, ""); section != nil {
+			section.PrependLines([]string{goVendorEnvironment})
+		}
+	}
+}
+
+func goVendorPrepSpec(tree *specTree, archiveValue string) []byte {
+	prep := tree.Section("%prep", "")
+	prep.AppendLines([]string{
+		"printf '%%s\\n' %{shescape:" + archiveValue + `} > "%{_topdir}/azldev-go-archive-name"`,
+	})
+
+	result := serializeGoVendorTree(tree)
+	prep.block.Children = prep.block.Children[:len(prep.block.Children)-1]
+
+	return result
+}
+
+// FinalizeLicense preserves a verified upstream expression or writes the detected
+// expression for a newly converted spec. It does not mutate the plan.
+func (p *GoVendorSpec) FinalizeLicense(expression string) ([]byte, error) {
+	if p.ExpectedLicense != "" {
+		return p.Spec, nil
+	}
+
+	editor, err := openStructuralSpec(strings.NewReader(string(p.Spec)))
+	if err != nil {
+		return nil, err
+	}
+
+	if err := editor.UpdateExistingTag("", "License", expression); err != nil {
+		return nil, err
+	}
+
+	return []byte(strings.Join(editor.rawLines, "\n") + "\n"), nil
 }
 
 func goVendorInModule(moduleDir, command string) string {

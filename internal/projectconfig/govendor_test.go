@@ -28,6 +28,7 @@ tool-config = '''
 `), &config))
 	require.True(t, config.GoVendor.IsEnabled())
 	require.NoError(t, config.GoVendor.Validate())
+	require.Equal(t, config.GoVendor, config.WithAbsolutePaths("/project").GoVendor)
 	require.NoError(t, config.MergeUpdatesFrom(&projectconfig.ComponentConfig{
 		GoVendor: &projectconfig.GoVendorConfig{Enabled: lo.ToPtr(false)},
 	}))

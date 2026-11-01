@@ -105,6 +105,9 @@ description: "Instructions for working on the azldev Go codebase. IMPORTANT: Alw
 
 ## Component Fingerprinting — `fingerprint:"-"` Tags
 
+New component fields must survive `ComponentConfig.WithAbsolutePaths` without aliasing
+mutable data. Its automatic clone deliberately shares only config-file back-references.
+
 Structs in `internal/projectconfig/` are hashed by `hashstructure.Hash()` to detect component changes. Fields **included by default** (safe: false positive > false negative).
 
 When adding a new field to a fingerprinted struct, ask: **"Does changing this field change the build output?"**
