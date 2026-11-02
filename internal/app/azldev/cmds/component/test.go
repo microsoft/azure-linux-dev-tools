@@ -16,14 +16,7 @@ func testOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
 	parentCmd.AddCommand(NewComponentTestCmd())
 }
 
-// NewComponentTestCmd constructs the 'component test' command.
-func NewComponentTestCmd() *cobra.Command {
-	options := &tmt.Options{}
-
-	cmd := &cobra.Command{
-		Use:   "test COMPONENT",
-		Short: "Run a component's TMT tests in a VM, on this host, or over SSH",
-		Long: `Run TMT test definitions associated with a component using TMT's virtual
+const componentTestLongDescription = `Run TMT test definitions associated with a component using TMT's virtual
 (QEMU/testcloud), local, or connect (SSH) provisioner.
 
 For virtual, the image must be a local qcow2 file. Every RPM supplied with --rpm is copied
@@ -85,7 +78,16 @@ on the host; git is required for azldev's own catalog clone unless
 '--source-dir' is used, though the selected plan's 'discover' step may still
 invoke git itself regardless of '--source-dir'.
 
-Reports and logs stay under --work-dir. Use -O json for artifact paths and TMT exit codes, including on failure.`,
+Reports and logs stay under --work-dir. Use -O json for artifact paths and TMT exit codes, including on failure.`
+
+// NewComponentTestCmd constructs the 'component test' command.
+func NewComponentTestCmd() *cobra.Command {
+	options := &tmt.Options{}
+
+	cmd := &cobra.Command{
+		Use:   "test COMPONENT",
+		Short: "Run a component's TMT tests in a VM, on this host, or over SSH",
+		Long:  componentTestLongDescription,
 		Example: `  # Build the component first
   azldev component build buildah
 
@@ -130,7 +132,8 @@ func registerComponentTestFlags(cmd *cobra.Command, options *tmt.Options) {
 	cmd.Flags().StringVarP(&options.ImagePath, "image-path", "i", "", "Path to the qcow2 image under test")
 	_ = cmd.MarkFlagFilename("image-path")
 	cmd.Flags().StringSliceVarP(
-		&options.RPMPaths, "rpm", "r", nil, "Local RPM to install before testing (required for virtual/local; may be repeated). "+
+		&options.RPMPaths, "rpm", "r", nil,
+		"Local RPM to install before testing (required for virtual/local; may be repeated). "+
 			"Typically include the main package and -tests package.",
 	)
 	_ = cmd.MarkFlagFilename("rpm")
@@ -147,7 +150,8 @@ func registerComponentTestFlags(cmd *cobra.Command, options *tmt.Options) {
 	cmd.Flags().StringVar(&options.Connection.Guest, "guest", "", "SSH guest hostname or address (required for connect)")
 	cmd.Flags().IntVar(&options.Connection.Port, "port", tmt.DefaultSSHPort, "SSH port (connect only; 1..65535)")
 	cmd.Flags().StringVar(&options.Connection.User, "user", "", "SSH user with passwordless sudo (required for connect)")
-	cmd.Flags().StringVar(&options.Connection.Key, "key", "", "SSH private key file, relative to the project (required for connect)")
+	cmd.Flags().StringVar(&options.Connection.Key, "key", "",
+		"SSH private key file, relative to the project (required for connect)")
 	_ = cmd.MarkFlagFilename("key")
 	cmd.Flags().StringVar(&options.SourceDir, "source-dir", "",
 		"Run tmt straight from this local fmf tree instead of cloning the catalog 'source'. Accepts the "+

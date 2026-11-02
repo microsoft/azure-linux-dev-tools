@@ -137,21 +137,9 @@ func RunComponentTests(
 		return nil, err
 	}
 
-	connection := options.Connection
-	if options.Provision == ProvisionConnect {
-		keyPath, err := absoluteProjectPath(env.ProjectDir(), connection.Key)
-		if err != nil {
-			return nil, fmt.Errorf("resolve SSH key path:\n%w", err)
-		}
-
-		info, err := env.FS().Stat(keyPath)
-		if err != nil {
-			return nil, fmt.Errorf("SSH key path %#q:\n%w", keyPath, err)
-		}
-		if !info.Mode().IsRegular() {
-			return nil, fmt.Errorf("SSH key path %#q must be a regular file", keyPath)
-		}
-		connection.Key = keyPath
+	connection, err := resolveConnection(env, options)
+	if err != nil {
+		return nil, err
 	}
 
 	imagePath, err := resolveTMTImagePath(env, options.Provision, options.ImagePath)
@@ -216,30 +204,67 @@ func RunComponentTests(
 	return executeComponentTMTTests(env, options.WorkDir, resolved, settings)
 }
 
+func resolveConnection(env *azldev.Env, options *Options) (ConnectionOptions, error) {
+	connection := options.Connection
+	if options.Provision != ProvisionConnect {
+		return connection, nil
+	}
+
+	keyPath, err := absoluteProjectPath(env.ProjectDir(), connection.Key)
+	if err != nil {
+		return connection, fmt.Errorf("resolve SSH key path:\n%w", err)
+	}
+
+	info, err := env.FS().Stat(keyPath)
+	if err != nil {
+		return connection, fmt.Errorf("SSH key path %#q:\n%w", keyPath, err)
+	}
+
+	if !info.Mode().IsRegular() {
+		return connection, fmt.Errorf("SSH key path %#q must be a regular file", keyPath)
+	}
+
+	connection.Key = keyPath
+
+	return connection, nil
+}
+
+func validateConnectionOptions(options *Options) error {
+	if options.Provision != ProvisionConnect {
+		if options.Connection.Guest != "" || options.Connection.User != "" || options.Connection.Key != "" ||
+			(options.Connection.Port != 0 && options.Connection.Port != DefaultSSHPort) {
+			return errors.New("'--guest', '--port', '--user', and '--key' require '--provision connect'")
+		}
+
+		if len(options.RPMPaths) == 0 {
+			return errors.New("'--rpm' is required with '--provision virtual' or '--provision local'")
+		}
+
+		return nil
+	}
+
+	for _, field := range []struct{ name, value string }{
+		{"guest", options.Connection.Guest}, {"user", options.Connection.User}, {"key", options.Connection.Key},
+	} {
+		if strings.TrimSpace(field.value) == "" {
+			return fmt.Errorf("'--%s' is required with '--provision connect'", field.name)
+		}
+	}
+
+	if options.Connection.Port < 1 || options.Connection.Port > 65535 {
+		return errors.New("'--port' must be between 1 and 65535")
+	}
+
+	return nil
+}
+
 func validateOptions(env *azldev.Env, options *Options) error {
 	if err := validateTMTProvisionOptions(options.Provision, options.ImagePath); err != nil {
 		return err
 	}
 
-	if options.Provision == ProvisionConnect {
-		for _, field := range []struct{ name, value string }{
-			{"guest", options.Connection.Guest}, {"user", options.Connection.User}, {"key", options.Connection.Key},
-		} {
-			if strings.TrimSpace(field.value) == "" {
-				return fmt.Errorf("'--%s' is required with '--provision connect'", field.name)
-			}
-		}
-		if options.Connection.Port < 1 || options.Connection.Port > 65535 {
-			return errors.New("'--port' must be between 1 and 65535")
-		}
-	} else {
-		if options.Connection.Guest != "" || options.Connection.User != "" || options.Connection.Key != "" ||
-			(options.Connection.Port != 0 && options.Connection.Port != 22) {
-			return errors.New("'--guest', '--port', '--user', and '--key' require '--provision connect'")
-		}
-		if len(options.RPMPaths) == 0 {
-			return errors.New("'--rpm' is required with '--provision virtual' or '--provision local'")
-		}
+	if err := validateConnectionOptions(options); err != nil {
+		return err
 	}
 
 	// The local provisioner runs the plan's prepare and execute steps directly on
@@ -821,6 +846,7 @@ func componentTMTArgs(
 	if len(settings.RPMs) > 0 {
 		args = append(args, "prepare", "--insert", "--how", "install", "--name", tmtCandidateRPMPrepareStepName)
 	}
+
 	for _, rpm := range settings.RPMs {
 		args = append(args, "--package", rpm)
 	}

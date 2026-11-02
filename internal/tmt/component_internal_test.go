@@ -713,8 +713,10 @@ func TestComponentTMTArgsPreservesNativePlanSteps(t *testing.T) {
 	args := componentTMTArgs(
 		tmtConfig{Plan: "/plans/smoke"},
 		"/work/tmt",
-		tmtRunSettings{Provision: ProvisionVirtual, ImagePath: "/path/to/image.qcow2",
-			RPMs: []string{"/rpms/component.rpm", "/rpms/component-tests.rpm"}},
+		tmtRunSettings{
+			Provision: ProvisionVirtual, ImagePath: "/path/to/image.qcow2",
+			RPMs: []string{"/rpms/component.rpm", "/rpms/component-tests.rpm"},
+		},
 		[]string{"memory >= 4 GB", "boot.method = uefi"},
 	)
 
@@ -737,8 +739,10 @@ func TestComponentTMTArgsVirtualProvisioner(t *testing.T) {
 	args := componentTMTArgs(
 		tmtConfig{Plan: "/plans/smoke"},
 		"/work/tmt",
-		tmtRunSettings{Provision: ProvisionVirtual, ImagePath: "/path/to/image.qcow2",
-			RPMs: []string{"/rpms/component.rpm"}},
+		tmtRunSettings{
+			Provision: ProvisionVirtual, ImagePath: "/path/to/image.qcow2",
+			RPMs: []string{"/rpms/component.rpm"},
+		},
 		[]string{"boot.method = uefi"},
 	)
 
@@ -760,8 +764,10 @@ func TestComponentTMTArgsLocalProvisioner(t *testing.T) {
 	args := componentTMTArgs(
 		tmtConfig{Plan: "/plans/smoke"},
 		"/work/tmt",
-		tmtRunSettings{Provision: tmtProvisionLocal, ImagePath: "/path/to/image.qcow2",
-			RPMs: []string{"/rpms/component.rpm"}},
+		tmtRunSettings{
+			Provision: tmtProvisionLocal, ImagePath: "/path/to/image.qcow2",
+			RPMs: []string{"/rpms/component.rpm"},
+		},
 		[]string{"memory >= 4 GB", "boot.method = uefi"},
 	)
 

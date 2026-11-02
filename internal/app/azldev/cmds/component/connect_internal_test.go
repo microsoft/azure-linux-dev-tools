@@ -56,15 +56,18 @@ func TestConnectionFlagsRejectedByOtherProvisioners(t *testing.T) {
 			t.Run(provision+"/"+flag, func(t *testing.T) {
 				env := reportTestEnv(t)
 				cmd := component.NewComponentTestCmd()
+
 				value := ""
 				if flag == "port" {
 					value = "22"
 				}
-				cmd.SetArgs([]string{testTMTComponentName, "--provision", provision, "--"+flag, value})
+
+				cmd.SetArgs([]string{testTMTComponentName, "--provision", provision, "--" + flag, value})
 				require.ErrorContains(t, cmd.ExecuteContext(env.Env), "requires '--provision connect'")
 				assert.Empty(t, env.CommandsExecuted)
 			})
 		}
+
 		t.Run(provision+"/requires rpm", func(t *testing.T) {
 			env := reportTestEnv(t)
 			cmd := component.NewComponentTestCmd()
@@ -81,28 +84,34 @@ func TestConnectCommandAndReports(t *testing.T) {
 			t.Run(fmt.Sprintf("rpm=%t/failure=%t", withRPM, fail), func(t *testing.T) {
 				env := reportTestEnv(t)
 				require.NoError(t, fileutils.WriteFile(env.TestFS, "/project/key", []byte("key"), fileperms.PrivateFile))
+
 				for key, value := range map[string]string{
 					"TMT_SSH_STRICT_HOST_KEY_CHECKING": "yes",
-					"TMT_SSH_USER_KNOWN_HOSTS_FILE":   "/trusted/known_hosts",
-					"TMT_SSH_BATCH_MODE":             "yes",
-					"TMT_SSH_CONNECT_TIMEOUT":        "30",
-					"TMT_PLUGINS":                    "/caller/plugins",
+					"TMT_SSH_USER_KNOWN_HOSTS_FILE":    "/trusted/known_hosts",
+					"TMT_SSH_BATCH_MODE":               "yes",
+					"TMT_SSH_CONNECT_TIMEOUT":          "30",
+					"TMT_PLUGINS":                      "/caller/plugins",
 				} {
 					t.Setenv(key, value)
 				}
+
 				var output strings.Builder
 				env.Env.SetReportFile(&output)
+
 				called := false
 				env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
 					if filepath.Base(cmd.Args[0]) != tmtProgram {
 						return nil
 					}
+
 					called = true
 					native := cmd.Args[slices.Index(cmd.Args, "--id")+1]
+
 					port := "22"
 					if withRPM {
 						port = "22429"
 					}
+
 					want := []string{
 						cmd.Args[0], "run", "--all", "--keep", "--id", native,
 						"--workdir-root", filepath.Join(filepath.Dir(native), "workdir-root"), "plan",
@@ -113,9 +122,11 @@ func TestConnectCommandAndReports(t *testing.T) {
 						want = append(want, "prepare", "--insert", "--how", "install", "--name",
 							"azldev-candidate-rpms", "--package", testRPMPath)
 					}
+
 					want = append(want, "report", "--insert", "--how", "junit", "--name",
 						"azldev-junit", "--no-include-output-log")
 					assert.Equal(t, want, cmd.Args)
+
 					for _, variable := range []string{
 						"TMT_SSH_STRICT_HOST_KEY_CHECKING=yes", "TMT_SSH_USER_KNOWN_HOSTS_FILE=/trusted/known_hosts",
 						"TMT_SSH_BATCH_MODE=yes", "TMT_SSH_CONNECT_TIMEOUT=30", "TMT_PLUGINS=/caller/plugins",
@@ -123,35 +134,47 @@ func TestConnectCommandAndReports(t *testing.T) {
 						assert.Contains(t, cmd.Env, variable)
 						prefix, _, _ := strings.Cut(variable, "=")
 						count := 0
+
 						for _, entry := range cmd.Env {
 							if strings.HasPrefix(entry, prefix+"=") {
 								count++
 							}
 						}
+
 						assert.Equal(t, 1, count)
 					}
+
 					require.NoError(t, fileutils.WriteFile(env.TestFS,
 						filepath.Join(native, "report", "azldev-junit", "junit.xml"),
 						[]byte("<testsuites/>"), fileperms.PrivateFile))
+
 					if fail {
 						return errors.New("tmt failed")
 					}
+
 					return nil
 				}
 				cmd := component.NewComponentTestCmd()
-				args := []string{testTMTComponentName, "--provision", "connect", "--guest", "127.0.0.1",
-					"--user", "tester", "--key", "key", "--source-dir", "/source", "--work-dir", "/work"}
+
+				args := []string{
+					testTMTComponentName, "--provision", "connect", "--guest", "127.0.0.1",
+					"--user", "tester", "--key", "key", "--source-dir", "/source", "--work-dir", "/work",
+				}
 				if withRPM {
 					args = append(args, "--rpm", testRPMPath, "--port", "22429")
 				}
+
 				cmd.SetArgs(args)
+
 				err := cmd.ExecuteContext(env.Env)
 				if fail {
 					require.ErrorContains(t, err, "tmt failed")
 				} else {
 					require.NoError(t, err)
 				}
+
 				require.True(t, called)
+
 				var results []azldev.TestRunResult
 				require.NoError(t, json.Unmarshal([]byte(output.String()), &results))
 				require.Len(t, results, 1)
