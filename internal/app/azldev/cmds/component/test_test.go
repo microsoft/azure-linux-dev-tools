@@ -47,6 +47,7 @@ func TestNewComponentTestCmd(t *testing.T) {
 
 	for _, name := range []string{
 		"image-path", "rpm", "test", "work-dir", "provision", "source-dir", "plan", "from-spec",
+		"guest", "port", "user", "key",
 	} {
 		assert.NotNil(t, cmd.Flags().Lookup(name), "%s flag should be registered", name)
 	}
@@ -55,8 +56,8 @@ func TestNewComponentTestCmd(t *testing.T) {
 	require.NotNil(t, fromSpec)
 	assert.NotEmpty(t, fromSpec.Deprecated, "--from-spec should be marked deprecated")
 
-	// Removed flags: memory, firmware, connection, user
-	for _, name := range []string{"memory", "firmware", "connection", "user"} {
+	// Removed flags: memory, firmware, connection
+	for _, name := range []string{"memory", "firmware", "connection"} {
 		assert.Nil(t, cmd.Flags().Lookup(name), "%s flag should not be registered", name)
 	}
 }

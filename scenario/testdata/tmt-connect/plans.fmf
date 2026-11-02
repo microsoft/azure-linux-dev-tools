@@ -1,0 +1,9 @@
+execute:
+  how: tmt
+/pass:
+  discover:
+    how: fmf
+    test: /tests/pass
+/mixed:
+  discover:
+    how: fmf

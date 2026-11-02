@@ -2,22 +2,22 @@
 
 ## azldev component test
 
-Run a component's TMT tests in a local QEMU VM
+Run a component's TMT tests in a VM, on this host, or over SSH
 
 ### Synopsis
 
-Run TMT test definitions associated with a component against an Azure Linux
-image using TMT's virtual provisioner (QEMU/testcloud).
+Run TMT test definitions associated with a component using TMT's virtual
+(QEMU/testcloud), local, or connect (SSH) provisioner.
 
-The image must be a local qcow2 file. Every RPM supplied with --rpm is copied
+For virtual, the image must be a local qcow2 file. Every RPM supplied with --rpm is copied
 into the guest and installed by TMT before the selected plan executes. This
 ensures the test validates the locally built package rather than the version
 already present in the image. The guest can be modified by test preparation and
 execution; a disposable testcloud overlay is used for the virtual disk.
 
-REQUIRED RPMs:
+RPMs (required for virtual/local, optional for connect):
   After building a component with 'azldev component build COMPONENT', built RPMs
-  are typically located in base/out/rpms/rpm-base/. You must pass at minimum:
+  are typically located in base/out/rpms/rpm-base/. For virtual/local, pass at minimum:
   - The main package (e.g., buildah-1.0.0-1.x86_64.rpm)
   - The -tests package (e.g., buildah-tests-1.0.0-1.x86_64.rpm)
 
@@ -33,6 +33,14 @@ PROVISIONER MODES:
                        constraints are resolved per-plan.
   - local: Runs tests directly on this machine. Host must be Azure Linux 4.
            Useful for quick testing; modifies host state.
+  - connect: Runs tests on an existing SSH guest; no VM lifecycle or image.
+             Requires --guest, --user, and --key; --port defaults to 22.
+             Use a non-root account with passwordless sudo. Preparation and
+             tests modify the guest. Candidate RPMs are optional.
+             Caller TMT_SSH_* environment settings are inherited unchanged.
+             TMT copies the absolute work path to the same path on the guest
+             as the SSH user. That user must be able to create/write it;
+             normally use --work-dir /var/tmp/azldev-connect.
 
 PLAN SELECTION:
   By default tmt discovers and runs every enabled plan it finds in the test
@@ -80,18 +88,27 @@ azldev component test COMPONENT [flags]
     --image-path ./base/out/images/vm-base/azl4-vm-base.x86_64.qcow2 \
     --rpm ./base/out/rpms/rpm-base/buildah-1.29.0-5.x86_64.rpm \
     --rpm ./base/out/rpms/rpm-base/buildah-tests-1.29.0-5.x86_64.rpm
+
+  # Run on an existing disposable SSH guest
+  azldev component test buildah --provision connect \
+    --guest 127.0.0.1 --port 22429 --user tester --key ./test-key \
+    --source-dir ./test-tree --work-dir /var/tmp/azldev-connect -O json
 ```
 
 ### Options
 
 ```
+      --guest string        SSH guest hostname or address (required for connect)
   -h, --help                help for test
   -i, --image-path string   Path to the qcow2 image under test
+      --key string          SSH private key file, relative to the project (required for connect)
       --plan string         Absolute fmf plan name to run, overriding the catalog entry's 'tmt.plan'. Defaults to running every enabled plan tmt discovers in the test source. Required with '--provision virtual', since hardware export is resolved per-plan.
-      --provision string    TMT provisioner mode: 'virtual' (default) runs tests in QEMU; 'local' runs on this machine (must be Azure Linux 4) (default "virtual")
-  -r, --rpm strings         Local RPM to install before testing (required; may be repeated). Typically include the main package and -tests package.
+      --port int            SSH port (connect only; 1..65535) (default 22)
+      --provision string    TMT provisioner: 'virtual' (default) uses QEMU; 'local' uses this Azure Linux 4 host; 'connect' uses SSH (default "virtual")
+  -r, --rpm strings         Local RPM to install before testing (required for virtual/local; may be repeated). Typically include the main package and -tests package.
       --source-dir string   Run tmt straight from this local fmf tree instead of cloning the catalog 'source'. Accepts the output of either 'azldev component render' (with 'render.skip-file-filter = true') or 'azldev component prepare-sources'. Local inner-loop convenience; not used by cloud (TEE) runs.
   -t, --test strings        Mapped TMT test name to run (may be repeated; defaults to all)
+      --user string         SSH user with passwordless sudo (required for connect)
       --work-dir string     Parent for the reusable TMT venv and fresh retained test artifacts (default: current directory)
 ```
 

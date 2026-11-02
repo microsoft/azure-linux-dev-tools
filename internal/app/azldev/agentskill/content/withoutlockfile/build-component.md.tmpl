@@ -43,6 +43,17 @@ For components with TMT tests, `azldev component test <name> --image-path <qcow2
 logs and available native JUnit reports. JSON rows give the test, TMT exit code,
 artifact directory, and relative JUnit paths. Keep the command's nonzero exit
 status; early failures may have logs but no JUnit. Artifacts persist until removed.
+For an existing disposable SSH guest, use `--provision connect --guest <host>
+--port 22 --user <user> --key <private-key>` instead of `--image-path`.
+Use `--work-dir /var/tmp/azldev-connect`: TMT transfers the absolute work path
+to the same path on the guest as the SSH user, who must be able to create/write it.
+Guest, user, and key are required; port defaults to 22. Relative key paths use
+the project directory. Use a non-root user with passwordless sudo; tests modify
+the guest. `--rpm` is optional only for connect. The plan's preparation and
+the same JSON/JUnit reporting still run. Caller `TMT_PLUGINS` and `TMT_SSH_*`
+settings are inherited; enforce verified host keys with
+`TMT_SSH_STRICT_HOST_KEY_CHECKING=yes` and
+`TMT_SSH_USER_KNOWN_HOSTS_FILE=/absolute/path/to/known_hosts`.
 Do not use
 `--provision local` on a development host: it installs packages and executes
 tests on that machine; use a disposable Azure Linux 4 test container instead.

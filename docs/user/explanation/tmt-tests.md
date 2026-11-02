@@ -102,7 +102,7 @@ packages whose upstream dist-git already ships `plans/`/`tests/`), `azldev
 component test` still needs a test source to run: pass `--source-dir` pointed
 at a local fmf tree (see below). Without a catalog entry **and** without
 `--source-dir`, the command fails outright — there is no implicit default
-source to fall back to. When `plan` is omitted **and `--provision local` is
+source to fall back to. When `plan` is omitted **and `--provision local` or `connect` is
 used**, tmt discovers and runs every enabled plan it finds — the same default
 Fedora's own Testing Farm uses (`tmt plan ls --filter enabled:true`, not a fixed
 name) — instead of guessing one. `--provision virtual` (the default) always
@@ -115,11 +115,51 @@ At runtime [`azldev component test`](../reference/cli/azldev_component_test.md)
 either clones `source@ref`, or (with `--source-dir`) runs straight from a local
 fmf tree instead — the output of either `azldev component render` (with
 `render.skip-file-filter = true`) or `azldev component prepare-sources`. Either
-way, it provisions the supplied image with TMT's virtual (QEMU/testcloud) or
-local provisioner, installs the candidate RPMs passed via `--rpm`, and executes
+way, it uses TMT's virtual (QEMU/testcloud), local, or connect (SSH)
+provisioner, installs any candidate RPMs passed via `--rpm`, and executes
 the selected plan(s). **The plan's own `discover` step then decides where the
 tests come from** — azldev does not model that; it only pins (or locally
 materializes) the plan's repo.
+
+### Existing SSH guests: `--provision connect`
+
+Connect runs against an existing guest without creating an image or managing
+the guest lifecycle. Use a disposable guest: preparation and tests modify it.
+Supply `--guest`, `--user`, and `--key` explicitly; `--port` defaults to 22
+and accepts 1–65535. Use a non-root SSH account with passwordless sudo:
+azldev passes TMT's `--become` for preparation and execution. The key must be
+a regular file; relative key paths resolve against the project directory.
+`--image-path` is rejected, and connection flags are rejected by other provisioners.
+
+```bash
+export TMT_SSH_STRICT_HOST_KEY_CHECKING=yes
+export TMT_SSH_USER_KNOWN_HOSTS_FILE=/absolute/path/to/known_hosts
+export TMT_SSH_BATCH_MODE=yes
+export TMT_SSH_CONNECT_TIMEOUT=30
+azldev component test example --provision connect \
+  --guest 127.0.0.1 --port 22429 --user tester --key ./test-key \
+  --source-dir ./test-tree --work-dir /var/tmp/azldev-connect -O json
+```
+
+TMT's native rsync transfer copies the absolute work path to the same path on
+the guest as the unprivileged SSH user. That user must be able to create and
+write the directory there; normally choose a path under `/var/tmp`, as above.
+A host work directory under `/home/<host-user>` can fail with permission denied
+if the SSH user cannot create that path on the guest. `--become` does not elevate
+this transfer.
+
+Populate the known-hosts file with a verified host key before running; for a
+non-default port its entry uses `[127.0.0.1]:22429`. azldev inherits the caller's
+`TMT_SSH_*` environment unchanged, so TMT can override its default SSH options.
+Use these environment settings rather than relying on plan-level SSH options
+to override host-key policy. Connect also leaves caller `TMT_PLUGINS` intact.
+
+Candidate `--rpm` files are optional **only for connect**. If supplied, TMT copies
+and installs them in an inserted prepare step, just as for virtual/local.
+Without them, azldev inserts no RPM-install step. The plan's normal preparation
+(including `require`/`recommend` dependencies), execution durations, and reporting
+remain TMT's responsibility. Connect uses the same JSON results, retained logs,
+JUnit reports, and failure handling described below.
 
 ### Candidate RPMs: `--rpm` (loose files) vs. build repos
 

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -28,11 +29,12 @@ import (
 
 // Options holds options for running component TMT tests.
 type Options struct {
-	ImagePath string
-	RPMPaths  []string
-	Tests     []string
-	WorkDir   string
-	Provision string
+	ImagePath  string
+	RPMPaths   []string
+	Tests      []string
+	WorkDir    string
+	Provision  string
+	Connection ConnectionOptions
 	// SourceDir points tmt straight at a local fmf tree instead of cloning the
 	// catalog 'source' — any directory with an fmf root works, whether produced
 	// by 'azldev component render' (with render.skip-file-filter=true) or
@@ -47,6 +49,13 @@ type Options struct {
 	// the component's rendered spec directory, preserving the pre-rename
 	// '--from-spec' behavior for existing invocations.
 	FromSpec bool
+}
+
+type ConnectionOptions struct {
+	Guest string
+	Port  int
+	User  string
+	Key   string
 }
 
 type tmtSource struct {
@@ -73,6 +82,7 @@ type tmtRunSettings struct {
 	WorkDir        string
 	TMTProgramPath string
 	Provision      string
+	Connection     ConnectionOptions
 	// SourceDir, when set, runs tmt straight from this local fmf tree instead of
 	// cloning the catalog 'source' (see Options.SourceDir).
 	SourceDir string
@@ -85,6 +95,8 @@ const (
 	tmtProgram        = "tmt"
 	tmtProvisionLocal = "local"
 	ProvisionVirtual  = "virtual"
+	ProvisionConnect  = "connect"
+	DefaultSSHPort    = 22
 )
 
 const (
@@ -122,6 +134,11 @@ func RunComponentTests(
 	env *azldev.Env, componentName string, options *Options,
 ) ([]azldev.TestRunResult, error) {
 	if err := validateOptions(env, options); err != nil {
+		return nil, err
+	}
+
+	connection, err := resolveConnection(env, options)
+	if err != nil {
 		return nil, err
 	}
 
@@ -177,17 +194,76 @@ func RunComponentTests(
 	}
 
 	settings := tmtRunSettings{
-		ImagePath: imagePath,
-		RPMs:      rpms,
-		Provision: options.Provision,
-		SourceDir: sourceDir,
+		ImagePath:  imagePath,
+		RPMs:       rpms,
+		Provision:  options.Provision,
+		SourceDir:  sourceDir,
+		Connection: connection,
 	}
 
 	return executeComponentTMTTests(env, options.WorkDir, resolved, settings)
 }
 
+func resolveConnection(env *azldev.Env, options *Options) (ConnectionOptions, error) {
+	connection := options.Connection
+	if options.Provision != ProvisionConnect {
+		return connection, nil
+	}
+
+	keyPath, err := absoluteProjectPath(env.ProjectDir(), connection.Key)
+	if err != nil {
+		return connection, fmt.Errorf("resolve SSH key path:\n%w", err)
+	}
+
+	info, err := env.FS().Stat(keyPath)
+	if err != nil {
+		return connection, fmt.Errorf("SSH key path %#q:\n%w", keyPath, err)
+	}
+
+	if !info.Mode().IsRegular() {
+		return connection, fmt.Errorf("SSH key path %#q must be a regular file", keyPath)
+	}
+
+	connection.Key = keyPath
+
+	return connection, nil
+}
+
+func validateConnectionOptions(options *Options) error {
+	if options.Provision != ProvisionConnect {
+		if options.Connection.Guest != "" || options.Connection.User != "" || options.Connection.Key != "" ||
+			(options.Connection.Port != 0 && options.Connection.Port != DefaultSSHPort) {
+			return errors.New("'--guest', '--port', '--user', and '--key' require '--provision connect'")
+		}
+
+		if len(options.RPMPaths) == 0 {
+			return errors.New("'--rpm' is required with '--provision virtual' or '--provision local'")
+		}
+
+		return nil
+	}
+
+	for _, field := range []struct{ name, value string }{
+		{"guest", options.Connection.Guest}, {"user", options.Connection.User}, {"key", options.Connection.Key},
+	} {
+		if strings.TrimSpace(field.value) == "" {
+			return fmt.Errorf("'--%s' is required with '--provision connect'", field.name)
+		}
+	}
+
+	if options.Connection.Port < 1 || options.Connection.Port > 65535 {
+		return errors.New("'--port' must be between 1 and 65535")
+	}
+
+	return nil
+}
+
 func validateOptions(env *azldev.Env, options *Options) error {
 	if err := validateTMTProvisionOptions(options.Provision, options.ImagePath); err != nil {
+		return err
+	}
+
+	if err := validateConnectionOptions(options); err != nil {
 		return err
 	}
 
@@ -646,7 +722,7 @@ func runOneTMTTest(
 		}
 	}
 
-	args := componentTMTArgs(config, tmtWorkDir, settings.Provision, settings.ImagePath, hardwareArgs, settings.RPMs)
+	args := componentTMTArgs(config, tmtWorkDir, settings, hardwareArgs)
 
 	result.ExitCode, err = runTMTCommand(
 		env, filepath.Join(testDir, "runner.log"), runDir, pluginDir, settings.TMTProgramPath, settings.Provision, args...,
@@ -727,14 +803,12 @@ func validateTMTTestName(name string) error {
 func componentTMTArgs(
 	config tmtConfig,
 	tmtWorkDir string,
-	provision string,
-	imagePath string,
+	settings tmtRunSettings,
 	hardwareArgs []string,
-	rpms []string,
 ) []string {
-	args := make([]string, 0, 32+len(hardwareArgs)+len(rpms))
+	args := make([]string, 0, 32+len(hardwareArgs)+len(settings.RPMs))
 
-	// Both provisioners need --become: candidate RPM installation and most plans'
+	// All provisioners need --become: candidate RPM installation and most plans'
 	// execute steps require root, and neither the testcloud guest user nor the
 	// invoking local user is root. TMT escalates with passwordless sudo.
 	args = append(args, "run", "--all", "--keep", "--id", tmtWorkDir,
@@ -749,12 +823,16 @@ func componentTMTArgs(
 		args = append(args, "plan")
 	}
 
-	args = append(args, "provision", "--how", provision, "--become")
+	args = append(args, "provision", "--how", settings.Provision, "--become")
+	if settings.Provision == ProvisionConnect {
+		args = append(args, "--guest", settings.Connection.Guest, "--port", strconv.Itoa(settings.Connection.Port),
+			"--user", settings.Connection.User, "--key", settings.Connection.Key)
+	}
 
 	// Only the virtual provisioner boots an image, so the disk and hardware
 	// constraints are meaningless for a local run.
-	if provision == ProvisionVirtual {
-		args = append(args, "--image", imagePath)
+	if settings.Provision == ProvisionVirtual {
+		args = append(args, "--image", settings.ImagePath)
 
 		// Emit hardware constraints from the plan, plus boot.method for UEFI.
 		for _, hardwareArg := range hardwareArgs {
@@ -765,8 +843,11 @@ func componentTMTArgs(
 	// Insert a distinct step rather than updating the plan's preparation. An
 	// update can inherit a plan entry's `when` conditions and skip candidate
 	// RPM installation entirely.
-	args = append(args, "prepare", "--insert", "--how", "install", "--name", tmtCandidateRPMPrepareStepName)
-	for _, rpm := range rpms {
+	if len(settings.RPMs) > 0 {
+		args = append(args, "prepare", "--insert", "--how", "install", "--name", tmtCandidateRPMPrepareStepName)
+	}
+
+	for _, rpm := range settings.RPMs {
 		args = append(args, "--package", rpm)
 	}
 
@@ -968,8 +1049,9 @@ func decodeTMTConfig(raw map[string]any) (tmtConfig, error) {
 }
 
 func validateTMTProvision(provision string) error {
-	if provision != tmtProvisionLocal && provision != ProvisionVirtual {
-		return fmt.Errorf("'--provision' must be either %q or %q", tmtProvisionLocal, ProvisionVirtual)
+	if provision != tmtProvisionLocal && provision != ProvisionVirtual && provision != ProvisionConnect {
+		return fmt.Errorf("'--provision' must be either %q, %q, or %q",
+			tmtProvisionLocal, ProvisionVirtual, ProvisionConnect)
 	}
 
 	return nil
@@ -980,8 +1062,8 @@ func validateTMTProvisionOptions(provision string, imagePath string) error {
 		return err
 	}
 
-	if provision == tmtProvisionLocal && imagePath != "" {
-		return errors.New("'--image-path' cannot be used with '--provision local'")
+	if provision != ProvisionVirtual && imagePath != "" {
+		return fmt.Errorf("'--image-path' cannot be used with '--provision %s'", provision)
 	}
 
 	return nil
