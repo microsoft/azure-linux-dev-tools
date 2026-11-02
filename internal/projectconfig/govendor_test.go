@@ -40,6 +40,40 @@ config-file = "go-vendor-tools.toml"
 	assert.False(t, config.GoVendor.IsEnabled(), "explicit false must override an inherited true")
 }
 
+func TestGoVendorMergeDoesNotMutateDefaults(t *testing.T) {
+	for name, merge := range map[string]func(*projectconfig.ComponentConfig, *projectconfig.ComponentConfig) error{
+		"updates":   (*projectconfig.ComponentConfig).MergeUpdatesFrom,
+		"overrides": (*projectconfig.ComponentConfig).MergeOverridesFrom,
+	} {
+		t.Run(name, func(t *testing.T) {
+			defaults := projectconfig.ComponentConfig{GoVendor: &projectconfig.GoVendorConfig{
+				ConfigFile: "defaults.toml", ModuleDir: "default-module", PrepPackages: []string{"patch"},
+			}}
+
+			var first projectconfig.ComponentConfig
+			require.NoError(t, merge(&first, &defaults))
+			second := first
+			overrides := projectconfig.ComponentConfig{GoVendor: &projectconfig.GoVendorConfig{
+				Enabled: lo.ToPtr(true), ModuleDir: "custom-module",
+			}}
+			require.NoError(t, merge(&first, &overrides))
+			first.GoVendor.PrepPackages[0] = "changed"
+
+			for _, unchanged := range []*projectconfig.ComponentConfig{&defaults, &second} {
+				assert.Nil(t, unchanged.GoVendor.Enabled)
+				assert.Equal(t, "default-module", unchanged.GoVendor.ModuleDir)
+				assert.Equal(t, "defaults.toml", unchanged.GoVendor.ConfigFile)
+				assert.Equal(t, []string{"patch"}, unchanged.GoVendor.PrepPackages)
+			}
+
+			assert.True(t, first.GoVendor.IsEnabled())
+			assert.Equal(t, "custom-module", first.GoVendor.ModuleDir)
+			assert.Equal(t, "custom-module", overrides.GoVendor.ModuleDir)
+			assert.True(t, overrides.GoVendor.IsEnabled())
+		})
+	}
+}
+
 func TestGoVendorConfigValidation(t *testing.T) {
 	for _, config := range []*projectconfig.GoVendorConfig{
 		{ModuleDir: "../outside"},

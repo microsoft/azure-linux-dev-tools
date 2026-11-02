@@ -171,6 +171,8 @@ func TestComponentTomlSkillDocumentsGoVendoring(t *testing.T) {
 		assert.Contains(t, doc, `config-file = "go-vendor-tools.toml"`)
 		assert.Contains(t, doc, "Inline `tool-config` is not supported.")
 		assert.Contains(t, doc, "Upstream `general.go_mod_dir` is honored")
+		assert.Contains(t, doc, "non-root `module-dir` overrides fail")
+		assert.Contains(t, doc, "Replacing a config listed in upstream `sources` is unsupported.")
 		assert.Contains(t, doc, "Source filename is pinned before")
 	}
 }

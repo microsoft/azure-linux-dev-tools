@@ -56,6 +56,8 @@ neither `go2rpm` nor the Go vendor tools are required on the host. Configure
 The pipeline fetches the selected upstream sources, applies overlays, and copies
 them into isolated staging. It processes automatic release/changelog metadata
 there and runs the existing `%prep` section with `rpmbuild -bp --nodeps`.
+Upstream Git history remains available for this processing even with
+`--without-git`; it is removed from the final output when that option is used.
 This retains upstream patches and edits to module files. It then calls
 `go_vendor_archive create` on the prepared module tree, extracts the result for
 license detection, and runs `go_vendor_license` without interactive prompts.
@@ -123,8 +125,11 @@ even when empty; missing files or invalid TOML fail without falling back.
 The detected licenses are verified against the existing
 main-package `License:` expression; mismatches fail instead of rewriting it.
 Upstream `general.go_mod_dir` is honored by generation and licensing, preserving
-the module subdirectory within the archive. A conflicting `module-dir` fails;
-use a separate `config-file` to replace upstream settings when changing the layout.
+the module subdirectory within the archive. Non-root `module-dir` overrides are
+rejected for already-vendored specs; their extraction and licensing retain the
+upstream layout.
+Replacing a configuration listed in upstream `sources` is also rejected before
+generation; custom configurations must replace a tracked sidecar instead.
 Neither the regenerated archive nor its configuration sidecar may also be
 declared in `source-files`, even with `replace-upstream = true`.
 The source-fetch phase currently still downloads the upstream vendor archive

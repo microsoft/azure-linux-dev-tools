@@ -59,6 +59,14 @@ func TestExistingGoVendoringPreservesPackaging(t *testing.T) {
 	}
 }
 
+func TestExistingGoVendoringRejectsModuleOverride(t *testing.T) {
+	result, err := spec.ConvertGoVendor([]byte(existingVendorSpec()), spec.GoVendorOptions{
+		ArchiveName: "app-vendor.tar.bz2", ConfigName: "vendor.toml", ModuleDir: "cmd/app",
+	})
+	require.ErrorContains(t, err, "'module-dir' overrides")
+	assert.Nil(t, result)
+}
+
 func TestExistingGoVendoringRejectsAmbiguousInputs(t *testing.T) {
 	for name, input := range map[string]string{
 		"multiple extractions":       strings.ReplaceAll(existingVendorSpec(), "%goprep -p1", "%goprep -p1\ntar -xf %{S:9}"),

@@ -205,9 +205,10 @@ config-file = "go-vendor-tools.toml"
 
 The configured file must exist and contain valid TOML. An explicitly selected
 empty file is an empty replacement, not a request to fall back to upstream.
-In an explicitly selected file, use `module-dir`, not `general.go_mod_dir`, for
-the module location. Reused upstream `general.go_mod_dir` settings remain honored;
-an inconsistent component `module-dir` is rejected.
+For a new conversion, set the module location with component `module-dir`, not
+`general.go_mod_dir` in the selected file. Already-vendored specs retain the
+upstream module layout, honoring native `general.go_mod_dir`; non-root
+`module-dir` overrides are rejected.
 Configured command hooks execute in the generation chroot; treat this file as
 trusted build code. The old inline `tool-config` string/table is no longer supported.
 
@@ -229,7 +230,8 @@ verifies the existing `License:` expression without rewriting it.
 These generated archive/config filenames must not also appear in `source-files`,
 including entries with `replace-upstream = true`.
 When `config-file` is set, its contents are staged under the configuration filename
-referenced by the prepared spec, retaining the existing Source number.
+referenced by the prepared spec, retaining the existing Source number. Replacing
+a configuration listed in upstream `sources` is unsupported and fails before generation.
 
 All archive/spec/loose-file overlays run before conversion. Source preparation,
 builds, rendering (including `--check-only`), and source diffs use the same

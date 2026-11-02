@@ -17,3 +17,4 @@ To get started developing `azldev`, review the [Getting Started guide](./how-to/
 * [Build reference](./reference/build.md)
 * [Coding standards](./reference/coding-standards.md)
 * [Command guidelines](./reference/command-guidelines.md)
+* [Go vendor packaging design](./reference/go-vendor-packaging-design.md)

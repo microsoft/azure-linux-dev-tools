@@ -201,6 +201,9 @@ type sourcePreparerImpl struct {
 	// source preparation. Git-tracked files are still fetched.
 	skipLookaside bool
 
+	// Preserve upstream history for rpmautospec during private Go vendor generation.
+	preserveGoVendorHistory bool
+
 	// cmdFactory is used to shell out to git for fingerprint change detection
 	// in the project repository. Set via [WithGitRepo].
 	cmdFactory opctx.CmdFactory
@@ -300,19 +303,17 @@ func NewPreparer(
 func (p *sourcePreparerImpl) PrepareSources(
 	ctx context.Context, component components.Component, outputDir string, applyOverlays bool,
 ) error {
-	p = p.withRequiredDownloads(component, applyOverlays)
-
 	if applyOverlays {
 		if err := p.validateArchiveOverlayConfig(component); err != nil {
 			return err
 		}
 	}
 
-	// Preserve the upstream .git directory only when dist-git creation is
-	// requested via --with-git. This is required so that overlay commits can be
-	// appended on top of the upstream commit log during synthetic history generation.
+	p = p.withGoVendorInputs(component, applyOverlays)
+
+	// Go vendor prep needs history for rpmautospec even without output dist-git.
 	var fetchOpts []sourceproviders.FetchComponentOption
-	if applyOverlays && p.withGitRepo {
+	if (applyOverlays && p.withGitRepo) || p.preserveGoVendorHistory {
 		fetchOpts = append(fetchOpts, sourceproviders.WithPreserveGitDir())
 	}
 
@@ -362,22 +363,37 @@ func (p *sourcePreparerImpl) PrepareSources(
 		}
 	}
 
-	return nil
+	return p.removePrivateGoVendorHistory(outputDir, applyOverlays)
 }
 
-func (p *sourcePreparerImpl) withRequiredDownloads(
+func (p *sourcePreparerImpl) withGoVendorInputs(
 	component components.Component, applyConversion bool,
 ) *sourcePreparerImpl {
-	if applyConversion && p.skipLookaside && component.GetConfig().GoVendor.IsEnabled() {
+	if applyConversion && component.GetConfig().GoVendor.IsEnabled() {
 		effective := *p
 		effective.skipLookaside = false
+		effective.preserveGoVendorHistory = true
 
-		slog.Info("Go vendoring requires source downloads, including during rendering", "component", component.GetName())
+		if p.skipLookaside {
+			slog.Info("Go vendoring requires source downloads, including during rendering", "component", component.GetName())
+		}
 
 		return &effective
 	}
 
 	return p
+}
+
+func (p *sourcePreparerImpl) removePrivateGoVendorHistory(outputDir string, applyConversion bool) error {
+	if !applyConversion || !p.preserveGoVendorHistory || p.withGitRepo || p.dryRunnable.DryRun() {
+		return nil
+	}
+
+	if err := p.fs.RemoveAll(filepath.Join(outputDir, ".git")); err != nil {
+		return fmt.Errorf("removing private Go vendor history:\n%w", err)
+	}
+
+	return nil
 }
 
 func (p *sourcePreparerImpl) validateArchiveOverlayConfig(component components.Component) error {
@@ -764,7 +780,7 @@ func removeSubmoduleEntries(fs opctx.FS, repo *gogit.Repository, repoDir string)
 func (p *sourcePreparerImpl) DiffSources(
 	ctx context.Context, component components.Component, baseDir string,
 ) (result *dirdiff.DiffResult, err error) {
-	p = p.withRequiredDownloads(component, true)
+	p = p.withGoVendorInputs(component, true)
 
 	event := p.eventListener.StartEvent("Computing overlay diff", "component", component.GetName())
 	defer event.End()

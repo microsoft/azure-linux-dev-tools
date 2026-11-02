@@ -38,8 +38,8 @@ func goVendorTestSpec() string {
 }
 
 func TestPrepareSourcesGoVendor(t *testing.T) {
-	for _, skipLookaside := range []bool{false, true} {
-		t.Run(map[bool]string{false: "prepare", true: "render"}[skipLookaside], func(t *testing.T) {
+	for _, mode := range []string{"prepare", "render", "diff"} {
+		t.Run(mode, func(t *testing.T) {
 			ctx := newMockProcessorTestCtx()
 			ctrl := gomock.NewController(t)
 			component := components_testutils.NewMockComponent(ctrl)
@@ -59,18 +59,28 @@ func TestPrepareSourcesGoVendor(t *testing.T) {
 
 			component.EXPECT().GetName().AnyTimes().Return("app")
 			component.EXPECT().GetConfig().AnyTimes().Return(config)
-			manager.EXPECT().FetchComponent(gomock.Any(), component, "/output", gomock.Any()).DoAndReturn(
-				func(_ context.Context, _ any, _ string, _ ...sourceproviders.FetchComponentOption) error {
+			manager.EXPECT().FetchComponent(gomock.Any(), component, gomock.Any(), gomock.Any()).DoAndReturn(
+				func(_ context.Context, _ any, outputDir string, opts ...sourceproviders.FetchComponentOption) error {
+					var fetch sourceproviders.FetchComponentOptions
+					for _, option := range opts {
+						option(&fetch)
+					}
+
+					require.True(t, fetch.PreserveGitDir, "rpmautospec needs upstream history even without output git")
+
 					for name, content := range map[string]string{
-						"app.spec": goVendorTestSpec(), "app.tar.gz": "upstream", "fix.patch": "patch",
+						"app.spec":   strings.ReplaceAll(goVendorTestSpec(), "Release: 1", "Release: %autorelease"),
+						"app.tar.gz": "upstream", "fix.patch": "patch", ".git/HEAD": "upstream-history",
 						"sources": "# upstream\n", ".gitignore": "/app.tar.gz\n",
 					} {
-						require.NoError(t, fileutils.WriteFile(ctx.FS(), "/output/"+name, []byte(content), fileperms.PublicFile))
+						require.NoError(t, fileutils.MkdirAll(ctx.FS(), filepath.Dir(filepath.Join(outputDir, name))))
+						require.NoError(t, fileutils.WriteFile(ctx.FS(), filepath.Join(outputDir, name),
+							[]byte(content), fileperms.PublicFile))
 					}
 
 					return nil
 				})
-			manager.EXPECT().FetchFiles(gomock.Any(), component, "/output").Return(nil)
+			manager.EXPECT().FetchFiles(gomock.Any(), component, gomock.Any()).Return(nil)
 
 			var calls []string
 
@@ -92,6 +102,10 @@ func TestPrepareSourcesGoVendor(t *testing.T) {
 				require.NoError(t, err)
 				assert.Contains(t, string(prep), "Summary: overlaid", "overlays must run before generation")
 
+				history, err := fileutils.ReadFile(ctx.FS(), filepath.Join(filepath.Dir(staging), "sources", ".git", "HEAD"))
+				require.NoError(t, err)
+				assert.Equal(t, "upstream-history", string(history))
+
 				for name, content := range map[string]string{
 					"app-vendor.tar.bz2": "generated archive",
 					"archive-name":       "app-vendor.tar.bz2\n",
@@ -106,13 +120,31 @@ func TestPrepareSourcesGoVendor(t *testing.T) {
 			}
 
 			options := []PreparerOption{WithGoVendorRunner(mock.NewRunner(ctx, "/mock.cfg"))}
-			if skipLookaside {
+			if mode == "render" {
 				options = append(options, WithSkipLookaside())
 			}
 
 			preparer, err := NewPreparer(manager, ctx.FS(), ctx, ctx, options...)
 			require.NoError(t, err)
+
+			if mode == "diff" {
+				require.NoError(t, fileutils.MkdirAll(ctx.FS(), "/output"))
+				diff, err := preparer.DiffSources(ctx, component, "/output")
+				require.NoError(t, err)
+				assert.Contains(t, diff.String(), "app-vendor.tar.bz2")
+
+				for _, file := range diff.Files {
+					assert.NotContains(t, file.Path, ".git/")
+				}
+
+				return
+			}
+
 			require.NoError(t, preparer.PrepareSources(ctx, component, "/output", true))
+			exists, err := fileutils.Exists(ctx.FS(), "/output/.git")
+			require.NoError(t, err)
+			assert.False(t, exists, "private generation history must not leak into --without-git output")
+
 			output, err := fileutils.ReadFile(ctx.FS(), "/output/app.spec")
 			require.NoError(t, err)
 			assert.Contains(t, string(output), "License: Apache-2.0 AND MIT")

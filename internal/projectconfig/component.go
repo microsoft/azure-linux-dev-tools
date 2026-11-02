@@ -472,10 +472,12 @@ var AllowedSourceFilesHashTypes = map[fileutils.HashType]bool{
 
 // Mutates the component config, updating it with overrides present in other.
 func (c *ComponentConfig) MergeUpdatesFrom(other *ComponentConfig) error {
+	c.GoVendor = deep.MustCopy(c.GoVendor)
 	otherOverlayFiles := slices.Clone(other.OverlayFiles)
 	otherSourceConfigFile := other.SourceConfigFile
 	otherWithoutSourceConfigFile := *other
 	otherWithoutSourceConfigFile.SourceConfigFile = nil
+	otherWithoutSourceConfigFile.GoVendor = deep.MustCopy(other.GoVendor)
 
 	err := mergo.Merge(c, &otherWithoutSourceConfigFile, mergo.WithOverride, mergo.WithAppendSlice)
 	if err != nil {
@@ -497,10 +499,8 @@ func (c *ComponentConfig) MergeUpdatesFrom(other *ComponentConfig) error {
 
 func (c *ComponentConfig) overrideGoVendorEnabled(other *ComponentConfig) {
 	if other.GoVendor != nil && other.GoVendor.Enabled != nil {
-		config := *c.GoVendor
 		enabled := *other.GoVendor.Enabled
-		config.Enabled = &enabled
-		c.GoVendor = &config
+		c.GoVendor.Enabled = &enabled
 	}
 }
 
@@ -526,11 +526,13 @@ func (c *ComponentConfig) resolveLocalCustomScriptPaths() {
 // primary definition rather than merge with it. Slices in the build config are
 // still appended, matching [ComponentConfig.MergeUpdatesFrom].
 func (c *ComponentConfig) MergeOverridesFrom(other *ComponentConfig) error {
+	c.GoVendor = deep.MustCopy(c.GoVendor)
 	otherOverlayFiles := slices.Clone(other.OverlayFiles)
 
 	// Merge the nested config blocks separately so that mergo does not descend
 	// into them with slice-appending semantics.
 	otherTopLevel := *other
+	otherTopLevel.GoVendor = deep.MustCopy(other.GoVendor)
 	otherTopLevel.Spec = SpecSource{}
 	otherTopLevel.Release = ReleaseConfig{}
 	otherTopLevel.Build = ComponentBuildConfig{}

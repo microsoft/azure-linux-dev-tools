@@ -108,6 +108,12 @@ func (p *sourcePreparerImpl) resolveGoVendorConfig(
 	}
 
 	if config.ConfigFile != "" {
+		if plan.AllowReplacement {
+			if err := p.checkGoVendorManifestCollision(outputDir, plan.ConfigName); err != nil {
+				return "", err
+			}
+		}
+
 		content, err := config.ReadConfigFile(p.fs)
 		if err != nil {
 			return "", fmt.Errorf("loading Go vendor configuration:\n%w", err)
@@ -166,6 +172,10 @@ func (p *sourcePreparerImpl) checkGoVendorSourceCollision(outputDir string, name
 		}
 	}
 
+	return p.checkGoVendorManifestCollision(outputDir, names...)
+}
+
+func (p *sourcePreparerImpl) checkGoVendorManifestCollision(outputDir string, names ...string) error {
 	content, err := p.readSourcesFileIfExists(filepath.Join(outputDir, fedorasource.SourcesFileName))
 	if err != nil {
 		return err

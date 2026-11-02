@@ -67,6 +67,11 @@ func ConvertGoVendor(data []byte, options GoVendorOptions) (*GoVendorSpec, error
 	}
 
 	if configSource != "" {
+		if options.ModuleDir != "" && options.ModuleDir != "." {
+			return nil, errors.New("'module-dir' overrides are unsupported for already-vendored specs; " +
+				"retain the upstream module layout")
+		}
+
 		return prepareExistingGoVendor(tree, configSource)
 	}
 
