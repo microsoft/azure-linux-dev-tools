@@ -544,22 +544,21 @@ func buildHistoricalResults(
 			return nil, fmt.Errorf("comparing component %#q:\n%w", name, err)
 		}
 
-		result.SourcesChange, err = compareHistoricalSources(
-			fromTree,
-			toTree,
-			fromProject.renderedSpecsRelDir,
-			toProject.renderedSpecsRelDir,
-			name,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("comparing sources for %#q:\n%w", name, err)
-		}
-
-		if includeAllComponents &&
-			!includeUnchanged &&
-			result.ChangeType == changeTypeUnchanged &&
-			!result.SourcesChange {
-			continue
+		if result.ChangeType == changeTypeUnchanged {
+			if includeAllComponents && !includeUnchanged {
+				continue
+			}
+		} else {
+			result.SourcesChange, err = compareHistoricalSources(
+				fromTree,
+				toTree,
+				fromProject.renderedSpecsRelDir,
+				toProject.renderedSpecsRelDir,
+				name,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("comparing sources for %#q:\n%w", name, err)
+			}
 		}
 
 		results = append(results, result)

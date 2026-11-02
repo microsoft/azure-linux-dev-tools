@@ -40,3 +40,15 @@ A guard test (`TestAllFingerprintedFieldsHaveDecision`) reflects over all finger
 ## Known Limitations
 
 - It is difficult to determine WHY a diff occurred (e.g., which specific field changed) since the fingerprint is a single opaque hash. The JSON output includes an `inputs` breakdown (`configHash`, `sourceIdentity`, `overlayFileHashes`, etc.) that can help narrow it down by comparing the two identity files manually.
+
+## History Across Upstream Branches
+
+When switching dist-git branches, historical Azure Linux changelog entries can
+reference upstream commits that are no longer ancestors of the selected pin.
+The history generator retains an entry when it finds exactly one equivalent
+commit in the selected history: the author, author timestamp, message, and
+packaging tree must match. Only the root `.gitignore` file is excluded from
+the tree comparison, since branches can list different old source archives.
+
+Entries with no unique equivalent still produce the existing orphan-history
+warning. The current package tree is not changed by history reconciliation.

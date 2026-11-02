@@ -178,7 +178,7 @@ return appropriate responses.
 
 - `*_test.go` (external package, e.g., `package component_test`) — tests exported APIs only
 - `*_internal_test.go` (same package, e.g., `package component`) — tests unexported functions
-  - Requires `//nolint:testpackage` directive
+  - Exempt from `testpackage` by its default filename pattern; do not add an unused `//nolint:testpackage` directive
   - Use sparingly — prefer testing through exported APIs when possible
 
 ## Test Style

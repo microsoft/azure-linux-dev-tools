@@ -1,17 +1,17 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-package image_test
+package pytest_test
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/image"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/pytest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -38,11 +38,11 @@ func mustBuildNativePytestArgs(
 	fs opctx.FS,
 	pytestConfig *projectconfig.PytestConfig,
 	imageConfig *projectconfig.ImageConfig,
-	options *image.ImageTestOptions,
+	options *pytest.Options,
 ) []string {
 	t.Helper()
 
-	args, err := image.BuildNativePytestArgs(fs, pytestConfig, imageConfig, options)
+	args, err := pytest.BuildNativePytestArgs(fs, pytestConfig, imageConfig, options)
 	require.NoError(t, err)
 
 	return args
@@ -53,7 +53,7 @@ func TestBuildNativePytestArgs_BasicTestPaths(t *testing.T) {
 		TestPaths: []string{"cases/", "other/"},
 		ExtraArgs: []string{"--image-path", "{image-path}"},
 	}
-	options := &image.ImageTestOptions{
+	options := &pytest.Options{
 		ImagePath: "/images/test.raw",
 	}
 
@@ -76,7 +76,7 @@ func TestBuildNativePytestArgs_GlobExpansion(t *testing.T) {
 		TestPaths:  []string{"cases/test_*.py"},
 		ExtraArgs:  []string{"--image-path", "{image-path}"},
 	}
-	options := &image.ImageTestOptions{
+	options := &pytest.Options{
 		ImagePath: "/images/test.raw",
 	}
 
@@ -96,7 +96,7 @@ func TestBuildNativePytestArgs_GlobNoMatch(t *testing.T) {
 		WorkingDir: tmpDir,
 		TestPaths:  []string{"cases/test_*.py"},
 	}
-	options := &image.ImageTestOptions{
+	options := &pytest.Options{
 		ImagePath: "/images/test.raw",
 	}
 
@@ -110,7 +110,7 @@ func TestBuildNativePytestArgs_ExtraArgsNeverGlobExpanded(t *testing.T) {
 	pytestConfig := &projectconfig.PytestConfig{
 		ExtraArgs: []string{"--pattern", "test_*.py"},
 	}
-	options := &image.ImageTestOptions{
+	options := &pytest.Options{
 		ImagePath: "/images/test.raw",
 	}
 
@@ -125,7 +125,7 @@ func TestBuildNativePytestArgs_JUnitXMLAppended(t *testing.T) {
 		TestPaths: []string{"cases/"},
 		ExtraArgs: []string{"--image-path", "{image-path}"},
 	}
-	options := &image.ImageTestOptions{
+	options := &pytest.Options{
 		ImagePath:    "/images/test.raw",
 		JUnitXMLPath: "/output/results.xml",
 	}
@@ -143,7 +143,7 @@ func TestBuildNativePytestArgs_NoJUnitXMLWhenNotRequested(t *testing.T) {
 	pytestConfig := &projectconfig.PytestConfig{
 		TestPaths: []string{"cases/"},
 	}
-	options := &image.ImageTestOptions{
+	options := &pytest.Options{
 		ImagePath: "/images/test.raw",
 	}
 
@@ -154,7 +154,7 @@ func TestBuildNativePytestArgs_NoJUnitXMLWhenNotRequested(t *testing.T) {
 
 func TestBuildNativePytestArgs_EmptyConfig(t *testing.T) {
 	pytestConfig := &projectconfig.PytestConfig{}
-	options := &image.ImageTestOptions{
+	options := &pytest.Options{
 		ImagePath: "/images/test.raw",
 	}
 
@@ -167,7 +167,7 @@ func TestBuildNativePytestArgs_PlaceholderNotInTestPaths(t *testing.T) {
 	pytestConfig := &projectconfig.PytestConfig{
 		TestPaths: []string{"{image-path}"},
 	}
-	options := &image.ImageTestOptions{
+	options := &pytest.Options{
 		ImagePath: "/images/test.raw",
 	}
 
@@ -180,7 +180,7 @@ func TestBuildNativePytestArgs_ImageNamePlaceholder(t *testing.T) {
 	pytestConfig := &projectconfig.PytestConfig{
 		ExtraArgs: []string{"--image-name", "{image-name}"},
 	}
-	options := &image.ImageTestOptions{
+	options := &pytest.Options{
 		ImageName: "vm-base",
 		ImagePath: "/images/test.raw",
 	}
@@ -203,7 +203,7 @@ func TestBuildNativePytestArgs_CapabilitiesPlaceholder(t *testing.T) {
 	pytestConfig := &projectconfig.PytestConfig{
 		ExtraArgs: []string{"--capabilities", "{capabilities}"},
 	}
-	options := &image.ImageTestOptions{
+	options := &pytest.Options{
 		ImagePath: "/images/test.raw",
 	}
 
@@ -227,7 +227,7 @@ func TestBuildNativePytestArgs_PropertiesPlaceholder(t *testing.T) {
 	pytestConfig := &projectconfig.PytestConfig{
 		ExtraArgs: []string{"--properties", "{properties}"},
 	}
-	options := &image.ImageTestOptions{
+	options := &pytest.Options{
 		ImagePath: "/images/test.raw",
 	}
 
@@ -251,7 +251,7 @@ func TestBuildNativePytestArgs_CapabilitiesEmpty(t *testing.T) {
 	pytestConfig := &projectconfig.PytestConfig{
 		ExtraArgs: []string{"--capabilities", "{capabilities}"},
 	}
-	options := &image.ImageTestOptions{
+	options := &pytest.Options{
 		ImagePath: "/images/test.raw",
 	}
 
@@ -266,11 +266,21 @@ func TestRunPytestSuite_MissingPytestConfig(t *testing.T) {
 		Type: projectconfig.TestTypePytest,
 	}
 
-	options := &image.ImageTestOptions{
+	options := &pytest.Options{
 		ImagePath: "/images/test.raw",
 	}
 
-	err := image.RunPytestSuite(nil, suiteConfig, testImageConfig(), options)
+	err := pytest.RunPytestSuite(nil, suiteConfig, testImageConfig(), options)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "missing pytest configuration")
+}
+
+func TestRunPytestSuiteMissingConfigBeforeOptions(t *testing.T) {
+	err := pytest.RunPytestSuite(nil, &projectconfig.TestSuiteConfig{Name: "smoke"}, nil, nil)
+	require.EqualError(t, err, "test suite `smoke` is missing pytest configuration")
+}
+
+func TestRunTestDefinitionRejectsMissingConfigBeforeSetup(t *testing.T) {
+	err := pytest.RunTestDefinition(nil, projectconfig.ResolvedTest{Name: "smoke"}, nil, nil)
+	require.EqualError(t, err, "decode pytest config for test `smoke`:\nmissing [pytest] subtable")
 }

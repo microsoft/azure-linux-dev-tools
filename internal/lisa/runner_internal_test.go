@@ -1,13 +1,15 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-package image
+package lisa
 
 import (
 	"path/filepath"
 	"testing"
 
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,7 +24,7 @@ func TestBuildLisaArgs(t *testing.T) {
 		Properties: map[string]string{"openssl-fips-provider": "symcrypt"},
 	}
 
-	options := &ImageTestOptions{
+	options := &Options{
 		ImageName: "vm-base",
 		ImagePath: "relative/image.qcow2",
 	}
@@ -58,7 +60,7 @@ func TestBuildLisaArgs(t *testing.T) {
 
 func TestBuildLisaArgs_NoExtraArgs(t *testing.T) {
 	imageConfig := &projectconfig.ImageConfig{}
-	options := &ImageTestOptions{ImageName: "vm-base", ImagePath: "/abs/image.qcow2"}
+	options := &Options{ImageName: "vm-base", ImagePath: "/abs/image.qcow2"}
 
 	args, err := buildLisaArgs("/runbook.yml", nil, imageConfig, options)
 	require.NoError(t, err)
@@ -68,7 +70,7 @@ func TestBuildLisaArgs_NoExtraArgs(t *testing.T) {
 
 func TestBuildLisaArgs_EmptyCapabilities(t *testing.T) {
 	imageConfig := &projectconfig.ImageConfig{}
-	options := &ImageTestOptions{ImageName: "vm-base", ImagePath: "/abs/image.qcow2"}
+	options := &Options{ImageName: "vm-base", ImagePath: "/abs/image.qcow2"}
 
 	args, err := buildLisaArgs("/runbook.yml", []string{"{capabilities}"}, imageConfig, options)
 	require.NoError(t, err)
@@ -78,7 +80,7 @@ func TestBuildLisaArgs_EmptyCapabilities(t *testing.T) {
 
 func TestBuildLisaArgs_EmptyProperties(t *testing.T) {
 	imageConfig := &projectconfig.ImageConfig{}
-	options := &ImageTestOptions{ImageName: "vm-base", ImagePath: "/abs/image.qcow2"}
+	options := &Options{ImageName: "vm-base", ImagePath: "/abs/image.qcow2"}
 
 	args, err := buildLisaArgs("/runbook.yml", []string{"{properties}"}, imageConfig, options)
 	require.NoError(t, err)
@@ -108,4 +110,35 @@ func TestRequireQcow2Image(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "cannot infer image format")
 	})
+}
+
+func TestResolveLisaFrameworkDir_UsesLisaDirWhenSet(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+	require.NoError(t, fileutils.MkdirAll(testEnv.Env.FS(), "/checkouts/lisa"))
+
+	options := &Options{LisaDir: "/checkouts/lisa"}
+
+	dir, err := resolveLisaFrameworkDir(testEnv.Env, "my-test", "/work/lisa", nil, options)
+	require.NoError(t, err)
+	assert.Equal(t, "/checkouts/lisa", dir)
+}
+
+func TestResolveLisaFrameworkDir_LisaDirMissingReturnsError(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	options := &Options{LisaDir: "/does/not/exist"}
+
+	_, err := resolveLisaFrameworkDir(testEnv.Env, "my-test", "/work/lisa", nil, options)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not exist")
+}
+
+func TestResolveLisaFrameworkDir_NoLisaDirAndNoFrameworkReturnsError(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	options := &Options{}
+
+	_, err := resolveLisaFrameworkDir(testEnv.Env, "my-test", "/work/lisa", nil, options)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--lisa-dir")
 }

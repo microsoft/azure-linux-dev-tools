@@ -119,7 +119,7 @@ func TestTryBumpRPMDevBumpspec_UsesEVRTransactionsAndFixedMetadata(t *testing.T)
 		case isEVRQuery(cmd):
 			queries++
 			_, _ = fmt.Fprint(cmd.Stdout, evrOutput("test-pkg", "0", strconv.Itoa(3+(queries+1)/2)))
-		case cmd.Path == RPMDevBumpspecBinary:
+		case cmd.Args[0] == RPMDevBumpspecBinary:
 			bumps++
 
 			assert.Equal(t, "- rebuilt", cmd.Args[2])
@@ -161,7 +161,7 @@ func TestTryBumpRPMDevBumpspec_RollsBackWholeSequence(t *testing.T) {
 		case isEVRQuery(cmd):
 			queries++
 			_, _ = fmt.Fprint(cmd.Stdout, evrOutput("osbs-client", "0", "6"))
-		case cmd.Path == RPMDevBumpspecBinary:
+		case cmd.Args[0] == RPMDevBumpspecBinary:
 			bumps++
 
 			content := stringMustRead(t, ctx, specPath)
@@ -378,7 +378,7 @@ func TestTryBumpRPMDevBumpspec_RollsBackAfterKthFailure(t *testing.T) {
 			}
 
 			_, _ = fmt.Fprint(cmd.Stdout, evrOutput("test-pkg", "0", release))
-		case cmd.Path == RPMDevBumpspecBinary:
+		case cmd.Args[0] == RPMDevBumpspecBinary:
 			bumps++
 			if bumps == 2 {
 				return errors.New("second operation failed")
@@ -519,7 +519,7 @@ func TestTryBumpRelease_UsesRPMDevBumpspecOnlyWhenConfigured(t *testing.T) {
 			}
 
 			_, _ = fmt.Fprint(cmd.Stdout, evrOutput("test-pkg", "0", release))
-		case cmd.Path == RPMDevBumpspecBinary:
+		case cmd.Args[0] == RPMDevBumpspecBinary:
 			bumps++
 
 			return fileutils.WriteFile(ctx.FS(), specPath,

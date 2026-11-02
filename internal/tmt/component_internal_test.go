@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-package component
+package tmt
 
 import (
 	"errors"
@@ -86,7 +86,7 @@ func TestDecodeTMTConfigRejectsInvalidRefAndPlan(t *testing.T) {
 }
 
 func TestValidateTMTProvisionOptions(t *testing.T) {
-	require.NoError(t, validateTMTProvisionOptions(tmtProvisionVirtual, "/images/azure.qcow2"))
+	require.NoError(t, validateTMTProvisionOptions(ProvisionVirtual, "/images/azure.qcow2"))
 	require.NoError(t, validateTMTProvisionOptions(tmtProvisionLocal, ""))
 	require.ErrorContains(t, validateTMTProvisionOptions(tmtProvisionLocal, "/images/azure.qcow2"), "cannot be used")
 	require.ErrorContains(t, validateTMTProvisionOptions("container", ""), "must be either")
@@ -94,7 +94,7 @@ func TestValidateTMTProvisionOptions(t *testing.T) {
 
 func TestTMTInstallRequirementUsesProvisionerExtra(t *testing.T) {
 	assert.Equal(t, "tmt[report-junit]", tmtInstallRequirement(tmtProvisionLocal))
-	assert.Equal(t, "tmt[provision-virtual,report-junit]", tmtInstallRequirement(tmtProvisionVirtual))
+	assert.Equal(t, "tmt[provision-virtual,report-junit]", tmtInstallRequirement(ProvisionVirtual))
 }
 
 func TestSelectTMTTests(t *testing.T) {
@@ -191,7 +191,7 @@ func TestResolveTMTImagePath(t *testing.T) {
 			testEnv.TestFS, "/project/out/image.qcow2", []byte("qcow2"), fileperms.PrivateFile,
 		))
 
-		imagePath, err := resolveTMTImagePath(testEnv.Env, tmtProvisionVirtual, "out/image.qcow2")
+		imagePath, err := resolveTMTImagePath(testEnv.Env, ProvisionVirtual, "out/image.qcow2")
 
 		require.NoError(t, err)
 		assert.Equal(t, "/project/out/image.qcow2", imagePath)
@@ -201,7 +201,7 @@ func TestResolveTMTImagePath(t *testing.T) {
 		testEnv := testutils.NewTestEnv(t)
 		require.NoError(t, testEnv.TestFS.MkdirAll("/project/out/image.qcow2", fileperms.PublicDir))
 
-		_, err := resolveTMTImagePath(testEnv.Env, tmtProvisionVirtual, "out/image.qcow2")
+		_, err := resolveTMTImagePath(testEnv.Env, ProvisionVirtual, "out/image.qcow2")
 
 		require.ErrorContains(t, err, "must be a regular file")
 	})
@@ -209,7 +209,7 @@ func TestResolveTMTImagePath(t *testing.T) {
 	t.Run("rejects a missing path", func(t *testing.T) {
 		testEnv := testutils.NewTestEnv(t)
 
-		_, err := resolveTMTImagePath(testEnv.Env, tmtProvisionVirtual, "out/image.qcow2")
+		_, err := resolveTMTImagePath(testEnv.Env, ProvisionVirtual, "out/image.qcow2")
 
 		require.ErrorIs(t, err, fs.ErrNotExist)
 	})
@@ -258,7 +258,7 @@ func TestPrepareTMTEnvironmentDryRunAvoidsFilesystemChanges(t *testing.T) {
 	dryRunOptions.Interfaces = testEnv.TestInterfaces
 	dryRunEnv := azldev.NewEnv(t.Context(), dryRunOptions)
 
-	workDir, tmtProgramPath, err := prepareTMTEnvironment(dryRunEnv, "artifacts", tmtProvisionVirtual, false, "")
+	workDir, tmtProgramPath, err := prepareTMTEnvironment(dryRunEnv, "artifacts", ProvisionVirtual, false, "")
 
 	require.NoError(t, err)
 	assert.Equal(t, "/project/artifacts", workDir)
@@ -266,29 +266,6 @@ func TestPrepareTMTEnvironmentDryRunAvoidsFilesystemChanges(t *testing.T) {
 
 	_, err = testEnv.TestFS.Stat(workDir)
 	assert.ErrorIs(t, err, fs.ErrNotExist)
-}
-
-func TestNewComponentTestCmd(t *testing.T) {
-	cmd := NewComponentTestCmd()
-
-	require.NotNil(t, cmd)
-	assert.Equal(t, "test COMPONENT", cmd.Use)
-	assert.NotNil(t, cmd.RunE)
-
-	for _, name := range []string{
-		"image-path", "rpm", "test", "work-dir", "provision", "source-dir", "plan", "from-spec",
-	} {
-		assert.NotNil(t, cmd.Flags().Lookup(name), "%s flag should be registered", name)
-	}
-
-	fromSpec := cmd.Flags().Lookup("from-spec")
-	require.NotNil(t, fromSpec)
-	assert.NotEmpty(t, fromSpec.Deprecated, "--from-spec should be marked deprecated")
-
-	// Removed flags: memory, firmware, connection, user
-	for _, name := range []string{"memory", "firmware", "connection", "user"} {
-		assert.Nil(t, cmd.Flags().Lookup(name), "%s flag should not be registered", name)
-	}
 }
 
 func TestResolveSourceRunDir(t *testing.T) {
@@ -445,7 +422,7 @@ func TestEffectiveSourceDir(t *testing.T) {
 	t.Run("returns an absolute --source-dir unchanged when --from-spec is not set", func(t *testing.T) {
 		testEnv := newTMTTestEnv(t, nil)
 
-		sourceDir, err := effectiveSourceDir(testEnv.Env, testTMTComponentName, &ComponentTestOptions{
+		sourceDir, err := effectiveSourceDir(testEnv.Env, testTMTComponentName, &Options{
 			SourceDir: "/project/source",
 		})
 
@@ -456,7 +433,7 @@ func TestEffectiveSourceDir(t *testing.T) {
 	t.Run("resolves a relative --source-dir against the project directory", func(t *testing.T) {
 		testEnv := newTMTTestEnv(t, nil)
 
-		sourceDir, err := effectiveSourceDir(testEnv.Env, testTMTComponentName, &ComponentTestOptions{
+		sourceDir, err := effectiveSourceDir(testEnv.Env, testTMTComponentName, &Options{
 			SourceDir: "prepared/pkg",
 		})
 
@@ -467,7 +444,7 @@ func TestEffectiveSourceDir(t *testing.T) {
 	t.Run("leaves --source-dir empty when neither flag is set", func(t *testing.T) {
 		testEnv := newTMTTestEnv(t, nil)
 
-		sourceDir, err := effectiveSourceDir(testEnv.Env, testTMTComponentName, &ComponentTestOptions{})
+		sourceDir, err := effectiveSourceDir(testEnv.Env, testTMTComponentName, &Options{})
 
 		require.NoError(t, err)
 		assert.Empty(t, sourceDir)
@@ -477,7 +454,7 @@ func TestEffectiveSourceDir(t *testing.T) {
 		testEnv := newTMTTestEnv(t, nil)
 		testEnv.Config.Project.RenderedSpecsDir = "/project/specs"
 
-		sourceDir, err := effectiveSourceDir(testEnv.Env, testTMTComponentName, &ComponentTestOptions{
+		sourceDir, err := effectiveSourceDir(testEnv.Env, testTMTComponentName, &Options{
 			FromSpec: true,
 		})
 
@@ -489,7 +466,7 @@ func TestEffectiveSourceDir(t *testing.T) {
 		testEnv := newTMTTestEnv(t, nil)
 		testEnv.Config.Project.RenderedSpecsDir = "/project/specs"
 
-		_, err := effectiveSourceDir(testEnv.Env, testTMTComponentName, &ComponentTestOptions{
+		_, err := effectiveSourceDir(testEnv.Env, testTMTComponentName, &Options{
 			FromSpec:  true,
 			SourceDir: "/project/source",
 		})
@@ -503,7 +480,7 @@ func TestEffectiveSourceDir(t *testing.T) {
 		testEnv := newTMTTestEnv(t, nil)
 		// Project.RenderedSpecsDir intentionally left unset.
 
-		_, err := effectiveSourceDir(testEnv.Env, testTMTComponentName, &ComponentTestOptions{FromSpec: true})
+		_, err := effectiveSourceDir(testEnv.Env, testTMTComponentName, &Options{FromSpec: true})
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "rendered-specs-dir")
@@ -621,52 +598,12 @@ func TestPreflightTMTTests(t *testing.T) {
 			Definition: projectconfig.TestDefinition{Type: "tmt", Tmt: map[string]any{}},
 		}}
 
-		err := preflightTMTTests(resolved, "/project/source", tmtProvisionVirtual)
+		err := preflightTMTTests(resolved, "/project/source", ProvisionVirtual)
 
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "'tmt.plan'")
 		assert.Contains(t, err.Error(), "--provision virtual")
 	})
-}
-
-func TestComponentTestCmdNoMatch(t *testing.T) {
-	testEnv := testutils.NewTestEnv(t)
-
-	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, testImagePath, []byte("image"), fileperms.PrivateFile))
-	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, testRPMPath, []byte("rpm"), fileperms.PrivateFile))
-
-	cmd := NewComponentTestCmd()
-	cmd.SetArgs([]string{"missing-component", "--image-path", testImagePath, "--rpm", testRPMPath})
-
-	err := cmd.ExecuteContext(testEnv.Env)
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "component not found")
-}
-
-// TestComponentTestCmdPreflightsBeforePreparingEnvironment proves the fix for
-// the deterministic-input-error-after-side-effects issue: a catalog test
-// missing 'tmt.source' (and no --source-dir) must fail before azldev creates a
-// venv or runs pip install, not partway through runOneTMTTest.
-func TestComponentTestCmdPreflightsBeforePreparingEnvironment(t *testing.T) {
-	testEnv := newTMTTestEnv(t, &projectconfig.ComponentTestsConfig{
-		Tests: []projectconfig.TestRef{{Name: "ci"}},
-	})
-	testEnv.Config.Tests["ci"] = projectconfig.TestDefinition{Type: "tmt", Tmt: map[string]any{}}
-
-	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, testImagePath, []byte("image"), fileperms.PrivateFile))
-	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, testRPMPath, []byte("rpm"), fileperms.PrivateFile))
-
-	cmd := NewComponentTestCmd()
-	cmd.SetArgs([]string{
-		testTMTComponentName, "--image-path", testImagePath, "--rpm", testRPMPath, "--plan", "/plans/all",
-	})
-
-	err := cmd.ExecuteContext(testEnv.Env)
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "'tmt.source'")
-	assert.Empty(t, testEnv.CommandsExecuted, "no venv/pip commands should run before the preflight check")
 }
 
 func TestDirsOverlap(t *testing.T) {
@@ -688,30 +625,23 @@ func TestDirsOverlap(t *testing.T) {
 	}
 }
 
-// TestComponentTestCmdRejectsOverlappingSourceAndWorkDir covers the scenario
-// from the review finding: '--source-dir .' from the project root with the
-// default (cwd) work directory makes the managed per-test directory a child
-// of the supplied source tree.
-func TestComponentTestCmdRejectsOverlappingSourceAndWorkDir(t *testing.T) {
-	testEnv := newTMTTestEnv(t, nil)
-	require.NoError(t, fileutils.WriteFile(
-		testEnv.TestFS, filepath.Join(testProjectDir, ".fmf", "version"), []byte("1\n"), fileperms.PrivateFile,
-	))
+func TestRemovePreviousTMTRepositoryRemovesOnlyRepository(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+	testDir := "/project/tmt-test"
+	repoDir := filepath.Join(testDir, "repo")
+	artifactPath := filepath.Join(testDir, "tmt", "results.yaml")
+	staleMetadataPath := filepath.Join(repoDir, "stale-metadata")
 
-	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, testImagePath, []byte("image"), fileperms.PrivateFile))
-	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, testRPMPath, []byte("rpm"), fileperms.PrivateFile))
+	require.NoError(t, testEnv.TestFS.MkdirAll(repoDir, fileperms.PublicDir))
+	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, staleMetadataPath, []byte("stale"), fileperms.PrivateFile))
+	require.NoError(t, testEnv.TestFS.MkdirAll(filepath.Dir(artifactPath), fileperms.PublicDir))
+	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, artifactPath, []byte("preserve"), fileperms.PrivateFile))
 
-	cmd := NewComponentTestCmd()
-	cmd.SetArgs([]string{
-		testTMTComponentName, "--image-path", testImagePath, "--rpm", testRPMPath,
-		"--plan", "/plans/all", "--source-dir", ".",
-	})
-
-	err := cmd.ExecuteContext(testEnv.Env)
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "must not overlap")
-	assert.Empty(t, testEnv.CommandsExecuted, "no venv/pip commands should run before the overlap check")
+	require.NoError(t, removePreviousTMTRepository(testEnv.Env, repoDir))
+	_, err := testEnv.TestFS.Stat(repoDir)
+	require.ErrorIs(t, err, fs.ErrNotExist)
+	_, err = testEnv.TestFS.Stat(artifactPath)
+	assert.NoError(t, err)
 }
 
 func TestRunHostCommandOutputIncludesStderr(t *testing.T) {
@@ -749,7 +679,7 @@ func TestComponentTMTArgsPreservesNativePlanSteps(t *testing.T) {
 	args := componentTMTArgs(
 		tmtConfig{Plan: "/plans/smoke"},
 		"/work/tmt",
-		tmtProvisionVirtual,
+		ProvisionVirtual,
 		"/path/to/image.qcow2",
 		[]string{"memory >= 4 GB", "boot.method = uefi"},
 		[]string{"/rpms/component.rpm", "/rpms/component-tests.rpm"},
@@ -774,7 +704,7 @@ func TestComponentTMTArgsVirtualProvisioner(t *testing.T) {
 	args := componentTMTArgs(
 		tmtConfig{Plan: "/plans/smoke"},
 		"/work/tmt",
-		tmtProvisionVirtual,
+		ProvisionVirtual,
 		"/path/to/image.qcow2",
 		[]string{"boot.method = uefi"},
 		[]string{"/rpms/component.rpm"},
@@ -863,7 +793,7 @@ func TestTMTCommandEnv(t *testing.T) {
 		},
 		"virtual provisioner omits the acknowledgement": {
 			pluginDir: "/work/test/tmt-plugins",
-			provision: tmtProvisionVirtual,
+			provision: ProvisionVirtual,
 			expected:  []string{"TMT_PLUGINS=/work/test/tmt-plugins", "TMT_BOOT_TIMEOUT=300"},
 		},
 		"explicit boot timeout is preserved": {

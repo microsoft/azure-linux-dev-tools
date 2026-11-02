@@ -60,6 +60,11 @@ description: "Instructions for working on the azldev Go codebase. IMPORTANT: Alw
 - Always wrap with `ctx.Command(rawCmd)` or `env.Command(rawCmd)` and use `cmd.RunAndGetOutput(ctx)` or `cmd.Run(ctx)` for consistent event tracking and dry-run support.
 - Capture stderr separately via `rawCmd.Stderr = &stderr` (set BEFORE `ctx.Command()` / `env.Command()`) for use in error messages.
 
+### External Dependency Requirements
+
+- Reuse `prereqs.RequireExecutable` for tool prerequisites. Opt into version checks with a tool-owned `PackagePrereq.VersionCheck` callback, invoked after executable acquisition and skipped during dry runs. Keep probing and parsing in the tool's package.
+- Keep constraints in azldev code as minimal as possible. Only add version requirements when there are breaking changes or known incompatibilities.
+
 ### Return values
 
 - For functions with named returns, **ALWAYS** explicitly mention the return values.

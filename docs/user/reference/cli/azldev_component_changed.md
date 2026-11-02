@@ -8,17 +8,12 @@ Detect which components changed between two git refs
 
 Compare component lock files and rendered sources between two git refs to
 determine which components changed. For each component, reports whether its
-input fingerprint changed (any change) and whether its rendered sources file
-changed (sources change).
+input fingerprint changed (any change). For components whose fingerprint
+changed, it also reports whether the rendered sources file changed (sources
+change).
 
 This is useful for CI/CD pipelines to determine which components need to be
 rebuilt or have their lookaside tarballs re-uploaded after a PR merge.
-
-Fails with an error if any component's fingerprint is unchanged between refs
-but its rendered sources file drifted. This combination cannot occur from a
-clean render -- it usually means the rendered sources were edited by hand (a
-cache-poisoning vector if blindly uploaded) or the renderer is non-
-deterministic.
 
 Note: component selection and directory paths (lock-dir, rendered-specs-dir)
 are resolved from the current checkout's configuration, not from the compared

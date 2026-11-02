@@ -88,7 +88,7 @@ container. Virtual diagnostics remain under `out/tmt-virtual-e2e/`.
 
 Remove the temporary environment guard when the virtual test is fixed. Both
 tests share the production pins in
-`internal/app/azldev/cmds/component/requirements.txt`. Broad `mage e2e` also runs
+`internal/tmt/requirements.txt`, which Dependabot tracks. Broad `mage e2e` also runs
 the privileged image-builder test independently of the virtual quarantine.
 
 ## Mutation Testing

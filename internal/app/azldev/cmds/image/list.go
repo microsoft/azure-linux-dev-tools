@@ -143,8 +143,9 @@ func ListImages(env *azldev.Env, options *ListImageOptions) ([]ImageListResult, 
 
 		imageConfig := cfg.Images[name]
 
-		propertiesSummary, err := serializeImageProperties(imageConfig.Properties)
+		propertiesSummary, err := imageConfig.PropertiesJSON()
 		if err != nil {
+			//nolint:wrapcheck // Preserve the existing property-serialization error unchanged.
 			return nil, err
 		}
 

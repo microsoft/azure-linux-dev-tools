@@ -8,7 +8,6 @@ import (
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/image"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
-	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/qemu"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -46,6 +45,19 @@ func TestNewImageBootCmd_DiskSizeDefault(t *testing.T) {
 	diskSizeFlag := cmd.Flags().Lookup("disk-size")
 	require.NotNil(t, diskSizeFlag)
 	assert.Equal(t, "10G", diskSizeFlag.DefValue)
+}
+
+func TestNewImageBootCmd_ImagePathWithFormat(t *testing.T) {
+	for _, format := range image.BootableImageFormats() {
+		t.Run(format, func(t *testing.T) {
+			cmd := image.NewImageBootCmd()
+			err := cmd.ParseFlags([]string{
+				"--image-path", "/image.raw", "--format", format, "--memory", "2G", "--cpus", "2",
+			})
+			require.NoError(t, err)
+			assert.NoError(t, cmd.ValidateFlagGroups())
+		})
+	}
 }
 
 func TestNewImageBootCmd_NoImageSourceErrors(t *testing.T) {
@@ -159,53 +171,6 @@ func TestQEMUArch_Type(t *testing.T) {
 	assert.Equal(t, "arch", arch.Type())
 }
 
-func TestResolveImageWithAvailableList_NoImages(t *testing.T) {
-	testEnv := testutils.NewTestEnv(t)
-	// testEnv already has an empty Images map by default.
-
-	_, err := image.ResolveImageByName(testEnv.Env, "some-image")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
-	assert.Contains(t, err.Error(), "no images defined")
-}
-
-func TestResolveImageWithAvailableList_EmptyName(t *testing.T) {
-	testEnv := testutils.NewTestEnv(t)
-
-	_, err := image.ResolveImageByName(testEnv.Env, "")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "image name is required")
-}
-
-func TestResolveImageWithAvailableList_NotFound(t *testing.T) {
-	testEnv := testutils.NewTestEnv(t)
-	testEnv.Config.Images = map[string]projectconfig.ImageConfig{
-		"image-a": {Name: "image-a"},
-		"image-b": {Name: "image-b"},
-	}
-
-	_, err := image.ResolveImageByName(testEnv.Env, "nonexistent")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
-	assert.Contains(t, err.Error(), "image-a")
-	assert.Contains(t, err.Error(), "image-b")
-}
-
-func TestResolveImageWithAvailableList_Found(t *testing.T) {
-	testEnv := testutils.NewTestEnv(t)
-	testEnv.Config.Images = map[string]projectconfig.ImageConfig{
-		"my-image": {
-			Name:        "my-image",
-			Description: "My test image",
-		},
-	}
-
-	cfg, err := image.ResolveImageByName(testEnv.Env, "my-image")
-	require.NoError(t, err)
-	assert.Equal(t, "my-image", cfg.Name)
-	assert.Equal(t, "My test image", cfg.Description)
-}
-
 func TestBootableImageFormats(t *testing.T) {
 	formats := image.BootableImageFormats()
 	require.NotEmpty(t, formats)
@@ -214,52 +179,6 @@ func TestBootableImageFormats(t *testing.T) {
 	assert.Contains(t, formats, "vhdx")
 	assert.Contains(t, formats, "vhd")
 	assert.NotContains(t, formats, "oci", "OCI is not a bootable format")
-}
-
-func TestAllImageFormats(t *testing.T) {
-	formats := image.AllImageFormats()
-	require.NotEmpty(t, formats)
-	assert.Contains(t, formats, "raw")
-	assert.Contains(t, formats, "qcow2")
-	assert.Contains(t, formats, "oci")
-}
-
-func TestInferImageFormat(t *testing.T) {
-	tests := []struct {
-		name     string
-		path     string
-		expected string
-	}{
-		{name: "raw", path: "/path/to/image.raw", expected: "raw"},
-		{name: "qcow2", path: "/path/to/image.qcow2", expected: "qcow2"},
-		{name: "vhd", path: "/path/to/image.vhd", expected: "vhd"},
-		{name: "vhdfixed", path: "/path/to/image.vhdfixed", expected: "vhd"},
-		{name: "vhdx", path: "/path/to/image.vhdx", expected: "vhdx"},
-		{name: "oci.tar.xz", path: "/path/to/image.oci.tar.xz", expected: "oci"},
-		{name: "oci.tar.gz", path: "/path/to/image.oci.tar.gz", expected: "oci"},
-		{name: "oci.tar", path: "/path/to/image.oci.tar", expected: "oci"},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			format, err := image.InferImageFormat(test.path)
-			require.NoError(t, err)
-			assert.Equal(t, test.expected, format)
-		})
-	}
-}
-
-func TestInferImageFormat_NoExtension(t *testing.T) {
-	_, err := image.InferImageFormat("/path/to/imagefile")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no file extension")
-}
-
-func TestInferImageFormat_UnsupportedExtension(t *testing.T) {
-	_, err := image.InferImageFormat("/path/to/image.iso")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported image format")
-	assert.Contains(t, err.Error(), "iso")
 }
 
 func TestSupportedArchitectures(t *testing.T) {

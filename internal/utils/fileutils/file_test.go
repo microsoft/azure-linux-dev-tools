@@ -4,15 +4,57 @@
 package fileutils_test
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestValidateFileExists(t *testing.T) {
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.MkdirAll(ctx.FS(), "/files"))
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), "/files/present", []byte("content"), fileperms.PublicFile))
+
+	for _, testCase := range []struct {
+		name    string
+		path    string
+		wantErr string
+	}{
+		{name: "file", path: "/files/present"},
+		{name: "missing", path: "/files/missing", wantErr: "file not found: `/files/missing`"},
+		{name: "directory", path: "/files", wantErr: "`/files` is a directory, expected a file"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := fileutils.ValidateFileExists(ctx.FS(), testCase.path)
+			if testCase.wantErr != "" {
+				require.EqualError(t, err, testCase.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+type statFailureFS struct {
+	opctx.FS
+}
+
+func (statFailureFS) Stat(string) (os.FileInfo, error) {
+	return nil, os.ErrPermission
+}
+
+func TestValidateFileExistsAccessError(t *testing.T) {
+	ctx := testctx.NewCtx()
+	err := fileutils.ValidateFileExists(statFailureFS{FS: ctx.FS()}, "/file")
+	require.EqualError(t, err, "cannot access `/file`:\n"+os.ErrPermission.Error())
+	require.ErrorIs(t, err, os.ErrPermission)
+}
 
 func TestGlob(t *testing.T) {
 	const testDir = "/test"

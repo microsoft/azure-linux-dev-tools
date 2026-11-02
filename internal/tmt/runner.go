@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-package component
+package tmt
 
 import (
 	"errors"
@@ -132,6 +132,16 @@ func collectTMTJUnit(fs opctx.FS, root string, native string) []string {
 	}
 
 	return reports
+}
+
+func lstatIfPossible(fs opctx.FS, path string) (os.FileInfo, error) {
+	if lstater, ok := fs.(afero.Lstater); ok {
+		info, _, err := lstater.LstatIfPossible(path)
+
+		return info, err //nolint:wrapcheck // The caller adds report context.
+	}
+
+	return fs.Stat(path) //nolint:wrapcheck // The caller adds report context.
 }
 
 func retainedTMTReport(fs opctx.FS, root string, path string) (string, error) {

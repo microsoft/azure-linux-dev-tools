@@ -16,6 +16,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/mcpprogress"
 	"github.com/samber/lo"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -42,6 +43,7 @@ func newStdioServer(env *azldev.Env, cmd *cobra.Command) *server.StdioServer {
 	srv := server.NewMCPServer(cmd.Root().Name(), version.Get().Version,
 		server.WithLogging(),
 		server.WithRecovery(),
+		server.WithToolHandlerMiddleware(mcpprogress.Middleware),
 		server.WithResourceCapabilities(true, true),
 		server.WithToolCapabilities(true),
 	)

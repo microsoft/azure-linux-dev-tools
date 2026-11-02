@@ -19,6 +19,17 @@ const (
 	TestTypeLisa TestType = "lisa"
 )
 
+const (
+	// ImagePlaceholder is the placeholder token for the image path.
+	ImagePlaceholder = "{image-path}"
+	// ImageNamePlaceholder is the placeholder token for the image name.
+	ImageNamePlaceholder = "{image-name}"
+	// CapabilitiesPlaceholder is the placeholder token for the comma-delimited capabilities.
+	CapabilitiesPlaceholder = "{capabilities}"
+	// PropertiesPlaceholder is the placeholder token for the JSON-encoded image properties.
+	PropertiesPlaceholder = "{properties}"
+)
+
 var (
 	// ErrDuplicateTests is returned when duplicate conflicting [tests] entries are found.
 	ErrDuplicateTests = errors.New("duplicate test")
