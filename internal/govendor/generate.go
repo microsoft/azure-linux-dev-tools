@@ -20,6 +20,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spectool"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
+	"github.com/pelletier/go-toml/v2"
 )
 
 const (
@@ -41,6 +42,7 @@ type Request struct {
 	ExpectedLicense              string
 	PrepSpec                     []byte
 	Packages                     []string
+	configModuleDir              string
 }
 
 // Artifact is validated generation output, ready for publication by the caller.
@@ -51,6 +53,11 @@ type Artifact struct {
 // Generate prepares inputs and generates an archive in one isolated mock root.
 // It never changes SourceDir or publishes a spec or source manifest.
 func Generate(ctx context.Context, fs opctx.FS, base *mock.Runner, request Request) (Artifact, error) {
+	request, err := resolveModuleDir(request)
+	if err != nil {
+		return Artifact{}, err
+	}
+
 	staging := filepath.Join(request.WorkDir, "work")
 
 	sourceCopy := filepath.Join(request.WorkDir, "sources")
@@ -65,11 +72,73 @@ func Generate(ctx context.Context, fs opctx.FS, base *mock.Runner, request Reque
 		return Artifact{}, err
 	}
 
-	if err := validateInputs(fs, staging, request.SourceDir); err != nil {
+	// Snapshot only regular outputs into a host-only directory. Subsequent
+	// validation, hashing and publication never reopen chroot-writable paths.
+	trusted := filepath.Join(request.WorkDir, "artifacts")
+	if err := fileutils.MkdirAll(fs, trusted); err != nil {
+		return Artifact{}, fmt.Errorf("creating trusted Go vendor output directory:\n%w", err)
+	}
+
+	for _, name := range []string{request.ArchiveFile, "archive-name", "license", "sources-list"} {
+		if err := fileutils.CopyFileCrossFS(nilDryRun{}, fs, filepath.Join(staging, name),
+			fs, filepath.Join(trusted, name), fileutils.CopyFileOptions{NoFollow: true}); err != nil {
+			return Artifact{}, fmt.Errorf("collecting Go vendor output %#q:\n%w", name, err)
+		}
+	}
+
+	if err := validateInputs(fs, trusted, request.SourceDir); err != nil {
 		return Artifact{}, err
 	}
 
-	return readArtifact(fs, staging, request)
+	return readArtifact(fs, trusted, request)
+}
+
+type nilDryRun struct{}
+
+func (nilDryRun) DryRun() bool { return false }
+
+func resolveModuleDir(request Request) (Request, error) {
+	var settings map[string]any
+	if err := toml.Unmarshal([]byte(request.ConfigContents), &settings); err != nil {
+		return request, fmt.Errorf("parsing Go vendor tool configuration:\n%w", err)
+	}
+
+	general, _ := settings["general"].(map[string]any)
+	if raw, exists := general["go_mod_dir"]; exists {
+		directory, ok := raw.(string)
+		if !ok {
+			return request, errors.New("go vendor 'general.go_mod_dir' must be a string")
+		}
+
+		request.configModuleDir = directory
+	}
+
+	for _, directory := range []string{request.ModuleDir, request.configModuleDir} {
+		if directory == "" || directory == "." {
+			continue
+		}
+
+		if err := fileutils.ValidateRelPath(directory); err != nil {
+			return request, fmt.Errorf("invalid Go vendor module directory:\n%w", err)
+		}
+
+		if strings.ContainsAny(directory, "%\r\n") {
+			return request, errors.New("go vendor module directory must not contain RPM macros or newlines")
+		}
+	}
+
+	if request.configModuleDir != "" {
+		if request.ModuleDir != "" && request.ModuleDir != request.configModuleDir {
+			return request, errors.New("'module-dir' conflicts with upstream 'general.go_mod_dir'; " +
+				"use 'config-file' to replace the upstream settings")
+		}
+
+		// Native tools preserve this subdirectory in the archive and use it for
+		// licensing. Keep their root and config intact, without descending twice.
+		request.ModuleDir = ""
+	}
+
+	return request, nil
 }
 
 func stage(fs opctx.FS, request Request, sourceCopy, staging string) error {
@@ -169,10 +238,13 @@ func generationCommand(request Request, targetArch string) []string {
 		`IFS= read -r module_root < ` + topDir + "/azldev-go-module-root",
 		`cd "$module_root"`,
 		"cd " + quote(cmp.Or(request.ModuleDir, ".")),
-		"test -f go.mod",
+		quote("test", "-f", filepath.Join(request.configModuleDir, "go.mod")),
+		`module_root=$(pwd -P)`,
 		"export GOTOOLCHAIN=local",
+		"cd " + sourceMount,
 		quote("go_vendor_archive", "create", "--config", outputMount+"/"+ConfigFilename,
-			"--output", outputMount+"/"+request.ArchiveFile, "."),
+			"--output", outputMount+"/"+request.ArchiveFile) + ` "$module_root"`,
+		`cd "$module_root"`,
 		quote("tar", "-xf", outputMount+"/"+request.ArchiveFile),
 		quote(licenseArgs...) + " > " + outputMount + "/license",
 		"cd " + sourceMount,

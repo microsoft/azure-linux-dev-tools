@@ -23,12 +23,30 @@ import (
 )
 
 func TestPrepareExistingGoVendorReplacesPayload(t *testing.T) {
+	for _, conflict := range []string{"", "app-1.2-vendor.tar.bz2", "go-vendor-tools.toml"} {
+		t.Run("source-file-"+conflict, func(t *testing.T) {
+			testPrepareExistingGoVendor(t, conflict)
+		})
+	}
+}
+
+func testPrepareExistingGoVendor(t *testing.T, conflict string) {
+	t.Helper()
+
 	ctx := newMockProcessorTestCtx()
 	component := components_testutils.NewMockComponent(gomock.NewController(t))
 	component.EXPECT().GetName().AnyTimes().Return("app")
-	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
+
+	config := &projectconfig.ComponentConfig{
 		GoVendor: &projectconfig.GoVendorConfig{Enabled: lo.ToPtr(true)},
-	})
+	}
+	if conflict != "" {
+		config.SourceFiles = []projectconfig.SourceFileReference{{
+			Filename: conflict, ReplaceUpstream: true, Hash: strings.Repeat("a", 128), HashType: fileutils.HashTypeSHA512,
+		}}
+	}
+
+	component.EXPECT().GetConfig().AnyTimes().Return(config)
 
 	input := strings.Join([]string{
 		"Name: app", "Version: 1.2", "Release: 1", "License: MIT AND Apache-2.0",
@@ -75,14 +93,34 @@ func TestPrepareExistingGoVendorReplacesPayload(t *testing.T) {
 		return "", nil
 	}
 	preparer := &sourcePreparerImpl{fs: ctx.FS(), dryRunnable: ctx, goVendorRunner: mock.NewRunner(ctx, "/mock.cfg")}
-	require.NoError(t, preparer.prepareGoVendor(ctx, component, "/output"))
+
+	err := preparer.prepareGoVendor(ctx, component, "/output")
+	if conflict != "" {
+		require.ErrorContains(t, err, "'source-files'")
+
+		unchanged, readErr := fileutils.ReadFile(ctx.FS(), "/output/app.spec")
+		require.NoError(t, readErr)
+		assert.Equal(t, input, string(unchanged))
+
+		payload, readErr := fileutils.ReadFile(ctx.FS(), "/output/"+archiveName)
+		require.NoError(t, readErr)
+		assert.Equal(t, "old vendor", string(payload))
+
+		manifest, readErr := fileutils.ReadFile(ctx.FS(), "/output/sources")
+		require.NoError(t, readErr)
+		assert.Equal(t, oldEntry+"\n", string(manifest))
+
+		return
+	}
+
+	require.NoError(t, err)
 	payload, err := fileutils.ReadFile(ctx.FS(), "/output/"+archiveName)
 	require.NoError(t, err)
 	assert.Equal(t, "new vendor", string(payload))
 
 	finalSpec, err := fileutils.ReadFile(ctx.FS(), "/output/app.spec")
 	require.NoError(t, err)
-	assert.Contains(t, string(finalSpec), "Source1: app-%{version}-vendor.tar.bz2")
+	assert.Contains(t, string(finalSpec), "Source1: "+archiveName)
 	assert.Contains(t, string(finalSpec), "License: MIT AND Apache-2.0")
 	assert.NotContains(t, string(finalSpec), "azldev-go-vendor.toml")
 

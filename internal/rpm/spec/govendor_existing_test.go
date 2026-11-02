@@ -61,8 +61,13 @@ func TestExistingGoVendoringPreservesPackaging(t *testing.T) {
 
 func TestExistingGoVendoringRejectsAmbiguousInputs(t *testing.T) {
 	for name, input := range map[string]string{
-		"multiple extractions": strings.ReplaceAll(existingVendorSpec(), "%goprep -p1", "%goprep -p1\ntar -xf %{S:9}"),
-		"no extraction":        strings.ReplaceAll(existingVendorSpec(), "tar -xf %{S:5}", ""),
+		"multiple extractions":       strings.ReplaceAll(existingVendorSpec(), "%goprep -p1", "%goprep -p1\ntar -xf %{S:9}"),
+		"autosetup secondary":        strings.ReplaceAll(existingVendorSpec(), "%goprep -p1", "%autosetup -a 1"),
+		"setup secondary":            strings.ReplaceAll(existingVendorSpec(), "%goprep -p1", "%setup -qb1"),
+		"braced autosetup secondary": strings.ReplaceAll(existingVendorSpec(), "%goprep -p1", "%{autosetup -a 1}"),
+		"other tar flags":            strings.ReplaceAll(existingVendorSpec(), "%goprep -p1", "%goprep -p1\ntar -xjf %{S:9}"),
+		"directory after extraction": strings.ReplaceAll(existingVendorSpec(), "sed -i 's/old/new/' go.mod", "cd submodule"),
+		"no extraction":              strings.ReplaceAll(existingVendorSpec(), "tar -xf %{S:5}", ""),
 		"mismatched config": strings.ReplaceAll(existingVendorSpec(),
 			"%go_vendor_license_check -c %{S:8}", "%go_vendor_license_check -c %{S:9}"),
 		"dynamic config":      strings.ReplaceAll(existingVendorSpec(), "go-vendor-tools.toml", "%{name}.toml"),
@@ -84,4 +89,41 @@ func TestExistingGoVendoringRejectsAmbiguousInputs(t *testing.T) {
 			assert.Nil(t, result)
 		})
 	}
+}
+
+func TestExistingGoVendorExtractsAfterModulePatches(t *testing.T) {
+	input := strings.ReplaceAll(existingVendorSpec(), "%goprep -p1", "%setup -q")
+	input = strings.ReplaceAll(input, "sed -i 's/old/new/' go.mod", "%autopatch -p1\nsed -i 's/old/new/' go.mod")
+	result, err := spec.ConvertGoVendor([]byte(input), spec.GoVendorOptions{
+		ArchiveName: "app-vendor.tar.bz2", ConfigName: "vendor.toml",
+	})
+	require.NoError(t, err)
+
+	output := string(result.Spec)
+	assert.Less(t, strings.Index(output, "%autopatch -p1"), strings.Index(output, "tar -xf %{S:5}"))
+	assert.Less(t, strings.Index(output, "sed -i"), strings.Index(output, "tar -xf %{S:5}"))
+	assert.Less(t, strings.Index(output, "cp %{S:9} ."), strings.Index(output, "tar -xf %{S:5}"))
+	assert.Contains(t, string(result.PrepSpec), "%autopatch -p1")
+	assert.NotContains(t, string(result.PrepSpec), "tar -xf %{S:5}")
+}
+
+func TestExistingGoVendorPinsExpandedArchiveBeforeReleaseChanges(t *testing.T) {
+	input := strings.ReplaceAll(existingVendorSpec(), "app-%{version}-vendor", "app-%{version}-%{release}-vendor")
+	result, err := spec.ConvertGoVendor([]byte(input), spec.GoVendorOptions{
+		ArchiveName: "app-vendor.tar.bz2", ConfigName: "vendor.toml",
+	})
+	require.NoError(t, err)
+	final, err := result.Finalize("app-1.2-7-vendor.tar.bz2", "MIT AND Apache-2.0")
+	require.NoError(t, err)
+	assert.Contains(t, string(final), "Source5: app-1.2-7-vendor.tar.bz2")
+	assert.NotContains(t, string(final), "app-%{version}-%{release}-vendor")
+	assert.Contains(t, string(result.Spec), "Source5: app-%{version}-%{release}-vendor.tar.bz2",
+		"finalization must not mutate the plan")
+	editor, err := spec.OpenSpec(strings.NewReader(string(final)), spec.WithEditor(spec.EditorStructural))
+	require.NoError(t, err)
+	require.NoError(t, editor.UpdateExistingTag("", "Release", "8"))
+
+	var output strings.Builder
+	require.NoError(t, editor.Serialize(&output))
+	assert.Contains(t, output.String(), "Source5: app-1.2-7-vendor.tar.bz2")
 }

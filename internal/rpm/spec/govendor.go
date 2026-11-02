@@ -29,6 +29,7 @@ type GoVendorSpec struct {
 	ArchiveFile      string // Filename used inside generation staging.
 	ArchiveSuffix    string // Required suffix of the RPM-expanded destination name, if any.
 	ConfigName       string
+	ArchiveSource    string // Existing Source tag to pin to the generated filename.
 	ExpectedLicense  string // Empty: detect and update. Otherwise: verify and preserve.
 	AllowReplacement bool   // Permit replacing the existing vendor payload and configuration.
 }
@@ -73,7 +74,7 @@ func ConvertGoVendor(data []byte, options GoVendorOptions) (*GoVendorSpec, error
 		return nil, err
 	}
 
-	if err := convertGoVendorLines(tree); err != nil {
+	if err := convertGoVendorLines(tree, options.ModuleDir); err != nil {
 		return nil, err
 	}
 
@@ -189,20 +190,24 @@ func goVendorPrepSpec(tree *specTree, archiveValue string) []byte {
 	return result
 }
 
-// FinalizeLicense preserves a verified upstream expression or writes the detected
-// expression for a newly converted spec. It does not mutate the plan.
-func (p *GoVendorSpec) FinalizeLicense(expression string) ([]byte, error) {
-	if p.ExpectedLicense != "" {
-		return p.Spec, nil
-	}
-
+// Finalize pins an existing archive reference before release/history processing,
+// and updates the license only for newly converted specs. It does not mutate the plan.
+func (p *GoVendorSpec) Finalize(archiveName, expression string) ([]byte, error) {
 	editor, err := openStructuralSpec(strings.NewReader(string(p.Spec)))
 	if err != nil {
 		return nil, err
 	}
 
-	if err := editor.UpdateExistingTag("", "License", expression); err != nil {
-		return nil, err
+	if p.ArchiveSource != "" {
+		if err := editor.UpdateExistingTag("", p.ArchiveSource, archiveName); err != nil {
+			return nil, err
+		}
+	}
+
+	if p.ExpectedLicense == "" {
+		if err := editor.UpdateExistingTag("", "License", expression); err != nil {
+			return nil, err
+		}
 	}
 
 	return []byte(strings.Join(editor.rawLines, "\n") + "\n"), nil
@@ -298,7 +303,7 @@ func validateGoVendorBlock(blk *block) error {
 	return nil
 }
 
-func convertGoVendorLines(tree *specTree) error {
+func convertGoVendorLines(tree *specTree, moduleDir string) error {
 	return tree.VisitAllLines(func(section, _ string, line *lineHandle) error {
 		text := strings.TrimSpace(line.Text)
 		if strings.HasPrefix(text, "#") {
@@ -326,7 +331,7 @@ func convertGoVendorLines(tree *specTree) error {
 				return fmt.Errorf("unsupported Go check command %#q; use a module-aware check overlay", text)
 			}
 
-			line.Replace("%gotest ./...")
+			line.Replace(goVendorInModule(moduleDir, "%gotest ./..."))
 		}
 
 		return nil

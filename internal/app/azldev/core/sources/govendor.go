@@ -89,6 +89,12 @@ func (p *sourcePreparerImpl) prepareGoVendor(
 		return fmt.Errorf("generating Go vendor sources:\n%w", err)
 	}
 
+	for _, ref := range component.GetConfig().SourceFiles {
+		if ref.Filename == artifact.Name || ref.Filename == plan.ConfigName {
+			return fmt.Errorf("'source-files' entry %#q conflicts with generated Go vendor sources", ref.Filename)
+		}
+	}
+
 	return p.publishGoVendor(outputDir, filepath.Base(specPath), toolConfig, plan, artifact)
 }
 
@@ -129,7 +135,7 @@ func (p *sourcePreparerImpl) publishGoVendor(
 		return fmt.Errorf("generated Go archive %#q does not match planned name %#q", artifact.Name, plan.ArchiveFile)
 	}
 
-	finalSpec, err := plan.FinalizeLicense(artifact.License)
+	finalSpec, err := plan.Finalize(artifact.Name, artifact.License)
 	if err != nil {
 		return fmt.Errorf("finalizing Go vendor spec:\n%w", err)
 	}

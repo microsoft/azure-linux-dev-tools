@@ -205,7 +205,9 @@ config-file = "go-vendor-tools.toml"
 
 The configured file must exist and contain valid TOML. An explicitly selected
 empty file is an empty replacement, not a request to fall back to upstream.
-Use `module-dir`, not `general.go_mod_dir`, for the module location.
+In an explicitly selected file, use `module-dir`, not `general.go_mod_dir`, for
+the module location. Reused upstream `general.go_mod_dir` settings remain honored;
+an inconsistent component `module-dir` is rejected.
 Configured command hooks execute in the generation chroot; treat this file as
 trusted build code. The old inline `tool-config` string/table is no longer supported.
 
@@ -218,8 +220,14 @@ The recorded digest identifies that output, not a separately pinned vendor lock.
 
 For supported specs already using go-vendor-tools, preparation instead regenerates
 the existing vendor source, retaining its Source number, RPM-expanded filename,
-and configuration sidecar. It updates that archive's `sources` entry in place and
+and configuration sidecar. The Source tag is pinned to the generated filename
+before release/history updates, and extraction moves after prep's module edits
+to avoid applying patches twice. Ambiguous secondary-source setup and
+post-extraction directory changes require a prep overlay.
+It updates that archive's `sources` entry in place and
 verifies the existing `License:` expression without rewriting it.
+These generated archive/config filenames must not also appear in `source-files`,
+including entries with `replace-upstream = true`.
 When `config-file` is set, its contents are staged under the configuration filename
 referenced by the prepared spec, retaining the existing Source number.
 

@@ -53,6 +53,10 @@ Generated `<component>-vendor.tar.bz2` and `azldev-go-vendor.toml` must not also
 declared as `source-files`. For supported already-vendored specs, regenerate the
 existing vendor Source instead, reuse upstream tool configuration unless overridden,
 and verify rather than replace the reviewed `License:` expression.
+The regenerated archive and configuration must not also be `source-files` entries.
+Upstream `general.go_mod_dir` is honored; conflicting `module-dir` values fail.
+Vendor extraction runs after prep edits, and its Source filename is pinned before
+release/history updates. Ambiguous secondary-source setup requires an overlay.
 Unsupported constructs (notably automatic Go devel
 subpackages, flagged `%gocheck`, or ambiguous sections) require explicit overlays;
 never replace the upstream spec wholesale to bypass a conversion error.

@@ -78,7 +78,8 @@ func TestConvertGoVendorPreservesUpstream(t *testing.T) {
 				"%package tools", "Requires: app = %{version}-%{release}",
 				"%goprep -p1", "sed -i 's/old/new/' go.mod", "echo custom-build-dependency",
 				"%gobuild -o app %{goipath}", "install -D app %{buildroot}%{_bindir}/app",
-				"%if %{with check}\n%gotest ./...\n./custom-test\n%endif",
+				"%if %{with check}\n" +
+					`( cd "$(cat "%{_topdir}/azldev-go-module-root")"` + "\n%gotest ./...\n)\n./custom-test\n%endif",
 				"%files tools\n%{_bindir}/tool", "%autochangelog",
 				"Source2: app-vendor.tar.bz2", "Source3: vendor.toml", "tar -xf %{SOURCE2}",
 				"%go_vendor_license_buildrequires -c %{SOURCE3}",
@@ -153,6 +154,8 @@ func TestConvertGoVendorModuleDirAndStaticRequires(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(result.Spec), "tar -xf %{SOURCE2} -C cmd/app")
 	assert.Contains(t, string(result.Spec), "cd cmd/app\n%go_vendor_license_install")
+	assert.Contains(t, string(result.Spec),
+		`( cd "$(cat "%{_topdir}/azldev-go-module-root")"`+"\ncd cmd/app\n%gotest ./...\n)")
 	assert.Contains(t, string(result.Spec), `( cd "$(cat "%{_topdir}/azldev-go-module-root")"`)
 	assert.Contains(t, string(result.Spec), "%generate_buildrequires\n")
 }

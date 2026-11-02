@@ -18,6 +18,8 @@ var (
 	existingVendorLicense = regexp.MustCompile(
 		`^%go_vendor_license_(?:buildrequires|install|check)\s+-c\s+%\{(?:S:|SOURCE)([0-9]+)\}\s*$`)
 	existingVendorExtract = regexp.MustCompile(`^tar\s+-xf\s+%\{(?:S:|SOURCE)([0-9]+)\}\s*$`)
+	existingVendorSetup   = regexp.MustCompile(`%(?:\{[!?]*)?(?:(?:auto)?setup|goprep)\b.*\s-[a-zA-Z]*[ab]`)
+	existingVendorChdir   = regexp.MustCompile(`^(?:cd|pushd|popd|%(?:auto)?setup|%goprep)\b`)
 )
 
 func prepareExistingGoVendor(tree *specTree, configSource string) (*GoVendorSpec, error) {
@@ -34,7 +36,7 @@ func prepareExistingGoVendor(tree *specTree, configSource string) (*GoVendorSpec
 		return nil, fmt.Errorf("existing Go vendor config Source%s must name a plain file, got %#q", configSource, configName)
 	}
 
-	extraction, sourceNumber, err := existingVendorExtraction(tree)
+	extraction, sourceNumber, err := takeExistingVendorExtraction(tree)
 	if err != nil {
 		return nil, err
 	}
@@ -65,6 +67,9 @@ func prepareExistingGoVendor(tree *specTree, configSource string) (*GoVendorSpec
 		}
 	}
 
+	// Regeneration already includes prep's module edits. Extract the resulting
+	// module files after those edits so the RPM build cannot apply them twice.
+	tree.Section("%prep", "").AppendLines([]string{extraction})
 	addGoVendorEnvironment(tree)
 	finalSpec := serializeGoVendorTree(tree)
 
@@ -79,7 +84,7 @@ func prepareExistingGoVendor(tree *specTree, configSource string) (*GoVendorSpec
 	return &GoVendorSpec{
 		Spec: finalSpec, PrepSpec: goVendorPrepSpec(tree, archiveValue),
 		ArchiveFile: "azldev-generated-vendor" + suffix, ArchiveSuffix: suffix, ConfigName: configName,
-		ExpectedLicense: license, AllowReplacement: true,
+		ArchiveSource: "Source" + sourceNumber, ExpectedLicense: license, AllowReplacement: true,
 	}, nil
 }
 
@@ -126,19 +131,34 @@ func existingVendorConfigSource(tree *specTree) (string, error) {
 	return source, nil
 }
 
-func existingVendorExtraction(tree *specTree) (line, source string, err error) {
+func takeExistingVendorExtraction(tree *specTree) (line, source string, err error) {
 	count := 0
 
 	err = tree.Section("%prep", "").VisitLines(func(candidate *lineHandle) error {
-		matches := existingVendorExtract.FindStringSubmatch(strings.TrimSpace(candidate.Text))
+		text := strings.TrimSpace(candidate.Text)
+		if existingVendorSetup.MatchString(text) {
+			return errors.New("secondary-source extraction in '%setup' or '%autosetup' makes Go vendoring ambiguous")
+		}
+
+		if count > 0 && existingVendorChdir.MatchString(text) {
+			return errors.New("directory changes after Go vendor extraction require an explicit prep overlay")
+		}
+
+		matches := existingVendorExtract.FindStringSubmatch(text)
+		if strings.HasPrefix(text, "tar ") && strings.Contains(text, "%{S") && len(matches) == 0 {
+			return fmt.Errorf("unsupported secondary-source extraction %#q", text)
+		}
+
 		if len(matches) != 0 {
 			if !slices.Contains(tree.Section("%prep", "").block.Children, candidate.block) {
 				return errors.New("conditional Go vendor extraction requires an explicit preparation strategy")
 			}
 
 			count++
-			line = strings.TrimSpace(candidate.Text)
+			line = text
 			source = matches[1]
+
+			candidate.Remove()
 		}
 
 		return nil

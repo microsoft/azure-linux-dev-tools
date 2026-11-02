@@ -59,6 +59,8 @@ there and runs the existing `%prep` section with `rpmbuild -bp --nodeps`.
 This retains upstream patches and edits to module files. It then calls
 `go_vendor_archive create` on the prepared module tree, extracts the result for
 license detection, and runs `go_vendor_license` without interactive prompts.
+The archive tool runs from staged dist-git, so hooks can find preserved patches
+and sidecars through `GVT_CWD`.
 Unrecognized licenses fail preparation; add reviewed, hash-qualified exceptions
 to the file selected by `config-file` rather than suppressing detection.
 
@@ -102,11 +104,17 @@ For an already-vendored spec, azldev recognizes a single
 referenced by `%go_vendor_license_* -c %{S:M}` commands. The Source numbers need
 not be 1 and 2. The configuration must name a plain sidecar file.
 
-The original Source declarations, extraction command, license/file-list macros,
-module-mode settings, and custom packaging are retained. The temporary prep spec
+The original Source numbers, license/file-list macros, module-mode settings, and
+custom packaging are retained. The vendor extraction moves to the end of `%prep`,
+after module-file patches and edits, because the replacement archive already
+contains their results. Directory changes after the original extraction and
+secondary-source extraction with `%setup -a/-b` or `%autosetup -a/-b` are rejected
+as ambiguous; adapt these layouts with an overlay. The temporary prep spec
 omits the vendor Source declaration and its extraction command, so generating
 the replacement does not consume the old vendor payload. RPM expands the
-upstream archive filename; the regenerated archive replaces that file and its
+upstream archive filename and pins the vendor Source tag to that expanded name,
+so subsequent release/history changes cannot desynchronize the spec and payload.
+The regenerated archive replaces that file and its
 `sources` checksum rather than adding a second vendor archive.
 
 When `config-file` is omitted, the upstream go-vendor-tools configuration is used,
@@ -114,6 +122,11 @@ including its reviewed license exceptions. An explicit file replaces that config
 even when empty; missing files or invalid TOML fail without falling back.
 The detected licenses are verified against the existing
 main-package `License:` expression; mismatches fail instead of rewriting it.
+Upstream `general.go_mod_dir` is honored by generation and licensing, preserving
+the module subdirectory within the archive. A conflicting `module-dir` fails;
+use a separate `config-file` to replace upstream settings when changing the layout.
+Neither the regenerated archive nor its configuration sidecar may also be
+declared in `source-files`, even with `replace-upstream = true`.
 The source-fetch phase currently still downloads the upstream vendor archive
 alongside the other upstream sources, before regenerating its contents.
 
