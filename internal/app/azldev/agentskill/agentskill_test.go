@@ -5,6 +5,7 @@ package agentskill_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"path"
 	"reflect"
 	"strings"
@@ -161,6 +162,36 @@ func TestBuildComponentSkillDocumentsTMTArtifactsInBothModes(t *testing.T) {
 		assert.Contains(t, doc, "relative JUnit paths")
 		assert.Contains(t, doc, "early failures may have logs but no JUnit")
 		assert.Contains(t, doc, "disposable Azure Linux 4 test container")
+	}
+}
+
+func TestBuildComponentSkillDocumentsTMTConnect(t *testing.T) {
+	for _, withoutLockfile := range []bool{false, true} {
+		t.Run(fmt.Sprintf("withoutLockfile=%t", withoutLockfile), func(t *testing.T) {
+			doc, err := agentskill.NewCatalog(withoutLockfile).SkillDocument("azldev-build-component", testParams())
+			require.NoError(t, err)
+			assert.Equal(t, "azldev-build-component", parseFrontmatter(t, doc)["name"])
+
+			doc = strings.Join(strings.Fields(doc), " ")
+			for _, guidance := range []string{
+				"azldev component test <name>",
+				"--rpm <candidate.rpm> --plan /plans/smoke --work-dir <artifacts> -O json",
+				"JSON rows give the test, TMT exit code, artifact directory, and relative JUnit paths.",
+				"Keep the command's nonzero exit status; early failures may have logs but no JUnit.",
+				"--provision connect --guest <host> --port 22 --user <user> --key <private-key>",
+				"Use `--work-dir /var/tmp/azldev-connect`",
+				"Guest, user, and key are required; port defaults to 22.",
+				"Relative key paths use the project directory.",
+				"Use a non-root user with passwordless sudo; tests modify the guest.",
+				"`--rpm` is optional only for connect.",
+				"Caller `TMT_PLUGINS` and `TMT_SSH_*` settings are inherited",
+				"TMT_SSH_STRICT_HOST_KEY_CHECKING=yes",
+				"TMT_SSH_USER_KNOWN_HOSTS_FILE=/absolute/path/to/known_hosts",
+				"Do not use `--provision local` on a development host",
+			} {
+				assert.Contains(t, doc, guidance)
+			}
+		})
 	}
 }
 
