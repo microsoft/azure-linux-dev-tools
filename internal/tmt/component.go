@@ -535,14 +535,6 @@ func absoluteRegularFiles(env *azldev.Env, paths []string, kind string) ([]strin
 	return result, nil
 }
 
-func removePreviousTMTRepository(env *azldev.Env, repoDir string) error {
-	if err := env.FS().RemoveAll(repoDir); err != nil {
-		return fmt.Errorf("remove test metadata repository %#q:\n%w", repoDir, err)
-	}
-
-	return nil
-}
-
 // preflightTMTTests validates every selected test's decoded tmt config against
 // sourceDir and the provisioner before RunComponentTests prepares the TMT
 // environment (venv creation, pip install) or runOneTMTTest clones metadata.
@@ -706,12 +698,6 @@ func prepareTMTTestDir(env *azldev.Env, testDir string, settings tmtRunSettings)
 
 	if err := env.FS().MkdirAll(testDir, fileperms.PublicDir); err != nil {
 		return "", fmt.Errorf("create test directory:\n%w", err)
-	}
-
-	if settings.SourceDir == "" {
-		if err := removePreviousTMTRepository(env, filepath.Join(testDir, "repo")); err != nil {
-			return "", fmt.Errorf("remove previous test metadata checkout:\n%w", err)
-		}
 	}
 
 	if settings.Provision != ProvisionVirtual {

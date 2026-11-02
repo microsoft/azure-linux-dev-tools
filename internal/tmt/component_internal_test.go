@@ -625,23 +625,56 @@ func TestDirsOverlap(t *testing.T) {
 	}
 }
 
-func TestRemovePreviousTMTRepositoryRemovesOnlyRepository(t *testing.T) {
+func TestExecuteComponentTMTTestsUsesFreshMetadataRepositories(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
-	testDir := "/project/tmt-test"
-	repoDir := filepath.Join(testDir, "repo")
-	artifactPath := filepath.Join(testDir, "tmt", "results.yaml")
-	staleMetadataPath := filepath.Join(repoDir, "stale-metadata")
+	testEnv.CmdFactory.RegisterCommandInSearchPath("python3")
+	testEnv.CmdFactory.RegisterCommandInSearchPath("git")
 
-	require.NoError(t, testEnv.TestFS.MkdirAll(repoDir, fileperms.PublicDir))
-	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, staleMetadataPath, []byte("stale"), fileperms.PrivateFile))
-	require.NoError(t, testEnv.TestFS.MkdirAll(filepath.Dir(artifactPath), fileperms.PublicDir))
-	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, artifactPath, []byte("preserve"), fileperms.PrivateFile))
+	var repositories []string
 
-	require.NoError(t, removePreviousTMTRepository(testEnv.Env, repoDir))
-	_, err := testEnv.TestFS.Stat(repoDir)
-	require.ErrorIs(t, err, fs.ErrNotExist)
-	_, err = testEnv.TestFS.Stat(artifactPath)
-	assert.NoError(t, err)
+	testEnv.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+		if filepath.Base(cmd.Args[0]) == "git" && len(cmd.Args) > 1 && cmd.Args[1] == "clone" {
+			repoDir := cmd.Args[len(cmd.Args)-1]
+			_, err := testEnv.TestFS.Stat(repoDir)
+			require.ErrorIs(t, err, fs.ErrNotExist)
+			require.NoError(t, testEnv.TestFS.MkdirAll(repoDir, fileperms.PublicDir))
+			require.NoError(t, fileutils.WriteFile(
+				testEnv.TestFS, filepath.Join(repoDir, "metadata"), []byte("retained"), fileperms.PrivateFile,
+			))
+			repositories = append(repositories, repoDir)
+		}
+
+		return nil
+	}
+
+	tests := []projectconfig.ResolvedTest{{
+		Name: "ci",
+		Definition: projectconfig.TestDefinition{Type: "tmt", Tmt: map[string]any{
+			"source": map[string]any{
+				"git-url": "https://example.test/tests.git",
+				"ref":     "0123456789012345678901234567890123456789",
+			},
+		}},
+	}}
+
+	roots := make([]string, 0, 2)
+
+	for range 2 {
+		results, err := executeComponentTMTTests(testEnv.Env, "/work", tests, tmtRunSettings{Provision: tmtProvisionLocal})
+		require.NoError(t, err)
+		require.Len(t, results, 1)
+		roots = append(roots, results[0].ArtifactDir)
+	}
+
+	require.Len(t, repositories, 2)
+	assert.NotEqual(t, roots[0], roots[1])
+
+	for i, root := range roots {
+		assert.Equal(t, filepath.Join(root, "001-ci", "repo"), repositories[i])
+		data, err := fileutils.ReadFile(testEnv.TestFS, filepath.Join(repositories[i], "metadata"))
+		require.NoError(t, err)
+		assert.Equal(t, "retained", string(data))
+	}
 }
 
 func TestRunHostCommandOutputIncludesStderr(t *testing.T) {
