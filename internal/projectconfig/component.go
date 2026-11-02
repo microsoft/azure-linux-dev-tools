@@ -653,6 +653,9 @@ func (c *ComponentConfig) WithAbsolutePaths(referenceDir string) *ComponentConfi
 
 	// Fix up paths.
 	result.Spec.Path = makeAbsolute(referenceDir, result.Spec.Path)
+	if result.GoVendor != nil {
+		result.GoVendor.ConfigFile = makeAbsolute(referenceDir, result.GoVendor.ConfigFile)
+	}
 
 	for i := range result.SourceFiles {
 		origin := &result.SourceFiles[i].Origin

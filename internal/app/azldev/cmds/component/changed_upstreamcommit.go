@@ -118,6 +118,7 @@ type componentComparisonInputs struct {
 	Config              projectconfig.ComponentConfig `json:"config"`
 	SourceIdentity      string                        `json:"sourceIdentity,omitempty"`
 	OverlaySourceHashes map[string]string             `json:"overlaySourceHashes,omitempty"`
+	GoVendorConfigHash  string                        `json:"goVendorConfigHash,omitempty"`
 	ReleaseVer          string                        `json:"releaseVer,omitempty"`
 }
 
@@ -252,6 +253,13 @@ func buildComponentComparisonInputs(
 		SourceIdentity: component.EffectiveUpstreamCommit(),
 	}
 
+	var err error
+
+	inputs.GoVendorConfigHash, err = component.GoVendor.SourceContentIdentity(fs)
+	if err != nil {
+		return inputs, fmt.Errorf("hashing Go vendor configuration:\n%w", err)
+	}
+
 	if component.Spec.SourceType == projectconfig.SpecSourceTypeLocal {
 		identity, err := sourceproviders.ResolveLocalSourceIdentity(
 			fs, filepath.Dir(component.Spec.Path),
@@ -314,7 +322,13 @@ func normalizeComponentForComparison(component projectconfig.ComponentConfig) pr
 	normalized.Build.Hints = projectconfig.ComponentBuildHints{}
 	normalized.OverlayFiles = nil
 	normalized.Publish = projectconfig.ComponentPublishConfig{}
+
 	normalized.Tests = nil
+	if component.GoVendor != nil {
+		vendor := *component.GoVendor
+		vendor.ConfigFile = ""
+		normalized.GoVendor = &vendor
+	}
 
 	normalized.Overlays = slices.Clone(component.Overlays)
 	for idx := range normalized.Overlays {

@@ -182,21 +182,32 @@ enabled = true
 | `enabled` | boolean | `false` | Enable conversion and vendor archive generation. An explicit `false` overrides inherited enablement. |
 | `module-dir` | string | `""` | Relative directory containing `go.mod`, resolved from the working directory at the end of the upstream `%prep` section. Empty uses that directory itself. No absolute paths, traversal, or RPM macros. |
 | `prep-packages` | array of string | `[]` | Additional RPM packages needed by upstream `%prep` commands or the selected license detector. Installed only in the isolated generation chroot. |
-| `tool-config` | string | `""` | Inline [go-vendor-tools TOML](https://fedora.gitlab.io/sigs/go/go-vendor-tools/config/), for dependency overrides, archive options, and reviewed license exceptions. When omitted for an already-vendored spec, reuse its upstream tool configuration. An explicit value replaces it. Use `module-dir`, not `general.go_mod_dir`. |
+| `config-file` | string | `""` | Path to a separate [go-vendor-tools TOML file](https://fedora.gitlab.io/sigs/go/go-vendor-tools/config/), relative to the configuration file that declares it. Its contents replace upstream tool settings; they are not merged. When no file is configured, reuse an already-vendored spec's upstream settings or use tool defaults for a new conversion. |
 
-The tool configuration is inline so its contents participate in component
-fingerprinting without checkout-dependent paths. Configured command hooks execute
-in the generation chroot; treat this configuration as trusted build code.
+Custom vendor settings must live in a separate file, typically
+`go-vendor-tools.toml` beside the component definition. Its contents participate
+in the component fingerprint; absolute checkout paths do not. Inherited paths
+retain their original declaration directory. Editing only this file makes the
+lock fingerprint stale and requires the normal update/render workflow.
 
 ```toml
+# example.comp.toml
 [components.example.go-vendor]
 enabled = true
-prep-packages = ["git"]
-tool-config = '''
+config-file = "go-vendor-tools.toml"
+```
+
+```toml
+# go-vendor-tools.toml
 [archive.dependency_overrides]
 "example.com/dependency" = "v1.2.3"
-'''
 ```
+
+The configured file must exist and contain valid TOML. An explicitly selected
+empty file is an empty replacement, not a request to fall back to upstream.
+Use `module-dir`, not `general.go_mod_dir`, for the module location.
+Configured command hooks execute in the generation chroot; treat this file as
+trusted build code. The old inline `tool-config` string/table is no longer supported.
 
 For previously unbundled specs, preparation emits `<component>-vendor.tar.bz2` and `azldev-go-vendor.toml`,
 allocating unused `Source` numbers automatically. These names are reserved for
@@ -209,6 +220,8 @@ For supported specs already using go-vendor-tools, preparation instead regenerat
 the existing vendor source, retaining its Source number, RPM-expanded filename,
 and configuration sidecar. It updates that archive's `sources` entry in place and
 verifies the existing `License:` expression without rewriting it.
+When `config-file` is set, its contents are staged under the configuration filename
+referenced by the prepared spec, retaining the existing Source number.
 
 All archive/spec/loose-file overlays run before conversion. Source preparation,
 builds, rendering (including `--check-only`), and source diffs use the same

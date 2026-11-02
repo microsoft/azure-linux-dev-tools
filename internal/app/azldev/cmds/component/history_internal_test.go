@@ -107,7 +107,6 @@ func TestCustomizationCollectorsCoverEveryFingerprintableField(t *testing.T) {
 		"ComponentConfig.GoVendor":    "appendGoVendorItems",
 		"GoVendorConfig.Enabled":      "go-vendor.enabled",
 		"GoVendorConfig.ModuleDir":    "go-vendor.module-dir",
-		"GoVendorConfig.ToolConfig":   "go-vendor.tool-config",
 		"GoVendorConfig.PrepPackages": "go-vendor.prep-packages",
 
 		// ComponentBuildConfig.

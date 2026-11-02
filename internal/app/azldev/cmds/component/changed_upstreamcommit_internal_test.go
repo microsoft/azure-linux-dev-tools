@@ -209,6 +209,28 @@ func TestBuildComponentComparisonInputs_ContentIdentities(t *testing.T) {
 	assert.NotEqual(t, second.OverlaySourceHashes, third.OverlaySourceHashes)
 }
 
+func TestBuildComponentComparisonInputs_GoVendorFile(t *testing.T) {
+	env := testutils.NewTestEnvWithoutLockfile(t)
+	enabled := true
+	component := projectconfig.ComponentConfig{GoVendor: &projectconfig.GoVendorConfig{
+		Enabled: &enabled, ConfigFile: "/project/vendor.toml",
+	}}
+	require.NoError(t, fileutils.WriteFile(env.FS(), component.GoVendor.ConfigFile,
+		[]byte("[archive]\ntidy = false\n"), fileperms.PublicFile))
+	first, err := buildComponentComparisonInputs(env.FS(), env.Env, &component)
+	require.NoError(t, err)
+	assert.Empty(t, first.Config.GoVendor.ConfigFile)
+	assert.Equal(t, "/project/vendor.toml", component.GoVendor.ConfigFile)
+	require.NotEmpty(t, first.GoVendorConfigHash)
+
+	require.NoError(t, fileutils.WriteFile(env.FS(), component.GoVendor.ConfigFile,
+		[]byte("[archive]\ntidy = true\n"), fileperms.PublicFile))
+	second, err := buildComponentComparisonInputs(env.FS(), env.Env, &component)
+	require.NoError(t, err)
+	assert.NotEqual(t, first.GoVendorConfigHash, second.GoVendorConfigHash)
+	assert.Equal(t, first.Config, second.Config)
+}
+
 func TestLoadHistoricalProject_UsesNormalIncludesAndMerging(t *testing.T) {
 	rootConfig := []byte(`includes = [
     "config/components.toml",

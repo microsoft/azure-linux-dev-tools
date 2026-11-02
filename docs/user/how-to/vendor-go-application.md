@@ -15,6 +15,31 @@ Add this to the component definition:
 enabled = true
 ```
 
+For custom vendor settings, use a separate file beside the component definition:
+
+```toml
+# example.comp.toml
+[components.example.go-vendor]
+enabled = true
+config-file = "go-vendor-tools.toml"
+```
+
+```toml
+# go-vendor-tools.toml
+[archive]
+use_module_proxy = true
+
+[licensing]
+detector = "askalono"
+```
+
+This file replaces, rather than merges with, upstream settings. Carry forward
+any required upstream license exceptions. Omit `config-file` to reuse those
+settings unchanged. Paths are relative to the declaring component configuration,
+including when inherited from defaults; no adjacent file is loaded implicitly.
+File-only edits affect the component fingerprint. Inline `tool-config` values
+are no longer accepted.
+
 Then prepare the complete build inputs:
 
 ```sh
@@ -35,7 +60,7 @@ This retains upstream patches and edits to module files. It then calls
 `go_vendor_archive create` on the prepared module tree, extracts the result for
 license detection, and runs `go_vendor_license` without interactive prompts.
 Unrecognized licenses fail preparation; add reviewed, hash-qualified exceptions
-to `tool-config` rather than suppressing detection.
+to the file selected by `config-file` rather than suppressing detection.
 
 The output includes the converted spec, all its original sources and patches,
 `<component>-vendor.tar.bz2`, and `azldev-go-vendor.toml`. The archive is recorded
@@ -84,9 +109,10 @@ the replacement does not consume the old vendor payload. RPM expands the
 upstream archive filename; the regenerated archive replaces that file and its
 `sources` checksum rather than adding a second vendor archive.
 
-When `tool-config` is omitted, the upstream go-vendor-tools configuration is used,
-including its reviewed license exceptions. An explicit `tool-config` replaces
-that configuration. The detected licenses are verified against the existing
+When `config-file` is omitted, the upstream go-vendor-tools configuration is used,
+including its reviewed license exceptions. An explicit file replaces that configuration
+even when empty; missing files or invalid TOML fail without falling back.
+The detected licenses are verified against the existing
 main-package `License:` expression; mismatches fail instead of rewriting it.
 The source-fetch phase currently still downloads the upstream vendor archive
 alongside the other upstream sources, before regenerating its contents.

@@ -14,6 +14,7 @@ import (
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/govendor"
+	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/mock"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spec"
@@ -66,7 +67,7 @@ func (p *sourcePreparerImpl) prepareGoVendor(
 		return fmt.Errorf("planning Go vendoring for %#q:\n%w", component.GetName(), err)
 	}
 
-	toolConfig, err := p.resolveGoVendorConfig(outputDir, plan, config.ToolConfig)
+	toolConfig, err := p.resolveGoVendorConfig(outputDir, plan, config)
 	if err != nil {
 		return err
 	}
@@ -82,7 +83,7 @@ func (p *sourcePreparerImpl) prepareGoVendor(
 	artifact, err := govendor.Generate(ctx, p.fs, p.goVendorRunner, govendor.Request{
 		SourceDir: outputDir, WorkDir: scratch, SpecName: filepath.Base(specPath), PrepSpec: plan.PrepSpec,
 		ArchiveFile: plan.ArchiveFile, ArchiveSuffix: plan.ArchiveSuffix, ModuleDir: config.ModuleDir,
-		ToolConfig: toolConfig, Packages: config.PrepPackages, ExpectedLicense: plan.ExpectedLicense,
+		ConfigContents: toolConfig, Packages: config.PrepPackages, ExpectedLicense: plan.ExpectedLicense,
 	})
 	if err != nil {
 		return fmt.Errorf("generating Go vendor sources:\n%w", err)
@@ -92,7 +93,7 @@ func (p *sourcePreparerImpl) prepareGoVendor(
 }
 
 func (p *sourcePreparerImpl) resolveGoVendorConfig(
-	outputDir string, plan *spec.GoVendorSpec, configured string,
+	outputDir string, plan *spec.GoVendorSpec, config *projectconfig.GoVendorConfig,
 ) (string, error) {
 	if !plan.AllowReplacement {
 		if err := p.checkGoVendorSourceCollision(outputDir, plan.ArchiveFile, plan.ConfigName); err != nil {
@@ -100,8 +101,17 @@ func (p *sourcePreparerImpl) resolveGoVendorConfig(
 		}
 	}
 
-	if configured != "" || !plan.AllowReplacement {
-		return configured, nil
+	if config.ConfigFile != "" {
+		content, err := config.ReadConfigFile(p.fs)
+		if err != nil {
+			return "", fmt.Errorf("loading Go vendor configuration:\n%w", err)
+		}
+
+		return content, nil
+	}
+
+	if !plan.AllowReplacement {
+		return "", nil
 	}
 
 	data, err := fileutils.ReadFile(p.fs, filepath.Join(outputDir, plan.ConfigName))

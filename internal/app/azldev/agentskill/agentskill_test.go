@@ -168,6 +168,8 @@ func TestComponentTomlSkillDocumentsGoVendoring(t *testing.T) {
 		assert.Contains(t, doc, "does\nnot run `go2rpm`")
 		assert.Contains(t, doc, "Rendering and source diffs also generate")
 		assert.Contains(t, doc, "reviewed license exceptions")
+		assert.Contains(t, doc, `config-file = "go-vendor-tools.toml"`)
+		assert.Contains(t, doc, "Inline `tool-config` is not supported.")
 	}
 }
 

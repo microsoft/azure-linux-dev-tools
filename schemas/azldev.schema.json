@@ -699,10 +699,13 @@
           "title": "Module directory",
           "description": "Relative module directory within the prepared source tree; defaults to its root"
         },
-        "tool-config": {
+        "config-file": {
           "type": "string",
-          "title": "Tool configuration",
-          "description": "Inline go-vendor-tools TOML for dependency overrides and licensing settings"
+          "title": "Vendor configuration file",
+          "description": "Path to a go-vendor-tools TOML file relative to the declaring component configuration. Replaces upstream settings when specified",
+          "examples": [
+            "go-vendor-tools.toml"
+          ]
         },
         "prep-packages": {
           "items": {

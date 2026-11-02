@@ -45,11 +45,17 @@ func TestPrepareSourcesGoVendor(t *testing.T) {
 			component := components_testutils.NewMockComponent(ctrl)
 			manager := sourceproviders_test.NewMockSourceManager(ctrl)
 			config := &projectconfig.ComponentConfig{
-				GoVendor: &projectconfig.GoVendorConfig{Enabled: lo.ToPtr(true), PrepPackages: []string{"git"}},
+				GoVendor: &projectconfig.GoVendorConfig{
+					Enabled: lo.ToPtr(true), PrepPackages: []string{"git"}, ConfigFile: "/project/vendor.toml",
+				},
 				Overlays: []projectconfig.ComponentOverlay{{
 					Type: "spec-set-tag", Tag: "Summary", Value: "overlaid",
 				}},
 			}
+
+			const settings = "# reviewed settings\n[archive]\nuse_module_proxy = true\n"
+			require.NoError(t, fileutils.WriteFile(ctx.FS(), config.GoVendor.ConfigFile,
+				[]byte(settings), fileperms.PublicFile))
 
 			component.EXPECT().GetName().AnyTimes().Return("app")
 			component.EXPECT().GetConfig().AnyTimes().Return(config)
@@ -78,6 +84,10 @@ func TestPrepareSourcesGoVendor(t *testing.T) {
 				assert.Contains(t, cmd.Args, "--enable-network")
 				assert.Contains(t, strings.Join(cmd.Args, " "), "go_vendor_archive")
 				staging := goVendorTestStaging(t, ctx)
+				stagedConfig, err := fileutils.ReadFile(ctx.FS(), filepath.Join(staging, govendor.ConfigFilename))
+				require.NoError(t, err)
+				assert.Equal(t, settings, string(stagedConfig))
+
 				prep, err := fileutils.ReadFile(ctx.FS(), filepath.Join(filepath.Dir(staging), "sources", "app.spec"))
 				require.NoError(t, err)
 				assert.Contains(t, string(prep), "Summary: overlaid", "overlays must run before generation")
@@ -108,6 +118,10 @@ func TestPrepareSourcesGoVendor(t *testing.T) {
 			assert.Contains(t, string(output), "License: Apache-2.0 AND MIT")
 			assert.Contains(t, string(output), "tar -xf %{SOURCE1}")
 			assert.NotContains(t, string(output), "BuildRequires: golang(")
+
+			publishedConfig, err := fileutils.ReadFile(ctx.FS(), "/output/"+govendor.ConfigFilename)
+			require.NoError(t, err)
+			assert.Equal(t, settings, string(publishedConfig))
 
 			digest, err := fileutils.ComputeFileHash(ctx.FS(), fileutils.HashTypeSHA512, "/output/app-vendor.tar.bz2")
 			require.NoError(t, err)

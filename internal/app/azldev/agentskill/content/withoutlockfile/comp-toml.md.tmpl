@@ -43,8 +43,12 @@ not run `go2rpm`. Rendering and source diffs also generate the vendor archive an
 require downloads. Review the generated cumulative `License:` expression.
 
 Use `module-dir` for a module below the final prep working directory,
-`prep-packages` for additional chroot tools, and inline `tool-config` for
-go-vendor-tools dependency overrides or reviewed license exceptions.
+`prep-packages` for additional chroot tools, and `config-file = "go-vendor-tools.toml"`
+for custom settings in a separate native TOML file beside the component definition.
+Keep reviewed license exceptions in that file.
+The path is relative to the declaring config, and file contents are fingerprinted.
+It replaces upstream settings without merging; an explicit empty file is still a
+replacement, and a missing file is an error. Inline `tool-config` is not supported.
 Generated `<component>-vendor.tar.bz2` and `azldev-go-vendor.toml` must not also be
 declared as `source-files`. For supported already-vendored specs, regenerate the
 existing vendor Source instead, reuse upstream tool configuration unless overridden,

@@ -52,12 +52,12 @@ func TestGoVendorPreparerOptions(t *testing.T) {
 func TestGoVendorHistoryCustomizations(t *testing.T) {
 	config := &projectconfig.GoVendorConfig{
 		Enabled: lo.ToPtr(true), ModuleDir: "cmd/app",
-		ToolConfig: "[archive]\ntidy = false", PrepPackages: []string{"git"},
+		ConfigFile: "/project/go-vendor-tools.toml", PrepPackages: []string{"git"},
 	}
 	assert.Equal(t, []CustomizationItem{
 		{Kind: "go-vendor.enabled", Value: "true"},
 		{Kind: "go-vendor.module-dir", Value: "cmd/app"},
-		{Kind: "go-vendor.tool-config", Value: config.ToolConfig},
+		{Kind: "go-vendor.config-file", Value: config.ConfigFile},
 		{Kind: "go-vendor.prep-packages", Value: "git"},
 	}, collectCustomizations("app", &projectconfig.ComponentConfig{GoVendor: config}))
 	assert.Empty(t, appendGoVendorItems(nil, &projectconfig.GoVendorConfig{}))

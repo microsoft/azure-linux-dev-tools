@@ -37,7 +37,7 @@ const (
 type Request struct {
 	SourceDir, WorkDir, SpecName string
 	ArchiveFile, ArchiveSuffix   string
-	ModuleDir, ToolConfig        string
+	ModuleDir, ConfigContents    string
 	ExpectedLicense              string
 	PrepSpec                     []byte
 	Packages                     []string
@@ -90,7 +90,7 @@ func stage(fs opctx.FS, request Request, sourceCopy, staging string) error {
 
 	for path, data := range map[string][]byte{
 		filepath.Join(sourceCopy, request.SpecName): request.PrepSpec,
-		filepath.Join(staging, ConfigFilename):      []byte(request.ToolConfig),
+		filepath.Join(staging, ConfigFilename):      []byte(request.ConfigContents),
 	} {
 		if err := fileutils.WriteFile(fs, path, data, fileperms.PublicFile); err != nil {
 			return fmt.Errorf("staging Go vendor input %#q:\n%w", path, err)
@@ -134,7 +134,7 @@ func execute(ctx context.Context, runner *mock.Runner, request Request) (err err
 	output, err := cmd.RunAndGetOutput(ctx)
 	if err != nil {
 		return fmt.Errorf("go vendor generation or license detection failed; use 'prep-packages' for missing prep tools "+
-			"and 'tool-config' for reviewed license exceptions:\n%s\n%w", output, err)
+			"and 'config-file' for reviewed license exceptions:\n%s\n%w", output, err)
 	}
 
 	return nil

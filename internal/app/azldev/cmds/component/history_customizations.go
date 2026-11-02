@@ -47,8 +47,8 @@ func appendGoVendorItems(items []CustomizationItem, config *projectconfig.GoVend
 		items = append(items, CustomizationItem{Kind: "go-vendor.module-dir", Value: config.ModuleDir})
 	}
 
-	if config.ToolConfig != "" {
-		items = append(items, CustomizationItem{Kind: "go-vendor.tool-config", Value: config.ToolConfig})
+	if config.ConfigFile != "" {
+		items = append(items, CustomizationItem{Kind: "go-vendor.config-file", Value: config.ConfigFile})
 	}
 
 	for _, name := range config.PrepPackages {
