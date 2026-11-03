@@ -263,7 +263,7 @@ func TestRenderRPMAutospecCommands(t *testing.T) {
 
 func TestExpandRelease(t *testing.T) {
 	const initFailure = "initialization failure"
-	for _, phase := range []string{"success", initFailure, "query failure"} {
+	for _, phase := range []string{"success", "diagnostics", "missing release", initFailure, "query failure"} {
 		t.Run(phase, func(t *testing.T) {
 			ctx := newMockProcessorTestCtx()
 			ctx.CmdFactory.RunHandler = func(_ *exec.Cmd) error {
@@ -283,15 +283,21 @@ func TestExpandRelease(t *testing.T) {
 
 				args, err := shellquote.Split(cmd.Args[len(cmd.Args)-1])
 				require.NoError(t, err)
-				assert.Contains(t, args, "%{RELEASE}")
+				assert.Contains(t, args, "release=%{RELEASE}\n")
 				assert.Contains(t, joined, "_sourcedir /tmp/provenance")
 				assert.Contains(t, joined, "/tmp/provenance/curl.spec")
 
-				if phase == "query failure" {
+				switch phase {
+				case "query failure":
 					return "", errRpmautospecExit
+				case "diagnostics":
+					return "error: %changelog not in descending chronological order\n" +
+						"release=9.fc43\nwarning: trailing diagnostic\n", nil
+				case "missing release":
+					return "error: %changelog not in descending chronological order\nrelease=\n", nil
+				default:
+					return "release=9.fc43\n", nil
 				}
-
-				return "9.fc43\n", nil
 			}
 			processor := NewMockProcessor(ctx, "/mock/config")
 			out, err := processor.ExpandRelease(ctx, "/committed", "curl.spec")
@@ -303,9 +309,11 @@ func TestExpandRelease(t *testing.T) {
 				require.ErrorIs(t, err, errInitBoom)
 			case "query failure":
 				require.ErrorIs(t, err, errRpmautospecExit)
+			case "missing release":
+				require.ErrorContains(t, err, "no Release field")
 			default:
 				require.NoError(t, err)
-				assert.Equal(t, "9.fc43\n", out)
+				assert.Equal(t, "9.fc43", out)
 			}
 		})
 	}

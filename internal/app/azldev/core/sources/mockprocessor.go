@@ -389,7 +389,7 @@ func (p *MockProcessor) ExpandRelease(ctx context.Context, specHostDir, specFile
 	runner.AddBindMount(specHostDir, chrootProvenanceDir)
 
 	cmd, err := runner.CmdInChroot(ctx, []string{
-		"rpmspec", "-q", "--srpm", "--queryformat", "%{RELEASE}",
+		"rpmspec", "-q", "--srpm", "--queryformat", "release=%{RELEASE}\n",
 		"--define", "_sourcedir " + chrootProvenanceDir,
 		"--define", "_specdir " + chrootProvenanceDir,
 		filepath.Join(chrootProvenanceDir, specFilename),
@@ -403,7 +403,13 @@ func (p *MockProcessor) ExpandRelease(ctx context.Context, specHostDir, specFile
 		return "", fmt.Errorf("querying committed Release in mock chroot:\n%w", err)
 	}
 
-	return out, nil
+	for _, line := range strings.Split(out, "\n") {
+		if release, found := strings.CutPrefix(strings.TrimSpace(line), "release="); found && release != "" {
+			return release, nil
+		}
+	}
+
+	return "", fmt.Errorf("no Release field in committed spec query output %#q", out)
 }
 
 func (p *MockProcessor) runRPMAutospec(
