@@ -38,6 +38,7 @@ type locklessRenderUpdate struct {
 
 type lastRender struct {
 	spec     string
+	tree     *object.Tree
 	previous string
 	current  string
 }
@@ -45,6 +46,7 @@ type lastRender struct {
 type renderAutorelease interface {
 	GenerateChangelog(ctx context.Context, dir, filename string) (string, error)
 	CalculateBaseRelease(ctx context.Context, dir, filename string) (string, error)
+	ExpandRelease(ctx context.Context, dir, filename string) (string, error)
 }
 
 func prepareLocklessRender(
@@ -97,7 +99,7 @@ func readLastRender(
 		return history, err
 	}
 
-	_, err = tree.Tree(path)
+	history.tree, err = tree.Tree(path)
 	if errors.Is(err, object.ErrDirectoryNotFound) {
 		return history, nil
 	}
@@ -292,8 +294,12 @@ func collectRenderUpstreamChanges(
 func locklessRenderRelease(
 	env *azldev.Env, autospec renderAutorelease, dir, filename, release string, history lastRender,
 ) (string, error) {
-	if history.spec != "" || !sources.ReleaseUsesAutorelease(release) || env.DryRun() {
+	if !sources.ReleaseUsesAutorelease(release) || env.DryRun() {
 		return release, nil
+	}
+
+	if history.spec != "" {
+		return carryRenderedAutorelease(env, autospec, dir, filename, release, history)
 	}
 
 	changelog, err := autospec.GenerateChangelog(env, dir, filename)
@@ -312,6 +318,72 @@ func locklessRenderRelease(
 	}
 
 	return withAutoreleaseBase(release, calculated)
+}
+
+var (
+	renderedAutoreleaseMarker = regexp.MustCompile(`(?m)^## RPMAUTOSPEC:[^\r\n]*autorelease`)
+	renderedReleaseNumber     = regexp.MustCompile(`^[0-9]+`)
+)
+
+func carryRenderedAutorelease(
+	env *azldev.Env, autospec renderAutorelease, dir, filename, release string, history lastRender,
+) (string, error) {
+	if !renderedAutoreleaseMarker.MatchString(history.spec) {
+		return release, nil
+	}
+
+	expanded, err := expandCommittedRelease(env, autospec, dir, filename, history)
+	if err != nil {
+		return "", fmt.Errorf("expanding committed Release:\n%w", err)
+	}
+
+	release, err = withAutoreleaseBase(release, renderedReleaseNumber.FindString(strings.TrimSpace(expanded)))
+	if err != nil {
+		return "", fmt.Errorf("using committed Release %#q as autorelease base:\n%w", expanded, err)
+	}
+
+	previous := []byte(history.spec)
+
+	start, end, err := renderChangelogBounds(previous, spec.EditorLegacy)
+	if err != nil {
+		return "", err
+	}
+
+	_, changelog, _ := strings.Cut(string(previous[start:end]), "\n")
+	if err := fileutils.WriteFile(env.FS(), filepath.Join(dir, "changelog"), []byte(changelog),
+		fileperms.PublicFile); err != nil {
+		return "", fmt.Errorf("writing committed 'changelog' content:\n%w", err)
+	}
+
+	return release, nil
+}
+
+func expandCommittedRelease(
+	env *azldev.Env, autospec renderAutorelease, dir, filename string, history lastRender,
+) (release string, err error) {
+	snapshot, err := fileutils.MkdirTemp(env.FS(), filepath.Dir(dir), "azldev-render-previous-")
+	if err != nil {
+		return "", fmt.Errorf("creating committed dist-git snapshot:\n%w", err)
+	}
+	defer fileutils.RemoveAllAndUpdateErrorIfNil(env.FS(), snapshot, &err)
+
+	if history.tree != nil {
+		if err := copyTreeToFS(history.tree, env.FS(), snapshot); err != nil {
+			return "", fmt.Errorf("copying committed dist-git snapshot:\n%w", err)
+		}
+	}
+
+	if err := fileutils.WriteFile(env.FS(), filepath.Join(snapshot, filename), []byte(history.spec),
+		fileperms.PublicFile); err != nil {
+		return "", fmt.Errorf("writing committed spec snapshot:\n%w", err)
+	}
+
+	release, err = autospec.ExpandRelease(env, snapshot, filename)
+	if err != nil {
+		return "", fmt.Errorf("querying committed spec:\n%w", err)
+	}
+
+	return release, nil
 }
 
 func restoreLocklessRelease(
@@ -358,14 +430,14 @@ var autoreleaseBaseArg = regexp.MustCompile(`(^|\s)-b(?:\s+|=)?[0-9]+`)
 func withAutoreleaseBase(release, output string) (string, error) {
 	fields := strings.Fields(output)
 	if len(fields) == 0 {
-		return "", errors.New("rpmautospec returned an empty release number")
+		return "", errors.New("empty autorelease base")
 	}
 
 	number := fields[len(fields)-1]
 
 	value, err := strconv.Atoi(number)
 	if err != nil || value < 1 {
-		return "", fmt.Errorf("rpmautospec returned invalid release number %#q", output)
+		return "", fmt.Errorf("invalid autorelease base %#q", output)
 	}
 
 	if autoreleaseBaseArg.MatchString(release) {

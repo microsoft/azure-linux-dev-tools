@@ -207,6 +207,8 @@ func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, doc, "fully parsed committed TOML")
 	assert.Contains(t, doc, "automatically commits only that directory")
+	assert.Contains(t, doc, "## RPMAUTOSPEC:")
+	assert.Contains(t, doc, "leading integer of the committed,")
 	assert.NotContains(t, doc, "git commit --amend")
 }
 

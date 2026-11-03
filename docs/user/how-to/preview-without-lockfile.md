@@ -126,6 +126,15 @@ For an initial `%autorelease` render, it generates the complete upstream
 release, and adds or replaces the macro's `-b` parameter. These rpmautospec
 operations run inside the shared mock chroot.
 
+For an existing output whose spec has a line starting with `## RPMAUTOSPEC:`
+and containing `autorelease` on that same line, a `%autorelease` upstream spec
+inherits its base from the committed rendered spec. The renderer expands the
+committed `Release:` with `rpmspec` in mock, using a temporary copy of the
+committed dist-git files, and uses its leading integer as `-b` (for example,
+`9.fc43` becomes `-b 9`). It also replaces the working checkout's `changelog`
+file with the committed `%changelog` body, excluding the section header.
+The later version-change release reset still applies.
+
 The last commit touching the component output is the **last render commit**.
 The renderer fully loads TOML, including includes and component defaults, at
 that commit and at the current project commit to compare `spec.upstream-commit`.

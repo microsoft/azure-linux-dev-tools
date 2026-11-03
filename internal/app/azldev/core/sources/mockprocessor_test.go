@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kballard/go-shellquote"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/mock"
 	"github.com/stretchr/testify/assert"
@@ -256,6 +257,56 @@ func TestRenderRPMAutospecCommands(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Equal(t, "unchanged output\n", out)
+		})
+	}
+}
+
+func TestExpandRelease(t *testing.T) {
+	const initFailure = "initialization failure"
+	for _, phase := range []string{"success", initFailure, "query failure"} {
+		t.Run(phase, func(t *testing.T) {
+			ctx := newMockProcessorTestCtx()
+			ctx.CmdFactory.RunHandler = func(_ *exec.Cmd) error {
+				if phase == initFailure {
+					return errInitBoom
+				}
+
+				return nil
+			}
+			queried := false
+			ctx.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				queried = true
+				joined := strings.Join(cmd.Args, " ")
+				assert.Contains(t, joined, "--unpriv")
+				assert.Contains(t, joined, `bind_mount:dirs=[("/committed", "/tmp/provenance")]`)
+				assert.Contains(t, joined, "rpmspec -q --srpm --queryformat")
+
+				args, err := shellquote.Split(cmd.Args[len(cmd.Args)-1])
+				require.NoError(t, err)
+				assert.Contains(t, args, "%{RELEASE}")
+				assert.Contains(t, joined, "_sourcedir /tmp/provenance")
+				assert.Contains(t, joined, "/tmp/provenance/curl.spec")
+
+				if phase == "query failure" {
+					return "", errRpmautospecExit
+				}
+
+				return "9.fc43\n", nil
+			}
+			processor := NewMockProcessor(ctx, "/mock/config")
+			out, err := processor.ExpandRelease(ctx, "/committed", "curl.spec")
+
+			assert.Equal(t, phase != initFailure, queried)
+
+			switch phase {
+			case initFailure:
+				require.ErrorIs(t, err, errInitBoom)
+			case "query failure":
+				require.ErrorIs(t, err, errRpmautospecExit)
+			default:
+				require.NoError(t, err)
+				assert.Equal(t, "9.fc43\n", out)
+			}
 		})
 	}
 }

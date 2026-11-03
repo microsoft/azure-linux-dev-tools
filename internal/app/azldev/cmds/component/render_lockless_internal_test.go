@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -65,6 +66,12 @@ release-ver = "1"
 	history, err := readLastRender(env.Env, repo, "/project", "SPECS/c/curl", "curl")
 	require.NoError(t, err)
 	assert.Equal(t, oldSpec, history.spec)
+	require.NotNil(t, history.tree)
+	committed, err := history.tree.File("curl.spec")
+	require.NoError(t, err)
+	content, err := committed.Contents()
+	require.NoError(t, err)
+	assert.Equal(t, oldSpec, content)
 	assert.Equal(t, "aaaaaaa", history.previous)
 	assert.Equal(t, "bbbbbbb", history.current)
 }
@@ -125,8 +132,9 @@ upstream-commit = "bbbbbbb"
 }
 
 type renderAutospecStub struct {
-	calls []string
-	err   error
+	calls  []string
+	err    error
+	expand func(string, string) (string, error)
 }
 
 func (s *renderAutospecStub) GenerateChangelog(_ context.Context, _, _ string) (string, error) {
@@ -139,6 +147,12 @@ func (s *renderAutospecStub) CalculateBaseRelease(_ context.Context, _, _ string
 	s.calls = append(s.calls, "release")
 
 	return "Calculated release number: 42\n", s.err
+}
+
+func (s *renderAutospecStub) ExpandRelease(_ context.Context, dir, filename string) (string, error) {
+	s.calls = append(s.calls, "expand")
+
+	return s.expand(dir, filename)
 }
 
 func TestPrepareLocklessSpec_ReleaseChangelogAndUpstreamChanges(t *testing.T) {
@@ -251,6 +265,148 @@ func TestPrepareLocklessSpec_ReleaseChangelogAndUpstreamChanges(t *testing.T) {
 			} else {
 				assert.Empty(t, stub.calls)
 			}
+		})
+	}
+}
+
+const carriedAutoreleaseChangelog = "* Mon Nov 02 2026 Packager - 1-9\n- Preserve spaces  \n\n"
+
+func testCommittedAutoreleaseHistory(t *testing.T) lastRender {
+	t.Helper()
+
+	content := "## RPMAUTOSPEC: processed with autorelease, autochangelog\n%global carried_release 9\n" +
+		renderTestSpec("1", "%{carried_release}%{?dist}", carriedAutoreleaseChangelog) +
+		"%files\n/file\n"
+	repo, commits := testRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{
+		"curl.spec": []byte(content), "macros.inc": []byte("committed macro definitions"),
+	}}})
+	tree, err := resolveTree(repo, commits[0])
+	require.NoError(t, err)
+
+	return lastRender{spec: content, tree: tree, previous: "old", current: "old"}
+}
+
+func TestPrepareLocklessSpec_CommittedAutorelease(t *testing.T) {
+	for _, testCase := range []struct {
+		name            string
+		version         string
+		upstreamChanged bool
+		wantRelease     string
+	}{
+		{name: "same upstream", version: "1", wantRelease: "%autorelease -b 9 -e test"},
+		{
+			name: "new upstream same version", version: "1", upstreamChanged: true,
+			wantRelease: "%autorelease -b 9 -e test",
+		},
+		{
+			name: "version reset", version: "2", upstreamChanged: true,
+			wantRelease: "%autorelease -b 2 -e test",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+
+			history := testCommittedAutoreleaseHistory(t)
+			if testCase.upstreamChanged {
+				history.current = "new"
+			}
+
+			require.NoError(t, fileutils.WriteFile(env.TestFS, "/working/curl.spec",
+				[]byte(renderTestSpec(testCase.version, "%autorelease -b 2 -e test", "%autochangelog\n")),
+				fileperms.PublicFile))
+			require.NoError(t, fileutils.WriteFile(env.TestFS, "/working/changelog", []byte("stale"),
+				fileperms.PublicFile))
+
+			var snapshot string
+
+			stub := &renderAutospecStub{expand: func(dir, filename string) (string, error) {
+				snapshot = dir
+				content, err := fileutils.ReadFile(env.TestFS, filepath.Join(dir, filename))
+				require.NoError(t, err)
+				assert.Equal(t, history.spec, string(content))
+				content, err = fileutils.ReadFile(env.TestFS, filepath.Join(dir, "macros.inc"))
+				require.NoError(t, err)
+				assert.Equal(t, "committed macro definitions", string(content))
+
+				return " 9.fc43\n", nil
+			}}
+
+			env.CmdFactory.RegisterCommandInSearchPath("rpmdev-bumpspec")
+			env.CmdFactory.RunAndGetOutputHandler = func(_ *exec.Cmd) (string, error) {
+				return "abc123 Upstream fix\n", nil
+			}
+			bumped := false
+			env.CmdFactory.RunHandler = func(_ *exec.Cmd) error {
+				bumped = true
+				content, err := fileutils.ReadFile(env.TestFS, "/working/curl.spec")
+				require.NoError(t, err)
+				assert.Contains(t, string(content), "Release: "+testCase.wantRelease+"\n")
+				assert.Contains(t, string(content), "%changelog\n%autochangelog\n")
+				content, err = fileutils.ReadFile(env.TestFS, "/working/changelog")
+				require.NoError(t, err)
+				assert.Equal(t, carriedAutoreleaseChangelog, string(content))
+
+				return nil
+			}
+			err := prepareLocklessSpec(env.Env, stub, "/working", "curl", spec.EditorLegacy,
+				history, &locklessRenderUpdate{subject: "updated curl"})
+			require.NoError(t, err)
+			assert.True(t, bumped)
+			assert.Equal(t, []string{"expand"}, stub.calls)
+			assert.NotEqual(t, "/working", snapshot)
+			exists, err := fileutils.DirExists(env.TestFS, snapshot)
+			require.NoError(t, err)
+			assert.False(t, exists)
+		})
+	}
+}
+
+func TestLocklessRenderRelease_RequiresAutoreleaseMarker(t *testing.T) {
+	for _, testCase := range []struct{ header, release string }{
+		{"## RPMAUTOSPEC: autochangelog\n", "%autorelease"},
+		{"## RPMAUTOSPEC: autochangelog\nautorelease\n", "%autorelease"},
+		{" ## RPMAUTOSPEC: autorelease\n", "%autorelease"},
+		{"## RPMAUTOSPEC: autorelease\n", "1%{?dist}"},
+	} {
+		env := testutils.NewTestEnv(t)
+		stub := &renderAutospecStub{}
+		history := lastRender{spec: testCase.header + renderTestSpec("1", "9", "old\n")}
+		got, err := locklessRenderRelease(env.Env, stub, "/working", "curl.spec", testCase.release, history)
+		require.NoError(t, err)
+		assert.Equal(t, testCase.release, got)
+		assert.Empty(t, stub.calls)
+	}
+}
+
+func TestPrepareLocklessSpec_CommittedAutoreleaseFailure(t *testing.T) {
+	for _, testCase := range []struct {
+		name, output, want string
+		err                error
+	}{
+		{name: "query failure", err: errors.New("query failed"), want: "expanding committed Release"},
+		{name: "unresolved release", output: "%{unknown}", want: "using committed Release"},
+		{name: "zero base", output: "0.fc43", want: "using committed Release"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			original := renderTestSpec("1", "%autorelease", "%autochangelog\n")
+			require.NoError(t, fileutils.WriteFile(env.TestFS, "/working/curl.spec",
+				[]byte(original), fileperms.PublicFile))
+			require.NoError(t, fileutils.WriteFile(env.TestFS, "/working/changelog",
+				[]byte("original changelog"), fileperms.PublicFile))
+
+			stub := &renderAutospecStub{expand: func(_, _ string) (string, error) {
+				return testCase.output, testCase.err
+			}}
+			err := prepareLocklessSpec(env.Env, stub, "/working", "curl", spec.EditorLegacy,
+				testCommittedAutoreleaseHistory(t), &locklessRenderUpdate{subject: "updated curl"})
+			require.ErrorContains(t, err, testCase.want)
+			content, err := fileutils.ReadFile(env.TestFS, "/working/curl.spec")
+			require.NoError(t, err)
+			assert.Equal(t, original, string(content))
+			content, err = fileutils.ReadFile(env.TestFS, "/working/changelog")
+			require.NoError(t, err)
+			assert.Equal(t, "original changelog", string(content))
 		})
 	}
 }

@@ -375,6 +375,37 @@ func (p *MockProcessor) GenerateChangelog(ctx context.Context, specHostDir, spec
 	return p.runRPMAutospec(ctx, specHostDir, specFilename, "generate-changelog")
 }
 
+// ExpandRelease queries the spec's macro-expanded Release inside the shared mock chroot.
+func (p *MockProcessor) ExpandRelease(ctx context.Context, specHostDir, specFilename string) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if err := p.initOnce(ctx); err != nil {
+		return "", err
+	}
+
+	runner := p.runner.Clone()
+	runner.WithUnprivileged()
+	runner.AddBindMount(specHostDir, chrootProvenanceDir)
+
+	cmd, err := runner.CmdInChroot(ctx, []string{
+		"rpmspec", "-q", "--srpm", "--queryformat", "%{RELEASE}",
+		"--define", "_sourcedir " + chrootProvenanceDir,
+		"--define", "_specdir " + chrootProvenanceDir,
+		filepath.Join(chrootProvenanceDir, specFilename),
+	}, false)
+	if err != nil {
+		return "", fmt.Errorf("creating committed Release query in mock chroot:\n%w", err)
+	}
+
+	out, err := cmd.RunAndGetOutput(ctx)
+	if err != nil {
+		return "", fmt.Errorf("querying committed Release in mock chroot:\n%w", err)
+	}
+
+	return out, nil
+}
+
 func (p *MockProcessor) runRPMAutospec(
 	ctx context.Context, specHostDir, specFilename string, args ...string,
 ) (string, error) {

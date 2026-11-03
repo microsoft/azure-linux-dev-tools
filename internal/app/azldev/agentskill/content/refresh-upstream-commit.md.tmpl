@@ -59,7 +59,12 @@ Rendering preserves the committed downstream Release and changelog for static
 specs, resets Release to its original upstream value on a version change, and
 runs host `rpmdev-bumpspec -c` with `updated <component-name>` plus upstream
 changes. An initial `%autorelease` render generates the complete upstream
-changelog and calculates its base release inside mock. Existing overlays,
+changelog and calculates its base release inside mock. For existing output
+marked by a line starting with `## RPMAUTOSPEC:` and containing `autorelease`,
+an `%autorelease` upstream spec inherits the leading integer of the committed,
+macro-expanded Release as `-b` and its committed `%changelog` body as the
+working `changelog` file. Expansion uses the committed files inside mock;
+the later version-change release reset still applies. Existing overlays,
 synthetic history, RPM expansion, and filtering still run afterward.
 
 Rendering then replaces `{{ .RenderedSpecsDir }}/<first-char>/<name>/` and
