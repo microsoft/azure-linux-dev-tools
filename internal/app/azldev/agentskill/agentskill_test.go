@@ -201,6 +201,7 @@ func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
 		require.NoError(t, err)
 		assert.Contains(t, doc, "host `rpmdev-bumpspec`")
 		assert.Contains(t, doc, "`--check-only` never creates project commits")
+		assert.Contains(t, doc, "never uses mock or `rpmautospec process-distgit`")
 	}
 
 	doc, err := agentskill.SkillDocument("azldev-refresh-upstream-commit", testParams())
@@ -209,6 +210,7 @@ func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
 	assert.Contains(t, doc, "automatically commits only that directory")
 	assert.Contains(t, doc, "## RPMAUTOSPEC:")
 	assert.Contains(t, doc, "leading integer of the committed,")
+	assert.Contains(t, doc, "retains `%autorelease`, `%autochangelog`")
 	assert.NotContains(t, doc, "git commit --amend")
 }
 

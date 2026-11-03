@@ -111,8 +111,9 @@ produce a synthetic commit.
 ## Render and Commit an Upstream Component
 
 The following process applies only to **upstream components selected as
-lockless**. Local components and components using lock files retain their
-existing rendering behavior.
+lockless**. Local components skip the upstream release/changelog carryover and
+automatic commit steps. All lockless rendering runs on the host without mock;
+components using lock files retain their existing mock-based rendering.
 
 The renderer clones the selected upstream dist-git to temporary storage. It
 finds the existing committed output under
@@ -124,12 +125,12 @@ carries over the committed rendered spec's exact `Release:` value and
 For an initial `%autorelease` render, it generates the complete upstream
 `changelog` file (replacing any existing file), calculates the numeric upstream
 release, and adds or replaces the macro's `-b` parameter. These rpmautospec
-operations run inside the shared mock chroot.
+operations run on the host; they do not preprocess or rewrite the spec.
 
 For an existing output whose spec has a line starting with `## RPMAUTOSPEC:`
 and containing `autorelease` on that same line, a `%autorelease` upstream spec
 inherits its base from the committed rendered spec. The renderer expands the
-committed `Release:` with `rpmspec` in mock, using a temporary copy of the
+committed `Release:` with host `rpmspec`, using a temporary copy of the
 committed dist-git files, and uses its leading integer as `-b` (for example,
 `9.fc43` becomes `-b 9`). It also replaces the working checkout's `changelog`
 file with the committed `%changelog` body, excluding the section header.
@@ -149,14 +150,19 @@ version (or there is no previous output), it restores the original upstream
 `updated <component-name>` followed by upstream changes on separate lines.
 The tool's no-op for `%autorelease` specs is accepted.
 
-Existing overlays, synthetic history, RPM expansion, and sidecar filtering run
-after these steps. The renderer replaces the component output, excluding `.git`,
+Existing overlays, synthetic history, and sidecar filtering run after these
+steps. Host `spectool` supplies the sidecar keep-list, with `changelog` always
+preserved. The spec is **not** preprocessed with `rpmautospec process-distgit`:
+`%autorelease`, `%autochangelog`, and other RPM macros remain unexpanded.
+No mock configuration is needed for lockless rendering.
+The renderer replaces the component output, excluding `.git`,
 and commits only that directory. The subject is `updated <component-name>`; the
 body lists upstream changes, if any. Unrelated staged files are not committed.
 Unchanged Git content does not produce an empty commit. A commit failure leaves
 the rendered files available for inspection.
 
-Install `rpmdevtools` on the host and configure Git author identity before
+Install `rpmdevtools`, `rpm-build`, and `rpmautospec` on the host as needed for
+the release/changelog queries, and configure Git author identity before
 rendering. Output (including a custom `--output-dir`) must be inside the project
 Git repository. `--check-only` prepares and compares temporary output but never
 replaces rendered files or creates project commits. Because ordinary release

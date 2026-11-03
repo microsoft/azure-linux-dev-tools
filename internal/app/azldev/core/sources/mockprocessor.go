@@ -362,59 +362,6 @@ func (p *MockProcessor) runBatchScript(
 // the caller parses and validates it. The chroot is lazily initialized on first
 // use, shared with [MockProcessor.BatchProcess].
 func (p *MockProcessor) CalculateRelease(ctx context.Context, specHostDir, specFilename string) (string, error) {
-	return p.runRPMAutospec(ctx, specHostDir, specFilename, "calculate-release", "--complete-release")
-}
-
-// CalculateBaseRelease returns the numeric upstream release for an autorelease base.
-func (p *MockProcessor) CalculateBaseRelease(ctx context.Context, specHostDir, specFilename string) (string, error) {
-	return p.runRPMAutospec(ctx, specHostDir, specFilename, "calculate-release", "--number-only")
-}
-
-// GenerateChangelog returns the full changelog from the checkout's upstream history.
-func (p *MockProcessor) GenerateChangelog(ctx context.Context, specHostDir, specFilename string) (string, error) {
-	return p.runRPMAutospec(ctx, specHostDir, specFilename, "generate-changelog")
-}
-
-// ExpandRelease queries the spec's macro-expanded Release inside the shared mock chroot.
-func (p *MockProcessor) ExpandRelease(ctx context.Context, specHostDir, specFilename string) (string, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if err := p.initOnce(ctx); err != nil {
-		return "", err
-	}
-
-	runner := p.runner.Clone()
-	runner.WithUnprivileged()
-	runner.AddBindMount(specHostDir, chrootProvenanceDir)
-
-	cmd, err := runner.CmdInChroot(ctx, []string{
-		"rpmspec", "-q", "--srpm", "--queryformat", "release=%{RELEASE}\n",
-		"--define", "_sourcedir " + chrootProvenanceDir,
-		"--define", "_specdir " + chrootProvenanceDir,
-		filepath.Join(chrootProvenanceDir, specFilename),
-	}, false)
-	if err != nil {
-		return "", fmt.Errorf("creating committed Release query in mock chroot:\n%w", err)
-	}
-
-	out, err := cmd.RunAndGetOutput(ctx)
-	if err != nil {
-		return "", fmt.Errorf("querying committed Release in mock chroot:\n%w", err)
-	}
-
-	for _, line := range strings.Split(out, "\n") {
-		if release, found := strings.CutPrefix(strings.TrimSpace(line), "release="); found && release != "" {
-			return release, nil
-		}
-	}
-
-	return "", fmt.Errorf("no Release field in committed spec query output %#q", out)
-}
-
-func (p *MockProcessor) runRPMAutospec(
-	ctx context.Context, specHostDir, specFilename string, args ...string,
-) (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -436,7 +383,7 @@ func (p *MockProcessor) runRPMAutospec(
 	// on the bind-mounted .git, mirroring the render batch path. Wrapped in
 	// `sh -c` so the shell operators survive shellquote joining in CmdInChroot.
 	shellCmd := "git config --global --add safe.directory '*' && " +
-		shellquote.Join(append(append([]string{"rpmautospec"}, args...), specInChroot)...)
+		"rpmautospec calculate-release --complete-release " + shellquote.Join(specInChroot)
 
 	cmd, err := runner.CmdInChroot(ctx, []string{"sh", "-c", shellCmd}, false)
 	if err != nil {
@@ -445,7 +392,7 @@ func (p *MockProcessor) runRPMAutospec(
 
 	out, err := cmd.RunAndGetOutput(ctx)
 	if err != nil {
-		return "", fmt.Errorf("rpmautospec %s failed in mock chroot:\n%w", args[0], err)
+		return "", fmt.Errorf("rpmautospec calculate-release failed in mock chroot:\n%w", err)
 	}
 
 	return out, nil

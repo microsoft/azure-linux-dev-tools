@@ -161,14 +161,21 @@ func WithUpstreamProvenance(distTag string) PreparerOption {
 
 // WithMockProcessor returns a [PreparerOption] that supplies the mock chroot
 // used to resolve an rpmautospec %autorelease when emitting
-// %fedora_upstream_release. Without it, upstream components whose Release uses
-// %autorelease get no release macro (best-effort). Running rpmautospec inside
-// mock keeps it out of azldev's host dependencies. A nil processor is ignored.
+// %fedora_upstream_release. Without a resolver, upstream components whose Release
+// uses %autorelease get no release macro (best-effort). Lockless rendering uses
+// [WithAutoreleaseResolver] instead to run on the host. A nil processor is ignored.
 func WithMockProcessor(mp *MockProcessor) PreparerOption {
 	return func(p *sourcePreparerImpl) {
 		if mp != nil {
 			p.autoreleaseResolver = mp
 		}
+	}
+}
+
+// WithAutoreleaseResolver selects how upstream provenance release numbers are calculated.
+func WithAutoreleaseResolver(resolver AutoreleaseResolver) PreparerOption {
+	return func(p *sourcePreparerImpl) {
+		p.autoreleaseResolver = resolver
 	}
 }
 
@@ -238,11 +245,11 @@ type sourcePreparerImpl struct {
 	// [WithUpstreamProvenance].
 	upstreamDistTag string
 
-	// autoreleaseResolver runs rpmautospec inside a mock chroot to resolve an
+	// autoreleaseResolver runs rpmautospec to resolve an
 	// %autorelease Release into a concrete Fedora release number for
 	// %fedora_upstream_release. Nil disables autorelease resolution (the release
-	// macro is skipped for such specs). Set via [WithMockProcessor].
-	autoreleaseResolver autoreleaseResolver
+	// macro is skipped for such specs). Set via [WithMockProcessor] or [WithAutoreleaseResolver].
+	autoreleaseResolver AutoreleaseResolver
 
 	releaseStrategy    releaseStrategy
 	bumpspecCtx        opctx.Ctx

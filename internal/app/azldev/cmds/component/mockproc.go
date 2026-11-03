@@ -5,8 +5,7 @@ package component
 
 // Required-package presets for the shared MockProcessor.
 //
-// Render needs rpmautospec (macro expansion), rpmdevtools (spectool), rpm-build
-// (rpmspec queries of committed Release values), and git
+// Locked render needs rpmautospec (macro expansion), rpmdevtools (spectool), and git
 // (required for rpmautospec to read commit history). python3-click is required
 // by rpmautospec but not declared as an RPM dependency. Ecosystem macro
 // packages (go-srpm-macros, etc.) are already present via @buildsys-build →
@@ -16,7 +15,7 @@ package component
 // pulled in via @buildsys-build, but we install it explicitly so we don't
 // depend on a particular buildgroup composition.
 func mockPackagesForRender() []string {
-	return []string{"rpmautospec", "rpmdevtools", "rpm-build", "git", "python3-click"}
+	return []string{"rpmautospec", "rpmdevtools", "git", "python3-click"}
 }
 
 func mockPackagesForQuery() []string {

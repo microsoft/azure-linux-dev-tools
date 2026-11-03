@@ -6,6 +6,7 @@ package component
 import (
 	"context"
 	"errors"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -72,14 +73,94 @@ type renderModeObservingPreparer struct {
 	sources.SourcePreparer
 	observe func(components.Component)
 	err     error
+	prepare func(components.Component, string) error
 }
 
 func (p *renderModeObservingPreparer) PrepareSources(
-	_ context.Context, component components.Component, _ string, _ bool,
+	_ context.Context, component components.Component, dir string, _ bool,
 ) error {
 	p.observe(component)
 
+	if p.prepare != nil {
+		return p.prepare(component, dir)
+	}
+
 	return p.err
+}
+
+func TestLocklessRenderPreservesMacrosWithoutMock(t *testing.T) {
+	env := testutils.NewTestEnvWithoutLockfile(t)
+	version := env.Config.Distros["test-distro"].Versions["1.0"]
+	version.MockConfigPath = ""
+	env.Config.Distros["test-distro"].Versions["1.0"] = version
+	env.Config.Components["curl"] = projectconfig.ComponentConfig{
+		Name: "curl",
+		Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeLocal},
+	}
+	env.CmdFactory.RegisterCommandInSearchPath("spectool")
+
+	queries := 0
+	env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+		queries++
+
+		assert.Equal(t, "spectool", cmd.Args[0])
+
+		return "Patch0: fix.patch\n", nil
+	}
+	env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+		t.Fatalf("unexpected command during host-only rendering: %v", cmd.Args)
+
+		return nil
+	}
+
+	const (
+		rawSpec   = "Name: curl\nVersion: 1\nRelease: %autorelease\n\n%changelog\n%autochangelog\n"
+		changelog = "* Old entry\n- Keep unchanged\n"
+	)
+
+	original := newSourcePreparer
+	newSourcePreparer = func(
+		_ sourceproviders.SourceManager, fs opctx.FS, _ opctx.EventListener, _ opctx.DryRunnable,
+		_ ...sources.PreparerOption,
+	) (sources.SourcePreparer, error) {
+		return &renderModeObservingPreparer{
+			observe: func(_ components.Component) {},
+			prepare: func(_ components.Component, dir string) error {
+				for name, content := range map[string]string{
+					"curl.spec": rawSpec, "changelog": changelog, "fix.patch": "patch",
+					"unreferenced": "discard", ".git/HEAD": "temporary history",
+				} {
+					require.NoError(t, fileutils.WriteFile(fs, filepath.Join(dir, name),
+						[]byte(content), fileperms.PublicFile))
+				}
+
+				return nil
+			},
+		}, nil
+	}
+
+	t.Cleanup(func() { newSourcePreparer = original })
+
+	results, err := RenderComponents(env.Env, &RenderOptions{
+		ComponentFilter: components.ComponentFilter{IncludeAllComponents: true},
+		OutputDir:       "/rendered", OutputDirExplicit: true, FailOnError: true,
+	})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, renderStatusOK, results[0].Status)
+	assert.Equal(t, 1, queries)
+
+	for name, want := range map[string]string{"curl.spec": rawSpec, "changelog": changelog, "fix.patch": "patch"} {
+		content, err := fileutils.ReadFile(env.TestFS, filepath.Join("/rendered/c/curl", name))
+		require.NoError(t, err)
+		assert.Equal(t, want, string(content))
+	}
+
+	for _, name := range []string{".git", "unreferenced"} {
+		exists, err := fileutils.Exists(env.TestFS, filepath.Join("/rendered/c/curl", name))
+		require.NoError(t, err)
+		assert.False(t, exists)
+	}
 }
 
 func TestRenderComponentsSelectsLockModeFromFile(t *testing.T) {

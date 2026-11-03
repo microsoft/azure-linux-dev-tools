@@ -83,7 +83,11 @@ the project repository, without including unrelated staged files. The output
 must be inside that repository; Git author identity must be configured and
 rpmdev-bumpspec must be installed. Commit updated upstream-commit TOML before
 rendering. --check-only never replaces output or creates project commits.
-Local components and components using lock files keep their existing behavior.
+Lockless rendering runs entirely on the host: it never uses mock or
+rpmautospec process-distgit. The rendered spec retains its RPM macros, including
+%autorelease and %autochangelog. Host spectool supplies the sidecar keep-list;
+rpmautospec generate-changelog/calculate-release are used only when needed for
+release history or provenance. Locked components keep their existing behavior.
 
 When rendering all components (-a), the --clean-stale flag prunes orphan
 rendered-spec directories (per-component dirs that no longer correspond to
@@ -172,7 +176,7 @@ const (
 // RenderComponents renders the post-overlay spec and sidecar files for each
 // selected component into the output directory. Processing is done in four phases:
 //  1. Parallel source preparation (clone, overlay, synthetic git)
-//  2. Batch mock processing (rpmautospec + spectool in a single chroot call)
+//  2. Host sidecar queries for lockless components; batch mock processing for locked components
 //  3. Parallel finishing (filter files, remove .git, copy output)
 //  4. Serial project commits for lockless upstream component output
 func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult, error) {
@@ -197,13 +201,13 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 		)
 	}
 
-	// Create mock processor for rpmautospec/spectool.
 	env = env.WithMockRootComponents(comps.Names()...)
 
-	mockProcessor := createMockProcessor(env)
-	if mockProcessor == nil {
-		return nil, errors.New(
-			"mock config required for rendering; ensure the project has a valid distro with mock config")
+	componentList := comps.Components()
+
+	mockProcessor, err := renderMockProcessor(env, componentList)
+	if err != nil {
+		return nil, err
 	}
 
 	defer destroyMockProcessor(env, mockProcessor)
@@ -227,14 +231,13 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 		}
 	}()
 
-	componentList := comps.Components()
 	results := make([]*RenderResult, len(componentList))
 
 	// ── Phase 1: Parallel source preparation ──
 	prepared := parallelPrepare(env, mockProcessor, componentList, stagingDir, options, results)
 
-	// ── Phase 2: Batch mock processing ──
-	mockResultMap := batchMockProcess(env, mockProcessor, stagingDir, prepared)
+	// ── Phase 2: Mode-specific source processing ──
+	mockResultMap := processRenderSources(env, mockProcessor, stagingDir, prepared)
 
 	// Prune orphan component dirs (components removed from config) when
 	// --clean-stale is set. Per-component output dirs that match the resolved
@@ -394,6 +397,7 @@ type preparedComponent struct {
 	specFilename  string // e.g., "curl.spec"
 	compOutputDir string // validated output path computed in phase 1
 	update        *locklessRenderUpdate
+	lockless      bool
 }
 
 // prepResult pairs a prepared component (on success) or a render result (on error).
@@ -567,8 +571,12 @@ func prepareComponentSources(
 	preparerOpts := append(gitRepoPreparerOptionsForMode(env, distro, lockless),
 		sources.WithSkipLookaside(),
 		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)),
-		sources.WithMockProcessor(mockProcessor),
 	)
+	if lockless {
+		preparerOpts = append(preparerOpts, sources.WithAutoreleaseResolver(hostRenderProcessor{env: env}))
+	} else {
+		preparerOpts = append(preparerOpts, sources.WithMockProcessor(mockProcessor))
+	}
 
 	var update *locklessRenderUpdate
 
@@ -577,7 +585,8 @@ func prepareComponentSources(
 			func(_ context.Context, fetched components.Component, dir string) error {
 				var prepErr error
 				//nolint:contextcheck // The callback context is the captured preparation env.
-				update, prepErr = prepareLocklessRender(env, mockProcessor, fetched, dir, compOutputDir, specEditor)
+				update, prepErr = prepareLocklessRender(env, hostRenderProcessor{env: env},
+					fetched, dir, compOutputDir, specEditor)
 
 				return prepErr
 			}))
@@ -609,6 +618,7 @@ func prepareComponentSources(
 		comp:         comp,
 		specFilename: filepath.Base(specPath),
 		update:       update,
+		lockless:     lockless,
 	}, nil
 }
 
@@ -619,7 +629,7 @@ func prepareComponentSources(
 // batchMockProcess runs rpmautospec and spectool for all prepared components in
 // a single mock chroot invocation. Returns a map from component name to result.
 //
-// NOTE: All components share one mock chroot initialized from the project's
+// NOTE: All locked components share one mock chroot initialized from the project's
 // default distro. Phase 1 resolves distro per-component for source fetching,
 // but the mock environment (macros, rpmautospec version, etc.) is uniform.
 // This matches the current Koji build model where all components target the
@@ -663,7 +673,7 @@ func batchMockProcess(
 // Phase 3: Parallel finishing
 // ──────────────────────────────────────────────────────────────────────────────
 
-// parallelFinish applies mock results (file filtering, .git removal) and copies
+// parallelFinish applies source-query results (file filtering, .git removal) and copies
 // rendered output for all successfully prepared components. In --check-only
 // mode, the copy step is replaced with a tree comparison and no disk writes
 // happen.
@@ -783,7 +793,7 @@ func finishComponentRender(
 	componentDir := filepath.Join(stagingDir, componentName)
 	specPath := filepath.Join(componentDir, prep.specFilename)
 
-	// Check mock result.
+	// Check the host or mock source-query result.
 	mockResult, hasMockResult := mockResultMap[componentName]
 	if !hasMockResult {
 		return false, fmt.Errorf(
@@ -792,10 +802,10 @@ func finishComponentRender(
 
 	if mockResult.Error != nil {
 		return false, fmt.Errorf(
-			"mock processing failed for %#q:\n%w", componentName, mockResult.Error)
+			"source processing failed for %#q:\n%w", componentName, mockResult.Error)
 	}
 
-	// Filter files using spectool result from batch mock.
+	// Filter files using the host or mock spectool result.
 	// Skip filtering when:
 	// 1. The component config explicitly opts out via 'skip-file-filter'.
 	// 2. spectool output contains unexpanded RPM macros (%{...}), indicating

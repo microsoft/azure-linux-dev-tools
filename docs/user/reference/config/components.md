@@ -242,7 +242,7 @@ emit-upstream-provenance = true
 
 The values are read from the upstream spec **before** any azldev overlays are applied, so they reflect the true upstream Name-Version-Release, not the Azure Linux–modified spec. The macros are derived fresh at render/build time from the pinned upstream commit and emitted into the component's generated macros file (loaded via `%{load:...}`).
 
-For specs whose `Release` uses rpmautospec (`Release: %autorelease`), the pristine Fedora release number is computed by running `rpmautospec calculate-release` in the project distro's mock chroot against the upstream dist-git checkout (whose history is Fedora's, not azldev's synthetic overlay history). This keeps `rpmautospec` out of azldev's host dependencies. If the project distro has no mock config, or mock resolution fails, `%fedora_upstream_release` is skipped (with a warning) rather than emitting the literal `%autorelease`.
+For specs whose `Release` uses rpmautospec (`Release: %autorelease`), the pristine Fedora release number is computed by running `rpmautospec calculate-release` against the upstream dist-git checkout (whose history is Fedora's, not azldev's synthetic overlay history). Lockless rendering runs this query on the host; other workflows use the project distro's mock chroot. If resolution is unavailable or fails, `%fedora_upstream_release` is skipped (with a warning) rather than emitting the literal `%autorelease`.
 
 Example: for a component pinned to Fedora 43's `grub2-2.12-5.fc43`, the spec can reference:
 

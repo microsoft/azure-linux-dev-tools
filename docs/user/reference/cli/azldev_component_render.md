@@ -34,7 +34,11 @@ the project repository, without including unrelated staged files. The output
 must be inside that repository; Git author identity must be configured and
 rpmdev-bumpspec must be installed. Commit updated upstream-commit TOML before
 rendering. --check-only never replaces output or creates project commits.
-Local components and components using lock files keep their existing behavior.
+Lockless rendering runs entirely on the host: it never uses mock or
+rpmautospec process-distgit. The rendered spec retains its RPM macros, including
+%autorelease and %autochangelog. Host spectool supplies the sidecar keep-list;
+rpmautospec generate-changelog/calculate-release are used only when needed for
+release history or provenance. Locked components keep their existing behavior.
 
 When rendering all components (-a), the --clean-stale flag prunes orphan
 rendered-spec directories (per-component dirs that no longer correspond to
