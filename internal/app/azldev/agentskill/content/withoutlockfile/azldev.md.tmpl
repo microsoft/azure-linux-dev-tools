@@ -33,6 +33,12 @@ images assemble RPMs into bootable artifacts.
 
 ## Common commands
 
+For upstream components, rendering preserves committed downstream release and
+changelog state before running host `rpmdev-bumpspec` and existing processing.
+It replaces and automatically commits only the component output directory.
+Commit refreshed TOML before rendering; configure Git author identity and install
+`rpmdevtools`. `--check-only` never creates project commits. Local rendering is unchanged.
+
 Top-level commands in this build:
 
 {{ range .TopLevelCommands }}- `azldev {{ .Name }}` — {{ .Short }}

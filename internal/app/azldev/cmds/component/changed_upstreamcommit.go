@@ -131,6 +131,46 @@ func loadHistoricalProject(
 	tree *object.Tree,
 	projectRelDir string,
 ) (*historicalProject, error) {
+	historicalEnv, err := loadHistoricalEnv(env, tree, projectRelDir)
+	if err != nil {
+		return nil, err
+	}
+
+	config := historicalEnv.Config()
+	resolver := components.NewResolver(historicalEnv)
+
+	resolvedComponents, err := resolver.FindAllComponents()
+	if err != nil {
+		return nil, fmt.Errorf("resolving components:\n%w", err)
+	}
+
+	result := &historicalProject{
+		components:       make(map[string]projectconfig.ComponentConfig, resolvedComponents.Len()),
+		comparisonInputs: make(map[string]componentComparisonInputs, resolvedComponents.Len()),
+		componentGroups:  make(map[string][]string, len(config.ComponentGroups)),
+	}
+
+	if err := populateHistoricalComponents(
+		result, historicalEnv.FS(), historicalEnv, resolvedComponents, env,
+	); err != nil {
+		return nil, err
+	}
+
+	if err := populateHistoricalGroups(result, resolver, config); err != nil {
+		return nil, err
+	}
+
+	result.renderedSpecsRelDir, err = git.RepoRelPath(snapshotRepoRoot, config.Project.RenderedSpecsDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolving rendered specs directory:\n%w", err)
+	}
+
+	return result, nil
+}
+
+func loadHistoricalEnv(
+	env *azldev.Env, tree *object.Tree, projectRelDir string,
+) (*azldev.Env, error) {
 	snapshotFS := afero.NewMemMapFs()
 
 	if err := copyTreeToFS(tree, snapshotFS, snapshotRepoRoot); err != nil {
@@ -167,35 +207,7 @@ func loadHistoricalProject(
 	})
 	historicalEnv.SetPermissiveConfigParsing(env.PermissiveConfigParsing())
 
-	resolver := components.NewResolver(historicalEnv)
-
-	resolvedComponents, err := resolver.FindAllComponents()
-	if err != nil {
-		return nil, fmt.Errorf("resolving components:\n%w", err)
-	}
-
-	result := &historicalProject{
-		components:       make(map[string]projectconfig.ComponentConfig, resolvedComponents.Len()),
-		comparisonInputs: make(map[string]componentComparisonInputs, resolvedComponents.Len()),
-		componentGroups:  make(map[string][]string, len(config.ComponentGroups)),
-	}
-
-	if err := populateHistoricalComponents(
-		result, snapshotFS, historicalEnv, resolvedComponents, env,
-	); err != nil {
-		return nil, err
-	}
-
-	if err := populateHistoricalGroups(result, resolver, config); err != nil {
-		return nil, err
-	}
-
-	result.renderedSpecsRelDir, err = git.RepoRelPath(snapshotRepoRoot, config.Project.RenderedSpecsDir)
-	if err != nil {
-		return nil, fmt.Errorf("resolving rendered specs directory:\n%w", err)
-	}
-
-	return result, nil
+	return historicalEnv, nil
 }
 
 func populateHistoricalGroups(

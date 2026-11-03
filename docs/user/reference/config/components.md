@@ -142,7 +142,13 @@ or `azldev component prepare-sources` to preview transactional
 `rpmdev-bumpspec` handling instead. This temporary Azure Linux migration flag
 uses the existing fixed changelog metadata and requires `rpmdev-bumpspec`,
 `rpmdev-packager`, `rpm`, `rpmspec`, and Python with the RPM module only when
-explicitly selected. `%autorelease` behavior is unchanged.
+explicitly selected for this transactional strategy. `%autorelease` behavior is unchanged.
+
+**Exception:** Rendering a lockless upstream component always invokes host
+`rpmdev-bumpspec -c` before the existing processing, without requiring the flag.
+Its `%autorelease` no-op is accepted. See the
+[lockless rendering workflow](../../how-to/preview-without-lockfile.md#render-and-commit-an-upstream-component)
+for release/changelog carryover and automatic output commits.
 
 ## Render Configuration
 

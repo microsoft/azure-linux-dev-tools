@@ -18,6 +18,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
+	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spec"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/dirdiff"
@@ -73,6 +74,16 @@ top-level azldev.toml. Each nonempty line names one component to render without
 its lock file, using configured upstream commits and their TOML history instead.
 All other components use lock files. A missing or empty file means all components
 use lock files.
+
+For lockless upstream components, prepare release and changelog state from the
+last committed render before applying the existing overlays and processing.
+Run rpmdev-bumpspec with "updated <component-name>" and any upstream changes.
+After replacing the output, automatically commit that component directory to
+the project repository, without including unrelated staged files. The output
+must be inside that repository; Git author identity must be configured and
+rpmdev-bumpspec must be installed. Commit updated upstream-commit TOML before
+rendering. --check-only never replaces output or creates project commits.
+Local components and components using lock files keep their existing behavior.
 
 When rendering all components (-a), the --clean-stale flag prunes orphan
 rendered-spec directories (per-component dirs that no longer correspond to
@@ -159,10 +170,11 @@ const (
 )
 
 // RenderComponents renders the post-overlay spec and sidecar files for each
-// selected component into the output directory. Processing is done in three phases:
+// selected component into the output directory. Processing is done in four phases:
 //  1. Parallel source preparation (clone, overlay, synthetic git)
 //  2. Batch mock processing (rpmautospec + spectool in a single chroot call)
 //  3. Parallel finishing (filter files, remove .git, copy output)
+//  4. Serial project commits for lockless upstream component output
 func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult, error) {
 	if err := resolveAndValidateOutputDir(env, options); err != nil {
 		return nil, err
@@ -257,6 +269,8 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 	// of bookkeeping. In --check-only mode this verifies that on-disk state
 	// matches the expected single-marker shape and flags drift on mismatch.
 	writeFailureMarkers(env.FS(), results, options.Force, options.CheckOnly)
+
+	commitLocklessRenders(env, prepared, results, options.CheckOnly)
 
 	// Sort results alphabetically for consistent output.
 	sortRenderResults(results)
@@ -379,6 +393,7 @@ type preparedComponent struct {
 	comp          components.Component
 	specFilename  string // e.g., "curl.spec"
 	compOutputDir string // validated output path computed in phase 1
+	update        *locklessRenderUpdate
 }
 
 // prepResult pairs a prepared component (on success) or a render result (on error).
@@ -488,7 +503,8 @@ func prepareOneComponent(
 		}}
 	}
 
-	prep, err := prepareComponentSources(env, mockProcessor, comp, stagingDir, specEditor, rpmDevBumpspec, lockless)
+	prep, err := prepareComponentSources(env, mockProcessor, comp, stagingDir, compOutputDir,
+		specEditor, rpmDevBumpspec, lockless)
 	if err != nil {
 		slog.Error("Failed to prepare component sources",
 			"component", componentName, "error", err)
@@ -514,6 +530,7 @@ func prepareComponentSources(
 	mockProcessor *sources.MockProcessor,
 	comp components.Component,
 	stagingDir string,
+	compOutputDir string,
 	specEditor spec.EditorMode,
 	rpmDevBumpspec bool,
 	lockless bool,
@@ -552,6 +569,20 @@ func prepareComponentSources(
 		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)),
 		sources.WithMockProcessor(mockProcessor),
 	)
+
+	var update *locklessRenderUpdate
+
+	if lockless && comp.GetConfig().Spec.SourceType == projectconfig.SpecSourceTypeUpstream {
+		preparerOpts = append(preparerOpts, sources.WithFetchedSources(
+			func(_ context.Context, fetched components.Component, dir string) error {
+				var prepErr error
+				//nolint:contextcheck // The callback context is the captured preparation env.
+				update, prepErr = prepareLocklessRender(env, mockProcessor, fetched, dir, compOutputDir, specEditor)
+
+				return prepErr
+			}))
+	}
+
 	if rpmDevBumpspec {
 		preparerOpts = append(preparerOpts, sources.WithRPMDevBumpspec(env, env.WorkDir(), ""))
 	}
@@ -577,6 +608,7 @@ func prepareComponentSources(
 	return &preparedComponent{
 		comp:         comp,
 		specFilename: filepath.Base(specPath),
+		update:       update,
 	}, nil
 }
 

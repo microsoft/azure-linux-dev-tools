@@ -86,6 +86,11 @@ calculation = "manual"
 
 ## Render configuration
 
+Upstream rendering always runs host `rpmdev-bumpspec -c` before the existing
+processing and automatically commits the component output directory. Commit
+input TOML first, install host `rpmdevtools`, and configure Git author identity.
+`--check-only` never creates project commits. Local rendering is unchanged.
+
 azldev reads `lockless-components.txt` beside the top-level `azldev.toml`.
 Listed component names use the lockless workflow for every command;
 all others use lock files. A missing or empty list means all components use

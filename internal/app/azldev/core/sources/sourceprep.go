@@ -140,6 +140,14 @@ func WithSkipLookaside() PreparerOption {
 	}
 }
 
+// WithFetchedSources runs prepare on the fetched checkout before overlays and
+// synthetic history are applied.
+func WithFetchedSources(prepare func(context.Context, components.Component, string) error) PreparerOption {
+	return func(p *sourcePreparerImpl) {
+		p.prepareFetchedSources = prepare
+	}
+}
+
 // WithUpstreamProvenance returns a [PreparerOption] that enables emission of
 // the %fedora_upstream_version and %fedora_upstream_release macros for Fedora
 // upstream components. distTag is the resolved %{?dist} expansion (e.g.
@@ -184,11 +192,12 @@ func WithAllowNoHashes() PreparerOption {
 
 // Standard implementation of the [SourcePreparer] interface.
 type sourcePreparerImpl struct {
-	sourceManager sourceproviders.SourceManager
-	specEditor    spec.EditorMode
-	fs            opctx.FS
-	eventListener opctx.EventListener
-	dryRunnable   opctx.DryRunnable
+	sourceManager         sourceproviders.SourceManager
+	prepareFetchedSources func(context.Context, components.Component, string) error
+	specEditor            spec.EditorMode
+	fs                    opctx.FS
+	eventListener         opctx.EventListener
+	dryRunnable           opctx.DryRunnable
 
 	// withGitRepo, when true, enables dist-git creation by preserving the
 	// upstream .git directory and generating synthetic commit history.
@@ -322,6 +331,10 @@ func (p *sourcePreparerImpl) PrepareSources(
 			component.GetName(), err)
 	}
 
+	if err := p.prepareFetched(ctx, component, outputDir); err != nil {
+		return fmt.Errorf("preparing fetched sources for %#q:\n%w", component.GetName(), err)
+	}
+
 	// Fetch custom and downloaded source files.
 	if !p.skipLookaside {
 		if err := p.sourceManager.FetchFiles(ctx, component, outputDir); err != nil {
@@ -358,6 +371,16 @@ func (p *sourcePreparerImpl) PrepareSources(
 	}
 
 	return nil
+}
+
+func (p *sourcePreparerImpl) prepareFetched(
+	ctx context.Context, component components.Component, dir string,
+) error {
+	if p.prepareFetchedSources == nil {
+		return nil
+	}
+
+	return p.prepareFetchedSources(ctx, component, dir)
 }
 
 func (p *sourcePreparerImpl) validateArchiveOverlayConfig(component components.Component) error {

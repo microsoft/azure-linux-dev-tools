@@ -195,6 +195,21 @@ func TestComponentTomlSkillDocumentsPerComponentRenderModes(t *testing.T) {
 	}
 }
 
+func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
+	for _, withoutLockfile := range []bool{false, true} {
+		doc, err := agentskill.NewCatalog(withoutLockfile).SkillDocument("azldev", testParams())
+		require.NoError(t, err)
+		assert.Contains(t, doc, "host `rpmdev-bumpspec`")
+		assert.Contains(t, doc, "`--check-only` never creates project commits")
+	}
+
+	doc, err := agentskill.SkillDocument("azldev-refresh-upstream-commit", testParams())
+	require.NoError(t, err)
+	assert.Contains(t, doc, "fully parsed committed TOML")
+	assert.Contains(t, doc, "automatically commits only that directory")
+	assert.NotContains(t, doc, "git commit --amend")
+}
+
 func TestImageSkillDocumentsSKUGroupGuidance(t *testing.T) {
 	doc, err := agentskill.SkillDocument("azldev-image", testParams())
 	require.NoError(t, err)

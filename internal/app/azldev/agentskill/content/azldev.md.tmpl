@@ -38,6 +38,14 @@ images assemble RPMs into bootable artifacts.
 workflow per component for all commands. Listed components ignore locks and use
 generated upstream-commit TOML instead. All others use locks.
 
+For listed upstream components, rendering carries release/changelog state from
+the committed output, runs host `rpmdev-bumpspec`, then applies the existing
+overlays, synthetic history, RPM expansion, and filtering. It replaces and
+automatically commits only that component's output directory; unrelated staged
+files are excluded. Commit refreshed TOML before rendering. Configure Git author
+identity and install `rpmdevtools`. `--check-only` never creates project commits.
+Local and locked components retain their existing render behavior.
+
 Top-level commands in this build:
 
 {{ range .TopLevelCommands }}- `azldev {{ .Name }}` — {{ .Short }}

@@ -362,6 +362,22 @@ func (p *MockProcessor) runBatchScript(
 // the caller parses and validates it. The chroot is lazily initialized on first
 // use, shared with [MockProcessor.BatchProcess].
 func (p *MockProcessor) CalculateRelease(ctx context.Context, specHostDir, specFilename string) (string, error) {
+	return p.runRPMAutospec(ctx, specHostDir, specFilename, "calculate-release", "--complete-release")
+}
+
+// CalculateBaseRelease returns the numeric upstream release for an autorelease base.
+func (p *MockProcessor) CalculateBaseRelease(ctx context.Context, specHostDir, specFilename string) (string, error) {
+	return p.runRPMAutospec(ctx, specHostDir, specFilename, "calculate-release", "--number-only")
+}
+
+// GenerateChangelog returns the full changelog from the checkout's upstream history.
+func (p *MockProcessor) GenerateChangelog(ctx context.Context, specHostDir, specFilename string) (string, error) {
+	return p.runRPMAutospec(ctx, specHostDir, specFilename, "generate-changelog")
+}
+
+func (p *MockProcessor) runRPMAutospec(
+	ctx context.Context, specHostDir, specFilename string, args ...string,
+) (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -383,7 +399,7 @@ func (p *MockProcessor) CalculateRelease(ctx context.Context, specHostDir, specF
 	// on the bind-mounted .git, mirroring the render batch path. Wrapped in
 	// `sh -c` so the shell operators survive shellquote joining in CmdInChroot.
 	shellCmd := "git config --global --add safe.directory '*' && " +
-		"rpmautospec calculate-release --complete-release " + shellquote.Join(specInChroot)
+		shellquote.Join(append(append([]string{"rpmautospec"}, args...), specInChroot)...)
 
 	cmd, err := runner.CmdInChroot(ctx, []string{"sh", "-c", shellCmd}, false)
 	if err != nil {
@@ -392,7 +408,7 @@ func (p *MockProcessor) CalculateRelease(ctx context.Context, specHostDir, specF
 
 	out, err := cmd.RunAndGetOutput(ctx)
 	if err != nil {
-		return "", fmt.Errorf("rpmautospec calculate-release failed in mock chroot:\n%w", err)
+		return "", fmt.Errorf("rpmautospec %s failed in mock chroot:\n%w", args[0], err)
 	}
 
 	return out, nil

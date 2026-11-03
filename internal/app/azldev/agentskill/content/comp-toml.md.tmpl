@@ -92,7 +92,9 @@ migrates. Only that path requires `rpmdev-bumpspec`, `rpmdev-packager`, `rpm`,
 identity/comment/datestamp and strict source-EVR transaction checks; locks and
 synthetic history still determine the number and order of bumps. Without the
 flag, no bumpspec runtime discovery occurs and the legacy static calculation is
-used. `%autorelease` behavior is unchanged on either path.
+used outside the lockless upstream render workflow. That workflow always runs
+host `rpmdev-bumpspec -c` before existing processing, accepts its `%autorelease`
+no-op, and automatically commits the component output. Commit input TOML first.
 
 ## Render configuration
 

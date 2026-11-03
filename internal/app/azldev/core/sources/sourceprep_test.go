@@ -4,12 +4,14 @@
 package sources_test
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components/components_testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
@@ -26,6 +28,42 @@ import (
 )
 
 const testOutputDir = "/output"
+
+func TestPrepareSources_FetchedSourcesRunBeforeOverlays(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+	manager := sourceproviders_test.NewMockSourceManager(ctrl)
+	ctx := testctx.NewCtx()
+
+	component.EXPECT().GetName().AnyTimes().Return("curl")
+	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
+		Overlays: []projectconfig.ComponentOverlay{{
+			Type:  projectconfig.ComponentOverlayAppendSpecLines,
+			Lines: []string{"# overlay runs last"},
+		}},
+	})
+	manager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ components.Component, dir string, _ ...sourceproviders.FetchComponentOption) error {
+			return fileutils.WriteFile(ctx.FS(), filepath.Join(dir, "curl.spec"),
+				[]byte("Name: curl\nRelease: 1\n"), fileperms.PublicFile)
+		})
+	preparer, err := sources.NewPreparer(manager, ctx.FS(), ctx, ctx,
+		sources.WithSkipLookaside(),
+		sources.WithFetchedSources(func(_ context.Context, _ components.Component, dir string) error {
+			path := filepath.Join(dir, "curl.spec")
+			content, err := fileutils.ReadFile(ctx.FS(), path)
+			require.NoError(t, err)
+			assert.NotContains(t, string(content), "overlay runs last")
+
+			return fileutils.WriteFile(ctx.FS(), path, append(content, []byte("# release prepared\n")...),
+				fileperms.PublicFile)
+		}))
+	require.NoError(t, err)
+	require.NoError(t, preparer.PrepareSources(ctx, component, testOutputDir, true))
+	content, err := fileutils.ReadFile(ctx.FS(), testOutputDir+"/curl.spec")
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "# release prepared\n# overlay runs last")
+}
 
 func TestNewPreparer(t *testing.T) {
 	ctrl := gomock.NewController(t)

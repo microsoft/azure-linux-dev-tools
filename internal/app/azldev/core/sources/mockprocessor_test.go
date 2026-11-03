@@ -231,6 +231,35 @@ func TestCalculateRelease_Success(t *testing.T) {
 		"git safe.directory must be configured before rpmautospec reads the .git history")
 }
 
+func TestRenderRPMAutospecCommands(t *testing.T) {
+	for _, operation := range []string{"generate-changelog", "calculate-release --number-only"} {
+		t.Run(operation, func(t *testing.T) {
+			ctx := newMockProcessorTestCtx()
+			ctx.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				assert.Contains(t, strings.Join(cmd.Args, " "),
+					"rpmautospec "+operation+" /tmp/provenance/curl.spec")
+
+				return "unchanged output\n", nil
+			}
+			processor := NewMockProcessor(ctx, "/mock/config")
+
+			var (
+				out string
+				err error
+			)
+
+			if operation == "generate-changelog" {
+				out, err = processor.GenerateChangelog(ctx, "/working", "curl.spec")
+			} else {
+				out, err = processor.CalculateBaseRelease(ctx, "/working", "curl.spec")
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, "unchanged output\n", out)
+		})
+	}
+}
+
 func TestCalculateRelease_InitFailurePropagates(t *testing.T) {
 	t.Parallel()
 

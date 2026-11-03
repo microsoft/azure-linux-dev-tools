@@ -102,11 +102,57 @@ resolved components are created or updated before the command exits with an
 error. Failed components remain unchanged, and orphan pruning is skipped for
 that run.
 
-Commit the refreshed TOML together with the rendered output: synthetic dist-git
+Commit the refreshed TOML before rendering: synthetic dist-git
 history — and therefore `%autorelease` and `%autochangelog` expansion — is derived
 from committed changes to the generated file. Unlike the default mode, there is no
 fingerprint to compare the working tree against, so uncommitted changes do not
 produce a synthetic commit.
+
+## Render and Commit an Upstream Component
+
+The following process applies only to **upstream components selected as
+lockless**. Local components and components using lock files retain their
+existing rendering behavior.
+
+The renderer clones the selected upstream dist-git to temporary storage. It
+finds the existing committed output under
+`<rendered-specs-dir>/<lowercase-first-letter>/<component-name>`, ignoring
+uncommitted spec changes. For an existing non-`%autorelease` upstream spec, it
+carries over the committed rendered spec's exact `Release:` value and
+`%changelog` section.
+
+For an initial `%autorelease` render, it generates the complete upstream
+`changelog` file (replacing any existing file), calculates the numeric upstream
+release, and adds or replaces the macro's `-b` parameter. These rpmautospec
+operations run inside the shared mock chroot.
+
+The last commit touching the component output is the **last render commit**.
+The renderer fully loads TOML, including includes and component defaults, at
+that commit and at the current project commit to compare `spec.upstream-commit`.
+Different pins, missing render history, or an error loading the old pin mean
+upstream changed. It records `git log --oneline <old>..<current>` from the
+upstream checkout; without an old pin it records a one-line version update.
+An error reading the current pin is fatal.
+
+When upstream changes exist and `Version:` differs from the committed rendered
+version (or there is no previous output), it restores the original upstream
+`Release:`. It then always invokes host `rpmdev-bumpspec -c` with
+`updated <component-name>` followed by upstream changes on separate lines.
+The tool's no-op for `%autorelease` specs is accepted.
+
+Existing overlays, synthetic history, RPM expansion, and sidecar filtering run
+after these steps. The renderer replaces the component output, excluding `.git`,
+and commits only that directory. The subject is `updated <component-name>`; the
+body lists upstream changes, if any. Unrelated staged files are not committed.
+Unchanged Git content does not produce an empty commit. A commit failure leaves
+the rendered files available for inspection.
+
+Install `rpmdevtools` on the host and configure Git author identity before
+rendering. Output (including a custom `--output-dir`) must be inside the project
+Git repository. `--check-only` prepares and compares temporary output but never
+replaces rendered files or creates project commits. Because ordinary release
+bumping is part of rendering, a new render may differ even without new upstream
+commits.
 
 ## Detect Changed Components
 

@@ -26,6 +26,16 @@ its lock file, using configured upstream commits and their TOML history instead.
 All other components use lock files. A missing or empty file means all components
 use lock files.
 
+For lockless upstream components, prepare release and changelog state from the
+last committed render before applying the existing overlays and processing.
+Run rpmdev-bumpspec with "updated <component-name>" and any upstream changes.
+After replacing the output, automatically commit that component directory to
+the project repository, without including unrelated staged files. The output
+must be inside that repository; Git author identity must be configured and
+rpmdev-bumpspec must be installed. Commit updated upstream-commit TOML before
+rendering. --check-only never replaces output or creates project commits.
+Local components and components using lock files keep their existing behavior.
+
 When rendering all components (-a), the --clean-stale flag prunes orphan
 rendered-spec directories (per-component dirs that no longer correspond to
 any component in the project config). Per-component dirs that ARE in config
