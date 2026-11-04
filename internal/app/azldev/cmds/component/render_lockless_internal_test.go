@@ -53,7 +53,7 @@ release-ver = "3"
 dist-git-branch = "f42"
 `)
 	oldSpec := renderTestSpec("1", "9%{?dist}", "* Previous\n- Keep exactly\n")
-	repo, _ := testRepoWithCommits(t, []testRepoCommit{
+	repo, hashes := testRepoWithCommits(t, []testRepoCommit{
 		{files: map[string][]byte{
 			"azldev.toml": root,
 			"component.toml": []byte("[components.curl.spec]\ntype = 'upstream'\n" +
@@ -77,6 +77,14 @@ dist-git-branch = "f42"
 	require.NoError(t, dirty.Close())
 
 	env := testutils.NewTestEnv(t)
+	env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+		assert.Equal(t, []string{
+			"git", "-C", "/project", "--literal-pathspecs", "log", "-1", "--format=%H",
+			"--end-of-options", hashes[2], "--", "SPECS/c/curl/",
+		}, cmd.Args)
+
+		return hashes[0] + "\n", nil
+	}
 	history, err := readLastRender(env.Env, repo, "/project", "SPECS/c/curl", "curl")
 	require.NoError(t, err)
 	assert.Equal(t, oldSpec, history.spec)
@@ -90,6 +98,56 @@ dist-git-branch = "f42"
 	assert.Equal(t, "bbbbbbb", history.current)
 	assert.Equal(t, "f40", history.previousBranch)
 	assert.Equal(t, "f41", history.currentBranch)
+}
+
+func TestReadLastRender_NativeHistoryErrors(t *testing.T) {
+	const renderPath = "SPECS/c/curl[1]"
+
+	logErr := errors.New("git log failed")
+
+	for _, testCase := range []struct {
+		name, output, wantError string
+		commandErr              error
+	}{
+		{name: "no matching commit"},
+		{name: "git failure", commandErr: logErr, wantError: "finding last render commit"},
+		{name: "unknown commit", output: strings.Repeat("a", 40), wantError: "reading last render commit"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			previous := renderTestSpec("1", "9", "old\n")
+			repo, hashes := testRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{
+				renderPath + "/curl.spec": []byte(previous),
+			}}})
+			env := testutils.NewTestEnv(t)
+			called := false
+			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				called = true
+
+				assert.Equal(t, []string{
+					"git", "-C", "/project", "--literal-pathspecs", "log", "-1", "--format=%H",
+					"--end-of-options", hashes[0], "--", renderPath + "/",
+				}, cmd.Args)
+
+				return testCase.output, testCase.commandErr
+			}
+
+			history, err := readLastRender(env.Env, repo, "/project", renderPath, "curl")
+			if testCase.wantError != "" {
+				require.ErrorContains(t, err, testCase.wantError)
+			} else {
+				require.NoError(t, err)
+			}
+
+			if testCase.commandErr != nil {
+				require.ErrorIs(t, err, testCase.commandErr)
+			}
+
+			assert.True(t, called)
+			assert.Equal(t, previous, history.spec)
+			assert.Empty(t, history.previous)
+			assert.Empty(t, history.current)
+		})
+	}
 }
 
 func TestReadLastRender_HistoricalLockFallback(t *testing.T) {
@@ -152,7 +210,7 @@ dist-git-branch = "f40"
 				selection = "curl\n"
 			}
 
-			repo, _ := testRepoWithCommits(t, []testRepoCommit{
+			repo, hashes := testRepoWithCommits(t, []testRepoCommit{
 				{files: files},
 				{files: map[string][]byte{
 					"components.toml": []byte(current),
@@ -171,6 +229,9 @@ dist-git-branch = "f40"
 			require.NoError(t, err)
 			require.NoError(t, dirty.Close())
 			env := testutils.NewTestEnv(t)
+			env.CmdFactory.RunAndGetOutputHandler = func(_ *exec.Cmd) (string, error) {
+				return hashes[0], nil
+			}
 
 			history, err := readLastRender(env.Env, repo, "/project", "SPECS/c/curl", "curl")
 			if testCase.missingCurrent {
@@ -307,8 +368,11 @@ upstream-commit = "bbbbbbb"
 				commits = append(commits, testRepoCommit{files: map[string][]byte{"azldev.toml": testCase.current}})
 			}
 
-			repo, _ := testRepoWithCommits(t, commits)
+			repo, hashes := testRepoWithCommits(t, commits)
 			env := testutils.NewTestEnv(t)
+			env.CmdFactory.RunAndGetOutputHandler = func(_ *exec.Cmd) (string, error) {
+				return hashes[0], nil
+			}
 
 			history, err := readLastRender(env.Env, repo, "/project", "SPECS/c/curl", "curl")
 			if testCase.wantError != "" {
@@ -745,7 +809,7 @@ upstream-commit = "aaaaaaa"
 `
 	)
 
-	repo, _ := testRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{
+	repo, hashes := testRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{
 		"azldev.toml":            []byte(rootConfig),
 		"SPECS/c/curl/curl.spec": []byte(renderTestSpec("1", "9", oldChangelog)),
 	}}})
@@ -776,9 +840,12 @@ upstream-commit = "aaaaaaa"
 
 	bumped := false
 	env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
-		t.Fatalf("unexpected upstream query: %v", cmd.Args)
+		assert.Equal(t, []string{
+			"git", "-C", "/project", "--literal-pathspecs", "log", "-1", "--format=%H",
+			"--end-of-options", hashes[0], "--", "SPECS/c/curl/",
+		}, cmd.Args)
 
-		return "", nil
+		return hashes[0], nil
 	}
 	env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
 		bumped = true

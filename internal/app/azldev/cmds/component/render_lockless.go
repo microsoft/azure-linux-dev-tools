@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os/exec"
 	"path/filepath"
@@ -141,22 +140,17 @@ func readLastRender(
 		return history, fmt.Errorf("reading committed spec contents:\n%w", err)
 	}
 
-	log, err := repo.Log(&gogit.LogOptions{
-		From: head.Hash(),
-		PathFilter: func(file string) bool {
-			return strings.HasPrefix(file, path+"/")
-		},
-	})
+	lastHash, err := git.RunInDir(env, env, root,
+		"--literal-pathspecs", "log", "-1", "--format=%H", "--end-of-options", head.Hash().String(), "--", path+"/")
 	if err != nil {
 		return history, fmt.Errorf("finding last render commit:\n%w", err)
 	}
-	defer log.Close()
 
-	last, err := log.Next()
-	if errors.Is(err, io.EOF) {
+	if lastHash == "" {
 		return history, nil
 	}
 
+	last, err := repo.CommitObject(plumbing.NewHash(lastHash))
 	if err != nil {
 		return history, fmt.Errorf("reading last render commit:\n%w", err)
 	}
