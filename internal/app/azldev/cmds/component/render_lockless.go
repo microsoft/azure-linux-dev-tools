@@ -272,6 +272,10 @@ func prepareLocklessSpec(
 		return fmt.Errorf("updating upstream Release:\n%w", err)
 	}
 
+	if err := carryStaticRenderRelease(env, opened, original, version, history, update.changes != "", editor); err != nil {
+		return err
+	}
+
 	resultBytes, err := locklessSpecBytes(opened, history.spec, original, editor)
 	if err != nil {
 		return err
@@ -427,11 +431,32 @@ func stripChangelogBoundaryComments(changelog string) string {
 func expandCommittedRelease(
 	env *azldev.Env, autospec renderAutorelease, dir, filename string, history lastRender,
 ) (release string, err error) {
-	snapshot, err := fileutils.MkdirTemp(env.FS(), filepath.Dir(dir), "azldev-render-previous-")
+	snapshot, err := committedRenderSnapshot(env, dir, filename, history)
+	if err != nil {
+		return "", err
+	}
+	defer fileutils.RemoveAllAndUpdateErrorIfNil(env.FS(), snapshot, &err)
+
+	release, err = autospec.ExpandRelease(env, snapshot, filename)
+	if err != nil {
+		return "", fmt.Errorf("querying committed spec:\n%w", err)
+	}
+
+	return release, nil
+}
+
+func committedRenderSnapshot(
+	env *azldev.Env, dir, filename string, history lastRender,
+) (snapshot string, err error) {
+	snapshot, err = fileutils.MkdirTemp(env.FS(), filepath.Dir(dir), "azldev-render-previous-")
 	if err != nil {
 		return "", fmt.Errorf("creating committed dist-git snapshot:\n%w", err)
 	}
-	defer fileutils.RemoveAllAndUpdateErrorIfNil(env.FS(), snapshot, &err)
+	defer func(path string) {
+		if err != nil {
+			fileutils.RemoveAllAndUpdateErrorIfNil(env.FS(), path, &err)
+		}
+	}(snapshot)
 
 	if history.tree != nil {
 		if err := copyTreeToFS(history.tree, env.FS(), snapshot); err != nil {
@@ -444,12 +469,7 @@ func expandCommittedRelease(
 		return "", fmt.Errorf("writing committed spec snapshot:\n%w", err)
 	}
 
-	release, err = autospec.ExpandRelease(env, snapshot, filename)
-	if err != nil {
-		return "", fmt.Errorf("querying committed spec:\n%w", err)
-	}
-
-	return release, nil
+	return snapshot, nil
 }
 
 func restoreLocklessRelease(
@@ -466,13 +486,6 @@ func restoreLocklessRelease(
 	previous, err := spec.OpenSpec(strings.NewReader(history.spec))
 	if err != nil {
 		return "", fmt.Errorf("parsing committed dist-git spec:\n%w", err)
-	}
-
-	if !sources.ReleaseUsesAutorelease(original) {
-		release, err = previous.GetLastTag("", "Release")
-		if err != nil {
-			return "", fmt.Errorf("reading committed Release:\n%w", err)
-		}
 	}
 
 	if !upstreamChanged {

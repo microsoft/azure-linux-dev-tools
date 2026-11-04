@@ -321,6 +321,7 @@ func TestPrepareLocklessSpec_ReleaseChangelogAndUpstreamChanges(t *testing.T) {
 			}
 			called := false
 			env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+				assert.False(t, called, "only the final release bump should run")
 				called = true
 
 				entry := "updated curl"

@@ -118,8 +118,13 @@ The renderer clones the selected upstream dist-git to temporary storage. It
 finds the existing committed output under
 `<rendered-specs-dir>/<lowercase-first-letter>/<component-name>`, ignoring
 uncommitted spec changes. For an existing non-`%autorelease` upstream spec, it
-carries over the committed rendered spec's exact `Release:` value and
-`%changelog` section.
+checks the committed `Release:` value. If it references the `baserelease` macro,
+the renderer copies the committed `%global baserelease` or `%define baserelease`
+line over the upstream definition, leaving the upstream `Release:` value
+unchanged. A missing or ambiguous macro definition fails rendering. Otherwise,
+it copies the committed `Release:` value into the upstream spec's `Release:`.
+No temporary release-bump probe is performed. The committed `%changelog`
+section is also preserved.
 
 For an initial `%autorelease` render, it generates the complete upstream
 `changelog` file (replacing any existing file), calculates the numeric upstream
@@ -151,8 +156,10 @@ upstream checkout; without an old pin it records a one-line version update.
 An error reading the current pin is fatal.
 
 When upstream changes exist and `Version:` differs from the committed rendered
-version (or there is no previous output), it restores the original upstream
-`Release:`. It then always invokes host `rpmdev-bumpspec -c` with
+version (or there is no previous output), it retains the original upstream
+`Release:` and `baserelease` definition instead of carrying over previous
+values, and restores the upstream `Release:` if an autorelease base was carried over.
+It then always invokes host `rpmdev-bumpspec -c` with
 `updated <component-name>` followed by upstream changes on separate lines.
 The tool's no-op for `%autorelease` specs is accepted.
 
