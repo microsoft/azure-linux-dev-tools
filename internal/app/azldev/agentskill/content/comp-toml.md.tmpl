@@ -94,7 +94,8 @@ synthetic history still determine the number and order of bumps. Without the
 flag, no bumpspec runtime discovery occurs and the legacy static calculation is
 used outside the lockless upstream render workflow. That workflow always runs
 host `rpmdev-bumpspec -c` before existing processing, accepts its `%autorelease`
-no-op, and automatically commits the component output. Commit input TOML first.
+no-op, and automatically commits the component output. Lockless rendering skips
+synthetic history and its legacy release adjustment. Commit input TOML first.
 
 ## Render configuration
 

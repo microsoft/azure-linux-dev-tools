@@ -122,6 +122,14 @@ func WithoutLockfileHistory() PreparerOption {
 	}
 }
 
+// WithoutSyntheticHistory preserves the upstream Git repository without generating
+// synthetic commits or applying their release adjustments.
+func WithoutSyntheticHistory() PreparerOption {
+	return func(p *sourcePreparerImpl) {
+		p.skipSyntheticHistory = true
+	}
+}
+
 // WithSpecEditor selects the [spec.EditorMode] used for source preparation.
 func WithSpecEditor(mode spec.EditorMode) PreparerOption {
 	return func(p *sourcePreparerImpl) { p.specEditor = mode }
@@ -208,7 +216,8 @@ type sourcePreparerImpl struct {
 
 	// withGitRepo, when true, enables dist-git creation by preserving the
 	// upstream .git directory and generating synthetic commit history.
-	withGitRepo bool
+	withGitRepo          bool
+	skipSyntheticHistory bool
 
 	// skipLookaside, when true, skips all lookaside cache downloads during
 	// source preparation. Git-tracked files are still fetched.
@@ -573,6 +582,10 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 	fingerprintConfig *projectconfig.ComponentConfig,
 	sourcesDirPath string,
 ) error {
+	if p.skipSyntheticHistory {
+		return nil
+	}
+
 	config := component.GetConfig()
 	componentName := component.GetName()
 

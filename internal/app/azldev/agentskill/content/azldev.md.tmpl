@@ -40,7 +40,8 @@ generated upstream-commit TOML instead. All others use locks.
 
 For listed upstream components, rendering carries release/changelog state from
 the committed output, runs host `rpmdev-bumpspec`, then applies the existing
-overlays, synthetic history, and host `spectool` filtering. Lockless rendering
+overlays and host `spectool` filtering, without synthetic history or its legacy
+release adjustment. Lockless rendering
 never uses mock or `rpmautospec process-distgit`; RPM macros remain unexpanded.
 It preserves the `changelog` sidecar and replaces and
 automatically commits only that component's output directory; unrelated staged

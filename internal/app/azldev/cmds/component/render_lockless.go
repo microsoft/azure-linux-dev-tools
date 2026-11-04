@@ -350,12 +350,43 @@ func carryRenderedAutorelease(
 	}
 
 	_, changelog, _ := strings.Cut(string(previous[start:end]), "\n")
+
+	changelog = stripChangelogBoundaryComments(changelog)
 	if err := fileutils.WriteFile(env.FS(), filepath.Join(dir, "changelog"), []byte(changelog),
 		fileperms.PublicFile); err != nil {
 		return "", fmt.Errorf("writing committed 'changelog' content:\n%w", err)
 	}
 
 	return release, nil
+}
+
+func stripChangelogBoundaryComments(changelog string) string {
+	lines := strings.SplitAfter(changelog, "\n")
+	for idx, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+
+		if !strings.HasPrefix(line, "##") {
+			break
+		}
+
+		lines[idx] = ""
+	}
+
+	for idx := len(lines) - 1; idx >= 0; idx-- {
+		if strings.TrimSpace(lines[idx]) == "" {
+			continue
+		}
+
+		if !strings.HasPrefix(lines[idx], "##") {
+			break
+		}
+
+		lines[idx] = ""
+	}
+
+	return strings.Join(lines, "")
 }
 
 func expandCommittedRelease(

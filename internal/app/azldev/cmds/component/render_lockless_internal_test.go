@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components/components_testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
@@ -275,7 +276,9 @@ func testCommittedAutoreleaseHistory(t *testing.T) lastRender {
 	t.Helper()
 
 	content := "## RPMAUTOSPEC: processed with autorelease, autochangelog\n%global carried_release 9\n" +
-		renderTestSpec("1", "%{carried_release}%{?dist}", carriedAutoreleaseChangelog) +
+		renderTestSpec("1", "%{carried_release}%{?dist}",
+			"## START: rpmautospec generated changelog\n"+carriedAutoreleaseChangelog+
+				"## END: rpmautospec generated changelog\n") +
 		"%files\n/file\n"
 	repo, commits := testRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{
 		"curl.spec": []byte(content), "macros.inc": []byte("committed macro definitions"),
@@ -284,6 +287,33 @@ func testCommittedAutoreleaseHistory(t *testing.T) lastRender {
 	require.NoError(t, err)
 
 	return lastRender{spec: content, tree: tree, previous: "old", current: "old"}
+}
+
+func TestStripChangelogBoundaryComments(t *testing.T) {
+	for _, testCase := range []struct {
+		name, input, want string
+	}{
+		{name: "empty"},
+		{name: "unchanged", input: "* Entry\n- Keep spaces  \n\n", want: "* Entry\n- Keep spaces  \n\n"},
+		{name: "leading only", input: "## First\n## Second\n* Entry\n", want: "* Entry\n"},
+		{name: "trailing only", input: "* Entry\n## First\n## Second", want: "* Entry\n"},
+		{
+			name:  "boundary blocks and interior comments",
+			input: "\n## Start\n\n* Entry\n## Interior\n- Keep\n\n## End\n\n",
+			want:  "\n\n* Entry\n## Interior\n- Keep\n\n\n",
+		},
+		{name: "comments only", input: "## Start\n## End\n", want: ""},
+		{name: "CRLF", input: "## Start\r\n* Entry\r\n## End\r\n", want: "* Entry\r\n"},
+		{
+			name:  "other comments remain",
+			input: "# Start\n## Interior\n* Entry\n ## Indented\n",
+			want:  "# Start\n## Interior\n* Entry\n ## Indented\n",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			assert.Equal(t, testCase.want, stripChangelogBoundaryComments(testCase.input))
+		})
+	}
 }
 
 func TestPrepareLocklessSpec_CommittedAutorelease(t *testing.T) {
@@ -474,6 +504,71 @@ func TestPrepareComponentSources_LocalAndLockedSkipNewLifecycle(t *testing.T) {
 			_, err := prepareComponentSources(env.Env, nil, comp, "/staging", "/rendered",
 				spec.EditorLegacy, false, testCase.lockless)
 			require.ErrorContains(t, err, "failed to apply overlays")
+		})
+	}
+}
+
+func TestPrepareComponentSources_LocklessSkipsSyntheticHistory(t *testing.T) {
+	for _, release := range []string{"7%{?dist}", "%autorelease -b 9"} {
+		t.Run(release, func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			ctrl := gomock.NewController(t)
+			comp := components_testutils.NewMockComponent(ctrl)
+			comp.EXPECT().GetName().AnyTimes().Return("curl")
+			comp.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
+				Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeLocal},
+			})
+
+			manager := sourceproviders_test.NewMockSourceManager(ctrl)
+
+			const changelog = "* Existing entry\n- Keep unchanged\n"
+
+			manager.EXPECT().FetchComponent(gomock.Any(), comp, "/staging/curl", gomock.Any()).DoAndReturn(
+				func(_ context.Context, _ components.Component, dir string, opts ...sourceproviders.FetchComponentOption) error {
+					var resolved sourceproviders.FetchComponentOptions
+					for _, opt := range opts {
+						opt(&resolved)
+					}
+
+					assert.True(t, resolved.PreserveGitDir)
+					require.NoError(t, fileutils.WriteFile(env.TestFS, filepath.Join(dir, ".git/HEAD"),
+						[]byte("upstream history"), fileperms.PublicFile))
+
+					return fileutils.WriteFile(env.TestFS, filepath.Join(dir, "curl.spec"),
+						[]byte(renderTestSpec("1", release, changelog)), fileperms.PublicFile)
+				})
+
+			original := newSourcePreparer
+			newSourcePreparer = func(
+				_ sourceproviders.SourceManager, fs opctx.FS, events opctx.EventListener, dry opctx.DryRunnable,
+				options ...sources.PreparerOption,
+			) (sources.SourcePreparer, error) {
+				return sources.NewPreparer(manager, fs, events, dry, options...)
+			}
+
+			t.Cleanup(func() { newSourcePreparer = original })
+
+			env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+				t.Fatalf("unexpected synthetic-history command: %v", cmd.Args)
+
+				return nil
+			}
+			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				t.Fatalf("unexpected synthetic-history query: %v", cmd.Args)
+
+				return "", nil
+			}
+
+			_, err := prepareComponentSources(env.Env, nil, comp, "/staging", "/rendered",
+				spec.EditorLegacy, false, true)
+			require.NoError(t, err)
+			content, err := fileutils.ReadFile(env.TestFS, "/staging/curl/curl.spec")
+			require.NoError(t, err)
+			assert.Contains(t, string(content), "Release: "+release+"\n")
+			assert.Contains(t, string(content), "%changelog\n"+changelog)
+			content, err = fileutils.ReadFile(env.TestFS, "/staging/curl/.git/HEAD")
+			require.NoError(t, err)
+			assert.Equal(t, "upstream history", string(content))
 		})
 	}
 }

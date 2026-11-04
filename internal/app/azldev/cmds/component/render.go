@@ -564,8 +564,8 @@ func prepareComponentSources(
 	}
 
 	// Prepare sources with overlays, skipping lookaside downloads.
-	// WithGitRepo preserves upstream .git and creates synthetic history so
-	// rpmautospec can expand %autorelease and %autochangelog correctly.
+	// Preserve upstream .git for release queries. Only locked rendering creates
+	// synthetic history for rpmautospec expansion.
 	// WithSkipLookaside avoids expensive tarball downloads — only spec +
 	// sidecar files are needed for rendering.
 	preparerOpts := append(gitRepoPreparerOptionsForMode(env, distro, lockless),
@@ -573,7 +573,8 @@ func prepareComponentSources(
 		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)),
 	)
 	if lockless {
-		preparerOpts = append(preparerOpts, sources.WithAutoreleaseResolver(hostRenderProcessor{env: env}))
+		preparerOpts = append(preparerOpts, sources.WithoutSyntheticHistory(),
+			sources.WithAutoreleaseResolver(hostRenderProcessor{env: env}))
 	} else {
 		preparerOpts = append(preparerOpts, sources.WithMockProcessor(mockProcessor))
 	}

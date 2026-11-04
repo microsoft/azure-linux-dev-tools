@@ -39,7 +39,8 @@ It replaces and automatically commits only the component output directory.
 Commit refreshed TOML before rendering; configure Git author identity and install
 `rpmdevtools`, `rpm-build`, and `rpmautospec` as needed.
 Lockless rendering never uses mock or `rpmautospec process-distgit`; RPM macros
-remain unexpanded and the `changelog` sidecar is preserved.
+remain unexpanded and the `changelog` sidecar is preserved. Synthetic history
+and its legacy release adjustment are skipped during rendering.
 `--check-only` never creates project commits. Local components skip upstream
 carryover and automatic commits.
 

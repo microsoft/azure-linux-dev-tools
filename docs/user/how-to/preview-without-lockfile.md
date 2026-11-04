@@ -27,8 +27,9 @@ rust-asyncband
 ```
 
 Rendering, builds, and source preparation ignore existing locks and lock
-validation for listed components. They use configured upstream commits, with
-synthetic history derived from committed upstream-commit TOML changes.
+validation for listed components. They use configured upstream commits.
+Lockless rendering does not generate synthetic history; builds and source
+preparation still derive it from committed upstream-commit TOML changes.
 Unlisted components use lock files, lock validation, and fingerprint-derived
 synthetic history. Both kinds can be processed together.
 
@@ -55,7 +56,7 @@ the current checkout's list determines which comparison to use.
 | Inspecting resolved state | `azldev component history`, `azldev component query` | read the generated TOML; no equivalent commands |
 | Lock consistency checks | On, with `--skip-lock-validation` to opt out | Skipped |
 | `component changed` | Compares stored input fingerprints | Compares project configuration resolved at each ref |
-| Synthetic dist-git history | Derived from lock-file fingerprint changes | Derived from generated upstream-commit TOML changes |
+| Synthetic dist-git history | Derived from lock-file fingerprint changes | Skipped during rendering; other workflows derive it from generated upstream-commit TOML changes |
 | Agent skills and MCP tools | Both workflows are available | Both workflows are available |
 
 ## Configure the Project
@@ -102,11 +103,9 @@ resolved components are created or updated before the command exits with an
 error. Failed components remain unchanged, and orphan pruning is skipped for
 that run.
 
-Commit the refreshed TOML before rendering: synthetic dist-git
-history — and therefore `%autorelease` and `%autochangelog` expansion — is derived
-from committed changes to the generated file. Unlike the default mode, there is no
-fingerprint to compare the working tree against, so uncommitted changes do not
-produce a synthetic commit.
+Commit the refreshed TOML before rendering: rendering compares the upstream pins
+from committed configuration. Lockless rendering neither generates synthetic
+history nor expands `%autorelease` or `%autochangelog`.
 
 ## Render and Commit an Upstream Component
 
@@ -133,7 +132,9 @@ inherits its base from the committed rendered spec. The renderer expands the
 committed `Release:` with host `rpmspec`, using a temporary copy of the
 committed dist-git files, and uses its leading integer as `-b` (for example,
 `9.fc43` becomes `-b 9`). It also replaces the working checkout's `changelog`
-file with the committed `%changelog` body, excluding the section header.
+file with the committed `%changelog` body, excluding the section header and
+leading or trailing comment lines starting with `##`. Interior comments and
+changelog whitespace are preserved.
 The later version-change release reset still applies.
 
 The last commit touching the component output is the **last render commit**.
@@ -150,8 +151,9 @@ version (or there is no previous output), it restores the original upstream
 `updated <component-name>` followed by upstream changes on separate lines.
 The tool's no-op for `%autorelease` specs is accepted.
 
-Existing overlays, synthetic history, and sidecar filtering run after these
-steps. Host `spectool` supplies the sidecar keep-list, with `changelog` always
+Existing overlays and sidecar filtering run after these steps. Synthetic history
+and its legacy release adjustment are skipped. Host `spectool` supplies the
+sidecar keep-list, with `changelog` always
 preserved. The spec is **not** preprocessed with `rpmautospec process-distgit`:
 `%autorelease`, `%autochangelog`, and other RPM macros remain unexpanded.
 No mock configuration is needed for lockless rendering.
