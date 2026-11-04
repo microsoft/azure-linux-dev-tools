@@ -199,17 +199,6 @@ func renderUpstreamCommit(
 }
 
 func lastRenderLockedUpstreamCommit(env *azldev.Env, name string) (string, error) {
-	selectionPath := filepath.Join(env.ProjectDir(), "lockless-components.txt")
-
-	exists, err := fileutils.Exists(env.FS(), selectionPath)
-	if err != nil {
-		return "", fmt.Errorf("checking historical lockless component selection:\n%w", err)
-	}
-
-	if !exists {
-		return "", errors.New("no historical 'lockless-components.txt' for lock fallback")
-	}
-
 	selected, err := projectconfig.ReadLocklessComponents(env.FS(), env.ProjectDir())
 	if err != nil {
 		return "", fmt.Errorf("reading historical lockless component selection:\n%w", err)

@@ -141,8 +141,8 @@ The last commit touching the component output is the **last render commit**.
 The renderer fully loads TOML, including includes and component defaults, at
 that commit and at the current project commit to compare `spec.upstream-commit`.
 If the last render has no configured pin, its committed lock file supplies
-`upstream-commit` only when that commit's top-level `lockless-components.txt`
-exists and does not list the component. The historical configuration's
+`upstream-commit` when that commit's top-level `lockless-components.txt` is absent
+or does not list the component. The historical configuration's
 `lock-dir` determines which lock file to read; current or uncommitted locks are
 never used for this fallback.
 Different pins, missing render history, or an error loading the old pin mean
