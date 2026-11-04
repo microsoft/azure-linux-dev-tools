@@ -107,6 +107,13 @@ func (p *sourcePreparerImpl) addUpstreamProvenanceMacros(
 		return
 	}
 
+	_, versionDefined := macros[fedoraUpstreamVersionMacro]
+
+	_, releaseDefined := macros[fedoraUpstreamReleaseMacro]
+	if versionDefined && releaseDefined {
+		return
+	}
+
 	specPath, err := findSpecInDir(p.fs, component, sourcesDir)
 	if err != nil {
 		// The user opted in via emit-upstream-provenance, so surface the
@@ -128,6 +135,10 @@ func (p *sourcePreparerImpl) addUpstreamProvenanceMacros(
 
 	if version != "" {
 		setMacroIfAbsent(macros, fedoraUpstreamVersionMacro, version)
+	}
+
+	if releaseDefined {
+		return
 	}
 
 	resolvedRelease := p.resolveUpstreamRelease(ctx, component.GetName(), release, sourcesDir, specPath)

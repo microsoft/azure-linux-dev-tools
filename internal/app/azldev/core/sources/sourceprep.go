@@ -347,6 +347,9 @@ func (p *sourcePreparerImpl) PrepareSources(
 			component.GetName(), err)
 	}
 
+	// Capture provenance before fetched-source preparation changes the upstream spec.
+	macros := p.resolveMacros(ctx, component, outputDir, applyOverlays)
+
 	if err := p.prepareFetched(ctx, component, outputDir); err != nil {
 		return fmt.Errorf("preparing fetched sources for %#q:\n%w", component.GetName(), err)
 	}
@@ -362,7 +365,7 @@ func (p *sourcePreparerImpl) PrepareSources(
 	fingerprintConfig := component.GetConfig()
 
 	if applyOverlays {
-		repackedArchives, err := p.applyOverlaysToSources(ctx, component, outputDir)
+		repackedArchives, err := p.applyOverlaysToSources(component, outputDir, macros)
 		if err != nil {
 			return err
 		}
@@ -413,11 +416,11 @@ func (p *sourcePreparerImpl) validateArchiveOverlayConfig(component components.C
 // (empty in dry-run mode or when no archive overlays ran), so the caller can
 // rehash exactly those entries in the 'sources' file.
 func (p *sourcePreparerImpl) applyOverlaysToSources(
-	ctx context.Context, component components.Component, outputDir string,
+	component components.Component, outputDir string, macros map[string]string,
 ) ([]string, error) {
 	var macrosFileName string
 
-	macrosFilePath, err := p.writeMacrosFile(ctx, component, outputDir)
+	macrosFilePath, err := p.writeMacrosFile(component, outputDir, macros)
 	if err != nil {
 		return nil, fmt.Errorf("failed to write macros file for component %#q:\n%w",
 			component.GetName(), err)
@@ -818,7 +821,8 @@ func (p *sourcePreparerImpl) DiffSources(
 	// Apply overlays in-place to the copied directory only. The repacked-archive
 	// list is unused here: DiffSources diffs the trees directly and does not
 	// rewrite a 'sources' file.
-	if _, err := p.applyOverlaysToSources(ctx, component, overlaidDir); err != nil {
+	macros := p.resolveMacros(ctx, component, overlaidDir, true)
+	if _, err := p.applyOverlaysToSources(component, overlaidDir, macros); err != nil {
 		return nil, fmt.Errorf("failed to apply overlays for component %#q:\n%w", component.GetName(), err)
 	}
 
@@ -1294,19 +1298,24 @@ func (p *sourcePreparerImpl) resolveSourceHash(
 	return hash, hashType, nil
 }
 
-// writeMacrosFile writes a macros file containing the resolved macros for a component.
-// This includes with/without flags converted to macro format, and any explicit defines.
-// If the build configuration produces no macros, no file is written and an empty path is
-// returned. Otherwise, the path to the written macros file is returned.
-func (p *sourcePreparerImpl) writeMacrosFile(
-	ctx context.Context, component components.Component, outputDir string,
-) (string, error) {
-	macros := buildMacrosMap(component.GetConfig().Build)
+func (p *sourcePreparerImpl) resolveMacros(
+	ctx context.Context, component components.Component, outputDir string, applyOverlays bool,
+) map[string]string {
+	if !applyOverlays {
+		return nil
+	}
 
-	// Layer Fedora upstream provenance macros on top, reading the pristine
-	// upstream spec that is already on disk (before overlays are applied).
+	macros := buildMacrosMap(component.GetConfig().Build)
 	p.addUpstreamProvenanceMacros(ctx, macros, component, outputDir)
 
+	return macros
+}
+
+// writeMacrosFile writes the previously resolved macros, returning the file's path
+// or an empty string when no macros are needed.
+func (p *sourcePreparerImpl) writeMacrosFile(
+	component components.Component, outputDir string, macros map[string]string,
+) (string, error) {
 	contents := renderMacrosFile(macros)
 	if contents == "" {
 		return "", nil

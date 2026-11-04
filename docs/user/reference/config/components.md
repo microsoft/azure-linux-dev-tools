@@ -253,9 +253,12 @@ emit-upstream-provenance = true
 | `%fedora_upstream_version` | The `Version` tag from the pristine upstream Fedora spec |
 | `%fedora_upstream_release` | The `Release` tag from the pristine upstream Fedora spec, with `%{?dist}` expanded to the Fedora dist tag (e.g. `.fc43`) |
 
-The values are read from the upstream spec **before** any azldev overlays are applied, so they reflect the true upstream Name-Version-Release, not the Azure Linux–modified spec. The macros are derived fresh at render/build time from the pinned upstream commit and emitted into the component's generated macros file (loaded via `%{load:...}`).
+The values are captured immediately after fetching the pinned upstream checkout,
+**before** release/changelog carryover, release bumping, or overlays can modify
+the spec. The captured values are reused when writing the component's generated
+macros file (loaded via `%{load:...}`), rather than querying the modified checkout.
 
-For specs whose `Release` uses rpmautospec (`Release: %autorelease`), the pristine Fedora release number is computed by running `rpmautospec calculate-release` against the upstream dist-git checkout (whose history is Fedora's, not azldev's synthetic overlay history). Lockless rendering runs this query on the host; other workflows use the project distro's mock chroot. If resolution is unavailable or fails, `%fedora_upstream_release` is skipped (with a warning) rather than emitting the literal `%autorelease`.
+For specs whose `Release` uses rpmautospec (`Release: %autorelease`), the pristine Fedora release number is computed by running `rpmautospec calculate-release` against the upstream dist-git checkout (whose history is Fedora's, not azldev's synthetic overlay history). Lockless rendering runs this query on the host; other workflows use the project distro's mock chroot. The query runs only when overlays will be applied, provenance is enabled for a Fedora upstream component, and `build.defines` does not already supply `fedora_upstream_release`. Static releases do not need this query. If resolution is unavailable or fails, `%fedora_upstream_release` is skipped (with a warning) rather than emitting the literal `%autorelease`; the query is not retried when writing the macros file.
 
 Example: for a component pinned to Fedora 43's `grub2-2.12-5.fc43`, the spec can reference:
 

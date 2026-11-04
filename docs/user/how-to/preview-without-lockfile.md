@@ -118,8 +118,18 @@ The renderer clones only the branch selected by the component's effective
 `spec.upstream-distro` (or the project default) into temporary storage. The
 resolved distro version's `dist-git-branch` supplies the branch name. The clone
 retains that branch's full history, not every upstream branch, so pinned commits
-and snapshot selection remain available without a shallow-history limit. It
-finds the existing committed output under
+and snapshot selection remain available without a shallow-history limit.
+
+Immediately after checking out the pinned upstream commit, rendering captures
+optional Fedora provenance values for `build.emit-upstream-provenance`, before
+release/changelog carryover or bumping changes the spec. If the upstream release
+uses `%autorelease` and `build.defines` does not already provide
+`fedora_upstream_release`, it runs host `rpmautospec calculate-release` at this
+point. The captured values are reused later when writing the macros file, without
+repeating the query against the modified checkout. No provenance query runs when
+provenance is disabled or the component is not sourced from Fedora upstream.
+
+The renderer then finds the existing committed output under
 `<rendered-specs-dir>/<lowercase-first-letter>/<component-name>`, ignoring
 uncommitted spec changes. For an existing non-`%autorelease` upstream spec, it
 checks the committed `Release:` value. If it references the `baserelease` macro,

@@ -88,7 +88,8 @@ rpmautospec process-distgit. The rendered spec retains its RPM macros, including
 %autorelease and %autochangelog. All prepared dist-git files are retained except
 .git; no file filtering or spectool query is performed. Host
 rpmautospec generate-changelog/calculate-release are used only when needed for
-release history or provenance. Locked components keep their existing behavior.
+release history or provenance. Provenance is captured before carryover/bumping
+and reused for the macros file. Locked components keep their existing behavior.
 
 When rendering all components (-a), the --clean-stale flag prunes orphan
 rendered-spec directories (per-component dirs that no longer correspond to

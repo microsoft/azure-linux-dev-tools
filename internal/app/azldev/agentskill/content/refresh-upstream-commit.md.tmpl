@@ -61,6 +61,13 @@ committed TOML resolves to a different branch and the pins differ, rendering
 fetches that historical branch before comparing commits, without switching the
 working checkout.
 
+With `build.emit-upstream-provenance`, rendering captures Fedora provenance
+immediately after checking out the pinned upstream commit, before
+release/changelog carryover or bumping. Host `rpmautospec calculate-release`
+runs here only for an upstream `%autorelease` whose `fedora_upstream_release`
+is not already supplied by `build.defines`. The captured values are reused
+when writing the macros file; that step never repeats the provenance query.
+
 For static specs, rendering checks the committed `Release:` value. If it uses
 the `baserelease` macro, rendering copies the committed `%global baserelease`
 or `%define baserelease` line over the upstream definition without changing
