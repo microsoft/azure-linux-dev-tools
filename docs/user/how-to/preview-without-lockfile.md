@@ -189,9 +189,14 @@ has no effect on lockless components. Synthetic history and its legacy release
 adjustment are skipped. The spec is **not** preprocessed with `rpmautospec process-distgit`:
 `%autorelease`, `%autochangelog`, and other RPM macros remain unexpanded.
 No mock configuration is needed for lockless rendering.
-The renderer replaces the component output, excluding `.git`,
-and commits only that directory. The subject is `updated <component-name>`; the
-body lists upstream changes, if any. Unrelated staged files are not committed.
+After comparing the prepared tree with the current output, the renderer
+recursively removes the existing component output directory, recreates it, and
+moves all prepared files and subdirectories except `.git` into it. Files found
+only in the old output are not retained. Moves use filesystem renames, so the
+project work directory and rendered output must be on the same filesystem.
+The renderer then commits only the component output directory. The subject is
+`updated <component-name>`; the body lists upstream changes, if any. Unrelated
+staged files are not committed.
 Unchanged Git content does not produce an empty commit. A commit failure leaves
 the rendered files available for inspection.
 

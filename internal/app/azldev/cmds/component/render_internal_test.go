@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/spf13/afero"
@@ -55,6 +57,102 @@ func TestFindSpecFile(t *testing.T) {
 		_, err := findSpecFile(fs, "/nonexistent", "curl")
 		require.Error(t, err)
 	})
+}
+
+func TestMoveRenderedOutput(t *testing.T) {
+	const (
+		workingDir = "/working/curl"
+		outputDir  = "/rendered/c/curl"
+	)
+
+	for _, testCase := range []struct {
+		name           string
+		existing       bool
+		allowOverwrite bool
+		dryRun         bool
+		wantErr        bool
+	}{
+		{name: "new output"},
+		{name: "replaces output", existing: true, allowOverwrite: true},
+		{name: "requires overwrite permission", existing: true, wantErr: true},
+		{name: "dry run preserves both trees", existing: true, allowOverwrite: true, dryRun: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			testEnv := testutils.NewTestEnv(t)
+			fs := testEnv.TestFS
+			env := azldev.NewEnv(t.Context(), azldev.EnvOptions{
+				ProjectDir: testEnv.Env.ProjectDir(), Config: testEnv.Config,
+				Interfaces: testEnv.TestInterfaces, EventListener: testEnv.EventListener,
+				DryRunnable: azldev.NewAppDryRunnable(testCase.dryRun),
+			})
+
+			files := map[string]string{
+				"curl.spec": "Name: curl\n", ".gitignore": "upstream ignore rules",
+				"extras/nested.patch": "nested sidecar",
+			}
+			for name, content := range files {
+				path := filepath.Join(workingDir, name)
+				require.NoError(t, fileutils.MkdirAll(fs, filepath.Dir(path)))
+				require.NoError(t, fileutils.WriteFile(fs, path, []byte(content), fileperms.PublicFile))
+			}
+
+			require.NoError(t, fileutils.MkdirAll(fs, filepath.Join(workingDir, "empty")))
+			require.NoError(t, fileutils.MkdirAll(fs, filepath.Join(workingDir, ".git")))
+			gitHead := filepath.Join(workingDir, ".git/HEAD")
+			require.NoError(t, fileutils.WriteFile(fs, gitHead, []byte("upstream history"), fileperms.PublicFile))
+
+			oldPath := filepath.Join(outputDir, "stale/nested.txt")
+			if testCase.existing {
+				require.NoError(t, fileutils.MkdirAll(fs, filepath.Dir(oldPath)))
+				require.NoError(t, fileutils.WriteFile(fs, oldPath, []byte("old output"), fileperms.PublicFile))
+			}
+
+			err := moveRenderedOutput(env, workingDir, outputDir, testCase.allowOverwrite)
+			if testCase.wantErr {
+				require.ErrorContains(t, err, "use --force to overwrite")
+			} else {
+				require.NoError(t, err)
+			}
+
+			readDir := outputDir
+			if testCase.wantErr || testCase.dryRun {
+				readDir = workingDir
+			}
+
+			for name, want := range files {
+				content, err := fileutils.ReadFile(fs, filepath.Join(readDir, name))
+				require.NoError(t, err)
+				assert.Equal(t, want, string(content))
+			}
+
+			emptyExists, err := fileutils.DirExists(fs, filepath.Join(readDir, "empty"))
+			require.NoError(t, err)
+			assert.True(t, emptyExists)
+
+			head, err := fileutils.ReadFile(fs, gitHead)
+			require.NoError(t, err)
+			assert.Equal(t, "upstream history", string(head))
+
+			if testCase.wantErr || testCase.dryRun {
+				old, err := fileutils.ReadFile(fs, oldPath)
+				require.NoError(t, err)
+				assert.Equal(t, "old output", string(old))
+
+				return
+			}
+
+			remaining, err := fileutils.ReadDir(fs, workingDir)
+			require.NoError(t, err)
+			require.Len(t, remaining, 1)
+			assert.Equal(t, ".git", remaining[0].Name())
+
+			for _, path := range []string{oldPath, filepath.Join(outputDir, ".git")} {
+				exists, err := fileutils.Exists(fs, path)
+				require.NoError(t, err)
+				assert.False(t, exists)
+			}
+		})
+	}
 }
 
 func TestWriteRenderErrorMarker(t *testing.T) {

@@ -178,7 +178,7 @@ const (
 // selected component into the output directory. Processing is done in four phases:
 //  1. Parallel source preparation (clone, overlay, synthetic git)
 //  2. Batch mock processing for locked components only
-//  3. Parallel finishing (filter files, remove .git, copy output)
+//  3. Parallel finishing (filter files, remove .git, move output)
 //  4. Serial project commits for lockless upstream component output
 func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult, error) {
 	if err := resolveAndValidateOutputDir(env, options); err != nil {
@@ -243,7 +243,7 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 	// Prune orphan component dirs (components removed from config) when
 	// --clean-stale is set. Per-component output dirs that match the resolved
 	// component set are NOT touched here; phase 3 will RemoveAll+rewrite each
-	// of them via copyRenderedOutput. This keeps the diff against existing
+	// of them via moveRenderedOutput. This keeps the diff against existing
 	// output meaningful (so result.Changed reflects actual content drift
 	// instead of being unconditionally true after a blanket wipe) and reduces
 	// the blast radius of a Ctrl-C: we only ever delete dirs that wouldn't
@@ -675,9 +675,9 @@ func batchMockProcess(
 // Phase 3: Parallel finishing
 // ──────────────────────────────────────────────────────────────────────────────
 
-// parallelFinish applies source-query results (file filtering, .git removal) and copies
+// parallelFinish applies source-query results (file filtering, .git removal) and moves
 // rendered output for all successfully prepared components. In --check-only
-// mode, the copy step is replaced with a tree comparison and no disk writes
+// mode, the move step is replaced with a tree comparison and no disk writes
 // happen.
 func parallelFinish(
 	env *azldev.Env,
@@ -845,9 +845,9 @@ func finishComponentRender(
 		return changed, nil
 	}
 
-	// Copy rendered files to the component's output directory.
-	if copyErr := copyRenderedOutput(env, componentDir, prep.compOutputDir, allowOverwrite); copyErr != nil {
-		return changed, copyErr
+	// Move rendered files to the component's output directory.
+	if moveErr := moveRenderedOutput(env, componentDir, prep.compOutputDir, allowOverwrite); moveErr != nil {
+		return changed, moveErr
 	}
 
 	// Best-effort: create a sibling symlink at the URL-encoded component name to
@@ -910,10 +910,15 @@ func writeAliasSymlink(fileSystem opctx.FS, componentOutputDir, componentName st
 	return nil
 }
 
-// copyRenderedOutput copies the rendered files from tempDir to the component's output directory.
-// For managed output (inside project root), existing output is removed before copying.
-// For external output, existing directories cause an error.
-func copyRenderedOutput(env *azldev.Env, tempDir, componentOutputDir string, allowOverwrite bool) error {
+// moveRenderedOutput recreates the output directory and moves all prepared entries
+// except '.git' into it. Existing output requires allowOverwrite.
+func moveRenderedOutput(env *azldev.Env, tempDir, componentOutputDir string, allowOverwrite bool) error {
+	if env.DryRun() {
+		slog.Info("Dry run; would replace rendered output", "source", tempDir, "dest", componentOutputDir)
+
+		return nil
+	}
+
 	exists, existsErr := fileutils.DirExists(env.FS(), componentOutputDir)
 	if existsErr != nil {
 		return fmt.Errorf("checking output directory %#q:\n%w", componentOutputDir, existsErr)
@@ -936,15 +941,22 @@ func copyRenderedOutput(env *azldev.Env, tempDir, componentOutputDir string, all
 		return fmt.Errorf("creating output directory %#q:\n%w", componentOutputDir, mkdirErr)
 	}
 
-	// Copy all files from temp to output.
-	copyOptions := fileutils.CopyDirOptions{
-		CopyFileOptions: fileutils.CopyFileOptions{
-			PreserveFileMode: true,
-		},
+	entries, err := fileutils.ReadDir(env.FS(), tempDir)
+	if err != nil {
+		return fmt.Errorf("reading prepared output directory %#q:\n%w", tempDir, err)
 	}
 
-	if copyErr := fileutils.CopyDirRecursive(env, env.FS(), tempDir, componentOutputDir, copyOptions); copyErr != nil {
-		return fmt.Errorf("copying rendered files to %#q:\n%w", componentOutputDir, copyErr)
+	for _, entry := range entries {
+		if entry.Name() == ".git" {
+			continue
+		}
+
+		sourcePath := filepath.Join(tempDir, entry.Name())
+
+		destPath := filepath.Join(componentOutputDir, entry.Name())
+		if moveErr := env.FS().Rename(sourcePath, destPath); moveErr != nil {
+			return fmt.Errorf("moving rendered entry %#q to %#q:\n%w", sourcePath, destPath, moveErr)
+		}
 	}
 
 	return nil
@@ -1090,7 +1102,7 @@ func validateOutputDir(outputDir string) error {
 // pruneOrphanRenderedDirs removes per-component rendered-spec directories
 // under outputDir that don't correspond to any component in resolvedComps.
 // Per-component dirs that ARE in resolvedComps are left alone -- phase 3 will
-// overwrite them via copyRenderedOutput, and leaving the prior content here
+// overwrite them via moveRenderedOutput, and leaving the prior content here
 // lets the unconditional diff in finishComponentRender produce a meaningful
 // result.Changed value for the user-visible table.
 //
