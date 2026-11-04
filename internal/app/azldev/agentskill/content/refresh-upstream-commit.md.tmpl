@@ -72,6 +72,11 @@ Lockless rendering never uses mock or `rpmautospec process-distgit`; the output
 retains `%autorelease`, `%autochangelog`, and other RPM macros unexpanded, and
 preserves the `changelog` sidecar.
 
+When the last render's configuration has no `spec.upstream-commit`, its
+committed lock file can supply the old pin only if that commit's top-level
+`lockless-components.txt` exists and does not list the component. The current
+render still requires a configured pin.
+
 Rendering then replaces `{{ .RenderedSpecsDir }}/<first-char>/<name>/` and
 automatically commits only that directory. The subject is
 `updated <component-name>` and the body contains upstream changes, if any.

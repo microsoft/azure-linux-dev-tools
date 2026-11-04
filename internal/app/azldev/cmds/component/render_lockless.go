@@ -22,6 +22,8 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
+	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
+	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spec"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
@@ -151,14 +153,14 @@ func renderedUpstreamCommits(
 		return "", "", err
 	}
 
-	current, err = renderUpstreamCommit(env, tree, projectPath, name)
+	current, err = renderUpstreamCommit(env, tree, projectPath, name, false)
 	if err != nil {
 		return "", "", fmt.Errorf("reading current render upstream commit:\n%w", err)
 	}
 
 	lastTree, err := last.Tree()
 	if err == nil {
-		previous, err = renderUpstreamCommit(env, lastTree, projectPath, name)
+		previous, err = renderUpstreamCommit(env, lastTree, projectPath, name, true)
 	}
 
 	if err != nil {
@@ -171,7 +173,9 @@ func renderedUpstreamCommits(
 	return previous, current, nil
 }
 
-func renderUpstreamCommit(env *azldev.Env, tree *object.Tree, projectPath, name string) (string, error) {
+func renderUpstreamCommit(
+	env *azldev.Env, tree *object.Tree, projectPath, name string, allowLockFallback bool,
+) (string, error) {
 	historicalEnv, err := loadHistoricalEnv(env, tree, projectPath)
 	if err != nil {
 		return "", err
@@ -183,11 +187,53 @@ func renderUpstreamCommit(env *azldev.Env, tree *object.Tree, projectPath, name 
 	}
 
 	commit := comp.GetConfig().Spec.UpstreamCommit
+	if commit == "" && allowLockFallback {
+		return lastRenderLockedUpstreamCommit(historicalEnv, name)
+	}
+
 	if commit == "" {
 		return "", fmt.Errorf("component %#q has no configured 'spec.upstream-commit'", name)
 	}
 
 	return commit, nil
+}
+
+func lastRenderLockedUpstreamCommit(env *azldev.Env, name string) (string, error) {
+	selectionPath := filepath.Join(env.ProjectDir(), "lockless-components.txt")
+
+	exists, err := fileutils.Exists(env.FS(), selectionPath)
+	if err != nil {
+		return "", fmt.Errorf("checking historical lockless component selection:\n%w", err)
+	}
+
+	if !exists {
+		return "", errors.New("no historical 'lockless-components.txt' for lock fallback")
+	}
+
+	selected, err := projectconfig.ReadLocklessComponents(env.FS(), env.ProjectDir())
+	if err != nil {
+		return "", fmt.Errorf("reading historical lockless component selection:\n%w", err)
+	}
+
+	if selected[name] {
+		return "", fmt.Errorf("historical component %#q is lockless but has no 'spec.upstream-commit'", name)
+	}
+
+	lockDir := env.Config().Project.LockDir
+	if lockDir == "" {
+		return "", errors.New("no historical 'lock-dir' configured for lock fallback")
+	}
+
+	lock, err := lockfile.NewStore(env.FS(), lockDir).Get(name)
+	if err != nil {
+		return "", fmt.Errorf("reading historical lock for %#q:\n%w", name, err)
+	}
+
+	if lock.UpstreamCommit == "" {
+		return "", fmt.Errorf("historical lock for %#q has no 'upstream-commit'", name)
+	}
+
+	return lock.UpstreamCommit, nil
 }
 
 func prepareLocklessSpec(

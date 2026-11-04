@@ -77,6 +77,97 @@ release-ver = "1"
 	assert.Equal(t, "bbbbbbb", history.current)
 }
 
+func TestReadLastRender_HistoricalLockFallback(t *testing.T) {
+	const (
+		oldLock = "version = 1\nupstream-commit = 'aaaaaaa'\n"
+		config  = `[project]
+default-distro = { name = "test", version = "1" }
+lock-dir = "../historical-locks"
+[distros.test.versions."1"]
+release-ver = "1"
+`
+	)
+	for _, testCase := range []struct {
+		name, selection, lock, pin, want string
+		noSelection, noLock, noLockDir   bool
+		missingCurrent                   bool
+	}{
+		{name: "historically locked", selection: "rust-asyncband\n", lock: oldLock, want: "aaaaaaa"},
+		{name: "empty selection", lock: oldLock, want: "aaaaaaa"},
+		{name: "exact names", selection: "Curl\ncurl-extra\n", lock: oldLock, want: "aaaaaaa"},
+		{name: "listed component", selection: " curl \r\n", lock: oldLock},
+		{name: "missing selection", noSelection: true, lock: oldLock},
+		{name: "missing lock", noLock: true},
+		{name: "corrupt lock", lock: "invalid = ["},
+		{name: "empty lock pin", lock: "version = 1\n"},
+		{name: "no configured lock directory", noLockDir: true, lock: oldLock},
+		{name: "configured pin takes precedence", pin: "ccccccc", lock: oldLock, want: "ccccccc"},
+		{name: "no fallback for current pin", lock: oldLock, missingCurrent: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			oldConfig := config
+			if testCase.noLockDir {
+				oldConfig = strings.ReplaceAll(oldConfig, `lock-dir = "../historical-locks"`, `lock-dir = ""`)
+			}
+
+			component := "[components.curl.spec]\ntype = 'upstream'\n"
+
+			files := map[string][]byte{
+				"azldev.toml":           []byte(`includes = ["settings/project.toml", "components.toml"]`),
+				"settings/project.toml": []byte(oldConfig),
+				"components.toml": []byte(component +
+					"upstream-commit = '" + testCase.pin + "'\n"),
+				"SPECS/c/curl/curl.spec": []byte(renderTestSpec("1", "9", "old\n")),
+			}
+			if !testCase.noSelection {
+				files["lockless-components.txt"] = []byte(testCase.selection)
+			}
+
+			if !testCase.noLock {
+				files["historical-locks/curl.lock"] = []byte(testCase.lock)
+			}
+
+			current := component
+			selection := "rust-asyncband\n"
+
+			if !testCase.missingCurrent {
+				current += "upstream-commit = 'bbbbbbb'\n"
+				selection = "curl\n"
+			}
+
+			repo, _ := testRepoWithCommits(t, []testRepoCommit{
+				{files: files},
+				{files: map[string][]byte{
+					"components.toml":            []byte(current),
+					"settings/project.toml":      []byte(strings.ReplaceAll(config, "historical-locks", "current-locks")),
+					"lockless-components.txt":    []byte(selection),
+					"historical-locks/curl.lock": []byte("version = 1\nupstream-commit = 'changed-old-lock'\n"),
+					"current-locks/curl.lock":    []byte("version = 1\nupstream-commit = 'current-lock'\n"),
+				}},
+			})
+			worktree, err := repo.Worktree()
+			require.NoError(t, err)
+			dirty, err := worktree.Filesystem.Create("historical-locks/curl.lock")
+			require.NoError(t, err)
+			_, err = dirty.Write([]byte("uncommitted lock"))
+			require.NoError(t, err)
+			require.NoError(t, dirty.Close())
+			env := testutils.NewTestEnv(t)
+
+			history, err := readLastRender(env.Env, repo, "/project", "SPECS/c/curl", "curl")
+			if testCase.missingCurrent {
+				require.ErrorContains(t, err, "current render upstream commit")
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, testCase.want, history.previous)
+			assert.Equal(t, "bbbbbbb", history.current)
+		})
+	}
+}
+
 func TestReadLastRender_AbsentAndInvalidHistory(t *testing.T) {
 	valid := []byte(`[project]
 default-distro = { name = "test", version = "1" }
