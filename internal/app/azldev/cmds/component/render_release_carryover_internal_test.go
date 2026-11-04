@@ -99,6 +99,10 @@ func TestPrepareLocklessSpec_CarriesBaseRelease(t *testing.T) {
 						testCase.version, history, update))
 					err := prepareLocklessSpec(env.Env, &renderAutospecStub{}, "/working", "curl", editor, history, update)
 					require.NoError(t, err)
+					assert.Zero(t, calls)
+
+					_, err = bumpLocklessSpec(env.Env, path, update)
+					require.NoError(t, err)
 					assert.Equal(t, 1, calls)
 
 					content, err := fileutils.ReadFile(env.TestFS, path)

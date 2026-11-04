@@ -28,12 +28,12 @@ use lock files.
 
 For lockless upstream components, write macros, apply overlays, and update sources
 before carrying release and changelog state from the last committed render.
-Run rpmdev-bumpspec with "updated <component-name>" and any upstream changes.
+Compare output, then run rpmdev-bumpspec with "updated <component-name>" and upstream changes.
 After replacing the output, automatically commit that component directory to
 the project repository, without including unrelated staged files. The output
 must be inside that repository; Git author identity must be configured and
 rpmdev-bumpspec must be installed. Commit updated upstream-commit TOML before
-rendering. --check-only never replaces output or creates project commits.
+rendering. --check-only stops before bumping, replacing output, or committing.
 Lockless rendering runs entirely on the host: it never uses mock or
 rpmautospec process-distgit. The rendered spec retains its RPM macros, including
 %autorelease and %autochangelog. All prepared dist-git files are retained except

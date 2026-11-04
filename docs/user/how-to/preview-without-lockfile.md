@@ -178,7 +178,9 @@ When upstream changes exist and `Version:` differs from the committed rendered
 version (or there is no previous output), it retains the original upstream
 `Release:` and `baserelease` definition instead of carrying over previous
 values, and restores the upstream `Release:` if an autorelease base was carried over.
-It then always invokes host `rpmdev-bumpspec -c` with
+It then compares the prepared tree with existing output, ignoring the root `.git`.
+`--check-only` stops here, before the final release bump.
+Normal rendering then always invokes host `rpmdev-bumpspec -c` with
 `updated <component-name>` followed by upstream changes on separate lines.
 The tool's no-op for `%autorelease` specs is accepted.
 
@@ -195,7 +197,7 @@ adjustment are skipped. The spec is **not** preprocessed with `rpmautospec proce
 No mock configuration is needed for lockless rendering.
 Comparison ignores the root `.git` entry without traversing or removing it;
 the working checkout retains its Git metadata until staging cleanup.
-After comparing the prepared tree with the current output, the renderer
+After comparison and the final release bump, normal rendering
 recursively removes the existing component output directory, recreates it, and
 moves all prepared files and subdirectories except `.git` into it. Files found
 only in the old output are not retained. Moves use filesystem renames, so the
@@ -217,9 +219,10 @@ Install `rpmdevtools`, `rpm-build`, and `rpmautospec` on the host as needed for
 the release/changelog queries, and configure Git author identity before
 rendering. Output (including a custom `--output-dir`) must be inside the project
 Git repository. `--check-only` prepares and compares temporary output but never
-replaces rendered files or creates project commits. Because ordinary release
-bumping is part of rendering, a new render may differ even without new upstream
-commits.
+performs the final `rpmdev-bumpspec` invocation, replaces rendered files, or
+creates project commits. Normal rendering still performs its final bump even
+when the pre-bump comparison finds no differences; its change reporting includes
+changes made by that bump.
 
 ## Detect Changed Components
 

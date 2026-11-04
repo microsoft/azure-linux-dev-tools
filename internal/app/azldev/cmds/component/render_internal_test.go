@@ -4,8 +4,11 @@
 package component
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
@@ -740,6 +743,121 @@ func TestFinishComponentRender_PreservesGitMetadata(t *testing.T) {
 			assert.False(t, exists)
 		})
 	}
+}
+
+func TestFinishComponentRender_ComparisonBeforeBump(t *testing.T) {
+	for _, testCase := range []struct {
+		name        string
+		checkOnly   bool
+		drift       bool
+		autorelease bool
+		compareFail bool
+		wantChanged bool
+	}{
+		{name: "check-only unchanged", checkOnly: true},
+		{name: "check-only drift", checkOnly: true, drift: true, wantChanged: true},
+		{name: "normal static bump", wantChanged: true},
+		{name: "normal autorelease no-op", autorelease: true},
+		{name: "normal drift and no-op", autorelease: true, drift: true, wantChanged: true},
+		{name: "comparison fails", compareFail: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			baseFS := env.TestFS
+			comp := components_testutils.NewMockComponent(gomock.NewController(t))
+			comp.EXPECT().GetName().AnyTimes().Return("curl")
+
+			release := "9"
+			if testCase.autorelease {
+				release = "%autorelease"
+			}
+
+			original := renderTestSpec("1", release, "* Previous entry\n")
+
+			actual := original
+			if testCase.drift {
+				actual += "\n# Stale output\n"
+			}
+
+			const (
+				stagedSpec = "/staging/curl/curl.spec"
+				outputSpec = "/output/curl/curl.spec"
+			)
+
+			require.NoError(t, fileutils.WriteFile(baseFS, stagedSpec, []byte(original), fileperms.PublicFile))
+			require.NoError(t, fileutils.WriteFile(baseFS, outputSpec, []byte(actual), fileperms.PublicFile))
+
+			comparisonFS := &renderComparisonFS{Fs: baseFS, path: outputSpec}
+			if testCase.compareFail {
+				comparisonFS.readErr = errors.New("comparison read failed")
+			}
+
+			env.TestFS = comparisonFS
+			called := false
+
+			env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+				assert.True(t, comparisonFS.compared, "comparison must precede the bump")
+
+				called = true
+
+				assert.Equal(t, "rpmdev-bumpspec", cmd.Args[0])
+
+				bumped := strings.Replace(original, "Release: 9\n", "Release: 10\n", 1)
+
+				return fileutils.WriteFile(baseFS, stagedSpec, []byte(bumped), fileperms.PublicFile)
+			}
+			if !testCase.checkOnly {
+				env.CmdFactory.RegisterCommandInSearchPath("rpmdev-bumpspec")
+			}
+
+			prep := &preparedComponent{
+				comp: comp, specFilename: "curl.spec", compOutputDir: "/output/curl",
+				lockless: true, update: &locklessRenderUpdate{subject: "updated curl"},
+			}
+
+			changed, err := finishComponentRender(env.Env, prep,
+				map[string]*sources.ComponentMockResult{"curl": {}}, "/staging", true, testCase.checkOnly)
+			if testCase.compareFail {
+				require.ErrorIs(t, err, comparisonFS.readErr)
+			} else {
+				require.NoError(t, err)
+			}
+
+			assert.True(t, comparisonFS.compared)
+			assert.Equal(t, !testCase.checkOnly && !testCase.compareFail, called)
+			assert.Equal(t, testCase.wantChanged, changed)
+
+			want := strings.Replace(original, "Release: 9\n", "Release: 10\n", 1)
+			if testCase.checkOnly || testCase.compareFail {
+				want = actual
+				staged, readErr := fileutils.ReadFile(baseFS, stagedSpec)
+				require.NoError(t, readErr)
+				assert.Equal(t, original, string(staged))
+			}
+
+			output, readErr := fileutils.ReadFile(baseFS, outputSpec)
+			require.NoError(t, readErr)
+			assert.Equal(t, want, string(output))
+		})
+	}
+}
+
+type renderComparisonFS struct {
+	afero.Fs
+	path     string
+	compared bool
+	readErr  error
+}
+
+func (fs *renderComparisonFS) Open(name string) (afero.File, error) {
+	if name == fs.path {
+		fs.compared = true
+		if fs.readErr != nil {
+			return nil, fs.readErr
+		}
+	}
+
+	return fs.Fs.Open(name)
 }
 
 func TestDiffRenderedOutput(t *testing.T) {

@@ -76,12 +76,12 @@ use lock files.
 
 For lockless upstream components, write macros, apply overlays, and update sources
 before carrying release and changelog state from the last committed render.
-Run rpmdev-bumpspec with "updated <component-name>" and any upstream changes.
+Compare output, then run rpmdev-bumpspec with "updated <component-name>" and upstream changes.
 After replacing the output, automatically commit that component directory to
 the project repository, without including unrelated staged files. The output
 must be inside that repository; Git author identity must be configured and
 rpmdev-bumpspec must be installed. Commit updated upstream-commit TOML before
-rendering. --check-only never replaces output or creates project commits.
+rendering. --check-only stops before bumping, replacing output, or committing.
 Lockless rendering runs entirely on the host: it never uses mock or
 rpmautospec process-distgit. The rendered spec retains its RPM macros, including
 %autorelease and %autochangelog. All prepared dist-git files are retained except
@@ -692,10 +692,8 @@ func batchMockProcess(
 // Phase 3: Parallel finishing
 // ──────────────────────────────────────────────────────────────────────────────
 
-// parallelFinish applies source-query results, compares without '.git', and moves
-// rendered output for all successfully prepared components. In --check-only
-// mode, the move step is replaced with a tree comparison and no disk writes
-// happen.
+// parallelFinish applies source-query results, compares without '.git', then
+// bumps and moves rendered output. Check-only stops after comparison.
 func parallelFinish(
 	env *azldev.Env,
 	prepared []*preparedComponent,
@@ -723,7 +721,8 @@ func parallelFinish(
 		prepared,
 		func(done, _ int) { progressEvent.SetProgress(int64(done), total) },
 		func(_ context.Context, prep *preparedComponent) *RenderResult {
-			return finishOneComponent(workerEnv, env, prep, mockResultMap, stagingDir, allowOverwrite, checkOnly)
+			//nolint:contextcheck // workerEnv is the captured context supplied to parmap.
+			return finishOneComponent(workerEnv, prep, mockResultMap, stagingDir, allowOverwrite, checkOnly)
 		},
 	)
 
@@ -750,7 +749,6 @@ func parallelFinish(
 // worker; semaphore acquisition is handled by parmap.
 func finishOneComponent(
 	workerEnv *azldev.Env,
-	env *azldev.Env,
 	prep *preparedComponent,
 	mockResultMap map[string]*sources.ComponentMockResult,
 	stagingDir string,
@@ -777,7 +775,7 @@ func finishOneComponent(
 		Status:    renderStatusOK,
 	}
 
-	drifted, err := finishComponentRender(env, prep, mockResultMap, stagingDir, allowOverwrite, checkOnly)
+	drifted, err := finishComponentRender(workerEnv, prep, mockResultMap, stagingDir, allowOverwrite, checkOnly)
 	if err != nil {
 		slog.Error("Failed to finish rendering component",
 			"component", componentName, "error", err)
@@ -793,13 +791,12 @@ func finishOneComponent(
 
 // finishComponentRender applies mock results, filters locked components' files,
 // diffs the staging tree against the existing output while ignoring the root '.git',
-// and (unless checkOnly is set) moves all other entries to the output dir.
+// and (unless checkOnly is set) bumps lockless upstream specs and moves output.
 // stagingDir is the root staging directory containing the component's subdirectory.
 //
-// Returns changed=true when the staging tree differs from the existing output
-// (or no existing output is present). The diff is computed unconditionally so
-// every render run gets a meaningful 'Changed' value in its result table; the
-// disk write is the only thing gated by checkOnly.
+// Returns changed=true when the prepared tree differs from the existing output
+// (or no existing output is present), or a subsequent release bump changes the spec.
+// Check-only compares before bumping and does not replace output.
 func finishComponentRender(
 	env *azldev.Env,
 	prep *preparedComponent,
@@ -843,9 +840,7 @@ func finishComponentRender(
 		return false, fmt.Errorf("filtering unreferenced files for %#q:\n%w", componentName, filterErr)
 	}
 
-	// Compare staging tree to existing output. Always done so the result table
-	// reflects which components actually changed on disk this run, not just
-	// in --check-only mode.
+	// Compare before the final bump so '--check-only' does not manufacture release drift.
 	changed, diffErr := diffRenderedOutput(env.FS(), componentDir, prep.compOutputDir)
 	if diffErr != nil {
 		return false, fmt.Errorf("comparing rendered output for %#q:\n%w", componentName, diffErr)
@@ -853,6 +848,15 @@ func finishComponentRender(
 
 	if checkOnly {
 		return changed, nil
+	}
+
+	if prep.update != nil {
+		bumped, err := bumpLocklessSpec(env, specPath, prep.update)
+		if err != nil {
+			return changed, err
+		}
+
+		changed = changed || bumped
 	}
 
 	// Move rendered files to the component's output directory.

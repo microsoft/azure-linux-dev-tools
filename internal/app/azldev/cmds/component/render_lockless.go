@@ -318,12 +318,7 @@ func prepareLocklessSpec(
 		return fmt.Errorf("writing prepared upstream spec:\n%w", err)
 	}
 
-	entry := update.subject
-	if update.changes != "" {
-		entry += "\n" + update.changes
-	}
-
-	return bumpLocklessSpec(env, path, entry)
+	return nil
 }
 
 func locklessSpecBytes(opened *spec.Spec, previous, release string, editor spec.EditorMode) ([]byte, error) {
@@ -643,9 +638,19 @@ func renderChangelogBounds(content []byte, editor spec.EditorMode) (start int, e
 	return start, end, nil
 }
 
-func bumpLocklessSpec(env *azldev.Env, path, entry string) error {
+func bumpLocklessSpec(env *azldev.Env, path string, update *locklessRenderUpdate) (bool, error) {
 	if err := prereqs.RequireExecutable(env, sources.RPMDevBumpspecBinary, nil); err != nil {
-		return fmt.Errorf("lockless upstream rendering requires 'rpmdev-bumpspec'; install 'rpmdevtools':\n%w", err)
+		return false, fmt.Errorf("lockless upstream rendering requires 'rpmdev-bumpspec'; install 'rpmdevtools':\n%w", err)
+	}
+
+	before, err := fileutils.ReadFile(env.FS(), path)
+	if err != nil {
+		return false, fmt.Errorf("reading spec before release bump:\n%w", err)
+	}
+
+	entry := update.subject
+	if update.changes != "" {
+		entry += "\n" + update.changes
 	}
 
 	raw := exec.CommandContext(env, sources.RPMDevBumpspecBinary, "-c", entry, path)
@@ -657,14 +662,19 @@ func bumpLocklessSpec(env *azldev.Env, path, entry string) error {
 
 	command, err := env.Command(raw)
 	if err != nil {
-		return fmt.Errorf("creating render release bump command:\n%w", err)
+		return false, fmt.Errorf("creating render release bump command:\n%w", err)
 	}
 
 	if err := command.Run(env); err != nil {
-		return fmt.Errorf("bumping render release (%s):\n%w", stderr.String(), err)
+		return false, fmt.Errorf("bumping render release (%s):\n%w", stderr.String(), err)
 	}
 
-	return nil
+	after, err := fileutils.ReadFile(env.FS(), path)
+	if err != nil {
+		return false, fmt.Errorf("reading spec after release bump:\n%w", err)
+	}
+
+	return !bytes.Equal(before, after), nil
 }
 
 func commitLocklessRenders(

@@ -448,6 +448,10 @@ func TestPrepareLocklessSpec_ReleaseChangelogAndUpstreamChanges(t *testing.T) {
 			err := prepareLocklessSpec(env.Env, stub, "/working", "curl", spec.EditorLegacy,
 				testCase.history, update)
 			require.NoError(t, err)
+			assert.False(t, called, "carryover must not perform the final bump")
+
+			_, err = bumpLocklessSpec(env.Env, path, update)
+			require.NoError(t, err)
 			assert.True(t, called)
 			assert.Equal(t, testCase.wantChanges, update.changes)
 
@@ -576,6 +580,10 @@ func TestPrepareLocklessSpec_CommittedAutorelease(t *testing.T) {
 			require.NoError(t, collectRenderUpstreamChanges(env.Env, "/working", "curl",
 				testCase.version, history, update))
 			err := prepareLocklessSpec(env.Env, stub, "/working", "curl", spec.EditorLegacy, history, update)
+			require.NoError(t, err)
+			assert.False(t, bumped)
+
+			_, err = bumpLocklessSpec(env.Env, "/working/curl.spec", update)
 			require.NoError(t, err)
 			assert.True(t, bumped)
 			assert.Equal(t, []string{"expand"}, stub.calls)
@@ -795,12 +803,19 @@ upstream-commit = "aaaaaaa"
 		return fileutils.WriteFile(env.TestFS, path,
 			[]byte(strings.Replace(string(content), "Release: 9\n", "Release: 10\n", 1)), fileperms.PublicFile)
 	}
-	_, err := prepareComponentSources(env.Env, nil, comp, "/staging", "/project/SPECS/c/curl",
+	prep, err := prepareComponentSources(env.Env, nil, comp, "/staging", "/project/SPECS/c/curl",
 		spec.EditorLegacy, false, true)
 	require.NoError(t, err)
+	assert.False(t, bumped)
+
+	prep.compOutputDir = "/project/SPECS/c/curl"
+	changed, err := finishComponentRender(env.Env, prep,
+		map[string]*sources.ComponentMockResult{"curl": {}}, "/staging", true, false)
+	require.NoError(t, err)
+	assert.True(t, changed)
 	assert.True(t, bumped)
 
-	content, err := fileutils.ReadFile(env.TestFS, "/staging/curl/curl.spec")
+	content, err := fileutils.ReadFile(env.TestFS, "/project/SPECS/c/curl/curl.spec")
 	require.NoError(t, err)
 	assert.Contains(t, string(content), "Release: 10\n")
 }
@@ -886,6 +901,9 @@ func TestBumpLocklessSpec_Failures(t *testing.T) {
 	for _, available := range []bool{false, true} {
 		t.Run(strconv.FormatBool(available), func(t *testing.T) {
 			env := testutils.NewTestEnv(t)
+			require.NoError(t, fileutils.WriteFile(env.TestFS, "/working/curl.spec",
+				[]byte(renderTestSpec("1", "1", "")), fileperms.PublicFile))
+
 			if available {
 				env.CmdFactory.RegisterCommandInSearchPath("rpmdev-bumpspec")
 			}
@@ -896,7 +914,7 @@ func TestBumpLocklessSpec_Failures(t *testing.T) {
 
 				return errors.New("invalid spec")
 			}
-			err := bumpLocklessSpec(env.Env, "/working/curl.spec", "updated curl")
+			_, err := bumpLocklessSpec(env.Env, "/working/curl.spec", &locklessRenderUpdate{subject: "updated curl"})
 
 			assert.Equal(t, available, called)
 

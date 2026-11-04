@@ -42,7 +42,8 @@ For listed upstream components, rendering writes macros, applies overlays, and
 updates `sources` before carrying release/changelog state from the committed
 output and running host `rpmdev-bumpspec`, without synthetic history or its legacy
 release adjustment. Lockless rendering
-never uses mock or `rpmautospec process-distgit`; RPM macros remain unexpanded.
+compares output before the final release bump; `--check-only` stops before that bump.
+It never uses mock or `rpmautospec process-distgit`; RPM macros remain unexpanded.
 It retains all prepared dist-git files except `.git`, without file filtering or
 `spectool` queries, and replaces and
 automatically commits only that component's output directory; unrelated staged

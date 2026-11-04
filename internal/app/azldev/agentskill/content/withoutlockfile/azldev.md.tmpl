@@ -36,6 +36,7 @@ images assemble RPMs into bootable artifacts.
 For upstream components, rendering writes macros, applies overlays, and
 updates `sources` before carrying release/changelog state from the committed
 output and running host `rpmdev-bumpspec`.
+Rendering compares output before the final release bump; `--check-only` stops before that bump.
 It replaces and automatically commits only the component output directory.
 Commit refreshed TOML before rendering; configure Git author identity and install
 `rpmdevtools`, `rpm-build`, and `rpmautospec` as needed.
