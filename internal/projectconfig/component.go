@@ -374,6 +374,8 @@ type ComponentLockData struct {
 }
 
 // Defines a component.
+//
+//nolint:recvcheck // HashInclude must also support configs passed to hashstructure by value.
 type ComponentConfig struct {
 	// The component's name; not actually present in serialized files.
 	Name string `toml:"-" json:"name" table:",sortkey" fingerprint:"-"`
@@ -432,6 +434,9 @@ type ComponentConfig struct {
 	// Source file references for this component.
 	SourceFiles []SourceFileReference `toml:"source-files,omitempty" json:"sourceFiles,omitempty" table:"-" jsonschema:"title=Source files,description=Source files to download for this component"`
 
+	// GoVendor converts supported Go application specs and generates their vendored sources.
+	GoVendor *GoVendorConfig `toml:"go-vendor,omitempty" json:"goVendor,omitempty" table:"-" jsonschema:"title=Go vendoring,description=Convert a Go application spec and generate its vendor archive during source preparation"`
+
 	// Per-package configuration overrides, keyed by exact binary package name.
 	// Takes precedence over package-group defaults.
 	Packages map[string]PackageConfig `toml:"packages,omitempty" json:"packages,omitempty" table:"-" validate:"dive" jsonschema:"title=Package overrides,description=Per-package configuration overrides keyed by exact binary package name"`
@@ -448,6 +453,11 @@ type ComponentConfig struct {
 	// References must resolve to entries in the project-level [tests] or
 	// [test-groups] maps; resolution is the responsibility of the test layer.
 	Tests *ComponentTestsConfig `toml:"tests,omitempty" json:"tests,omitempty" table:"-" jsonschema:"title=Tests,description=Per-component test or test-group references" fingerprint:"-"`
+}
+
+// HashInclude preserves existing fingerprints when Go vendoring is not configured.
+func (c ComponentConfig) HashInclude(field string, _ any) (bool, error) {
+	return field != "GoVendor" || c.GoVendor != nil, nil
 }
 
 // AllowedSourceFilesHashTypes defines the set of hash types that are supported
@@ -480,7 +490,18 @@ func (c *ComponentConfig) MergeUpdatesFrom(other *ComponentConfig) error {
 		c.OverlayFiles = otherOverlayFiles
 	}
 
+	c.overrideGoVendorEnabled(other)
+
 	return nil
+}
+
+func (c *ComponentConfig) overrideGoVendorEnabled(other *ComponentConfig) {
+	if other.GoVendor != nil && other.GoVendor.Enabled != nil {
+		config := *c.GoVendor
+		enabled := *other.GoVendor.Enabled
+		config.Enabled = &enabled
+		c.GoVendor = &config
+	}
 }
 
 func (c *ComponentConfig) resolveLocalCustomScriptPaths() {
@@ -548,6 +569,8 @@ func (c *ComponentConfig) MergeOverridesFrom(other *ComponentConfig) error {
 	if other.OverlayFiles != nil {
 		c.OverlayFiles = otherOverlayFiles
 	}
+
+	c.overrideGoVendorEnabled(other)
 
 	return nil
 }
@@ -621,31 +644,18 @@ func ResolveComponentConfig(
 // Returns a copy of the component config with relative file paths converted to absolute
 // file paths (relative to referenceDir, not the current working directory).
 func (c *ComponentConfig) WithAbsolutePaths(referenceDir string) *ComponentConfig {
-	// Deep copy the input to avoid unexpected sharing. Make sure *not* to deep-copy
-	// the SourceConfigFile, as we *do* want to alias that pointer, sharing it across
-	// all configs that came from that source config file.
-	result := &ComponentConfig{
-		Name:                     c.Name,
-		SourceConfigFile:         c.SourceConfigFile,
-		upstreamCommitConfigFile: c.upstreamCommitConfigFile,
-		RenderedSpecDir:          c.RenderedSpecDir,
-		Locked:                   deep.MustCopy(c.Locked),
-		Release:                  c.Release,
-		Spec:                     deep.MustCopy(c.Spec),
-		Build:                    deep.MustCopy(c.Build),
-		Render:                   c.Render,
-		SourceFiles:              deep.MustCopy(c.SourceFiles),
-		Packages:                 deep.MustCopy(c.Packages),
-		Publish:                  deep.MustCopy(c.Publish),
-		// OverlayFiles is consumed after component config resolution; preserve it verbatim
-		// here so inherited patterns can be interpreted relative to the concrete component
-		// config file.
-		OverlayFiles: slices.Clone(c.OverlayFiles),
-		Tests:        deep.MustCopy(c.Tests),
-	}
+	// Copy all configuration fields, excluding shared back-references which can
+	// point back into the component map and must retain their identity.
+	input := *c
+	input.SourceConfigFile, input.upstreamCommitConfigFile = nil, nil
+	result := deep.MustCopy(&input)
+	result.SourceConfigFile, result.upstreamCommitConfigFile = c.SourceConfigFile, c.upstreamCommitConfigFile
 
 	// Fix up paths.
 	result.Spec.Path = makeAbsolute(referenceDir, result.Spec.Path)
+	if result.GoVendor != nil {
+		result.GoVendor.ConfigFile = makeAbsolute(referenceDir, result.GoVendor.ConfigFile)
+	}
 
 	for i := range result.SourceFiles {
 		origin := &result.SourceFiles[i].Origin
@@ -654,13 +664,8 @@ func (c *ComponentConfig) WithAbsolutePaths(referenceDir string) *ComponentConfi
 		}
 	}
 
-	// Copy and fix up overlays.
-	if c.Overlays != nil {
-		result.Overlays = make([]ComponentOverlay, len(c.Overlays))
-
-		for i := range result.Overlays {
-			result.Overlays[i] = *c.Overlays[i].WithAbsolutePaths(referenceDir)
-		}
+	for i := range result.Overlays {
+		result.Overlays[i] = *result.Overlays[i].WithAbsolutePaths(referenceDir)
 	}
 
 	return result

@@ -42,6 +42,9 @@ type ComponentInputs struct {
 	// source file's basename and content. Keyed by index rather than path to avoid
 	// checkout-location dependence.
 	OverlayFileHashes map[string]string `json:"overlayFileHashes,omitempty"`
+	// GoVendorConfigHash records the contents of an explicitly selected vendor
+	// configuration without depending on its checkout-specific path.
+	GoVendorConfigHash string `json:"goVendorConfigHash,omitempty"`
 	// ManualBump is the manual rebuild counter from the lock file. Almost always 0;
 	// used for mass-rebuild scenarios.
 	ManualBump int `json:"manualBump"`
@@ -62,13 +65,13 @@ type IdentityOptions struct {
 	//
 	// This is caller-provided because resolving it requires network access (upstream clone) or
 	// filesystem traversal (local content hash). [ComputeIdentity] is a pure combiner — it does
-	// not perform I/O beyond reading overlay files. Callers should resolve source identity via
+	// not perform I/O beyond reading declared input files. Callers should resolve source identity via
 	// SourceManager.ResolveSourceIdentity before calling [ComputeIdentity].
 	SourceIdentity string
 }
 
 // ComputeIdentity computes the fingerprint for a component from its resolved config
-// and additional context. The fs parameter is used to read overlay source file
+// and additional context. The fs parameter is used to read declared input file
 // contents for hashing; spec content identity is provided via [IdentityOptions.SourceIdentity].
 //
 // This function is a deterministic combiner: given the same resolved inputs it always
@@ -141,6 +144,11 @@ func ComputeIdentity(
 
 	inputs.OverlayFileHashes = overlayHashes
 
+	inputs.GoVendorConfigHash, err = component.GoVendor.SourceContentIdentity(fs)
+	if err != nil {
+		return nil, fmt.Errorf("hashing Go vendor configuration:\n%w", err)
+	}
+
 	// 5. Combine all inputs into the overall fingerprint.
 	return &ComponentIdentity{
 		Fingerprint: combineInputs(inputs),
@@ -157,6 +165,10 @@ func combineInputs(inputs ComponentInputs) string {
 	writeField(hasher, "source_identity", inputs.SourceIdentity)
 	writeField(hasher, "manual_bump", strconv.Itoa(inputs.ManualBump))
 	writeField(hasher, "release_ver", inputs.ReleaseVer)
+
+	if inputs.GoVendorConfigHash != "" {
+		writeField(hasher, "go_vendor_config", inputs.GoVendorConfigHash)
+	}
 
 	// Overlay file hashes in sorted key order for determinism.
 	if len(inputs.OverlayFileHashes) > 0 {

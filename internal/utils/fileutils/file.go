@@ -14,6 +14,7 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/spf13/afero"
+	"golang.org/x/sys/unix"
 )
 
 // Adaptation of [os.WriteFile] that works with [opctx.FS].
@@ -26,6 +27,31 @@ func WriteFile(fs opctx.FS, path string, data []byte, perm os.FileMode) error {
 func ReadFile(fs opctx.FS, filename string) ([]byte, error) {
 	//nolint:wrapcheck // We are intentionally a pass-through.
 	return afero.ReadFile(fs, filename)
+}
+
+// OpenRegularFileNoFollow atomically rejects final-component symlinks and checks
+// the opened descriptor rather than a path that could change before reading.
+// The parent directory must be trusted. Nonblocking mode avoids opening a FIFO indefinitely.
+func OpenRegularFileNoFollow(fs opctx.FS, filename string) (opctx.File, error) {
+	file, err := fs.OpenFile(filename, os.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, fmt.Errorf("opening regular file %#q without following symlinks:\n%w", filename, err)
+	}
+
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+
+		return nil, fmt.Errorf("checking opened file %#q:\n%w", filename, err)
+	}
+
+	if !info.Mode().IsRegular() {
+		file.Close()
+
+		return nil, fmt.Errorf("%#q is not a regular file", filename)
+	}
+
+	return file, nil
 }
 
 // Adaptation of [filepath.Glob] that works with [opctx.FS] and also uses the

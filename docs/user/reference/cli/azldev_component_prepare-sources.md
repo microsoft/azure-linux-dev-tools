@@ -41,8 +41,8 @@ azldev component prepare-sources [flags]
   -o, --output-dir string             output directory
       --rpmdev-bumpspec               Use rpmdev-bumpspec instead of the legacy static release calculation
       --skip-lock-validation          skip lock file consistency checks
-      --skip-overlays                 skip applying overlays to prepared sources
-      --skip-sources                  skip downloading fetched sources when preparing the package (useful to extract dist-git metadata when source files are not needed)
+      --skip-overlays                 skip overlays and Go vendor conversion, preserving upstream packaging
+      --skip-sources                  skip downloading sources unless Go vendor conversion requires them
   -s, --spec-path stringArray         Spec path
       --without-git                   Disable dist-git repository creation (enabled by default)
 ```

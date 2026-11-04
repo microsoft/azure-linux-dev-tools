@@ -15,6 +15,7 @@ A component definition tells azldev where to find the spec file, how to customiz
 | Build config | `build` | [BuildConfig](#build-configuration) | No | Build-time options (macros, conditionals, check config) |
 | Render config | `render` | [RenderConfig](#render-configuration) | No | Options controlling spec rendering behavior |
 | Source files | `source-files` | array of [SourceFileReference](#source-file-references) | No | Additional source files to download for this component |
+| Go vendoring | `go-vendor` | [GoVendorConfig](#go-vendoring) | No | Convert a supported Go application spec in place and generate bundled dependencies |
 | Package overrides | `packages` | map of string → [PackageConfig](package-groups.md#package-config) | No | Exact per-package configuration overrides; highest priority in the resolution order |
 | Tests | `tests` | [ComponentTests](#component-tests) | No | Test references that apply to this component (see [Tests and Test Groups](tests.md)) |
 
@@ -164,6 +165,77 @@ skip-file-filter = true
 ```
 
 > **Note:** This should only be used for specs with macros that `spectool` cannot resolve. For most components, the default filtering behavior is correct and keeps the rendered output clean.
+
+## Go Vendoring
+
+Go vendoring is opt-in and preserves the upstream spec rather than replacing it
+with a generated spec. See [Vendor a Go application](../../how-to/vendor-go-application.md)
+for the workflow and supported spec patterns.
+
+```toml
+[components.example.go-vendor]
+enabled = true
+```
+
+| TOML Key | Type | Default | Description |
+|----------|------|---------|-------------|
+| `enabled` | boolean | `false` | Enable conversion and vendor archive generation. An explicit `false` overrides inherited enablement. |
+| `module-dir` | string | `""` | Relative directory containing `go.mod`, resolved from the working directory at the end of the upstream `%prep` section. Empty uses that directory itself. No absolute paths, traversal, or RPM macros. |
+| `prep-packages` | array of string | `[]` | Additional RPM packages needed by upstream `%prep` commands or the selected license detector. Installed only in the isolated generation chroot. |
+| `config-file` | string | `""` | Path to a separate [go-vendor-tools TOML file](https://fedora.gitlab.io/sigs/go/go-vendor-tools/config/), relative to the configuration file that declares it. Its contents replace upstream tool settings; they are not merged. When no file is configured, reuse an already-vendored spec's upstream settings or use tool defaults for a new conversion. |
+
+Custom vendor settings must live in a separate file, typically
+`go-vendor-tools.toml` beside the component definition. Its contents participate
+in the component fingerprint; absolute checkout paths do not. Inherited paths
+retain their original declaration directory. Editing only this file makes the
+lock fingerprint stale and requires the normal update/render workflow.
+
+```toml
+# example.comp.toml
+[components.example.go-vendor]
+enabled = true
+config-file = "go-vendor-tools.toml"
+```
+
+```toml
+# go-vendor-tools.toml
+[archive.dependency_overrides]
+"example.com/dependency" = "v1.2.3"
+```
+
+The configured file must exist and contain valid TOML. An explicitly selected
+empty file is an empty replacement, not a request to fall back to upstream.
+In an explicitly selected file, use `module-dir`, not `general.go_mod_dir`, for
+the module location. Reused upstream `general.go_mod_dir` settings remain honored;
+an inconsistent component `module-dir` is rejected.
+Configured command hooks execute in the generation chroot; treat this file as
+trusted build code. The old inline `tool-config` string/table is no longer supported.
+
+For previously unbundled specs, preparation emits `<component>-vendor.tar.bz2` and `azldev-go-vendor.toml`,
+allocating unused `Source` numbers automatically. These names are reserved for
+generated output; do not also declare them in `source-files` or supply them through
+overlays. The archive's SHA-512 digest is recorded in the prepared `sources` file.
+Generation runs afresh on every preparation; there is no filename-based cache.
+The recorded digest identifies that output, not a separately pinned vendor lock.
+
+For supported specs already using go-vendor-tools, preparation instead regenerates
+the existing vendor source, retaining its Source number, RPM-expanded filename,
+and configuration sidecar. The Source tag is pinned to the generated filename
+before release/history updates, and extraction moves after prep's module edits
+to avoid applying patches twice. Ambiguous secondary-source setup and
+post-extraction directory changes require a prep overlay.
+It updates that archive's `sources` entry in place and
+verifies the existing `License:` expression without rewriting it.
+These generated archive/config filenames must not also appear in `source-files`,
+including entries with `replace-upstream = true`.
+When `config-file` is set, its contents are staged under the configuration filename
+referenced by the prepared spec, retaining the existing Source number.
+
+All archive/spec/loose-file overlays run before conversion. Source preparation,
+builds, rendering (including `--check-only`), and source diffs use the same
+conversion. Enabled components require downloads even with `--skip-sources`,
+because preparation and license detection need the effective upstream sources.
+`--skip-overlays` also skips conversion, leaving the upstream packaging unchanged.
 
 ## Build Configuration
 
