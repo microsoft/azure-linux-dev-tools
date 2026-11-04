@@ -195,6 +195,13 @@ body lists upstream changes, if any. Unrelated staged files are not committed.
 Unchanged Git content does not produce an empty commit. A commit failure leaves
 the rendered files available for inspection.
 
+For component names requiring URL encoding, rendering also creates a sibling
+alias such as `libxml%2B%2B -> libxml++` for downstream tooling. Any existing
+entry at the encoded alias path is removed first, including regular files and
+nonempty directories, and replaced with a relative symlink. Existing symlink
+targets are not removed. Alias creation failures produce a warning.
+`--check-only` does not replace aliases.
+
 Install `rpmdevtools`, `rpm-build`, and `rpmautospec` on the host as needed for
 the release/changelog queries, and configure Git author identity before
 rendering. Output (including a custom `--output-dir`) must be inside the project

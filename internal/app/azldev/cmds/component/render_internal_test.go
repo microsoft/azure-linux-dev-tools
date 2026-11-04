@@ -379,28 +379,44 @@ func TestWriteAliasSymlink(t *testing.T) {
 		assert.Equal(t, "gtk+", osReadlink(t, osFS, aliasPath), "stale symlink should be replaced")
 	})
 
-	t.Run("refuses to overwrite a non-symlink at alias path", func(t *testing.T) {
-		osFS := afero.NewOsFs()
-		root := t.TempDir()
-		letterDir := filepath.Join(root, "g")
-		realDir := filepath.Join(letterDir, "gtk+")
-		require.NoError(t, fileutils.MkdirAll(osFS, realDir))
+	const symlinkType = "symlink"
 
-		// Hypothetical collision: a real component named 'gtk%2B' already exists
-		// at the alias path. RPM names don't use '%' in practice, but the guard
-		// must protect against it.
-		collisionDir := filepath.Join(letterDir, "gtk%2B")
-		require.NoError(t, fileutils.MkdirAll(osFS, collisionDir))
+	for _, entryType := range []string{"file", "directory", symlinkType} {
+		t.Run("replaces existing "+entryType+" at alias path", func(t *testing.T) {
+			osFS := afero.NewOsFs()
+			letterDir := filepath.Join(t.TempDir(), "g")
+			realDir := filepath.Join(letterDir, "gtk+")
+			require.NoError(t, fileutils.MkdirAll(osFS, realDir))
 
-		err := writeAliasSymlink(osFS, realDir, "gtk+")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "non-symlink")
+			aliasPath := filepath.Join(letterDir, "gtk%2B")
+			stalePath := aliasPath
 
-		// Collision dir must still exist -- the guard MUST NOT have destroyed it.
-		exists, existsErr := fileutils.DirExists(osFS, collisionDir)
-		require.NoError(t, existsErr)
-		assert.True(t, exists, "non-symlink at alias path must be preserved")
-	})
+			switch entryType {
+			case "directory":
+				stalePath = filepath.Join(aliasPath, "nested", "stale.txt")
+			case symlinkType:
+				stalePath = filepath.Join(letterDir, "old-target", "keep.txt")
+			}
+
+			require.NoError(t, fileutils.MkdirAll(osFS, filepath.Dir(stalePath)))
+			require.NoError(t, fileutils.WriteFile(osFS, stalePath, []byte("old contents"), fileperms.PublicFile))
+
+			if entryType == symlinkType {
+				osSymlink(t, osFS, "old-target", aliasPath)
+			}
+
+			require.NoError(t, writeAliasSymlink(osFS, realDir, "gtk+"))
+			linkInfo := osLstat(t, osFS, aliasPath)
+			assert.NotZero(t, linkInfo.Mode()&os.ModeSymlink)
+			assert.Equal(t, "gtk+", osReadlink(t, osFS, aliasPath))
+
+			if entryType == symlinkType {
+				contents, err := fileutils.ReadFile(osFS, stalePath)
+				require.NoError(t, err)
+				assert.Equal(t, "old contents", string(contents), "removing an alias must not remove its target")
+			}
+		})
+	}
 
 	t.Run("no-op on filesystem without symlink support", func(t *testing.T) {
 		// MemMapFs does NOT implement afero.Linker -- function should silently no-op.
