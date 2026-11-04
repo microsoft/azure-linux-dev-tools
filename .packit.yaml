@@ -1,0 +1,41 @@
+---
+specfile_path: packaging/azldev.spec
+upstream_package_name: azldev
+downstream_package_name: azldev
+upstream_tag_template: v{version}
+
+# The release preparation workflow owns Version, Release, and %changelog.
+update_release: false
+
+actions:
+  get-current-version:
+    - >-
+      sed -n
+      's/^Version:[[:space:]]*\([0-9]\+\.[0-9]\+\.[0-9]\+\)[[:space:]]*$/\1/p'
+      packaging/azldev.spec
+  create-archive:
+    - bash -c 'go run magefile.go archive "${PACKIT_PROJECT_VERSION}"'
+    - bash -c 'echo "out/rpm/azldev-${PACKIT_PROJECT_VERSION}.tar.gz"'
+
+# Packit runs source preparation in COPR. These tools create the vendored
+# archive before rpmbuild performs the offline Go compilation.
+srpm_build_deps:
+  - findutils
+  - git-core
+  - go-rpm-macros
+  - golang
+  - gzip
+  - rpm-build
+  - tar
+
+jobs:
+  - job: copr_build
+    trigger: release
+    owner: liunan
+    project: azure-linux-dev-tools
+    targets:
+      - fedora-43-x86_64
+    # The %build compiles offline from the vendored archive, so the RPM
+    # buildroot needs no network. 'go mod vendor' runs earlier in COPR's
+    # source build, which keeps network regardless of this setting.
+    enable_net: false
