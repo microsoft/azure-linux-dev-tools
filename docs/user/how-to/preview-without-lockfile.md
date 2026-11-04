@@ -172,10 +172,11 @@ It then always invokes host `rpmdev-bumpspec -c` with
 `updated <component-name>` followed by upstream changes on separate lines.
 The tool's no-op for `%autorelease` specs is accepted.
 
-Existing overlays and sidecar filtering run after these steps. Synthetic history
-and its legacy release adjustment are skipped. Host `spectool` supplies the
-sidecar keep-list, with `changelog` always
-preserved. The spec is **not** preprocessed with `rpmautospec process-distgit`:
+Existing overlays run after these steps. All prepared dist-git files are retained
+except `.git`, including unreferenced sidecars, hidden files, and subdirectories.
+Lockless rendering does not run `spectool` or filter files; `render.skip-file-filter`
+has no effect on lockless components. Synthetic history and its legacy release
+adjustment are skipped. The spec is **not** preprocessed with `rpmautospec process-distgit`:
 `%autorelease`, `%autochangelog`, and other RPM macros remain unexpanded.
 No mock configuration is needed for lockless rendering.
 The renderer replaces the component output, excluding `.git`,

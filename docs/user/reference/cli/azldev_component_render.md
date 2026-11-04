@@ -36,7 +36,8 @@ rpmdev-bumpspec must be installed. Commit updated upstream-commit TOML before
 rendering. --check-only never replaces output or creates project commits.
 Lockless rendering runs entirely on the host: it never uses mock or
 rpmautospec process-distgit. The rendered spec retains its RPM macros, including
-%autorelease and %autochangelog. Host spectool supplies the sidecar keep-list;
+%autorelease and %autochangelog. All prepared dist-git files are retained except
+.git; no file filtering or spectool query is performed. Host
 rpmautospec generate-changelog/calculate-release are used only when needed for
 release history or provenance. Locked components keep their existing behavior.
 

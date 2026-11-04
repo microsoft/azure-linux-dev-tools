@@ -31,7 +31,7 @@ Add sub-tables only for what you change. The fields you will reach for most:
 | `overlays` / `overlay-files` | targeted spec/source edits (see the `azldev-overlays` skill) |
 | `build.defines` / `build.with` / `build.without` | RPM macro and bcond build tweaks |
 | `release.calculation` | how the `Release` tag is managed |
-| `render.skip-file-filter` | rendering edge-case escape hatch |
+| `render.skip-file-filter` | locked-rendering edge-case escape hatch |
 
 ## Spec source
 
@@ -102,9 +102,11 @@ all others use lock files. A missing or empty list means all components use
 locks. List every component to use a fully lockless workflow.
 Use `comp refresh-upstream-commit` for lockless components.
 
-`render.skip-file-filter = true` keeps all source and patch files during render.
-azldev normally prunes files not referenced by the rendered spec; set this only for
+`render.skip-file-filter = true` keeps all source and patch files during locked render.
+Locked rendering normally prunes files not referenced by the rendered spec; set this only for
 the rare spec whose `Source`/`Patch` filenames use macros the filter cannot expand.
+Lockless rendering always retains all prepared dist-git files except `.git`,
+without file filtering or `spectool` queries; this setting has no effect on it.
 
 ## File organization
 

@@ -78,7 +78,8 @@ macro-expanded Release as `-b` and its committed `%changelog` body as the
 working `changelog` file, removing leading and trailing comment lines starting
 with `##` while preserving interior comments. Expansion uses the committed files on the host;
 the later version-change release reset still applies. Existing overlays
-and host `spectool` filtering still run afterward. Synthetic history and its
+still run afterward. All prepared dist-git files except `.git` are retained,
+without file filtering or `spectool` queries. Synthetic history and its
 legacy release adjustment are skipped during lockless rendering.
 Lockless rendering never uses mock or `rpmautospec process-distgit`; the output
 retains `%autorelease`, `%autochangelog`, and other RPM macros unexpanded, and

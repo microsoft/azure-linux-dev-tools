@@ -40,10 +40,11 @@ generated upstream-commit TOML instead. All others use locks.
 
 For listed upstream components, rendering carries release/changelog state from
 the committed output, runs host `rpmdev-bumpspec`, then applies the existing
-overlays and host `spectool` filtering, without synthetic history or its legacy
+overlays, without synthetic history or its legacy
 release adjustment. Lockless rendering
 never uses mock or `rpmautospec process-distgit`; RPM macros remain unexpanded.
-It preserves the `changelog` sidecar and replaces and
+It retains all prepared dist-git files except `.git`, without file filtering or
+`spectool` queries, and replaces and
 automatically commits only that component's output directory; unrelated staged
 files are excluded. Commit refreshed TOML before rendering. Configure Git author
 identity and install `rpmdevtools`. `--check-only` never creates project commits.

@@ -8,12 +8,10 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
-	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spectool"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/prereqs"
 )
 
@@ -50,15 +48,6 @@ func (p hostRenderProcessor) ExpandRelease(ctx context.Context, dir, filename st
 	return "", fmt.Errorf("no Release field in committed spec query output %#q", out)
 }
 
-func (p hostRenderProcessor) specFiles(ctx context.Context, dir, filename string) ([]string, error) {
-	out, err := p.run(ctx, dir, "spectool", "--define", "_sourcedir "+dir, "-l", "-a", filename)
-	if err != nil {
-		return nil, err
-	}
-
-	return append(spectool.ParseSpectoolOutput(out), "changelog"), nil
-}
-
 func (p hostRenderProcessor) run(ctx context.Context, dir, binary string, args ...string) (string, error) {
 	if err := prereqs.RequireExecutable(p.env, binary, nil); err != nil {
 		return "", fmt.Errorf("lockless rendering requires host program %#q:\n%w", binary, err)
@@ -90,8 +79,6 @@ func processRenderSources(
 	var locked []*preparedComponent
 
 	results := make(map[string]*sources.ComponentMockResult, len(prepared))
-	host := hostRenderProcessor{env: env}
-
 	for _, prep := range prepared {
 		if !prep.lockless {
 			locked = append(locked, prep)
@@ -101,12 +88,7 @@ func processRenderSources(
 
 		name := prep.comp.GetName()
 
-		result := &sources.ComponentMockResult{Name: name}
-		if !prep.comp.GetConfig().Render.SkipFileFilter {
-			result.SpecFiles, result.Error = host.specFiles(env, filepath.Join(stagingDir, name), prep.specFilename)
-		}
-
-		results[name] = result
+		results[name] = &sources.ComponentMockResult{Name: name}
 	}
 
 	for name, result := range batchMockProcess(env, processor, stagingDir, locked) {

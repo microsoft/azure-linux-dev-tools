@@ -171,11 +171,11 @@ behavior for every component. List every component for a fully lockless project.
 
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
-| Skip file filter | `skip-file-filter` | boolean | No | Disable post-render file filtering (defaults to `false`) |
+| Skip file filter | `skip-file-filter` | boolean | No | Disable post-render file filtering for locked components (defaults to `false`; ignored for lockless components) |
 
 ### Skip File Filter
 
-During rendering, azldev uses `spectool` to determine which files are referenced by `Source` and `Patch` tags in the spec, then removes unreferenced files from the rendered output. Some specs use dynamic macros (e.g., `%{fontpkgname1}`) that `spectool` cannot expand, causing it to report incorrect filenames. This results in referenced files being incorrectly removed.
+When rendering locked components, azldev uses `spectool` to determine which files are referenced by `Source` and `Patch` tags in the spec, then removes unreferenced files from the rendered output. Some specs use dynamic macros (e.g., `%{fontpkgname1}`) that `spectool` cannot expand, causing it to report incorrect filenames. This results in referenced files being incorrectly removed.
 
 Set `skip-file-filter = true` to preserve all files from the dist-git checkout:
 
@@ -184,7 +184,11 @@ Set `skip-file-filter = true` to preserve all files from the dist-git checkout:
 skip-file-filter = true
 ```
 
-> **Note:** This should only be used for specs with macros that `spectool` cannot resolve. For most components, the default filtering behavior is correct and keeps the rendered output clean.
+> **Note:** This should only be used for specs with macros that `spectool` cannot resolve. For most locked components, the default filtering behavior is correct and keeps the rendered output clean.
+
+Lockless rendering does not query `spectool` or filter files: it always retains
+all prepared dist-git files except `.git`. This setting has no effect on
+components selected by `lockless-components.txt`.
 
 ## Build Configuration
 

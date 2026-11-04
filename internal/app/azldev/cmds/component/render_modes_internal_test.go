@@ -88,7 +88,7 @@ func (p *renderModeObservingPreparer) PrepareSources(
 	return p.err
 }
 
-func TestLocklessRenderPreservesMacrosWithoutMock(t *testing.T) {
+func TestLocklessRenderPreservesAllFilesWithoutMock(t *testing.T) {
 	env := testutils.NewTestEnvWithoutLockfile(t)
 	version := env.Config.Distros["test-distro"].Versions["1.0"]
 	version.MockConfigPath = ""
@@ -97,15 +97,10 @@ func TestLocklessRenderPreservesMacrosWithoutMock(t *testing.T) {
 		Name: "curl",
 		Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeLocal},
 	}
-	env.CmdFactory.RegisterCommandInSearchPath("spectool")
-
-	queries := 0
 	env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
-		queries++
+		t.Fatalf("unexpected query during lockless rendering: %v", cmd.Args)
 
-		assert.Equal(t, "spectool", cmd.Args[0])
-
-		return "Patch0: fix.patch\n", nil
+		return "", nil
 	}
 	env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
 		t.Fatalf("unexpected command during host-only rendering: %v", cmd.Args)
@@ -118,6 +113,12 @@ func TestLocklessRenderPreservesMacrosWithoutMock(t *testing.T) {
 		changelog = "* Old entry\n- Keep unchanged\n"
 	)
 
+	files := map[string]string{
+		"curl.spec": rawSpec, "changelog": changelog, "fix.patch": "patch",
+		"unreferenced": "keep", ".gitignore": "upstream ignore rules",
+		"extras/nested.txt": "unreferenced nested file",
+	}
+
 	original := newSourcePreparer
 	newSourcePreparer = func(
 		_ sourceproviders.SourceManager, fs opctx.FS, _ opctx.EventListener, _ opctx.DryRunnable,
@@ -126,15 +127,13 @@ func TestLocklessRenderPreservesMacrosWithoutMock(t *testing.T) {
 		return &renderModeObservingPreparer{
 			observe: func(_ components.Component) {},
 			prepare: func(_ components.Component, dir string) error {
-				for name, content := range map[string]string{
-					"curl.spec": rawSpec, "changelog": changelog, "fix.patch": "patch",
-					"unreferenced": "discard", ".git/HEAD": "temporary history",
-				} {
+				for name, content := range files {
 					require.NoError(t, fileutils.WriteFile(fs, filepath.Join(dir, name),
 						[]byte(content), fileperms.PublicFile))
 				}
 
-				return nil
+				return fileutils.WriteFile(fs, filepath.Join(dir, ".git/HEAD"),
+					[]byte("temporary history"), fileperms.PublicFile)
 			},
 		}, nil
 	}
@@ -148,19 +147,16 @@ func TestLocklessRenderPreservesMacrosWithoutMock(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	assert.Equal(t, renderStatusOK, results[0].Status)
-	assert.Equal(t, 1, queries)
 
-	for name, want := range map[string]string{"curl.spec": rawSpec, "changelog": changelog, "fix.patch": "patch"} {
+	for name, want := range files {
 		content, err := fileutils.ReadFile(env.TestFS, filepath.Join("/rendered/c/curl", name))
 		require.NoError(t, err)
 		assert.Equal(t, want, string(content))
 	}
 
-	for _, name := range []string{".git", "unreferenced"} {
-		exists, err := fileutils.Exists(env.TestFS, filepath.Join("/rendered/c/curl", name))
-		require.NoError(t, err)
-		assert.False(t, exists)
-	}
+	exists, err := fileutils.Exists(env.TestFS, "/rendered/c/curl/.git")
+	require.NoError(t, err)
+	assert.False(t, exists)
 }
 
 func TestRenderComponentsSelectsLockModeFromFile(t *testing.T) {

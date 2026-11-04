@@ -85,7 +85,8 @@ rpmdev-bumpspec must be installed. Commit updated upstream-commit TOML before
 rendering. --check-only never replaces output or creates project commits.
 Lockless rendering runs entirely on the host: it never uses mock or
 rpmautospec process-distgit. The rendered spec retains its RPM macros, including
-%autorelease and %autochangelog. Host spectool supplies the sidecar keep-list;
+%autorelease and %autochangelog. All prepared dist-git files are retained except
+.git; no file filtering or spectool query is performed. Host
 rpmautospec generate-changelog/calculate-release are used only when needed for
 release history or provenance. Locked components keep their existing behavior.
 
@@ -176,7 +177,7 @@ const (
 // RenderComponents renders the post-overlay spec and sidecar files for each
 // selected component into the output directory. Processing is done in four phases:
 //  1. Parallel source preparation (clone, overlay, synthetic git)
-//  2. Host sidecar queries for lockless components; batch mock processing for locked components
+//  2. Batch mock processing for locked components only
 //  3. Parallel finishing (filter files, remove .git, copy output)
 //  4. Serial project commits for lockless upstream component output
 func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult, error) {
@@ -794,7 +795,7 @@ func finishComponentRender(
 	componentDir := filepath.Join(stagingDir, componentName)
 	specPath := filepath.Join(componentDir, prep.specFilename)
 
-	// Check the host or mock source-query result.
+	// Check the source-processing result.
 	mockResult, hasMockResult := mockResultMap[componentName]
 	if !hasMockResult {
 		return false, fmt.Errorf(
@@ -806,12 +807,15 @@ func finishComponentRender(
 			"source processing failed for %#q:\n%w", componentName, mockResult.Error)
 	}
 
-	// Filter files using the host or mock spectool result.
+	// Filter locked components using the mock spectool result.
 	// Skip filtering when:
-	// 1. The component config explicitly opts out via 'skip-file-filter'.
-	// 2. spectool output contains unexpanded RPM macros (%{...}), indicating
+	// 1. The component is lockless.
+	// 2. The component config explicitly opts out via 'skip-file-filter'.
+	// 3. spectool output contains unexpanded RPM macros (%{...}), indicating
 	//    that the reported filenames don't match the real files on disk.
-	if prep.comp.GetConfig().Render.SkipFileFilter {
+	if prep.lockless {
+		slog.Debug("Preserving all files for lockless render", "component", componentName)
+	} else if prep.comp.GetConfig().Render.SkipFileFilter {
 		slog.Info("Skipping file filter ('skip-file-filter' is set)", "component", componentName)
 	} else if macro := findUnexpandedMacro(mockResult.SpecFiles); macro != "" {
 		slog.Info("Skipping file filter (spectool output contains unexpanded macros)",

@@ -12,7 +12,6 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components/components_testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
-	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/stretchr/testify/assert"
@@ -111,33 +110,12 @@ func TestHostRenderExpandRelease(t *testing.T) {
 	}
 }
 
-func TestHostRenderSpecFiles(t *testing.T) {
-	env := testutils.NewTestEnv(t)
-	env.CmdFactory.RegisterCommandInSearchPath("spectool")
-	env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
-		assert.Equal(t, "/working", cmd.Dir)
-		assert.Equal(t, []string{
-			"spectool", "--define", "_sourcedir /working", "-l", "-a", "curl.spec",
-		}, cmd.Args)
-
-		return "Source0: https://example.com/curl-1.tar.gz\nPatch0: fixes/fix.patch\n", nil
-	}
-	files, err := (hostRenderProcessor{env: env.Env}).specFiles(env.Env, "/working", "curl.spec")
-	require.NoError(t, err)
-	assert.Equal(t, []string{"curl-1.tar.gz", "fixes/fix.patch", "changelog"}, files)
-}
-
 func TestMixedRenderRoutesOnlyLockedComponentsThroughMock(t *testing.T) {
-	const (
-		hostFailure = "host failure"
-		mockFailure = "mock failure"
-		skipFilter  = "skip host filter"
-	)
+	const mockFailure = "mock failure"
 
-	for _, phase := range []string{"success", hostFailure, mockFailure, skipFilter} {
+	for _, phase := range []string{"success", mockFailure} {
 		t.Run(phase, func(t *testing.T) {
 			env := testutils.NewTestEnv(t)
-			env.CmdFactory.RegisterCommandInSearchPath("spectool")
 			env.CmdFactory.RegisterCommandInSearchPath("mock")
 
 			ctrl := gomock.NewController(t)
@@ -146,26 +124,16 @@ func TestMixedRenderRoutesOnlyLockedComponentsThroughMock(t *testing.T) {
 
 			host := components_testutils.NewMockComponent(ctrl)
 			host.EXPECT().GetName().AnyTimes().Return("rust-asyncband")
-			host.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
-				Render: projectconfig.ComponentRenderConfig{SkipFileFilter: phase == skipFilter},
-			})
 
 			env.Config.LocklessComponents = map[string]bool{"rust-asyncband": true}
 			processor, err := renderMockProcessor(env.Env, []components.Component{host, locked})
 			require.NoError(t, err)
 			require.NotNil(t, processor)
 
-			queryErr := errors.New("host query failed")
 			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
-				assert.NotEqual(t, skipFilter, phase)
-				assert.Equal(t, "spectool", cmd.Args[0])
-				assert.Equal(t, "/stage/rust-asyncband", cmd.Dir)
+				t.Fatalf("unexpected host query during lockless rendering: %v", cmd.Args)
 
-				if phase == hostFailure {
-					return "", queryErr
-				}
-
-				return "Patch0: host.patch\n", nil
+				return "", nil
 			}
 			batched := false
 			env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
@@ -195,15 +163,8 @@ func TestMixedRenderRoutesOnlyLockedComponentsThroughMock(t *testing.T) {
 			require.Contains(t, results, "rust-asyncband")
 			assert.Equal(t, phase != mockFailure, batched)
 
-			if phase == hostFailure {
-				require.ErrorIs(t, results["rust-asyncband"].Error, queryErr)
-			} else {
-				require.NoError(t, results["rust-asyncband"].Error)
-
-				if phase != skipFilter {
-					assert.Equal(t, []string{"host.patch", "changelog"}, results["rust-asyncband"].SpecFiles)
-				}
-			}
+			require.NoError(t, results["rust-asyncband"].Error)
+			assert.Empty(t, results["rust-asyncband"].SpecFiles)
 
 			if phase == mockFailure {
 				assert.NotContains(t, results, "curl")

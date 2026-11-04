@@ -202,6 +202,8 @@ func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
 		assert.Contains(t, doc, "host `rpmdev-bumpspec`")
 		assert.Contains(t, doc, "`--check-only` never creates project commits")
 		assert.Contains(t, doc, "never uses mock or `rpmautospec process-distgit`")
+		assert.Contains(t, doc, "all prepared dist-git files except `.git`")
+		assert.NotContains(t, doc, "host `spectool` filtering")
 	}
 
 	doc, err := agentskill.SkillDocument("azldev-refresh-upstream-commit", testParams())
@@ -213,6 +215,7 @@ func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
 	assert.Contains(t, doc, "retains `%autorelease`, `%autochangelog`")
 	assert.Contains(t, doc, "effective upstream distro's `dist-git-branch`")
 	assert.Contains(t, doc, "fetches that historical branch before comparing commits")
+	assert.Contains(t, doc, "All prepared dist-git files except `.git` are retained")
 	assert.NotContains(t, doc, "git commit --amend")
 }
 
