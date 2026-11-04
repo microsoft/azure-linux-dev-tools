@@ -16,7 +16,7 @@ This repo contains configs for the `golangci-lint` linter. It is installed as pa
 | Command | Description | When to Use |
 |---------|-------------|-------------|
 | `mage -l` | List all available targets | To see all options |
-| `mage all` | Build, test, default checks, and scenario pipeline | Before submitting PR |
+| `mage all` | Build, then run unit tests, default checks, and scenario tests in parallel; generate docs after they pass | Before submitting PR |
 | `mage build` | Build Go binaries | After code changes |
 | `mage install` | Build Go binaries and install | Outer-loop testing |
 | `mage unit` | Run unit tests | After writing tests |
@@ -32,6 +32,13 @@ This repo contains configs for the `golangci-lint` linter. It is installed as pa
 
 **Note**: Dependencies run automatically in correct order
 (i.e. `mage build` and `mage unit` automatically run code generation as needed).
+
+`mage all` shares one code-generation and build pass across its parallel
+validation targets. Each validation target must pass before documentation is
+regenerated. It still runs the default Go checks, not the optional Python checks;
+use `mage check all` to include those. Parallel validation can increase peak
+resource use; set `GOMAXPROCS` and `GOFLAGS=-p=<count>` to limit Go concurrency
+on memory-constrained hosts.
 
 ## Code Generation
 
