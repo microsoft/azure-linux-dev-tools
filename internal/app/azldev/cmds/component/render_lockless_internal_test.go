@@ -26,6 +26,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spec"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -810,7 +811,7 @@ upstream-commit = "aaaaaaa"
 
 	prep.compOutputDir = "/project/SPECS/c/curl"
 	changed, err := finishComponentRender(env.Env, prep,
-		map[string]*sources.ComponentMockResult{"curl": {}}, "/staging", true, false)
+		map[string]*sources.ComponentMockResult{"curl": {}}, "/staging", true, false, false)
 	require.NoError(t, err)
 	assert.True(t, changed)
 	assert.True(t, bumped)
@@ -895,6 +896,63 @@ func TestPrepareLocklessSpec_StopsOnAutospecFailure(t *testing.T) {
 		&locklessRenderUpdate{subject: "updated curl"})
 	require.ErrorContains(t, err, "autospec failed")
 	assert.Equal(t, []string{"changelog"}, stub.calls)
+}
+
+func TestFinishLocklessSpec_TimestampFailures(t *testing.T) {
+	for _, testCase := range []struct {
+		name, want string
+		available  bool
+		dateFails  bool
+		readOnly   bool
+	}{
+		{name: "date missing", want: "requires 'date'"},
+		{name: "date fails", available: true, dateFails: true, want: "getting rebuild timestamp"},
+		{name: "write fails", available: true, readOnly: true, want: "writing rebuild timestamp"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+
+			const path = "/working/curl.spec"
+
+			original := renderTestSpec("1", "9", "")
+			require.NoError(t, fileutils.WriteFile(env.TestFS, path, []byte(original), fileperms.PublicFile))
+
+			if testCase.readOnly {
+				env.TestFS = afero.NewReadOnlyFs(env.TestFS)
+			}
+
+			if testCase.available {
+				env.CmdFactory.RegisterCommandInSearchPath("date")
+			}
+
+			env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+				t.Fatalf("must not bump without a timestamp: %v", cmd.Args)
+
+				return nil
+			}
+			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				assert.Equal(t, []string{"date", "-Is"}, cmd.Args)
+
+				if testCase.dateFails {
+					return "", errors.New("date failed")
+				}
+
+				return "2026-11-04T22:53:27+00:00\n", nil
+			}
+
+			changed, err := finishLocklessSpec(env.Env, path, &locklessRenderUpdate{}, false, true)
+			require.ErrorContains(t, err, testCase.want)
+			assert.False(t, changed)
+
+			content, err := fileutils.ReadFile(env.TestFS, path)
+			require.NoError(t, err)
+			assert.Equal(t, original, string(content))
+
+			exists, err := fileutils.Exists(env.TestFS, filepath.Join("/working", noChangeRebuildMarker))
+			require.NoError(t, err)
+			assert.False(t, exists)
+		})
+	}
 }
 
 func TestBumpLocklessSpec_Failures(t *testing.T) {

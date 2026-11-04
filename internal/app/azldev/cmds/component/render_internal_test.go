@@ -730,7 +730,7 @@ func TestFinishComponentRender_PreservesGitMetadata(t *testing.T) {
 			}
 			mockResults := map[string]*sources.ComponentMockResult{"curl": {}}
 
-			changed, err := finishComponentRender(env.Env, prep, mockResults, "/staging", true, testCase.checkOnly)
+			changed, err := finishComponentRender(env.Env, prep, mockResults, "/staging", true, testCase.checkOnly, false)
 			require.NoError(t, err)
 			assert.False(t, changed, "Git metadata alone must not count as rendered drift")
 
@@ -747,18 +747,22 @@ func TestFinishComponentRender_PreservesGitMetadata(t *testing.T) {
 
 func TestFinishComponentRender_ComparisonBeforeBump(t *testing.T) {
 	for _, testCase := range []struct {
-		name        string
-		checkOnly   bool
-		drift       bool
-		autorelease bool
-		compareFail bool
-		wantChanged bool
+		name            string
+		checkOnly       bool
+		drift           bool
+		autorelease     bool
+		compareFail     bool
+		noChangeRebuild bool
+		wantNoChanges   bool
+		wantChanged     bool
 	}{
-		{name: "check-only unchanged", checkOnly: true},
+		{name: "check-only unchanged with flag", checkOnly: true, noChangeRebuild: true},
 		{name: "check-only drift", checkOnly: true, drift: true, wantChanged: true},
-		{name: "normal static bump", wantChanged: true},
-		{name: "normal autorelease no-op", autorelease: true},
+		{name: "unchanged render refused", wantNoChanges: true},
+		{name: "forced static bump", noChangeRebuild: true, wantChanged: true},
+		{name: "forced autorelease no-op", autorelease: true, noChangeRebuild: true, wantChanged: true},
 		{name: "normal drift and no-op", autorelease: true, drift: true, wantChanged: true},
+		{name: "drift with flag", drift: true, noChangeRebuild: true, wantChanged: true},
 		{name: "comparison fails", compareFail: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -782,10 +786,13 @@ func TestFinishComponentRender_ComparisonBeforeBump(t *testing.T) {
 			const (
 				stagedSpec = "/staging/curl/curl.spec"
 				outputSpec = "/output/curl/curl.spec"
+				timestamp  = "2026-11-04T22:53:27+00:00\n"
 			)
 
 			require.NoError(t, fileutils.WriteFile(baseFS, stagedSpec, []byte(original), fileperms.PublicFile))
 			require.NoError(t, fileutils.WriteFile(baseFS, outputSpec, []byte(actual), fileperms.PublicFile))
+			markerPath := filepath.Join(filepath.Dir(outputSpec), noChangeRebuildMarker)
+			require.NoError(t, fileutils.WriteFile(baseFS, markerPath, []byte("old timestamp\n"), fileperms.PublicFile))
 
 			comparisonFS := &renderComparisonFS{Fs: baseFS, path: outputSpec}
 			if testCase.compareFail {
@@ -794,6 +801,9 @@ func TestFinishComponentRender_ComparisonBeforeBump(t *testing.T) {
 
 			env.TestFS = comparisonFS
 			called := false
+			dated := false
+			wantBump := !testCase.checkOnly && !testCase.compareFail && !testCase.wantNoChanges
+			wantMarker := wantBump && !testCase.drift
 
 			env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
 				assert.True(t, comparisonFS.compared, "comparison must precede the bump")
@@ -802,12 +812,30 @@ func TestFinishComponentRender_ComparisonBeforeBump(t *testing.T) {
 
 				assert.Equal(t, "rpmdev-bumpspec", cmd.Args[0])
 
+				if wantMarker {
+					marker, err := fileutils.ReadFile(baseFS, filepath.Join(filepath.Dir(stagedSpec), noChangeRebuildMarker))
+					require.NoError(t, err)
+					assert.Equal(t, timestamp, string(marker), "timestamp must be written before bumping")
+				}
+
 				bumped := strings.Replace(original, "Release: 9\n", "Release: 10\n", 1)
 
 				return fileutils.WriteFile(baseFS, stagedSpec, []byte(bumped), fileperms.PublicFile)
 			}
+
+			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				assert.True(t, comparisonFS.compared)
+				assert.False(t, called)
+				assert.Equal(t, []string{"date", "-Is"}, cmd.Args)
+				assert.Equal(t, filepath.Dir(stagedSpec), cmd.Dir)
+
+				dated = true
+
+				return timestamp, nil
+			}
 			if !testCase.checkOnly {
 				env.CmdFactory.RegisterCommandInSearchPath("rpmdev-bumpspec")
+				env.CmdFactory.RegisterCommandInSearchPath("date")
 			}
 
 			prep := &preparedComponent{
@@ -815,20 +843,32 @@ func TestFinishComponentRender_ComparisonBeforeBump(t *testing.T) {
 				lockless: true, update: &locklessRenderUpdate{subject: "updated curl"},
 			}
 
-			changed, err := finishComponentRender(env.Env, prep,
-				map[string]*sources.ComponentMockResult{"curl": {}}, "/staging", true, testCase.checkOnly)
-			if testCase.compareFail {
+			result := finishOneComponent(env.Env, prep,
+				map[string]*sources.ComponentMockResult{"curl": {}}, "/staging", true, testCase.checkOnly, testCase.noChangeRebuild)
+
+			err := result.renderErr
+
+			switch {
+			case testCase.compareFail:
 				require.ErrorIs(t, err, comparisonFS.readErr)
-			} else {
+			case testCase.wantNoChanges:
+				require.ErrorIs(t, err, errNoRenderChanges)
+				writeFailureMarkers(baseFS, []*RenderResult{result}, true, false)
+
+				for _, failOnError := range []bool{false, true} {
+					require.ErrorIs(t, checkRenderErrors([]*RenderResult{result}, failOnError), errNoRenderChanges)
+				}
+			default:
 				require.NoError(t, err)
 			}
 
 			assert.True(t, comparisonFS.compared)
-			assert.Equal(t, !testCase.checkOnly && !testCase.compareFail, called)
-			assert.Equal(t, testCase.wantChanged, changed)
+			assert.Equal(t, wantBump, called)
+			assert.Equal(t, wantMarker, dated)
+			assert.Equal(t, testCase.wantChanged, result.Changed)
 
 			want := strings.Replace(original, "Release: 9\n", "Release: 10\n", 1)
-			if testCase.checkOnly || testCase.compareFail {
+			if !wantBump {
 				want = actual
 				staged, readErr := fileutils.ReadFile(baseFS, stagedSpec)
 				require.NoError(t, readErr)
@@ -838,6 +878,22 @@ func TestFinishComponentRender_ComparisonBeforeBump(t *testing.T) {
 			output, readErr := fileutils.ReadFile(baseFS, outputSpec)
 			require.NoError(t, readErr)
 			assert.Equal(t, want, string(output))
+
+			markerExists, readErr := fileutils.Exists(baseFS, markerPath)
+			require.NoError(t, readErr)
+			assert.Equal(t, !wantBump || wantMarker, markerExists)
+
+			if markerExists {
+				marker, readErr := fileutils.ReadFile(baseFS, markerPath)
+				require.NoError(t, readErr)
+
+				wantTimestamp := "old timestamp\n"
+				if wantMarker {
+					wantTimestamp = timestamp
+				}
+
+				assert.Equal(t, wantTimestamp, string(marker))
+			}
 		})
 	}
 }
@@ -912,6 +968,44 @@ func TestDiffRenderedOutput(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, drifted)
 	})
+}
+
+func TestDiffRenderedOutput_RebuildMarker(t *testing.T) {
+	t.Parallel()
+
+	for _, testCase := range []struct {
+		name, existing, working string
+		wantChanged             bool
+	}{
+		{name: "existing marker ignored", existing: noChangeRebuildMarker},
+		{name: "working marker compared", working: noChangeRebuildMarker, wantChanged: true},
+		{name: "both markers", existing: noChangeRebuildMarker, working: noChangeRebuildMarker, wantChanged: true},
+		{name: "nested marker compared", existing: "nested/" + noChangeRebuildMarker, wantChanged: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			testFS := afero.NewMemMapFs()
+			for _, root := range []string{"/existing", "/working"} {
+				require.NoError(t, fileutils.WriteFile(testFS, filepath.Join(root, "curl.spec"),
+					[]byte("identical"), fileperms.PublicFile))
+			}
+
+			if testCase.existing != "" {
+				require.NoError(t, fileutils.WriteFile(testFS, filepath.Join("/existing", testCase.existing),
+					[]byte("timestamp\n"), fileperms.PublicFile))
+			}
+
+			if testCase.working != "" {
+				require.NoError(t, fileutils.WriteFile(testFS, filepath.Join("/working", testCase.working),
+					[]byte("timestamp\n"), fileperms.PublicFile))
+			}
+
+			changed, err := diffRenderedOutput(testFS, "/working", "/existing")
+			require.NoError(t, err)
+			assert.Equal(t, testCase.wantChanged, changed)
+		})
+	}
 }
 
 func TestOutputDriftsFromMarker(t *testing.T) {

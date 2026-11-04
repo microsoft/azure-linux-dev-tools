@@ -49,6 +49,11 @@ func TestNewRenderCmd_Flags(t *testing.T) {
 	require.NotNil(t, checkOnlyFlag, "check-only flag should be registered")
 	assert.Equal(t, "false", checkOnlyFlag.DefValue)
 
+	noChangeRebuildFlag := cmd.Flags().Lookup("no-change-rebuild")
+	require.NotNil(t, noChangeRebuildFlag)
+	require.NoError(t, cmd.ParseFlags([]string{"--no-change-rebuild"}))
+	assert.Equal(t, "true", noChangeRebuildFlag.Value.String())
+
 	rpmDevBumpspecFlag := cmd.Flags().Lookup("rpmdev-bumpspec")
 	require.NotNil(t, rpmDevBumpspecFlag)
 	assert.Equal(t, "false", rpmDevBumpspecFlag.DefValue)
@@ -61,7 +66,7 @@ func TestRenderCmd_NoComponents(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
 
 	cmd := componentcmds.NewRenderCmd()
-	cmd.SetArgs([]string{"-o", "SPECS", "nonexistent-component"})
+	cmd.SetArgs([]string{"-o", "SPECS", "--no-change-rebuild", "nonexistent-component"})
 
 	err := cmd.ExecuteContext(testEnv.Env)
 

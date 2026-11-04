@@ -7,6 +7,7 @@ package dirdiff
 import (
 	"bytes"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -29,7 +30,11 @@ import (
 func DiffDirs(fs opctx.FS, dirA, dirB string, opts ...DiffOption) (*DiffResult, error) {
 	cfg := newDiffConfig(opts)
 
-	filesA, err := collectFiles(fs, dirA, cfg.ignoredPaths)
+	ignoredOriginal := make(map[string]bool, len(cfg.ignoredPaths)+len(cfg.ignoredOriginalPaths))
+	maps.Copy(ignoredOriginal, cfg.ignoredPaths)
+	maps.Copy(ignoredOriginal, cfg.ignoredOriginalPaths)
+
+	filesA, err := collectFiles(fs, dirA, ignoredOriginal)
 	if err != nil {
 		return nil, fmt.Errorf("failed to walk original directory %#q:\n%w", dirA, err)
 	}

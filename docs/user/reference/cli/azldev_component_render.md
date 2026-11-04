@@ -28,12 +28,12 @@ use lock files.
 
 For lockless upstream components, write macros, apply overlays, and update sources
 before carrying release and changelog state from the last committed render.
-Compare output, then run rpmdev-bumpspec with "updated <component-name>" and upstream changes.
-After replacing the output, automatically commit that component directory to
-the project repository, without including unrelated staged files. The output
-must be inside that repository; Git author identity must be configured and
-rpmdev-bumpspec must be installed. Commit updated upstream-commit TOML before
-rendering. --check-only stops before bumping, replacing output, or committing.
+Compare output; unchanged renders require --no-change-rebuild to record a timestamp.
+Then run rpmdev-bumpspec with "updated <component-name>" and upstream changes.
+After replacing output, commit only that directory, excluding unrelated staged files.
+Output must be inside the project repository; configure Git author identity and
+install rpmdev-bumpspec. Commit updated upstream-commit TOML before rendering.
+--check-only stops before bumping, replacing output, or committing.
 Lockless rendering runs entirely on the host: it never uses mock or
 rpmautospec process-distgit. The rendered spec retains its RPM macros, including
 %autorelease and %autochangelog. All prepared dist-git files are retained except
@@ -83,6 +83,7 @@ azldev component render [flags]
       --fail-on-error[=true|false]          exit with error if any component fails to render (useful for CI)
   -f, --force[=true|false]                  allow overwriting existing rendered component directories
   -h, --help[=true|false]                   help for render
+      --no-change-rebuild[=true|false]      allow unchanged lockless upstream renders by recording 'date -Is' output in '.no-change-rebuild'
   -o, --output-dir string                   output directory for rendered specs (overrides rendered-specs-dir from config)
       --rpmdev-bumpspec[=true|false]        Use rpmdev-bumpspec instead of the legacy static release calculation
       --skip-lock-validation[=true|false]   skip lock file consistency checks

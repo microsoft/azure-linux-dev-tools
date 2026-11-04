@@ -38,6 +38,7 @@ type RenderOptions struct {
 	Force             bool
 	CleanStale        bool
 	CheckOnly         bool
+	NoChangeRebuild   bool
 	RPMDevBumpspec    bool
 }
 
@@ -76,12 +77,12 @@ use lock files.
 
 For lockless upstream components, write macros, apply overlays, and update sources
 before carrying release and changelog state from the last committed render.
-Compare output, then run rpmdev-bumpspec with "updated <component-name>" and upstream changes.
-After replacing the output, automatically commit that component directory to
-the project repository, without including unrelated staged files. The output
-must be inside that repository; Git author identity must be configured and
-rpmdev-bumpspec must be installed. Commit updated upstream-commit TOML before
-rendering. --check-only stops before bumping, replacing output, or committing.
+Compare output; unchanged renders require --no-change-rebuild to record a timestamp.
+Then run rpmdev-bumpspec with "updated <component-name>" and upstream changes.
+After replacing output, commit only that directory, excluding unrelated staged files.
+Output must be inside the project repository; configure Git author identity and
+install rpmdev-bumpspec. Commit updated upstream-commit TOML before rendering.
+--check-only stops before bumping, replacing output, or committing.
 Lockless rendering runs entirely on the host: it never uses mock or
 rpmautospec process-distgit. The rendered spec retains its RPM macros, including
 %autorelease and %autochangelog. All prepared dist-git files are retained except
@@ -149,6 +150,8 @@ func addRenderOptions(cmd *cobra.Command, options *RenderOptions) {
 			"without modifying the output directory. Exits 0 when nothing would change "+
 			"and 1 when any component would drift. With -a + --clean-stale, also fails "+
 			"on orphan rendered-spec directories. Intended for CI gates.")
+	cmd.Flags().BoolVar(&options.NoChangeRebuild, "no-change-rebuild", false,
+		"allow unchanged lockless upstream renders by recording 'date -Is' output in '.no-change-rebuild'")
 	addRPMDevBumpspecFlag(cmd, &options.RPMDevBumpspec)
 
 	// --check-only is a read-only diff against on-disk state; --fail-on-error
@@ -165,6 +168,7 @@ type RenderResult struct {
 	Status    string `json:"status"          table:"Status"`
 	Error     string `json:"error,omitempty" table:"Error,omitempty"`
 	Changed   bool   `json:"changed"         table:"Changed"`
+	renderErr error  `json:"-"               table:"-"`
 }
 
 // Render status constants.
@@ -264,7 +268,7 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 
 	// ── Phase 3: Parallel finishing ──
 	parallelFinish(env, prepared, mockResultMap, results, stagingDir,
-		options.Force, options.CheckOnly)
+		options.Force, options.CheckOnly, options.NoChangeRebuild)
 
 	// Write RENDER_FAILED markers for any component that errored in phase 1
 	// (source preparation) or phase 3 (mock result application + copy).
@@ -358,13 +362,21 @@ func sortRenderResults(results []*RenderResult) {
 	})
 }
 
-// checkRenderErrors counts error and cancelled results and returns an error if FailOnError is set.
+// checkRenderErrors reports no-change refusals regardless of failOnError, and
+// other error or cancelled results only when failOnError is set.
 func checkRenderErrors(results []*RenderResult, failOnError bool) error {
-	var errCount, cancelledCount int
+	var (
+		errCount, cancelledCount int
+		noChangeErrors           []error
+	)
 
 	for _, result := range results {
 		if result == nil {
 			continue
+		}
+
+		if errors.Is(result.renderErr, errNoRenderChanges) {
+			noChangeErrors = append(noChangeErrors, fmt.Errorf("%#q: %w", result.Component, result.renderErr))
 		}
 
 		switch result.Status {
@@ -382,6 +394,10 @@ func checkRenderErrors(results []*RenderResult, failOnError bool) error {
 
 	slog.Error("Some components failed to render",
 		"errorCount", errCount, "cancelledCount", cancelledCount)
+
+	if len(noChangeErrors) > 0 {
+		return errors.Join(noChangeErrors...)
+	}
 
 	if failOnError {
 		return fmt.Errorf("%d component(s) failed to render", failCount)
@@ -702,6 +718,7 @@ func parallelFinish(
 	stagingDir string,
 	allowOverwrite bool,
 	checkOnly bool,
+	noChangeRebuild bool,
 ) {
 	if len(prepared) == 0 {
 		return
@@ -722,7 +739,7 @@ func parallelFinish(
 		func(done, _ int) { progressEvent.SetProgress(int64(done), total) },
 		func(_ context.Context, prep *preparedComponent) *RenderResult {
 			//nolint:contextcheck // workerEnv is the captured context supplied to parmap.
-			return finishOneComponent(workerEnv, prep, mockResultMap, stagingDir, allowOverwrite, checkOnly)
+			return finishOneComponent(workerEnv, prep, mockResultMap, stagingDir, allowOverwrite, checkOnly, noChangeRebuild)
 		},
 	)
 
@@ -754,6 +771,7 @@ func finishOneComponent(
 	stagingDir string,
 	allowOverwrite bool,
 	checkOnly bool,
+	noChangeRebuild bool,
 ) *RenderResult {
 	componentName := prep.comp.GetName()
 	compOutputDir := prep.compOutputDir
@@ -775,13 +793,15 @@ func finishOneComponent(
 		Status:    renderStatusOK,
 	}
 
-	drifted, err := finishComponentRender(workerEnv, prep, mockResultMap, stagingDir, allowOverwrite, checkOnly)
+	drifted, err := finishComponentRender(
+		workerEnv, prep, mockResultMap, stagingDir, allowOverwrite, checkOnly, noChangeRebuild)
 	if err != nil {
 		slog.Error("Failed to finish rendering component",
 			"component", componentName, "error", err)
 
 		result.Status = renderStatusError
 		result.Error = err.Error()
+		result.renderErr = err
 	}
 
 	result.Changed = drifted
@@ -804,6 +824,7 @@ func finishComponentRender(
 	stagingDir string,
 	allowOverwrite bool,
 	checkOnly bool,
+	noChangeRebuild bool,
 ) (bool, error) {
 	componentName := prep.comp.GetName()
 	componentDir := filepath.Join(stagingDir, componentName)
@@ -851,7 +872,7 @@ func finishComponentRender(
 	}
 
 	if prep.update != nil {
-		bumped, err := bumpLocklessSpec(env, specPath, prep.update)
+		bumped, err := finishLocklessSpec(env, specPath, prep.update, changed, noChangeRebuild)
 		if err != nil {
 			return changed, err
 		}
@@ -1152,6 +1173,7 @@ func pruneOrphanRenderedDirs(
 // Cancelled components are intentionally skipped — a Ctrl-C is not a render
 // failure, just an incomplete run, and silently planting markers under those
 // circumstances would lie in git diff.
+// No-change refusals also leave the existing successful output intact.
 //
 // In --check-only mode, no marker is written. Instead, the existing on-disk
 // state for each errored component is verified to be exactly the standard
@@ -1163,7 +1185,7 @@ func writeFailureMarkers(
 	fileSystem opctx.FS, results []*RenderResult, allowOverwrite, checkOnly bool,
 ) {
 	for _, result := range results {
-		if result == nil || result.Status != renderStatusError {
+		if result == nil || result.Status != renderStatusError || errors.Is(result.renderErr, errNoRenderChanges) {
 			continue
 		}
 
@@ -1229,6 +1251,7 @@ const renderErrorMarkerContent = "Rendering failed. See azldev logs for details.
 // A missing actualDir always counts as drift. Symlinks are compared by target
 // (filesystems without symlink support skip that check; matches production
 // render behavior). The root '.git' entry is ignored without traversing it.
+// The existing output's root '.no-change-rebuild' marker is also ignored.
 func diffRenderedOutput(fileSystem opctx.FS, expectedDir, actualDir string) (bool, error) {
 	actualExists, err := fileutils.DirExists(fileSystem, actualDir)
 	if err != nil {
@@ -1240,7 +1263,8 @@ func diffRenderedOutput(fileSystem opctx.FS, expectedDir, actualDir string) (boo
 		return true, nil
 	}
 
-	result, err := dirdiff.DiffDirs(fileSystem, actualDir, expectedDir, dirdiff.WithIgnoredPaths(".git"))
+	result, err := dirdiff.DiffDirs(fileSystem, actualDir, expectedDir,
+		dirdiff.WithIgnoredPaths(".git"), dirdiff.WithIgnoredOriginalPaths(noChangeRebuildMarker))
 	if err != nil {
 		return false, fmt.Errorf("diffing %#q vs %#q:\n%w", actualDir, expectedDir, err)
 	}

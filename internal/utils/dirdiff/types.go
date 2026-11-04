@@ -60,9 +60,10 @@ const (
 
 // diffConfig holds the resolved configuration for a [DiffDirs] invocation.
 type diffConfig struct {
-	contextLines      int
-	maxBinaryScanSize int
-	ignoredPaths      map[string]bool
+	contextLines         int
+	maxBinaryScanSize    int
+	ignoredPaths         map[string]bool
+	ignoredOriginalPaths map[string]bool
 }
 
 func newDiffConfig(opts []DiffOption) *diffConfig {
@@ -103,6 +104,17 @@ func WithIgnoredPaths(paths ...string) DiffOption {
 		cfg.ignoredPaths = make(map[string]bool, len(paths))
 		for _, path := range paths {
 			cfg.ignoredPaths[filepath.Clean(path)] = true
+		}
+	}
+}
+
+// WithIgnoredOriginalPaths additionally excludes root-relative paths only from
+// the original (dirA) tree. Matching entries in the modified tree are still compared.
+func WithIgnoredOriginalPaths(paths ...string) DiffOption {
+	return func(cfg *diffConfig) {
+		cfg.ignoredOriginalPaths = make(map[string]bool, len(paths))
+		for _, path := range paths {
+			cfg.ignoredOriginalPaths[filepath.Clean(path)] = true
 		}
 	}
 }

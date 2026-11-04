@@ -81,6 +81,47 @@ func (fs unreadablePathFS) Open(name string) (afero.File, error) {
 	return fs.Fs.Open(name)
 }
 
+func TestDiffDirs_IgnoredOriginalPaths(t *testing.T) {
+	t.Parallel()
+
+	for _, testCase := range []struct {
+		name       string
+		inModified bool
+	}{
+		{name: "original only"},
+		{name: "modified entry is still compared", inModified: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			baseFS := afero.NewMemMapFs()
+			for _, root := range []string{"/a", "/b"} {
+				require.NoError(t, fileutils.WriteFile(baseFS, filepath.Join(root, ".git/HEAD"),
+					[]byte(root), fileperms.PublicFile))
+			}
+
+			require.NoError(t, fileutils.WriteFile(baseFS, "/a/marker", []byte("original"), fileperms.PublicFile))
+
+			if testCase.inModified {
+				require.NoError(t, fileutils.WriteFile(baseFS, "/b/marker", []byte("modified"), fileperms.PublicFile))
+			}
+
+			fs := unreadablePathFS{Fs: baseFS, blockedPath: "/a/marker"}
+			result, err := dirdiff.DiffDirs(fs, "/a", "/b",
+				dirdiff.WithIgnoredPaths(".git"), dirdiff.WithIgnoredOriginalPaths("marker"))
+			require.NoError(t, err)
+
+			if testCase.inModified {
+				require.Len(t, result.Files, 1)
+				assert.Equal(t, "marker", result.Files[0].Path)
+				assert.Equal(t, dirdiff.FileStatusAdded, result.Files[0].Status)
+			} else {
+				assert.Empty(t, result.Files)
+			}
+		})
+	}
+}
+
 func TestDiffDirs_ModifiedFile(t *testing.T) {
 	ctx := testctx.NewCtx()
 	testFS := ctx.FS()

@@ -206,6 +206,9 @@ func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
 		assert.NotContains(t, doc, "host `spectool` filtering")
 		assert.Contains(t, doc, "updates `sources` before carrying release/changelog state")
 		assert.Contains(t, doc, "compares output before the final release bump; `--check-only` stops before that bump")
+		assert.Contains(t, doc, "Unchanged lockless upstream renders require `--no-change-rebuild`")
+		assert.Contains(t, doc, "host `date -Is` output")
+		assert.Contains(t, doc, "ignores this marker in existing output, not in the working upstream checkout")
 	}
 
 	doc, err := agentskill.SkillDocument("azldev-refresh-upstream-commit", testParams())
@@ -222,6 +225,9 @@ func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
 	assert.Contains(t, doc, "that step never repeats the provenance query")
 	assert.Contains(t, doc, "the macros file, applies overlays, and updates `sources` before carrying")
 	assert.Contains(t, doc, "compares output before the final release bump; `--check-only` stops before that bump")
+	assert.Contains(t, doc, "Unchanged lockless upstream renders require `--no-change-rebuild`")
+	assert.Contains(t, doc, "host `date -Is` output")
+	assert.Contains(t, doc, "ignores this marker in existing output, not in the working upstream checkout")
 	assert.NotContains(t, doc, "git commit --amend")
 }
 

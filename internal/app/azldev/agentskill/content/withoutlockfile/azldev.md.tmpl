@@ -37,6 +37,10 @@ For upstream components, rendering writes macros, applies overlays, and
 updates `sources` before carrying release/changelog state from the committed
 output and running host `rpmdev-bumpspec`.
 Rendering compares output before the final release bump; `--check-only` stops before that bump.
+Unchanged lockless upstream renders require `--no-change-rebuild`; otherwise rendering errors
+without replacing existing output. The flag records host `date -Is` output in
+`.no-change-rebuild` before bumping, only when no changes were detected. Comparison
+ignores this marker in existing output, not in the working upstream checkout.
 It replaces and automatically commits only the component output directory.
 Commit refreshed TOML before rendering; configure Git author identity and install
 `rpmdevtools`, `rpm-build`, and `rpmautospec` as needed.

@@ -178,9 +178,26 @@ When upstream changes exist and `Version:` differs from the committed rendered
 version (or there is no previous output), it retains the original upstream
 `Release:` and `baserelease` definition instead of carrying over previous
 values, and restores the upstream `Release:` if an autorelease base was carried over.
-It then compares the prepared tree with existing output, ignoring the root `.git`.
+It then compares the prepared tree with existing output, ignoring the root `.git`
+and any top-level `.no-change-rebuild` in the existing output only.
 `--check-only` stops here, before the final release bump.
-Normal rendering then always invokes host `rpmdev-bumpspec -c` with
+If normal rendering detects no changes, it returns an error indicating there
+has been no change since the last render, without replacing the existing output
+or writing a failure marker. To explicitly rebuild unchanged upstream content,
+pass `--no-change-rebuild`, a boolean switch taking no argument:
+
+```bash
+azldev comp render -p curl --no-change-rebuild
+```
+
+For an unchanged render with this flag, the tool runs host `date -Is` and writes
+its exact output to `.no-change-rebuild` at the working dist-git root before
+bumping. The marker is then published and committed with the rendered files.
+The flag does not create a marker when comparison detects real changes.
+A marker already present in the working upstream checkout remains part of the
+comparison; only the existing output's marker is ignored.
+
+Changed renders, or explicitly requested no-change rebuilds, then invoke host `rpmdev-bumpspec -c` with
 `updated <component-name>` followed by upstream changes on separate lines.
 The tool's no-op for `%autorelease` specs is accepted.
 
@@ -220,9 +237,11 @@ the release/changelog queries, and configure Git author identity before
 rendering. Output (including a custom `--output-dir`) must be inside the project
 Git repository. `--check-only` prepares and compares temporary output but never
 performs the final `rpmdev-bumpspec` invocation, replaces rendered files, or
-creates project commits. Normal rendering still performs its final bump even
-when the pre-bump comparison finds no differences; its change reporting includes
-changes made by that bump.
+creates project commits. `--check-only` also never creates a rebuild timestamp,
+even with `--no-change-rebuild`. The no-change refusal and rebuild flag apply only
+to lockless upstream components; local and locked components retain their existing
+behavior. Change reporting includes a forced rebuild marker and changes made by
+the final bump.
 
 ## Detect Changed Components
 

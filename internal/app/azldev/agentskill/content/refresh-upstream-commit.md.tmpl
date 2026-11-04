@@ -73,6 +73,10 @@ the macros file, applies overlays, and updates `sources` before carrying
 release/changelog state and running the final `rpmdev-bumpspec`.
 Carryover and version-reset rules operate on the working spec after overlays.
 Rendering compares output before the final release bump; `--check-only` stops before that bump.
+Unchanged lockless upstream renders require `--no-change-rebuild`; otherwise rendering errors
+without replacing existing output. The flag records host `date -Is` output in
+`.no-change-rebuild` before bumping, only when no changes were detected. Comparison
+ignores this marker in existing output, not in the working upstream checkout.
 The comparison ignores the root `.git` without traversing or removing it.
 
 For static specs, rendering checks the committed `Release:` value. If it uses
@@ -109,8 +113,7 @@ automatically commits only that directory. The subject is
 `updated <component-name>` and the body contains upstream changes, if any.
 It never includes unrelated staged files or creates empty commits. Configure
 Git author identity and install host `rpmdevtools`, `rpm-build`, and `rpmautospec`
-as needed. `--check-only` never replaces output or commits. Normal rendering
-still performs its final bump when the pre-bump comparison finds no differences.
+as needed. `--check-only` never replaces output, creates rebuild timestamps, or commits.
 
 For source-resolution changes, run `refresh-upstream-commit` first and review the
 generated pin, then follow the commit-before-render sequence above. Do not amend

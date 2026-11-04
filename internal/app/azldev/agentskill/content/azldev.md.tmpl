@@ -43,6 +43,10 @@ updates `sources` before carrying release/changelog state from the committed
 output and running host `rpmdev-bumpspec`, without synthetic history or its legacy
 release adjustment. Lockless rendering
 compares output before the final release bump; `--check-only` stops before that bump.
+Unchanged lockless upstream renders require `--no-change-rebuild`; otherwise rendering errors
+without replacing existing output. The flag records host `date -Is` output in
+`.no-change-rebuild` before bumping, only when no changes were detected. Comparison
+ignores this marker in existing output, not in the working upstream checkout.
 It never uses mock or `rpmautospec process-distgit`; RPM macros remain unexpanded.
 It retains all prepared dist-git files except `.git`, without file filtering or
 `spectool` queries, and replaces and
