@@ -3,6 +3,8 @@
 
 package dirdiff
 
+import "path/filepath"
+
 // FileStatus describes whether a file was added, removed, modified, or changed type
 // relative to the original (pre-overlay) directory.
 type FileStatus string
@@ -60,6 +62,7 @@ const (
 type diffConfig struct {
 	contextLines      int
 	maxBinaryScanSize int
+	ignoredPaths      map[string]bool
 }
 
 func newDiffConfig(opts []DiffOption) *diffConfig {
@@ -90,6 +93,17 @@ func WithContextLines(n int) DiffOption {
 func WithMaxBinaryScanBytes(n int) DiffOption {
 	return func(cfg *diffConfig) {
 		cfg.maxBinaryScanSize = max(n, 1)
+	}
+}
+
+// WithIgnoredPaths excludes paths relative to each compared root. Ignored
+// directories are not traversed. Each call replaces the previous ignored paths.
+func WithIgnoredPaths(paths ...string) DiffOption {
+	return func(cfg *diffConfig) {
+		cfg.ignoredPaths = make(map[string]bool, len(paths))
+		for _, path := range paths {
+			cfg.ignoredPaths[filepath.Clean(path)] = true
+		}
 	}
 }
 

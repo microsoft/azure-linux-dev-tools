@@ -178,7 +178,7 @@ const (
 // selected component into the output directory. Processing is done in four phases:
 //  1. Parallel source preparation (clone, overlay, synthetic git)
 //  2. Batch mock processing for locked components only
-//  3. Parallel finishing (filter files, remove .git, move output)
+//  3. Parallel finishing (filter locked files, compare without '.git', move output)
 //  4. Serial project commits for lockless upstream component output
 func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult, error) {
 	if err := resolveAndValidateOutputDir(env, options); err != nil {
@@ -692,7 +692,7 @@ func batchMockProcess(
 // Phase 3: Parallel finishing
 // ──────────────────────────────────────────────────────────────────────────────
 
-// parallelFinish applies source-query results (file filtering, .git removal) and moves
+// parallelFinish applies source-query results, compares without '.git', and moves
 // rendered output for all successfully prepared components. In --check-only
 // mode, the move step is replaced with a tree comparison and no disk writes
 // happen.
@@ -791,9 +791,9 @@ func finishOneComponent(
 	return result
 }
 
-// finishComponentRender applies mock results, filters unreferenced files,
-// removes .git, diffs the staging tree against the existing on-disk output,
-// and (unless checkOnly is set) copies the staging tree to the output dir.
+// finishComponentRender applies mock results, filters locked components' files,
+// diffs the staging tree against the existing output while ignoring the root '.git',
+// and (unless checkOnly is set) moves all other entries to the output dir.
 // stagingDir is the root staging directory containing the component's subdirectory.
 //
 // Returns changed=true when the staging tree differs from the existing output
@@ -841,13 +841,6 @@ func finishComponentRender(
 		env.FS(), componentDir, specPath, mockResult.SpecFiles, componentName,
 	); filterErr != nil {
 		return false, fmt.Errorf("filtering unreferenced files for %#q:\n%w", componentName, filterErr)
-	}
-
-	// Remove .git directory — must not appear in rendered output.
-	// rpmautospec already read it during the batch mock phase.
-	gitDir := filepath.Join(componentDir, ".git")
-	if removeErr := env.FS().RemoveAll(gitDir); removeErr != nil {
-		slog.Debug("Failed to remove .git directory", "path", gitDir, "error", removeErr)
 	}
 
 	// Compare staging tree to existing output. Always done so the result table
@@ -1231,7 +1224,7 @@ const renderErrorMarkerContent = "Rendering failed. See azldev logs for details.
 // the existing on-disk output (actualDir) and returns true when they differ.
 // A missing actualDir always counts as drift. Symlinks are compared by target
 // (filesystems without symlink support skip that check; matches production
-// render behavior).
+// render behavior). The root '.git' entry is ignored without traversing it.
 func diffRenderedOutput(fileSystem opctx.FS, expectedDir, actualDir string) (bool, error) {
 	actualExists, err := fileutils.DirExists(fileSystem, actualDir)
 	if err != nil {
@@ -1243,7 +1236,7 @@ func diffRenderedOutput(fileSystem opctx.FS, expectedDir, actualDir string) (boo
 		return true, nil
 	}
 
-	result, err := dirdiff.DiffDirs(fileSystem, actualDir, expectedDir)
+	result, err := dirdiff.DiffDirs(fileSystem, actualDir, expectedDir, dirdiff.WithIgnoredPaths(".git"))
 	if err != nil {
 		return false, fmt.Errorf("diffing %#q vs %#q:\n%w", actualDir, expectedDir, err)
 	}

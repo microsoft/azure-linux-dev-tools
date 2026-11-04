@@ -15,6 +15,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/dirdiff"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -30,6 +31,54 @@ func TestDiffDirs_IdenticalDirs(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, result.Files)
 	assert.Empty(t, result.String())
+}
+
+func TestDiffDirs_IgnoredPaths(t *testing.T) {
+	t.Parallel()
+
+	for _, testCase := range []struct {
+		name    string
+		gitPath string
+	}{
+		{name: "directory", gitPath: ".git/HEAD"},
+		{name: "file", gitPath: ".git"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			baseFS := afero.NewMemMapFs()
+
+			for _, root := range []string{"/a", "/b"} {
+				for _, path := range []string{testCase.gitPath, ".gitignore", "nested/.git/HEAD"} {
+					require.NoError(t, fileutils.WriteFile(baseFS, filepath.Join(root, path),
+						[]byte(root), fileperms.PublicFile))
+				}
+			}
+
+			testFS := unreadablePathFS{Fs: baseFS, blockedPath: "/a/.git"}
+			result, err := dirdiff.DiffDirs(testFS, "/a", "/b", dirdiff.WithIgnoredPaths(".git"))
+			require.NoError(t, err)
+			require.Len(t, result.Files, 2)
+			assert.Equal(t, ".gitignore", result.Files[0].Path)
+			assert.Equal(t, filepath.Join("nested", ".git", "HEAD"), result.Files[1].Path)
+
+			_, err = dirdiff.DiffDirs(testFS, "/a", "/b")
+			require.ErrorIs(t, err, os.ErrPermission)
+		})
+	}
+}
+
+type unreadablePathFS struct {
+	afero.Fs
+	blockedPath string
+}
+
+func (fs unreadablePathFS) Open(name string) (afero.File, error) {
+	if name == fs.blockedPath || strings.HasPrefix(name, fs.blockedPath+string(filepath.Separator)) {
+		return nil, os.ErrPermission
+	}
+
+	return fs.Fs.Open(name)
 }
 
 func TestDiffDirs_ModifiedFile(t *testing.T) {

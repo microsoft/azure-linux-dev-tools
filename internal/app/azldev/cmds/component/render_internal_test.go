@@ -9,12 +9,15 @@ import (
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components/components_testutils"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 func TestFindSpecFile(t *testing.T) {
@@ -693,6 +696,50 @@ func TestWriteFailureMarkers(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, exists, "check-only must not create output dirs")
 	})
+}
+
+func TestFinishComponentRender_PreservesGitMetadata(t *testing.T) {
+	for _, testCase := range []struct {
+		name      string
+		checkOnly bool
+	}{
+		{name: "normal render"},
+		{name: "check-only", checkOnly: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			comp := components_testutils.NewMockComponent(gomock.NewController(t))
+			comp.EXPECT().GetName().AnyTimes().Return("curl")
+
+			for _, root := range []string{"/staging/curl", "/output/curl"} {
+				for _, name := range []string{"curl.spec", ".gitignore"} {
+					require.NoError(t, fileutils.WriteFile(env.TestFS, filepath.Join(root, name),
+						[]byte("unchanged"), fileperms.PublicFile))
+				}
+			}
+
+			const gitHead = "/staging/curl/.git/HEAD"
+
+			require.NoError(t, fileutils.WriteFile(env.TestFS, gitHead, []byte("upstream"), fileperms.PublicFile))
+
+			prep := &preparedComponent{
+				comp: comp, specFilename: "curl.spec", compOutputDir: "/output/curl", lockless: true,
+			}
+			mockResults := map[string]*sources.ComponentMockResult{"curl": {}}
+
+			changed, err := finishComponentRender(env.Env, prep, mockResults, "/staging", true, testCase.checkOnly)
+			require.NoError(t, err)
+			assert.False(t, changed, "Git metadata alone must not count as rendered drift")
+
+			head, err := fileutils.ReadFile(env.TestFS, gitHead)
+			require.NoError(t, err)
+			assert.Equal(t, "upstream", string(head))
+
+			exists, err := fileutils.Exists(env.TestFS, "/output/curl/.git")
+			require.NoError(t, err)
+			assert.False(t, exists)
+		})
+	}
 }
 
 func TestDiffRenderedOutput(t *testing.T) {

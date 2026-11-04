@@ -186,13 +186,15 @@ Macro-file generation, existing overlays, and `sources` manifest updates run
 before release/changelog carryover and the final `rpmdev-bumpspec` invocation.
 Carryover and version-reset decisions therefore use the working spec after
 overlays; release/changelog edits made by overlays remain subject to those rules.
-All prepared dist-git files are retained
-except `.git`, including unreferenced sidecars, hidden files, and subdirectories.
+Rendered output retains all prepared dist-git files except `.git`, including
+unreferenced sidecars, hidden files, and subdirectories.
 Lockless rendering does not run `spectool` or filter files; `render.skip-file-filter`
 has no effect on lockless components. Synthetic history and its legacy release
 adjustment are skipped. The spec is **not** preprocessed with `rpmautospec process-distgit`:
 `%autorelease`, `%autochangelog`, and other RPM macros remain unexpanded.
 No mock configuration is needed for lockless rendering.
+Comparison ignores the root `.git` entry without traversing or removing it;
+the working checkout retains its Git metadata until staging cleanup.
 After comparing the prepared tree with the current output, the renderer
 recursively removes the existing component output directory, recreates it, and
 moves all prepared files and subdirectories except `.git` into it. Files found
