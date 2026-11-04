@@ -9,6 +9,7 @@ import (
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
+	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/mock"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -65,6 +66,41 @@ func TestApp_Execute(t *testing.T) {
 	result := app.Execute([]string{"test-cmd"})
 	assert.Zero(t, result)
 	assert.True(t, ran)
+}
+
+func TestApp_UniqueMockRoot(t *testing.T) {
+	for name, enabled := range map[string]bool{"default": false, "enabled": true} {
+		t.Run(name, func(t *testing.T) {
+			app := createTestApp(t)
+			ran := false
+			cmd := &cobra.Command{
+				Use: "build",
+				RunE: func(cmd *cobra.Command, _ []string) error {
+					ran = true
+					env, err := azldev.GetEnvFromCommand(cmd)
+					require.NoError(t, err)
+
+					runner := mock.NewRunner(env.WithMockRootComponents("curl"), "/mock.cfg")
+					if enabled {
+						assert.Regexp(t, `^bld-curl-[a-z2-7]{6}$`, runner.UniqueExtension())
+					} else {
+						assert.Empty(t, runner.UniqueExtension())
+					}
+
+					return nil
+				},
+			}
+			app.AddTopLevelCommand(cmd)
+
+			args := []string{"build"}
+			if enabled {
+				args = append(args, "--unique-mockroot")
+			}
+
+			assert.Zero(t, app.Execute(args))
+			assert.True(t, ran)
+		})
+	}
 }
 
 func TestApp_RegisterPostInitCallback(t *testing.T) {

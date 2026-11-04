@@ -177,6 +177,8 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 	}
 
 	// Create mock processor for rpmautospec/spectool.
+	env = env.WithMockRootComponents(comps.Names()...)
+
 	mockProcessor := createMockProcessor(env)
 	if mockProcessor == nil {
 		return nil, errors.New(
@@ -516,7 +518,7 @@ func prepareComponentSources(
 	}
 
 	// Create source manager.
-	sourceManager, err := sourceproviders.NewSourceManager(env, distro)
+	sourceManager, err := sourceproviders.NewSourceManager(env.WithMockRootComponents(componentName), distro)
 	if err != nil {
 		return nil, fmt.Errorf("creating source manager for %#q:\n%w", componentName, err)
 	}

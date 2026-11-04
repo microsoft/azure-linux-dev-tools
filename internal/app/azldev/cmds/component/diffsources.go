@@ -96,7 +96,7 @@ func DiffComponentSources(env *azldev.Env, options *DiffSourcesOptions) (interfa
 		return nil, fmt.Errorf("failed to resolve distro for component %q:\n%w", component.GetName(), err)
 	}
 
-	sourceManager, err := sourceproviders.NewSourceManager(env, distro)
+	sourceManager, err := sourceproviders.NewSourceManager(env.WithMockRootComponents(component.GetName()), distro)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create source manager:\n%w", err)
 	}

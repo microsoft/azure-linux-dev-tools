@@ -126,7 +126,7 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 	}
 
 	// Create source manager to handle all source fetching, both local and upstream.
-	sourceManager, err = sourceproviders.NewSourceManager(env, distro)
+	sourceManager, err = sourceproviders.NewSourceManager(env.WithMockRootComponents(component.GetName()), distro)
 	if err != nil {
 		return fmt.Errorf("failed to create source manager:\n%w", err)
 	}

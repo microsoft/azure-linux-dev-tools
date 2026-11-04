@@ -73,6 +73,7 @@ react to output between commands.
 | --- | --- |
 | `-p`, `--add-package <path>` | Install a package into the chroot before entering. Accepts an RPM file path or a package name. May be repeated. |
 | `--enable-network` | Allow network access (dependency resolution, downloads). |
+| `--unique-mockroot` | Use a distinct root for this session, passing mock an action/package label (up to 12 characters for the package label) and random suffix via `--uniqueext` (at most 24 characters total). |
 
 > **`-p` means `--add-package`, not a component name.** Unlike `azldev comp build -p <name>`,
 > `mock shell` has no component selector. `-p <name>` installs a package *by name* from the
@@ -82,10 +83,13 @@ react to output between commands.
 
 - **Don't mix `-p <name>` with `--add-package /path/to/<name>.rpm` for the same package** — that
   installs both the repo build and your local build, which conflict. Use one or the other.
-- **The mock chroot is persistent** across `azldev adv mock shell` sessions — installed packages and
+- **The mock chroot is persistent by default** across `azldev adv mock shell` sessions — installed packages and
   created files survive. Handy (install once, re-enter later), but stale state can confuse. azldev
   has no built-in reset; clear it with `mock` directly (`--scrub=chroot`, or `--scrub=all` to also
   drop the bootstrap), pointing at the project's distro mock config.
+- **`--unique-mockroot` starts a separate root each time.** To re-enter a preserved unique root,
+  use `mock -r <mock-config> --uniqueext <extension> --shell` with the extension from the
+  verbose command log, not another azldev invocation.
 - **One mock session per terminal.** Running `azldev adv mock shell` while a terminal is already
   inside a mock shell fails — run `exit` first.
 

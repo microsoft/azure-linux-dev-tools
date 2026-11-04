@@ -46,9 +46,10 @@ type Runner struct {
 	// Verbosity
 	verbose bool
 
-	mockConfigPath string
-	bindMounts     []bindMountRequest
-	enableNetwork  bool
+	mockConfigPath  string
+	uniqueExtension string
+	bindMounts      []bindMountRequest
+	enableNetwork   bool
 
 	// noPreClean requests that the root *not* be cleaned on command execution, even if mock deems
 	// it ought to be.
@@ -90,31 +91,33 @@ type bindMountRequest struct {
 // Constructs a new [Runner] that can be used to invoke mock.
 func NewRunner(ctx opctx.Ctx, mockConfigPath string) *Runner {
 	return &Runner{
-		fs:             ctx.FS(),
-		osEnv:          ctx.OSEnv(),
-		cmdFactory:     ctx,
-		eventListener:  ctx,
-		verbose:        ctx.Verbose(),
-		mockConfigPath: mockConfigPath,
+		fs:              ctx.FS(),
+		osEnv:           ctx.OSEnv(),
+		cmdFactory:      ctx,
+		eventListener:   ctx,
+		verbose:         ctx.Verbose(),
+		mockConfigPath:  mockConfigPath,
+		uniqueExtension: newUniqueExtension(ctx),
 	}
 }
 
 // Clone creates a deep copy of the provided [Runner] instance.
 func (r *Runner) Clone() *Runner {
 	return &Runner{
-		fs:             r.fs,
-		osEnv:          r.osEnv,
-		cmdFactory:     r.cmdFactory,
-		eventListener:  r.eventListener,
-		verbose:        r.verbose,
-		mockConfigPath: r.mockConfigPath,
-		bindMounts:     deep.MustCopy(r.bindMounts),
-		enableNetwork:  r.enableNetwork,
-		noPreClean:     r.noPreClean,
-		unprivileged:   r.unprivileged,
-		baseDir:        r.baseDir,
-		rootDir:        r.rootDir,
-		configOpts:     deep.MustCopy(r.configOpts),
+		fs:              r.fs,
+		osEnv:           r.osEnv,
+		cmdFactory:      r.cmdFactory,
+		eventListener:   r.eventListener,
+		verbose:         r.verbose,
+		mockConfigPath:  r.mockConfigPath,
+		uniqueExtension: r.uniqueExtension,
+		bindMounts:      deep.MustCopy(r.bindMounts),
+		enableNetwork:   r.enableNetwork,
+		noPreClean:      r.noPreClean,
+		unprivileged:    r.unprivileged,
+		baseDir:         r.baseDir,
+		rootDir:         r.rootDir,
+		configOpts:      deep.MustCopy(r.configOpts),
 	}
 }
 
@@ -219,6 +222,11 @@ func (r *Runner) ConfigOpts() map[string]string {
 // Retrieves the path to the mock .cfg file used by this [Runner].
 func (r *Runner) ConfigPath() string {
 	return r.mockConfigPath
+}
+
+// UniqueExtension returns the mock root extension, or empty when unique roots are disabled.
+func (r *Runner) UniqueExtension() string {
+	return r.uniqueExtension
 }
 
 // InitRoot initializes a mock root.
@@ -665,7 +673,11 @@ func (r *Runner) getBaseArgs() (args []string) {
 	}
 
 	args = append(args, "-r", r.mockConfigPath)
+
 	args = append(args, "--configdir", filepath.Dir(r.mockConfigPath))
+	if r.uniqueExtension != "" {
+		args = append(args, "--uniqueext", r.uniqueExtension)
+	}
 
 	if r.baseDir != "" {
 		args = append(args, "--config-opts", "basedir="+r.baseDir)
