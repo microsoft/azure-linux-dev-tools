@@ -25,8 +25,20 @@ func TestTMTVirtualProvisioning(t *testing.T) {
 		t.Skip("skipping long test")
 	}
 	if os.Getenv(tmtEnableEnv) == "" {
-		t.Skip("temporarily disabled; run 'mage e2e -target=tmt' to execute the virtual TMT regression")
+		t.Skip("quarantined; set TESTING_ENABLE_TMT_VIRTUAL_E2E=1 to reproduce the virtual TMT regression")
 	}
+
+	kvm, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0)
+	if os.IsNotExist(err) {
+		t.Skip("virtual TMT requires /dev/kvm")
+	}
+	require.NoError(t, err, "open /dev/kvm read-write as the scenario runner user")
+	require.NoError(t, kvm.Close())
+
+	kvmInfo, err := os.Stat("/dev/kvm")
+	require.NoError(t, err)
+	kvmStat, ok := kvmInfo.Sys().(*syscall.Stat_t)
+	require.True(t, ok, "read /dev/kvm ownership")
 
 	inputs, externalInputs, err := loadTMTVirtualInputs(os.Getenv)
 	require.NoError(t, err)
@@ -40,15 +52,6 @@ func TestTMTVirtualProvisioning(t *testing.T) {
 	if externalInputs {
 		rpmContainerPath = "/inputs/candidate.rpm"
 	}
-
-	kvm, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0)
-	require.NoError(t, err, "open /dev/kvm read-write as the scenario runner user")
-	require.NoError(t, kvm.Close())
-
-	kvmInfo, err := os.Stat("/dev/kvm")
-	require.NoError(t, err)
-	kvmStat, ok := kvmInfo.Sys().(*syscall.Stat_t)
-	require.True(t, ok, "read /dev/kvm ownership")
 
 	runID := fmt.Sprintf("%d", time.Now().UTC().UnixNano())
 	artifactBase, err := filepath.Abs(filepath.Join("..", "out", "tmt-virtual-e2e"))

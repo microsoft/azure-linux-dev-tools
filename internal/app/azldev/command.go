@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"reflect"
 
@@ -359,7 +360,14 @@ func reportResultsAsJSON(env *Env, results interface{}) error {
 	}
 
 	if len(jsonBytes) > 0 {
-		fmt.Fprintf(env.ReportFile(), "%s\n", jsonBytes)
+		count, err := fmt.Fprintf(env.ReportFile(), "%s\n", jsonBytes)
+		if err == nil && count != len(jsonBytes)+1 {
+			err = io.ErrShortWrite
+		}
+
+		if err != nil {
+			return fmt.Errorf("failed to write JSON command results:\n%w", err)
+		}
 	}
 
 	return nil

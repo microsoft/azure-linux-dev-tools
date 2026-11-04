@@ -1,0 +1,7 @@
+discover:
+  how: shell
+  tests:
+    - name: smoke
+      test: echo root-plan-passed
+execute:
+  how: tmt
