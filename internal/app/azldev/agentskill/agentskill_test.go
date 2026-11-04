@@ -211,6 +211,8 @@ func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
 	assert.Contains(t, doc, "## RPMAUTOSPEC:")
 	assert.Contains(t, doc, "leading integer of the committed,")
 	assert.Contains(t, doc, "retains `%autorelease`, `%autochangelog`")
+	assert.Contains(t, doc, "effective upstream distro's `dist-git-branch`")
+	assert.Contains(t, doc, "fetches that historical branch before comparing commits")
 	assert.NotContains(t, doc, "git commit --amend")
 }
 

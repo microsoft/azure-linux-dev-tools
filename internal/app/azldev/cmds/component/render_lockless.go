@@ -24,6 +24,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
 	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spec"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
@@ -39,10 +40,12 @@ type locklessRenderUpdate struct {
 }
 
 type lastRender struct {
-	spec     string
-	tree     *object.Tree
-	previous string
-	current  string
+	spec           string
+	tree           *object.Tree
+	previous       string
+	current        string
+	previousBranch string
+	currentBranch  string
 }
 
 type renderAutorelease interface {
@@ -140,62 +143,71 @@ func readLastRender(
 		return history, fmt.Errorf("reading last render commit:\n%w", err)
 	}
 
-	history.previous, history.current, err = renderedUpstreamCommits(env, root, name, tree, last)
+	err = readRenderedUpstreamCommits(env, root, name, tree, last, &history)
 
 	return history, err
 }
 
-func renderedUpstreamCommits(
-	env *azldev.Env, root, name string, tree *object.Tree, last *object.Commit,
-) (previous string, current string, err error) {
+func readRenderedUpstreamCommits(
+	env *azldev.Env, root, name string, tree *object.Tree, last *object.Commit, history *lastRender,
+) error {
 	projectPath, err := repoRelPath(root, env.ProjectDir())
 	if err != nil {
-		return "", "", err
+		return err
 	}
 
-	current, err = renderUpstreamCommit(env, tree, projectPath, name, false)
+	history.current, history.currentBranch, err = renderUpstreamCommit(env, tree, projectPath, name, false)
 	if err != nil {
-		return "", "", fmt.Errorf("reading current render upstream commit:\n%w", err)
+		return fmt.Errorf("reading current render upstream commit:\n%w", err)
 	}
 
 	lastTree, err := last.Tree()
 	if err == nil {
-		previous, err = renderUpstreamCommit(env, lastTree, projectPath, name, true)
+		history.previous, history.previousBranch, err = renderUpstreamCommit(env, lastTree, projectPath, name, true)
 	}
 
 	if err != nil {
 		slog.Warn("Cannot read last render upstream commit; treating upstream as changed",
 			"component", name, "error", err)
 
-		previous = ""
+		history.previous = ""
+		history.previousBranch = ""
 	}
 
-	return previous, current, nil
+	return nil
 }
 
 func renderUpstreamCommit(
 	env *azldev.Env, tree *object.Tree, projectPath, name string, allowLockFallback bool,
-) (string, error) {
+) (commit string, branch string, err error) {
 	historicalEnv, err := loadHistoricalEnv(env, tree, projectPath)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	comp, err := components.NewResolver(historicalEnv).GetComponentByName(name)
 	if err != nil {
-		return "", fmt.Errorf("resolving historical component %#q:\n%w", name, err)
+		return "", "", fmt.Errorf("resolving historical component %#q:\n%w", name, err)
 	}
 
-	commit := comp.GetConfig().Spec.UpstreamCommit
+	commit = comp.GetConfig().Spec.UpstreamCommit
 	if commit == "" && allowLockFallback {
-		return lastRenderLockedUpstreamCommit(historicalEnv, name)
+		commit, err = lastRenderLockedUpstreamCommit(historicalEnv, name)
+		if err != nil {
+			return "", "", err
+		}
 	}
 
 	if commit == "" {
-		return "", fmt.Errorf("component %#q has no configured 'spec.upstream-commit'", name)
+		return "", "", fmt.Errorf("component %#q has no configured 'spec.upstream-commit'", name)
 	}
 
-	return commit, nil
+	distro, err := sourceproviders.ResolveDistro(historicalEnv, comp)
+	if err != nil {
+		return "", "", fmt.Errorf("resolving historical upstream branch:\n%w", err)
+	}
+
+	return commit, distro.Version.DistGitBranch, nil
 }
 
 func lastRenderLockedUpstreamCommit(env *azldev.Env, name string) (string, error) {
@@ -317,6 +329,13 @@ func collectRenderUpstreamChanges(
 
 	if history.previous == history.current {
 		return nil
+	}
+
+	if history.previousBranch != "" && history.previousBranch != history.currentBranch {
+		refspec := "+refs/heads/" + history.previousBranch + ":refs/remotes/origin/" + history.previousBranch
+		if _, err := git.RunInDir(env, env, dir, "fetch", "--no-tags", "--", "origin", refspec); err != nil {
+			return fmt.Errorf("fetching last render upstream branch %#q:\n%w", history.previousBranch, err)
+		}
 	}
 
 	changes, err := git.RunInDir(env, env, dir,

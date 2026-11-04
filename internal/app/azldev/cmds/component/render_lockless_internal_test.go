@@ -37,21 +37,31 @@ func renderTestSpec(version, release, changelog string) string {
 func TestReadLastRender_CommittedConfigAndSpec(t *testing.T) {
 	root := []byte(`includes = ["component.toml", "pins/*.toml"]
 [project]
-default-distro = { name = "test", version = "1" }
+default-distro = { name = "test", version = "3" }
 rendered-specs-dir = "SPECS"
 [distros.test.versions."1"]
 release-ver = "1"
+dist-git-branch = "f40"
+[distros.test.versions."2"]
+release-ver = "2"
+dist-git-branch = "f41"
+[distros.test.versions."3"]
+release-ver = "3"
+dist-git-branch = "f42"
 `)
 	oldSpec := renderTestSpec("1", "9%{?dist}", "* Previous\n- Keep exactly\n")
 	repo, _ := testRepoWithCommits(t, []testRepoCommit{
 		{files: map[string][]byte{
-			"azldev.toml":            root,
-			"component.toml":         []byte("[components.curl.spec]\ntype = 'upstream'\n"),
+			"azldev.toml": root,
+			"component.toml": []byte("[components.curl.spec]\ntype = 'upstream'\n" +
+				"upstream-distro = { name = 'test', version = '1' }\n"),
 			"pins/curl.toml":         []byte("[components.curl.spec]\nupstream-commit = 'aaaaaaa'\n"),
 			"SPECS/c/curl/curl.spec": []byte(oldSpec),
 		}},
 		{files: map[string][]byte{
 			"pins/curl.toml": []byte("[components.curl.spec]\nupstream-commit = 'bbbbbbb'\n"),
+			"component.toml": []byte("[components.curl.spec]\ntype = 'upstream'\n" +
+				"upstream-distro = { name = 'test', version = '2' }\n"),
 		}},
 		{files: map[string][]byte{"README": []byte("unrelated later commit")}},
 	})
@@ -75,6 +85,8 @@ release-ver = "1"
 	assert.Equal(t, oldSpec, content)
 	assert.Equal(t, "aaaaaaa", history.previous)
 	assert.Equal(t, "bbbbbbb", history.current)
+	assert.Equal(t, "f40", history.previousBranch)
+	assert.Equal(t, "f41", history.currentBranch)
 }
 
 func TestReadLastRender_HistoricalLockFallback(t *testing.T) {
@@ -85,6 +97,7 @@ default-distro = { name = "test", version = "1" }
 lock-dir = "../historical-locks"
 [distros.test.versions."1"]
 release-ver = "1"
+dist-git-branch = "f40"
 `
 	)
 	for _, testCase := range []struct {
@@ -139,8 +152,9 @@ release-ver = "1"
 			repo, _ := testRepoWithCommits(t, []testRepoCommit{
 				{files: files},
 				{files: map[string][]byte{
-					"components.toml":            []byte(current),
-					"settings/project.toml":      []byte(strings.ReplaceAll(config, "historical-locks", "current-locks")),
+					"components.toml": []byte(current),
+					"settings/project.toml": []byte(strings.ReplaceAll(
+						strings.ReplaceAll(config, "historical-locks", "current-locks"), "f40", "f41")),
 					"lockless-components.txt":    []byte(selection),
 					"historical-locks/curl.lock": []byte("version = 1\nupstream-commit = 'changed-old-lock'\n"),
 					"current-locks/curl.lock":    []byte("version = 1\nupstream-commit = 'current-lock'\n"),
@@ -165,6 +179,89 @@ release-ver = "1"
 			require.NoError(t, err)
 			assert.Equal(t, testCase.want, history.previous)
 			assert.Equal(t, "bbbbbbb", history.current)
+			assert.Equal(t, "f41", history.currentBranch)
+
+			if testCase.want != "" {
+				assert.Equal(t, "f40", history.previousBranch)
+			}
+		})
+	}
+}
+
+func TestCollectRenderUpstreamChanges_Branches(t *testing.T) {
+	for _, testCase := range []struct {
+		name, previous, current, oldBranch, newBranch string
+		wantFetch, fetchFails, wantLog                bool
+	}{
+		{
+			name: "same branch", previous: "old", current: "new",
+			oldBranch: "f41", newBranch: "f41", wantLog: true,
+		},
+		{
+			name: "branch change", previous: "old", current: "new",
+			oldBranch: "f40", newBranch: "f41", wantFetch: true, wantLog: true,
+		},
+		{
+			name: "branch fetch fails", previous: "old", current: "new",
+			oldBranch: "f40", newBranch: "f41", wantFetch: true, fetchFails: true,
+		},
+		{
+			name: "same commit on different branch", previous: "same", current: "same",
+			oldBranch: "f40", newBranch: "f41",
+		},
+		{name: "initial render", current: "new", newBranch: "f41"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			fetchErr := errors.New("fetch failed")
+
+			var fetched, logged bool
+
+			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				if cmd.Args[3] == "fetch" {
+					fetched = true
+
+					assert.False(t, logged, "fetch must run before comparing commits")
+					assert.Equal(t, []string{
+						"git", "-C", "/working", "fetch", "--no-tags", "--", "origin",
+						"+refs/heads/f40:refs/remotes/origin/f40",
+					}, cmd.Args)
+
+					if testCase.fetchFails {
+						return "", fetchErr
+					}
+
+					return "", nil
+				}
+
+				logged = true
+
+				assert.Equal(t, []string{
+					"git", "-C", "/working", "log", "--oneline", "--end-of-options", "old..new", "--",
+				}, cmd.Args)
+
+				return "abc123 Upstream change\n", nil
+			}
+			update := &locklessRenderUpdate{}
+
+			err := collectRenderUpstreamChanges(env.Env, "/working", "curl", "1",
+				lastRender{
+					previous: testCase.previous, current: testCase.current,
+					previousBranch: testCase.oldBranch, currentBranch: testCase.newBranch,
+				}, update)
+			if testCase.fetchFails {
+				require.ErrorIs(t, err, fetchErr)
+				require.ErrorContains(t, err, "fetching last render upstream branch")
+			} else {
+				require.NoError(t, err)
+			}
+
+			assert.Equal(t, testCase.wantFetch, fetched)
+			assert.Equal(t, testCase.wantLog, logged)
+
+			if testCase.wantLog {
+				assert.Equal(t, "abc123 Upstream change", update.changes)
+			}
 		})
 	}
 }

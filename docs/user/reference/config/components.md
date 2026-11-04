@@ -76,6 +76,11 @@ When the upstream package has a different name than the component, use `upstream
 spec = { type = "upstream", upstream-name = "redhat-rpm-config" }
 ```
 
+Upstream clones fetch only the effective distro version's `dist-git-branch`,
+including its full history. They are not shallow clones and do not fetch every
+upstream branch. Select a different branch through `spec.upstream-distro` and
+the referenced distro version's `dist-git-branch`.
+
 ### Commit-Pinned Specs
 
 When you need to pin to a specific git commit — for example, to pick up a fix that hasn't been included in a tagged release yet — use `upstream-commit`:
@@ -86,6 +91,10 @@ spec = { type = "upstream", upstream-commit = "a1b2c3d4e5f6789" }
 ```
 
 The value must be a hex string between 7 and 40 characters (a short or full git commit hash). When `upstream-commit` is set, it takes priority over the distro snapshot date — azldev checks out the exact commit instead of finding the latest commit before a snapshot timestamp.
+
+The pinned commit must be available from the selected upstream branch. Lockless
+rendering additionally fetches the last render's branch when it differs and
+the old and current pins must be compared.
 
 > **Note:** Commit-pinning is intended for temporary use. Once the desired change lands in a tagged upstream release, switch back to version-based pinning or the default snapshot to keep the component aligned with the upstream distro.
 

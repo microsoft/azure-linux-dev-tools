@@ -204,10 +204,11 @@ func resolveCloneOptions(options []GitOptions) cloneOptions {
 	return resolved
 }
 
-// WithGitBranch returns a [GitOptions] that specifies the branch to clone.
+// WithGitBranch returns a [GitOptions] that clones only the specified branch
+// and its full history.
 func WithGitBranch(branch string) GitOptions {
 	return func(opts *cloneOptions) {
-		opts.args = append(opts.args, "--branch", branch)
+		opts.args = append(opts.args, "--branch", branch, "--single-branch")
 	}
 }
 

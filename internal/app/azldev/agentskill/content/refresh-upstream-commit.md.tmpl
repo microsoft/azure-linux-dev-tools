@@ -55,6 +55,12 @@ git commit -m "fix(<name>): ..."
 azldev comp render -p <name>
 ```
 
+Rendering clones only the effective upstream distro's `dist-git-branch`, keeping
+its full history rather than making a shallow clone. If the last render's
+committed TOML resolves to a different branch and the pins differ, rendering
+fetches that historical branch before comparing commits, without switching the
+working checkout.
+
 For static specs, rendering checks the committed `Release:` value. If it uses
 the `baserelease` macro, rendering copies the committed `%global baserelease`
 or `%define baserelease` line over the upstream definition without changing

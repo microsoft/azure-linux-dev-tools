@@ -114,7 +114,11 @@ lockless**. Local components skip the upstream release/changelog carryover and
 automatic commit steps. All lockless rendering runs on the host without mock;
 components using lock files retain their existing mock-based rendering.
 
-The renderer clones the selected upstream dist-git to temporary storage. It
+The renderer clones only the branch selected by the component's effective
+`spec.upstream-distro` (or the project default) into temporary storage. The
+resolved distro version's `dist-git-branch` supplies the branch name. The clone
+retains that branch's full history, not every upstream branch, so pinned commits
+and snapshot selection remain available without a shallow-history limit. It
 finds the existing committed output under
 `<rendered-specs-dir>/<lowercase-first-letter>/<component-name>`, ignoring
 uncommitted spec changes. For an existing non-`%autorelease` upstream spec, it
@@ -150,6 +154,11 @@ If the last render has no configured pin, its committed lock file supplies
 or does not list the component. The historical configuration's
 `lock-dir` determines which lock file to read; current or uncommitted locks are
 never used for this fallback.
+When the last render used a different upstream branch and the pins differ, the
+renderer fetches that branch into the working clone before comparing commits.
+Its branch is resolved from the last render's committed TOML, including includes,
+component overrides, and distro defaults. The current branch remains available;
+fetching the historical branch does not change the working checkout.
 Different pins, missing render history, or an error loading the old pin mean
 upstream changed. It records `git log --oneline <old>..<current>` from the
 upstream checkout; without an old pin it records a one-line version update.
