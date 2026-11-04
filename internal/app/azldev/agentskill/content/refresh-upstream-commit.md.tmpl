@@ -68,6 +68,11 @@ runs here only for an upstream `%autorelease` whose `fedora_upstream_release`
 is not already supplied by `build.defines`. The captured values are reused
 when writing the macros file; that step never repeats the provenance query.
 
+After reading render history and collecting upstream changes, rendering writes
+the macros file, applies overlays, and updates `sources` before carrying
+release/changelog state and running the final `rpmdev-bumpspec`.
+Carryover and version-reset rules operate on the working spec after overlays.
+
 For static specs, rendering checks the committed `Release:` value. If it uses
 the `baserelease` macro, rendering copies the committed `%global baserelease`
 or `%define baserelease` line over the upstream definition without changing
@@ -84,8 +89,8 @@ an `%autorelease` upstream spec inherits the leading integer of the committed,
 macro-expanded Release as `-b` and its committed `%changelog` body as the
 working `changelog` file, removing leading and trailing comment lines starting
 with `##` while preserving interior comments. Expansion uses the committed files on the host;
-the later version-change release reset still applies. Existing overlays
-still run afterward. All prepared dist-git files except `.git` are retained,
+the later version-change release reset still applies.
+All prepared dist-git files except `.git` are retained,
 without file filtering or `spectool` queries. Synthetic history and its
 legacy release adjustment are skipped during lockless rendering.
 Lockless rendering never uses mock or `rpmautospec process-distgit`; the output

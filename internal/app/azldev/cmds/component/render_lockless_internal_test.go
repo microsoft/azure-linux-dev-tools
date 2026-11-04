@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 
+	gogit "github.com/go-git/go-git/v5"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components/components_testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
@@ -441,6 +443,8 @@ func TestPrepareLocklessSpec_ReleaseChangelogAndUpstreamChanges(t *testing.T) {
 			}
 			stub := &renderAutospecStub{}
 			update := &locklessRenderUpdate{subject: "updated curl"}
+			require.NoError(t, collectRenderUpstreamChanges(env.Env, "/working", "curl",
+				testCase.version, testCase.history, update))
 			err := prepareLocklessSpec(env.Env, stub, "/working", "curl", spec.EditorLegacy,
 				testCase.history, update)
 			require.NoError(t, err)
@@ -568,8 +572,10 @@ func TestPrepareLocklessSpec_CommittedAutorelease(t *testing.T) {
 
 				return nil
 			}
-			err := prepareLocklessSpec(env.Env, stub, "/working", "curl", spec.EditorLegacy,
-				history, &locklessRenderUpdate{subject: "updated curl"})
+			update := &locklessRenderUpdate{subject: "updated curl"}
+			require.NoError(t, collectRenderUpstreamChanges(env.Env, "/working", "curl",
+				testCase.version, history, update))
+			err := prepareLocklessSpec(env.Env, stub, "/working", "curl", spec.EditorLegacy, history, update)
 			require.NoError(t, err)
 			assert.True(t, bumped)
 			assert.Equal(t, []string{"expand"}, stub.calls)
@@ -696,6 +702,107 @@ func TestPrepareComponentSources_LocalAndLockedSkipNewLifecycle(t *testing.T) {
 			require.ErrorContains(t, err, "failed to apply overlays")
 		})
 	}
+}
+
+func TestPrepareComponentSources_OverlaysBeforeReleaseCarryover(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	ctrl := gomock.NewController(t)
+	config := &projectconfig.ComponentConfig{
+		Spec:  projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeUpstream},
+		Build: projectconfig.ComponentBuildConfig{With: []string{"feature"}},
+		Overlays: []projectconfig.ComponentOverlay{
+			{Type: projectconfig.ComponentOverlaySetSpecTag, Tag: "Release", Value: "2"},
+			{Type: projectconfig.ComponentOverlaySetSpecTag, Tag: "Summary", Value: "Overlaid summary"},
+		},
+		SourceFiles: []projectconfig.SourceFileReference{{
+			Filename: "extra-source.tar.gz", Hash: "abc123", HashType: fileutils.HashTypeSHA512,
+			Origin: projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/extra-source.tar.gz"},
+		}},
+	}
+	comp := components_testutils.NewMockComponent(ctrl)
+	comp.EXPECT().GetName().AnyTimes().Return("curl")
+	comp.EXPECT().GetConfig().AnyTimes().Return(config)
+
+	const (
+		oldChangelog = "* Downstream entry\n"
+		rootConfig   = `[project]
+default-distro = { name = "test-distro", version = "1.0" }
+[distros.test-distro.versions."1.0"]
+release-ver = "3"
+dist-git-branch = "upstream"
+[components.curl.spec]
+type = "upstream"
+upstream-commit = "aaaaaaa"
+`
+	)
+
+	repo, _ := testRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{
+		"azldev.toml":            []byte(rootConfig),
+		"SPECS/c/curl/curl.spec": []byte(renderTestSpec("1", "9", oldChangelog)),
+	}}})
+	originalOpen := openRenderRepo
+	openRenderRepo = func(_ *azldev.Env) (*gogit.Repository, string, error) {
+		return repo, "/project", nil
+	}
+	manager := sourceproviders_test.NewMockSourceManager(ctrl)
+	manager.EXPECT().FetchComponent(gomock.Any(), comp, "/staging/curl", gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ components.Component, dir string, _ ...sourceproviders.FetchComponentOption) error {
+			return fileutils.WriteFile(env.TestFS, filepath.Join(dir, "curl.spec"),
+				[]byte(renderTestSpec("1", "1", "* Upstream entry\n")), fileperms.PublicFile)
+		})
+
+	originalPreparer := newSourcePreparer
+	newSourcePreparer = func(
+		_ sourceproviders.SourceManager, fs opctx.FS, events opctx.EventListener, dry opctx.DryRunnable,
+		options ...sources.PreparerOption,
+	) (sources.SourcePreparer, error) {
+		return sources.NewPreparer(manager, fs, events, dry, options...)
+	}
+
+	t.Cleanup(func() {
+		openRenderRepo = originalOpen
+		newSourcePreparer = originalPreparer
+	})
+	env.CmdFactory.RegisterCommandInSearchPath("rpmdev-bumpspec")
+
+	bumped := false
+	env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+		t.Fatalf("unexpected upstream query: %v", cmd.Args)
+
+		return "", nil
+	}
+	env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+		bumped = true
+
+		assert.Equal(t, "rpmdev-bumpspec", cmd.Args[0])
+		path := cmd.Args[len(cmd.Args)-1]
+		content, err := fileutils.ReadFile(env.TestFS, path)
+		require.NoError(t, err)
+		assert.Contains(t, string(content), "Summary: Overlaid summary\n")
+		assert.Contains(t, string(content), "Release: 9\n")
+		assert.Contains(t, string(content), "%changelog\n"+oldChangelog)
+		assert.Contains(t, string(content), "%{load:%{_sourcedir}/curl.azl.macros}")
+		assert.Contains(t, string(content), "Source9999")
+
+		macros, err := fileutils.ReadFile(env.TestFS, "/staging/curl/curl.azl.macros")
+		require.NoError(t, err)
+		assert.Contains(t, string(macros), "%_with_feature 1\n")
+
+		manifest, err := fileutils.ReadFile(env.TestFS, "/staging/curl/sources")
+		require.NoError(t, err)
+		assert.Contains(t, string(manifest), "SHA512 (extra-source.tar.gz) = abc123")
+
+		return fileutils.WriteFile(env.TestFS, path,
+			[]byte(strings.Replace(string(content), "Release: 9\n", "Release: 10\n", 1)), fileperms.PublicFile)
+	}
+	_, err := prepareComponentSources(env.Env, nil, comp, "/staging", "/project/SPECS/c/curl",
+		spec.EditorLegacy, false, true)
+	require.NoError(t, err)
+	assert.True(t, bumped)
+
+	content, err := fileutils.ReadFile(env.TestFS, "/staging/curl/curl.spec")
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "Release: 10\n")
 }
 
 func TestPrepareComponentSources_LocklessSkipsSyntheticHistory(t *testing.T) {

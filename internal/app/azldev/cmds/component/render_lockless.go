@@ -54,35 +54,49 @@ type renderAutorelease interface {
 	ExpandRelease(ctx context.Context, dir, filename string) (string, error)
 }
 
+//nolint:gochecknoglobals // Replaced by isolated render tests to open an in-memory project repository.
+var openRenderRepo = openChangedRepo
+
 func prepareLocklessRender(
-	env *azldev.Env, autospec renderAutorelease, comp components.Component,
+	env *azldev.Env, comp components.Component,
 	dir, outputDir string, editor spec.EditorMode,
-) (*locklessRenderUpdate, error) {
-	repo, root, err := openChangedRepo(env)
+) (history lastRender, update *locklessRenderUpdate, err error) {
+	repo, root, err := openRenderRepo(env)
 	if err != nil {
-		return nil, err
+		return history, nil, err
 	}
 
 	path, err := repoRelPath(root, outputDir)
 	if err != nil {
-		return nil, fmt.Errorf("lockless render output must be inside the project repository:\n%w", err)
+		return history, nil, fmt.Errorf("lockless render output must be inside the project repository:\n%w", err)
 	}
 
-	history, err := readLastRender(env, repo, root, path, comp.GetName())
+	history, err = readLastRender(env, repo, root, path, comp.GetName())
 	if err != nil {
-		return nil, fmt.Errorf("reading committed render state:\n%w", err)
+		return history, nil, fmt.Errorf("reading committed render state:\n%w", err)
 	}
 
-	update := &locklessRenderUpdate{
+	update = &locklessRenderUpdate{
 		repoRoot: root,
 		path:     path,
 		subject:  "updated " + comp.GetName(),
 	}
-	if err := prepareLocklessSpec(env, autospec, dir, comp.GetName(), editor, history, update); err != nil {
-		return nil, err
+
+	_, opened, err := openLocklessSpec(env, dir, comp.GetName(), editor)
+	if err != nil {
+		return history, nil, err
 	}
 
-	return update, nil
+	version, err := opened.GetLastTag("", "Version")
+	if err != nil {
+		return history, nil, fmt.Errorf("reading upstream Version:\n%w", err)
+	}
+
+	if err := collectRenderUpstreamChanges(env, dir, comp.GetName(), version, history, update); err != nil {
+		return history, nil, err
+	}
+
+	return history, update, nil
 }
 
 func readLastRender(
@@ -237,23 +251,34 @@ func lastRenderLockedUpstreamCommit(env *azldev.Env, name string) (string, error
 	return lock.UpstreamCommit, nil
 }
 
-func prepareLocklessSpec(
-	env *azldev.Env, autospec renderAutorelease, dir, name string, editor spec.EditorMode,
-	history lastRender, update *locklessRenderUpdate,
-) error {
-	path, err := findSpecFile(env.FS(), dir, name)
+func openLocklessSpec(
+	env *azldev.Env, dir, name string, editor spec.EditorMode,
+) (path string, opened *spec.Spec, err error) {
+	path, err = findSpecFile(env.FS(), dir, name)
 	if err != nil {
-		return err
+		return "", nil, err
 	}
 
 	content, err := fileutils.ReadFile(env.FS(), path)
 	if err != nil {
-		return fmt.Errorf("reading upstream spec:\n%w", err)
+		return "", nil, fmt.Errorf("reading upstream spec:\n%w", err)
 	}
 
-	opened, err := spec.OpenSpec(bytes.NewReader(content), spec.WithEditor(editor))
+	opened, err = spec.OpenSpec(bytes.NewReader(content), spec.WithEditor(editor))
 	if err != nil {
-		return fmt.Errorf("parsing upstream spec:\n%w", err)
+		return "", nil, fmt.Errorf("parsing upstream spec:\n%w", err)
+	}
+
+	return path, opened, nil
+}
+
+func prepareLocklessSpec(
+	env *azldev.Env, autospec renderAutorelease, dir, name string, editor spec.EditorMode,
+	history lastRender, update *locklessRenderUpdate,
+) error {
+	path, opened, err := openLocklessSpec(env, dir, name, editor)
+	if err != nil {
+		return err
 	}
 
 	original, err := opened.GetLastTag("", "Release")
@@ -264,10 +289,6 @@ func prepareLocklessSpec(
 	version, err := opened.GetLastTag("", "Version")
 	if err != nil {
 		return fmt.Errorf("reading upstream Version:\n%w", err)
-	}
-
-	if err := collectRenderUpstreamChanges(env, dir, name, version, history, update); err != nil {
-		return err
 	}
 
 	release, err := locklessRenderRelease(env, autospec, dir, filepath.Base(path), original, history)

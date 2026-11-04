@@ -94,8 +94,10 @@ func TestPrepareLocklessSpec_CarriesBaseRelease(t *testing.T) {
 							[]byte(strings.Replace(string(content), "baserelease "+testCase.wantBase,
 								"baserelease "+testCase.wantBumped, 1)), fileperms.PublicFile)
 					}
-					err := prepareLocklessSpec(env.Env, &renderAutospecStub{}, "/working", "curl", editor,
-						history, &locklessRenderUpdate{subject: "updated curl"})
+					update := &locklessRenderUpdate{subject: "updated curl"}
+					require.NoError(t, collectRenderUpstreamChanges(env.Env, "/working", "curl",
+						testCase.version, history, update))
+					err := prepareLocklessSpec(env.Env, &renderAutospecStub{}, "/working", "curl", editor, history, update)
 					require.NoError(t, err)
 					assert.Equal(t, 1, calls)
 

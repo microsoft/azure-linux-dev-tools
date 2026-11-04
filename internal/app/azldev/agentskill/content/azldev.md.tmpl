@@ -38,9 +38,9 @@ images assemble RPMs into bootable artifacts.
 workflow per component for all commands. Listed components ignore locks and use
 generated upstream-commit TOML instead. All others use locks.
 
-For listed upstream components, rendering carries release/changelog state from
-the committed output, runs host `rpmdev-bumpspec`, then applies the existing
-overlays, without synthetic history or its legacy
+For listed upstream components, rendering writes macros, applies overlays, and
+updates `sources` before carrying release/changelog state from the committed
+output and running host `rpmdev-bumpspec`, without synthetic history or its legacy
 release adjustment. Lockless rendering
 never uses mock or `rpmautospec process-distgit`; RPM macros remain unexpanded.
 It retains all prepared dist-git files except `.git`, without file filtering or

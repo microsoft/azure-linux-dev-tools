@@ -182,7 +182,11 @@ It then always invokes host `rpmdev-bumpspec -c` with
 `updated <component-name>` followed by upstream changes on separate lines.
 The tool's no-op for `%autorelease` specs is accepted.
 
-Existing overlays run after these steps. All prepared dist-git files are retained
+Macro-file generation, existing overlays, and `sources` manifest updates run
+before release/changelog carryover and the final `rpmdev-bumpspec` invocation.
+Carryover and version-reset decisions therefore use the working spec after
+overlays; release/changelog edits made by overlays remain subject to those rules.
+All prepared dist-git files are retained
 except `.git`, including unreferenced sidecars, hidden files, and subdirectories.
 Lockless rendering does not run `spectool` or filter files; `render.skip-file-filter`
 has no effect on lockless components. Synthetic history and its legacy release
