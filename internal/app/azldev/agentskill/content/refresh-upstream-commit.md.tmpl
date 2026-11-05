@@ -97,7 +97,8 @@ working `changelog` file, removing leading and trailing comment lines starting
 with `##` while preserving interior comments. Expansion uses the committed files on the host;
 the later version-change release reset still applies.
 Without that legacy marker, an existing `%autorelease` spec carries its
-committed `-b` value (default `1` when omitted) into the working macro and
+committed `-b` value into the working macro; an omitted `-b` stays omitted,
+removing any working base option rather than adding `-b 1`. Rendering
 replaces the working `changelog` with the committed file byte-for-byte.
 A missing committed `changelog` or invalid numeric base fails rendering.
 This carryover requires no host release query; the version-change reset still applies.

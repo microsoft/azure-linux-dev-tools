@@ -217,7 +217,7 @@ func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
 	assert.Contains(t, doc, "automatically commits only that directory")
 	assert.Contains(t, doc, "## RPMAUTOSPEC:")
 	assert.Contains(t, doc, "leading integer of the committed,")
-	assert.Contains(t, doc, "committed `-b` value (default `1` when omitted)")
+	assert.Contains(t, doc, "an omitted `-b` stays omitted")
 	assert.Contains(t, doc, "committed file byte-for-byte")
 	assert.Contains(t, doc, "retains `%autorelease`, `%autochangelog`")
 	assert.Contains(t, doc, "effective upstream distro's `dist-git-branch`")

@@ -684,8 +684,16 @@ func TestPrepareLocklessSpec_UnprocessedAutorelease(t *testing.T) {
 			working: "%autorelease", want: "%autorelease -b 17",
 		},
 		{
-			name: "implicit base", previous: "%autorelease",
-			working: "%autorelease -b 2", want: "%autorelease -b 1",
+			name: "omitted base", previous: "%autorelease",
+			working: "%autorelease -b 2 -e test", want: "%autorelease -e test",
+		},
+		{
+			name: "omitted braced base", previous: "%{autorelease}",
+			working: "%{autorelease -e %{suffix} -b2}", want: "%{autorelease -e %{suffix}}",
+		},
+		{
+			name: "both bases omitted", previous: "%autorelease",
+			working: "%autorelease", want: "%autorelease",
 		},
 		{
 			name: "version reset", previous: "%autorelease -b 17",

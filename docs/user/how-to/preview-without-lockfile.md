@@ -158,7 +158,8 @@ The later version-change release reset still applies.
 
 For an existing `%autorelease` spec without the legacy marker, rendering carries
 the committed `-b` value into the working spec, preserving the working macro's
-other options. An omitted `-b` means the default base of `1`. The committed
+other options. If the committed spec omits `-b`, the working spec also omits it,
+removing any working base option rather than adding `-b 1`. The committed
 `changelog` file replaces the working file byte-for-byte, or is created if absent
 from the working checkout. A missing committed `changelog` or invalid numeric
 base fails rendering. No host release or changelog query is needed for this

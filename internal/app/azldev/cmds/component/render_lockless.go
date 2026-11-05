@@ -448,14 +448,13 @@ func carryUnprocessedAutorelease(env *azldev.Env, dir, release string, history l
 		return release, nil
 	}
 
-	base := "1"
 	if matches := renderedAutoreleaseBase.FindStringSubmatch(previousRelease); matches != nil {
-		base = matches[1]
-	}
-
-	release, err = withAutoreleaseBase(release, base)
-	if err != nil {
-		return "", fmt.Errorf("using committed autorelease base:\n%w", err)
+		release, err = withAutoreleaseBase(release, matches[1])
+		if err != nil {
+			return "", fmt.Errorf("using committed autorelease base:\n%w", err)
+		}
+	} else {
+		release = autoreleaseBaseArg.ReplaceAllString(release, "")
 	}
 
 	if history.tree == nil {
