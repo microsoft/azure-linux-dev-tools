@@ -211,6 +211,9 @@ func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
 		assert.Contains(t, doc, "ignores this root marker in both existing output and the working upstream checkout")
 		assert.Contains(t, doc, "Lockless failures never write `RENDER_FAILED`")
 		assert.Contains(t, doc, "Recovery discards uncommitted changes in that directory and keeps no backups")
+		assert.Contains(t, doc, "`--changelog-comment`")
+		assert.Contains(t, doc, "`update <component-name>`")
+		assert.Contains(t, doc, "`--no-git-commit` skips automatic staging and committing")
 	}
 
 	doc, err := agentskill.SkillDocument("azldev-refresh-upstream-commit", testParams())
@@ -241,6 +244,9 @@ func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
 	assert.Contains(t, doc, "ignores this root marker in both existing output and the working upstream checkout")
 	assert.Contains(t, doc, "Lockless failures never write `RENDER_FAILED`")
 	assert.Contains(t, doc, "Recovery discards uncommitted changes in that directory and keeps no backups")
+	assert.Contains(t, doc, "`--changelog-comment`")
+	assert.Contains(t, doc, "`update <component-name>`")
+	assert.Contains(t, doc, "`--no-git-commit` skips automatic staging and committing")
 	assert.NotContains(t, doc, "git commit --amend")
 }
 

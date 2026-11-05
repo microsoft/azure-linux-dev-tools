@@ -31,15 +31,18 @@ import (
 // RenderOptions holds the options for the render command.
 type RenderOptions struct {
 	componentCommandOptions
-	ComponentFilter   components.ComponentFilter
-	OutputDir         string
-	OutputDirExplicit bool // True when --output-dir was explicitly passed on the CLI.
-	FailOnError       bool
-	Force             bool
-	CleanStale        bool
-	CheckOnly         bool
-	NoChangeRebuild   bool
-	RPMDevBumpspec    bool
+	ComponentFilter          components.ComponentFilter
+	OutputDir                string
+	OutputDirExplicit        bool // True when --output-dir was explicitly passed on the CLI.
+	FailOnError              bool
+	Force                    bool
+	CleanStale               bool
+	CheckOnly                bool
+	NoChangeRebuild          bool
+	ChangelogComment         string
+	NoGitCommit              bool
+	RPMDevBumpspec           bool
+	changelogCommentExplicit bool
 }
 
 func renderOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
@@ -78,15 +81,16 @@ use lock files.
 For lockless upstream components, write macros, apply overlays, and update sources
 before carrying release and changelog state from the last committed render.
 Compare output; unchanged renders require --no-change-rebuild to record a timestamp.
-Then run rpmdev-bumpspec with "updated <component-name>" and upstream changes.
-After replacing output, commit only that directory, excluding unrelated staged files.
+Then run rpmdev-bumpspec -c with --changelog-comment (default: "update <component-name>").
+Commit only that directory with the same subject and upstream changes as the body.
+--no-git-commit skips staging and committing. Both flags affect only lockless upstream
+components; unrelated staged files are excluded.
 Output must be inside the project repository; configure Git author identity and
 install rpmdev-bumpspec. Commit updated upstream-commit TOML before rendering.
 --check-only stops before bumping, replacing output, or committing.
-Lockless rendering runs entirely on the host: it never uses mock or
-rpmautospec process-distgit. The rendered spec retains its RPM macros, including
-%autorelease and %autochangelog. All prepared dist-git files are retained except
-.git; no file filtering or spectool query is performed. Host
+Lockless rendering never uses mock or rpmautospec process-distgit.
+The spec retains its RPM macros, including %autorelease and %autochangelog.
+All prepared files except .git are retained, without filtering or spectool. Host
 rpmautospec generate-changelog/calculate-release are used only when needed for
 release history or provenance. Provenance is captured before carryover/bumping
 and reused for the macros file. Locked components keep their existing behavior.
@@ -107,13 +111,11 @@ valid with -a.`,
   azldev component render -p curl
 
   # Render to a custom directory, allowing removal of existing rendered component directories
-  azldev component render -a -o rendered/ --force
-
-  # Render all and remove stale directories
-  azldev component render -a --clean-stale`,
+  azldev component render -a -o rendered/ --force`,
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
 			options.ComponentFilter.ComponentNamePatterns = append(args, options.ComponentFilter.ComponentNamePatterns...)
 			options.OutputDirExplicit = cmd.Flags().Changed("output-dir")
+			options.changelogCommentExplicit = cmd.Flags().Changed("changelog-comment")
 			options.SpecEditor = specEditorFromCommand(cmd)
 
 			return RenderComponents(env, &options)
@@ -152,6 +154,11 @@ func addRenderOptions(cmd *cobra.Command, options *RenderOptions) {
 			"on orphan rendered-spec directories. Intended for CI gates.")
 	cmd.Flags().BoolVar(&options.NoChangeRebuild, "no-change-rebuild", false,
 		"allow unchanged lockless upstream renders by recording 'date -Is' output in '.no-change-rebuild'")
+	cmd.Flags().StringVar(&options.ChangelogComment, "changelog-comment", "",
+		"comment passed verbatim to rpmdev-bumpspec -c and used as the Git commit subject "+
+			"for lockless upstream components (default: update <component-name>)")
+	cmd.Flags().BoolVar(&options.NoGitCommit, "no-git-commit", false,
+		"leave lockless upstream rendered output uncommitted without staging it")
 	addRPMDevBumpspecFlag(cmd, &options.RPMDevBumpspec)
 
 	// --check-only is a read-only diff against on-disk state; --fail-on-error
@@ -486,6 +493,14 @@ func parallelPrepare(
 			results[idx] = result.Value.result
 		default:
 			result.Value.prepared.index = idx
+			if update := result.Value.prepared.update; update != nil {
+				if options.changelogCommentExplicit || options.ChangelogComment != "" {
+					update.subject = options.ChangelogComment
+				}
+
+				update.noGitCommit = options.NoGitCommit
+			}
+
 			prepared = append(prepared, result.Value.prepared)
 		}
 	}

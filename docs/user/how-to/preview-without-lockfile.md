@@ -223,9 +223,15 @@ The flag does not create a marker when comparison detects real changes.
 The root marker is ignored in both the working upstream checkout and existing
 output, even if its contents differ. Nested files with the same name are compared.
 
-Changed renders, or explicitly requested no-change rebuilds, then invoke host `rpmdev-bumpspec -c` with
-`updated <component-name>` followed by upstream changes on separate lines.
+Changed renders, or explicitly requested no-change rebuilds, then invoke host
+`rpmdev-bumpspec -c` with the exact `--changelog-comment` value. If omitted, the
+comment defaults to `update <component-name>` for each rendered component.
+Upstream changes are not appended to this comment.
 The tool's no-op for `%autorelease` specs is accepted.
+
+```bash
+azldev comp render -p curl --changelog-comment "Fix curl patches"
+```
 
 Macro-file generation, existing overlays, and `sources` manifest updates run
 before release/changelog carryover and the final `rpmdev-bumpspec` invocation.
@@ -246,9 +252,18 @@ its replacement. Files found only in the old output are not retained.
 Moves use filesystem renames, so the project work directory and rendered
 output must be on the same filesystem.
 The renderer then commits only the component output directory. The subject is
-`updated <component-name>`; the body lists upstream changes, if any. Unrelated
-staged files are not committed.
+the same changelog comment, defaulting to `update <component-name>`; the body
+lists upstream changes, if any. Unrelated staged files are not committed.
 Unchanged Git content does not produce an empty commit.
+Pass `--no-git-commit` to skip automatic staging and committing while still
+rendering and bumping the spec. The rendered output remains available for review
+and manual commit. Both flags affect only lockless upstream components;
+locked and local rendering retain their existing behavior.
+
+```bash
+azldev comp render -p curl --changelog-comment "Fix curl patches" --no-git-commit
+```
+
 Lockless component failures never create `RENDER_FAILED` or replace existing
 output with a failure marker. Failures before output replacement leave the
 existing directory unchanged. If replacement or automatic committing fails after
@@ -270,9 +285,10 @@ Lockless aliases are updated only after rendering and any automatic commit succe
 `--check-only` does not replace aliases.
 
 Install `rpmdevtools`, `rpm-build`, and `rpmautospec` on the host as needed for
-the release/changelog queries, and configure Git author identity before
-rendering. Output (including a custom `--output-dir`) must be inside the project
-Git repository. `--check-only` prepares and compares temporary output but never
+the release/changelog queries. Output (including a custom `--output-dir`) must be inside the project
+Git repository. Git author identity is needed for automatic commits; it is not
+required by the renderer with `--no-git-commit`.
+`--check-only` prepares and compares temporary output but never
 performs the final `rpmdev-bumpspec` invocation, replaces rendered files, or
 creates project commits. `--check-only` also never creates a rebuild timestamp,
 even with `--no-change-rebuild`. The no-change refusal and rebuild flag apply only

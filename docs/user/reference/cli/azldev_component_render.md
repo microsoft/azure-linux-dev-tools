@@ -29,15 +29,16 @@ use lock files.
 For lockless upstream components, write macros, apply overlays, and update sources
 before carrying release and changelog state from the last committed render.
 Compare output; unchanged renders require --no-change-rebuild to record a timestamp.
-Then run rpmdev-bumpspec with "updated <component-name>" and upstream changes.
-After replacing output, commit only that directory, excluding unrelated staged files.
+Then run rpmdev-bumpspec -c with --changelog-comment (default: "update <component-name>").
+Commit only that directory with the same subject and upstream changes as the body.
+--no-git-commit skips staging and committing. Both flags affect only lockless upstream
+components; unrelated staged files are excluded.
 Output must be inside the project repository; configure Git author identity and
 install rpmdev-bumpspec. Commit updated upstream-commit TOML before rendering.
 --check-only stops before bumping, replacing output, or committing.
-Lockless rendering runs entirely on the host: it never uses mock or
-rpmautospec process-distgit. The rendered spec retains its RPM macros, including
-%autorelease and %autochangelog. All prepared dist-git files are retained except
-.git; no file filtering or spectool query is performed. Host
+Lockless rendering never uses mock or rpmautospec process-distgit.
+The spec retains its RPM macros, including %autorelease and %autochangelog.
+All prepared files except .git are retained, without filtering or spectool. Host
 rpmautospec generate-changelog/calculate-release are used only when needed for
 release history or provenance. Provenance is captured before carryover/bumping
 and reused for the macros file. Locked components keep their existing behavior.
@@ -67,15 +68,13 @@ azldev component render [flags]
 
   # Render to a custom directory, allowing removal of existing rendered component directories
   azldev component render -a -o rendered/ --force
-
-  # Render all and remove stale directories
-  azldev component render -a --clean-stale
 ```
 
 ### Options
 
 ```
   -a, --all-components[=true|false]         Include all components
+      --changelog-comment string            comment passed verbatim to rpmdev-bumpspec -c and used as the Git commit subject for lockless upstream components (default: update <component-name>)
       --check-only[=true|false]             render to a staging area and compare against the existing on-disk output without modifying the output directory. Exits 0 when nothing would change and 1 when any component would drift. With -a + --clean-stale, also fails on orphan rendered-spec directories. Intended for CI gates.
       --clean-stale[=true|false]            prune rendered-spec directories that no longer correspond to a configured component (only with -a; requires -f with -o). Top-level non-component siblings are preserved.
   -p, --component stringArray               Component name pattern
@@ -84,6 +83,7 @@ azldev component render [flags]
   -f, --force[=true|false]                  allow overwriting existing rendered component directories
   -h, --help[=true|false]                   help for render
       --no-change-rebuild[=true|false]      allow unchanged lockless upstream renders by recording 'date -Is' output in '.no-change-rebuild'
+      --no-git-commit[=true|false]          leave lockless upstream rendered output uncommitted without staging it
   -o, --output-dir string                   output directory for rendered specs (overrides rendered-specs-dir from config)
       --rpmdev-bumpspec[=true|false]        Use rpmdev-bumpspec instead of the legacy static release calculation
       --skip-lock-validation[=true|false]   skip lock file consistency checks

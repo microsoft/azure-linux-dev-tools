@@ -54,6 +54,15 @@ func TestNewRenderCmd_Flags(t *testing.T) {
 	require.NoError(t, cmd.ParseFlags([]string{"--no-change-rebuild"}))
 	assert.Equal(t, "true", noChangeRebuildFlag.Value.String())
 
+	commentFlag := cmd.Flags().Lookup("changelog-comment")
+	require.NotNil(t, commentFlag)
+
+	noGitCommitFlag := cmd.Flags().Lookup("no-git-commit")
+	require.NotNil(t, noGitCommitFlag)
+	require.NoError(t, cmd.ParseFlags([]string{"--changelog-comment", "Fix curl patches", "--no-git-commit"}))
+	assert.Equal(t, "Fix curl patches", commentFlag.Value.String())
+	assert.Equal(t, "true", noGitCommitFlag.Value.String())
+
 	rpmDevBumpspecFlag := cmd.Flags().Lookup("rpmdev-bumpspec")
 	require.NotNil(t, rpmDevBumpspecFlag)
 	assert.Equal(t, "false", rpmDevBumpspecFlag.DefValue)
@@ -66,13 +75,23 @@ func TestRenderCmd_NoComponents(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
 
 	cmd := componentcmds.NewRenderCmd()
-	cmd.SetArgs([]string{"-o", "SPECS", "--no-change-rebuild", "nonexistent-component"})
+	cmd.SetArgs([]string{
+		"-o", "SPECS", "--no-change-rebuild", "--no-git-commit",
+		"--changelog-comment", "Fix patches", "nonexistent-component",
+	})
 
 	err := cmd.ExecuteContext(testEnv.Env)
 
 	// We expect an error because no components match (not the output-dir error).
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "component not found")
+}
+
+func TestRenderCmd_ChangelogCommentRequiresValue(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+	cmd := componentcmds.NewRenderCmd()
+	cmd.SetArgs([]string{"--changelog-comment"})
+	require.ErrorContains(t, cmd.ExecuteContext(testEnv.Env), "flag needs an argument")
 }
 
 func TestRenderCmd_NoOutputDir(t *testing.T) {

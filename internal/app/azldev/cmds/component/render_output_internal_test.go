@@ -32,6 +32,7 @@ const (
 	renderTestResetCommand    = "reset"
 	renderTestCheckoutCommand = "checkout"
 	renderTestOverwrite       = "overwrite"
+	renderTestSpecDiff        = "SPECS/c/curl/curl.spec\n"
 )
 
 func writeOriginalRenderOutput(t *testing.T, fileSystem afero.Fs, root string) {
@@ -179,7 +180,7 @@ func TestCommitLocklessRenders_RestoresFailedOutput(t *testing.T) {
 					}
 
 					if cmd.Args[3] == renderTestDiffCommand {
-						return "SPECS/c/curl/curl.spec\n", nil
+						return renderTestSpecDiff, nil
 					}
 
 					if cmd.Args[3] == renderTestResetCommand || cmd.Args[3] == renderTestCheckoutCommand {

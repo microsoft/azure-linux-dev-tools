@@ -506,12 +506,7 @@ func TestPrepareLocklessSpec_ReleaseChangelogAndUpstreamChanges(t *testing.T) {
 				assert.False(t, called, "only the final release bump should run")
 				called = true
 
-				entry := "updated curl"
-				if testCase.wantChanges != "" {
-					entry += "\n" + testCase.wantChanges
-				}
-
-				assert.Equal(t, []string{"rpmdev-bumpspec", "-c", entry, path}, cmd.Args)
+				assert.Equal(t, []string{"rpmdev-bumpspec", "-c", "update curl", path}, cmd.Args)
 				prepared, err := fileutils.ReadFile(env.TestFS, path)
 				require.NoError(t, err)
 				assert.Contains(t, string(prepared), "Release: "+testCase.wantRelease+"\n")
@@ -525,7 +520,7 @@ func TestPrepareLocklessSpec_ReleaseChangelogAndUpstreamChanges(t *testing.T) {
 				return nil
 			}
 			stub := &renderAutospecStub{base: testCase.base}
-			update := &locklessRenderUpdate{subject: "updated curl"}
+			update := &locklessRenderUpdate{subject: "update curl"}
 			require.NoError(t, collectRenderUpstreamChanges(env.Env, "/working", "curl",
 				testCase.version, testCase.history, update))
 			err := prepareLocklessSpec(env.Env, stub, "/working", "curl", spec.EditorLegacy,
@@ -1005,28 +1000,44 @@ func TestPrepareComponentSources_LocalAndLockedSkipNewLifecycle(t *testing.T) {
 }
 
 func TestPrepareComponentSources_OverlaysBeforeReleaseCarryover(t *testing.T) {
-	env := testutils.NewTestEnv(t)
-	ctrl := gomock.NewController(t)
-	config := &projectconfig.ComponentConfig{
-		Spec:  projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeUpstream},
-		Build: projectconfig.ComponentBuildConfig{With: []string{"feature"}},
-		Overlays: []projectconfig.ComponentOverlay{
-			{Type: projectconfig.ComponentOverlaySetSpecTag, Tag: "Release", Value: "2"},
-			{Type: projectconfig.ComponentOverlaySetSpecTag, Tag: "Version", Value: "1"},
-			{Type: projectconfig.ComponentOverlaySetSpecTag, Tag: "Summary", Value: "Overlaid summary"},
+	for _, testCase := range []struct {
+		name, comment, wantComment string
+		explicit, noGitCommit      bool
+	}{
+		{name: "default comment", wantComment: "update curl"},
+		{
+			name: "custom comment", comment: "Fix curl's patches; keep $COMPONENT literal",
+			wantComment: "Fix curl's patches; keep $COMPONENT literal", explicit: true,
 		},
-		SourceFiles: []projectconfig.SourceFileReference{{
-			Filename: "extra-source.tar.gz", Hash: "abc123", HashType: fileutils.HashTypeSHA512,
-			Origin: projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/extra-source.tar.gz"},
-		}},
-	}
-	comp := components_testutils.NewMockComponent(ctrl)
-	comp.EXPECT().GetName().AnyTimes().Return("curl")
-	comp.EXPECT().GetConfig().AnyTimes().Return(config)
+		{name: "empty explicit comment", explicit: true},
+		{
+			name: "no Git commit", comment: "Prepare curl for review",
+			wantComment: "Prepare curl for review", noGitCommit: true,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := testutils.NewTestEnvWithoutLockfile(t)
+			ctrl := gomock.NewController(t)
+			config := &projectconfig.ComponentConfig{
+				Spec:  projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeUpstream},
+				Build: projectconfig.ComponentBuildConfig{With: []string{"feature"}},
+				Overlays: []projectconfig.ComponentOverlay{
+					{Type: projectconfig.ComponentOverlaySetSpecTag, Tag: "Release", Value: "2"},
+					{Type: projectconfig.ComponentOverlaySetSpecTag, Tag: "Version", Value: "1"},
+					{Type: projectconfig.ComponentOverlaySetSpecTag, Tag: "Summary", Value: "Overlaid summary"},
+				},
+				SourceFiles: []projectconfig.SourceFileReference{{
+					Filename: "extra-source.tar.gz", Hash: "abc123", HashType: fileutils.HashTypeSHA512,
+					Origin: projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/extra-source.tar.gz"},
+				}},
+			}
+			comp := components_testutils.NewMockComponent(ctrl)
+			comp.EXPECT().GetName().AnyTimes().Return("curl")
+			comp.EXPECT().GetConfig().AnyTimes().Return(config)
 
-	const (
-		oldChangelog = "* Downstream entry\n"
-		rootConfig   = `[project]
+			const (
+				oldChangelog = "* Downstream entry\n"
+				rootConfig   = `[project]
 default-distro = { name = "test-distro", version = "1.0" }
 [distros.test-distro.versions."1.0"]
 release-ver = "3"
@@ -1035,85 +1046,130 @@ dist-git-branch = "upstream"
 type = "upstream"
 upstream-commit = "aaaaaaa"
 `
-	)
+			)
 
-	repo, hashes := testRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{
-		"azldev.toml":            []byte(rootConfig),
-		"SPECS/c/curl/curl.spec": []byte(renderTestSpec("1", "9", oldChangelog)),
-	}}})
-	originalOpen := openRenderRepo
-	openRenderRepo = func(_ *azldev.Env) (*gogit.Repository, string, error) {
-		return repo, "/project", nil
-	}
-	manager := sourceproviders_test.NewMockSourceManager(ctrl)
-	manager.EXPECT().FetchComponent(gomock.Any(), comp, "/staging/curl", gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ components.Component, dir string, _ ...sourceproviders.FetchComponentOption) error {
-			return fileutils.WriteFile(env.TestFS, filepath.Join(dir, "curl.spec"),
-				[]byte(renderTestSpec("2", "1", "* Upstream entry\n")), fileperms.PublicFile)
+			repo, hashes := testRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{
+				"azldev.toml":            []byte(rootConfig),
+				"SPECS/c/curl/curl.spec": []byte(renderTestSpec("1", "9", oldChangelog)),
+			}}})
+			originalOpen := openRenderRepo
+			openRenderRepo = func(_ *azldev.Env) (*gogit.Repository, string, error) {
+				return repo, "/project", nil
+			}
+			manager := sourceproviders_test.NewMockSourceManager(ctrl)
+			manager.EXPECT().FetchComponent(gomock.Any(), comp, "/staging/curl", gomock.Any()).DoAndReturn(
+				func(_ context.Context, _ components.Component, dir string, _ ...sourceproviders.FetchComponentOption) error {
+					return fileutils.WriteFile(env.TestFS, filepath.Join(dir, "curl.spec"),
+						[]byte(renderTestSpec("2", "1", "* Upstream entry\n")), fileperms.PublicFile)
+				})
+
+			originalPreparer := newSourcePreparer
+			newSourcePreparer = func(
+				_ sourceproviders.SourceManager, fs opctx.FS, events opctx.EventListener, dry opctx.DryRunnable,
+				options ...sources.PreparerOption,
+			) (sources.SourcePreparer, error) {
+				return sources.NewPreparer(manager, fs, events, dry, options...)
+			}
+
+			t.Cleanup(func() {
+				openRenderRepo = originalOpen
+				newSourcePreparer = originalPreparer
+			})
+			env.CmdFactory.RegisterCommandInSearchPath("rpmdev-bumpspec")
+
+			bumped := false
+			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				assert.Equal(t, []string{
+					"git", "-C", "/project", "--literal-pathspecs", "log", "-1", "--format=%H",
+					"--end-of-options", hashes[0], "--", "SPECS/c/curl/",
+				}, cmd.Args)
+
+				return hashes[0], nil
+			}
+			env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+				bumped = true
+
+				assert.Equal(t, "rpmdev-bumpspec", cmd.Args[0])
+				assert.Equal(t, "-c", cmd.Args[1])
+				assert.Equal(t, testCase.wantComment, cmd.Args[2])
+				path := cmd.Args[len(cmd.Args)-1]
+				content, err := fileutils.ReadFile(env.TestFS, path)
+				require.NoError(t, err)
+				assert.Contains(t, string(content), "Summary: Overlaid summary\n")
+				assert.Contains(t, string(content), "Release: 9\n")
+				assert.Contains(t, string(content), "%changelog\n"+oldChangelog)
+				assert.Contains(t, string(content), "%{load:%{_sourcedir}/curl.azl.macros}")
+				assert.Contains(t, string(content), "Source9999")
+
+				macros, err := fileutils.ReadFile(env.TestFS, "/staging/curl/curl.azl.macros")
+				require.NoError(t, err)
+				assert.Contains(t, string(macros), "%_with_feature 1\n")
+
+				manifest, err := fileutils.ReadFile(env.TestFS, "/staging/curl/sources")
+				require.NoError(t, err)
+				assert.Contains(t, string(manifest), "SHA512 (extra-source.tar.gz) = abc123")
+
+				return fileutils.WriteFile(env.TestFS, path,
+					[]byte(strings.Replace(string(content), "Release: 9\n", "Release: 10\n", 1)), fileperms.PublicFile)
+			}
+			results := make([]*RenderResult, 1)
+			prepared := parallelPrepare(env.Env, nil, []components.Component{comp}, "/staging", &RenderOptions{
+				OutputDir: "/project/SPECS", ChangelogComment: testCase.comment,
+				changelogCommentExplicit: testCase.explicit, NoGitCommit: testCase.noGitCommit,
+			}, results)
+			require.Len(t, prepared, 1)
+			prep := prepared[0]
+			prep.update.changes = "abc123 Fix upstream"
+
+			assert.False(t, bumped)
+
+			prep.compOutputDir = "/project/SPECS/c/curl"
+			changed, err := finishComponentRender(env.Env, prep,
+				map[string]*sources.ComponentMockResult{"curl": {}}, "/staging", true, false, false)
+			require.NoError(t, err)
+			assert.True(t, changed)
+			assert.True(t, bumped)
+
+			content, err := fileutils.ReadFile(env.TestFS, "/project/SPECS/c/curl/curl.spec")
+			require.NoError(t, err)
+			assert.Contains(t, string(content), "Release: 10\n")
+
+			var gitCommands []string
+
+			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				gitCommands = append(gitCommands, cmd.Args[3])
+
+				assert.False(t, testCase.noGitCommit, "no Git commands should run for --no-git-commit")
+
+				if cmd.Args[3] == renderTestDiffCommand {
+					return renderTestSpecDiff, nil
+				}
+
+				if cmd.Args[3] == "commit" {
+					assert.Equal(t, []string{
+						"git", "-C", "/project", "commit", "--only", "-m", testCase.wantComment,
+						"-m", "abc123 Fix upstream", "--", "SPECS/c/curl",
+					}, cmd.Args)
+				}
+
+				return "", nil
+			}
+			results[0] = &RenderResult{Status: renderStatusOK, lockless: true}
+			commitLocklessRenders(env.Env, prepared, results, false)
+
+			if testCase.noGitCommit {
+				assert.Empty(t, gitCommands)
+			} else {
+				assert.Equal(t, []string{"add", renderTestDiffCommand, "commit"}, gitCommands)
+			}
+
+			assert.Equal(t, renderStatusOK, results[0].Status)
+
+			content, err = fileutils.ReadFile(env.TestFS, "/project/SPECS/c/curl/curl.spec")
+			require.NoError(t, err)
+			assert.Contains(t, string(content), "Release: 10\n")
 		})
-
-	originalPreparer := newSourcePreparer
-	newSourcePreparer = func(
-		_ sourceproviders.SourceManager, fs opctx.FS, events opctx.EventListener, dry opctx.DryRunnable,
-		options ...sources.PreparerOption,
-	) (sources.SourcePreparer, error) {
-		return sources.NewPreparer(manager, fs, events, dry, options...)
 	}
-
-	t.Cleanup(func() {
-		openRenderRepo = originalOpen
-		newSourcePreparer = originalPreparer
-	})
-	env.CmdFactory.RegisterCommandInSearchPath("rpmdev-bumpspec")
-
-	bumped := false
-	env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
-		assert.Equal(t, []string{
-			"git", "-C", "/project", "--literal-pathspecs", "log", "-1", "--format=%H",
-			"--end-of-options", hashes[0], "--", "SPECS/c/curl/",
-		}, cmd.Args)
-
-		return hashes[0], nil
-	}
-	env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
-		bumped = true
-
-		assert.Equal(t, "rpmdev-bumpspec", cmd.Args[0])
-		path := cmd.Args[len(cmd.Args)-1]
-		content, err := fileutils.ReadFile(env.TestFS, path)
-		require.NoError(t, err)
-		assert.Contains(t, string(content), "Summary: Overlaid summary\n")
-		assert.Contains(t, string(content), "Release: 9\n")
-		assert.Contains(t, string(content), "%changelog\n"+oldChangelog)
-		assert.Contains(t, string(content), "%{load:%{_sourcedir}/curl.azl.macros}")
-		assert.Contains(t, string(content), "Source9999")
-
-		macros, err := fileutils.ReadFile(env.TestFS, "/staging/curl/curl.azl.macros")
-		require.NoError(t, err)
-		assert.Contains(t, string(macros), "%_with_feature 1\n")
-
-		manifest, err := fileutils.ReadFile(env.TestFS, "/staging/curl/sources")
-		require.NoError(t, err)
-		assert.Contains(t, string(manifest), "SHA512 (extra-source.tar.gz) = abc123")
-
-		return fileutils.WriteFile(env.TestFS, path,
-			[]byte(strings.Replace(string(content), "Release: 9\n", "Release: 10\n", 1)), fileperms.PublicFile)
-	}
-	prep, err := prepareComponentSources(env.Env, nil, comp, "/staging", "/project/SPECS/c/curl",
-		spec.EditorLegacy, false, true)
-	require.NoError(t, err)
-	assert.False(t, bumped)
-
-	prep.compOutputDir = "/project/SPECS/c/curl"
-	changed, err := finishComponentRender(env.Env, prep,
-		map[string]*sources.ComponentMockResult{"curl": {}}, "/staging", true, false, false)
-	require.NoError(t, err)
-	assert.True(t, changed)
-	assert.True(t, bumped)
-
-	content, err := fileutils.ReadFile(env.TestFS, "/project/SPECS/c/curl/curl.spec")
-	require.NoError(t, err)
-	assert.Contains(t, string(content), "Release: 10\n")
 }
 
 func TestPrepareComponentSources_LocklessSkipsSyntheticHistory(t *testing.T) {
@@ -1411,7 +1467,7 @@ func TestCommitLocklessRender_PathOnlyAndNoEmptyCommits(t *testing.T) {
 			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
 				commands = append(commands, cmd.Args)
 				if cmd.Args[3] == "diff" && changed {
-					return "SPECS/c/curl/curl.spec\n", nil
+					return renderTestSpecDiff, nil
 				}
 
 				return "", nil

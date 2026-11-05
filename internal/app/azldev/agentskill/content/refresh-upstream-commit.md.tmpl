@@ -121,7 +121,8 @@ as the working `changelog`, removing leading and trailing `##` comment lines
 while preserving interior comments and whitespace. Modern autorelease output
 replaces the working `changelog` with the committed file byte-for-byte.
 A missing committed `changelog` fails rendering. The final host
-`rpmdev-bumpspec -c` still uses `updated <component-name>` plus upstream changes.
+`rpmdev-bumpspec -c` uses the exact `--changelog-comment` value, defaulting to
+`update <component-name>`. Upstream changes are not appended to this comment.
 All prepared dist-git files except `.git` are retained,
 without file filtering or `spectool` queries. Synthetic history and its
 legacy release adjustment are skipped during lockless rendering.
@@ -135,8 +136,10 @@ committed lock file can supply the old pin if that commit's top-level
 render still requires a configured pin.
 
 Rendering then replaces `{{ .RenderedSpecsDir }}/<first-char>/<name>/` and
-automatically commits only that directory. The subject is
-`updated <component-name>` and the body contains upstream changes, if any.
+automatically commits only that directory. The subject is the same changelog
+comment, defaulting to `update <component-name>`, and the body contains upstream
+changes, if any.
+`--no-git-commit` skips automatic staging and committing, but still renders and bumps.
 It never includes unrelated staged files or creates empty commits. Configure
 Git author identity and install host `rpmdevtools`, `rpm-build`, and `rpmautospec`
 as needed. `--check-only` never replaces output, creates rebuild timestamps, or commits.

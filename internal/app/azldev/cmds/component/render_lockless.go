@@ -36,10 +36,11 @@ const noChangeRebuildMarker = ".no-change-rebuild"
 var errNoRenderChanges = errors.New("no change since the last render; use '--no-change-rebuild' to rebuild anyway")
 
 type locklessRenderUpdate struct {
-	repoRoot string
-	path     string
-	subject  string
-	changes  string
+	repoRoot    string
+	path        string
+	subject     string
+	changes     string
+	noGitCommit bool
 }
 
 type lastRender struct {
@@ -82,7 +83,7 @@ func prepareLocklessRender(
 	update = &locklessRenderUpdate{
 		repoRoot: root,
 		path:     path,
-		subject:  "updated " + comp.GetName(),
+		subject:  "update " + comp.GetName(),
 	}
 
 	_, opened, err := openLocklessSpec(env, dir, comp.GetName(), editor)
@@ -775,12 +776,7 @@ func bumpLocklessSpec(env *azldev.Env, path string, update *locklessRenderUpdate
 		return false, fmt.Errorf("reading spec before release bump:\n%w", err)
 	}
 
-	entry := update.subject
-	if update.changes != "" {
-		entry += "\n" + update.changes
-	}
-
-	raw := exec.CommandContext(env, sources.RPMDevBumpspecBinary, "-c", entry, path)
+	raw := exec.CommandContext(env, sources.RPMDevBumpspecBinary, "-c", update.subject, path)
 	raw.Dir = filepath.Dir(path)
 
 	var stderr bytes.Buffer
@@ -815,7 +811,7 @@ func commitLocklessRenders(
 	for _, prep := range prepared {
 		result := results[prep.index]
 
-		if prep.update != nil && result.Status == renderStatusOK {
+		if prep.update != nil && !prep.update.noGitCommit && result.Status == renderStatusOK {
 			if err := commitLocklessRender(env, prep.update); err != nil {
 				result.Status = renderStatusError
 				result.Error = err.Error()

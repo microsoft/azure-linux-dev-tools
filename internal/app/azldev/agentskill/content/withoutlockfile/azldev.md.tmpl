@@ -46,6 +46,10 @@ untouched; failures after replacement starts clear the component directory and
 use Git to restore committed output, or leave no directory if none existed.
 Recovery discards uncommitted changes in that directory and keeps no backups.
 It replaces and automatically commits only the component output directory.
+`--changelog-comment` supplies the exact `rpmdev-bumpspec -c` value and commit
+subject, defaulting to `update <component-name>`.
+`--no-git-commit` skips automatic staging and committing, but still renders and bumps.
+Upstream changes remain in the Git commit body, not the changelog comment.
 Commit refreshed TOML before rendering; configure Git author identity and install
 `rpmdevtools`, `rpm-build`, and `rpmautospec` as needed.
 Lockless rendering never uses mock or `rpmautospec process-distgit`; RPM macros
