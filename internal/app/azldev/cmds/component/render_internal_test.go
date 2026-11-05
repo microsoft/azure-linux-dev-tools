@@ -802,8 +802,9 @@ func TestFinishComponentRender_ComparisonBeforeBump(t *testing.T) {
 			env.TestFS = comparisonFS
 			called := false
 			dated := false
-			wantBump := !testCase.checkOnly && !testCase.compareFail && !testCase.wantNoChanges
-			wantMarker := wantBump && !testCase.drift
+			wantFinish := !testCase.checkOnly && !testCase.compareFail && !testCase.wantNoChanges
+			wantBump := wantFinish && !testCase.autorelease
+			wantMarker := wantFinish && !testCase.drift
 
 			env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
 				assert.True(t, comparisonFS.compared, "comparison must precede the bump")
@@ -868,11 +869,13 @@ func TestFinishComponentRender_ComparisonBeforeBump(t *testing.T) {
 			assert.Equal(t, testCase.wantChanged, result.Changed)
 
 			want := strings.Replace(original, "Release: 9\n", "Release: 10\n", 1)
-			if !wantBump {
+			if !wantFinish {
 				want = actual
 				staged, readErr := fileutils.ReadFile(baseFS, stagedSpec)
 				require.NoError(t, readErr)
 				assert.Equal(t, original, string(staged))
+			} else if !wantBump {
+				want = original
 			}
 
 			output, readErr := fileutils.ReadFile(baseFS, outputSpec)
@@ -881,7 +884,7 @@ func TestFinishComponentRender_ComparisonBeforeBump(t *testing.T) {
 
 			markerExists, readErr := fileutils.Exists(baseFS, markerPath)
 			require.NoError(t, readErr)
-			assert.Equal(t, !wantBump || wantMarker, markerExists)
+			assert.Equal(t, !wantFinish || wantMarker, markerExists)
 
 			if markerExists {
 				marker, readErr := fileutils.ReadFile(baseFS, markerPath)

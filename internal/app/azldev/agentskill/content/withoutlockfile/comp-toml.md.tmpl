@@ -86,8 +86,10 @@ calculation = "manual"
 
 ## Render configuration
 
-Upstream rendering always runs host `rpmdev-bumpspec -c` before the existing
-processing and automatically commits the component output directory. Commit
+Upstream rendering runs host `rpmdev-bumpspec -c` only for non-autorelease specs
+and automatically commits the component output directory. Missing
+`--changelog-comment` opens `$EDITOR` or a local editor for non-autorelease,
+or Git's own editor for an autorelease commit. Commit
 input TOML first, install host `rpmdevtools`, `rpm-build`, and `rpmautospec` as
 needed, and configure Git author identity. Lockless rendering never uses mock
 or `rpmautospec process-distgit`; RPM macros remain unexpanded and the

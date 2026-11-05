@@ -266,10 +266,22 @@ The root marker is ignored in both the working upstream checkout and existing
 output, even if its contents differ. Nested files with the same name are compared.
 
 Changed renders, or explicitly requested no-change rebuilds, then invoke host
-`rpmdev-bumpspec -c` with the exact `--changelog-comment` value. If omitted, the
-comment defaults to `update <component-name>` for each rendered component.
-Upstream changes are not appended to this comment.
-The tool's no-op for `%autorelease` specs is accepted.
+`rpmdev-bumpspec -c` **only for non-autorelease specs**, with the exact
+`--changelog-comment` value. There is no default comment. If the flag is omitted,
+rendering opens `$EDITOR` (including configured arguments), or a local editor
+(`editor`, `sensible-editor`, `vi`, or `nano`), to obtain the entry. Save and close
+the editor to continue. Its text is passed unchanged to `rpmdev-bumpspec -c` and
+reused as the Git commit message. Empty edited text or editor failure aborts
+rendering before output replacement. Missing-comment finishing is serialized
+to prevent simultaneous editors.
+
+Autorelease specs skip `rpmdev-bumpspec` entirely. With `--changelog-comment`,
+Git uses the supplied message; without it, Git opens its own configured editor
+to obtain the commit message, using a template containing upstream changes.
+`--no-git-commit` skips that Git prompt, but non-autorelease specs still need a
+changelog entry. `--check-only` and dry runs never open editors.
+For unattended rendering, provide `--changelog-comment`.
+Upstream changes are not appended to the changelog entry.
 
 ```bash
 azldev comp render -p curl --changelog-comment "Fix curl patches"
@@ -298,8 +310,9 @@ its replacement. Files found only in the old output are not retained.
 Moves use filesystem renames, so the project work directory and rendered
 output must be on the same filesystem.
 The renderer then commits the component output directory. The subject is
-the same changelog comment, defaulting to `update <component-name>`; the body
-lists upstream changes, if any. The first successful automatic commit also
+the supplied or edited changelog comment; autorelease without a comment uses
+Git's interactive message editor. The body includes upstream changes, if any.
+The first successful automatic commit also
 includes all staged changes, unstaged tracked changes, and non-ignored untracked
 files outside `rendered-specs-dir` (or the active `--output-dir`). Other component
 directories and unrelated changes within the rendered output directory are
@@ -307,7 +320,7 @@ excluded from that commit, even if already staged. Later component commits
 include only their own dist-git output.
 Unchanged Git content does not produce an empty commit.
 Pass `--no-git-commit` to skip automatic staging and committing while still
-rendering and bumping the spec. The rendered output remains available for review
+rendering and bumping non-autorelease specs. The rendered output remains available for review
 and manual commit. Both flags affect only lockless upstream components;
 locked and local rendering retain their existing behavior.
 

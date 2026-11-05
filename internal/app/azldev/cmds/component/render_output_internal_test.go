@@ -50,7 +50,7 @@ func setupRenderOutput(t *testing.T, fileSystem afero.Fs, existing bool) {
 	t.Helper()
 
 	for name, content := range map[string]string{
-		"curl.spec": "new spec", "sidecar": "new sidecar", ".git/HEAD": "upstream",
+		"curl.spec": "Name: curl\nVersion: 1\nRelease: 1\n", "sidecar": "new sidecar", ".git/HEAD": "upstream",
 	} {
 		require.NoError(t, fileutils.WriteFile(fileSystem, filepath.Join("/staging/curl", name),
 			[]byte(content), fileperms.PublicFile))
@@ -209,7 +209,7 @@ func TestCommitLocklessRenders_RestoresFailedOutput(t *testing.T) {
 
 					content, err := fileutils.ReadFile(env.TestFS, filepath.Join(testRenderOutputDir, "curl.spec"))
 					require.NoError(t, err)
-					assert.Equal(t, "new spec", string(content))
+					assert.Equal(t, "Name: curl\nVersion: 1\nRelease: 1\n", string(content))
 
 					for _, name := range []string{".git", "extras", renderErrorMarkerFile} {
 						exists, err := fileutils.Exists(env.TestFS, filepath.Join(testRenderOutputDir, name))

@@ -36,11 +36,12 @@ const noChangeRebuildMarker = ".no-change-rebuild"
 var errNoRenderChanges = errors.New("no change since the last render; use '--no-change-rebuild' to rebuild anyway")
 
 type locklessRenderUpdate struct {
-	repoRoot    string
-	path        string
-	subject     string
-	changes     string
-	noGitCommit bool
+	repoRoot        string
+	path            string
+	subject         string
+	changes         string
+	noGitCommit     bool
+	subjectProvided bool
 }
 
 type lastRender struct {
@@ -118,7 +119,6 @@ func prepareLocklessRender(
 	update := &locklessRenderUpdate{
 		repoRoot: root,
 		path:     path,
-		subject:  "update " + comp.GetName(),
 	}
 
 	_, opened, err := openLocklessSpec(env, dir, comp.GetName(), editor)
@@ -823,13 +823,34 @@ func writeNoChangeRebuild(env *azldev.Env, dir string) error {
 }
 
 func bumpLocklessSpec(env *azldev.Env, path string, update *locklessRenderUpdate) (bool, error) {
+	before, err := fileutils.ReadFile(env.FS(), path)
+	if err != nil {
+		return false, fmt.Errorf("reading spec before release bump:\n%w", err)
+	}
+
+	opened, err := spec.OpenSpec(bytes.NewReader(before))
+	if err != nil {
+		return false, fmt.Errorf("reading spec before release bump:\n%w", err)
+	}
+
+	release, err := opened.GetLastTag("", "Release")
+	if err != nil {
+		return false, fmt.Errorf("reading Release before release bump:\n%w", err)
+	}
+
+	if sources.ReleaseUsesAutorelease(release) {
+		return false, nil
+	}
+
 	if err := prereqs.RequireExecutable(env, sources.RPMDevBumpspecBinary, nil); err != nil {
 		return false, fmt.Errorf("lockless upstream rendering requires 'rpmdev-bumpspec'; install 'rpmdevtools':\n%w", err)
 	}
 
-	before, err := fileutils.ReadFile(env.FS(), path)
-	if err != nil {
-		return false, fmt.Errorf("reading spec before release bump:\n%w", err)
+	if !update.subjectProvided && update.subject == "" && !env.DryRun() {
+		update.subject, err = editRenderChangelog(env, path)
+		if err != nil {
+			return false, err
+		}
 	}
 
 	raw := exec.CommandContext(env, sources.RPMDevBumpspecBinary, "-c", update.subject, path)
@@ -953,15 +974,7 @@ func commitLocklessRender(env *azldev.Env, update *locklessRenderUpdate, include
 		return false, nil
 	}
 
-	args := []string{"commit", "--only", "-m", update.subject}
-	if update.changes != "" {
-		args = append(args, "-m", update.changes)
-	}
-
-	args = append(args, "--")
-
-	args = append(args, paths...)
-	if _, err := git.RunInDir(env, env, update.repoRoot, args...); err != nil {
+	if err := runLocklessRenderCommit(env, update, paths); err != nil {
 		return false, fmt.Errorf("committing rendered component:\n%w", err)
 	}
 

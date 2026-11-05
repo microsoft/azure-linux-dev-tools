@@ -30,8 +30,8 @@ For lockless upstream components, prepare the changelog, then Release, using the
 upstream spec and last committed render before writing macros, applying overlays,
 and updating sources. Overlays can override the prepared release and changelog.
 Compare output; unchanged renders require --no-change-rebuild to record a timestamp.
-Then run rpmdev-bumpspec -c with --changelog-comment (default: "update <component-name>").
-Commit that directory with the same subject and upstream changes as the body.
+Non-autorelease specs use rpmdev-bumpspec -c with --changelog-comment, or edited text.
+Autorelease skips bumpspec; without --changelog-comment, Git prompts for a message.
 The first commit also includes all pending changes outside the rendered output directory.
 Later commits are component-only. --no-git-commit skips staging and committing.
 Output must be inside the project repository; configure Git author identity and
@@ -82,7 +82,7 @@ azldev component render [flags]
 ```
   -a, --all-components[=true|false]         Include all components
       --allow-uncommitted[=true|false]      allow lockless upstream rendering with uncommitted or untracked files in the project repository
-      --changelog-comment string            comment passed verbatim to rpmdev-bumpspec -c and used as the Git commit subject for lockless upstream components (default: update <component-name>)
+      --changelog-comment string            comment passed verbatim to rpmdev-bumpspec -c and used as the Git commit message for lockless upstream components (if omitted, prompt in an editor)
       --check-only[=true|false]             render to a staging area and compare against the existing on-disk output without modifying the output directory. Exits 0 when nothing would change and 1 when any component would drift. With -a + --clean-stale, also fails on orphan rendered-spec directories. Intended for CI gates.
       --clean-stale[=true|false]            prune rendered-spec directories that no longer correspond to a configured component (only with -a; requires -f with -o). Top-level non-component siblings are preserved.
   -p, --component stringArray               Component name pattern

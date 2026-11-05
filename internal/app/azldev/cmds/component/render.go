@@ -89,8 +89,8 @@ For lockless upstream components, prepare the changelog, then Release, using the
 upstream spec and last committed render before writing macros, applying overlays,
 and updating sources. Overlays can override the prepared release and changelog.
 Compare output; unchanged renders require --no-change-rebuild to record a timestamp.
-Then run rpmdev-bumpspec -c with --changelog-comment (default: "update <component-name>").
-Commit that directory with the same subject and upstream changes as the body.
+Non-autorelease specs use rpmdev-bumpspec -c with --changelog-comment, or edited text.
+Autorelease skips bumpspec; without --changelog-comment, Git prompts for a message.
 The first commit also includes all pending changes outside the rendered output directory.
 Later commits are component-only. --no-git-commit skips staging and committing.
 Output must be inside the project repository; configure Git author identity and
@@ -163,8 +163,8 @@ func addRenderOptions(cmd *cobra.Command, options *RenderOptions) {
 	cmd.Flags().BoolVar(&options.NoChangeRebuild, "no-change-rebuild", false,
 		"allow unchanged lockless upstream renders by recording 'date -Is' output in '.no-change-rebuild'")
 	cmd.Flags().StringVar(&options.ChangelogComment, "changelog-comment", "",
-		"comment passed verbatim to rpmdev-bumpspec -c and used as the Git commit subject "+
-			"for lockless upstream components (default: update <component-name>)")
+		"comment passed verbatim to rpmdev-bumpspec -c and used as the Git commit message "+
+			"for lockless upstream components (if omitted, prompt in an editor)")
 	cmd.Flags().BoolVar(&options.NoGitCommit, "no-git-commit", false,
 		"leave lockless upstream rendered output uncommitted without staging it")
 	cmd.Flags().BoolVar(&options.AllowUncommitted, "allow-uncommitted", false,
@@ -502,10 +502,8 @@ func parallelPrepare(
 		default:
 			result.Value.prepared.index = idx
 			if update := result.Value.prepared.update; update != nil {
-				if options.changelogCommentExplicit || options.ChangelogComment != "" {
-					update.subject = options.ChangelogComment
-				}
-
+				update.subject = options.ChangelogComment
+				update.subjectProvided = options.changelogCommentExplicit || options.ChangelogComment != ""
 				update.noGitCommit = options.NoGitCommit
 			}
 
@@ -740,7 +738,7 @@ func parallelFinish(
 
 	parmapResults := parmap.Map(
 		workerEnv,
-		env.IOBoundConcurrency(),
+		renderFinishConcurrency(env, prepared, checkOnly),
 		prepared,
 		func(done, _ int) { progressEvent.SetProgress(int64(done), total) },
 		func(_ context.Context, prep *preparedComponent) *RenderResult {

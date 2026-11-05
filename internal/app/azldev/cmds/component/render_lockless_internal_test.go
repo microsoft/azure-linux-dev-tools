@@ -508,15 +508,6 @@ func TestPrepareLocklessSpec_ReleaseChangelogAndUpstreamChanges(t *testing.T) {
 				called = true
 
 				assert.Equal(t, []string{"rpmdev-bumpspec", "-c", "update curl", path}, cmd.Args)
-				prepared, err := fileutils.ReadFile(env.TestFS, path)
-				require.NoError(t, err)
-				assert.Contains(t, string(prepared), "Release: "+testCase.wantRelease+"\n")
-
-				if testCase.history.spec != "" && testCase.release != "%autorelease" {
-					assert.True(t, strings.HasSuffix(string(prepared), oldChangelog))
-				} else {
-					assert.True(t, strings.HasSuffix(string(prepared), "* Upstream\n- New entry\n"))
-				}
 
 				return nil
 			}
@@ -529,9 +520,19 @@ func TestPrepareLocklessSpec_ReleaseChangelogAndUpstreamChanges(t *testing.T) {
 			require.NoError(t, err)
 			assert.False(t, called, "carryover must not perform the final bump")
 
+			prepared, err := fileutils.ReadFile(env.TestFS, path)
+			require.NoError(t, err)
+			assert.Contains(t, string(prepared), "Release: "+testCase.wantRelease+"\n")
+
+			if testCase.history.spec != "" && testCase.release != "%autorelease" {
+				assert.True(t, strings.HasSuffix(string(prepared), oldChangelog))
+			} else {
+				assert.True(t, strings.HasSuffix(string(prepared), "* Upstream\n- New entry\n"))
+			}
+
 			_, err = bumpLocklessSpec(env.Env, path, update)
 			require.NoError(t, err)
-			assert.True(t, called)
+			assert.Equal(t, !sources.ReleaseUsesAutorelease(testCase.wantRelease), called)
 			assert.Equal(t, testCase.wantChanges, update.changes)
 
 			if testCase.bootstrap {
@@ -659,13 +660,6 @@ func TestPrepareLocklessSpec_CommittedAutorelease(t *testing.T) {
 			bumped := false
 			env.CmdFactory.RunHandler = func(_ *exec.Cmd) error {
 				bumped = true
-				content, err := fileutils.ReadFile(env.TestFS, "/working/curl.spec")
-				require.NoError(t, err)
-				assert.Contains(t, string(content), "Release: "+testCase.wantRelease+"\n")
-				assert.Contains(t, string(content), "%changelog\n%autochangelog\n")
-				content, err = fileutils.ReadFile(env.TestFS, "/working/changelog")
-				require.NoError(t, err)
-				assert.Equal(t, carriedAutoreleaseChangelog, string(content))
 
 				return nil
 			}
@@ -676,9 +670,17 @@ func TestPrepareLocklessSpec_CommittedAutorelease(t *testing.T) {
 			require.NoError(t, err)
 			assert.False(t, bumped)
 
+			content, err := fileutils.ReadFile(env.TestFS, "/working/curl.spec")
+			require.NoError(t, err)
+			assert.Contains(t, string(content), "Release: "+testCase.wantRelease+"\n")
+			assert.Contains(t, string(content), "%changelog\n%autochangelog\n")
+			content, err = fileutils.ReadFile(env.TestFS, "/working/changelog")
+			require.NoError(t, err)
+			assert.Equal(t, carriedAutoreleaseChangelog, string(content))
+
 			_, err = bumpLocklessSpec(env.Env, "/working/curl.spec", update)
 			require.NoError(t, err)
-			assert.True(t, bumped)
+			assert.False(t, bumped)
 
 			assert.Equal(t, []string{"expand"}, stub.calls)
 			assert.NotEqual(t, "/working", snapshot)
@@ -1019,7 +1021,7 @@ func TestPrepareComponentSources_ChangelogAndReleaseBeforeOverlays(t *testing.T)
 		upstreamVersion, overlayVersion, wantRelease string
 		explicit, noGitCommit, skipReleaseOverlay    bool
 	}{
-		{name: "default comment", wantComment: "update curl"},
+		{name: "edited comment", wantComment: "Edited changelog text"},
 		{
 			name: "custom comment", comment: "Fix curl's patches; keep $COMPONENT literal",
 			wantComment: "Fix curl's patches; keep $COMPONENT literal", explicit: true,
@@ -1030,11 +1032,11 @@ func TestPrepareComponentSources_ChangelogAndReleaseBeforeOverlays(t *testing.T)
 			wantComment: "Prepare curl for review", noGitCommit: true,
 		},
 		{
-			name: "version overlay cannot enable carryover", wantComment: "update curl",
+			name: "version overlay cannot enable carryover", comment: "update curl", wantComment: "update curl",
 			upstreamVersion: "2", overlayVersion: "1", wantRelease: "1", skipReleaseOverlay: true,
 		},
 		{
-			name: "version overlay cannot disable carryover", wantComment: "update curl",
+			name: "version overlay cannot disable carryover", comment: "update curl", wantComment: "update curl",
 			upstreamVersion: "1", overlayVersion: "2", wantRelease: "9", skipReleaseOverlay: true,
 		},
 	} {
@@ -1133,7 +1135,14 @@ upstream-commit = "aaaaaaa"
 
 				return hashes[0], nil
 			}
+			env.CmdFactory.RegisterCommandInSearchPath("test-editor")
+			setRenderEditor(t, env, "test-editor")
 			env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+				if cmd.Args[0] == "test-editor" {
+					return fileutils.WriteFile(env.TestFS, cmd.Args[len(cmd.Args)-1],
+						[]byte(testCase.wantComment), fileperms.PrivateFile)
+				}
+
 				bumped = true
 
 				assert.Equal(t, "rpmdev-bumpspec", cmd.Args[0])
