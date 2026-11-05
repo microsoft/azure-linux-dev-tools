@@ -33,6 +33,11 @@ images assemble RPMs into bootable artifacts.
 
 ## Common commands
 
+`azldev comp make-lockless` adds selected exact names to the top-level
+`lockless-components.txt` if needed, then runs the refresh pipeline.
+Existing list contents and lock files are retained. Already-listed components
+are still refreshed; a refresh failure leaves the list updated.
+
 For upstream components, rendering writes macros, applies overlays, and
 updates `sources` before carrying release/changelog state from the committed
 output and running host `rpmdev-bumpspec`.

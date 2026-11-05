@@ -47,6 +47,7 @@ components defined in the project configuration.
 * [azldev component diff-sources](azldev_component_diff-sources.md)	 - Show the diff that overlays apply to a component's sources
 * [azldev component history](azldev_component_history.md)	 - Report per-component change activity and customization detail
 * [azldev component list](azldev_component_list.md)	 - List components in this project
+* [azldev component make-lockless](azldev_component_make-lockless.md)	 - Select the lockless workflow and refresh upstream commits
 * [azldev component metadata](azldev_component_metadata.md)	 - List documentation metadata for components' overlays and groups
 * [azldev component prepare-sources](azldev_component_prepare-sources.md)	 - Prepare buildable sources for components
 * [azldev component query](azldev_component_query.md)	 - Query info from locally rendered component specs

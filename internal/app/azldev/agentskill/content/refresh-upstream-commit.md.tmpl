@@ -42,6 +42,10 @@ Add `-O json` for machine-readable output when debugging.
 
 Select this workflow by listing the component's exact name in
 `lockless-components.txt` beside the top-level `azldev.toml`.
+Alternatively, `azldev comp make-lockless` adds selected exact names if needed
+and runs this refresh pipeline. It accepts `-p`, `-g`, `-a`, or positional names,
+preserves existing list contents and lock files, and refreshes already-listed components.
+A refresh failure leaves the updated list in place; fix the failure and rerun.
 Refresh skips unlisted components and preserves their generated TOML files.
 
 Commit component inputs before rendering. For upstream components, rendering

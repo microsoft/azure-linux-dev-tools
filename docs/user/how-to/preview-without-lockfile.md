@@ -37,6 +37,22 @@ A missing or empty file means all components use lock files. Blank lines and
 surrounding whitespace are ignored; names are not glob patterns. A file read
 error stops configuration loading.
 
+To add names and refresh their upstream commits in one command, first configure
+the generated TOML include described below, then run:
+
+```bash
+azldev comp make-lockless curl rust-asyncband
+```
+
+`make-lockless` accepts the normal component selectors (`-p`, `-g`, and `-a`).
+It appends missing exact names to the top-level list without rewriting existing
+entries or removing lock files, then runs the `refresh-upstream-commit` pipeline
+for the selection. Already-listed components are refreshed again without adding
+duplicates. Non-upstream components are listed too; refresh removes any generated
+pin for them without contacting an upstream provider.
+If refreshing fails, the list stays updated and successful pins are saved.
+Fix the failure and rerun the command. Dry runs change neither the list nor pins.
+
 Both `component update` and `component refresh-upstream-commit` are available.
 Update (including `--bump`) skips listed components and leaves
 their locks untouched; refresh skips unlisted components and preserves their

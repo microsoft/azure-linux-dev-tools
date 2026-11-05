@@ -41,6 +41,7 @@ components defined in the project configuration.`,
 	queryOnAppInit(app, cmd)
 	updateOnAppInit(app, cmd)
 	refreshUpstreamCommitOnAppInit(app, cmd)
+	makeLocklessOnAppInit(app, cmd)
 
 	return cmd
 }
