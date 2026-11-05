@@ -22,28 +22,33 @@ func TestPrepareLocklessSpec_CarriesBaseRelease(t *testing.T) {
 			for _, testCase := range []struct {
 				name, version, definition, release, wantBase, wantBumped string
 				changed                                                  bool
+				initial                                                  bool
 			}{
 				{
 					name: "same upstream", version: "1", definition: "%global baserelease 18",
-					release: "%{baserelease}%{?dist}", wantBase: "17", wantBumped: "18",
+					release: "%{baserelease}%{?dist}", wantBase: "18", wantBumped: "19",
 				},
 				{
 					name: "new upstream same version", version: "1", changed: true,
 					definition: "%global baserelease 18", release: "%{baserelease}%{?dist}",
-					wantBase: "17", wantBumped: "18",
+					wantBase: "18", wantBumped: "19",
 				},
 				{
 					name: "new version", version: "2", changed: true,
 					definition: "%global baserelease 18", release: "%{baserelease}%{?dist}",
-					wantBase: "18", wantBumped: "19",
+					wantBase: "17", wantBumped: "18",
 				},
 				{
-					name: "define and optional macro", version: "2", definition: "%define baserelease 18",
+					name: "define and optional macro", version: "1", definition: "%define baserelease 18",
 					release: "%{?baserelease}%{?dist}", wantBase: "18", wantBumped: "19",
 				},
 				{
-					name: "unbraced macro", version: "2", definition: "%global baserelease 18",
+					name: "unbraced macro", version: "1", definition: "%global baserelease 18",
 					release: "%baserelease%{?dist}", wantBase: "18", wantBumped: "19",
+				},
+				{
+					name: "initial render", version: "1", initial: true,
+					release: "%{baserelease}%{?dist}", wantBase: "17", wantBumped: "18",
 				},
 			} {
 				t.Run(testCase.name, func(t *testing.T) {
@@ -59,6 +64,14 @@ func TestPrepareLocklessSpec_CarriesBaseRelease(t *testing.T) {
 						renderTestSpec("1", testCase.release, oldChangelog)
 
 					history := lastRender{spec: oldSpec, previous: "old", current: "old"}
+					wantChangelog := oldChangelog
+
+					if testCase.initial {
+						oldSpec = ""
+						history = lastRender{}
+						wantChangelog = "* Upstream entry\n"
+					}
+
 					if testCase.changed {
 						history.current = "new"
 					}
@@ -82,13 +95,13 @@ func TestPrepareLocklessSpec_CarriesBaseRelease(t *testing.T) {
 						require.NoError(t, err)
 
 						definition := testCase.definition
-						if testCase.version == "1" {
+						if testCase.wantBase == "17" {
 							definition = "%define baserelease 17"
 						}
 
 						assert.Contains(t, string(content), definition+"\n")
 						assert.Contains(t, string(content), "Release: "+newRelease+"\n")
-						assert.Contains(t, string(content), "%changelog\n"+oldChangelog)
+						assert.Contains(t, string(content), "%changelog\n"+wantChangelog)
 
 						return fileutils.WriteFile(env.TestFS, path,
 							[]byte(strings.Replace(string(content), "baserelease "+testCase.wantBase,

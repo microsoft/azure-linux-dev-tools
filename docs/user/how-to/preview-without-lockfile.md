@@ -133,11 +133,11 @@ The renderer then finds the existing committed output under
 `<rendered-specs-dir>/<lowercase-first-letter>/<component-name>`, ignoring
 uncommitted spec changes. After reading the working spec's post-overlay
 `Release:` and `Version:`, it compares that version with the committed spec's
-`Version:`. Release calculation and carryover run **only when the version
-differs or no committed output exists**, independently of upstream pin changes.
-For an unchanged version, the working release and `baserelease` definition are
-left as supplied by upstream and overlays. There is no later restoration of the
-original upstream release.
+`Version:`, independently of upstream pin changes. Static release carryover runs
+**only when committed output exists and the version is unchanged**; otherwise the
+working static release and `baserelease` definition are left as supplied by
+upstream and overlays. Autorelease follows the case-specific rules below.
+There is no later restoration of the original upstream release.
 
 When release carryover runs for an existing non-`%autorelease` upstream spec, it
 checks the committed `Release:` value. If it references the `baserelease` macro,
@@ -149,7 +149,8 @@ No temporary release-bump probe is performed.
 
 For an initial `%autorelease` render, it calculates the numeric upstream release
 and adds or replaces the macro's `-b` parameter. This rpmautospec operation runs
-on the host; it does not preprocess or rewrite the spec.
+on the host; it does not preprocess or rewrite the spec. Initial and legacy
+autorelease handling do not depend on version changes.
 
 For an existing output whose spec has a line starting with `## RPMAUTOSPEC:`
 and containing `autorelease` on that same line, a `%autorelease` upstream spec
@@ -159,10 +160,19 @@ committed dist-git files, and uses its leading integer as `-b` (for example,
 `9.fc43` becomes `-b 9`).
 
 For an existing `%autorelease` spec without the legacy marker, rendering carries
-the committed `-b` value into the working spec, preserving the working macro's
-other options. If the committed spec omits `-b`, the working spec also omits it,
-removing any working base option rather than adding `-b 1`. An invalid numeric
-base fails release carryover. No host release query is needed for this carryover.
+the committed `-b` value into the working spec **only when the version is
+unchanged**, preserving the working macro's other options. If the committed spec
+omits `-b`, the working spec also omits it, removing any working base option
+rather than adding `-b 1`. An invalid numeric base fails release carryover.
+No host release query is needed for unchanged-version carryover. When the version
+changes, rendering calculates the upstream numeric base on the host and adds or
+replaces `-b`, just as for an initial render. This changes only release preparation:
+the committed changelog is still carried over as described below, not regenerated.
+
+For calculated bases, including legacy expansion, a base of `1` omits `-b`
+and removes any existing working base option, using the `%autorelease` default.
+Other macro options are preserved. Unchanged-version modern output still carries
+an explicitly committed `-b 1` as-is.
 
 Changelog handling follows release preparation and runs even when the version
 is unchanged. For non-`%autorelease` specs, the committed inline `%changelog`
@@ -195,7 +205,7 @@ upstream checkout; without an old pin it records a one-line version update.
 An error reading the current pin is fatal.
 
 It then compares the prepared tree with existing output, ignoring the root `.git`
-and any top-level `.no-change-rebuild` in the existing output only.
+and any top-level `.no-change-rebuild` on both sides.
 `--check-only` stops here, before the final release bump.
 If normal rendering detects no changes, it returns an error indicating there
 has been no change since the last render, without replacing the existing output
@@ -210,8 +220,8 @@ For an unchanged render with this flag, the tool runs host `date -Is` and writes
 its exact output to `.no-change-rebuild` at the working dist-git root before
 bumping. The marker is then published and committed with the rendered files.
 The flag does not create a marker when comparison detects real changes.
-A marker already present in the working upstream checkout remains part of the
-comparison; only the existing output's marker is ignored.
+The root marker is ignored in both the working upstream checkout and existing
+output, even if its contents differ. Nested files with the same name are compared.
 
 Changed renders, or explicitly requested no-change rebuilds, then invoke host `rpmdev-bumpspec -c` with
 `updated <component-name>` followed by upstream changes on separate lines.
@@ -230,22 +240,33 @@ adjustment are skipped. The spec is **not** preprocessed with `rpmautospec proce
 No mock configuration is needed for lockless rendering.
 Comparison ignores the root `.git` entry without traversing or removing it;
 the working checkout retains its Git metadata until staging cleanup.
-After comparison and the final release bump, normal rendering
-recursively removes the existing component output directory, recreates it, and
-moves all prepared files and subdirectories except `.git` into it. Files found
-only in the old output are not retained. Moves use filesystem renames, so the
-project work directory and rendered output must be on the same filesystem.
+After comparison and the final release bump, lockless rendering removes the
+existing output directory and moves all prepared entries except `.git` into
+its replacement. Files found only in the old output are not retained.
+Moves use filesystem renames, so the project work directory and rendered
+output must be on the same filesystem.
 The renderer then commits only the component output directory. The subject is
 `updated <component-name>`; the body lists upstream changes, if any. Unrelated
 staged files are not committed.
-Unchanged Git content does not produce an empty commit. A commit failure leaves
-the rendered files available for inspection.
+Unchanged Git content does not produce an empty commit.
+Lockless component failures never create `RENDER_FAILED` or replace existing
+output with a failure marker. Failures before output replacement leave the
+existing directory unchanged. If replacement or automatic committing fails after
+removal begins, rendering clears the component output and resets only that
+component's staged paths. If output existed, Git checks out its committed
+contents from `HEAD`; otherwise, the directory remains absent.
+This recovery does not preserve uncommitted changes or untracked files in the
+replaced component directory, and uses no backup or index snapshot. Recovery
+errors are reported with the original render failure.
+`--check-only` failures leave output untouched and fail the check.
+Locked rendering retains its failure marker behavior.
 
 For component names requiring URL encoding, rendering also creates a sibling
 alias such as `libxml%2B%2B -> libxml++` for downstream tooling. Any existing
 entry at the encoded alias path is removed first, including regular files and
 nonempty directories, and replaced with a relative symlink. Existing symlink
 targets are not removed. Alias creation failures produce a warning.
+Lockless aliases are updated only after rendering and any automatic commit succeed.
 `--check-only` does not replace aliases.
 
 Install `rpmdevtools`, `rpm-build`, and `rpmautospec` on the host as needed for

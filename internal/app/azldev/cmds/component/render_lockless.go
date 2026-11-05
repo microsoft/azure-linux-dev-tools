@@ -294,8 +294,8 @@ func prepareLocklessSpec(
 		return err
 	}
 
-	if versionChanged {
-		release, err := locklessRenderRelease(env, autospec, dir, filepath.Base(path), original, history)
+	if !versionChanged || sources.ReleaseUsesAutorelease(original) {
+		release, err := locklessRenderRelease(env, autospec, dir, filepath.Base(path), original, history, versionChanged)
 		if err != nil {
 			return err
 		}
@@ -371,12 +371,13 @@ func collectRenderUpstreamChanges(
 
 func locklessRenderRelease(
 	env *azldev.Env, autospec renderAutorelease, dir, filename, release string, history lastRender,
+	versionChanged bool,
 ) (string, error) {
 	if !sources.ReleaseUsesAutorelease(release) || env.DryRun() {
 		return release, nil
 	}
 
-	if history.spec != "" {
+	if history.spec != "" && (!versionChanged || renderedAutoreleaseMarker.MatchString(history.spec)) {
 		return carryRenderedAutorelease(env, autospec, dir, filename, release, history)
 	}
 
@@ -385,7 +386,7 @@ func locklessRenderRelease(
 		return "", fmt.Errorf("calculating upstream release base:\n%w", err)
 	}
 
-	return withAutoreleaseBase(release, calculated)
+	return withAutoreleaseBase(release, calculated, true)
 }
 
 var (
@@ -406,7 +407,7 @@ func carryRenderedAutorelease(
 		return "", fmt.Errorf("expanding committed Release:\n%w", err)
 	}
 
-	release, err = withAutoreleaseBase(release, renderedReleaseNumber.FindString(strings.TrimSpace(expanded)))
+	release, err = withAutoreleaseBase(release, renderedReleaseNumber.FindString(strings.TrimSpace(expanded)), true)
 	if err != nil {
 		return "", fmt.Errorf("using committed Release %#q as autorelease base:\n%w", expanded, err)
 	}
@@ -430,7 +431,7 @@ func carryUnprocessedAutorelease(release string, history lastRender) (string, er
 	}
 
 	if matches := renderedAutoreleaseBase.FindStringSubmatch(previousRelease); matches != nil {
-		release, err = withAutoreleaseBase(release, matches[1])
+		release, err = withAutoreleaseBase(release, matches[1], false)
 		if err != nil {
 			return "", fmt.Errorf("using committed autorelease base:\n%w", err)
 		}
@@ -611,7 +612,7 @@ func locklessVersionChanged(version string, history lastRender) (bool, error) {
 
 var autoreleaseBaseArg = regexp.MustCompile(`(^|\s)-b(?:\s+|=)?[0-9]+`)
 
-func withAutoreleaseBase(release, output string) (string, error) {
+func withAutoreleaseBase(release, output string, omitDefault bool) (string, error) {
 	fields := strings.Fields(output)
 	if len(fields) == 0 {
 		return "", errors.New("empty autorelease base")
@@ -622,6 +623,10 @@ func withAutoreleaseBase(release, output string) (string, error) {
 	value, err := strconv.Atoi(number)
 	if err != nil || value < 1 {
 		return "", fmt.Errorf("invalid autorelease base %#q", output)
+	}
+
+	if omitDefault && value == 1 {
+		return autoreleaseBaseArg.ReplaceAllString(release, ""), nil
 	}
 
 	if autoreleaseBaseArg.MatchString(release) {
@@ -806,18 +811,63 @@ func commitLocklessRenders(
 		return
 	}
 
-	// All project index writes are serialized; source preparation and filtering
-	// remain parallel. A failed commit leaves rendered output intact for recovery.
+	// Serialize writes to the project index.
 	for _, prep := range prepared {
-		if prep.update == nil || results[prep.index].Status != renderStatusOK {
+		result := results[prep.index]
+
+		if prep.update != nil && result.Status == renderStatusOK {
+			if err := commitLocklessRender(env, prep.update); err != nil {
+				result.Status = renderStatusError
+				result.Error = err.Error()
+			}
+		}
+
+		if !prep.lockless {
 			continue
 		}
 
-		if err := commitLocklessRender(env, prep.update); err != nil {
-			results[prep.index].Status = renderStatusError
-			results[prep.index].Error = err.Error()
+		if result.Status != renderStatusOK {
+			if prep.outputTouched {
+				if err := restoreLocklessOutput(env, prep); err != nil {
+					result.Error += "\n" + err.Error()
+				}
+			}
+		} else {
+			writeRenderedAlias(env, prep)
 		}
 	}
+}
+
+func restoreLocklessOutput(env *azldev.Env, prep *preparedComponent) error {
+	if err := env.FS().RemoveAll(prep.compOutputDir); err != nil {
+		return fmt.Errorf("clearing failed rendered output %#q:\n%w", prep.compOutputDir, err)
+	}
+
+	root := env.ProjectDir()
+	if prep.update != nil {
+		root = prep.update.repoRoot
+	}
+
+	path, err := filepath.Rel(root, prep.compOutputDir)
+	if err != nil {
+		return fmt.Errorf("locating rendered output in the project repository:\n%w", err)
+	}
+
+	path = filepath.ToSlash(path)
+	ctx := context.WithoutCancel(env)
+
+	// Reset this path first so checkout cannot reuse files staged by the failed render.
+	if _, err := git.RunInDir(ctx, env, root, "reset", "--quiet", "--", path); err != nil {
+		return fmt.Errorf("resetting failed rendered output in the index:\n%w", err)
+	}
+
+	if prep.outputExisted {
+		if _, err := git.RunInDir(ctx, env, root, "checkout", "HEAD", "--", path); err != nil {
+			return fmt.Errorf("restoring committed rendered output %#q:\n%w", prep.compOutputDir, err)
+		}
+	}
+
+	return nil
 }
 
 func commitLocklessRender(env *azldev.Env, update *locklessRenderUpdate) error {

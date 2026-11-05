@@ -76,13 +76,18 @@ Rendering compares output before the final release bump; `--check-only` stops be
 Unchanged lockless upstream renders require `--no-change-rebuild`; otherwise rendering errors
 without replacing existing output. The flag records host `date -Is` output in
 `.no-change-rebuild` before bumping, only when no changes were detected. Comparison
-ignores this marker in existing output, not in the working upstream checkout.
+ignores this root marker in both existing output and the working upstream checkout.
+Lockless failures never write `RENDER_FAILED`. Before replacement, output is
+untouched; failures after replacement starts clear the component directory and
+use Git to restore committed output, or leave no directory if none existed.
+Recovery discards uncommitted changes in that directory and keeps no backups.
 The comparison ignores the root `.git` without traversing or removing it.
 
 After reading the working spec, rendering compares its `Version:` with the
-committed spec. Release calculation and carryover run only when the version
-differs or no committed output exists, independently of upstream pin changes.
-Otherwise the post-overlay release and `baserelease` definition are unchanged.
+committed spec, independently of upstream pin changes.
+Static release carryover runs only when committed output exists and the version
+is unchanged. Otherwise the working static release
+and `baserelease` definition are unchanged.
 There is no later restoration of the original upstream release.
 
 For static specs, release carryover checks the committed `Release:` value. If it uses
@@ -91,14 +96,22 @@ or `%define baserelease` line over the upstream definition without changing
 the upstream `Release:` value. Missing or ambiguous definitions fail rendering.
 Otherwise, it copies the committed `Release:` value. No temporary release-bump
 probe is performed. An initial `%autorelease` render calculates its base release
-on the host. For existing output
+on the host. Initial and legacy autorelease handling do not depend on version changes.
+For existing output
 marked by a line starting with `## RPMAUTOSPEC:` and containing `autorelease`,
 an `%autorelease` upstream spec inherits the leading integer of the committed,
 macro-expanded Release as `-b`. Expansion uses the committed files on the host.
 Without that legacy marker, an existing `%autorelease` spec carries its
+base only when the version is unchanged. For unchanged versions, it carries the
 committed `-b` value into the working macro; an omitted `-b` stays omitted,
 removing any working base option rather than adding `-b 1`.
 An invalid numeric base fails release carryover, which requires no host release query.
+When the version changes, rendering calculates the upstream numeric base and sets `-b`,
+as for initial output. The committed changelog is still carried over, not regenerated.
+
+A calculated base of `1` omits `-b`, removing any working base option while preserving
+other macro options. This includes legacy expansion. Unchanged-version modern output
+still carries an explicitly committed `-b 1` as-is.
 
 Changelog handling follows release preparation and runs even when the version
 is unchanged. Static specs retain the committed inline `%changelog` section.

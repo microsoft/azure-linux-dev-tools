@@ -208,7 +208,9 @@ func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
 		assert.Contains(t, doc, "compares output before the final release bump; `--check-only` stops before that bump")
 		assert.Contains(t, doc, "Unchanged lockless upstream renders require `--no-change-rebuild`")
 		assert.Contains(t, doc, "host `date -Is` output")
-		assert.Contains(t, doc, "ignores this marker in existing output, not in the working upstream checkout")
+		assert.Contains(t, doc, "ignores this root marker in both existing output and the working upstream checkout")
+		assert.Contains(t, doc, "Lockless failures never write `RENDER_FAILED`")
+		assert.Contains(t, doc, "Recovery discards uncommitted changes in that directory and keeps no backups")
 	}
 
 	doc, err := agentskill.SkillDocument("azldev-refresh-upstream-commit", testParams())
@@ -219,7 +221,12 @@ func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
 	assert.Contains(t, doc, "leading integer of the committed,")
 	assert.Contains(t, doc, "an omitted `-b` stays omitted")
 	assert.Contains(t, doc, "committed file byte-for-byte")
-	assert.Contains(t, doc, "Release calculation and carryover run only when the version")
+	assert.Contains(t, doc, "Static release carryover runs only when committed output exists and the version")
+	assert.Contains(t, doc, "Initial and legacy autorelease handling do not depend on version changes")
+	assert.Contains(t, doc, "base only when the version is unchanged")
+	assert.Contains(t, doc, "When the version changes, rendering calculates the upstream numeric base and sets `-b`")
+	assert.Contains(t, doc, "The committed changelog is still carried over, not regenerated")
+	assert.Contains(t, doc, "A calculated base of `1` omits `-b`")
 	assert.Contains(t, doc, "Changelog handling follows release preparation and runs even when the version")
 	assert.Contains(t, doc, "retains `%autorelease`, `%autochangelog`")
 	assert.Contains(t, doc, "effective upstream distro's `dist-git-branch`")
@@ -231,7 +238,9 @@ func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
 	assert.Contains(t, doc, "compares output before the final release bump; `--check-only` stops before that bump")
 	assert.Contains(t, doc, "Unchanged lockless upstream renders require `--no-change-rebuild`")
 	assert.Contains(t, doc, "host `date -Is` output")
-	assert.Contains(t, doc, "ignores this marker in existing output, not in the working upstream checkout")
+	assert.Contains(t, doc, "ignores this root marker in both existing output and the working upstream checkout")
+	assert.Contains(t, doc, "Lockless failures never write `RENDER_FAILED`")
+	assert.Contains(t, doc, "Recovery discards uncommitted changes in that directory and keeps no backups")
 	assert.NotContains(t, doc, "git commit --amend")
 }
 

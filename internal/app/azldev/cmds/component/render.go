@@ -169,6 +169,7 @@ type RenderResult struct {
 	Error     string `json:"error,omitempty" table:"Error,omitempty"`
 	Changed   bool   `json:"changed"         table:"Changed"`
 	renderErr error  `json:"-"               table:"-"`
+	lockless  bool   `json:"-"               table:"-"`
 }
 
 // Render status constants.
@@ -270,12 +271,7 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 	parallelFinish(env, prepared, mockResultMap, results, stagingDir,
 		options.Force, options.CheckOnly, options.NoChangeRebuild)
 
-	// Write RENDER_FAILED markers for any component that errored in phase 1
-	// (source preparation) or phase 3 (mock result application + copy).
-	// Centralizing this here makes it idempotent with the --clean-stale wipe
-	// (which sits between phases 2 and 3) and keeps the per-phase code free
-	// of bookkeeping. In --check-only mode this verifies that on-disk state
-	// matches the expected single-marker shape and flags drift on mismatch.
+	// Only locked failures write markers; lockless failures preserve output.
 	writeFailureMarkers(env.FS(), results, options.Force, options.CheckOnly)
 
 	commitLocklessRenders(env, prepared, results, options.CheckOnly)
@@ -415,6 +411,8 @@ type preparedComponent struct {
 	compOutputDir string // validated output path computed in phase 1
 	update        *locklessRenderUpdate
 	lockless      bool
+	outputTouched bool
+	outputExisted bool
 }
 
 // prepResult pairs a prepared component (on success) or a render result (on error).
@@ -482,6 +480,7 @@ func parallelPrepare(
 				OutputDir: compOutputDir,
 				Status:    renderStatusCancelled,
 				Error:     "context cancelled",
+				lockless:  env.ComponentWithoutLockfile(compName),
 			}
 		case result.Value.result != nil:
 			results[idx] = result.Value.result
@@ -521,6 +520,7 @@ func prepareOneComponent(
 			OutputDir: "(invalid)",
 			Status:    renderStatusError,
 			Error:     nameErr.Error(),
+			lockless:  lockless,
 		}}
 	}
 
@@ -535,6 +535,7 @@ func prepareOneComponent(
 			OutputDir: compOutputDir,
 			Status:    renderStatusError,
 			Error:     err.Error(),
+			lockless:  lockless,
 		}}
 	}
 
@@ -754,6 +755,7 @@ func parallelFinish(
 				OutputDir: prep.compOutputDir,
 				Status:    renderStatusCancelled,
 				Error:     "context cancelled",
+				lockless:  prep.lockless,
 			}
 		default:
 			results[prep.index] = result.Value
@@ -784,6 +786,7 @@ func finishOneComponent(
 			OutputDir: compOutputDir,
 			Status:    renderStatusCancelled,
 			Error:     "context cancelled",
+			lockless:  prep.lockless,
 		}
 	}
 
@@ -791,6 +794,7 @@ func finishOneComponent(
 		Component: componentName,
 		OutputDir: compOutputDir,
 		Status:    renderStatusOK,
+		lockless:  prep.lockless,
 	}
 
 	drifted, err := finishComponentRender(
@@ -881,7 +885,7 @@ func finishComponentRender(
 	}
 
 	// Move rendered files to the component's output directory.
-	if moveErr := moveRenderedOutput(env, componentDir, prep.compOutputDir, allowOverwrite); moveErr != nil {
+	if moveErr := moveRenderedOutput(env, componentDir, prep, allowOverwrite); moveErr != nil {
 		return changed, moveErr
 	}
 
@@ -894,16 +898,23 @@ func finishComponentRender(
 	//
 	//nolint:godox // tracked by TODO(koji-fragment-decode) tag.
 	// TODO(koji-fragment-decode): remove once the build system decodes fragments.
-	if aliasErr := writeAliasSymlink(env.FS(), prep.compOutputDir, componentName); aliasErr != nil {
-		slog.Warn("Failed to create rendered-spec alias symlink; downstream build steps"+
-			" that consume the percent-encoded path may fail to locate this component",
-			"component", componentName, "error", aliasErr)
+	if !prep.lockless {
+		writeRenderedAlias(env, prep)
 	}
 
 	slog.Info("Rendered component", "component", componentName,
 		"output", prep.compOutputDir)
 
 	return changed, nil
+}
+
+func writeRenderedAlias(env *azldev.Env, prep *preparedComponent) {
+	name := prep.comp.GetName()
+	if err := writeAliasSymlink(env.FS(), prep.compOutputDir, name); err != nil {
+		slog.Warn("Failed to create rendered-spec alias symlink; downstream build steps"+
+			" that consume the percent-encoded path may fail to locate this component",
+			"component", name, "error", err)
+	}
 }
 
 // writeAliasSymlink creates a sibling symlink alongside componentOutputDir at the
@@ -947,7 +958,9 @@ func writeAliasSymlink(fileSystem opctx.FS, componentOutputDir, componentName st
 
 // moveRenderedOutput recreates the output directory and moves all prepared entries
 // except '.git' into it. Existing output requires allowOverwrite.
-func moveRenderedOutput(env *azldev.Env, tempDir, componentOutputDir string, allowOverwrite bool) error {
+func moveRenderedOutput(env *azldev.Env, tempDir string, prep *preparedComponent, allowOverwrite bool) error {
+	componentOutputDir := prep.compOutputDir
+
 	if env.DryRun() {
 		slog.Info("Dry run; would replace rendered output", "source", tempDir, "dest", componentOutputDir)
 
@@ -959,13 +972,16 @@ func moveRenderedOutput(env *azldev.Env, tempDir, componentOutputDir string, all
 		return fmt.Errorf("checking output directory %#q:\n%w", componentOutputDir, existsErr)
 	}
 
-	if exists {
-		if !allowOverwrite {
-			return fmt.Errorf(
-				"output directory %#q already exists; use --force to overwrite",
-				componentOutputDir)
-		}
+	if exists && !allowOverwrite {
+		return fmt.Errorf(
+			"output directory %#q already exists; use --force to overwrite",
+			componentOutputDir)
+	}
 
+	prep.outputExisted = exists
+	prep.outputTouched = true
+
+	if exists {
 		// Clean up existing rendered output for this component.
 		if removeErr := env.FS().RemoveAll(componentOutputDir); removeErr != nil {
 			return fmt.Errorf("cleaning output directory %#q:\n%w", componentOutputDir, removeErr)
@@ -1165,10 +1181,9 @@ func pruneOrphanRenderedDirs(
 	return nil
 }
 
-// writeFailureMarkers walks the final results slice and writes a RENDER_FAILED
-// marker into each errored component's output directory. When allowOverwrite
-// is set, any pre-existing content at the path is removed first so the marker
-// isn't surrounded by stale render output.
+// writeFailureMarkers writes a RENDER_FAILED marker for errored locked components.
+// Lockless failures preserve output, and fail check-only without requiring markers.
+// When allowOverwrite is set, pre-existing locked output is removed first.
 //
 // Cancelled components are intentionally skipped — a Ctrl-C is not a render
 // failure, just an incomplete run, and silently planting markers under those
@@ -1186,6 +1201,14 @@ func writeFailureMarkers(
 ) {
 	for _, result := range results {
 		if result == nil || result.Status != renderStatusError || errors.Is(result.renderErr, errNoRenderChanges) {
+			continue
+		}
+
+		if result.lockless {
+			if checkOnly {
+				result.Changed = true
+			}
+
 			continue
 		}
 
@@ -1251,7 +1274,7 @@ const renderErrorMarkerContent = "Rendering failed. See azldev logs for details.
 // A missing actualDir always counts as drift. Symlinks are compared by target
 // (filesystems without symlink support skip that check; matches production
 // render behavior). The root '.git' entry is ignored without traversing it.
-// The existing output's root '.no-change-rebuild' marker is also ignored.
+// The root '.no-change-rebuild' marker is also ignored on both sides.
 func diffRenderedOutput(fileSystem opctx.FS, expectedDir, actualDir string) (bool, error) {
 	actualExists, err := fileutils.DirExists(fileSystem, actualDir)
 	if err != nil {
@@ -1264,7 +1287,7 @@ func diffRenderedOutput(fileSystem opctx.FS, expectedDir, actualDir string) (boo
 	}
 
 	result, err := dirdiff.DiffDirs(fileSystem, actualDir, expectedDir,
-		dirdiff.WithIgnoredPaths(".git"), dirdiff.WithIgnoredOriginalPaths(noChangeRebuildMarker))
+		dirdiff.WithIgnoredPaths(".git", noChangeRebuildMarker))
 	if err != nil {
 		return false, fmt.Errorf("diffing %#q vs %#q:\n%w", actualDir, expectedDir, err)
 	}

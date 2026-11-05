@@ -113,7 +113,7 @@ func TestMoveRenderedOutput(t *testing.T) {
 				require.NoError(t, fileutils.WriteFile(fs, oldPath, []byte("old output"), fileperms.PublicFile))
 			}
 
-			err := moveRenderedOutput(env, workingDir, outputDir, testCase.allowOverwrite)
+			err := moveRenderedOutput(env, workingDir, &preparedComponent{compOutputDir: outputDir}, testCase.allowOverwrite)
 			if testCase.wantErr {
 				require.ErrorContains(t, err, "use --force to overwrite")
 			} else {
@@ -978,9 +978,10 @@ func TestDiffRenderedOutput_RebuildMarker(t *testing.T) {
 		wantChanged             bool
 	}{
 		{name: "existing marker ignored", existing: noChangeRebuildMarker},
-		{name: "working marker compared", working: noChangeRebuildMarker, wantChanged: true},
-		{name: "both markers", existing: noChangeRebuildMarker, working: noChangeRebuildMarker, wantChanged: true},
-		{name: "nested marker compared", existing: "nested/" + noChangeRebuildMarker, wantChanged: true},
+		{name: "working marker ignored", working: noChangeRebuildMarker},
+		{name: "different markers ignored", existing: noChangeRebuildMarker, working: noChangeRebuildMarker},
+		{name: "nested existing marker compared", existing: "nested/" + noChangeRebuildMarker, wantChanged: true},
+		{name: "nested working marker compared", working: "nested/" + noChangeRebuildMarker, wantChanged: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
@@ -998,7 +999,7 @@ func TestDiffRenderedOutput_RebuildMarker(t *testing.T) {
 
 			if testCase.working != "" {
 				require.NoError(t, fileutils.WriteFile(testFS, filepath.Join("/working", testCase.working),
-					[]byte("timestamp\n"), fileperms.PublicFile))
+					[]byte("working timestamp\n"), fileperms.PublicFile))
 			}
 
 			changed, err := diffRenderedOutput(testFS, "/working", "/existing")

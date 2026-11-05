@@ -46,7 +46,11 @@ compares output before the final release bump; `--check-only` stops before that 
 Unchanged lockless upstream renders require `--no-change-rebuild`; otherwise rendering errors
 without replacing existing output. The flag records host `date -Is` output in
 `.no-change-rebuild` before bumping, only when no changes were detected. Comparison
-ignores this marker in existing output, not in the working upstream checkout.
+ignores this root marker in both existing output and the working upstream checkout.
+Lockless failures never write `RENDER_FAILED`. Before replacement, output is
+untouched; failures after replacement starts clear the component directory and
+use Git to restore committed output, or leave no directory if none existed.
+Recovery discards uncommitted changes in that directory and keeps no backups.
 It never uses mock or `rpmautospec process-distgit`; RPM macros remain unexpanded.
 It retains all prepared dist-git files except `.git`, without file filtering or
 `spectool` queries, and replaces and
