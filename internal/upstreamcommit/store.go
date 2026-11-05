@@ -6,6 +6,7 @@
 package upstreamcommit
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -161,6 +162,10 @@ func (s *Store) Save(componentName, upstreamCommit string) error {
 	if err != nil {
 		return fmt.Errorf("serializing upstream commit TOML %#q:\n%w", path, err)
 	}
+
+	// Only the spec table has values; omit the encoder's two empty parent headers.
+	_, data, _ = bytes.Cut(data, []byte("\n"))
+	_, data, _ = bytes.Cut(data, []byte("\n"))
 
 	data = append([]byte(generatedFileHeader), data...)
 

@@ -88,8 +88,16 @@ includes = [
 ```
 
 Generated files hold only `spec.upstream-commit`; the component's own TOML
-supplies the source type and everything else. Because a single file may hold a
-partial component definition for a lockless component, its validation runs after
+supplies the source type and everything else. Newly written files use one table,
+`[components.<name>.spec]`, without separate parent-table headers:
+
+```toml
+[components.curl.spec]
+upstream-commit = 'abcdef1234567'
+```
+
+Existing files with explicit parent tables remain readable. Because a single file
+may hold a partial component definition for a lockless component, its validation runs after
 all config files have been merged. Unlisted components retain normal additive
 merging and per-file validation.
 
