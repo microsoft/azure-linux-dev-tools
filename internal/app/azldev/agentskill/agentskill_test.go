@@ -219,6 +219,8 @@ func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
 	assert.Contains(t, doc, "leading integer of the committed,")
 	assert.Contains(t, doc, "an omitted `-b` stays omitted")
 	assert.Contains(t, doc, "committed file byte-for-byte")
+	assert.Contains(t, doc, "Release calculation and carryover run only when the version")
+	assert.Contains(t, doc, "Changelog handling follows release preparation and runs even when the version")
 	assert.Contains(t, doc, "retains `%autorelease`, `%autochangelog`")
 	assert.Contains(t, doc, "effective upstream distro's `dist-git-branch`")
 	assert.Contains(t, doc, "fetches that historical branch before comparing commits")

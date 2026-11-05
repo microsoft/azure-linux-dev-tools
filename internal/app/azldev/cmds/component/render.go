@@ -638,7 +638,7 @@ func finishSourcePreparation(
 	componentName := comp.GetName()
 	if update != nil {
 		if err := prepareLocklessSpec(env, hostRenderProcessor{env: env}, componentDir, componentName,
-			specEditor, history, update); err != nil {
+			specEditor, history); err != nil {
 			return nil, fmt.Errorf("preparing release and changelog for %#q:\n%w", componentName, err)
 		}
 	}

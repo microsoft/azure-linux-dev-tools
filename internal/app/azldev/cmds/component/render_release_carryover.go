@@ -19,8 +19,8 @@ var (
 )
 
 func carryStaticRenderRelease(
-	env *azldev.Env, working *spec.Spec, release, version string,
-	history lastRender, upstreamChanged bool, editor spec.EditorMode,
+	env *azldev.Env, working *spec.Spec, release string,
+	history lastRender, editor spec.EditorMode,
 ) error {
 	if history.spec == "" || sources.ReleaseUsesAutorelease(release) || env.DryRun() {
 		return nil
@@ -29,15 +29,6 @@ func carryStaticRenderRelease(
 	previous, err := spec.OpenSpec(strings.NewReader(history.spec), spec.WithEditor(editor))
 	if err != nil {
 		return fmt.Errorf("parsing committed release spec:\n%w", err)
-	}
-
-	oldVersion, err := previous.GetLastTag("", "Version")
-	if err != nil {
-		return fmt.Errorf("reading committed Version:\n%w", err)
-	}
-
-	if upstreamChanged && oldVersion != version {
-		return nil
 	}
 
 	oldRelease, err := previous.GetLastTag("", "Release")

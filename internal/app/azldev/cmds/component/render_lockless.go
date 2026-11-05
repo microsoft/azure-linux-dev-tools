@@ -272,7 +272,7 @@ func openLocklessSpec(
 
 func prepareLocklessSpec(
 	env *azldev.Env, autospec renderAutorelease, dir, name string, editor spec.EditorMode,
-	history lastRender, update *locklessRenderUpdate,
+	history lastRender,
 ) error {
 	path, opened, err := openLocklessSpec(env, dir, name, editor)
 	if err != nil {
@@ -289,21 +289,27 @@ func prepareLocklessSpec(
 		return fmt.Errorf("reading upstream Version:\n%w", err)
 	}
 
-	release, err := locklessRenderRelease(env, autospec, dir, filepath.Base(path), original, history)
+	versionChanged, err := locklessVersionChanged(version, history)
 	if err != nil {
 		return err
 	}
 
-	release, err = restoreLocklessRelease(original, release, version, history, update.changes != "")
-	if err != nil {
-		return err
+	if versionChanged {
+		release, err := locklessRenderRelease(env, autospec, dir, filepath.Base(path), original, history)
+		if err != nil {
+			return err
+		}
+
+		if err := opened.SetTag("", "Release", release); err != nil {
+			return fmt.Errorf("updating upstream Release:\n%w", err)
+		}
+
+		if err := carryStaticRenderRelease(env, opened, original, history, editor); err != nil {
+			return err
+		}
 	}
 
-	if err := opened.SetTag("", "Release", release); err != nil {
-		return fmt.Errorf("updating upstream Release:\n%w", err)
-	}
-
-	if err := carryStaticRenderRelease(env, opened, original, version, history, update.changes != "", editor); err != nil {
+	if err := prepareLocklessChangelog(env, autospec, dir, filepath.Base(path), original, history); err != nil {
 		return err
 	}
 
@@ -374,16 +380,6 @@ func locklessRenderRelease(
 		return carryRenderedAutorelease(env, autospec, dir, filename, release, history)
 	}
 
-	changelog, err := autospec.GenerateChangelog(env, dir, filename)
-	if err != nil {
-		return "", fmt.Errorf("generating initial upstream changelog:\n%w", err)
-	}
-
-	if err := fileutils.WriteFile(env.FS(), filepath.Join(dir, "changelog"), []byte(changelog),
-		fileperms.PublicFile); err != nil {
-		return "", fmt.Errorf("writing initial upstream changelog:\n%w", err)
-	}
-
 	calculated, err := autospec.CalculateBaseRelease(env, dir, filename)
 	if err != nil {
 		return "", fmt.Errorf("calculating upstream release base:\n%w", err)
@@ -402,7 +398,7 @@ func carryRenderedAutorelease(
 	env *azldev.Env, autospec renderAutorelease, dir, filename, release string, history lastRender,
 ) (string, error) {
 	if !renderedAutoreleaseMarker.MatchString(history.spec) {
-		return carryUnprocessedAutorelease(env, dir, release, history)
+		return carryUnprocessedAutorelease(release, history)
 	}
 
 	expanded, err := expandCommittedRelease(env, autospec, dir, filename, history)
@@ -415,25 +411,10 @@ func carryRenderedAutorelease(
 		return "", fmt.Errorf("using committed Release %#q as autorelease base:\n%w", expanded, err)
 	}
 
-	previous := []byte(history.spec)
-
-	start, end, err := renderChangelogBounds(previous, spec.EditorLegacy)
-	if err != nil {
-		return "", err
-	}
-
-	_, changelog, _ := strings.Cut(string(previous[start:end]), "\n")
-
-	changelog = stripChangelogBoundaryComments(changelog)
-	if err := fileutils.WriteFile(env.FS(), filepath.Join(dir, "changelog"), []byte(changelog),
-		fileperms.PublicFile); err != nil {
-		return "", fmt.Errorf("writing committed 'changelog' content:\n%w", err)
-	}
-
 	return release, nil
 }
 
-func carryUnprocessedAutorelease(env *azldev.Env, dir, release string, history lastRender) (string, error) {
+func carryUnprocessedAutorelease(release string, history lastRender) (string, error) {
 	previous, err := spec.OpenSpec(strings.NewReader(history.spec))
 	if err != nil {
 		return "", fmt.Errorf("parsing committed autorelease spec:\n%w", err)
@@ -457,26 +438,84 @@ func carryUnprocessedAutorelease(env *azldev.Env, dir, release string, history l
 		release = autoreleaseBaseArg.ReplaceAllString(release, "")
 	}
 
+	return release, nil
+}
+
+func prepareLocklessChangelog(
+	env *azldev.Env, autospec renderAutorelease, dir, filename, release string, history lastRender,
+) error {
+	if !sources.ReleaseUsesAutorelease(release) || env.DryRun() {
+		return nil
+	}
+
+	if history.spec != "" && !renderedAutoreleaseMarker.MatchString(history.spec) {
+		return carryUnprocessedChangelog(env, dir, history)
+	}
+
+	var changelog string
+
+	if history.spec == "" {
+		var err error
+
+		changelog, err = autospec.GenerateChangelog(env, dir, filename)
+		if err != nil {
+			return fmt.Errorf("generating initial upstream changelog:\n%w", err)
+		}
+	} else {
+		previous := []byte(history.spec)
+
+		start, end, err := renderChangelogBounds(previous, spec.EditorLegacy)
+		if err != nil {
+			return err
+		}
+
+		_, changelog, _ = strings.Cut(string(previous[start:end]), "\n")
+		changelog = stripChangelogBoundaryComments(changelog)
+	}
+
+	if err := fileutils.WriteFile(env.FS(), filepath.Join(dir, "changelog"), []byte(changelog),
+		fileperms.PublicFile); err != nil {
+		return fmt.Errorf("writing prepared 'changelog':\n%w", err)
+	}
+
+	return nil
+}
+
+func carryUnprocessedChangelog(env *azldev.Env, dir string, history lastRender) error {
+	previous, err := spec.OpenSpec(strings.NewReader(history.spec))
+	if err != nil {
+		return fmt.Errorf("parsing committed autorelease spec:\n%w", err)
+	}
+
+	release, err := previous.GetLastTag("", "Release")
+	if err != nil {
+		return fmt.Errorf("reading committed Release:\n%w", err)
+	}
+
+	if !sources.ReleaseUsesAutorelease(release) {
+		return nil
+	}
+
 	if history.tree == nil {
-		return "", errors.New("missing committed dist-git tree for 'changelog'")
+		return errors.New("missing committed dist-git tree for 'changelog'")
 	}
 
 	changelog, err := history.tree.File("changelog")
 	if err != nil {
-		return "", fmt.Errorf("reading committed 'changelog':\n%w", err)
+		return fmt.Errorf("reading committed 'changelog':\n%w", err)
 	}
 
 	content, err := changelog.Contents()
 	if err != nil {
-		return "", fmt.Errorf("reading committed 'changelog' contents:\n%w", err)
+		return fmt.Errorf("reading committed 'changelog' contents:\n%w", err)
 	}
 
 	if err := fileutils.WriteFile(env.FS(), filepath.Join(dir, "changelog"), []byte(content),
 		fileperms.PublicFile); err != nil {
-		return "", fmt.Errorf("writing committed 'changelog':\n%w", err)
+		return fmt.Errorf("writing committed 'changelog':\n%w", err)
 	}
 
-	return release, nil
+	return nil
 }
 
 func stripChangelogBoundaryComments(changelog string) string {
@@ -552,36 +591,22 @@ func committedRenderSnapshot(
 	return snapshot, nil
 }
 
-func restoreLocklessRelease(
-	original, release, version string, history lastRender, upstreamChanged bool,
-) (string, error) {
-	if history.spec == "" && upstreamChanged {
-		return original, nil
-	}
-
+func locklessVersionChanged(version string, history lastRender) (bool, error) {
 	if history.spec == "" {
-		return release, nil
+		return true, nil
 	}
 
 	previous, err := spec.OpenSpec(strings.NewReader(history.spec))
 	if err != nil {
-		return "", fmt.Errorf("parsing committed dist-git spec:\n%w", err)
-	}
-
-	if !upstreamChanged {
-		return release, nil
+		return false, fmt.Errorf("parsing committed dist-git spec:\n%w", err)
 	}
 
 	oldVersion, err := previous.GetLastTag("", "Version")
 	if err != nil {
-		return "", fmt.Errorf("reading committed Version:\n%w", err)
+		return false, fmt.Errorf("reading committed Version:\n%w", err)
 	}
 
-	if oldVersion != version {
-		return original, nil
-	}
-
-	return release, nil
+	return oldVersion != version, nil
 }
 
 var autoreleaseBaseArg = regexp.MustCompile(`(^|\s)-b(?:\s+|=)?[0-9]+`)

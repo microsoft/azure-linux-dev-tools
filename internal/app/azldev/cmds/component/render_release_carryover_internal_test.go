@@ -25,24 +25,24 @@ func TestPrepareLocklessSpec_CarriesBaseRelease(t *testing.T) {
 			}{
 				{
 					name: "same upstream", version: "1", definition: "%global baserelease 18",
-					release: "%{baserelease}%{?dist}", wantBase: "18", wantBumped: "19",
+					release: "%{baserelease}%{?dist}", wantBase: "17", wantBumped: "18",
 				},
 				{
 					name: "new upstream same version", version: "1", changed: true,
 					definition: "%global baserelease 18", release: "%{baserelease}%{?dist}",
-					wantBase: "18", wantBumped: "19",
+					wantBase: "17", wantBumped: "18",
 				},
 				{
 					name: "new version", version: "2", changed: true,
 					definition: "%global baserelease 18", release: "%{baserelease}%{?dist}",
-					wantBase: "17", wantBumped: "18",
+					wantBase: "18", wantBumped: "19",
 				},
 				{
-					name: "define and optional macro", version: "1", definition: "%define baserelease 18",
+					name: "define and optional macro", version: "2", definition: "%define baserelease 18",
 					release: "%{?baserelease}%{?dist}", wantBase: "18", wantBumped: "19",
 				},
 				{
-					name: "unbraced macro", version: "1", definition: "%global baserelease 18",
+					name: "unbraced macro", version: "2", definition: "%global baserelease 18",
 					release: "%baserelease%{?dist}", wantBase: "18", wantBumped: "19",
 				},
 			} {
@@ -82,7 +82,7 @@ func TestPrepareLocklessSpec_CarriesBaseRelease(t *testing.T) {
 						require.NoError(t, err)
 
 						definition := testCase.definition
-						if testCase.changed && testCase.version != "1" {
+						if testCase.version == "1" {
 							definition = "%define baserelease 17"
 						}
 
@@ -97,7 +97,7 @@ func TestPrepareLocklessSpec_CarriesBaseRelease(t *testing.T) {
 					update := &locklessRenderUpdate{subject: "updated curl"}
 					require.NoError(t, collectRenderUpstreamChanges(env.Env, "/working", "curl",
 						testCase.version, history, update))
-					err := prepareLocklessSpec(env.Env, &renderAutospecStub{}, "/working", "curl", editor, history, update)
+					err := prepareLocklessSpec(env.Env, &renderAutospecStub{}, "/working", "curl", editor, history)
 					require.NoError(t, err)
 					assert.Zero(t, calls)
 
@@ -158,7 +158,7 @@ func TestCarryStaticRenderRelease(t *testing.T) {
 
 					history := lastRender{spec: testCase.previous + renderTestSpec("1", testCase.oldRelease, "")}
 
-					err = carryStaticRenderRelease(env.Env, opened, "1%{?dist}", "1", history, false, editor)
+					err = carryStaticRenderRelease(env.Env, opened, "1%{?dist}", history, editor)
 					if testCase.wantError != "" {
 						require.ErrorContains(t, err, testCase.wantError)
 

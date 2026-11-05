@@ -71,7 +71,7 @@ when writing the macros file; that step never repeats the provenance query.
 After reading render history and collecting upstream changes, rendering writes
 the macros file, applies overlays, and updates `sources` before carrying
 release/changelog state and running the final `rpmdev-bumpspec`.
-Carryover and version-reset rules operate on the working spec after overlays.
+Version detection and carryover operate on the working spec after overlays.
 Rendering compares output before the final release bump; `--check-only` stops before that bump.
 Unchanged lockless upstream renders require `--no-change-rebuild`; otherwise rendering errors
 without replacing existing output. The flag records host `date -Is` output in
@@ -79,29 +79,36 @@ without replacing existing output. The flag records host `date -Is` output in
 ignores this marker in existing output, not in the working upstream checkout.
 The comparison ignores the root `.git` without traversing or removing it.
 
-For static specs, rendering checks the committed `Release:` value. If it uses
+After reading the working spec, rendering compares its `Version:` with the
+committed spec. Release calculation and carryover run only when the version
+differs or no committed output exists, independently of upstream pin changes.
+Otherwise the post-overlay release and `baserelease` definition are unchanged.
+There is no later restoration of the original upstream release.
+
+For static specs, release carryover checks the committed `Release:` value. If it uses
 the `baserelease` macro, rendering copies the committed `%global baserelease`
 or `%define baserelease` line over the upstream definition without changing
 the upstream `Release:` value. Missing or ambiguous definitions fail rendering.
 Otherwise, it copies the committed `Release:` value. No temporary release-bump
-probe is performed, and the committed changelog is retained. A version change
-keeps the original upstream `Release:` and `baserelease` definition before
-the final host `rpmdev-bumpspec -c` with
-`updated <component-name>` plus upstream changes.
-An initial `%autorelease` render generates the complete upstream
-changelog and calculates its base release on the host. For existing output
+probe is performed. An initial `%autorelease` render calculates its base release
+on the host. For existing output
 marked by a line starting with `## RPMAUTOSPEC:` and containing `autorelease`,
 an `%autorelease` upstream spec inherits the leading integer of the committed,
-macro-expanded Release as `-b` and its committed `%changelog` body as the
-working `changelog` file, removing leading and trailing comment lines starting
-with `##` while preserving interior comments. Expansion uses the committed files on the host;
-the later version-change release reset still applies.
+macro-expanded Release as `-b`. Expansion uses the committed files on the host.
 Without that legacy marker, an existing `%autorelease` spec carries its
 committed `-b` value into the working macro; an omitted `-b` stays omitted,
-removing any working base option rather than adding `-b 1`. Rendering
+removing any working base option rather than adding `-b 1`.
+An invalid numeric base fails release carryover, which requires no host release query.
+
+Changelog handling follows release preparation and runs even when the version
+is unchanged. Static specs retain the committed inline `%changelog` section.
+An initial `%autorelease` render generates the complete upstream changelog on
+the host. Legacy-marker output supplies its committed inline `%changelog` body
+as the working `changelog`, removing leading and trailing `##` comment lines
+while preserving interior comments and whitespace. Modern autorelease output
 replaces the working `changelog` with the committed file byte-for-byte.
-A missing committed `changelog` or invalid numeric base fails rendering.
-This carryover requires no host release query; the version-change reset still applies.
+A missing committed `changelog` fails rendering. The final host
+`rpmdev-bumpspec -c` still uses `updated <component-name>` plus upstream changes.
 All prepared dist-git files except `.git` are retained,
 without file filtering or `spectool` queries. Synthetic history and its
 legacy release adjustment are skipped during lockless rendering.

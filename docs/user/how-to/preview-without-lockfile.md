@@ -131,39 +131,50 @@ provenance is disabled or the component is not sourced from Fedora upstream.
 
 The renderer then finds the existing committed output under
 `<rendered-specs-dir>/<lowercase-first-letter>/<component-name>`, ignoring
-uncommitted spec changes. For an existing non-`%autorelease` upstream spec, it
+uncommitted spec changes. After reading the working spec's post-overlay
+`Release:` and `Version:`, it compares that version with the committed spec's
+`Version:`. Release calculation and carryover run **only when the version
+differs or no committed output exists**, independently of upstream pin changes.
+For an unchanged version, the working release and `baserelease` definition are
+left as supplied by upstream and overlays. There is no later restoration of the
+original upstream release.
+
+When release carryover runs for an existing non-`%autorelease` upstream spec, it
 checks the committed `Release:` value. If it references the `baserelease` macro,
 the renderer copies the committed `%global baserelease` or `%define baserelease`
 line over the upstream definition, leaving the upstream `Release:` value
 unchanged. A missing or ambiguous macro definition fails rendering. Otherwise,
 it copies the committed `Release:` value into the upstream spec's `Release:`.
-No temporary release-bump probe is performed. The committed `%changelog`
-section is also preserved.
+No temporary release-bump probe is performed.
 
-For an initial `%autorelease` render, it generates the complete upstream
-`changelog` file (replacing any existing file), calculates the numeric upstream
-release, and adds or replaces the macro's `-b` parameter. These rpmautospec
-operations run on the host; they do not preprocess or rewrite the spec.
+For an initial `%autorelease` render, it calculates the numeric upstream release
+and adds or replaces the macro's `-b` parameter. This rpmautospec operation runs
+on the host; it does not preprocess or rewrite the spec.
 
 For an existing output whose spec has a line starting with `## RPMAUTOSPEC:`
 and containing `autorelease` on that same line, a `%autorelease` upstream spec
 inherits its base from the committed rendered spec. The renderer expands the
 committed `Release:` with host `rpmspec`, using a temporary copy of the
 committed dist-git files, and uses its leading integer as `-b` (for example,
-`9.fc43` becomes `-b 9`). It also replaces the working checkout's `changelog`
-file with the committed `%changelog` body, excluding the section header and
-leading or trailing comment lines starting with `##`. Interior comments and
-changelog whitespace are preserved.
-The later version-change release reset still applies.
+`9.fc43` becomes `-b 9`).
 
 For an existing `%autorelease` spec without the legacy marker, rendering carries
 the committed `-b` value into the working spec, preserving the working macro's
 other options. If the committed spec omits `-b`, the working spec also omits it,
-removing any working base option rather than adding `-b 1`. The committed
-`changelog` file replaces the working file byte-for-byte, or is created if absent
-from the working checkout. A missing committed `changelog` or invalid numeric
-base fails rendering. No host release or changelog query is needed for this
-carryover; the later version-change release reset still applies.
+removing any working base option rather than adding `-b 1`. An invalid numeric
+base fails release carryover. No host release query is needed for this carryover.
+
+Changelog handling follows release preparation and runs even when the version
+is unchanged. For non-`%autorelease` specs, the committed inline `%changelog`
+section is preserved. For an initial `%autorelease` render, host
+`rpmautospec generate-changelog` creates the complete upstream `changelog`,
+replacing any existing file. For legacy-marker output, the working `changelog`
+is replaced with the committed inline `%changelog` body, excluding the section
+header and leading or trailing comment lines starting with `##`; interior
+comments and whitespace are preserved. For modern `%autorelease` output, the
+committed `changelog` file replaces the working file byte-for-byte, or is created
+if absent from the working checkout. A missing committed `changelog` fails
+rendering.
 
 The last commit touching the component output is the **last render commit**.
 The renderer fully loads TOML, including includes and component defaults, at
@@ -183,10 +194,6 @@ upstream changed. It records `git log --oneline <old>..<current>` from the
 upstream checkout; without an old pin it records a one-line version update.
 An error reading the current pin is fatal.
 
-When upstream changes exist and `Version:` differs from the committed rendered
-version (or there is no previous output), it retains the original upstream
-`Release:` and `baserelease` definition instead of carrying over previous
-values, and restores the upstream `Release:` if an autorelease base was carried over.
 It then compares the prepared tree with existing output, ignoring the root `.git`
 and any top-level `.no-change-rebuild` in the existing output only.
 `--check-only` stops here, before the final release bump.
