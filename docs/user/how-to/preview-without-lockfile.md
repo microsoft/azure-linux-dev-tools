@@ -155,8 +155,22 @@ provenance is disabled or the component is not sourced from Fedora upstream.
 
 The renderer then finds the existing committed output under
 `<rendered-specs-dir>/<lowercase-first-letter>/<component-name>`, ignoring
-uncommitted spec changes. After reading the working spec's post-overlay
-`Release:` and `Version:`, it compares that version with the committed spec's
+uncommitted spec changes. It prepares the changelog first, then Release, before
+writing the macros file, applying overlays, or updating `sources`.
+
+Changelog handling is independent of version changes. For non-`%autorelease`
+specs, the committed inline `%changelog` section is preserved. For an initial
+`%autorelease` render, host `rpmautospec generate-changelog` creates the complete
+upstream `changelog`, replacing any existing file. For legacy-marker output, the
+working `changelog` is replaced with the committed inline `%changelog` body,
+excluding the section header and leading or trailing comment lines starting with
+`##`; interior comments and whitespace are preserved. For modern `%autorelease`
+output, the committed `changelog` file replaces the working file byte-for-byte,
+or is created if absent from the working checkout. A missing committed
+`changelog` fails rendering.
+
+Release preparation reads the upstream spec's `Release:` and `Version:` before
+overlays, and compares that version with the committed spec's
 `Version:`, independently of upstream pin changes. Static release carryover runs
 **only when committed output exists and the version is unchanged**; otherwise the
 working static release and `baserelease` definition are left as supplied by
@@ -197,18 +211,6 @@ For calculated bases, including legacy expansion, a base of `1` omits `-b`
 and removes any existing working base option, using the `%autorelease` default.
 Other macro options are preserved. Unchanged-version modern output still carries
 an explicitly committed `-b 1` as-is.
-
-Changelog handling follows release preparation and runs even when the version
-is unchanged. For non-`%autorelease` specs, the committed inline `%changelog`
-section is preserved. For an initial `%autorelease` render, host
-`rpmautospec generate-changelog` creates the complete upstream `changelog`,
-replacing any existing file. For legacy-marker output, the working `changelog`
-is replaced with the committed inline `%changelog` body, excluding the section
-header and leading or trailing comment lines starting with `##`; interior
-comments and whitespace are preserved. For modern `%autorelease` output, the
-committed `changelog` file replaces the working file byte-for-byte, or is created
-if absent from the working checkout. A missing committed `changelog` fails
-rendering.
 
 The last commit touching the component output is the **last render commit**.
 The renderer fully loads TOML, including includes and component defaults, at
@@ -258,9 +260,10 @@ azldev comp render -p curl --changelog-comment "Fix curl patches"
 ```
 
 Macro-file generation, existing overlays, and `sources` manifest updates run
-before release/changelog carryover and the final `rpmdev-bumpspec` invocation.
-Carryover and version-reset decisions therefore use the working spec after
-overlays; release/changelog edits made by overlays remain subject to those rules.
+after changelog and Release preparation, but before comparison and the final
+`rpmdev-bumpspec` invocation. Overlays can override the prepared Release and
+changelog; carryover is not repeated afterwards. Version changes made by overlays
+do not alter the earlier carryover decision.
 Release edits preserve the existing spaces and tabs between `Release:` and its
 value, including during overlays and carryover, so aligned spec headers stay aligned
 with either spec editor.

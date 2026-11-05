@@ -64,23 +64,23 @@ var openRenderRepo = openChangedRepo
 func prepareLocklessRender(
 	env *azldev.Env, comp components.Component,
 	dir, outputDir string, editor spec.EditorMode,
-) (history lastRender, update *locklessRenderUpdate, err error) {
+) (*locklessRenderUpdate, error) {
 	repo, root, err := openRenderRepo(env)
 	if err != nil {
-		return history, nil, err
+		return nil, err
 	}
 
 	path, err := git.RepoRelPath(root, outputDir)
 	if err != nil {
-		return history, nil, fmt.Errorf("lockless render output must be inside the project repository:\n%w", err)
+		return nil, fmt.Errorf("lockless render output must be inside the project repository:\n%w", err)
 	}
 
-	history, err = readLastRender(env, repo, root, path, comp.GetName())
+	history, err := readLastRender(env, repo, root, path, comp.GetName())
 	if err != nil {
-		return history, nil, fmt.Errorf("reading committed render state:\n%w", err)
+		return nil, fmt.Errorf("reading committed render state:\n%w", err)
 	}
 
-	update = &locklessRenderUpdate{
+	update := &locklessRenderUpdate{
 		repoRoot: root,
 		path:     path,
 		subject:  "update " + comp.GetName(),
@@ -88,19 +88,23 @@ func prepareLocklessRender(
 
 	_, opened, err := openLocklessSpec(env, dir, comp.GetName(), editor)
 	if err != nil {
-		return history, nil, err
+		return nil, err
 	}
 
 	version, err := opened.GetLastTag("", "Version")
 	if err != nil {
-		return history, nil, fmt.Errorf("reading upstream Version:\n%w", err)
+		return nil, fmt.Errorf("reading upstream Version:\n%w", err)
 	}
 
 	if err := collectRenderUpstreamChanges(env, dir, comp.GetName(), version, history, update); err != nil {
-		return history, nil, err
+		return nil, err
 	}
 
-	return history, update, nil
+	if err := prepareLocklessSpec(env, hostRenderProcessor{env: env}, dir, comp.GetName(), editor, history); err != nil {
+		return nil, fmt.Errorf("preparing changelog and release for %#q:\n%w", comp.GetName(), err)
+	}
+
+	return update, nil
 }
 
 func readLastRender(
@@ -295,6 +299,15 @@ func prepareLocklessSpec(
 		return err
 	}
 
+	if err := prepareLocklessChangelog(env, autospec, dir, filepath.Base(path), original, history); err != nil {
+		return err
+	}
+
+	opened, err = carryLocklessInlineChangelog(opened, history.spec, original, editor)
+	if err != nil {
+		return err
+	}
+
 	if !versionChanged || sources.ReleaseUsesAutorelease(original) {
 		release, err := locklessRenderRelease(env, autospec, dir, filepath.Base(path), original, history, versionChanged)
 		if err != nil {
@@ -310,33 +323,41 @@ func prepareLocklessSpec(
 		}
 	}
 
-	if err := prepareLocklessChangelog(env, autospec, dir, filepath.Base(path), original, history); err != nil {
-		return err
+	var result bytes.Buffer
+	if err := opened.Serialize(&result); err != nil {
+		return fmt.Errorf("serializing prepared upstream spec:\n%w", err)
 	}
 
-	resultBytes, err := locklessSpecBytes(opened, history.spec, original, editor)
-	if err != nil {
-		return err
-	}
-
-	if err := fileutils.WriteFile(env.FS(), path, resultBytes, fileperms.PublicFile); err != nil {
+	if err := fileutils.WriteFile(env.FS(), path, result.Bytes(), fileperms.PublicFile); err != nil {
 		return fmt.Errorf("writing prepared upstream spec:\n%w", err)
 	}
 
 	return nil
 }
 
-func locklessSpecBytes(opened *spec.Spec, previous, release string, editor spec.EditorMode) ([]byte, error) {
+func carryLocklessInlineChangelog(
+	opened *spec.Spec, previous, release string, editor spec.EditorMode,
+) (*spec.Spec, error) {
+	if previous == "" || sources.ReleaseUsesAutorelease(release) {
+		return opened, nil
+	}
+
 	var result bytes.Buffer
 	if err := opened.Serialize(&result); err != nil {
 		return nil, fmt.Errorf("serializing upstream spec:\n%w", err)
 	}
 
-	if previous != "" && !sources.ReleaseUsesAutorelease(release) {
-		return restoreRenderChangelog(result.Bytes(), []byte(previous), editor)
+	content, err := restoreRenderChangelog(result.Bytes(), []byte(previous), editor)
+	if err != nil {
+		return nil, err
 	}
 
-	return result.Bytes(), nil
+	carried, err := spec.OpenSpec(bytes.NewReader(content), spec.WithEditor(editor))
+	if err != nil {
+		return nil, fmt.Errorf("parsing spec with committed changelog:\n%w", err)
+	}
+
+	return carried, nil
 }
 
 func collectRenderUpstreamChanges(

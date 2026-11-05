@@ -26,8 +26,9 @@ its lock file, using configured upstream commits and their TOML history instead.
 All other components use lock files. A missing or empty file means all components
 use lock files.
 
-For lockless upstream components, write macros, apply overlays, and update sources
-before carrying release and changelog state from the last committed render.
+For lockless upstream components, prepare the changelog, then Release, using the
+upstream spec and last committed render before writing macros, applying overlays,
+and updating sources. Overlays can override the prepared release and changelog.
 Compare output; unchanged renders require --no-change-rebuild to record a timestamp.
 Then run rpmdev-bumpspec -c with --changelog-comment (default: "update <component-name>").
 Commit only that directory with the same subject and upstream changes as the body.

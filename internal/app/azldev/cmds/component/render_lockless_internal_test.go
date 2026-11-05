@@ -534,7 +534,7 @@ func TestPrepareLocklessSpec_ReleaseChangelogAndUpstreamChanges(t *testing.T) {
 			assert.Equal(t, testCase.wantChanges, update.changes)
 
 			if testCase.bootstrap {
-				assert.Equal(t, []string{"release", "changelog"}, stub.calls)
+				assert.Equal(t, []string{"changelog", "release"}, stub.calls)
 
 				changelog, err := fileutils.ReadFile(env.TestFS, "/working/changelog")
 				require.NoError(t, err)
@@ -636,6 +636,11 @@ func TestPrepareLocklessSpec_CommittedAutorelease(t *testing.T) {
 
 			stub := &renderAutospecStub{expand: func(dir, filename string) (string, error) {
 				snapshot = dir
+				changelog, err := fileutils.ReadFile(env.TestFS, "/working/changelog")
+				require.NoError(t, err)
+				assert.Equal(t, carriedAutoreleaseChangelog, string(changelog),
+					"carry the changelog before expanding the committed release")
+
 				content, err := fileutils.ReadFile(env.TestFS, filepath.Join(dir, filename))
 				require.NoError(t, err)
 				assert.Equal(t, history.spec, string(content))
@@ -865,7 +870,7 @@ func TestPrepareLocklessSpec_UnprocessedAutoreleaseFailure(t *testing.T) {
 				lastRender{spec: committed, tree: tree})
 			require.ErrorContains(t, err, testCase.want)
 
-			if testCase.newVersion {
+			if testCase.newVersion && !testCase.missingFile && !testCase.missingTree {
 				assert.Equal(t, []string{"release"}, stub.calls)
 			} else {
 				assert.Empty(t, stub.calls)
@@ -876,7 +881,13 @@ func TestPrepareLocklessSpec_UnprocessedAutoreleaseFailure(t *testing.T) {
 			assert.Equal(t, original, string(content))
 			content, err = fileutils.ReadFile(env.TestFS, "/working/changelog")
 			require.NoError(t, err)
-			assert.Equal(t, "upstream changelog", string(content))
+
+			wantChangelog := "committed changelog"
+			if testCase.missingFile || testCase.missingTree {
+				wantChangelog = "upstream changelog"
+			}
+
+			assert.Equal(t, wantChangelog, string(content))
 		})
 	}
 }
@@ -926,7 +937,7 @@ func TestPrepareLocklessSpec_CommittedAutoreleaseFailure(t *testing.T) {
 			assert.Equal(t, original, string(content))
 			content, err = fileutils.ReadFile(env.TestFS, "/working/changelog")
 			require.NoError(t, err)
-			assert.Equal(t, "original changelog", string(content))
+			assert.Equal(t, carriedAutoreleaseChangelog, string(content))
 		})
 	}
 }
@@ -999,12 +1010,13 @@ func TestPrepareComponentSources_LocalAndLockedSkipNewLifecycle(t *testing.T) {
 	}
 }
 
-func TestPrepareComponentSources_OverlaysBeforeReleaseCarryover(t *testing.T) {
+func TestPrepareComponentSources_ChangelogAndReleaseBeforeOverlays(t *testing.T) {
 	const releaseTag = "Release:        "
 
 	for _, testCase := range []struct {
-		name, comment, wantComment string
-		explicit, noGitCommit      bool
+		name, comment, wantComment                   string
+		upstreamVersion, overlayVersion, wantRelease string
+		explicit, noGitCommit, skipReleaseOverlay    bool
 	}{
 		{name: "default comment", wantComment: "update curl"},
 		{
@@ -1016,23 +1028,52 @@ func TestPrepareComponentSources_OverlaysBeforeReleaseCarryover(t *testing.T) {
 			name: "no Git commit", comment: "Prepare curl for review",
 			wantComment: "Prepare curl for review", noGitCommit: true,
 		},
+		{
+			name: "version overlay cannot enable carryover", wantComment: "update curl",
+			upstreamVersion: "2", overlayVersion: "1", wantRelease: "1", skipReleaseOverlay: true,
+		},
+		{
+			name: "version overlay cannot disable carryover", wantComment: "update curl",
+			upstreamVersion: "1", overlayVersion: "2", wantRelease: "9", skipReleaseOverlay: true,
+		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			env := testutils.NewTestEnvWithoutLockfile(t)
 			ctrl := gomock.NewController(t)
+
+			upstreamVersion, overlayVersion, wantRelease := "2", "1", "2"
+			if testCase.skipReleaseOverlay {
+				upstreamVersion = testCase.upstreamVersion
+				overlayVersion = testCase.overlayVersion
+				wantRelease = testCase.wantRelease
+			}
+
+			releaseNumber, err := strconv.Atoi(wantRelease)
+			require.NoError(t, err)
+
+			wantBumped := strconv.Itoa(releaseNumber + 1)
+
 			config := &projectconfig.ComponentConfig{
 				Spec:  projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeUpstream},
 				Build: projectconfig.ComponentBuildConfig{With: []string{"feature"}},
 				Overlays: []projectconfig.ComponentOverlay{
 					{Type: projectconfig.ComponentOverlaySetSpecTag, Tag: "Release", Value: "2"},
-					{Type: projectconfig.ComponentOverlaySetSpecTag, Tag: "Version", Value: "1"},
+					{Type: projectconfig.ComponentOverlaySetSpecTag, Tag: "Version", Value: overlayVersion},
 					{Type: projectconfig.ComponentOverlaySetSpecTag, Tag: "Summary", Value: "Overlaid summary"},
+					{
+						Type: projectconfig.ComponentOverlaySearchAndReplaceInSpec, SectionName: "%changelog",
+						Regex: "Downstream entry", Replacement: "Overlaid entry",
+					},
 				},
 				SourceFiles: []projectconfig.SourceFileReference{{
 					Filename: "extra-source.tar.gz", Hash: "abc123", HashType: fileutils.HashTypeSHA512,
 					Origin: projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://example.com/extra-source.tar.gz"},
 				}},
 			}
+			if testCase.skipReleaseOverlay {
+				config.Overlays = config.Overlays[1:]
+			}
+
 			comp := components_testutils.NewMockComponent(ctrl)
 			comp.EXPECT().GetName().AnyTimes().Return("curl")
 			comp.EXPECT().GetConfig().AnyTimes().Return(config)
@@ -1061,7 +1102,7 @@ upstream-commit = "aaaaaaa"
 			manager := sourceproviders_test.NewMockSourceManager(ctrl)
 			manager.EXPECT().FetchComponent(gomock.Any(), comp, "/staging/curl", gomock.Any()).DoAndReturn(
 				func(_ context.Context, _ components.Component, dir string, _ ...sourceproviders.FetchComponentOption) error {
-					upstream := strings.Replace(renderTestSpec("2", "1", "* Upstream entry\n"),
+					upstream := strings.Replace(renderTestSpec(upstreamVersion, "1", "* Upstream entry\n"),
 						"Release: ", releaseTag, 1)
 
 					return fileutils.WriteFile(env.TestFS, filepath.Join(dir, "curl.spec"),
@@ -1101,8 +1142,9 @@ upstream-commit = "aaaaaaa"
 				content, err := fileutils.ReadFile(env.TestFS, path)
 				require.NoError(t, err)
 				assert.Contains(t, string(content), "Summary: Overlaid summary\n")
-				assert.Contains(t, string(content), releaseTag+"9\n")
-				assert.Contains(t, string(content), "%changelog\n"+oldChangelog)
+				assert.Contains(t, string(content), releaseTag+wantRelease+"\n")
+				assert.Contains(t, string(content), "Version: "+overlayVersion+"\n")
+				assert.Contains(t, string(content), "%changelog\n* Overlaid entry\n")
 				assert.Contains(t, string(content), "%{load:%{_sourcedir}/curl.azl.macros}")
 				assert.Contains(t, string(content), "Source9999")
 
@@ -1115,14 +1157,15 @@ upstream-commit = "aaaaaaa"
 				assert.Contains(t, string(manifest), "SHA512 (extra-source.tar.gz) = abc123")
 
 				return fileutils.WriteFile(env.TestFS, path,
-					[]byte(strings.Replace(string(content), releaseTag+"9\n", releaseTag+"10\n", 1)), fileperms.PublicFile)
+					[]byte(strings.Replace(string(content), releaseTag+wantRelease+"\n",
+						releaseTag+wantBumped+"\n", 1)), fileperms.PublicFile)
 			}
 			results := make([]*RenderResult, 1)
 			prepared := parallelPrepare(env.Env, nil, []components.Component{comp}, "/staging", &RenderOptions{
 				OutputDir: "/project/SPECS", ChangelogComment: testCase.comment,
 				changelogCommentExplicit: testCase.explicit, NoGitCommit: testCase.noGitCommit,
 			}, results)
-			require.Len(t, prepared, 1)
+			require.Len(t, prepared, 1, "preparation results: %+v", results[0])
 			prep := prepared[0]
 			prep.update.changes = "abc123 Fix upstream"
 
@@ -1137,7 +1180,7 @@ upstream-commit = "aaaaaaa"
 
 			content, err := fileutils.ReadFile(env.TestFS, "/project/SPECS/c/curl/curl.spec")
 			require.NoError(t, err)
-			assert.Contains(t, string(content), releaseTag+"10\n")
+			assert.Contains(t, string(content), releaseTag+wantBumped+"\n")
 
 			var gitCommands []string
 
@@ -1172,7 +1215,7 @@ upstream-commit = "aaaaaaa"
 
 			content, err = fileutils.ReadFile(env.TestFS, "/project/SPECS/c/curl/curl.spec")
 			require.NoError(t, err)
-			assert.Contains(t, string(content), releaseTag+"10\n")
+			assert.Contains(t, string(content), releaseTag+wantBumped+"\n")
 		})
 	}
 }
@@ -1276,7 +1319,7 @@ func TestPrepareLocklessSpec_StopsOnAutospecFailure(t *testing.T) {
 	stub := &renderAutospecStub{err: errors.New("autospec failed")}
 	err := prepareLocklessSpec(env.Env, stub, "/working", "curl", spec.EditorLegacy, lastRender{})
 	require.ErrorContains(t, err, "autospec failed")
-	assert.Equal(t, []string{"release"}, stub.calls)
+	assert.Equal(t, []string{"changelog"}, stub.calls)
 }
 
 func TestFinishLocklessSpec_TimestampFailures(t *testing.T) {

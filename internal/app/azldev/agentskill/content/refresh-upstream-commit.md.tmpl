@@ -72,11 +72,13 @@ runs here only for an upstream `%autorelease` whose `fedora_upstream_release`
 is not already supplied by `build.defines`. The captured values are reused
 when writing the macros file; that step never repeats the provenance query.
 
-After reading render history and collecting upstream changes, rendering writes
-the macros file, applies overlays, and updates `sources` before carrying
-release/changelog state and running the final `rpmdev-bumpspec`.
+After reading render history and collecting upstream changes, rendering prepares
+the changelog before Release, then writes the macros file, applies overlays, and
+updates `sources` before comparison and the final `rpmdev-bumpspec`.
 Release edits preserve the existing spaces and tabs after `Release:`.
-Version detection and carryover operate on the working spec after overlays.
+Version detection and carryover use the upstream spec before overlays.
+Overlays can override the prepared release and changelog.
+Carryover is not repeated after overlays, even if they change the version.
 Rendering compares output before the final release bump; `--check-only` stops before that bump.
 Unchanged lockless upstream renders require `--no-change-rebuild`; otherwise rendering errors
 without replacing existing output. The flag records host `date -Is` output in
@@ -88,7 +90,16 @@ use Git to restore committed output, or leave no directory if none existed.
 Recovery discards uncommitted changes in that directory and keeps no backups.
 The comparison ignores the root `.git` without traversing or removing it.
 
-After reading the working spec, rendering compares its `Version:` with the
+Changelog handling precedes release preparation and is independent of version
+changes. Static specs retain the committed inline `%changelog` section.
+An initial `%autorelease` render generates the complete upstream changelog on
+the host. Legacy-marker output supplies its committed inline `%changelog` body
+as the working `changelog`, removing leading and trailing `##` comment lines
+while preserving interior comments and whitespace. Modern autorelease output
+replaces the working `changelog` with the committed file byte-for-byte.
+A missing committed `changelog` fails rendering.
+
+Before overlays, rendering compares the upstream spec's `Version:` with the
 committed spec, independently of upstream pin changes.
 Static release carryover runs only when committed output exists and the version
 is unchanged. Otherwise the working static release
@@ -118,14 +129,7 @@ A calculated base of `1` omits `-b`, removing any working base option while pres
 other macro options. This includes legacy expansion. Unchanged-version modern output
 still carries an explicitly committed `-b 1` as-is.
 
-Changelog handling follows release preparation and runs even when the version
-is unchanged. Static specs retain the committed inline `%changelog` section.
-An initial `%autorelease` render generates the complete upstream changelog on
-the host. Legacy-marker output supplies its committed inline `%changelog` body
-as the working `changelog`, removing leading and trailing `##` comment lines
-while preserving interior comments and whitespace. Modern autorelease output
-replaces the working `changelog` with the committed file byte-for-byte.
-A missing committed `changelog` fails rendering. The final host
+The final host
 `rpmdev-bumpspec -c` uses the exact `--changelog-comment` value, defaulting to
 `update <component-name>`. Upstream changes are not appended to this comment.
 All prepared dist-git files except `.git` are retained,

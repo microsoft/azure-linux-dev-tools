@@ -41,9 +41,11 @@ generated upstream-commit TOML instead. All others use locks.
 then runs the refresh pipeline. Existing list contents and lock files are retained.
 Already-listed components are still refreshed; a refresh failure leaves the list updated.
 
-For listed upstream components, rendering writes macros, applies overlays, and
-updates `sources` before carrying release/changelog state from the committed
-output and running host `rpmdev-bumpspec`, without synthetic history or its legacy
+For listed upstream components, rendering prepares the changelog before Release,
+then writes macros, applies overlays, and updates `sources`.
+Version detection and carryover use the upstream spec before overlays.
+Overlays can override the prepared release and changelog.
+Rendering then runs host `rpmdev-bumpspec`, without synthetic history or its legacy
 release adjustment. Lockless rendering
 preserves the existing spaces and tabs after `Release:` when editing its value, and
 compares output before the final release bump; `--check-only` stops before that bump.

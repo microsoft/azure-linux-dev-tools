@@ -78,8 +78,9 @@ its lock file, using configured upstream commits and their TOML history instead.
 All other components use lock files. A missing or empty file means all components
 use lock files.
 
-For lockless upstream components, write macros, apply overlays, and update sources
-before carrying release and changelog state from the last committed render.
+For lockless upstream components, prepare the changelog, then Release, using the
+upstream spec and last committed render before writing macros, applying overlays,
+and updating sources. Overlays can override the prepared release and changelog.
 Compare output; unchanged renders require --no-change-rebuild to record a timestamp.
 Then run rpmdev-bumpspec -c with --changelog-comment (default: "update <component-name>").
 Commit only that directory with the same subject and upstream changes as the body.
@@ -612,17 +613,14 @@ func prepareComponentSources(
 		preparerOpts = append(preparerOpts, sources.WithMockProcessor(mockProcessor))
 	}
 
-	var (
-		update  *locklessRenderUpdate
-		history lastRender
-	)
+	var update *locklessRenderUpdate
 
 	if lockless && comp.GetConfig().Spec.SourceType == projectconfig.SpecSourceTypeUpstream {
 		preparerOpts = append(preparerOpts, sources.WithFetchedSources(
 			func(_ context.Context, fetched components.Component, dir string) error {
 				var prepErr error
 				//nolint:contextcheck // The callback context is the captured preparation env.
-				history, update, prepErr = prepareLocklessRender(env, fetched, dir, compOutputDir, specEditor)
+				update, prepErr = prepareLocklessRender(env, fetched, dir, compOutputDir, specEditor)
 
 				return prepErr
 			}))
@@ -642,21 +640,6 @@ func prepareComponentSources(
 
 	if prepErr := preparer.PrepareSources(env, comp, componentDir, true /*applyOverlays*/); prepErr != nil {
 		return nil, fmt.Errorf("preparing sources for %#q:\n%w", componentName, prepErr)
-	}
-
-	return finishSourcePreparation(env, comp, componentDir, specEditor, history, update, lockless)
-}
-
-func finishSourcePreparation(
-	env *azldev.Env, comp components.Component, componentDir string, specEditor spec.EditorMode,
-	history lastRender, update *locklessRenderUpdate, lockless bool,
-) (*preparedComponent, error) {
-	componentName := comp.GetName()
-	if update != nil {
-		if err := prepareLocklessSpec(env, hostRenderProcessor{env: env}, componentDir, componentName,
-			specEditor, history); err != nil {
-			return nil, fmt.Errorf("preparing release and changelog for %#q:\n%w", componentName, err)
-		}
 	}
 
 	// Find the spec file so we can pass the filename to mock.
