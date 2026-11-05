@@ -156,6 +156,14 @@ leading or trailing comment lines starting with `##`. Interior comments and
 changelog whitespace are preserved.
 The later version-change release reset still applies.
 
+For an existing `%autorelease` spec without the legacy marker, rendering carries
+the committed `-b` value into the working spec, preserving the working macro's
+other options. An omitted `-b` means the default base of `1`. The committed
+`changelog` file replaces the working file byte-for-byte, or is created if absent
+from the working checkout. A missing committed `changelog` or invalid numeric
+base fails rendering. No host release or changelog query is needed for this
+carryover; the later version-change release reset still applies.
+
 The last commit touching the component output is the **last render commit**.
 The renderer fully loads TOML, including includes and component defaults, at
 that commit and at the current project commit to compare `spec.upstream-commit`.

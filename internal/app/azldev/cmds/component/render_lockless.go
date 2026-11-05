@@ -394,6 +394,7 @@ func locklessRenderRelease(
 
 var (
 	renderedAutoreleaseMarker = regexp.MustCompile(`(?m)^## RPMAUTOSPEC:[^\r\n]*autorelease`)
+	renderedAutoreleaseBase   = regexp.MustCompile(`(?:^|\s)-b(?:\s+|=)?([^\s}]*)`)
 	renderedReleaseNumber     = regexp.MustCompile(`^[0-9]+`)
 )
 
@@ -401,7 +402,7 @@ func carryRenderedAutorelease(
 	env *azldev.Env, autospec renderAutorelease, dir, filename, release string, history lastRender,
 ) (string, error) {
 	if !renderedAutoreleaseMarker.MatchString(history.spec) {
-		return release, nil
+		return carryUnprocessedAutorelease(env, dir, release, history)
 	}
 
 	expanded, err := expandCommittedRelease(env, autospec, dir, filename, history)
@@ -427,6 +428,53 @@ func carryRenderedAutorelease(
 	if err := fileutils.WriteFile(env.FS(), filepath.Join(dir, "changelog"), []byte(changelog),
 		fileperms.PublicFile); err != nil {
 		return "", fmt.Errorf("writing committed 'changelog' content:\n%w", err)
+	}
+
+	return release, nil
+}
+
+func carryUnprocessedAutorelease(env *azldev.Env, dir, release string, history lastRender) (string, error) {
+	previous, err := spec.OpenSpec(strings.NewReader(history.spec))
+	if err != nil {
+		return "", fmt.Errorf("parsing committed autorelease spec:\n%w", err)
+	}
+
+	previousRelease, err := previous.GetLastTag("", "Release")
+	if err != nil {
+		return "", fmt.Errorf("reading committed Release:\n%w", err)
+	}
+
+	if !sources.ReleaseUsesAutorelease(previousRelease) {
+		return release, nil
+	}
+
+	base := "1"
+	if matches := renderedAutoreleaseBase.FindStringSubmatch(previousRelease); matches != nil {
+		base = matches[1]
+	}
+
+	release, err = withAutoreleaseBase(release, base)
+	if err != nil {
+		return "", fmt.Errorf("using committed autorelease base:\n%w", err)
+	}
+
+	if history.tree == nil {
+		return "", errors.New("missing committed dist-git tree for 'changelog'")
+	}
+
+	changelog, err := history.tree.File("changelog")
+	if err != nil {
+		return "", fmt.Errorf("reading committed 'changelog':\n%w", err)
+	}
+
+	content, err := changelog.Contents()
+	if err != nil {
+		return "", fmt.Errorf("reading committed 'changelog' contents:\n%w", err)
+	}
+
+	if err := fileutils.WriteFile(env.FS(), filepath.Join(dir, "changelog"), []byte(content),
+		fileperms.PublicFile); err != nil {
+		return "", fmt.Errorf("writing committed 'changelog':\n%w", err)
 	}
 
 	return release, nil
