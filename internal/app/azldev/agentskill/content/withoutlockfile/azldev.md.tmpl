@@ -41,6 +41,7 @@ are still refreshed; a refresh failure leaves the list updated.
 For upstream components, rendering writes macros, applies overlays, and
 updates `sources` before carrying release/changelog state from the committed
 output and running host `rpmdev-bumpspec`.
+Release edits preserve the existing spaces and tabs after `Release:`.
 Rendering compares output before the final release bump; `--check-only` stops before that bump.
 Unchanged lockless upstream renders require `--no-change-rebuild`; otherwise rendering errors
 without replacing existing output. The flag records host `date -Is` output in

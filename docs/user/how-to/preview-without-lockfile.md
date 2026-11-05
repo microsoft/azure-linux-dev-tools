@@ -253,6 +253,9 @@ Macro-file generation, existing overlays, and `sources` manifest updates run
 before release/changelog carryover and the final `rpmdev-bumpspec` invocation.
 Carryover and version-reset decisions therefore use the working spec after
 overlays; release/changelog edits made by overlays remain subject to those rules.
+Release edits preserve the existing spaces and tabs between `Release:` and its
+value, including during overlays and carryover, so aligned spec headers stay aligned
+with either spec editor.
 Rendered output retains all prepared dist-git files except `.git`, including
 unreferenced sidecars, hidden files, and subdirectories.
 Lockless rendering does not run `spectool` or filter files; `render.skip-file-filter`

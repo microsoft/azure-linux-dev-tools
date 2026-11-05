@@ -45,6 +45,7 @@ For listed upstream components, rendering writes macros, applies overlays, and
 updates `sources` before carrying release/changelog state from the committed
 output and running host `rpmdev-bumpspec`, without synthetic history or its legacy
 release adjustment. Lockless rendering
+preserves the existing spaces and tabs after `Release:` when editing its value, and
 compares output before the final release bump; `--check-only` stops before that bump.
 Unchanged lockless upstream renders require `--no-change-rebuild`; otherwise rendering errors
 without replacing existing output. The flag records host `date -Is` output in

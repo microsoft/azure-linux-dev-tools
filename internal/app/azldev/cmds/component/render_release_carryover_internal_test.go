@@ -58,6 +58,7 @@ func TestPrepareLocklessSpec_CarriesBaseRelease(t *testing.T) {
 						path         = "/working/curl.spec"
 						oldChangelog = "* Old downstream entry\n"
 						newRelease   = "%{baserelease}.upstream%{?dist}"
+						releaseTag   = "Release:\t  "
 					)
 
 					oldSpec := testCase.definition + "\n" +
@@ -79,6 +80,7 @@ func TestPrepareLocklessSpec_CarriesBaseRelease(t *testing.T) {
 					// Upstream context and Release differ; only the macro definition is carried over.
 					upstream := "# New upstream header\n%define baserelease 17\n" +
 						renderTestSpec(testCase.version, newRelease, "* Upstream entry\n")
+					upstream = strings.Replace(upstream, "Release: ", releaseTag, 1)
 					require.NoError(t, fileutils.WriteFile(env.TestFS, path, []byte(upstream), fileperms.PublicFile))
 					env.CmdFactory.RegisterCommandInSearchPath("rpmdev-bumpspec")
 					env.CmdFactory.RunAndGetOutputHandler = func(_ *exec.Cmd) (string, error) {
@@ -100,7 +102,7 @@ func TestPrepareLocklessSpec_CarriesBaseRelease(t *testing.T) {
 						}
 
 						assert.Contains(t, string(content), definition+"\n")
-						assert.Contains(t, string(content), "Release: "+newRelease+"\n")
+						assert.Contains(t, string(content), releaseTag+newRelease+"\n")
 						assert.Contains(t, string(content), "%changelog\n"+wantChangelog)
 
 						return fileutils.WriteFile(env.TestFS, path,
@@ -121,7 +123,33 @@ func TestPrepareLocklessSpec_CarriesBaseRelease(t *testing.T) {
 					content, err := fileutils.ReadFile(env.TestFS, path)
 					require.NoError(t, err)
 					assert.Contains(t, string(content), "baserelease "+testCase.wantBumped+"\n")
+					assert.Contains(t, string(content), releaseTag+newRelease+"\n")
 					assert.Equal(t, oldSpec, history.spec)
+				})
+			}
+		})
+	}
+}
+
+func TestPrepareLocklessSpec_PreservesAutoreleaseSpacing(t *testing.T) {
+	for _, editor := range []spec.EditorMode{spec.EditorLegacy, spec.EditorStructural} {
+		t.Run(string(editor), func(t *testing.T) {
+			for _, spacing := range []string{"        ", "\t \t", ""} {
+				t.Run(spacing, func(t *testing.T) {
+					env := testutils.NewTestEnv(t)
+
+					const path = "/working/curl.spec"
+
+					upstream := strings.Replace(renderTestSpec("1", "%autorelease -b 2 -e test", "%autochangelog\n"),
+						"Release: ", "Release:"+spacing, 1)
+					require.NoError(t, fileutils.WriteFile(env.TestFS, path, []byte(upstream), fileperms.PublicFile))
+
+					err := prepareLocklessSpec(env.Env, &renderAutospecStub{base: "9"},
+						"/working", "curl", editor, lastRender{})
+					require.NoError(t, err)
+					content, err := fileutils.ReadFile(env.TestFS, path)
+					require.NoError(t, err)
+					assert.Contains(t, string(content), "Release:"+spacing+"%autorelease -b 9 -e test\n")
 				})
 			}
 		})

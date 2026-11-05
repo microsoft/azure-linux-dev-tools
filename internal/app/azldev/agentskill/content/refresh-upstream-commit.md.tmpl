@@ -75,6 +75,7 @@ when writing the macros file; that step never repeats the provenance query.
 After reading render history and collecting upstream changes, rendering writes
 the macros file, applies overlays, and updates `sources` before carrying
 release/changelog state and running the final `rpmdev-bumpspec`.
+Release edits preserve the existing spaces and tabs after `Release:`.
 Version detection and carryover operate on the working spec after overlays.
 Rendering compares output before the final release bump; `--check-only` stops before that bump.
 Unchanged lockless upstream renders require `--no-change-rebuild`; otherwise rendering errors

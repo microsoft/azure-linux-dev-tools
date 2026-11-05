@@ -6,6 +6,7 @@ package spec
 import (
 	"fmt"
 	"io"
+	"strings"
 	"time"
 )
 
@@ -70,6 +71,19 @@ type specEditor interface {
 // Spec is the public facade for a configuration-selected RPM spec editor.
 type Spec struct {
 	editor specEditor
+}
+
+func updatedTagLine(original, tag, value string) string {
+	if strings.EqualFold(tag, "Release") {
+		prefix, rest, found := strings.Cut(original, ":")
+		if found {
+			spacing := rest[:len(rest)-len(strings.TrimLeft(rest, " \t"))]
+
+			return prefix + ":" + spacing + value
+		}
+	}
+
+	return fmt.Sprintf("%s: %s", tag, value)
 }
 
 func (s *Spec) activeEditor() specEditor {

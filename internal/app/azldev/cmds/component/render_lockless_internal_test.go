@@ -1000,6 +1000,8 @@ func TestPrepareComponentSources_LocalAndLockedSkipNewLifecycle(t *testing.T) {
 }
 
 func TestPrepareComponentSources_OverlaysBeforeReleaseCarryover(t *testing.T) {
+	const releaseTag = "Release:        "
+
 	for _, testCase := range []struct {
 		name, comment, wantComment string
 		explicit, noGitCommit      bool
@@ -1059,8 +1061,11 @@ upstream-commit = "aaaaaaa"
 			manager := sourceproviders_test.NewMockSourceManager(ctrl)
 			manager.EXPECT().FetchComponent(gomock.Any(), comp, "/staging/curl", gomock.Any()).DoAndReturn(
 				func(_ context.Context, _ components.Component, dir string, _ ...sourceproviders.FetchComponentOption) error {
+					upstream := strings.Replace(renderTestSpec("2", "1", "* Upstream entry\n"),
+						"Release: ", releaseTag, 1)
+
 					return fileutils.WriteFile(env.TestFS, filepath.Join(dir, "curl.spec"),
-						[]byte(renderTestSpec("2", "1", "* Upstream entry\n")), fileperms.PublicFile)
+						[]byte(upstream), fileperms.PublicFile)
 				})
 
 			originalPreparer := newSourcePreparer
@@ -1096,7 +1101,7 @@ upstream-commit = "aaaaaaa"
 				content, err := fileutils.ReadFile(env.TestFS, path)
 				require.NoError(t, err)
 				assert.Contains(t, string(content), "Summary: Overlaid summary\n")
-				assert.Contains(t, string(content), "Release: 9\n")
+				assert.Contains(t, string(content), releaseTag+"9\n")
 				assert.Contains(t, string(content), "%changelog\n"+oldChangelog)
 				assert.Contains(t, string(content), "%{load:%{_sourcedir}/curl.azl.macros}")
 				assert.Contains(t, string(content), "Source9999")
@@ -1110,7 +1115,7 @@ upstream-commit = "aaaaaaa"
 				assert.Contains(t, string(manifest), "SHA512 (extra-source.tar.gz) = abc123")
 
 				return fileutils.WriteFile(env.TestFS, path,
-					[]byte(strings.Replace(string(content), "Release: 9\n", "Release: 10\n", 1)), fileperms.PublicFile)
+					[]byte(strings.Replace(string(content), releaseTag+"9\n", releaseTag+"10\n", 1)), fileperms.PublicFile)
 			}
 			results := make([]*RenderResult, 1)
 			prepared := parallelPrepare(env.Env, nil, []components.Component{comp}, "/staging", &RenderOptions{
@@ -1132,7 +1137,7 @@ upstream-commit = "aaaaaaa"
 
 			content, err := fileutils.ReadFile(env.TestFS, "/project/SPECS/c/curl/curl.spec")
 			require.NoError(t, err)
-			assert.Contains(t, string(content), "Release: 10\n")
+			assert.Contains(t, string(content), releaseTag+"10\n")
 
 			var gitCommands []string
 
@@ -1167,7 +1172,7 @@ upstream-commit = "aaaaaaa"
 
 			content, err = fileutils.ReadFile(env.TestFS, "/project/SPECS/c/curl/curl.spec")
 			require.NoError(t, err)
-			assert.Contains(t, string(content), "Release: 10\n")
+			assert.Contains(t, string(content), releaseTag+"10\n")
 		})
 	}
 }

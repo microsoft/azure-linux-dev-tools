@@ -638,26 +638,28 @@ Name: value
 }
 
 func TestUpdateExistingTagUpdatesRepeatedConditionalTags(t *testing.T) {
-	specFile, err := spec.OpenSpec(strings.NewReader(`Name: example
-%if 0
-Release: 1
-%else
-Release: 2
-%endif
-`), spec.WithEditor(spec.EditorStructural))
-	require.NoError(t, err)
+	for _, editor := range []spec.EditorMode{spec.EditorLegacy, spec.EditorStructural} {
+		t.Run(string(editor), func(t *testing.T) {
+			input := []string{
+				"Name: example",
+				"%if 0",
+				"Release:        1",
+				"%else",
+				"Release:\t 2",
+				"%endif",
+			}
+			specFile, err := spec.OpenSpec(strings.NewReader(strings.Join(input, "\n")+"\n"), spec.WithEditor(editor))
+			require.NoError(t, err)
+			require.NoError(t, specFile.UpdateExistingTag("", "Release", "3%{?dist}"))
 
-	require.NoError(t, specFile.UpdateExistingTag("", "Release", "3%{?dist}"))
+			var actual bytes.Buffer
+			require.NoError(t, specFile.Serialize(&actual))
 
-	var actual bytes.Buffer
-	require.NoError(t, specFile.Serialize(&actual))
-	assert.Equal(t, `Name: example
-%if 0
-Release: 3%{?dist}
-%else
-Release: 3%{?dist}
-%endif
-`, actual.String())
+			input[2] = "Release:        3%{?dist}"
+			input[4] = "Release:\t 3%{?dist}"
+			assert.Equal(t, strings.Join(input, "\n")+"\n", actual.String())
+		})
+	}
 }
 
 func TestRemoveTag(t *testing.T) {
