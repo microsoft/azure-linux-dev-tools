@@ -138,6 +138,22 @@ lockless**. Local components skip the upstream release/changelog carryover and
 automatic commit steps. All lockless rendering runs on the host without mock;
 components using lock files retain their existing mock-based rendering.
 
+Before any upstream checkout or component preparation, rendering checks the
+entire project Git repository for staged changes, unstaged tracked changes, and
+untracked files. Git-ignored files do not block rendering. If any selected
+component is lockless and upstream, a dirty repository stops the whole invocation.
+Commit or remove those changes first, or explicitly bypass this check:
+
+```sh
+azldev comp render -p <name> --allow-uncommitted
+```
+
+`--check-only` and `--no-git-commit` still require a clean repository unless
+`--allow-uncommitted` is specified. The override bypasses only the cleanliness
+check: carryover and upstream-change comparison still use committed history,
+and failure recovery can discard uncommitted files in the component output
+directory. Locked and local components do not trigger this check.
+
 The renderer clones only the branch selected by the component's effective
 `spec.upstream-distro` (or the project default) into temporary storage. The
 resolved distro version's `dist-git-branch` supplies the branch name. The clone

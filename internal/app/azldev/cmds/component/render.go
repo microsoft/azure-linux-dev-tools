@@ -41,6 +41,7 @@ type RenderOptions struct {
 	NoChangeRebuild          bool
 	ChangelogComment         string
 	NoGitCommit              bool
+	AllowUncommitted         bool
 	RPMDevBumpspec           bool
 	changelogCommentExplicit bool
 }
@@ -48,6 +49,12 @@ type RenderOptions struct {
 func renderOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
 	parentCmd.AddCommand(NewRenderCmd())
 }
+
+const renderWorktreeHelp = `Before rendering any lockless upstream component, require a clean Git repository.
+Uncommitted tracked changes and untracked files anywhere in the repository block
+rendering; Git-ignored files are excluded. --allow-uncommitted bypasses this check.
+--check-only and --no-git-commit do not bypass it. Locked and local components are
+unaffected.`
 
 // NewRenderCmd constructs a [cobra.Command] for the "component render" CLI subcommand.
 func NewRenderCmd() *cobra.Command {
@@ -104,7 +111,7 @@ result table accurately reflects which components actually changed on disk.
 Top-level non-component siblings (e.g. a hand-placed README.md) are
 preserved. When using a custom output directory (--output-dir), --force is
 required alongside --clean-stale as a safety measure. This flag is only
-valid with -a.`,
+valid with -a.` + "\n\n" + renderWorktreeHelp,
 		Example: `  # Render all components (output dir from config)
   azldev component render -a
 
@@ -160,6 +167,8 @@ func addRenderOptions(cmd *cobra.Command, options *RenderOptions) {
 			"for lockless upstream components (default: update <component-name>)")
 	cmd.Flags().BoolVar(&options.NoGitCommit, "no-git-commit", false,
 		"leave lockless upstream rendered output uncommitted without staging it")
+	cmd.Flags().BoolVar(&options.AllowUncommitted, "allow-uncommitted", false,
+		"allow lockless upstream rendering with uncommitted or untracked files in the project repository")
 	addRPMDevBumpspecFlag(cmd, &options.RPMDevBumpspec)
 
 	// --check-only is a read-only diff against on-disk state; --fail-on-error
@@ -209,15 +218,13 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 		return nil, fmt.Errorf("failed to resolve components:\n%w", err)
 	}
 
-	if comps.Len() == 0 {
-		return nil, errors.New("no components were selected; " +
-			"please use command-line options to indicate which components to render",
-		)
-	}
-
 	env = env.WithMockRootComponents(comps.Names()...)
 
 	componentList := comps.Components()
+
+	if err := validateRenderComponents(env, componentList, options.AllowUncommitted); err != nil {
+		return nil, err
+	}
 
 	mockProcessor, err := renderMockProcessor(env, componentList)
 	if err != nil {

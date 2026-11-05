@@ -54,6 +54,12 @@ preserved. When using a custom output directory (--output-dir), --force is
 required alongside --clean-stale as a safety measure. This flag is only
 valid with -a.
 
+Before rendering any lockless upstream component, require a clean Git repository.
+Uncommitted tracked changes and untracked files anywhere in the repository block
+rendering; Git-ignored files are excluded. --allow-uncommitted bypasses this check.
+--check-only and --no-git-commit do not bypass it. Locked and local components are
+unaffected.
+
 ```
 azldev component render [flags]
 ```
@@ -75,6 +81,7 @@ azldev component render [flags]
 
 ```
   -a, --all-components[=true|false]         Include all components
+      --allow-uncommitted[=true|false]      allow lockless upstream rendering with uncommitted or untracked files in the project repository
       --changelog-comment string            comment passed verbatim to rpmdev-bumpspec -c and used as the Git commit subject for lockless upstream components (default: update <component-name>)
       --check-only[=true|false]             render to a staging area and compare against the existing on-disk output without modifying the output directory. Exits 0 when nothing would change and 1 when any component would drift. With -a + --clean-stale, also fails on orphan rendered-spec directories. Intended for CI gates.
       --clean-stale[=true|false]            prune rendered-spec directories that no longer correspond to a configured component (only with -a; requires -f with -o). Top-level non-component siblings are preserved.

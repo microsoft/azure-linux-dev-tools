@@ -41,6 +41,14 @@ generated upstream-commit TOML instead. All others use locks.
 then runs the refresh pipeline. Existing list contents and lock files are retained.
 Already-listed components are still refreshed; a refresh failure leaves the list updated.
 
+Before preparing any selected lockless upstream component, rendering requires a
+clean project Git repository: staged changes, unstaged tracked changes, and
+untracked files anywhere in the repository block the whole invocation.
+Git-ignored files are excluded. Use `--allow-uncommitted` for intentional dirty
+renders; `--check-only` and `--no-git-commit` do not bypass this check.
+The override does not change committed-history carryover or failure recovery.
+Locked and local components do not trigger this check.
+
 For listed upstream components, rendering prepares the changelog before Release,
 then writes macros, applies overlays, and updates `sources`.
 Version detection and carryover use the upstream spec before overlays.

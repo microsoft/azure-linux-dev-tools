@@ -61,6 +61,41 @@ type renderAutorelease interface {
 //nolint:gochecknoglobals // Replaced by isolated render tests to open an in-memory project repository.
 var openRenderRepo = openChangedRepo
 
+func validateRenderComponents(
+	env *azldev.Env, comps []components.Component, allowUncommitted bool,
+) error {
+	if len(comps) == 0 {
+		return errors.New("no components were selected; " +
+			"please use command-line options to indicate which components to render")
+	}
+
+	if allowUncommitted {
+		return nil
+	}
+
+	for _, comp := range comps {
+		if !env.ComponentWithoutLockfile(comp.GetName()) ||
+			comp.GetConfig().Spec.SourceType != projectconfig.SpecSourceTypeUpstream {
+			continue
+		}
+
+		status, err := git.RunInDir(env, env, env.ProjectDir(),
+			"status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none")
+		if err != nil {
+			return fmt.Errorf("checking project repository for uncommitted files:\n%w", err)
+		}
+
+		if status != "" {
+			return errors.New("rendering will not be done due to uncommitted or untracked files " +
+				"in the project repository; use '--allow-uncommitted' to proceed")
+		}
+
+		return nil
+	}
+
+	return nil
+}
+
 func prepareLocklessRender(
 	env *azldev.Env, comp components.Component,
 	dir, outputDir string, editor spec.EditorMode,

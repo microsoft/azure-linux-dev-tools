@@ -30,7 +30,7 @@ Other configuration validation failures are still reported as warnings.
 | Adding a new upstream component | **Yes** — first, to generate its upstream commit TOML |
 | Finalizing overlay, build config, or metadata changes | No — these do not affect the resolved commit |
 | Changing source resolution (commit pin, upstream distro/version, or snapshot) | **Yes** — also mid-workflow (see below) |
-| Iterating on overlays / build config / metadata | No — `render` alone is enough while iterating |
+| Iterating on overlays / build config / metadata | No — use `render --allow-uncommitted` while inputs are uncommitted |
 | Just reading or building existing components | No |
 
 Refresh a single component with `-p <name>`. Use `-a` (all components) only for
@@ -51,6 +51,15 @@ Refresh skips unlisted components and preserves their generated TOML files.
 Commit component inputs before rendering. For upstream components, rendering
 compares the fully parsed committed TOML at the last render commit and at HEAD;
 uncommitted generated pins do not count as a committed upstream change.
+
+Before any upstream checkout or component preparation, rendering requires a
+clean project Git repository: staged changes, unstaged tracked changes, and
+untracked files anywhere in the repository block the whole invocation.
+Git-ignored files are excluded. Use `--allow-uncommitted` for intentional dirty
+renders; `--check-only` and `--no-git-commit` do not bypass this check.
+The override does not change committed-history carryover or failure recovery,
+which can discard uncommitted files in the component output directory.
+Locked and local components do not trigger this check.
 
 ```sh
 git add <changed-component-config-and-source-paths> \

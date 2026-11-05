@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components/components_testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
@@ -23,6 +24,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 func TestReadLocklessComponents(t *testing.T) {
@@ -86,6 +88,144 @@ func (p *renderModeObservingPreparer) PrepareSources(
 	}
 
 	return p.err
+}
+
+func TestRenderComponentsRequiresCleanLocklessUpstreamRepository(t *testing.T) {
+	statusErr := errors.New("git status failed")
+
+	for _, testCase := range []struct {
+		name, status, wantError              string
+		allow, checkOnly, noGitCommit, mixed bool
+		statusErr                            error
+	}{
+		{name: "clean"},
+		{name: "unstaged tracked", status: " M tracked\n", wantError: "uncommitted or untracked files"},
+		{name: "staged tracked", status: "M  tracked\n", wantError: "uncommitted or untracked files"},
+		{name: "untracked", status: "?? scratch\n", wantError: "uncommitted or untracked files"},
+		{name: "explicit override", status: "?? scratch\n", allow: true},
+		{
+			name: "check-only still checks", status: " M tracked\n",
+			checkOnly: true, wantError: "uncommitted or untracked files",
+		},
+		{
+			name: "no-git-commit still checks", status: " M tracked\n",
+			noGitCommit: true, wantError: "uncommitted or untracked files",
+		},
+		{
+			name: "mixed selection stops before preparation", status: "?? scratch\n",
+			mixed: true, wantError: "uncommitted or untracked files",
+		},
+		{name: "status failure", statusErr: statusErr, wantError: "checking project repository"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := testutils.NewTestEnvWithoutLockfile(t)
+			if testCase.mixed {
+				env = testutils.NewTestEnv(t)
+				env.AddUpstreamComponent(t, "bash")
+				env.Config.LocklessComponents = map[string]bool{"curl": true}
+			}
+
+			env.Config.Components["curl"] = projectconfig.ComponentConfig{
+				Name: "curl",
+				Spec: projectconfig.SpecSource{
+					SourceType: projectconfig.SpecSourceTypeUpstream, UpstreamCommit: "configured-commit",
+				},
+			}
+			queried := false
+			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				queried = true
+
+				assert.Equal(t, []string{
+					"git", "-C", "/project", "status", "--porcelain=v1",
+					"--untracked-files=all", "--ignore-submodules=none",
+				}, cmd.Args)
+
+				return testCase.status, testCase.statusErr
+			}
+			started := false
+			original := newSourcePreparer
+			newSourcePreparer = func(
+				_ sourceproviders.SourceManager, _ opctx.FS, _ opctx.EventListener, _ opctx.DryRunnable,
+				_ ...sources.PreparerOption,
+			) (sources.SourcePreparer, error) {
+				started = true
+
+				return &renderModeObservingPreparer{
+					observe: func(_ components.Component) {},
+					err:     errors.New("stop after preflight"),
+				}, nil
+			}
+
+			t.Cleanup(func() { newSourcePreparer = original })
+
+			results, err := RenderComponents(env.Env, &RenderOptions{
+				ComponentFilter:   components.ComponentFilter{IncludeAllComponents: true},
+				OutputDir:         "/project/SPECS",
+				OutputDirExplicit: true,
+				AllowUncommitted:  testCase.allow,
+				CheckOnly:         testCase.checkOnly,
+				NoGitCommit:       testCase.noGitCommit,
+			})
+			assert.Equal(t, !testCase.allow, queried)
+
+			if testCase.wantError != "" {
+				require.ErrorContains(t, err, testCase.wantError)
+				assert.Empty(t, results)
+				assert.False(t, started, "refuse before fetching any selected component")
+
+				if testCase.statusErr != nil {
+					require.ErrorIs(t, err, statusErr)
+				} else {
+					assert.Contains(t, err.Error(), "--allow-uncommitted")
+				}
+			} else {
+				require.NoError(t, err)
+				assert.True(t, started)
+				require.Len(t, results, 1)
+				assert.Contains(t, results[0].Error, "stop after preflight")
+			}
+		})
+	}
+}
+
+func TestLocklessRenderWorktreeCheckScope(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		source   projectconfig.SpecSourceType
+		lockless bool
+		checked  bool
+	}{
+		{name: "locked upstream", source: projectconfig.SpecSourceTypeUpstream},
+		{name: "locked local", source: projectconfig.SpecSourceTypeLocal},
+		{name: "lockless local", source: projectconfig.SpecSourceTypeLocal, lockless: true},
+		{name: "lockless upstream", source: projectconfig.SpecSourceTypeUpstream, lockless: true, checked: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			env.Config.LocklessComponents = map[string]bool{"curl": testCase.lockless, "rust-asyncband": true}
+			comp := components_testutils.NewMockComponent(gomock.NewController(t))
+			comp.EXPECT().GetName().AnyTimes().Return("curl")
+			comp.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
+				Spec: projectconfig.SpecSource{SourceType: testCase.source},
+			})
+
+			queried := false
+			env.CmdFactory.RunAndGetOutputHandler = func(_ *exec.Cmd) (string, error) {
+				queried = true
+
+				return "?? scratch\n", nil
+			}
+			err := validateRenderComponents(env.Env, []components.Component{comp}, false)
+
+			assert.Equal(t, testCase.checked, queried)
+
+			if testCase.checked {
+				require.ErrorContains(t, err, "uncommitted or untracked files")
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
 }
 
 func TestLocklessRenderPreservesAllFilesWithoutMock(t *testing.T) {
