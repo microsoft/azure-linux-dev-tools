@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -1190,6 +1191,10 @@ upstream-commit = "aaaaaaa"
 				assert.False(t, testCase.noGitCommit, "no Git commands should run for --no-git-commit")
 
 				if cmd.Args[3] == renderTestDiffCommand {
+					if slices.Contains(cmd.Args, "--name-status") {
+						return "", nil
+					}
+
 					return renderTestSpecDiff, nil
 				}
 
@@ -1208,7 +1213,9 @@ upstream-commit = "aaaaaaa"
 			if testCase.noGitCommit {
 				assert.Empty(t, gitCommands)
 			} else {
-				assert.Equal(t, []string{"add", renderTestDiffCommand, "commit"}, gitCommands)
+				assert.Equal(t, []string{
+					"add", renderTestDiffCommand, "add", renderTestDiffCommand, "commit",
+				}, gitCommands)
 			}
 
 			assert.Equal(t, renderStatusOK, results[0].Status)
@@ -1478,9 +1485,12 @@ func TestCommitLocklessRenders_SkipsFailedComponents(t *testing.T) {
 
 	env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
 		commands = append(commands, cmd.Args)
-		assert.Equal(t, "SPECS/v/vim", cmd.Args[len(cmd.Args)-1])
 
-		if cmd.Args[3] == "diff" {
+		if cmd.Args[3] == renderTestDiffCommand {
+			if slices.Contains(cmd.Args, "--name-status") {
+				return "M\x00config.toml\x00", nil
+			}
+
 			return "SPECS/v/vim/vim.spec\n", nil
 		}
 
@@ -1501,8 +1511,105 @@ func TestCommitLocklessRenders_SkipsFailedComponents(t *testing.T) {
 	commitLocklessRenders(env.Env, prepared, results, false)
 	assert.Equal(t, "render failed", results[1].Error)
 	assert.Equal(t, renderStatusOK, results[2].Status)
-	require.Len(t, commands, 3)
-	assert.Equal(t, "commit", commands[2][3])
+	require.Len(t, commands, 5)
+	assert.Equal(t, []string{
+		"git", "-C", "/project", "add", "--all", "--", ".", ":(top,exclude,literal)SPECS",
+	}, commands[0])
+	assert.Equal(t, []string{
+		"git", "-C", "/project", "commit", "--only", "-m", "updated vim",
+		"--", "SPECS/v/vim", ":(top,literal)config.toml",
+	}, commands[4])
+}
+
+func TestCommitLocklessRenders_InputsOnlyInFirstCommit(t *testing.T) {
+	for _, testCase := range []struct {
+		name             string
+		empty, fail      bool
+		wantInputQueries int
+	}{
+		{name: "successful first commit", wantInputQueries: 1},
+		{name: "empty first attempt", empty: true, wantInputQueries: 2},
+		{name: "failed first commit", fail: true, wantInputQueries: 2},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			inputQueries := 0
+
+			var commits [][]string
+
+			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				switch cmd.Args[3] {
+				case "add":
+					if cmd.Args[len(cmd.Args)-1] == ":(top,exclude,literal)nested/rendered" {
+						assert.Equal(t, ".", cmd.Args[len(cmd.Args)-2])
+					}
+				case renderTestDiffCommand:
+					if slices.Contains(cmd.Args, "--name-status") {
+						inputQueries++
+
+						assert.Contains(t, cmd.Args, ":(top,exclude,literal)nested/rendered")
+						assert.Contains(t, cmd.Args, "--no-renames")
+						assert.Contains(t, cmd.Args, "-z")
+
+						if testCase.empty && inputQueries == 1 {
+							return "", nil
+						}
+
+						return "M\x00config.toml\x00A\x00 scratch[1].txt\x00D\x00removed.txt\x00", nil
+					}
+
+					if testCase.empty && slices.Contains(cmd.Args, "nested/rendered/c/curl") {
+						return "", nil
+					}
+
+					return "changed\n", nil
+				case "commit":
+					commits = append(commits, cmd.Args)
+					if testCase.fail && slices.Contains(cmd.Args, "update curl") {
+						return "", errors.New("first commit failed")
+					}
+				default:
+					t.Fatalf("unexpected Git command: %v", cmd.Args)
+				}
+
+				return "", nil
+			}
+			prepared := []*preparedComponent{
+				{index: 0, update: &locklessRenderUpdate{
+					repoRoot: "/project", path: "nested/rendered/c/curl", subject: "update curl",
+				}},
+				{index: 1, update: &locklessRenderUpdate{
+					repoRoot: "/project", path: "nested/rendered/v/vim", subject: "update vim",
+				}},
+			}
+			results := []*RenderResult{{Status: renderStatusOK}, {Status: renderStatusOK}}
+
+			commitLocklessRenders(env.Env, prepared, results, false)
+
+			assert.Equal(t, testCase.wantInputQueries, inputQueries)
+			require.NotEmpty(t, commits)
+			firstCommit := commits[0]
+			assert.Contains(t, firstCommit, ":(top,literal)config.toml")
+			assert.Contains(t, firstCommit, ":(top,literal) scratch[1].txt")
+			assert.Contains(t, firstCommit, ":(top,literal)removed.txt")
+
+			if !testCase.empty {
+				assert.Contains(t, firstCommit, "nested/rendered/c/curl")
+				assert.NotContains(t, firstCommit, "nested/rendered/v/vim")
+			}
+
+			lastCommit := commits[len(commits)-1]
+			assert.Contains(t, lastCommit, "nested/rendered/v/vim")
+			assert.NotContains(t, lastCommit, "nested/rendered/c/curl")
+			assert.Equal(t, renderStatusOK, results[1].Status)
+
+			if testCase.fail || testCase.empty {
+				assert.Contains(t, lastCommit, ":(top,literal)config.toml")
+			} else {
+				assert.NotContains(t, lastCommit, ":(top,literal)config.toml")
+			}
+		})
+	}
 }
 
 func TestCommitLocklessRender_PathOnlyAndNoEmptyCommits(t *testing.T) {
@@ -1514,7 +1621,7 @@ func TestCommitLocklessRender_PathOnlyAndNoEmptyCommits(t *testing.T) {
 
 			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
 				commands = append(commands, cmd.Args)
-				if cmd.Args[3] == "diff" && changed {
+				if cmd.Args[3] == renderTestDiffCommand && changed {
 					return renderTestSpecDiff, nil
 				}
 
@@ -1523,7 +1630,9 @@ func TestCommitLocklessRender_PathOnlyAndNoEmptyCommits(t *testing.T) {
 			update := &locklessRenderUpdate{
 				repoRoot: "/project", path: "SPECS/c/curl", subject: "updated curl", changes: "abc123 Fix",
 			}
-			require.NoError(t, commitLocklessRender(env.Env, update))
+			committed, err := commitLocklessRender(env.Env, update, false)
+			require.NoError(t, err)
+			assert.Equal(t, changed, committed)
 			assert.Equal(t, []string{"git", "-C", "/project", "add", "--all", "--", update.path}, commands[0])
 
 			if changed {

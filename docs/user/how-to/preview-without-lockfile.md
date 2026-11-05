@@ -297,9 +297,14 @@ existing output directory and moves all prepared entries except `.git` into
 its replacement. Files found only in the old output are not retained.
 Moves use filesystem renames, so the project work directory and rendered
 output must be on the same filesystem.
-The renderer then commits only the component output directory. The subject is
+The renderer then commits the component output directory. The subject is
 the same changelog comment, defaulting to `update <component-name>`; the body
-lists upstream changes, if any. Unrelated staged files are not committed.
+lists upstream changes, if any. The first successful automatic commit also
+includes all staged changes, unstaged tracked changes, and non-ignored untracked
+files outside `rendered-specs-dir` (or the active `--output-dir`). Other component
+directories and unrelated changes within the rendered output directory are
+excluded from that commit, even if already staged. Later component commits
+include only their own dist-git output.
 Unchanged Git content does not produce an empty commit.
 Pass `--no-git-commit` to skip automatic staging and committing while still
 rendering and bumping the spec. The rendered output remains available for review
@@ -319,6 +324,8 @@ contents from `HEAD`; otherwise, the directory remains absent.
 This recovery does not preserve uncommitted changes or untracked files in the
 replaced component directory, and uses no backup or index snapshot. Recovery
 errors are reported with the original render failure.
+Files outside the rendered output directory may remain staged if automatic
+committing fails; component recovery does not reset those paths.
 `--check-only` failures leave output untouched and fail the check.
 Locked rendering retains its failure marker behavior.
 

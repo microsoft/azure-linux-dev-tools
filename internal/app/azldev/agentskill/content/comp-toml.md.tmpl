@@ -96,6 +96,8 @@ used outside the lockless upstream render workflow. That workflow always runs
 host `rpmdev-bumpspec -c` before existing processing, accepts its `%autorelease`
 no-op, and automatically commits the component output. Lockless rendering skips
 synthetic history and its legacy release adjustment. Commit input TOML first.
+The first automatic commit also includes pending repository changes outside the
+rendered output directory; later commits contain only their component output.
 
 ## Render configuration
 

@@ -154,11 +154,16 @@ committed lock file can supply the old pin if that commit's top-level
 render still requires a configured pin.
 
 Rendering then replaces `{{ .RenderedSpecsDir }}/<first-char>/<name>/` and
-automatically commits only that directory. The subject is the same changelog
+automatically commits that directory. The first commit also includes all staged
+changes, unstaged tracked changes, and non-ignored untracked files outside the
+rendered output directory. Other rendered paths are excluded even if staged;
+later commits include only their component's dist-git changes.
+The subject is the same changelog
 comment, defaulting to `update <component-name>`, and the body contains upstream
 changes, if any.
 `--no-git-commit` skips automatic staging and committing, but still renders and bumps.
-It never includes unrelated staged files or creates empty commits. Configure
+It never creates empty commits. Files outside rendered output may remain staged
+if committing fails; component recovery does not reset them. Configure
 Git author identity and install host `rpmdevtools`, `rpm-build`, and `rpmautospec`
 as needed. `--check-only` never replaces output, creates rebuild timestamps, or commits.
 

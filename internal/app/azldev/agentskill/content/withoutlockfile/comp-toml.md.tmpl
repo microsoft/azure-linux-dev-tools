@@ -95,6 +95,8 @@ or `rpmautospec process-distgit`; RPM macros remain unexpanded and the
 adjustment are skipped during rendering.
 `--check-only` never creates project commits. Local components skip upstream
 carryover and automatic commits.
+The first automatic commit also includes pending repository changes outside the
+rendered output directory; later commits contain only their component output.
 
 azldev reads `lockless-components.txt` beside the top-level `azldev.toml`.
 Listed component names use the lockless workflow for every command;

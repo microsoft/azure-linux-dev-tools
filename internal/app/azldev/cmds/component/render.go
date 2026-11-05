@@ -90,9 +90,9 @@ upstream spec and last committed render before writing macros, applying overlays
 and updating sources. Overlays can override the prepared release and changelog.
 Compare output; unchanged renders require --no-change-rebuild to record a timestamp.
 Then run rpmdev-bumpspec -c with --changelog-comment (default: "update <component-name>").
-Commit only that directory with the same subject and upstream changes as the body.
---no-git-commit skips staging and committing. Both flags affect only lockless upstream
-components; unrelated staged files are excluded.
+Commit that directory with the same subject and upstream changes as the body.
+The first commit also includes all pending changes outside the rendered output directory.
+Later commits are component-only. --no-git-commit skips staging and committing.
 Output must be inside the project repository; configure Git author identity and
 install rpmdev-bumpspec. Commit updated upstream-commit TOML before rendering.
 --check-only stops before bumping, replacing output, or committing.

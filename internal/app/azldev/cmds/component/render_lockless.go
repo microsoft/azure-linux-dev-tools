@@ -864,13 +864,18 @@ func commitLocklessRenders(
 	}
 
 	// Serialize writes to the project index.
+	includeInputs := true
+
 	for _, prep := range prepared {
 		result := results[prep.index]
 
 		if prep.update != nil && !prep.update.noGitCommit && result.Status == renderStatusOK {
-			if err := commitLocklessRender(env, prep.update); err != nil {
+			committed, err := commitLocklessRender(env, prep.update, includeInputs)
+			if err != nil {
 				result.Status = renderStatusError
 				result.Error = err.Error()
+			} else if committed {
+				includeInputs = false
 			}
 		}
 
@@ -922,18 +927,30 @@ func restoreLocklessOutput(env *azldev.Env, prep *preparedComponent) error {
 	return nil
 }
 
-func commitLocklessRender(env *azldev.Env, update *locklessRenderUpdate) error {
-	if _, err := git.RunInDir(env, env, update.repoRoot, "add", "--all", "--", update.path); err != nil {
-		return fmt.Errorf("staging rendered component:\n%w", err)
+func commitLocklessRender(env *azldev.Env, update *locklessRenderUpdate, includeInputs bool) (bool, error) {
+	paths := []string{update.path}
+	if includeInputs {
+		inputs, err := stageLocklessRenderInputs(env, update)
+		if err != nil {
+			return false, err
+		}
+
+		paths = append(paths, inputs...)
 	}
 
-	diff, err := git.RunInDir(env, env, update.repoRoot, "diff", "--cached", "--name-only", "--", update.path)
+	if _, err := git.RunInDir(env, env, update.repoRoot, "add", "--all", "--", update.path); err != nil {
+		return false, fmt.Errorf("staging rendered component:\n%w", err)
+	}
+
+	diffArgs := append([]string{"diff", "--cached", "--name-only", "--"}, paths...)
+
+	diff, err := git.RunInDir(env, env, update.repoRoot, diffArgs...)
 	if err != nil {
-		return fmt.Errorf("checking staged render:\n%w", err)
+		return false, fmt.Errorf("checking staged render:\n%w", err)
 	}
 
 	if diff == "" {
-		return nil
+		return false, nil
 	}
 
 	args := []string{"commit", "--only", "-m", update.subject}
@@ -941,10 +958,38 @@ func commitLocklessRender(env *azldev.Env, update *locklessRenderUpdate) error {
 		args = append(args, "-m", update.changes)
 	}
 
-	args = append(args, "--", update.path)
+	args = append(args, "--")
+
+	args = append(args, paths...)
 	if _, err := git.RunInDir(env, env, update.repoRoot, args...); err != nil {
-		return fmt.Errorf("committing rendered component:\n%w", err)
+		return false, fmt.Errorf("committing rendered component:\n%w", err)
 	}
 
-	return nil
+	return true, nil
+}
+
+func stageLocklessRenderInputs(env *azldev.Env, update *locklessRenderUpdate) ([]string, error) {
+	renderedPath := filepath.ToSlash(filepath.Dir(filepath.Dir(update.path)))
+	exclusion := ":(top,exclude,literal)" + renderedPath
+
+	if _, err := git.RunInDir(env, env, update.repoRoot, "add", "--all", "--", ".", exclusion); err != nil {
+		return nil, fmt.Errorf("staging uncommitted files outside rendered specs:\n%w", err)
+	}
+
+	status, err := git.RunInDir(env, env, update.repoRoot,
+		"diff", "--cached", "--name-status", "--no-renames", "-z", "--", ".", exclusion)
+	if err != nil {
+		return nil, fmt.Errorf("checking staged files outside rendered specs:\n%w", err)
+	}
+
+	// With '--no-renames', NUL-delimited name/status output contains status/path pairs.
+	fields := strings.Split(status, "\x00")
+
+	var paths []string
+
+	for index := 1; index < len(fields); index += 2 {
+		paths = append(paths, ":(top,literal)"+fields[index])
+	}
+
+	return paths, nil
 }

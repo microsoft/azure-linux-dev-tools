@@ -61,7 +61,11 @@ Lockless failures never write `RENDER_FAILED`. Before replacement, output is
 untouched; failures after replacement starts clear the component directory and
 use Git to restore committed output, or leave no directory if none existed.
 Recovery discards uncommitted changes in that directory and keeps no backups.
-It replaces and automatically commits only the component output directory.
+It replaces and automatically commits the component output directory.
+The first commit also includes all staged changes, unstaged tracked changes,
+and non-ignored untracked files outside the rendered output directory.
+Other rendered paths are excluded even if staged; later commits include only
+their component's dist-git changes.
 `--changelog-comment` supplies the exact `rpmdev-bumpspec -c` value and commit
 subject, defaulting to `update <component-name>`.
 `--no-git-commit` skips automatic staging and committing, but still renders and bumps.

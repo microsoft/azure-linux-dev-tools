@@ -68,8 +68,11 @@ Recovery discards uncommitted changes in that directory and keeps no backups.
 It never uses mock or `rpmautospec process-distgit`; RPM macros remain unexpanded.
 It retains all prepared dist-git files except `.git`, without file filtering or
 `spectool` queries, and replaces and
-automatically commits only that component's output directory; unrelated staged
-files are excluded. `--changelog-comment` supplies the exact `rpmdev-bumpspec -c`
+automatically commits that component's output directory. The first commit also includes
+all staged changes, unstaged tracked changes, and non-ignored untracked files outside
+the rendered output directory. Other rendered paths are excluded even if staged;
+later commits include only their component's dist-git changes.
+`--changelog-comment` supplies the exact `rpmdev-bumpspec -c`
 value and commit subject, defaulting to `update <component-name>`.
 `--no-git-commit` skips automatic staging and committing, but still renders and bumps.
 Upstream changes remain in the Git commit body, not the changelog comment.
