@@ -55,7 +55,9 @@ then writes macros, applies overlays, and updates `sources`.
 Version detection and carryover use the upstream spec before overlays.
 Overlays can override the prepared release and changelog.
 Non-autorelease rendering then runs host `rpmdev-bumpspec`, without synthetic history or its legacy
-release adjustment. Lockless rendering
+release adjustment. A temporary process-local RPM wrapper sets `_sourcedir` and `_specdir`
+to the spec directory without changing `HOME` or editing the user's `.rpmmacros`;
+it is removed after the invocation, including on failure. Lockless rendering
 preserves the existing spaces and tabs after `Release:` when editing its value, and
 compares output before the final release bump; `--check-only` stops before that bump.
 Unchanged lockless renders require `--no-change-rebuild`; otherwise rendering errors

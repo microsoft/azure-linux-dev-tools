@@ -216,6 +216,16 @@ func TestSkillsDocumentDistGitRepo(t *testing.T) {
 	}
 }
 
+func TestSkillsDocumentLocklessRPMContext(t *testing.T) {
+	for _, withoutLockfile := range []bool{false, true} {
+		doc, err := agentskill.NewCatalog(withoutLockfile).SkillDocument("azldev", testParams())
+		require.NoError(t, err)
+		assert.Contains(t, doc, "temporary process-local RPM wrapper sets `_sourcedir` and `_specdir`")
+		assert.Contains(t, doc, "without changing `HOME` or editing the user's `.rpmmacros`")
+		assert.Contains(t, doc, "removed after the invocation")
+	}
+}
+
 func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
 	for _, withoutLockfile := range []bool{false, true} {
 		doc, err := agentskill.NewCatalog(withoutLockfile).SkillDocument("azldev", testParams())

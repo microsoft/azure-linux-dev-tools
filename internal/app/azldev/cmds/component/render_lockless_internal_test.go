@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -34,8 +35,9 @@ import (
 )
 
 const (
-	renderTestRevParse    = "rev-parse"
-	renderTestProjectRoot = "/project"
+	renderTestRevParse              = "rev-parse"
+	renderTestProjectRoot           = "/project"
+	renderTestWrapperCleanupFailure = "cleanup"
 )
 
 func renderTestSpec(version, release, changelog string) string {
@@ -1690,6 +1692,153 @@ func TestBumpLocklessSpec_Failures(t *testing.T) {
 			} else {
 				require.ErrorContains(t, err, "install 'rpmdevtools'")
 			}
+		})
+	}
+}
+
+func TestBumpLocklessSpec_ProcessLocalRPMContext(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(strconv.FormatBool(fail), func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			env.CmdFactory.RegisterCommandInSearchPath("rpmdev-bumpspec")
+
+			const path = "/working/spec dir's/curl.spec"
+
+			before := renderTestSpec("1", "1", "")
+			after := renderTestSpec("1", "2", "- Render message\n")
+
+			require.NoError(t, fileutils.WriteFile(env.TestFS, path, []byte(before), fileperms.PublicFile))
+
+			var wrapperDir string
+
+			env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+				assert.Equal(t, []string{"rpmdev-bumpspec", "-c", "Render message", path}, cmd.Args)
+				assert.Equal(t, filepath.Dir(path), cmd.Dir)
+				wrapperDir = filepath.SplitList(renderCommandEnvValue(cmd.Env, "PATH"))[0]
+				wrapper, err := fileutils.ReadFile(env.TestFS, filepath.Join(wrapperDir, "rpm"))
+				require.NoError(t, err)
+				assert.Contains(t, string(wrapper), "'_sourcedir /working/spec dir'\"'\"'s'")
+				assert.Contains(t, string(wrapper), "PATH=\"$RPMDEV_BUMPSPEC_ORIGINAL_PATH\"")
+				assert.Equal(t, env.OSEnv().Getenv("PATH"),
+					renderCommandEnvValue(cmd.Env, "RPMDEV_BUMPSPEC_ORIGINAL_PATH"))
+
+				inherited := (&exec.Cmd{}).Environ()
+				for _, key := range []string{"HOME", "LC_ALL", "TZ"} {
+					assert.Equal(t, renderCommandEnvValue(inherited, key), renderCommandEnvValue(cmd.Env, key))
+				}
+
+				if fail {
+					return errors.New("bumpspec failed")
+				}
+
+				return fileutils.WriteFile(env.TestFS, path, []byte(after), fileperms.PublicFile)
+			}
+
+			changed, err := bumpLocklessSpec(env.Env, path, &locklessRenderUpdate{subject: "Render message"})
+			if fail {
+				require.ErrorContains(t, err, "bumpspec failed")
+				assert.False(t, changed)
+			} else {
+				require.NoError(t, err)
+				assert.True(t, changed)
+			}
+
+			require.NotEmpty(t, wrapperDir)
+			exists, err := fileutils.Exists(env.TestFS, wrapperDir)
+			require.NoError(t, err)
+			assert.False(t, exists)
+		})
+	}
+}
+
+func renderCommandEnvValue(values []string, key string) string {
+	for _, value := range slices.Backward(values) {
+		if text, ok := strings.CutPrefix(value, key+"="); ok {
+			return text
+		}
+	}
+
+	return ""
+}
+
+func TestPrepareRenderBumpspecEnvironment_IsolatedInvocations(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	first := &exec.Cmd{Env: []string{"HOME=/user", "LC_ALL=custom", "TZ=custom", "KEEP=value"}}
+	second := &exec.Cmd{}
+	firstDir, err := prepareRenderBumpspecEnvironment(env.Env, first, "/first/curl.spec")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, env.TestFS.RemoveAll(firstDir)) })
+
+	secondDir, err := prepareRenderBumpspecEnvironment(env.Env, second, "/second/curl.spec")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, env.TestFS.RemoveAll(secondDir)) })
+
+	assert.NotEqual(t, firstDir, secondDir)
+
+	for _, item := range []string{"HOME=/user", "LC_ALL=custom", "TZ=custom", "KEEP=value"} {
+		assert.Contains(t, first.Env, item)
+	}
+
+	require.NoError(t, env.TestFS.RemoveAll(firstDir))
+
+	wrapper, err := fileutils.ReadFile(env.TestFS, filepath.Join(secondDir, "rpm"))
+	require.NoError(t, err)
+	assert.Contains(t, string(wrapper), "'_sourcedir /second'")
+	assert.NotContains(t, string(wrapper), "'_sourcedir /first'")
+}
+
+type renderBumpspecFaultFS struct {
+	afero.Fs
+	failure string
+	dir     string
+}
+
+func (fs *renderBumpspecFaultFS) OpenFile(name string, flag int, perm os.FileMode) (afero.File, error) {
+	if filepath.Base(name) == "rpm" {
+		fs.dir = filepath.Dir(name)
+		if fs.failure == "write" {
+			return nil, errors.New("injected wrapper write failure")
+		}
+	}
+
+	return fs.Fs.OpenFile(name, flag, perm)
+}
+
+func (fs *renderBumpspecFaultFS) RemoveAll(path string) error {
+	if path == fs.dir && fs.failure == renderTestWrapperCleanupFailure {
+		return errors.New("injected wrapper cleanup failure")
+	}
+
+	return fs.Fs.RemoveAll(path)
+}
+
+func TestBumpLocklessSpec_WrapperFilesystemFailures(t *testing.T) {
+	for _, failure := range []string{"write", renderTestWrapperCleanupFailure} {
+		t.Run(failure, func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			faultFS := &renderBumpspecFaultFS{Fs: env.TestFS, failure: failure}
+			env.TestFS = faultFS
+			env.CmdFactory.RegisterCommandInSearchPath("rpmdev-bumpspec")
+
+			path := "/working/curl.spec"
+			require.NoError(t, fileutils.WriteFile(env.TestFS, path,
+				[]byte(renderTestSpec("1", "1", "")), fileperms.PublicFile))
+
+			called := false
+			env.CmdFactory.RunHandler = func(_ *exec.Cmd) error {
+				called = true
+
+				return fileutils.WriteFile(env.TestFS, path,
+					[]byte(renderTestSpec("1", "2", "")), fileperms.PublicFile)
+			}
+
+			_, err := bumpLocklessSpec(env.Env, path, &locklessRenderUpdate{subject: "Render message"})
+			require.ErrorContains(t, err, "injected wrapper "+failure+" failure")
+			assert.Equal(t, failure == renderTestWrapperCleanupFailure, called)
+			require.NotEmpty(t, faultFS.dir)
+			exists, err := fileutils.Exists(env.TestFS, faultFS.dir)
+			require.NoError(t, err)
+			assert.Equal(t, failure == renderTestWrapperCleanupFailure, exists)
 		})
 	}
 }

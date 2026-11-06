@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -983,7 +984,7 @@ func writeNoChangeRebuild(env *azldev.Env, dir string) error {
 	return nil
 }
 
-func bumpLocklessSpec(env *azldev.Env, path string, update *locklessRenderUpdate) (bool, error) {
+func bumpLocklessSpec(env *azldev.Env, path string, update *locklessRenderUpdate) (changed bool, err error) {
 	before, err := fileutils.ReadFile(env.FS(), path)
 	if err != nil {
 		return false, fmt.Errorf("reading spec before release bump:\n%w", err)
@@ -1010,6 +1011,15 @@ func bumpLocklessSpec(env *azldev.Env, path string, update *locklessRenderUpdate
 	raw := exec.CommandContext(env, sources.RPMDevBumpspecBinary, "-c", update.subject, path)
 	raw.Dir = filepath.Dir(path)
 
+	wrapperDir, err := prepareRenderBumpspecEnvironment(env, raw, path)
+	if wrapperDir != "" {
+		defer fileutils.RemoveAllAndUpdateErrorIfNil(env.FS(), wrapperDir, &err)
+	}
+
+	if err != nil {
+		return false, err
+	}
+
 	var stderr bytes.Buffer
 
 	raw.Stderr = &stderr
@@ -1029,6 +1039,30 @@ func bumpLocklessSpec(env *azldev.Env, path string, update *locklessRenderUpdate
 	}
 
 	return !bytes.Equal(before, after), nil
+}
+
+func prepareRenderBumpspecEnvironment(env *azldev.Env, raw *exec.Cmd, specPath string) (string, error) {
+	dir, err := fileutils.MkdirTempInTempDir(env.FS(), "azldev-render-rpm-")
+	if err != nil {
+		return "", fmt.Errorf("creating temporary render RPM wrapper directory:\n%w", err)
+	}
+
+	if strings.ContainsRune(dir, os.PathListSeparator) {
+		return dir, fmt.Errorf("temporary RPM wrapper directory %#q contains the PATH separator", dir)
+	}
+
+	wrapper := sources.GenerateRPMDevBumpspecWrapper(sources.RPMDevBumpspecRequest{SpecPath: specPath})
+	if err := fileutils.WriteFile(env.FS(), filepath.Join(dir, "rpm"),
+		[]byte(wrapper), fileperms.PublicExecutable); err != nil {
+		return dir, fmt.Errorf("writing temporary render RPM wrapper:\n%w", err)
+	}
+
+	originalPath := env.OSEnv().Getenv("PATH")
+	raw.Env = append(raw.Environ(),
+		"PATH="+dir+string(os.PathListSeparator)+originalPath,
+		"RPMDEV_BUMPSPEC_ORIGINAL_PATH="+originalPath)
+
+	return dir, nil
 }
 
 func commitLocklessRenders(

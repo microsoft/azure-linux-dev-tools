@@ -306,6 +306,12 @@ before output replacement. Missing-comment finishing is serialized to prevent
 simultaneous editors.
 
 Local components and autorelease specs skip `rpmdev-bumpspec` entirely.
+For upstream non-autorelease specs, a temporary process-local RPM wrapper sets
+`_sourcedir` and `_specdir` to the spec's directory so sidecar macros resolve
+correctly. Rendering preserves your `HOME`, packager settings, locale, and
+timezone; it does not edit your `.rpmmacros`. The wrapper is removed after the
+invocation, including when bumpspec fails.
+
 When `--changelog-comment` is omitted, the prompt depends on how the message is used:
 
 | Component | Automatic Git commit | `--no-git-commit` |
