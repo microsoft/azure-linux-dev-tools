@@ -1210,20 +1210,24 @@ func TestPrepareComponentSources_LocalLocklessKeepsSpecAndSetsCommitState(t *tes
 
 func TestFinishLocalLocklessSpec_DoesNotBump(t *testing.T) {
 	for _, testCase := range []struct {
-		name             string
+		name, release    string
 		changed, rebuild bool
-		wantError        bool
+		wantError        error
+		wantMarker       bool
 	}{
-		{name: "changed", changed: true},
-		{name: "unchanged", wantError: true},
-		{name: "explicit rebuild", rebuild: true},
+		{name: "changed static", release: "7%{?dist}", changed: true},
+		{name: "unchanged static", release: "7%{?dist}", wantError: errLocalManualRebuild},
+		{name: "static rebuild refused", release: "7%{?dist}", rebuild: true, wantError: errLocalManualRebuild},
+		{name: "unchanged autorelease", release: "%autorelease -b 7", wantError: errNoRenderChanges},
+		{name: "autorelease rebuild", release: "%autorelease -b 7", rebuild: true, wantMarker: true},
+		{name: "changed autorelease", release: "%autorelease -b 7", changed: true, rebuild: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			env := testutils.NewTestEnv(t)
 			env.CmdFactory.RegisterCommandInSearchPath("date")
 
 			path := "/working/curl.spec"
-			content := renderTestSpec("1", "7%{?dist}", "* Keep local changelog\n")
+			content := renderTestSpec("1", testCase.release, "* Keep local changelog\n")
 			require.NoError(t, fileutils.WriteFile(env.TestFS, path, []byte(content), fileperms.PublicFile))
 			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
 				assert.Equal(t, []string{"date", "-Is"}, cmd.Args)
@@ -1238,11 +1242,11 @@ func TestFinishLocalLocklessSpec_DoesNotBump(t *testing.T) {
 
 			changed, err := finishLocklessSpec(env.Env, path, &locklessRenderUpdate{local: true, noGitCommit: true},
 				testCase.changed, testCase.rebuild)
-			if testCase.wantError {
-				require.ErrorIs(t, err, errNoRenderChanges)
+			if testCase.wantError != nil {
+				require.ErrorIs(t, err, testCase.wantError)
 			} else {
 				require.NoError(t, err)
-				assert.Equal(t, testCase.rebuild, changed)
+				assert.Equal(t, testCase.wantMarker, changed)
 			}
 
 			got, err := fileutils.ReadFile(env.TestFS, path)
@@ -1251,7 +1255,7 @@ func TestFinishLocalLocklessSpec_DoesNotBump(t *testing.T) {
 
 			exists, err := fileutils.Exists(env.TestFS, "/working/.no-change-rebuild")
 			require.NoError(t, err)
-			assert.Equal(t, testCase.rebuild, exists)
+			assert.Equal(t, testCase.wantMarker, exists)
 		})
 	}
 }
@@ -1612,7 +1616,7 @@ func TestFinishLocklessSpec_TimestampFailures(t *testing.T) {
 
 			const path = "/working/curl.spec"
 
-			original := renderTestSpec("1", "9", "")
+			original := renderTestSpec("1", "%autorelease -b 9", "")
 			require.NoError(t, fileutils.WriteFile(env.TestFS, path, []byte(original), fileperms.PublicFile))
 
 			if testCase.readOnly {

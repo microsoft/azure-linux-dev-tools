@@ -100,8 +100,11 @@ Overlays can override the prepared release and changelog.
 Carryover is not repeated after overlays, even if they change the version.
 Rendering compares output before the final release bump; `--check-only` stops before that bump.
 Unchanged lockless renders require `--no-change-rebuild`; otherwise rendering errors
-without replacing existing output. The flag records host `date -Is` output in
-`.no-change-rebuild` before bumping, only when no changes were detected. Comparison
+without replacing existing output. For unchanged autorelease components (upstream or local),
+the flag records host `date -Is` output in `.no-change-rebuild`.
+Upstream non-autorelease rebuilds proceed without a timestamp marker.
+Unchanged local non-autorelease components must manually update their release and changelog,
+even with `--no-change-rebuild`. Comparison
 ignores this root marker in both existing output and the working upstream checkout.
 Lockless failures never write `RENDER_FAILED`. Before replacement, output is
 untouched; failures after replacement starts clear the component directory and

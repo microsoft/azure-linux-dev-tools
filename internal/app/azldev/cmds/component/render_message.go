@@ -4,7 +4,6 @@
 package component
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,8 +14,6 @@ import (
 
 	"github.com/kballard/go-shellquote"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
-	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
-	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spec"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/git"
@@ -87,22 +84,11 @@ func prepareRenderMessage(env *azldev.Env, specPath string, update *locklessRend
 		return nil
 	}
 
-	content, err := fileutils.ReadFile(env.FS(), specPath)
+	autorelease, err := locklessSpecUsesAutorelease(env, specPath)
 	if err != nil {
-		return fmt.Errorf("reading spec for render message:\n%w", err)
+		return err
 	}
 
-	opened, err := spec.OpenSpec(bytes.NewReader(content))
-	if err != nil {
-		return fmt.Errorf("parsing spec for render message:\n%w", err)
-	}
-
-	release, err := opened.GetLastTag("", "Release")
-	if err != nil {
-		return fmt.Errorf("reading Release for render message:\n%w", err)
-	}
-
-	autorelease := sources.ReleaseUsesAutorelease(release)
 	if autorelease && update.noGitCommit {
 		return nil
 	}

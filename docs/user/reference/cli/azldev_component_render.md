@@ -29,7 +29,8 @@ use lock files.
 For lockless upstream components, prepare the changelog, then Release, using the
 upstream spec and last committed render before writing macros, applying overlays,
 and updating sources. Overlays can override the prepared release and changelog.
-Compare output; unchanged renders require --no-change-rebuild to record a timestamp.
+Compare output; --no-change-rebuild permits unchanged upstream renders and records
+a timestamp only for autorelease components (upstream or local).
 Non-autorelease specs use rpmdev-bumpspec -c with --changelog-comment, or edited text.
 Autorelease skips bumpspec. Missing messages are collected in an editor before
 bumping or replacing output; the final Git commit never prompts.
@@ -48,8 +49,9 @@ and reused for the macros file. Locked components keep their existing behavior.
 
 Local lockless components copy local files except the TOML defining the spec path.
 Their Release and changelog are never automatically modified, even with --rpmdev-bumpspec.
-They also reject unchanged renders unless --no-change-rebuild is provided, and
-automatically commit rendered output unless --no-git-commit is provided.
+Unchanged local non-autorelease components must manually update Release and changelog.
+Local autorelease components can use --no-change-rebuild to record a timestamp.
+Rendered output is automatically committed unless --no-git-commit is provided.
 For local components, --changelog-comment supplies only the Git commit message;
 without it, rendering collects the message in an editor before replacing output.
 --no-git-commit skips this prompt. Output must be inside the project repository.
@@ -99,7 +101,7 @@ azldev component render [flags]
       --fail-on-error[=true|false]          exit with error if any component fails to render (useful for CI)
   -f, --force[=true|false]                  allow overwriting existing rendered component directories
   -h, --help[=true|false]                   help for render
-      --no-change-rebuild[=true|false]      allow unchanged lockless renders by recording 'date -Is' output in '.no-change-rebuild'
+      --no-change-rebuild[=true|false]      allow unchanged upstream renders and local autorelease renders; record a timestamp only for autorelease
       --no-git-commit[=true|false]          leave lockless rendered output uncommitted without staging it
   -o, --output-dir string                   output directory for rendered specs (overrides rendered-specs-dir from config)
       --rpmdev-bumpspec[=true|false]        Use rpmdev-bumpspec instead of the legacy static release calculation

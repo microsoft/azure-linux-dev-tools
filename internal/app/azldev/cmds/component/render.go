@@ -57,8 +57,9 @@ rendering; Git-ignored files are excluded. --allow-uncommitted bypasses this che
 
 const renderLocalHelp = `Local lockless components copy local files except the TOML defining the spec path.
 Their Release and changelog are never automatically modified, even with --rpmdev-bumpspec.
-They also reject unchanged renders unless --no-change-rebuild is provided, and
-automatically commit rendered output unless --no-git-commit is provided.
+Unchanged local non-autorelease components must manually update Release and changelog.
+Local autorelease components can use --no-change-rebuild to record a timestamp.
+Rendered output is automatically committed unless --no-git-commit is provided.
 For local components, --changelog-comment supplies only the Git commit message;
 without it, rendering collects the message in an editor before replacing output.
 --no-git-commit skips this prompt. Output must be inside the project repository.`
@@ -100,7 +101,8 @@ use lock files.
 For lockless upstream components, prepare the changelog, then Release, using the
 upstream spec and last committed render before writing macros, applying overlays,
 and updating sources. Overlays can override the prepared release and changelog.
-Compare output; unchanged renders require --no-change-rebuild to record a timestamp.
+Compare output; --no-change-rebuild permits unchanged upstream renders and records
+a timestamp only for autorelease components (upstream or local).
 ` + renderMessageHelp + `
 The first commit also includes all pending changes outside the rendered output directory.
 Later commits are component-only. --no-git-commit skips staging and committing.
@@ -172,7 +174,7 @@ func addRenderOptions(cmd *cobra.Command, options *RenderOptions) {
 			"and 1 when any component would drift. With -a + --clean-stale, also fails "+
 			"on orphan rendered-spec directories. Intended for CI gates.")
 	cmd.Flags().BoolVar(&options.NoChangeRebuild, "no-change-rebuild", false,
-		"allow unchanged lockless renders by recording 'date -Is' output in '.no-change-rebuild'")
+		"allow unchanged upstream renders and local autorelease renders; record a timestamp only for autorelease")
 	cmd.Flags().StringVar(&options.ChangelogComment, "changelog-comment", "",
 		"Git commit message for lockless components and verbatim rpmdev-bumpspec -c comment "+
 			"for upstream non-autorelease specs (if omitted, prompt in an editor)")

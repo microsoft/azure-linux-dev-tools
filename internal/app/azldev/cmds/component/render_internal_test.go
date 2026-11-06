@@ -804,7 +804,7 @@ func TestFinishComponentRender_ComparisonBeforeBump(t *testing.T) {
 			dated := false
 			wantFinish := !testCase.checkOnly && !testCase.compareFail && !testCase.wantNoChanges
 			wantBump := wantFinish && !testCase.autorelease
-			wantMarker := wantFinish && !testCase.drift
+			wantMarker := wantFinish && !testCase.drift && testCase.autorelease
 
 			env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
 				assert.True(t, comparisonFS.compared, "comparison must precede the bump")
@@ -813,11 +813,9 @@ func TestFinishComponentRender_ComparisonBeforeBump(t *testing.T) {
 
 				assert.Equal(t, "rpmdev-bumpspec", cmd.Args[0])
 
-				if wantMarker {
-					marker, err := fileutils.ReadFile(baseFS, filepath.Join(filepath.Dir(stagedSpec), noChangeRebuildMarker))
-					require.NoError(t, err)
-					assert.Equal(t, timestamp, string(marker), "timestamp must be written before bumping")
-				}
+				markerExists, err := fileutils.Exists(baseFS, filepath.Join(filepath.Dir(stagedSpec), noChangeRebuildMarker))
+				require.NoError(t, err)
+				assert.False(t, markerExists, "static release bumps must not create a timestamp")
 
 				bumped := strings.Replace(original, "Release: 9\n", "Release: 10\n", 1)
 
@@ -836,7 +834,10 @@ func TestFinishComponentRender_ComparisonBeforeBump(t *testing.T) {
 			}
 			if !testCase.checkOnly {
 				env.CmdFactory.RegisterCommandInSearchPath("rpmdev-bumpspec")
-				env.CmdFactory.RegisterCommandInSearchPath("date")
+
+				if testCase.autorelease {
+					env.CmdFactory.RegisterCommandInSearchPath("date")
+				}
 			}
 
 			prep := &preparedComponent{

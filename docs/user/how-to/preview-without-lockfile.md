@@ -263,19 +263,23 @@ An error reading the current pin is fatal.
 It then compares the prepared tree with existing output, ignoring the root `.git`
 and any top-level `.no-change-rebuild` on both sides.
 `--check-only` stops here, before the final release bump.
-If normal rendering detects no changes, it returns an error indicating there
-has been no change since the last render, without replacing the existing output
-or writing a failure marker. To explicitly rebuild unchanged content,
+If normal rendering detects no changes, it returns an error without replacing
+the existing output or writing a failure marker. Unchanged local non-autorelease
+components must manually update their release and changelog; they fail even with
+`--no-change-rebuild`. To explicitly rebuild unchanged upstream content or a local
+autorelease component,
 pass `--no-change-rebuild`, a boolean switch taking no argument:
 
 ```bash
 azldev comp render -p curl --no-change-rebuild
 ```
 
-For an unchanged render with this flag, the tool runs host `date -Is` and writes
-its exact output to `.no-change-rebuild` at the working dist-git root before
-bumping upstream specs. Local specs are not bumped. The marker is then published
-and committed with the rendered files.
+For an unchanged autorelease component (upstream or local) with this flag, the
+tool runs host `date -Is` and writes its exact output to `.no-change-rebuild` at
+the working dist-git root. The marker is then published and committed with the
+rendered files. Unchanged upstream non-autorelease components instead proceed
+to the normal release/changelog bump without writing a timestamp marker.
+Local specs are never automatically bumped.
 The flag does not create a marker when comparison detects real changes.
 The root marker is ignored in both the working upstream checkout and existing
 output, even if its contents differ. Nested files with the same name are compared.

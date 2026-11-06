@@ -35,6 +35,10 @@ const noChangeRebuildMarker = ".no-change-rebuild"
 
 var errNoRenderChanges = errors.New("no change since the last render; use '--no-change-rebuild' to rebuild anyway")
 
+var errLocalManualRebuild = errors.New(
+	"local non-autorelease components must manually update their release and changelog before rendering again",
+)
+
 type locklessRenderUpdate struct {
 	repoRoot        string
 	path            string
@@ -831,11 +835,7 @@ func finishLocklessSpec(
 	env *azldev.Env, path string, update *locklessRenderUpdate, changed, noChangeRebuild bool,
 ) (bool, error) {
 	if !changed {
-		if !noChangeRebuild {
-			return false, errNoRenderChanges
-		}
-
-		if err := writeNoChangeRebuild(env, filepath.Dir(path)); err != nil {
+		if err := prepareLocklessRebuild(env, path, update.local, noChangeRebuild); err != nil {
 			return false, err
 		}
 	}
@@ -851,6 +851,46 @@ func finishLocklessSpec(
 	bumped, err := bumpLocklessSpec(env, path, update)
 
 	return !changed || bumped, err
+}
+
+func prepareLocklessRebuild(env *azldev.Env, path string, local, noChangeRebuild bool) error {
+	autorelease, err := locklessSpecUsesAutorelease(env, path)
+	if err != nil {
+		return err
+	}
+
+	if local && !autorelease {
+		return errLocalManualRebuild
+	}
+
+	if !noChangeRebuild {
+		return errNoRenderChanges
+	}
+
+	if !autorelease {
+		return nil
+	}
+
+	return writeNoChangeRebuild(env, filepath.Dir(path))
+}
+
+func locklessSpecUsesAutorelease(env *azldev.Env, path string) (bool, error) {
+	content, err := fileutils.ReadFile(env.FS(), path)
+	if err != nil {
+		return false, fmt.Errorf("reading spec for lockless render:\n%w", err)
+	}
+
+	opened, err := spec.OpenSpec(bytes.NewReader(content))
+	if err != nil {
+		return false, fmt.Errorf("parsing spec for lockless render:\n%w", err)
+	}
+
+	release, err := opened.GetLastTag("", "Release")
+	if err != nil {
+		return false, fmt.Errorf("reading Release for lockless render:\n%w", err)
+	}
+
+	return sources.ReleaseUsesAutorelease(release), nil
 }
 
 func writeNoChangeRebuild(env *azldev.Env, dir string) error {
