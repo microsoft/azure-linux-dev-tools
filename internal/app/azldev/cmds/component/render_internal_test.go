@@ -730,6 +730,7 @@ func TestFinishComponentRender_PreservesGitMetadata(t *testing.T) {
 			}
 			mockResults := map[string]*sources.ComponentMockResult{"curl": {}}
 
+			stubIncreasingRenderNEVR(t, env)
 			changed, err := finishComponentRender(env.Env, prep, mockResults, "/staging", true, testCase.checkOnly, false)
 			require.NoError(t, err)
 			assert.False(t, changed, "Git metadata alone must not count as rendered drift")
@@ -845,6 +846,7 @@ func TestFinishComponentRender_ComparisonBeforeBump(t *testing.T) {
 				lockless: true, update: &locklessRenderUpdate{subject: "updated curl"},
 			}
 
+			stubIncreasingRenderNEVR(t, env)
 			result := finishOneComponent(env.Env, prep,
 				map[string]*sources.ComponentMockResult{"curl": {}}, "/staging", true, testCase.checkOnly, testCase.noChangeRebuild)
 

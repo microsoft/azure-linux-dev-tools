@@ -24,6 +24,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
+	"github.com/microsoft/azure-linux-dev-tools/internal/rpm"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spec"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
@@ -38,6 +39,8 @@ var errNoRenderChanges = errors.New("no change since the last render; use '--no-
 var errLocalManualRebuild = errors.New(
 	"local non-autorelease components must manually update their release and changelog before rendering again",
 )
+
+var errRenderNEVRValidation = errors.New("lockless render NEVR validation failed")
 
 type locklessRenderUpdate struct {
 	repoRoot        string
@@ -891,6 +894,59 @@ func locklessSpecUsesAutorelease(env *azldev.Env, path string) (bool, error) {
 	}
 
 	return sources.ReleaseUsesAutorelease(release), nil
+}
+
+func requireRenderNEVRIncrease(env *azldev.Env, preparedDir string, prep *preparedComponent) error {
+	existing, err := queryRenderSpecNEVR(env, filepath.Join(prep.compOutputDir, prep.specFilename))
+	if err != nil {
+		return fmt.Errorf("%w: querying existing NEVR:\n%w", errRenderNEVRValidation, err)
+	}
+
+	rendered, err := queryRenderSpecNEVR(env, filepath.Join(preparedDir, prep.specFilename))
+	if err != nil {
+		return fmt.Errorf("%w: querying new NEVR:\n%w", errRenderNEVRValidation, err)
+	}
+
+	if existing.Name != rendered.Name || rendered.Version.Compare(&existing.Version) <= 0 {
+		return fmt.Errorf("%w: new NEVR must be higher than existing NEVR for the same package; "+
+			"existing %#q; new %#q", errRenderNEVRValidation,
+			existing.Name+"-"+existing.Version.String(), rendered.Name+"-"+rendered.Version.String())
+	}
+
+	return nil
+}
+
+func queryRenderSpecNEVR(env *azldev.Env, path string) (*rpm.SpecInfo, error) {
+	if err := prereqs.RequireExecutable(env, "rpmspec", nil); err != nil {
+		return nil, fmt.Errorf("lockless render NEVR validation requires 'rpmspec':\n%w", err)
+	}
+
+	dir := filepath.Dir(path)
+	raw := exec.CommandContext(env, "rpmspec", "-q", "--srpm",
+		"--define", "_sourcedir "+dir, "--define", "_specdir "+dir,
+		"--queryformat", rpm.SrpmQueryFormat, path)
+	raw.Dir = dir
+
+	var stderr bytes.Buffer
+
+	raw.Stderr = &stderr
+
+	command, err := env.Command(raw)
+	if err != nil {
+		return nil, fmt.Errorf("creating NEVR query for %#q:\n%w", path, err)
+	}
+
+	output, err := command.RunAndGetOutput(env)
+	if err != nil {
+		return nil, fmt.Errorf("querying NEVR for %#q (stderr: %#q):\n%w", path, stderr.String(), err)
+	}
+
+	info, err := rpm.ParseSrpmQueryOutput(path, output)
+	if err != nil {
+		return nil, fmt.Errorf("parsing NEVR query for %#q:\n%w", path, err)
+	}
+
+	return info, nil
 }
 
 func writeNoChangeRebuild(env *azldev.Env, dir string) error {

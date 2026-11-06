@@ -348,7 +348,19 @@ adjustment are skipped. The spec is **not** preprocessed with `rpmautospec proce
 No mock configuration is needed for lockless rendering.
 Comparison ignores the root `.git` entry without traversing or removing it;
 the working checkout retains its Git metadata until staging cleanup.
-After comparison and the final release bump, lockless rendering removes the
+After comparison and the final release bump, but immediately before removing
+existing output, lockless rendering queries the existing and new source-package
+NEVRs with host `rpmspec`. Queries expand each spec's macros using its own dist-git
+directory. The package name must match, and the new epoch/version/release must
+be strictly higher under RPM version ordering. Equal or lower NEVRs fail with
+both values in the error message; query failures also abort. These errors return
+a failing exit status even without `--fail-on-error`, and leave existing output
+untouched. First renders with no existing directory skip the check.
+`--check-only` and dry runs do not perform this replacement-time check.
+`--no-change-rebuild` does not bypass it: a timestamp-only autorelease rebuild
+still fails if its expanded NEVR has not increased.
+
+After successful validation, lockless rendering removes the
 existing output directory and moves all prepared entries except `.git` into
 its replacement. Files found only in the old output are not retained.
 Moves use filesystem renames, so the project work directory and rendered

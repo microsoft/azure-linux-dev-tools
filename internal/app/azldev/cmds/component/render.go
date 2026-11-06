@@ -68,7 +68,8 @@ const renderMessageHelp = `Non-autorelease specs use rpmdev-bumpspec -c with --c
 Autorelease skips bumpspec. Missing messages are collected in an editor before
 bumping or replacing output; the final Git commit never prompts.
 Autorelease with --no-git-commit needs no message and never prompts.
-Message prompts require both stdin and stdout to be interactive TTYs.`
+Message prompts require both stdin and stdout to be interactive TTYs.
+Before replacing existing lockless output, require a higher NEVR using host rpmspec.`
 
 // NewRenderCmd constructs a [cobra.Command] for the "component render" CLI subcommand.
 func NewRenderCmd() *cobra.Command {
@@ -387,7 +388,7 @@ func sortRenderResults(results []*RenderResult) {
 	})
 }
 
-// checkRenderErrors reports no-change refusals regardless of failOnError, and
+// checkRenderErrors reports no-change refusals and NEVR validation errors regardless of failOnError, and
 // other error or cancelled results only when failOnError is set.
 func checkRenderErrors(results []*RenderResult, failOnError bool) error {
 	var (
@@ -400,7 +401,7 @@ func checkRenderErrors(results []*RenderResult, failOnError bool) error {
 			continue
 		}
 
-		if errors.Is(result.renderErr, errNoRenderChanges) {
+		if errors.Is(result.renderErr, errNoRenderChanges) || errors.Is(result.renderErr, errRenderNEVRValidation) {
 			noChangeErrors = append(noChangeErrors, fmt.Errorf("%#q: %w", result.Component, result.renderErr))
 		}
 
@@ -993,6 +994,12 @@ func moveRenderedOutput(env *azldev.Env, tempDir string, prep *preparedComponent
 		return fmt.Errorf(
 			"output directory %#q already exists; use --force to overwrite",
 			componentOutputDir)
+	}
+
+	if exists && prep.lockless {
+		if err := requireRenderNEVRIncrease(env, tempDir, prep); err != nil {
+			return err
+		}
 	}
 
 	prep.outputExisted = exists

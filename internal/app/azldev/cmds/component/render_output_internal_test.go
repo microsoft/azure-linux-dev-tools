@@ -16,6 +16,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
+	"github.com/microsoft/azure-linux-dev-tools/internal/rpm"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spec"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/dirdiff"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
@@ -34,6 +35,150 @@ const (
 	renderTestOverwrite       = "overwrite"
 	renderTestSpecDiff        = "SPECS/c/curl/curl.spec\n"
 )
+
+func TestLocklessRenderNEVRBeforeReplacement(t *testing.T) {
+	for _, testCase := range []struct {
+		name, existing, rendered, newName string
+		reject, queryFails, toolMissing   bool
+	}{
+		{name: "numeric release increase", existing: "1-9", rendered: "1-10"},
+		{name: "equal", existing: "1-9", rendered: "1-9", reject: true},
+		{name: "version downgrade", existing: "2-1", rendered: "1-99", reject: true},
+		{name: "epoch increase", existing: "9-9", rendered: "1:1-1"},
+		{name: "epoch decrease", existing: "1:1-1", rendered: "9-9", reject: true},
+		{name: "prerelease downgrade", existing: "1-1", rendered: "1~rc1-2", reject: true},
+		{name: "name change", existing: "1-1", rendered: "2-1", newName: "other", reject: true},
+		{name: "query failure", existing: "1-1", rendered: "2-1", queryFails: true, reject: true},
+		{name: "missing rpmspec", existing: "1-1", rendered: "2-1", toolMissing: true, reject: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			setupRenderOutput(t, env.TestFS, true)
+
+			if !testCase.toolMissing {
+				env.CmdFactory.RegisterCommandInSearchPath("rpmspec")
+			}
+
+			prep := &preparedComponent{
+				lockless: true, specFilename: "curl.spec", compOutputDir: testRenderOutputDir,
+			}
+			existing, err := rpm.NewVersion(testCase.existing)
+			require.NoError(t, err)
+			rendered, err := rpm.NewVersion(testCase.rendered)
+			require.NoError(t, err)
+
+			newName := "curl"
+			if testCase.newName != "" {
+				newName = testCase.newName
+			}
+
+			queries := 0
+			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				queries++
+
+				assert.False(t, prep.outputTouched, "NEVR checks must precede removal and recovery state")
+				assertOriginalRenderOutput(t, env.TestFS, true)
+
+				dir := testRenderOutputDir
+
+				name, version := "curl", existing
+				if queries == 2 {
+					dir, name, version = "/staging/curl", newName, rendered
+				}
+
+				assert.Equal(t, dir, cmd.Dir)
+				assert.Equal(t, []string{
+					"rpmspec", "-q", "--srpm", "--define", "_sourcedir " + dir,
+					"--define", "_specdir " + dir, "--queryformat", rpm.SrpmQueryFormat,
+					filepath.Join(dir, "curl.spec"),
+				}, cmd.Args)
+
+				if testCase.queryFails {
+					return "", errors.New("rpmspec failed")
+				}
+
+				return "name=" + name + "\nepoch=" + strconv.Itoa(version.Epoch()) +
+					"\nversion=" + version.Version() + "\nrelease=" + version.Release() + "\n", nil
+			}
+
+			err = moveRenderedOutput(env.Env, "/staging/curl", prep, true)
+			if testCase.reject {
+				require.ErrorIs(t, err, errRenderNEVRValidation)
+				assertOriginalRenderOutput(t, env.TestFS, true)
+				assert.False(t, prep.outputTouched)
+
+				if !testCase.queryFails && !testCase.toolMissing {
+					require.ErrorContains(t, err, "existing `curl-"+testCase.existing+"`")
+					require.ErrorContains(t, err, "new `"+newName+"-"+testCase.rendered+"`")
+				}
+
+				for _, failOnError := range []bool{false, true} {
+					require.ErrorIs(t, checkRenderErrors([]*RenderResult{{
+						Component: "curl", Status: renderStatusError, renderErr: err,
+					}}, failOnError), errRenderNEVRValidation)
+				}
+			} else {
+				require.NoError(t, err)
+				assert.True(t, prep.outputTouched)
+
+				content, readErr := fileutils.ReadFile(env.TestFS, filepath.Join(testRenderOutputDir, "sidecar"))
+				require.NoError(t, readErr)
+				assert.Equal(t, "new sidecar", string(content))
+			}
+
+			switch {
+			case testCase.toolMissing:
+				assert.Zero(t, queries)
+			case testCase.queryFails:
+				assert.Equal(t, 1, queries)
+			default:
+				assert.Equal(t, 2, queries)
+			}
+		})
+	}
+}
+
+func TestRenderNEVRSkipsFirstAndLockedRenders(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		t.Run(strconv.FormatBool(existing), func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			setupRenderOutput(t, env.TestFS, existing)
+			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				t.Fatalf("must not query NEVR for first or locked output: %v", cmd.Args)
+
+				return "", nil
+			}
+			require.NoError(t, moveRenderedOutput(env.Env, "/staging/curl", &preparedComponent{
+				lockless: !existing, specFilename: "curl.spec", compOutputDir: testRenderOutputDir,
+			}, true))
+		})
+	}
+}
+
+func stubIncreasingRenderNEVR(t *testing.T, env *testutils.TestEnv) {
+	t.Helper()
+
+	env.CmdFactory.RegisterCommandInSearchPath("rpmspec")
+	original := env.CmdFactory.RunAndGetOutputHandler
+	env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+		if cmd.Args[0] == "rpmspec" {
+			release := "1"
+			if cmd.Dir == "/staging/curl" {
+				release = "2"
+			}
+
+			return "name=curl\nepoch=0\nversion=1\nrelease=" + release + "\n", nil
+		}
+
+		if original != nil {
+			return original(cmd)
+		}
+
+		t.Fatalf("unexpected command: %v", cmd.Args)
+
+		return "", nil
+	}
+}
 
 func writeOriginalRenderOutput(t *testing.T, fileSystem afero.Fs, root string) {
 	t.Helper()
@@ -128,6 +273,7 @@ func TestMoveLocklessOutput_PublicationFailure(t *testing.T) {
 					mockResult.Error = errors.New("injected processing failure")
 				}
 
+				stubIncreasingRenderNEVR(t, env)
 				result := finishOneComponent(env.Env, prep,
 					map[string]*sources.ComponentMockResult{"curl": mockResult},
 					"/staging", failure != renderTestOverwrite, false, false)
@@ -167,6 +313,7 @@ func TestCommitLocklessRenders_RestoresFailedOutput(t *testing.T) {
 
 				env.CmdFactory.RegisterCommandInSearchPath("rpmdev-bumpspec")
 				env.CmdFactory.RunHandler = func(_ *exec.Cmd) error { return nil }
+				stubIncreasingRenderNEVR(t, env)
 				result := finishOneComponent(env.Env, prepared[0],
 					map[string]*sources.ComponentMockResult{"curl": {}}, "/staging", true, false, false)
 				require.NoError(t, result.renderErr)

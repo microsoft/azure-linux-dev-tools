@@ -1272,6 +1272,14 @@ func assertCurlRenderCommit(t *testing.T, args []string, message string, provide
 	assert.Equal(t, wantArgs, args)
 }
 
+func finishPreparedCurlRender(t *testing.T, env *testutils.TestEnv, prep *preparedComponent) (bool, error) {
+	t.Helper()
+	stubIncreasingRenderNEVR(t, env)
+
+	return finishComponentRender(env.Env, prep,
+		map[string]*sources.ComponentMockResult{"curl": {}}, "/staging", true, false, false)
+}
+
 func TestPrepareComponentSources_ChangelogAndReleaseBeforeOverlays(t *testing.T) {
 	const releaseTag = "Release:        "
 
@@ -1441,8 +1449,7 @@ upstream-commit = "aaaaaaa"
 			assert.False(t, bumped)
 
 			prep.compOutputDir = "/project/SPECS/c/curl"
-			changed, err := finishComponentRender(env.Env, prep,
-				map[string]*sources.ComponentMockResult{"curl": {}}, "/staging", true, false, false)
+			changed, err := finishPreparedCurlRender(t, env, prep)
 			require.NoError(t, err)
 			assert.True(t, changed)
 			assert.True(t, bumped)

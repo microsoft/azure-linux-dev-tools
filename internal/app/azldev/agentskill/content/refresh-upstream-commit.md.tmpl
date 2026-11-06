@@ -110,6 +110,11 @@ Lockless failures never write `RENDER_FAILED`. Before replacement, output is
 untouched; failures after replacement starts clear the component directory and
 use Git to restore committed output, or leave no directory if none existed.
 Recovery discards uncommitted changes in that directory and keeps no backups.
+Before removing existing lockless output, host `rpmspec` compares source-package NEVRs.
+The new NEVR must be higher for the same package; equal/lower values fail with both NEVRs shown.
+Validation errors leave existing output untouched and fail even without `--fail-on-error`.
+First renders, `--check-only`, and dry runs skip this replacement-time check.
+`--no-change-rebuild` never bypasses the NEVR check.
 The comparison ignores the root `.git` without traversing or removing it.
 
 Changelog handling precedes release preparation and is independent of version
