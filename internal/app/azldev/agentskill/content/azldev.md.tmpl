@@ -42,13 +42,13 @@ then runs the refresh pipeline. The list is written in lexical order, one name
 per line without blank lines or duplicates. Existing names and lock files are retained.
 Already-listed components are still refreshed; a refresh failure leaves the list updated.
 
-Before preparing any selected lockless upstream component, rendering requires a
+Before preparing any selected lockless component, rendering requires a
 clean project Git repository: staged changes, unstaged tracked changes, and
 untracked files anywhere in the repository block the whole invocation.
 Git-ignored files are excluded. Use `--allow-uncommitted` for intentional dirty
 renders; `--check-only` and `--no-git-commit` do not bypass this check.
 The override does not change committed-history carryover or failure recovery.
-Locked and local components do not trigger this check.
+Only locked components do not trigger this check.
 
 For listed upstream components, rendering prepares the changelog before Release,
 then writes macros, applies overlays, and updates `sources`.
@@ -58,7 +58,7 @@ Non-autorelease rendering then runs host `rpmdev-bumpspec`, without synthetic hi
 release adjustment. Lockless rendering
 preserves the existing spaces and tabs after `Release:` when editing its value, and
 compares output before the final release bump; `--check-only` stops before that bump.
-Unchanged lockless upstream renders require `--no-change-rebuild`; otherwise rendering errors
+Unchanged lockless renders require `--no-change-rebuild`; otherwise rendering errors
 without replacing existing output. The flag records host `date -Is` output in
 `.no-change-rebuild` before bumping, only when no changes were detected. Comparison
 ignores this root marker in both existing output and the working upstream checkout.
@@ -86,8 +86,11 @@ bumps non-autorelease specs.
 Upstream changes remain in the Git commit body, not the changelog comment.
 Commit refreshed TOML before rendering. Configure Git author
 identity and install `rpmdevtools`. `--check-only` never creates project commits.
-Local components skip upstream carryover and automatic commits; locked
-components retain their existing render behavior.
+Local lockless components skip upstream carryover; Release and changelog remain unchanged.
+They exclude the TOML defining the local spec path, while retaining other TOML sidecars.
+They participate in unchanged-render checks and automatic commits.
+For local components, `--changelog-comment` supplies only the Git message; otherwise
+Git opens its own editor. Locked components retain their existing render behavior.
 
 Top-level commands in this build:
 

@@ -90,7 +90,7 @@ func (p *renderModeObservingPreparer) PrepareSources(
 	return p.err
 }
 
-func TestRenderComponentsRequiresCleanLocklessUpstreamRepository(t *testing.T) {
+func TestRenderComponentsRequiresCleanLocklessRepository(t *testing.T) {
 	statusErr := errors.New("git status failed")
 
 	for _, testCase := range []struct {
@@ -197,7 +197,7 @@ func TestLocklessRenderWorktreeCheckScope(t *testing.T) {
 	}{
 		{name: "locked upstream", source: projectconfig.SpecSourceTypeUpstream},
 		{name: "locked local", source: projectconfig.SpecSourceTypeLocal},
-		{name: "lockless local", source: projectconfig.SpecSourceTypeLocal, lockless: true},
+		{name: "lockless local", source: projectconfig.SpecSourceTypeLocal, lockless: true, checked: true},
 		{name: "lockless upstream", source: projectconfig.SpecSourceTypeUpstream, lockless: true, checked: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -238,7 +238,10 @@ func TestLocklessRenderPreservesAllFilesWithoutMock(t *testing.T) {
 		Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeLocal},
 	}
 	env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
-		t.Fatalf("unexpected query during lockless rendering: %v", cmd.Args)
+		assert.Equal(t, []string{
+			"git", "-C", "/project", "status", "--porcelain=v1",
+			"--untracked-files=all", "--ignore-submodules=none",
+		}, cmd.Args)
 
 		return "", nil
 	}

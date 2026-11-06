@@ -106,6 +106,11 @@ rendered output directory; later commits contain only their component output.
 
 ## Render configuration
 
+Local lockless components skip upstream carryover; Release and changelog remain unchanged.
+They exclude the TOML defining the local spec path, retain other TOML sidecars,
+and participate in unchanged-render checks and automatic commits.
+For local components, `--changelog-comment` supplies only the Git message.
+
 azldev reads `lockless-components.txt` beside the top-level `azldev.toml`.
 Listed component names use the lockless workflow for every command;
 all others use lock files. A missing or empty list means all components use

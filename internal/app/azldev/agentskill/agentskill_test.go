@@ -194,6 +194,9 @@ func TestComponentTomlSkillDocumentsPerComponentRenderModes(t *testing.T) {
 		assert.Contains(t, doc, "for every command")
 		assert.Contains(t, doc, "two blank lines and `#`-commented instructions")
 		assert.Contains(t, doc, "Blank lines and lines starting with `#` are removed, with no trailing newline")
+		assert.Contains(t, doc, "Local lockless components skip upstream carryover; Release and changelog remain unchanged")
+		assert.Contains(t, doc, "TOML defining the local spec path")
+		assert.Contains(t, doc, "participate in unchanged-render checks and automatic commits")
 	}
 }
 
@@ -225,7 +228,10 @@ func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
 		assert.Contains(t, doc, "Version detection and carryover use the upstream spec before overlays")
 		assert.Contains(t, doc, "Overlays can override the prepared release and changelog")
 		assert.Contains(t, doc, "compares output before the final release bump; `--check-only` stops before that bump")
-		assert.Contains(t, doc, "Unchanged lockless upstream renders require `--no-change-rebuild`")
+		assert.Contains(t, doc, "Unchanged lockless renders require `--no-change-rebuild`")
+		assert.Contains(t, doc, "Local lockless components skip upstream carryover; Release and changelog remain unchanged")
+		assert.Contains(t, doc, "TOML defining the local spec path")
+		assert.Contains(t, doc, "participate in unchanged-render checks and automatic commits")
 		assert.Contains(t, doc, "host `date -Is` output")
 		assert.Contains(t, doc, "ignores this root marker in both existing output and the working upstream checkout")
 		assert.Contains(t, doc, "Lockless failures never write `RENDER_FAILED`")
@@ -274,7 +280,7 @@ func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
 	assert.Contains(t, doc, "Version detection and carryover use the upstream spec before overlays")
 	assert.Contains(t, doc, "Overlays can override the prepared release and changelog")
 	assert.Contains(t, doc, "compares output before the final release bump; `--check-only` stops before that bump")
-	assert.Contains(t, doc, "Unchanged lockless upstream renders require `--no-change-rebuild`")
+	assert.Contains(t, doc, "Unchanged lockless renders require `--no-change-rebuild`")
 	assert.Contains(t, doc, "host `date -Is` output")
 	assert.Contains(t, doc, "ignores this root marker in both existing output and the working upstream checkout")
 	assert.Contains(t, doc, "Lockless failures never write `RENDER_FAILED`")

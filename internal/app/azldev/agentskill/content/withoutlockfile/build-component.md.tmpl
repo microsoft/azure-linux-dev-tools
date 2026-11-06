@@ -44,7 +44,7 @@ two trees). Builds can be slow — set generous timeouts.
 Finalize with `azldev comp refresh-upstream-commit -p <name>` before opening a PR (see the
 `azldev-refresh-upstream-commit` skill).
 
-For upstream components, uncommitted tracked changes or untracked files anywhere
+For all lockless components, uncommitted tracked changes or untracked files anywhere
 in the project repository require `comp render --allow-uncommitted`.
 Git-ignored files are excluded; the override does not change committed-history
 carryover or failure recovery. Commit inputs before the final render.

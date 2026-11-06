@@ -44,6 +44,13 @@ rpmautospec generate-changelog/calculate-release are used only when needed for
 release history or provenance. Provenance is captured before carryover/bumping
 and reused for the macros file. Locked components keep their existing behavior.
 
+Local lockless components copy local files except the TOML defining the spec path.
+Their Release and changelog are never automatically modified, even with --rpmdev-bumpspec.
+They also reject unchanged renders unless --no-change-rebuild is provided, and
+automatically commit rendered output unless --no-git-commit is provided.
+For local components, --changelog-comment supplies only the Git commit message;
+without it, Git prompts in its own editor. Output must be inside the project repository.
+
 When rendering all components (-a), the --clean-stale flag prunes orphan
 rendered-spec directories (per-component dirs that no longer correspond to
 any component in the project config). Per-component dirs that ARE in config
@@ -54,11 +61,10 @@ preserved. When using a custom output directory (--output-dir), --force is
 required alongside --clean-stale as a safety measure. This flag is only
 valid with -a.
 
-Before rendering any lockless upstream component, require a clean Git repository.
+Before rendering any lockless component, require a clean Git repository.
 Uncommitted tracked changes and untracked files anywhere in the repository block
 rendering; Git-ignored files are excluded. --allow-uncommitted bypasses this check.
---check-only and --no-git-commit do not bypass it. Locked and local components are
-unaffected.
+--check-only and --no-git-commit do not bypass it. Locked components are unaffected.
 
 ```
 azldev component render [flags]
@@ -81,8 +87,8 @@ azldev component render [flags]
 
 ```
   -a, --all-components[=true|false]         Include all components
-      --allow-uncommitted[=true|false]      allow lockless upstream rendering with uncommitted or untracked files in the project repository
-      --changelog-comment string            comment passed verbatim to rpmdev-bumpspec -c and used as the Git commit message for lockless upstream components (if omitted, prompt in an editor)
+      --allow-uncommitted[=true|false]      allow lockless rendering with uncommitted or untracked files in the project repository
+      --changelog-comment string            Git commit message for lockless components and verbatim rpmdev-bumpspec -c comment for upstream non-autorelease specs (if omitted, prompt in an editor)
       --check-only[=true|false]             render to a staging area and compare against the existing on-disk output without modifying the output directory. Exits 0 when nothing would change and 1 when any component would drift. With -a + --clean-stale, also fails on orphan rendered-spec directories. Intended for CI gates.
       --clean-stale[=true|false]            prune rendered-spec directories that no longer correspond to a configured component (only with -a; requires -f with -o). Top-level non-component siblings are preserved.
   -p, --component stringArray               Component name pattern
@@ -90,8 +96,8 @@ azldev component render [flags]
       --fail-on-error[=true|false]          exit with error if any component fails to render (useful for CI)
   -f, --force[=true|false]                  allow overwriting existing rendered component directories
   -h, --help[=true|false]                   help for render
-      --no-change-rebuild[=true|false]      allow unchanged lockless upstream renders by recording 'date -Is' output in '.no-change-rebuild'
-      --no-git-commit[=true|false]          leave lockless upstream rendered output uncommitted without staging it
+      --no-change-rebuild[=true|false]      allow unchanged lockless renders by recording 'date -Is' output in '.no-change-rebuild'
+      --no-git-commit[=true|false]          leave lockless rendered output uncommitted without staging it
   -o, --output-dir string                   output directory for rendered specs (overrides rendered-specs-dir from config)
       --rpmdev-bumpspec[=true|false]        Use rpmdev-bumpspec instead of the legacy static release calculation
       --skip-lock-validation[=true|false]   skip lock file consistency checks

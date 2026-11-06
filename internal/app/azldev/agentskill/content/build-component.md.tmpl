@@ -47,7 +47,7 @@ Prefer `comp render` for quick overlay verification; use `comp diff-sources` to 
 exact overlay effect (it fetches sources once, applies overlays to a copy, and diffs the
 two trees). Builds can be slow — set generous timeouts.
 
-For lockless upstream components, uncommitted tracked changes or untracked files
+For all lockless components, uncommitted tracked changes or untracked files
 anywhere in the project repository require `comp render --allow-uncommitted`.
 Git-ignored files are excluded; the override does not change committed-history
 carryover or failure recovery. Commit inputs before the final render (see the

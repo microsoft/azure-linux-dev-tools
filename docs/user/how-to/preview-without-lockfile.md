@@ -133,17 +133,22 @@ Commit the refreshed TOML before rendering: rendering compares the upstream pins
 from committed configuration. Lockless rendering neither generates synthetic
 history nor expands `%autorelease` or `%autochangelog`.
 
-## Render and Commit an Upstream Component
+## Render and Commit a Component
 
-The following process applies only to **upstream components selected as
-lockless**. Local components skip the upstream release/changelog carryover and
-automatic commit steps. All lockless rendering runs on the host without mock;
+The following process applies to **all components selected as lockless**.
+Local components skip upstream-history queries and release/changelog carryover;
+their Release and changelog are never automatically modified, including with
+`--rpmdev-bumpspec`. They copy local files except the TOML defining the local spec
+path, retain other TOML sidecars, and participate in unchanged-render checks and
+automatic commits. For local components, `--changelog-comment` supplies only the
+Git commit message; without it, Git opens its own editor.
+All lockless rendering runs on the host without mock;
 components using lock files retain their existing mock-based rendering.
 
 Before any upstream checkout or component preparation, rendering checks the
 entire project Git repository for staged changes, unstaged tracked changes, and
 untracked files. Git-ignored files do not block rendering. If any selected
-component is lockless and upstream, a dirty repository stops the whole invocation.
+component is lockless, a dirty repository stops the whole invocation.
 Commit or remove those changes first, or explicitly bypass this check:
 
 ```sh
@@ -154,9 +159,10 @@ azldev comp render -p <name> --allow-uncommitted
 `--allow-uncommitted` is specified. The override bypasses only the cleanliness
 check: carryover and upstream-change comparison still use committed history,
 and failure recovery can discard uncommitted files in the component output
-directory. Locked and local components do not trigger this check.
+directory. Locked components do not trigger this check.
 
-The renderer clones only the branch selected by the component's effective
+For upstream components, the renderer clones only the branch selected by the
+component's effective
 `spec.upstream-distro` (or the project default) into temporary storage. The
 resolved distro version's `dist-git-branch` supplies the branch name. The clone
 retains that branch's full history, not every upstream branch, so pinned commits
@@ -258,7 +264,7 @@ and any top-level `.no-change-rebuild` on both sides.
 `--check-only` stops here, before the final release bump.
 If normal rendering detects no changes, it returns an error indicating there
 has been no change since the last render, without replacing the existing output
-or writing a failure marker. To explicitly rebuild unchanged upstream content,
+or writing a failure marker. To explicitly rebuild unchanged content,
 pass `--no-change-rebuild`, a boolean switch taking no argument:
 
 ```bash
@@ -267,13 +273,14 @@ azldev comp render -p curl --no-change-rebuild
 
 For an unchanged render with this flag, the tool runs host `date -Is` and writes
 its exact output to `.no-change-rebuild` at the working dist-git root before
-bumping. The marker is then published and committed with the rendered files.
+bumping upstream specs. Local specs are not bumped. The marker is then published
+and committed with the rendered files.
 The flag does not create a marker when comparison detects real changes.
 The root marker is ignored in both the working upstream checkout and existing
 output, even if its contents differ. Nested files with the same name are compared.
 
 Changed renders, or explicitly requested no-change rebuilds, then invoke host
-`rpmdev-bumpspec -c` **only for non-autorelease specs**, with the exact
+`rpmdev-bumpspec -c` **only for upstream non-autorelease specs**, with the exact
 `--changelog-comment` value. There is no default comment. If the flag is omitted,
 rendering opens `$EDITOR` (including configured arguments), or a local editor
 (`editor`, `sensible-editor`, `vi`, or `nano`), to obtain the entry. The editor
@@ -287,7 +294,8 @@ An edited message containing only ignored lines or editor failure aborts renderi
 before output replacement. Missing-comment finishing is serialized to prevent
 simultaneous editors.
 
-Autorelease specs skip `rpmdev-bumpspec` entirely. With `--changelog-comment`,
+Local components and autorelease specs skip `rpmdev-bumpspec` entirely.
+With `--changelog-comment`,
 Git uses the supplied message; without it, Git opens its own configured editor
 to obtain the commit message, using a template containing upstream changes.
 `--no-git-commit` skips that Git prompt, but non-autorelease specs still need a
@@ -308,7 +316,8 @@ Release edits preserve the existing spaces and tabs between `Release:` and its
 value, including during overlays and carryover, so aligned spec headers stay aligned
 with either spec editor.
 Rendered output retains all prepared dist-git files except `.git`, including
-unreferenced sidecars, hidden files, and subdirectories.
+unreferenced sidecars, hidden files, and subdirectories. Local spec-defining TOML
+files are excluded during copying.
 Lockless rendering does not run `spectool` or filter files; `render.skip-file-filter`
 has no effect on lockless components. Synthetic history and its legacy release
 adjustment are skipped. The spec is **not** preprocessed with `rpmautospec process-distgit`:
@@ -333,8 +342,8 @@ include only their own dist-git output.
 Unchanged Git content does not produce an empty commit.
 Pass `--no-git-commit` to skip automatic staging and committing while still
 rendering and bumping non-autorelease specs. The rendered output remains available for review
-and manual commit. Both flags affect only lockless upstream components;
-locked and local rendering retain their existing behavior.
+and manual commit. These flags affect all lockless components;
+locked rendering retains its existing behavior. Local Release/changelog are not bumped.
 
 ```bash
 azldev comp render -p curl --changelog-comment "Fix curl patches" --no-git-commit
@@ -370,7 +379,7 @@ required by the renderer with `--no-git-commit`.
 performs the final `rpmdev-bumpspec` invocation, replaces rendered files, or
 creates project commits. `--check-only` also never creates a rebuild timestamp,
 even with `--no-change-rebuild`. The no-change refusal and rebuild flag apply only
-to lockless upstream components; local and locked components retain their existing
+to all lockless components; locked components retain their existing
 behavior. Change reporting includes a forced rebuild marker and changes made by
 the final bump.
 

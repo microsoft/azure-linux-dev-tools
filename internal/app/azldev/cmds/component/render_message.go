@@ -26,7 +26,7 @@ const renderChangelogTemplate = "\n\n" +
 func renderFinishConcurrency(env *azldev.Env, prepared []*preparedComponent, checkOnly bool) int {
 	if !checkOnly && !env.DryRun() {
 		for _, prep := range prepared {
-			if prep.update != nil && !prep.update.subjectProvided && prep.update.subject == "" {
+			if prep.update != nil && !prep.update.local && !prep.update.subjectProvided && prep.update.subject == "" {
 				return 1
 			}
 		}

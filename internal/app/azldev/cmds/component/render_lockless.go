@@ -42,6 +42,7 @@ type locklessRenderUpdate struct {
 	changes         string
 	noGitCommit     bool
 	subjectProvided bool
+	local           bool
 }
 
 type lastRender struct {
@@ -75,8 +76,7 @@ func validateRenderComponents(
 	}
 
 	for _, comp := range comps {
-		if !env.ComponentWithoutLockfile(comp.GetName()) ||
-			comp.GetConfig().Spec.SourceType != projectconfig.SpecSourceTypeUpstream {
+		if !env.ComponentWithoutLockfile(comp.GetName()) {
 			continue
 		}
 
@@ -101,24 +101,14 @@ func prepareLocklessRender(
 	env *azldev.Env, comp components.Component,
 	dir, outputDir string, editor spec.EditorMode,
 ) (*locklessRenderUpdate, error) {
-	repo, root, err := openRenderRepo(env)
+	repo, update, err := prepareLocklessRenderOutput(env, outputDir)
 	if err != nil {
 		return nil, err
 	}
 
-	path, err := git.RepoRelPath(root, outputDir)
-	if err != nil {
-		return nil, fmt.Errorf("lockless render output must be inside the project repository:\n%w", err)
-	}
-
-	history, err := readLastRender(env, repo, root, path, comp.GetName())
+	history, err := readLastRender(env, repo, update.repoRoot, update.path, comp.GetName())
 	if err != nil {
 		return nil, fmt.Errorf("reading committed render state:\n%w", err)
-	}
-
-	update := &locklessRenderUpdate{
-		repoRoot: root,
-		path:     path,
 	}
 
 	_, opened, err := openLocklessSpec(env, dir, comp.GetName(), editor)
@@ -140,6 +130,37 @@ func prepareLocklessRender(
 	}
 
 	return update, nil
+}
+
+func prepareFetchedLocklessRender(
+	env *azldev.Env, comp components.Component, dir, outputDir string, editor spec.EditorMode,
+) (*locklessRenderUpdate, error) {
+	if comp.GetConfig().Spec.SourceType != projectconfig.SpecSourceTypeLocal {
+		return prepareLocklessRender(env, comp, dir, outputDir, editor)
+	}
+
+	_, update, err := prepareLocklessRenderOutput(env, outputDir)
+	if update != nil {
+		update.local = true
+	}
+
+	return update, err
+}
+
+func prepareLocklessRenderOutput(
+	env *azldev.Env, outputDir string,
+) (repo *gogit.Repository, update *locklessRenderUpdate, err error) {
+	repo, root, err := openRenderRepo(env)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	path, err := git.RepoRelPath(root, outputDir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("lockless render output must be inside the project repository:\n%w", err)
+	}
+
+	return repo, &locklessRenderUpdate{repoRoot: root, path: path}, nil
 }
 
 func readLastRender(
@@ -817,6 +838,10 @@ func finishLocklessSpec(
 		if err := writeNoChangeRebuild(env, filepath.Dir(path)); err != nil {
 			return false, err
 		}
+	}
+
+	if update.local {
+		return !changed, nil
 	}
 
 	bumped, err := bumpLocklessSpec(env, path, update)

@@ -50,11 +50,17 @@ func renderOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
 	parentCmd.AddCommand(NewRenderCmd())
 }
 
-const renderWorktreeHelp = `Before rendering any lockless upstream component, require a clean Git repository.
+const renderWorktreeHelp = `Before rendering any lockless component, require a clean Git repository.
 Uncommitted tracked changes and untracked files anywhere in the repository block
 rendering; Git-ignored files are excluded. --allow-uncommitted bypasses this check.
---check-only and --no-git-commit do not bypass it. Locked and local components are
-unaffected.`
+--check-only and --no-git-commit do not bypass it. Locked components are unaffected.`
+
+const renderLocalHelp = `Local lockless components copy local files except the TOML defining the spec path.
+Their Release and changelog are never automatically modified, even with --rpmdev-bumpspec.
+They also reject unchanged renders unless --no-change-rebuild is provided, and
+automatically commit rendered output unless --no-git-commit is provided.
+For local components, --changelog-comment supplies only the Git commit message;
+without it, Git prompts in its own editor. Output must be inside the project repository.`
 
 // NewRenderCmd constructs a [cobra.Command] for the "component render" CLI subcommand.
 func NewRenderCmd() *cobra.Command {
@@ -101,7 +107,7 @@ The spec retains its RPM macros, including %autorelease and %autochangelog.
 All prepared files except .git are retained, without filtering or spectool. Host
 rpmautospec generate-changelog/calculate-release are used only when needed for
 release history or provenance. Provenance is captured before carryover/bumping
-and reused for the macros file. Locked components keep their existing behavior.
+and reused for the macros file. Locked components keep their existing behavior.` + "\n\n" + renderLocalHelp + `
 
 When rendering all components (-a), the --clean-stale flag prunes orphan
 rendered-spec directories (per-component dirs that no longer correspond to
@@ -161,14 +167,14 @@ func addRenderOptions(cmd *cobra.Command, options *RenderOptions) {
 			"and 1 when any component would drift. With -a + --clean-stale, also fails "+
 			"on orphan rendered-spec directories. Intended for CI gates.")
 	cmd.Flags().BoolVar(&options.NoChangeRebuild, "no-change-rebuild", false,
-		"allow unchanged lockless upstream renders by recording 'date -Is' output in '.no-change-rebuild'")
+		"allow unchanged lockless renders by recording 'date -Is' output in '.no-change-rebuild'")
 	cmd.Flags().StringVar(&options.ChangelogComment, "changelog-comment", "",
-		"comment passed verbatim to rpmdev-bumpspec -c and used as the Git commit message "+
-			"for lockless upstream components (if omitted, prompt in an editor)")
+		"Git commit message for lockless components and verbatim rpmdev-bumpspec -c comment "+
+			"for upstream non-autorelease specs (if omitted, prompt in an editor)")
 	cmd.Flags().BoolVar(&options.NoGitCommit, "no-git-commit", false,
-		"leave lockless upstream rendered output uncommitted without staging it")
+		"leave lockless rendered output uncommitted without staging it")
 	cmd.Flags().BoolVar(&options.AllowUncommitted, "allow-uncommitted", false,
-		"allow lockless upstream rendering with uncommitted or untracked files in the project repository")
+		"allow lockless rendering with uncommitted or untracked files in the project repository")
 	addRPMDevBumpspecFlag(cmd, &options.RPMDevBumpspec)
 
 	// --check-only is a read-only diff against on-disk state; --fail-on-error
@@ -612,7 +618,7 @@ func prepareComponentSources(
 		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)),
 	)
 	if lockless {
-		preparerOpts = append(preparerOpts, sources.WithoutSyntheticHistory(),
+		preparerOpts = append(preparerOpts, sources.WithoutSyntheticHistory(), sources.WithSkipLocalSpecConfig(),
 			sources.WithAutoreleaseResolver(hostRenderProcessor{env: env}))
 	} else {
 		preparerOpts = append(preparerOpts, sources.WithMockProcessor(mockProcessor))
@@ -620,18 +626,18 @@ func prepareComponentSources(
 
 	var update *locklessRenderUpdate
 
-	if lockless && comp.GetConfig().Spec.SourceType == projectconfig.SpecSourceTypeUpstream {
+	if lockless {
 		preparerOpts = append(preparerOpts, sources.WithFetchedSources(
 			func(_ context.Context, fetched components.Component, dir string) error {
 				var prepErr error
 				//nolint:contextcheck // The callback context is the captured preparation env.
-				update, prepErr = prepareLocklessRender(env, fetched, dir, compOutputDir, specEditor)
+				update, prepErr = prepareFetchedLocklessRender(env, fetched, dir, compOutputDir, specEditor)
 
 				return prepErr
 			}))
 	}
 
-	if rpmDevBumpspec {
+	if rpmDevBumpspec && (!lockless || comp.GetConfig().Spec.SourceType != projectconfig.SpecSourceTypeLocal) {
 		preparerOpts = append(preparerOpts, sources.WithRPMDevBumpspec(env, env.WorkDir(), ""))
 	}
 

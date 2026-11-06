@@ -165,17 +165,17 @@ func distGitRepoOutputPath(env *azldev.Env, output string) (string, error) {
 }
 
 func validateDistGitRepoOutput(env *azldev.Env, repoRoot, output string) error {
-	if _, err := repoRelPath(output, repoRoot); err == nil {
+	if _, err := git.RepoRelPath(output, repoRoot); err == nil {
 		return fmt.Errorf("output directory %#q must not contain the source repository", output)
 	}
 
 	if home := env.OSEnv().Getenv("HOME"); home != "" {
-		if _, err := repoRelPath(output, home); err == nil {
+		if _, err := git.RepoRelPath(output, home); err == nil {
 			return fmt.Errorf("output directory %#q must not contain the home directory", output)
 		}
 	}
 
-	if _, err := repoRelPath(filepath.Join(repoRoot, ".git"), output); err == nil {
+	if _, err := git.RepoRelPath(filepath.Join(repoRoot, ".git"), output); err == nil {
 		return fmt.Errorf("output directory %#q must not be inside source Git metadata", output)
 	}
 
@@ -188,11 +188,11 @@ func validateDistGitRepoOutput(env *azldev.Env, repoRoot, output string) error {
 		gitDir = filepath.Join(env.ProjectDir(), gitDir)
 	}
 
-	if _, err := repoRelPath(output, gitDir); err == nil {
+	if _, err := git.RepoRelPath(output, gitDir); err == nil {
 		return fmt.Errorf("output directory %#q must not contain source Git metadata", output)
 	}
 
-	if _, err := repoRelPath(gitDir, output); err == nil {
+	if _, err := git.RepoRelPath(gitDir, output); err == nil {
 		return fmt.Errorf("output directory %#q must not be inside source Git metadata", output)
 	}
 

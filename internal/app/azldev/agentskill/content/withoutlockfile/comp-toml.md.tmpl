@@ -98,8 +98,11 @@ needed, and configure Git author identity. Lockless rendering never uses mock
 or `rpmautospec process-distgit`; RPM macros remain unexpanded and the
 `changelog` sidecar is preserved. Synthetic history and its legacy release
 adjustment are skipped during rendering.
-`--check-only` never creates project commits. Local components skip upstream
-carryover and automatic commits.
+`--check-only` never creates project commits.
+Local lockless components skip upstream carryover; Release and changelog remain unchanged.
+They exclude the TOML defining the local spec path, retain other TOML sidecars,
+and participate in unchanged-render checks and automatic commits.
+For local components, `--changelog-comment` supplies only the Git message.
 The first automatic commit also includes pending repository changes outside the
 rendered output directory; later commits contain only their component output.
 

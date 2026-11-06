@@ -33,7 +33,10 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-const renderTestRevParse = "rev-parse"
+const (
+	renderTestRevParse    = "rev-parse"
+	renderTestProjectRoot = "/project"
+)
 
 func renderTestSpec(version, release, changelog string) string {
 	return fmt.Sprintf("Name: curl\nVersion: %s\nRelease: %s\nSummary: Test\nLicense: MIT\n"+
@@ -1116,14 +1119,13 @@ func TestWithAutoreleaseBase(t *testing.T) {
 	}
 }
 
-func TestPrepareComponentSources_LocalAndLockedSkipNewLifecycle(t *testing.T) {
+func TestPrepareComponentSources_LockedSkipNewLifecycle(t *testing.T) {
 	for _, testCase := range []struct {
 		name     string
 		source   projectconfig.SpecSourceType
 		lockless bool
 	}{
 		{name: "locked local", source: projectconfig.SpecSourceTypeLocal},
-		{name: "lockless local", source: projectconfig.SpecSourceTypeLocal, lockless: true},
 		{name: "locked upstream", source: projectconfig.SpecSourceTypeUpstream},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -1148,11 +1150,108 @@ func TestPrepareComponentSources_LocalAndLockedSkipNewLifecycle(t *testing.T) {
 
 			t.Cleanup(func() { newSourcePreparer = original })
 
-			// A successful fetch without a spec deliberately stops at overlays.
-			// The new lifecycle would instead require a project Git repository.
 			_, err := prepareComponentSources(env.Env, nil, comp, "/staging", "/rendered",
 				spec.EditorLegacy, false, testCase.lockless)
 			require.ErrorContains(t, err, "failed to apply overlays")
+		})
+	}
+}
+
+func TestPrepareComponentSources_LocalLocklessKeepsSpecAndSetsCommitState(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	ctrl := gomock.NewController(t)
+	comp := components_testutils.NewMockComponent(ctrl)
+	comp.EXPECT().GetName().AnyTimes().Return("curl")
+	comp.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
+		Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeLocal},
+	})
+
+	repo, _ := testRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{"README": []byte("local project")}}})
+	originalRepo := openRenderRepo
+	openRenderRepo = func(_ *azldev.Env) (*gogit.Repository, string, error) { return repo, renderTestProjectRoot, nil }
+
+	t.Cleanup(func() { openRenderRepo = originalRepo })
+
+	manager := sourceproviders_test.NewMockSourceManager(ctrl)
+	manager.EXPECT().FetchComponent(gomock.Any(), comp, "/staging/curl", gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ components.Component, dir string, _ ...sourceproviders.FetchComponentOption) error {
+			return fileutils.WriteFile(env.TestFS, filepath.Join(dir, "curl.spec"),
+				[]byte(renderTestSpec("1", "7%{?dist}", "* Keep local changelog\n")), fileperms.PublicFile)
+		})
+
+	originalPreparer := newSourcePreparer
+	newSourcePreparer = func(
+		_ sourceproviders.SourceManager, fs opctx.FS, events opctx.EventListener, dry opctx.DryRunnable,
+		options ...sources.PreparerOption,
+	) (sources.SourcePreparer, error) {
+		return sources.NewPreparer(manager, fs, events, dry, options...)
+	}
+
+	t.Cleanup(func() { newSourcePreparer = originalPreparer })
+
+	env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+		t.Fatalf("unexpected upstream history or release query: %v", cmd.Args)
+
+		return "", nil
+	}
+	prep, err := prepareComponentSources(env.Env, nil, comp, "/staging", "/project/SPECS/c/curl",
+		spec.EditorLegacy, true, true)
+	require.NoError(t, err)
+	require.NotNil(t, prep.update)
+	assert.True(t, prep.update.local)
+	assert.Equal(t, renderTestProjectRoot, prep.update.repoRoot)
+	assert.Equal(t, "SPECS/c/curl", prep.update.path)
+
+	content, err := fileutils.ReadFile(env.TestFS, "/staging/curl/curl.spec")
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "Release: 7%{?dist}")
+	assert.Contains(t, string(content), "* Keep local changelog\n")
+}
+
+func TestFinishLocalLocklessSpec_DoesNotBump(t *testing.T) {
+	for _, testCase := range []struct {
+		name             string
+		changed, rebuild bool
+		wantError        bool
+	}{
+		{name: "changed", changed: true},
+		{name: "unchanged", wantError: true},
+		{name: "explicit rebuild", rebuild: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			env.CmdFactory.RegisterCommandInSearchPath("date")
+
+			path := "/working/curl.spec"
+			content := renderTestSpec("1", "7%{?dist}", "* Keep local changelog\n")
+			require.NoError(t, fileutils.WriteFile(env.TestFS, path, []byte(content), fileperms.PublicFile))
+			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				assert.Equal(t, []string{"date", "-Is"}, cmd.Args)
+
+				return "2026-11-06T16:00:00+00:00\n", nil
+			}
+			env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+				t.Fatalf("local specs must never invoke bumpspec or a changelog editor: %v", cmd.Args)
+
+				return nil
+			}
+
+			changed, err := finishLocklessSpec(env.Env, path, &locklessRenderUpdate{local: true},
+				testCase.changed, testCase.rebuild)
+			if testCase.wantError {
+				require.ErrorIs(t, err, errNoRenderChanges)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, testCase.rebuild, changed)
+			}
+
+			got, err := fileutils.ReadFile(env.TestFS, path)
+			require.NoError(t, err)
+			assert.Equal(t, content, string(got))
+
+			exists, err := fileutils.Exists(env.TestFS, "/working/.no-change-rebuild")
+			require.NoError(t, err)
+			assert.Equal(t, testCase.rebuild, exists)
 		})
 	}
 }
@@ -1384,6 +1483,11 @@ func TestPrepareComponentSources_LocklessSkipsSyntheticHistory(t *testing.T) {
 	for _, release := range []string{"7%{?dist}", "%autorelease -b 9"} {
 		t.Run(release, func(t *testing.T) {
 			env := testutils.NewTestEnv(t)
+			repo, _ := testRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{"README": []byte("local")}}})
+			originalRepo := openRenderRepo
+			openRenderRepo = func(_ *azldev.Env) (*gogit.Repository, string, error) { return repo, renderTestProjectRoot, nil }
+
+			t.Cleanup(func() { openRenderRepo = originalRepo })
 			ctrl := gomock.NewController(t)
 			comp := components_testutils.NewMockComponent(ctrl)
 			comp.EXPECT().GetName().AnyTimes().Return("curl")
@@ -1431,7 +1535,7 @@ func TestPrepareComponentSources_LocklessSkipsSyntheticHistory(t *testing.T) {
 				return "", nil
 			}
 
-			_, err := prepareComponentSources(env.Env, nil, comp, "/staging", "/rendered",
+			_, err := prepareComponentSources(env.Env, nil, comp, "/staging", "/project/rendered",
 				spec.EditorLegacy, false, true)
 			require.NoError(t, err)
 			content, err := fileutils.ReadFile(env.TestFS, "/staging/curl/curl.spec")

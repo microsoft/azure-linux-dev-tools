@@ -148,6 +148,11 @@ func WithSkipLookaside() PreparerOption {
 	}
 }
 
+// WithSkipLocalSpecConfig excludes the TOML defining the local spec path from fetched files.
+func WithSkipLocalSpecConfig() PreparerOption {
+	return func(p *sourcePreparerImpl) { p.skipLocalSpecConfig = true }
+}
+
 // WithFetchedSources runs prepare on the fetched checkout before overlays and
 // synthetic history are applied.
 func WithFetchedSources(prepare func(context.Context, components.Component, string) error) PreparerOption {
@@ -222,6 +227,8 @@ type sourcePreparerImpl struct {
 	// skipLookaside, when true, skips all lookaside cache downloads during
 	// source preparation. Git-tracked files are still fetched.
 	skipLookaside bool
+
+	skipLocalSpecConfig bool
 
 	// cmdFactory is used to shell out to git for fingerprint change detection
 	// in the project repository. Set via [WithGitRepo].
@@ -328,20 +335,8 @@ func (p *sourcePreparerImpl) PrepareSources(
 		}
 	}
 
-	// Preserve the upstream .git directory only when dist-git creation is
-	// requested via --with-git. This is required so that overlay commits can be
-	// appended on top of the upstream commit log during synthetic history generation.
-	var fetchOpts []sourceproviders.FetchComponentOption
-	if applyOverlays && p.withGitRepo {
-		fetchOpts = append(fetchOpts, sourceproviders.WithPreserveGitDir())
-	}
-
-	if p.skipLookaside {
-		fetchOpts = append(fetchOpts, sourceproviders.WithSkipLookaside())
-	}
-
 	// Fetch the component first (spec, sidecar files, and upstream source tarballs).
-	err := p.sourceManager.FetchComponent(ctx, component, outputDir, fetchOpts...)
+	err := p.sourceManager.FetchComponent(ctx, component, outputDir, p.componentFetchOptions(applyOverlays)...)
 	if err != nil {
 		return fmt.Errorf("failed to fetch sources for component %#q:\n%w",
 			component.GetName(), err)
@@ -390,6 +385,23 @@ func (p *sourcePreparerImpl) PrepareSources(
 	}
 
 	return nil
+}
+
+func (p *sourcePreparerImpl) componentFetchOptions(applyOverlays bool) []sourceproviders.FetchComponentOption {
+	var options []sourceproviders.FetchComponentOption
+	if applyOverlays && p.withGitRepo {
+		options = append(options, sourceproviders.WithPreserveGitDir())
+	}
+
+	if p.skipLookaside {
+		options = append(options, sourceproviders.WithSkipLookaside())
+	}
+
+	if p.skipLocalSpecConfig {
+		options = append(options, sourceproviders.WithSkipLocalSpecConfig())
+	}
+
+	return options
 }
 
 func (p *sourcePreparerImpl) prepareFetched(
