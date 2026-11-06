@@ -139,8 +139,9 @@ other macro options. This includes legacy expansion. Unchanged-version modern ou
 still carries an explicitly committed `-b 1` as-is.
 
 The final host
-`rpmdev-bumpspec -c` uses the exact `--changelog-comment` value, defaulting to
-`update <component-name>`. Upstream changes are not appended to this comment.
+`rpmdev-bumpspec -c` uses the exact `--changelog-comment` value or the cleaned
+editor-provided entry. There is no default comment.
+Upstream changes are not appended to this comment.
 All prepared dist-git files except `.git` are retained,
 without file filtering or `spectool` queries. Synthetic history and its
 legacy release adjustment are skipped during lockless rendering.
@@ -160,6 +161,9 @@ rendered output directory. Other rendered paths are excluded even if staged;
 later commits include only their component's dist-git changes.
 The message is the supplied changelog comment or, for non-autorelease specs,
 the entry collected through `$EDITOR` or a local editor. There is no default.
+The changelog editor starts with two blank lines and `#`-commented instructions.
+Blank lines and lines starting with `#` are removed, with no trailing newline;
+the cleaned text is reused for the Git message. Explicit flag values remain unchanged.
 Autorelease skips `rpmdev-bumpspec`; without a supplied comment, Git prompts
 in its own editor for a message. The body/template contains upstream changes.
 Provide `--changelog-comment` for unattended rendering.

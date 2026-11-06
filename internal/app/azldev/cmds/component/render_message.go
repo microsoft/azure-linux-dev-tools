@@ -19,6 +19,10 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/git"
 )
 
+const renderChangelogTemplate = "\n\n" +
+	"# Please enter a changelog entry message (one or more lines).\n" +
+	"# Blank lines and lines starting with # will be ignored.\n"
+
 func renderFinishConcurrency(env *azldev.Env, prepared []*preparedComponent, checkOnly bool) int {
 	if !checkOnly && !env.DryRun() {
 		for _, prep := range prepared {
@@ -60,13 +64,14 @@ func editRenderChangelog(env *azldev.Env, specPath string) (string, error) {
 		return "", err
 	}
 
-	path, cleanup, err := renderMessageFile(env, "")
+	path, cleanup, err := renderMessageFile(env, renderChangelogTemplate)
 	if err != nil {
 		return "", err
 	}
 	defer cleanup()
 
-	slog.Info("Enter the changelog text, then save and close the editor", "spec", specPath)
+	slog.Info("Enter changelog text, save and close the editor; blank lines and lines starting with # are ignored",
+		"spec", specPath)
 
 	raw := exec.CommandContext(env, args[0], append(args[1:], path)...)
 	if err := runRenderInteractive(env, raw); err != nil {
@@ -78,11 +83,25 @@ func editRenderChangelog(env *azldev.Env, specPath string) (string, error) {
 		return "", fmt.Errorf("reading edited render changelog:\n%w", err)
 	}
 
-	if strings.TrimSpace(string(content)) == "" {
+	message := cleanRenderChangelog(string(content))
+	if message == "" {
 		return "", errors.New("no changelog text provided; rendering will not be done")
 	}
 
-	return string(content), nil
+	return message, nil
+}
+
+func cleanRenderChangelog(content string) string {
+	var lines []string
+
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if strings.TrimSpace(line) != "" && !strings.HasPrefix(line, "#") {
+			lines = append(lines, line)
+		}
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 func renderMessageFile(env *azldev.Env, content string) (path string, cleanup func(), err error) {

@@ -269,11 +269,16 @@ Changed renders, or explicitly requested no-change rebuilds, then invoke host
 `rpmdev-bumpspec -c` **only for non-autorelease specs**, with the exact
 `--changelog-comment` value. There is no default comment. If the flag is omitted,
 rendering opens `$EDITOR` (including configured arguments), or a local editor
-(`editor`, `sensible-editor`, `vi`, or `nano`), to obtain the entry. Save and close
-the editor to continue. Its text is passed unchanged to `rpmdev-bumpspec -c` and
-reused as the Git commit message. Empty edited text or editor failure aborts
-rendering before output replacement. Missing-comment finishing is serialized
-to prevent simultaneous editors.
+(`editor`, `sensible-editor`, `vi`, or `nano`), to obtain the entry. The editor
+starts with two blank lines followed by `#`-commented instructions. Save and close
+the editor to continue. Blank and whitespace-only lines and lines starting with
+`#` are removed; other message lines are preserved, with no trailing newline.
+The cleaned text is passed to `rpmdev-bumpspec -c` and reused as the Git commit
+message, leaving a single blank line between the new and previous changelog
+entries. Explicit `--changelog-comment` values remain unchanged.
+An edited message containing only ignored lines or editor failure aborts rendering
+before output replacement. Missing-comment finishing is serialized to prevent
+simultaneous editors.
 
 Autorelease specs skip `rpmdev-bumpspec` entirely. With `--changelog-comment`,
 Git uses the supplied message; without it, Git opens its own configured editor

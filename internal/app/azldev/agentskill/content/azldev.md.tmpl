@@ -74,7 +74,9 @@ the rendered output directory. Other rendered paths are excluded even if staged;
 later commits include only their component's dist-git changes.
 `--changelog-comment` supplies the exact `rpmdev-bumpspec -c`
 value and commit message, with no default. If omitted, `$EDITOR` or a local editor
-collects the entry; the exact edited text is reused for the Git message.
+collects the entry using a template with two blank lines and `#`-commented instructions.
+Blank lines and lines starting with `#` are removed, with no trailing newline;
+the cleaned text is reused for the Git message. Explicit flag values remain unchanged.
 Autorelease skips `rpmdev-bumpspec`; without a supplied comment, Git prompts
 in its own editor for a message, with upstream changes in the template.
 Provide `--changelog-comment` for unattended rendering.

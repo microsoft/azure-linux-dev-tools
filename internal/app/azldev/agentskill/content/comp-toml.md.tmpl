@@ -96,6 +96,9 @@ used outside the lockless upstream render workflow. That workflow always runs
 host `rpmdev-bumpspec -c` only for non-autorelease specs and automatically commits
 the component output. Missing `--changelog-comment` opens `$EDITOR` or a local
 editor for non-autorelease, or Git's own editor for an autorelease commit.
+The changelog editor starts with two blank lines and `#`-commented instructions.
+Blank lines and lines starting with `#` are removed, with no trailing newline;
+the cleaned text is reused for the Git message. Explicit flag values remain unchanged.
 Lockless rendering skips
 synthetic history and its legacy release adjustment. Commit input TOML first.
 The first automatic commit also includes pending repository changes outside the

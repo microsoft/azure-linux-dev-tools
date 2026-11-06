@@ -89,8 +89,11 @@ calculation = "manual"
 Upstream rendering runs host `rpmdev-bumpspec -c` only for non-autorelease specs
 and automatically commits the component output directory. Missing
 `--changelog-comment` opens `$EDITOR` or a local editor for non-autorelease,
-or Git's own editor for an autorelease commit. Commit
-input TOML first, install host `rpmdevtools`, `rpm-build`, and `rpmautospec` as
+or Git's own editor for an autorelease commit.
+The changelog editor starts with two blank lines and `#`-commented instructions.
+Blank lines and lines starting with `#` are removed, with no trailing newline;
+the cleaned text is reused for the Git message. Explicit flag values remain unchanged.
+Commit input TOML first, install host `rpmdevtools`, `rpm-build`, and `rpmautospec` as
 needed, and configure Git author identity. Lockless rendering never uses mock
 or `rpmautospec process-distgit`; RPM macros remain unexpanded and the
 `changelog` sidecar is preserved. Synthetic history and its legacy release

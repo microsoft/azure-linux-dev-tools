@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
@@ -61,11 +62,15 @@ func TestRenderEditorSelection(t *testing.T) {
 
 func TestBumpLocklessSpecMessageAndAutorelease(t *testing.T) {
 	for _, testCase := range []struct {
-		name, release, message string
-		provided, autorelease  bool
+		name, release, message, wantMessage string
+		provided, autorelease               bool
 	}{
-		{name: "edited text", release: "1", message: "Fix feature\n\nKeep details.\n"},
+		{
+			name: "edited text", release: "1", message: "Fix feature\n\nKeep details.\n",
+			wantMessage: "Fix feature\nKeep details.",
+		},
 		{name: "provided text", release: "1", message: "Explicit entry", provided: true},
+		{name: "provided multiline text", release: "1", message: "# Explicit\n\nKeep details.\n", provided: true},
 		{name: "explicit empty value", release: "1", provided: true},
 		{name: "autorelease without message", release: "%autorelease -b 9", autorelease: true},
 		{name: "autorelease with message", release: "%autorelease", message: "Git only", provided: true, autorelease: true},
@@ -85,6 +90,11 @@ func TestBumpLocklessSpecMessageAndAutorelease(t *testing.T) {
 
 			editCalls, bumpCalls := 0, 0
 
+			wantMessage := testCase.message
+			if !testCase.provided && !testCase.autorelease {
+				wantMessage = testCase.wantMessage
+			}
+
 			var messagePath string
 
 			env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
@@ -96,11 +106,18 @@ func TestBumpLocklessSpecMessageAndAutorelease(t *testing.T) {
 					messagePath = cmd.Args[2]
 					assert.Same(t, os.Stdin, cmd.Stdin)
 
-					return fileutils.WriteFile(env.TestFS, messagePath, []byte(testCase.message), fileperms.PrivateFile)
+					content, err := fileutils.ReadFile(env.TestFS, messagePath)
+					require.NoError(t, err)
+					assert.True(t, strings.HasPrefix(string(content), "\n\n#"))
+					assert.Contains(t, string(content), "enter a changelog entry message")
+					assert.Contains(t, string(content), "Blank lines and lines starting with # will be ignored")
+
+					return fileutils.WriteFile(env.TestFS, messagePath,
+						[]byte(testCase.message+string(content)), fileperms.PrivateFile)
 				case "rpmdev-bumpspec":
 					bumpCalls++
 
-					assert.Equal(t, []string{"rpmdev-bumpspec", "-c", testCase.message, specPath}, cmd.Args)
+					assert.Equal(t, []string{"rpmdev-bumpspec", "-c", wantMessage, specPath}, cmd.Args)
 				default:
 					t.Fatalf("unexpected command: %v", cmd.Args)
 				}
@@ -121,7 +138,7 @@ func TestBumpLocklessSpecMessageAndAutorelease(t *testing.T) {
 				assert.Zero(t, bumpCalls)
 			} else {
 				assert.Equal(t, 1, bumpCalls)
-				assert.Equal(t, testCase.message, update.subject)
+				assert.Equal(t, wantMessage, update.subject)
 
 				if testCase.provided {
 					assert.Zero(t, editCalls)
@@ -137,11 +154,45 @@ func TestBumpLocklessSpecMessageAndAutorelease(t *testing.T) {
 	}
 }
 
+func TestCleanRenderChangelog(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		lines []string
+		want  string
+		crlf  bool
+	}{
+		{
+			name:  "comments and blank lines",
+			lines: []string{"", "", "# Instructions", "Fix feature", " \t ", "Keep details.", "# Comment", ""},
+			want:  "Fix feature\nKeep details.",
+		},
+		{
+			name:  "preserve message whitespace and hashes",
+			lines: []string{"  # Indented message", "Keep # inline hash  "},
+			want:  "  # Indented message\nKeep # inline hash  ",
+		},
+		{name: "only ignored lines", lines: []string{"", "\t", "# Instructions", "#", ""}},
+		{
+			name: "CRLF", lines: []string{"", "# Instructions", "Fix feature", "", "Keep details.", ""},
+			want: "Fix feature\nKeep details.", crlf: true,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			content := strings.Join(testCase.lines, "\n")
+			if testCase.crlf {
+				content = strings.ReplaceAll(content, "\n", "\r\n")
+			}
+
+			assert.Equal(t, testCase.want, cleanRenderChangelog(content))
+		})
+	}
+}
+
 func TestEditRenderChangelogRejectsEmptyAndFailedEditor(t *testing.T) {
 	editorErr := errors.New("editor failed")
 
 	for _, fail := range []bool{false, true} {
-		t.Run(map[bool]string{false: "empty", true: "failure"}[fail], func(t *testing.T) {
+		t.Run(map[bool]string{false: "unchanged template", true: "failure"}[fail], func(t *testing.T) {
 			env := testutils.NewTestEnv(t)
 			setRenderEditor(t, env, "edit-tool")
 			env.CmdFactory.RegisterCommandInSearchPath("edit-tool")

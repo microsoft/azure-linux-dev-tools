@@ -192,6 +192,8 @@ func TestComponentTomlSkillDocumentsPerComponentRenderModes(t *testing.T) {
 		assert.Contains(t, doc, "`lockless-components.txt` beside the top-level `azldev.toml`")
 		assert.Contains(t, doc, "all others use lock files")
 		assert.Contains(t, doc, "for every command")
+		assert.Contains(t, doc, "two blank lines and `#`-commented instructions")
+		assert.Contains(t, doc, "Blank lines and lines starting with `#` are removed, with no trailing newline")
 	}
 }
 
@@ -220,6 +222,8 @@ func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
 		assert.Contains(t, doc, "`--changelog-comment`")
 		assert.Contains(t, doc, "Autorelease skips `rpmdev-bumpspec`")
 		assert.Contains(t, doc, "`$EDITOR` or a local editor")
+		assert.Contains(t, doc, "two blank lines and `#`-commented instructions")
+		assert.Contains(t, doc, "Blank lines and lines starting with `#` are removed, with no trailing newline")
 		assert.Contains(t, doc, "`--no-git-commit` skips automatic staging and committing")
 		assert.Contains(t, doc, "`azldev comp make-lockless`")
 		assert.Contains(t, doc, "spaces and tabs after `Release:`")
@@ -263,6 +267,8 @@ func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
 	assert.Contains(t, doc, "`--changelog-comment`")
 	assert.Contains(t, doc, "Autorelease skips `rpmdev-bumpspec`")
 	assert.Contains(t, doc, "`$EDITOR` or a local editor")
+	assert.Contains(t, doc, "two blank lines and `#`-commented instructions")
+	assert.Contains(t, doc, "Blank lines and lines starting with `#` are removed, with no trailing newline")
 	assert.Contains(t, doc, "`--no-git-commit` skips automatic staging and committing")
 	assert.Contains(t, doc, "`azldev comp make-lockless`")
 	assert.Contains(t, doc, "spaces and tabs after `Release:`")
