@@ -5,6 +5,7 @@
 - [Create a Project](./how-to/create-project.md) — set up a new Azure Linux project
 - [Add a Component](./how-to/add-component.md) — import or create a new package
 - [Build a Component](./how-to/build-component.md) — build RPMs from component definitions
+- [Extract a Dist-Git Repository](./how-to/extract-dist-git-repo.md) — export a component's committed files and history
 - [Build an Image](./how-to/build-image.md) — build and boot Azure Linux images
 - [Set Up AI Coding Agents](./how-to/set-up-ai-agents.md) — emit agent skill and instruction files
 - [Preview the Lock-File-Free Mode](./how-to/preview-without-lockfile.md) — select lockless components

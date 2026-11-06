@@ -100,11 +100,19 @@ Everyday tasks (add `-q -O json` when scripting):
 | Add a component | `azldev comp add` |
 | Build a component | `azldev comp build -p <name>` |
 | Render specs | `azldev comp render -p <name>` (or `-a`) |
+| Extract committed dist-git history | `azldev comp dist-git-repo <name> -o <directory>` |
 | Refresh an upstream commit | `azldev comp refresh-upstream-commit -p <name>` |
 | List / build images | `azldev image list` / `azldev image build` |
 
 `comp` is an alias for `component`. Always confirm current syntax with
 `azldev <command> --help`.
+
+`comp dist-git-repo` requires exactly one component name, `--output-dir` (`-o`),
+and git-filter-repo. It clones the local project's current branch with
+`--single-branch --no-local`, then filters
+`{{ .RenderedSpecsDir }}/<lowercase-first-letter>/<name>` into the repository root.
+Only committed rendered files/history are exported; it does not fetch upstream.
+Existing output requires `--force`, which deletes it after preflight checks.
 
 The hidden `advanced` group (`adv`) contains specialist integrations such as MCP and
 mock helpers; it is intentionally omitted from normal help.

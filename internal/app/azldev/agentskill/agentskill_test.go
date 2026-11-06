@@ -197,6 +197,17 @@ func TestComponentTomlSkillDocumentsPerComponentRenderModes(t *testing.T) {
 	}
 }
 
+func TestSkillsDocumentDistGitRepo(t *testing.T) {
+	for _, withoutLockfile := range []bool{false, true} {
+		doc, err := agentskill.NewCatalog(withoutLockfile).SkillDocument("azldev", testParams())
+		require.NoError(t, err)
+		assert.Contains(t, doc, "azldev comp dist-git-repo <name> -o <directory>")
+		assert.Contains(t, doc, "--single-branch --no-local")
+		assert.Contains(t, doc, "specs/<lowercase-first-letter>/<name>")
+		assert.Contains(t, doc, "and git-filter-repo")
+	}
+}
+
 func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
 	for _, withoutLockfile := range []bool{false, true} {
 		doc, err := agentskill.NewCatalog(withoutLockfile).SkillDocument("azldev", testParams())

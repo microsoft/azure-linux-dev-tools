@@ -45,6 +45,7 @@ components defined in the project configuration.
 * [azldev component build](azldev_component_build.md)	 - Build packages for components
 * [azldev component changed](azldev_component_changed.md)	 - Detect which components changed between two git refs
 * [azldev component diff-sources](azldev_component_diff-sources.md)	 - Show the diff that overlays apply to a component's sources
+* [azldev component dist-git-repo](azldev_component_dist-git-repo.md)	 - Extract a component's committed dist-git history into a repository
 * [azldev component history](azldev_component_history.md)	 - Report per-component change activity and customization detail
 * [azldev component list](azldev_component_list.md)	 - List components in this project
 * [azldev component make-lockless](azldev_component_make-lockless.md)	 - Select the lockless workflow and refresh upstream commits
