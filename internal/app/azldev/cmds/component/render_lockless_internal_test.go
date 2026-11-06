@@ -1236,7 +1236,7 @@ func TestFinishLocalLocklessSpec_DoesNotBump(t *testing.T) {
 				return nil
 			}
 
-			changed, err := finishLocklessSpec(env.Env, path, &locklessRenderUpdate{local: true},
+			changed, err := finishLocklessSpec(env.Env, path, &locklessRenderUpdate{local: true, noGitCommit: true},
 				testCase.changed, testCase.rebuild)
 			if testCase.wantError {
 				require.ErrorIs(t, err, errNoRenderChanges)
@@ -1254,6 +1254,18 @@ func TestFinishLocalLocklessSpec_DoesNotBump(t *testing.T) {
 			assert.Equal(t, testCase.rebuild, exists)
 		})
 	}
+}
+
+func assertCurlRenderCommit(t *testing.T, args []string, message string, provided bool) {
+	t.Helper()
+
+	wantArgs := []string{"git", "-C", "/project", "commit", "--only", "-m", message}
+	if provided {
+		wantArgs = append(wantArgs, "-m", "abc123 Fix upstream")
+	}
+
+	wantArgs = append(wantArgs, "--", "SPECS/c/curl")
+	assert.Equal(t, wantArgs, args)
 }
 
 func TestPrepareComponentSources_ChangelogAndReleaseBeforeOverlays(t *testing.T) {
@@ -1451,10 +1463,8 @@ upstream-commit = "aaaaaaa"
 				}
 
 				if cmd.Args[3] == "commit" {
-					assert.Equal(t, []string{
-						"git", "-C", "/project", "commit", "--only", "-m", testCase.wantComment,
-						"-m", "abc123 Fix upstream", "--", "SPECS/c/curl",
-					}, cmd.Args)
+					assertCurlRenderCommit(t, cmd.Args, testCase.wantComment,
+						testCase.explicit || testCase.comment != "")
 				}
 
 				return "", nil
@@ -1896,7 +1906,7 @@ func TestCommitLocklessRender_PathOnlyAndNoEmptyCommits(t *testing.T) {
 				require.Len(t, commands, 3)
 				assert.Equal(t, []string{
 					"git", "-C", "/project", "commit", "--only", "-m", "updated curl",
-					"-m", "abc123 Fix", "--", "SPECS/c/curl",
+					"--", "SPECS/c/curl",
 				}, commands[2])
 			} else {
 				assert.Len(t, commands, 2)

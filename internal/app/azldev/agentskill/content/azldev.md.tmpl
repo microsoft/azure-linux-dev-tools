@@ -75,22 +75,27 @@ the rendered output directory. Other rendered paths are excluded even if staged;
 later commits include only their component's dist-git changes.
 `--changelog-comment` supplies the exact `rpmdev-bumpspec -c`
 value and commit message, with no default. If omitted, `$EDITOR` or a local editor
-collects the entry using a template with two blank lines and `#`-commented instructions.
+collects the entry using a template with two blank lines and `#`-commented instructions
+when no upstream changes exist. Otherwise, line 1 is blank for the summary;
+non-autorelease changes start on line 2, while autorelease puts `...` on line 2
+and starts changes on line 3. Each change line is prefixed with `- ` and is editable.
 Blank lines and lines starting with `#` are removed, with no trailing newline;
 the cleaned text is reused for the Git message. Explicit flag values remain unchanged.
-Autorelease skips `rpmdev-bumpspec`; without a supplied comment, Git prompts
-in its own editor for a message, with upstream changes in the template.
+Autorelease skips `rpmdev-bumpspec`; missing messages are collected before output replacement.
+Autorelease with `--no-git-commit` never prompts. Blank/comment-only edited messages fail rendering.
+The final Git commit never prompts; its first message line is the summary, and remaining lines are body.
 Provide `--changelog-comment` for unattended rendering.
 `--no-git-commit` skips automatic staging and committing, but still renders and
 bumps non-autorelease specs.
-Upstream changes remain in the Git commit body, not the changelog comment.
+Edited upstream changes are not appended again; explicit flag messages retain the upstream Git body.
 Commit refreshed TOML before rendering. Configure Git author
 identity and install `rpmdevtools`. `--check-only` never creates project commits.
 Local lockless components skip upstream carryover; Release and changelog remain unchanged.
 They exclude the TOML defining the local spec path, while retaining other TOML sidecars.
 They participate in unchanged-render checks and automatic commits.
 For local components, `--changelog-comment` supplies only the Git message; otherwise
-Git opens its own editor. Locked components retain their existing render behavior.
+rendering collects it before output replacement, with commit-only instructions for non-autorelease.
+Local components with `--no-git-commit` never prompt. Locked components retain their existing render behavior.
 
 Top-level commands in this build:
 

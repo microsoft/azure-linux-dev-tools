@@ -31,7 +31,9 @@ upstream spec and last committed render before writing macros, applying overlays
 and updating sources. Overlays can override the prepared release and changelog.
 Compare output; unchanged renders require --no-change-rebuild to record a timestamp.
 Non-autorelease specs use rpmdev-bumpspec -c with --changelog-comment, or edited text.
-Autorelease skips bumpspec; without --changelog-comment, Git prompts for a message.
+Autorelease skips bumpspec. Missing messages are collected in an editor before
+bumping or replacing output; the final Git commit never prompts.
+Autorelease with --no-git-commit needs no message and never prompts.
 The first commit also includes all pending changes outside the rendered output directory.
 Later commits are component-only. --no-git-commit skips staging and committing.
 Output must be inside the project repository; configure Git author identity and
@@ -49,7 +51,8 @@ Their Release and changelog are never automatically modified, even with --rpmdev
 They also reject unchanged renders unless --no-change-rebuild is provided, and
 automatically commit rendered output unless --no-git-commit is provided.
 For local components, --changelog-comment supplies only the Git commit message;
-without it, Git prompts in its own editor. Output must be inside the project repository.
+without it, rendering collects the message in an editor before replacing output.
+--no-git-commit skips this prompt. Output must be inside the project repository.
 
 When rendering all components (-a), the --clean-stale flag prunes orphan
 rendered-spec directories (per-component dirs that no longer correspond to

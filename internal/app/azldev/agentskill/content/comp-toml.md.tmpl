@@ -95,8 +95,12 @@ flag, no bumpspec runtime discovery occurs and the legacy static calculation is
 used outside the lockless upstream render workflow. That workflow always runs
 host `rpmdev-bumpspec -c` only for non-autorelease specs and automatically commits
 the component output. Missing `--changelog-comment` opens `$EDITOR` or a local
-editor for non-autorelease, or Git's own editor for an autorelease commit.
-The changelog editor starts with two blank lines and `#`-commented instructions.
+editor before output replacement, including for autorelease commits.
+Autorelease with `--no-git-commit` never prompts. Blank/comment-only edited messages fail rendering.
+The final Git commit never prompts; its first message line is the summary, and remaining lines are body.
+With no upstream changes, the editor starts with two blank lines and `#`-commented instructions.
+Otherwise, non-autorelease changes start on line 2; autorelease puts `...` on line 2
+and starts changes on line 3. Each change line is prefixed with `- ` and is editable.
 Blank lines and lines starting with `#` are removed, with no trailing newline;
 the cleaned text is reused for the Git message. Explicit flag values remain unchanged.
 Lockless rendering skips
@@ -110,6 +114,7 @@ Local lockless components skip upstream carryover; Release and changelog remain 
 They exclude the TOML defining the local spec path, retain other TOML sidecars,
 and participate in unchanged-render checks and automatic commits.
 For local components, `--changelog-comment` supplies only the Git message.
+Local components with `--no-git-commit` never prompt.
 
 azldev reads `lockless-components.txt` beside the top-level `azldev.toml`.
 Listed component names use the lockless workflow for every command;

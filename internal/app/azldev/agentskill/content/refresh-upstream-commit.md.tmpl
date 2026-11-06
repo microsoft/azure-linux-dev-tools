@@ -151,7 +151,7 @@ still carries an explicitly committed `-b 1` as-is.
 The final host
 `rpmdev-bumpspec -c` uses the exact `--changelog-comment` value or the cleaned
 editor-provided entry. There is no default comment.
-Upstream changes are not appended to this comment.
+Upstream changes are prefilled in the editor, not appended after editing.
 All prepared dist-git files except `.git` are retained,
 without file filtering or `spectool` queries. Synthetic history and its
 legacy release adjustment are skipped during lockless rendering.
@@ -169,13 +169,17 @@ automatically commits that directory. The first commit also includes all staged
 changes, unstaged tracked changes, and non-ignored untracked files outside the
 rendered output directory. Other rendered paths are excluded even if staged;
 later commits include only their component's dist-git changes.
-The message is the supplied changelog comment or, for non-autorelease specs,
-the entry collected through `$EDITOR` or a local editor. There is no default.
-The changelog editor starts with two blank lines and `#`-commented instructions.
+The message is the supplied changelog comment or the entry collected through
+`$EDITOR` or a local editor before output replacement. There is no default.
+With no upstream changes, the editor starts with two blank lines and `#`-commented instructions.
+Otherwise, non-autorelease changes start on line 2; autorelease puts `...` on line 2
+and starts changes on line 3. Each change line is prefixed with `- ` and is editable.
 Blank lines and lines starting with `#` are removed, with no trailing newline;
 the cleaned text is reused for the Git message. Explicit flag values remain unchanged.
-Autorelease skips `rpmdev-bumpspec`; without a supplied comment, Git prompts
-in its own editor for a message. The body/template contains upstream changes.
+Autorelease skips `rpmdev-bumpspec`; missing messages are collected before output replacement.
+Autorelease with `--no-git-commit` never prompts. Blank/comment-only edited messages fail rendering.
+The final Git commit never prompts; its first message line is the summary, and remaining lines are body.
+Edited upstream changes are not appended again; explicit flag messages retain the upstream Git body.
 Provide `--changelog-comment` for unattended rendering.
 `--no-git-commit` skips automatic staging and committing, but still renders and
 bumps non-autorelease specs.

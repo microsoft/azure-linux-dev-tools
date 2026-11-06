@@ -7,7 +7,6 @@ import (
 	"errors"
 	"os"
 	"os/exec"
-	"slices"
 	"strings"
 	"testing"
 
@@ -60,39 +59,45 @@ func TestRenderEditorSelection(t *testing.T) {
 	}
 }
 
-func TestBumpLocklessSpecMessageAndAutorelease(t *testing.T) {
+func TestFinishLocklessSpecMessages(t *testing.T) {
 	for _, testCase := range []struct {
-		name, release, message, wantMessage string
-		provided, autorelease               bool
+		name, release, message, template string
+		provided, local, noGit           bool
 	}{
-		{
-			name: "edited text", release: "1", message: "Fix feature\n\nKeep details.\n",
-			wantMessage: "Fix feature\nKeep details.",
-		},
+		{name: "upstream static commit", release: "1", template: renderChangelogTemplate},
+		{name: "upstream static no commit", release: "1", noGit: true, template: renderNoGitChangelogTemplate},
+		{name: "upstream autorelease commit", release: "%autorelease -b 9", template: renderAutoreleaseTemplate},
+		{name: "upstream autorelease no commit", release: "%autorelease", noGit: true},
+		{name: "local static commit", release: "9", local: true, template: renderLocalCommitTemplate},
+		{name: "local static no commit", release: "9", local: true, noGit: true},
+		{name: "local autorelease commit", release: "%autorelease", local: true, template: renderAutoreleaseTemplate},
+		{name: "local autorelease no commit", release: "%autorelease", local: true, noGit: true},
 		{name: "provided text", release: "1", message: "Explicit entry", provided: true},
 		{name: "provided multiline text", release: "1", message: "# Explicit\n\nKeep details.\n", provided: true},
 		{name: "explicit empty value", release: "1", provided: true},
-		{name: "autorelease without message", release: "%autorelease -b 9", autorelease: true},
-		{name: "autorelease with message", release: "%autorelease", message: "Git only", provided: true, autorelease: true},
+		{name: "provided autorelease", release: "%autorelease", message: "Git only", provided: true},
+		{name: "provided local", release: "9", local: true, message: "Git only", provided: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			env := testutils.NewTestEnv(t)
 			setRenderEditor(t, env, "edit-tool --wait")
 			env.CmdFactory.RegisterCommandInSearchPath("edit-tool")
 
-			if !testCase.autorelease {
+			wantBump := !testCase.local && !strings.Contains(testCase.release, "%autorelease")
+			if wantBump {
 				env.CmdFactory.RegisterCommandInSearchPath("rpmdev-bumpspec")
 			}
 
 			const specPath = "/working/curl.spec"
-			require.NoError(t, fileutils.WriteFile(env.TestFS, specPath,
-				[]byte(renderTestSpec("1", testCase.release, "")), fileperms.PublicFile))
+
+			original := renderTestSpec("1", testCase.release, "* Preserve changelog\n- Existing entry\n")
+			require.NoError(t, fileutils.WriteFile(env.TestFS, specPath, []byte(original), fileperms.PublicFile))
 
 			editCalls, bumpCalls := 0, 0
 
 			wantMessage := testCase.message
-			if !testCase.provided && !testCase.autorelease {
-				wantMessage = testCase.wantMessage
+			if testCase.template != "" {
+				wantMessage = "Fix feature\nKeep details."
 			}
 
 			var messagePath string
@@ -108,16 +113,18 @@ func TestBumpLocklessSpecMessageAndAutorelease(t *testing.T) {
 
 					content, err := fileutils.ReadFile(env.TestFS, messagePath)
 					require.NoError(t, err)
-					assert.True(t, strings.HasPrefix(string(content), "\n\n#"))
-					assert.Contains(t, string(content), "enter a changelog entry message")
-					assert.Contains(t, string(content), "Blank lines and lines starting with # will be ignored")
+					assert.Equal(t, testCase.template, string(content))
 
 					return fileutils.WriteFile(env.TestFS, messagePath,
-						[]byte(testCase.message+string(content)), fileperms.PrivateFile)
+						[]byte("Fix feature\n\nKeep details.\n"+string(content)), fileperms.PrivateFile)
 				case "rpmdev-bumpspec":
 					bumpCalls++
 
 					assert.Equal(t, []string{"rpmdev-bumpspec", "-c", wantMessage, specPath}, cmd.Args)
+
+					if testCase.template != "" {
+						assert.Equal(t, 1, editCalls, "collect the message before bumpspec")
+					}
 				default:
 					t.Fatalf("unexpected command: %v", cmd.Args)
 				}
@@ -125,31 +132,36 @@ func TestBumpLocklessSpecMessageAndAutorelease(t *testing.T) {
 				return nil
 			}
 
-			update := &locklessRenderUpdate{subjectProvided: testCase.provided}
+			update := &locklessRenderUpdate{
+				subjectProvided: testCase.provided, local: testCase.local, noGitCommit: testCase.noGit,
+			}
 			if testCase.provided {
 				update.subject = testCase.message
 			}
 
-			_, err := bumpLocklessSpec(env.Env, specPath, update)
+			_, err := finishLocklessSpec(env.Env, specPath, update, true, false)
 			require.NoError(t, err)
+			assert.Equal(t, wantMessage, update.subject)
 
-			if testCase.autorelease {
-				assert.Zero(t, editCalls)
-				assert.Zero(t, bumpCalls)
-			} else {
+			if wantBump {
 				assert.Equal(t, 1, bumpCalls)
-				assert.Equal(t, wantMessage, update.subject)
-
-				if testCase.provided {
-					assert.Zero(t, editCalls)
-				} else {
-					assert.Equal(t, 1, editCalls)
-
-					exists, err := fileutils.Exists(env.TestFS, messagePath)
-					require.NoError(t, err)
-					assert.False(t, exists)
-				}
+			} else {
+				assert.Zero(t, bumpCalls)
 			}
+
+			if testCase.template == "" {
+				assert.Zero(t, editCalls)
+			} else {
+				assert.Equal(t, 1, editCalls)
+
+				exists, err := fileutils.Exists(env.TestFS, messagePath)
+				require.NoError(t, err)
+				assert.False(t, exists)
+			}
+
+			content, err := fileutils.ReadFile(env.TestFS, specPath)
+			require.NoError(t, err)
+			assert.Equal(t, original, string(content))
 		})
 	}
 }
@@ -188,66 +200,169 @@ func TestCleanRenderChangelog(t *testing.T) {
 	}
 }
 
-func TestEditRenderChangelogRejectsEmptyAndFailedEditor(t *testing.T) {
+func TestFinishLocklessSpecRejectsEmptyAndFailedEditor(t *testing.T) {
 	editorErr := errors.New("editor failed")
 
-	for _, fail := range []bool{false, true} {
-		t.Run(map[bool]string{false: "unchanged template", true: "failure"}[fail], func(t *testing.T) {
+	for _, testCase := range []struct {
+		name, response string
+		fail           bool
+	}{
+		{name: "blank"},
+		{name: "only blank lines", response: "\n \t\n"},
+		{name: "only comments and blank lines", response: "\n# Instructions\n#\n \t\n"},
+		{name: "failure", fail: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
 			env := testutils.NewTestEnv(t)
 			setRenderEditor(t, env, "edit-tool")
 			env.CmdFactory.RegisterCommandInSearchPath("edit-tool")
 
+			const specPath = "/working/curl.spec"
+
+			original := renderTestSpec("1", "9", "")
+			require.NoError(t, fileutils.WriteFile(env.TestFS, specPath, []byte(original), fileperms.PublicFile))
+
 			var messagePath string
 
 			env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+				require.Equal(t, "edit-tool", cmd.Args[0], "must fail before bumpspec or Git")
 				messagePath = cmd.Args[1]
 
-				if fail {
+				if testCase.fail {
 					return editorErr
 				}
 
-				return nil
+				return fileutils.WriteFile(env.TestFS, messagePath, []byte(testCase.response), fileperms.PrivateFile)
 			}
 
-			_, err := editRenderChangelog(env.Env, "/working/curl.spec")
-			if fail {
+			_, err := finishLocklessSpec(env.Env, specPath,
+				&locklessRenderUpdate{changes: "abc123 Upstream fix"}, true, false)
+			if testCase.fail {
 				require.ErrorIs(t, err, editorErr)
 			} else {
-				require.ErrorContains(t, err, "no changelog text")
+				require.ErrorContains(t, err, "no render message provided")
 			}
 
 			exists, err := fileutils.Exists(env.TestFS, messagePath)
 			require.NoError(t, err)
 			assert.False(t, exists)
+
+			content, err := fileutils.ReadFile(env.TestFS, specPath)
+			require.NoError(t, err)
+			assert.Equal(t, original, string(content))
 		})
 	}
 }
 
-func TestLocklessRenderCommitPromptsWithoutMessage(t *testing.T) {
+func TestLocklessRenderCommitRejectsMissingMessage(t *testing.T) {
 	env := testutils.NewTestEnv(t)
 
-	var templatePath string
-
 	env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
-		assert.Equal(t, []string{"git", "-C", "/project", "commit", "--only"}, cmd.Args[:5])
-		assert.NotContains(t, cmd.Args, "-m")
-		assert.Contains(t, cmd.Args, "SPECS/c/curl")
-		assert.Contains(t, cmd.Args, ":(top,literal)inputs.toml")
-		assert.Same(t, os.Stdin, cmd.Stdin)
-		assert.Same(t, os.Stdout, cmd.Stdout)
-		assert.Same(t, os.Stderr, cmd.Stderr)
-		templatePath = cmd.Args[slices.Index(cmd.Args, "--template")+1]
-		content, err := fileutils.ReadFile(env.TestFS, templatePath)
-		require.NoError(t, err)
-		assert.Contains(t, string(content), "abc123 Upstream fix")
+		t.Fatalf("must not open Git's editor: %v", cmd.Args)
 
 		return nil
 	}
-	require.NoError(t, runLocklessRenderCommit(env.Env,
+	env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+		t.Fatalf("must not run Git without a message: %v", cmd.Args)
+
+		return "", nil
+	}
+	require.ErrorContains(t, runLocklessRenderCommit(env.Env,
 		&locklessRenderUpdate{repoRoot: "/project", changes: "abc123 Upstream fix"},
-		[]string{"SPECS/c/curl", ":(top,literal)inputs.toml"}))
-	require.NotEmpty(t, templatePath)
-	exists, err := fileutils.Exists(env.TestFS, templatePath)
-	require.NoError(t, err)
-	assert.False(t, exists)
+		[]string{"SPECS/c/curl", ":(top,literal)inputs.toml"}), "no render message collected")
+}
+
+func TestLocklessRenderCommitReusesMessage(t *testing.T) {
+	for _, message := range []string{"Summary\nBody", "Summary\n\nBody"} {
+		t.Run(message, func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+				t.Fatalf("must not open Git's editor: %v", cmd.Args)
+
+				return nil
+			}
+			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				assert.Equal(t, []string{
+					"git", "-C", "/project", "commit", "--only", "-m", "Summary\n\nBody",
+					"--", "SPECS/c/curl",
+				}, cmd.Args)
+
+				return "", nil
+			}
+			require.NoError(t, runLocklessRenderCommit(env.Env, &locklessRenderUpdate{
+				repoRoot: "/project", subject: message, changes: "abc123 Upstream fix",
+			}, []string{"SPECS/c/curl"}))
+		})
+	}
+}
+
+func TestRenderMessagePrefillsUpstreamChanges(t *testing.T) {
+	const autorelease = "%autorelease"
+
+	for _, testCase := range []struct {
+		name, release, changes, prefix, message string
+	}{
+		{
+			name: "static", release: "1", changes: "abc123 First fix\ndef456 Second fix",
+			prefix:  "\n- abc123 First fix\n- def456 Second fix\n\n",
+			message: "Summary\n- abc123 First fix\n- def456 Second fix",
+		},
+		{
+			name: "autorelease", release: autorelease, changes: "abc123 First fix\ndef456 Second fix\n",
+			prefix:  "\n...\n- abc123 First fix\n- def456 Second fix\n\n",
+			message: "Summary\n...\n- abc123 First fix\n- def456 Second fix",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			setRenderEditor(t, env, "edit-tool")
+			env.CmdFactory.RegisterCommandInSearchPath("edit-tool")
+			env.CmdFactory.RegisterCommandInSearchPath("rpmdev-bumpspec")
+
+			const specPath = "/working/curl.spec"
+			require.NoError(t, fileutils.WriteFile(env.TestFS, specPath,
+				[]byte(renderTestSpec("1", testCase.release, "")), fileperms.PublicFile))
+
+			editorCalls := 0
+			env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+				if cmd.Args[0] == "rpmdev-bumpspec" {
+					assert.Equal(t, []string{"rpmdev-bumpspec", "-c", testCase.message, specPath}, cmd.Args)
+
+					return nil
+				}
+
+				require.Equal(t, "edit-tool", cmd.Args[0])
+
+				editorCalls++
+				content, err := fileutils.ReadFile(env.TestFS, cmd.Args[1])
+				require.NoError(t, err)
+
+				template := renderChangelogTemplate
+				if testCase.release == autorelease {
+					template = renderAutoreleaseTemplate
+				}
+
+				assert.Equal(t, testCase.prefix+strings.TrimPrefix(template, "\n\n"), string(content))
+
+				return fileutils.WriteFile(env.TestFS, cmd.Args[1], []byte("Summary"+string(content)),
+					fileperms.PrivateFile)
+			}
+			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				summary, body, _ := strings.Cut(testCase.message, "\n")
+				assert.Equal(t, []string{
+					"git", "-C", "/project", "commit", "--only", "-m", summary + "\n\n" + body,
+					"--", "SPECS/c/curl",
+				}, cmd.Args)
+
+				return "", nil
+			}
+
+			update := &locklessRenderUpdate{repoRoot: "/project", changes: testCase.changes}
+			_, err := finishLocklessSpec(env.Env, specPath, update, true, false)
+			require.NoError(t, err)
+			assert.Equal(t, testCase.message, update.subject)
+			require.NoError(t, runLocklessRenderCommit(env.Env, update, []string{"SPECS/c/curl"}))
+			assert.Equal(t, 1, editorCalls)
+		})
+	}
 }

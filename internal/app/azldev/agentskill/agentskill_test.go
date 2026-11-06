@@ -197,6 +197,10 @@ func TestComponentTomlSkillDocumentsPerComponentRenderModes(t *testing.T) {
 		assert.Contains(t, doc, "Local lockless components skip upstream carryover; Release and changelog remain unchanged")
 		assert.Contains(t, doc, "TOML defining the local spec path")
 		assert.Contains(t, doc, "participate in unchanged-render checks and automatic commits")
+		assert.Contains(t, doc, "The final Git commit never prompts")
+		assert.Contains(t, doc, "Autorelease with `--no-git-commit` never prompts")
+		assert.Contains(t, doc, "Blank/comment-only edited messages fail rendering")
+		assert.Contains(t, doc, "Each change line is prefixed with `- ` and is editable")
 	}
 }
 
@@ -239,6 +243,9 @@ func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
 		assert.Contains(t, doc, "`--changelog-comment`")
 		assert.Contains(t, doc, "Autorelease skips `rpmdev-bumpspec`")
 		assert.Contains(t, doc, "`$EDITOR` or a local editor")
+		assert.Contains(t, doc, "The final Git commit never prompts")
+		assert.Contains(t, doc, "Local components with `--no-git-commit` never prompt")
+		assert.Contains(t, doc, "Each change line is prefixed with `- ` and is editable")
 		assert.Contains(t, doc, "two blank lines and `#`-commented instructions")
 		assert.Contains(t, doc, "Blank lines and lines starting with `#` are removed, with no trailing newline")
 		assert.Contains(t, doc, "`--no-git-commit` skips automatic staging and committing")
@@ -288,6 +295,9 @@ func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
 	assert.Contains(t, doc, "`--changelog-comment`")
 	assert.Contains(t, doc, "Autorelease skips `rpmdev-bumpspec`")
 	assert.Contains(t, doc, "`$EDITOR` or a local editor")
+	assert.Contains(t, doc, "The final Git commit never prompts")
+	assert.Contains(t, doc, "Autorelease with `--no-git-commit` never prompts")
+	assert.Contains(t, doc, "Each change line is prefixed with `- ` and is editable")
 	assert.Contains(t, doc, "two blank lines and `#`-commented instructions")
 	assert.Contains(t, doc, "Blank lines and lines starting with `#` are removed, with no trailing newline")
 	assert.Contains(t, doc, "`--no-git-commit` skips automatic staging and committing")

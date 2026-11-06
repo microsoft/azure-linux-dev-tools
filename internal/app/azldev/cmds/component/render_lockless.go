@@ -840,6 +840,10 @@ func finishLocklessSpec(
 		}
 	}
 
+	if err := prepareRenderMessage(env, path, update); err != nil {
+		return false, err
+	}
+
 	if update.local {
 		return !changed, nil
 	}
@@ -905,13 +909,6 @@ func bumpLocklessSpec(env *azldev.Env, path string, update *locklessRenderUpdate
 
 	if err := prereqs.RequireExecutable(env, sources.RPMDevBumpspecBinary, nil); err != nil {
 		return false, fmt.Errorf("lockless upstream rendering requires 'rpmdev-bumpspec'; install 'rpmdevtools':\n%w", err)
-	}
-
-	if !update.subjectProvided && update.subject == "" && !env.DryRun() {
-		update.subject, err = editRenderChangelog(env, path)
-		if err != nil {
-			return false, err
-		}
 	}
 
 	raw := exec.CommandContext(env, sources.RPMDevBumpspecBinary, "-c", update.subject, path)

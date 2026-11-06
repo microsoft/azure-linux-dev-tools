@@ -141,7 +141,8 @@ their Release and changelog are never automatically modified, including with
 `--rpmdev-bumpspec`. They copy local files except the TOML defining the local spec
 path, retain other TOML sidecars, and participate in unchanged-render checks and
 automatic commits. For local components, `--changelog-comment` supplies only the
-Git commit message; without it, Git opens its own editor.
+Git commit message; without it, rendering collects the message before replacing
+output. Local components with `--no-git-commit` never prompt.
 All lockless rendering runs on the host without mock;
 components using lock files retain their existing mock-based rendering.
 
@@ -282,26 +283,39 @@ output, even if its contents differ. Nested files with the same name are compare
 Changed renders, or explicitly requested no-change rebuilds, then invoke host
 `rpmdev-bumpspec -c` **only for upstream non-autorelease specs**, with the exact
 `--changelog-comment` value. There is no default comment. If the flag is omitted,
-rendering opens `$EDITOR` (including configured arguments), or a local editor
-(`editor`, `sensible-editor`, `vi`, or `nano`), to obtain the entry. The editor
-starts with two blank lines followed by `#`-commented instructions. Save and close
-the editor to continue. Blank and whitespace-only lines and lines starting with
+rendering collects any needed message **after comparison and before bumping or
+replacing output**, using `$EDITOR` (including configured arguments), or a local
+editor (`editor`, `sensible-editor`, `vi`, or `nano`). The editor
+starts with two blank lines followed by `#`-commented instructions when there are
+no upstream changes. Otherwise, the first line is blank for your summary, and
+each upstream-change line is prefilled with a `- ` prefix. Non-autorelease prompts
+start those changes on line 2. Autorelease prompts put `...` on line 2 and start
+the changes on line 3. These are editable message text, not instructional comments.
+Save and close the editor to continue. Blank and whitespace-only lines and lines starting with
 `#` are removed; other message lines are preserved, with no trailing newline.
 The cleaned text is passed to `rpmdev-bumpspec -c` and reused as the Git commit
-message, leaving a single blank line between the new and previous changelog
-entries. Explicit `--changelog-comment` values remain unchanged.
+message, separating its first line (the Git summary) from subsequent body lines
+with a blank line. Bumpspec leaves a single blank line between the new and
+previous changelog entries. Explicit `--changelog-comment` values remain unchanged.
 An edited message containing only ignored lines or editor failure aborts rendering
 before output replacement. Missing-comment finishing is serialized to prevent
 simultaneous editors.
 
 Local components and autorelease specs skip `rpmdev-bumpspec` entirely.
-With `--changelog-comment`,
-Git uses the supplied message; without it, Git opens its own configured editor
-to obtain the commit message, using a template containing upstream changes.
-`--no-git-commit` skips that Git prompt, but non-autorelease specs still need a
-changelog entry. `--check-only` and dry runs never open editors.
+When `--changelog-comment` is omitted, the prompt depends on how the message is used:
+
+| Component | Automatic Git commit | `--no-git-commit` |
+|-----------|----------------------|-------------------|
+| Upstream non-autorelease | Changelog and commit message | Changelog message only |
+| Autorelease (upstream or local) | First-line changelog/commit summary, then commit body | No prompt |
+| Local non-autorelease | Git commit message only; changelog stays unchanged | No prompt |
+
+Each case has its own instructional comments. The final Git commit always reuses
+the supplied or already collected message; it never opens another editor.
+`--check-only` and dry runs never open editors.
 For unattended rendering, provide `--changelog-comment`.
-Upstream changes are not appended to the changelog entry.
+Prefilled upstream changes are used only as retained in the edited message;
+the original changes are not appended again to its changelog entry or Git body.
 
 ```bash
 azldev comp render -p curl --changelog-comment "Fix curl patches"
@@ -330,9 +344,11 @@ existing output directory and moves all prepared entries except `.git` into
 its replacement. Files found only in the old output are not retained.
 Moves use filesystem renames, so the project work directory and rendered
 output must be on the same filesystem.
-The renderer then commits the component output directory. The subject is
-the supplied or edited changelog comment; autorelease without a comment uses
-Git's interactive message editor. The body includes upstream changes, if any.
+The renderer then commits the component output directory noninteractively, using
+the supplied or already edited message. Its first line is the Git summary;
+remaining lines form the body. Prefilled upstream changes appear only as retained
+in the edited message; explicitly supplied flag messages keep the original
+upstream changes in a separate Git body paragraph.
 The first successful automatic commit also
 includes all staged changes, unstaged tracked changes, and non-ignored untracked
 files outside `rendered-specs-dir` (or the active `--output-dir`). Other component
