@@ -184,6 +184,9 @@ Autorelease with `--no-git-commit` never prompts. Blank/comment-only edited mess
 The final Git commit never prompts; its first message line is the summary, and remaining lines are body.
 Edited upstream changes are not appended again; explicit flag messages retain the upstream Git body.
 Provide `--changelog-comment` for unattended rendering.
+Required message prompts require both stdin and stdout to be TTYs; otherwise rendering fails.
+Non-interactive renders must use `--changelog-comment` and/or `--no-git-commit`.
+Upstream non-autorelease still needs `--changelog-comment` even with `--no-git-commit`.
 `--no-git-commit` skips automatic staging and committing, but still renders and
 bumps non-autorelease specs.
 It never creates empty commits. Files outside rendered output may remain staged

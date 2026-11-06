@@ -67,7 +67,8 @@ without it, rendering collects the message in an editor before replacing output.
 const renderMessageHelp = `Non-autorelease specs use rpmdev-bumpspec -c with --changelog-comment, or edited text.
 Autorelease skips bumpspec. Missing messages are collected in an editor before
 bumping or replacing output; the final Git commit never prompts.
-Autorelease with --no-git-commit needs no message and never prompts.`
+Autorelease with --no-git-commit needs no message and never prompts.
+Message prompts require both stdin and stdout to be interactive TTYs.`
 
 // NewRenderCmd constructs a [cobra.Command] for the "component render" CLI subcommand.
 func NewRenderCmd() *cobra.Command {

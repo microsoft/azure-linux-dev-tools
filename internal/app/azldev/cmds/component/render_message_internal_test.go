@@ -21,6 +21,11 @@ import (
 func setRenderEditor(t *testing.T, env *testutils.TestEnv, editor string) {
 	t.Helper()
 
+	original := renderIsTerminal
+	renderIsTerminal = func(_ uintptr) bool { return true }
+
+	t.Cleanup(func() { renderIsTerminal = original })
+
 	osEnv, ok := env.TestOSEnv.(*testctx.TestOSEnv)
 	require.True(t, ok)
 	osEnv.SetEnv("EDITOR", editor)
@@ -55,6 +60,97 @@ func TestRenderEditorSelection(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, testCase.want, args)
 			}
+		})
+	}
+}
+
+func TestRenderMessageRequiresInteractiveTTY(t *testing.T) {
+	for _, testCase := range []struct {
+		name                string
+		stdinTTY, stdoutTTY bool
+	}{
+		{name: "stdin is not a tty", stdoutTTY: true},
+		{name: "stdout is not a tty", stdinTTY: true},
+		{name: "neither is a tty"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			setRenderEditor(t, env, "unavailable-editor")
+
+			renderIsTerminal = func(descriptor uintptr) bool {
+				switch descriptor {
+				case os.Stdin.Fd():
+					return testCase.stdinTTY
+				case os.Stdout.Fd():
+					return testCase.stdoutTTY
+				default:
+					t.Fatalf("unexpected terminal descriptor: %d", descriptor)
+
+					return false
+				}
+			}
+			env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+				t.Fatalf("must not invoke an editor without both TTYs: %v", cmd.Args)
+
+				return nil
+			}
+			message, err := editRenderMessage(env.Env, "/working/curl.spec", renderLocalCommitTemplate)
+			require.ErrorContains(t, err, "non-interactive renders must use '--changelog-comment' and/or '--no-git-commit'")
+			assert.Empty(t, message)
+		})
+	}
+}
+
+func TestNonInteractiveRenderMessageOptions(t *testing.T) {
+	for _, testCase := range []struct {
+		name, release          string
+		local, noGit, provided bool
+		wantError              bool
+	}{
+		{name: "provided upstream static", release: "1", provided: true},
+		{name: "provided upstream autorelease", release: "%autorelease", provided: true},
+		{name: "provided local", release: "1", local: true, provided: true},
+		{name: "local static no commit", release: "1", local: true, noGit: true},
+		{name: "local autorelease no commit", release: "%autorelease", local: true, noGit: true},
+		{name: "upstream autorelease no commit", release: "%autorelease", noGit: true},
+		{name: "upstream static no commit still needs message", release: "1", noGit: true, wantError: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			original := renderIsTerminal
+			renderIsTerminal = func(_ uintptr) bool { return false }
+
+			t.Cleanup(func() { renderIsTerminal = original })
+			env.CmdFactory.RegisterCommandInSearchPath("rpmdev-bumpspec")
+
+			const specPath = "/working/curl.spec"
+			require.NoError(t, fileutils.WriteFile(env.TestFS, specPath,
+				[]byte(renderTestSpec("1", testCase.release, "")), fileperms.PublicFile))
+
+			bumped := false
+			env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+				require.Equal(t, "rpmdev-bumpspec", cmd.Args[0])
+
+				bumped = true
+
+				return nil
+			}
+
+			update := &locklessRenderUpdate{
+				local: testCase.local, noGitCommit: testCase.noGit, subjectProvided: testCase.provided,
+			}
+			if testCase.provided {
+				update.subject = "Provided render message"
+			}
+
+			_, err := finishLocklessSpec(env.Env, specPath, update, true, false)
+			if testCase.wantError {
+				require.ErrorContains(t, err, "non-interactive renders must use")
+			} else {
+				require.NoError(t, err)
+			}
+
+			assert.Equal(t, !testCase.local && testCase.release == "1" && !testCase.wantError, bumped)
 		})
 	}
 }

@@ -98,6 +98,8 @@ the component output. Missing `--changelog-comment` opens `$EDITOR` or a local
 editor before output replacement, including for autorelease commits.
 Autorelease with `--no-git-commit` never prompts. Blank/comment-only edited messages fail rendering.
 The final Git commit never prompts; its first message line is the summary, and remaining lines are body.
+Required message prompts require both stdin and stdout to be TTYs; otherwise rendering fails.
+Non-interactive renders must use `--changelog-comment` and/or `--no-git-commit`.
 With no upstream changes, the editor starts with two blank lines and `#`-commented instructions.
 Otherwise, non-autorelease changes start on line 2; autorelease puts `...` on line 2
 and starts changes on line 3. Each change line is prefixed with `- ` and is editable.

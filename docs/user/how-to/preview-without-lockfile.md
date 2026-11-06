@@ -318,6 +318,11 @@ Each case has its own instructional comments. The final Git commit always reuses
 the supplied or already collected message; it never opens another editor.
 `--check-only` and dry runs never open editors.
 For unattended rendering, provide `--changelog-comment`.
+Any required editor prompt first checks that both stdin and stdout are TTYs.
+Otherwise rendering fails before opening an editor or replacing output:
+non-interactive renders must use `--changelog-comment` and/or `--no-git-commit`.
+For upstream non-autorelease components, `--no-git-commit` alone is insufficient:
+the changelog bump still requires `--changelog-comment`.
 Prefilled upstream changes are used only as retained in the edited message;
 the original changes are not appended again to its changelog entry or Git body.
 

@@ -35,6 +35,7 @@ Non-autorelease specs use rpmdev-bumpspec -c with --changelog-comment, or edited
 Autorelease skips bumpspec. Missing messages are collected in an editor before
 bumping or replacing output; the final Git commit never prompts.
 Autorelease with --no-git-commit needs no message and never prompts.
+Message prompts require both stdin and stdout to be interactive TTYs.
 The first commit also includes all pending changes outside the rendered output directory.
 Later commits are component-only. --no-git-commit skips staging and committing.
 Output must be inside the project repository; configure Git author identity and

@@ -13,11 +13,15 @@ import (
 	"strings"
 
 	"github.com/kballard/go-shellquote"
+	"github.com/mattn/go-isatty"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/git"
 )
+
+//nolint:gochecknoglobals // Replaced by isolated render tests without changing real standard streams.
+var renderIsTerminal = isatty.IsTerminal
 
 const renderChangelogTemplate = "\n\n" +
 	"# Please enter a changelog entry message. The text will be used\n" +
@@ -126,6 +130,10 @@ func prefillRenderChanges(template, changes string, autorelease bool) string {
 }
 
 func editRenderMessage(env *azldev.Env, specPath, template string) (string, error) {
+	if !renderIsTerminal(os.Stdin.Fd()) || !renderIsTerminal(os.Stdout.Fd()) {
+		return "", errors.New("non-interactive renders must use '--changelog-comment' and/or '--no-git-commit'")
+	}
+
 	args, err := renderEditor(env)
 	if err != nil {
 		return "", err

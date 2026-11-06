@@ -198,6 +198,7 @@ func TestComponentTomlSkillDocumentsPerComponentRenderModes(t *testing.T) {
 		assert.Contains(t, doc, "TOML defining the local spec path")
 		assert.Contains(t, doc, "participate in unchanged-render checks and automatic commits")
 		assert.Contains(t, doc, "The final Git commit never prompts")
+		assert.Contains(t, doc, "both stdin and stdout to be TTYs")
 		assert.Contains(t, doc, "Autorelease with `--no-git-commit` never prompts")
 		assert.Contains(t, doc, "Blank/comment-only edited messages fail rendering")
 		assert.Contains(t, doc, "Each change line is prefixed with `- ` and is editable")
