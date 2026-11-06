@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -33,8 +34,9 @@ func NewMakeLocklessCmd() *cobra.Command {
 		Long: `Add selected component names to lockless-components.txt beside the top-level
 azldev.toml, then run the refresh-upstream-commit pipeline for those components.
 
-Existing entries, whitespace, and ordering are preserved. Missing names are
-appended once, using exact component names rather than selection patterns.
+Names are written in lexical order, one exact component name per line,
+without blank lines or duplicates. Existing names are retained; selection
+patterns are expanded to exact component names.
 Existing lock files are left untouched. Already-listed components are refreshed
 again without duplicating their entries.
 
@@ -118,22 +120,14 @@ func addLocklessComponents(env *azldev.Env, names []string) error {
 		return fmt.Errorf("reading %#q:\n%w", path, err)
 	}
 
-	var additions strings.Builder
-
 	for _, name := range names {
-		if !selected[name] {
-			additions.WriteString(name + "\n")
-			selected[name] = true
-		}
+		selected[name] = true
 	}
 
-	if additions.Len() > 0 {
-		if len(content) > 0 && content[len(content)-1] != '\n' {
-			content = append(content, '\n')
-		}
+	updated := strings.Join(slices.Sorted(maps.Keys(selected)), "\n") + "\n"
 
-		content = append(content, additions.String()...)
-		if err := fileutils.WriteFile(env.FS(), path, content, fileperms.PublicFile); err != nil {
+	if string(content) != updated {
+		if err := fileutils.WriteFile(env.FS(), path, []byte(updated), fileperms.PublicFile); err != nil {
 			return fmt.Errorf("writing %#q:\n%w", path, err)
 		}
 	}

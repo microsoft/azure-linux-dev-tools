@@ -226,6 +226,8 @@ func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
 		assert.Contains(t, doc, "Blank lines and lines starting with `#` are removed, with no trailing newline")
 		assert.Contains(t, doc, "`--no-git-commit` skips automatic staging and committing")
 		assert.Contains(t, doc, "`azldev comp make-lockless`")
+		assert.Contains(t, doc, "lexical order")
+		assert.Contains(t, doc, "without blank lines or duplicates")
 		assert.Contains(t, doc, "spaces and tabs after `Release:`")
 	}
 

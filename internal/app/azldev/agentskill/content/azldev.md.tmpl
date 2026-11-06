@@ -38,7 +38,8 @@ images assemble RPMs into bootable artifacts.
 workflow per component for all commands. Listed components ignore locks and use
 generated upstream-commit TOML instead. All others use locks.
 `azldev comp make-lockless` adds selected exact names to that list if needed,
-then runs the refresh pipeline. Existing list contents and lock files are retained.
+then runs the refresh pipeline. The list is written in lexical order, one name
+per line without blank lines or duplicates. Existing names and lock files are retained.
 Already-listed components are still refreshed; a refresh failure leaves the list updated.
 
 Before preparing any selected lockless upstream component, rendering requires a

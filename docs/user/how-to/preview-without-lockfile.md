@@ -45,9 +45,11 @@ azldev comp make-lockless curl rust-asyncband
 ```
 
 `make-lockless` accepts the normal component selectors (`-p`, `-g`, and `-a`).
-It appends missing exact names to the top-level list without rewriting existing
-entries or removing lock files, then runs the `refresh-upstream-commit` pipeline
-for the selection. Already-listed components are refreshed again without adding
+It merges selected exact names into the top-level list and writes the complete
+list in lexical order, one name per line without blank lines or duplicates.
+Existing names are retained and lock files are left untouched. It then runs the
+`refresh-upstream-commit` pipeline for the selection.
+Already-listed components are refreshed again without adding
 duplicates. Non-upstream components are listed too; refresh removes any generated
 pin for them without contacting an upstream provider.
 If refreshing fails, the list stays updated and successful pins are saved.

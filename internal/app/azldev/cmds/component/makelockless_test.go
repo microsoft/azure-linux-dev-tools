@@ -48,9 +48,17 @@ func TestMakeComponentsLockless_SelectsAndRefreshes(t *testing.T) {
 		name, existing, want string
 	}{
 		{name: "missing file", want: "curl\nrust-asyncband\n"},
-		{name: "missing newline", existing: "rust-asyncband", want: "rust-asyncband\ncurl\n"},
-		{name: "existing whitespace", existing: "\t rust-asyncband \r\n\n", want: "\t rust-asyncband \r\n\ncurl\n"},
+		{name: "missing newline", existing: "rust-asyncband", want: "curl\nrust-asyncband\n"},
+		{name: "existing whitespace", existing: "\t rust-asyncband \r\n\n", want: "curl\nrust-asyncband\n"},
+		{name: "blank file", existing: "\n \t\r\n\n", want: "curl\nrust-asyncband\n"},
+		{name: "insert before existing names", existing: "rust-asyncband\nvim\n", want: "curl\nrust-asyncband\nvim\n"},
+		{name: "insert between existing names", existing: "curl\nvim\n", want: "curl\nrust-asyncband\nvim\n"},
 		{name: "already selected", existing: "curl\nrust-asyncband\n", want: "curl\nrust-asyncband\n"},
+		{name: "already selected unsorted", existing: "rust-asyncband\ncurl\n", want: "curl\nrust-asyncband\n"},
+		{
+			name: "already selected duplicates", existing: "rust-asyncband\ncurl\nrust-asyncband\ncurl\n",
+			want: "curl\nrust-asyncband\n",
+		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			env := testutils.NewTestEnv(t)

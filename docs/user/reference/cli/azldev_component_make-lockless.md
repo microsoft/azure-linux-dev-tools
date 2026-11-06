@@ -9,8 +9,9 @@ Select the lockless workflow and refresh upstream commits
 Add selected component names to lockless-components.txt beside the top-level
 azldev.toml, then run the refresh-upstream-commit pipeline for those components.
 
-Existing entries, whitespace, and ordering are preserved. Missing names are
-appended once, using exact component names rather than selection patterns.
+Names are written in lexical order, one exact component name per line,
+without blank lines or duplicates. Existing names are retained; selection
+patterns are expanded to exact component names.
 Existing lock files are left untouched. Already-listed components are refreshed
 again without duplicating their entries.
 
