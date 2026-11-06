@@ -897,20 +897,33 @@ func locklessSpecUsesAutorelease(env *azldev.Env, path string) (bool, error) {
 	return sources.ReleaseUsesAutorelease(release), nil
 }
 
-func requireRenderNEVRIncrease(env *azldev.Env, preparedDir string, prep *preparedComponent) error {
+func validateRenderNEVR(env *azldev.Env, preparedDir string, prep *preparedComponent) error {
 	existing, err := queryRenderSpecNEVR(env, filepath.Join(prep.compOutputDir, prep.specFilename))
 	if err != nil {
 		return fmt.Errorf("%w: querying existing NEVR:\n%w", errRenderNEVRValidation, err)
 	}
 
-	rendered, err := queryRenderSpecNEVR(env, filepath.Join(preparedDir, prep.specFilename))
+	newPath := filepath.Join(preparedDir, prep.specFilename)
+
+	rendered, err := queryRenderSpecNEVR(env, newPath)
 	if err != nil {
 		return fmt.Errorf("%w: querying new NEVR:\n%w", errRenderNEVRValidation, err)
 	}
 
-	if existing.Name != rendered.Name || rendered.Version.Compare(&existing.Version) <= 0 {
-		return fmt.Errorf("%w: new NEVR must be higher than existing NEVR for the same package; "+
-			"existing %#q; new %#q", errRenderNEVRValidation,
+	autorelease, err := locklessSpecUsesAutorelease(env, newPath)
+	if err != nil {
+		return fmt.Errorf("%w: checking new spec autorelease:\n%w", errRenderNEVRValidation, err)
+	}
+
+	requirement := "higher than"
+	if autorelease {
+		requirement = "equal to or higher than"
+	}
+
+	comparison := rendered.Version.Compare(&existing.Version)
+	if existing.Name != rendered.Name || comparison < 0 || (comparison == 0 && !autorelease) {
+		return fmt.Errorf("%w: new NEVR must be %s existing NEVR for the same package; "+
+			"existing %#q; new %#q", errRenderNEVRValidation, requirement,
 			existing.Name+"-"+existing.Version.String(), rendered.Name+"-"+rendered.Version.String())
 	}
 

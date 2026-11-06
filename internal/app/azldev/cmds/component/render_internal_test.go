@@ -715,9 +715,11 @@ func TestFinishComponentRender_PreservesGitMetadata(t *testing.T) {
 			comp.EXPECT().GetName().AnyTimes().Return("curl")
 
 			for _, root := range []string{"/staging/curl", "/output/curl"} {
-				for _, name := range []string{"curl.spec", ".gitignore"} {
+				for name, content := range map[string]string{
+					"curl.spec": "Name: curl\nVersion: 1\nRelease: 1\n", ".gitignore": "unchanged",
+				} {
 					require.NoError(t, fileutils.WriteFile(env.TestFS, filepath.Join(root, name),
-						[]byte("unchanged"), fileperms.PublicFile))
+						[]byte(content), fileperms.PublicFile))
 				}
 			}
 

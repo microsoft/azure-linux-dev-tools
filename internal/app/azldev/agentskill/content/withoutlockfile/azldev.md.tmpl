@@ -68,7 +68,8 @@ untouched; failures after replacement starts clear the component directory and
 use Git to restore committed output, or leave no directory if none existed.
 Recovery discards uncommitted changes in that directory and keeps no backups.
 Before removing existing lockless output, host `rpmspec` compares source-package NEVRs.
-The new NEVR must be higher for the same package; equal/lower values fail with both NEVRs shown.
+The package name must match. The new NEVR must be equal or higher for a final autorelease spec;
+non-autorelease requires a higher NEVR. Invalid values fail with both NEVRs shown.
 Validation errors leave existing output untouched and fail even without `--fail-on-error`.
 First renders, `--check-only`, and dry runs skip this replacement-time check.
 `--no-change-rebuild` never bypasses the NEVR check.

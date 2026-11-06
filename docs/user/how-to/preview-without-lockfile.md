@@ -357,14 +357,18 @@ the working checkout retains its Git metadata until staging cleanup.
 After comparison and the final release bump, but immediately before removing
 existing output, lockless rendering queries the existing and new source-package
 NEVRs with host `rpmspec`. Queries expand each spec's macros using its own dist-git
-directory. The package name must match, and the new epoch/version/release must
-be strictly higher under RPM version ordering. Equal or lower NEVRs fail with
-both values in the error message; query failures also abort. These errors return
+directory. The package name must match. When the final new spec uses
+`%autorelease`, its new epoch/version/release must be equal to or higher than the
+existing value under RPM version ordering. Non-autorelease specs still require
+a strictly higher value. Autorelease permits equality because a subsequent Git
+commit can advance its Git-derived release; the query does not calculate that
+future release. Lower NEVRs, and equal non-autorelease NEVRs, fail with both values
+in the error message; query failures also abort. These errors return
 a failing exit status even without `--fail-on-error`, and leave existing output
 untouched. First renders with no existing directory skip the check.
 `--check-only` and dry runs do not perform this replacement-time check.
 `--no-change-rebuild` does not bypass it: a timestamp-only autorelease rebuild
-still fails if its expanded NEVR has not increased.
+may have an equal expanded NEVR, but must not decrease it.
 
 After successful validation, lockless rendering removes the
 existing output directory and moves all prepared entries except `.git` into

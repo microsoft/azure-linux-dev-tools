@@ -69,7 +69,8 @@ Autorelease skips bumpspec. Missing messages are collected in an editor before
 bumping or replacing output; the final Git commit never prompts.
 Autorelease with --no-git-commit needs no message and never prompts.
 Message prompts require both stdin and stdout to be interactive TTYs.
-Before replacing existing lockless output, require a higher NEVR using host rpmspec.`
+Before replacing existing lockless output, compare NEVRs using host rpmspec.
+Autorelease requires an equal or higher NEVR; non-autorelease requires a higher NEVR.`
 
 // NewRenderCmd constructs a [cobra.Command] for the "component render" CLI subcommand.
 func NewRenderCmd() *cobra.Command {
@@ -997,7 +998,7 @@ func moveRenderedOutput(env *azldev.Env, tempDir string, prep *preparedComponent
 	}
 
 	if exists && prep.lockless {
-		if err := requireRenderNEVRIncrease(env, tempDir, prep); err != nil {
+		if err := validateRenderNEVR(env, tempDir, prep); err != nil {
 			return err
 		}
 	}

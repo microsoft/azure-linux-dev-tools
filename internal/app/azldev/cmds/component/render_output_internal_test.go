@@ -34,15 +34,30 @@ const (
 	renderTestCheckoutCommand = "checkout"
 	renderTestOverwrite       = "overwrite"
 	renderTestSpecDiff        = "SPECS/c/curl/curl.spec\n"
+	renderTestAutorelease     = "%autorelease -b 9"
 )
 
 func TestLocklessRenderNEVRBeforeReplacement(t *testing.T) {
 	for _, testCase := range []struct {
-		name, existing, rendered, newName string
-		reject, queryFails, toolMissing   bool
+		name, existing, rendered, newName, rawRelease string
+		reject, queryFails, toolMissing               bool
 	}{
 		{name: "numeric release increase", existing: "1-9", rendered: "1-10"},
 		{name: "equal", existing: "1-9", rendered: "1-9", reject: true},
+		{name: "autorelease equal", existing: "1-9", rendered: "1-9", rawRelease: renderTestAutorelease},
+		{name: "autorelease increase", existing: "1-9", rendered: "1-10", rawRelease: "%autorelease -b 10"},
+		{
+			name: "autorelease release downgrade", existing: "1-10", rendered: "1-9",
+			rawRelease: renderTestAutorelease, reject: true,
+		},
+		{
+			name: "autorelease version downgrade", existing: "2-1", rendered: "1-9",
+			rawRelease: renderTestAutorelease, reject: true,
+		},
+		{
+			name: "autorelease name change", existing: "1-9", rendered: "1-9",
+			rawRelease: renderTestAutorelease, newName: "other", reject: true,
+		},
 		{name: "version downgrade", existing: "2-1", rendered: "1-99", reject: true},
 		{name: "epoch increase", existing: "9-9", rendered: "1:1-1"},
 		{name: "epoch decrease", existing: "1:1-1", rendered: "9-9", reject: true},
@@ -66,6 +81,14 @@ func TestLocklessRenderNEVRBeforeReplacement(t *testing.T) {
 			require.NoError(t, err)
 			rendered, err := rpm.NewVersion(testCase.rendered)
 			require.NoError(t, err)
+
+			rawRelease := rendered.Release()
+			if testCase.rawRelease != "" {
+				rawRelease = testCase.rawRelease
+			}
+
+			require.NoError(t, fileutils.WriteFile(env.TestFS, "/staging/curl/curl.spec",
+				[]byte(renderTestSpec(rendered.Version(), rawRelease, "")), fileperms.PublicFile))
 
 			newName := "curl"
 			if testCase.newName != "" {
@@ -108,6 +131,10 @@ func TestLocklessRenderNEVRBeforeReplacement(t *testing.T) {
 				assert.False(t, prep.outputTouched)
 
 				if !testCase.queryFails && !testCase.toolMissing {
+					if testCase.rawRelease != "" {
+						require.ErrorContains(t, err, "new NEVR must be equal to or higher than existing NEVR")
+					}
+
 					require.ErrorContains(t, err, "existing `curl-"+testCase.existing+"`")
 					require.ErrorContains(t, err, "new `"+newName+"-"+testCase.rendered+"`")
 				}
@@ -140,18 +167,26 @@ func TestLocklessRenderNEVRBeforeReplacement(t *testing.T) {
 
 func TestRenderNEVRSkipsFirstAndLockedRenders(t *testing.T) {
 	for _, existing := range []bool{false, true} {
-		t.Run(strconv.FormatBool(existing), func(t *testing.T) {
-			env := testutils.NewTestEnv(t)
-			setupRenderOutput(t, env.TestFS, existing)
-			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
-				t.Fatalf("must not query NEVR for first or locked output: %v", cmd.Args)
+		for _, autorelease := range []bool{false, true} {
+			t.Run(strconv.FormatBool(existing)+"/"+strconv.FormatBool(autorelease), func(t *testing.T) {
+				env := testutils.NewTestEnv(t)
+				setupRenderOutput(t, env.TestFS, existing)
 
-				return "", nil
-			}
-			require.NoError(t, moveRenderedOutput(env.Env, "/staging/curl", &preparedComponent{
-				lockless: !existing, specFilename: "curl.spec", compOutputDir: testRenderOutputDir,
-			}, true))
-		})
+				if autorelease {
+					require.NoError(t, fileutils.WriteFile(env.TestFS, "/staging/curl/curl.spec",
+						[]byte(renderTestSpec("1", renderTestAutorelease, "")), fileperms.PublicFile))
+				}
+
+				env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+					t.Fatalf("must not query NEVR for first or locked output: %v", cmd.Args)
+
+					return "", nil
+				}
+				require.NoError(t, moveRenderedOutput(env.Env, "/staging/curl", &preparedComponent{
+					lockless: !existing, specFilename: "curl.spec", compOutputDir: testRenderOutputDir,
+				}, true))
+			})
+		}
 	}
 }
 
