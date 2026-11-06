@@ -252,6 +252,8 @@ func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
 	assert.Contains(t, doc, "retains `%autorelease`, `%autochangelog`")
 	assert.Contains(t, doc, "effective upstream distro's `dist-git-branch`")
 	assert.Contains(t, doc, "fetches that historical branch before comparing commits")
+	assert.Contains(t, doc, "fetches that specific commit hash")
+	assert.Contains(t, doc, "update to upstream <component-name> commit <current-hash>")
 	assert.Contains(t, doc, "All prepared dist-git files except `.git` are retained")
 	assert.Contains(t, doc, "immediately after checking out the pinned upstream commit")
 	assert.Contains(t, doc, "that step never repeats the provenance query")

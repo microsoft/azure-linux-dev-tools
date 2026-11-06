@@ -33,6 +33,8 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+const renderTestRevParse = "rev-parse"
+
 func renderTestSpec(version, release, changelog string) string {
 	return fmt.Sprintf("Name: curl\nVersion: %s\nRelease: %s\nSummary: Test\nLicense: MIT\n"+
 		"\n%%description\nTest\n\n%%changelog\n%s", version, release, changelog)
@@ -268,7 +270,7 @@ func TestCollectRenderUpstreamChanges_Branches(t *testing.T) {
 		},
 		{
 			name: "branch fetch fails", previous: "old", current: "new",
-			oldBranch: "f40", newBranch: "f41", wantFetch: true, fetchFails: true,
+			oldBranch: "f40", newBranch: "f41", wantFetch: true, fetchFails: true, wantLog: true,
 		},
 		{
 			name: "same commit on different branch", previous: "same", current: "same",
@@ -283,6 +285,14 @@ func TestCollectRenderUpstreamChanges_Branches(t *testing.T) {
 			var fetched, logged bool
 
 			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				if cmd.Args[3] == renderTestRevParse {
+					assert.Equal(t, []string{
+						"git", "-C", "/working", renderTestRevParse, "--verify", "--end-of-options", "old^{commit}",
+					}, cmd.Args)
+
+					return "old\n", nil
+				}
+
 				if cmd.Args[3] == "fetch" {
 					fetched = true
 
@@ -314,18 +324,148 @@ func TestCollectRenderUpstreamChanges_Branches(t *testing.T) {
 					previous: testCase.previous, current: testCase.current,
 					previousBranch: testCase.oldBranch, currentBranch: testCase.newBranch,
 				}, update)
-			if testCase.fetchFails {
-				require.ErrorIs(t, err, fetchErr)
-				require.ErrorContains(t, err, "fetching last render upstream branch")
-			} else {
-				require.NoError(t, err)
-			}
+			require.NoError(t, err)
 
 			assert.Equal(t, testCase.wantFetch, fetched)
 			assert.Equal(t, testCase.wantLog, logged)
 
 			if testCase.wantLog {
 				assert.Equal(t, "abc123 Upstream change", update.changes)
+			}
+		})
+	}
+}
+
+func TestCollectRenderUpstreamChanges_MissingCommit(t *testing.T) {
+	for _, testCase := range []struct {
+		name                          string
+		present, recovered, fetchFail bool
+		logFail, cancelResolve        bool
+		branchFail                    bool
+	}{
+		{name: "already available", present: true},
+		{name: "fetched commit", recovered: true},
+		{name: "failed fetch", fetchFail: true},
+		{name: "failed fetch still recovers commit", recovered: true, fetchFail: true},
+		{name: "successful fetch without commit"},
+		{name: "failed branch and commit fetch", branchFail: true, fetchFail: true},
+		{name: "commit recovered after branch fetch failure", branchFail: true, recovered: true},
+		{name: "log failure is fatal", present: true, logFail: true},
+		{name: "cancelled resolution", cancelResolve: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+
+			workerEnv, cancel := env.Env.WithCancel()
+			defer cancel()
+
+			const (
+				previous = "1111111111111111111111111111111111111111"
+				current  = "2222222222222222222222222222222222222222"
+			)
+
+			logErr := errors.New("log failed")
+
+			var (
+				commands    []string
+				resolutions int
+			)
+
+			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				commands = append(commands, cmd.Args[3])
+
+				switch cmd.Args[3] {
+				case renderTestRevParse:
+					resolutions++
+
+					assert.Equal(t, []string{
+						"git", "-C", "/working", renderTestRevParse, "--verify", "--end-of-options", previous + "^{commit}",
+					}, cmd.Args)
+
+					if testCase.cancelResolve {
+						cancel()
+
+						return "", context.Canceled
+					}
+
+					if testCase.present || (resolutions == 2 && testCase.recovered) {
+						return previous, nil
+					}
+
+					return "", errors.New("unknown revision")
+				case "fetch":
+					if strings.HasPrefix(cmd.Args[7], "+refs/heads/") {
+						assert.Equal(t, "+refs/heads/f40:refs/remotes/origin/f40", cmd.Args[7])
+
+						return "", errors.New("branch unavailable")
+					}
+
+					assert.Equal(t, []string{
+						"git", "-C", "/working", "fetch", "--no-tags", "--", "origin", previous,
+					}, cmd.Args)
+
+					if testCase.fetchFail {
+						return "", errors.New("fetch failed")
+					}
+
+					return "", nil
+				case "log":
+					assert.Equal(t, []string{
+						"git", "-C", "/working", "log", "--oneline", "--end-of-options", previous + ".." + current, "--",
+					}, cmd.Args)
+
+					if testCase.logFail {
+						return "", logErr
+					}
+
+					return "def456 Fetched upstream change\n", nil
+				default:
+					t.Fatalf("unexpected command: %v", cmd.Args)
+
+					return "", nil
+				}
+			}
+
+			update := &locklessRenderUpdate{}
+
+			history := lastRender{previous: previous, current: current}
+			if testCase.branchFail {
+				history.previousBranch, history.currentBranch = "f40", "f41"
+			}
+
+			err := collectRenderUpstreamChanges(workerEnv, "/working", "rust-asyncband", "1",
+				history, update)
+
+			switch {
+			case testCase.cancelResolve:
+				require.ErrorIs(t, err, context.Canceled)
+				assert.Equal(t, []string{renderTestRevParse}, commands)
+				assert.Empty(t, update.changes)
+			case testCase.logFail:
+				require.ErrorIs(t, err, logErr)
+				require.ErrorContains(t, err, "collecting upstream changes")
+				assert.Equal(t, []string{renderTestRevParse, "log"}, commands)
+			default:
+				require.NoError(t, err)
+
+				expected := []string{renderTestRevParse}
+				if testCase.branchFail {
+					expected = append([]string{"fetch"}, expected...)
+				}
+
+				if !testCase.present {
+					expected = append(expected, "fetch", renderTestRevParse)
+				}
+
+				if testCase.present || testCase.recovered {
+					expected = append(expected, "log")
+
+					assert.Equal(t, "def456 Fetched upstream change", update.changes)
+				} else {
+					assert.Equal(t, "update to upstream rust-asyncband commit "+current, update.changes)
+				}
+
+				assert.Equal(t, expected, commands)
 			}
 		})
 	}
@@ -495,6 +635,10 @@ func TestPrepareLocklessSpec_ReleaseChangelogAndUpstreamChanges(t *testing.T) {
 				fileperms.PublicFile))
 			env.CmdFactory.RegisterCommandInSearchPath("rpmdev-bumpspec")
 			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				if cmd.Args[3] == renderTestRevParse {
+					return "old\n", nil
+				}
+
 				assert.Equal(t, []string{
 					"git", "-C", "/working", "log", "--oneline", "--end-of-options",
 					"old..new", "--",

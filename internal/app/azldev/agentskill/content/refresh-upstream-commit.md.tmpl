@@ -73,6 +73,11 @@ its full history rather than making a shallow clone. If the last render's
 committed TOML resolves to a different branch and the pins differ, rendering
 fetches that historical branch before comparing commits, without switching the
 working checkout.
+If the old pin cannot be resolved, rendering fetches that specific commit hash
+from `origin` and checks again. If it remains unavailable, rendering continues
+with `update to upstream <component-name> commit <current-hash>` as the upstream
+changes text, even when the historical branch fetch failed. Other Git log errors
+remain fatal.
 
 With `build.emit-upstream-provenance`, rendering captures Fedora provenance
 immediately after checking out the pinned upstream commit, before

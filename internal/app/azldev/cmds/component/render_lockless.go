@@ -411,8 +411,21 @@ func collectRenderUpstreamChanges(
 	if history.previousBranch != "" && history.previousBranch != history.currentBranch {
 		refspec := "+refs/heads/" + history.previousBranch + ":refs/remotes/origin/" + history.previousBranch
 		if _, err := git.RunInDir(env, env, dir, "fetch", "--no-tags", "--", "origin", refspec); err != nil {
-			return fmt.Errorf("fetching last render upstream branch %#q:\n%w", history.previousBranch, err)
+			slog.Warn("Cannot fetch last render upstream branch",
+				"component", name, "branch", history.previousBranch, "error", err)
 		}
+	}
+
+	if err := resolveRenderUpstreamCommit(env, dir, history.previous); err != nil {
+		if env.Err() != nil {
+			return fmt.Errorf("resolving last render upstream commit:\n%w", env.Err())
+		}
+
+		slog.Warn("Last render upstream commit is unavailable; using current upstream pin",
+			"component", name, "commit", history.previous, "error", err)
+		update.changes = fmt.Sprintf("update to upstream %s commit %s", name, history.current)
+
+		return nil
 	}
 
 	changes, err := git.RunInDir(env, env, dir,
@@ -422,6 +435,29 @@ func collectRenderUpstreamChanges(
 	}
 
 	update.changes = changes
+
+	return nil
+}
+
+func resolveRenderUpstreamCommit(env *azldev.Env, dir, commit string) error {
+	if _, err := git.RunInDir(env, env, dir,
+		"rev-parse", "--verify", "--end-of-options", commit+"^{commit}"); err == nil {
+		return nil
+	}
+
+	if env.Err() != nil {
+		return fmt.Errorf("resolving upstream commit %#q:\n%w", commit, env.Err())
+	}
+
+	if _, err := git.RunInDir(env, env, dir, "fetch", "--no-tags", "--", "origin", commit); err != nil {
+		slog.Warn("Cannot fetch last render upstream commit", "commit", commit, "error", err)
+	}
+
+	_, err := git.RunInDir(env, env, dir,
+		"rev-parse", "--verify", "--end-of-options", commit+"^{commit}")
+	if err != nil {
+		return fmt.Errorf("resolving upstream commit %#q after fetching:\n%w", commit, err)
+	}
 
 	return nil
 }

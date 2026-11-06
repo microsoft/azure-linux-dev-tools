@@ -244,6 +244,11 @@ fetching the historical branch does not change the working checkout.
 Different pins, missing render history, or an error loading the old pin mean
 upstream changed. It records `git log --oneline <old>..<current>` from the
 upstream checkout; without an old pin it records a one-line version update.
+If the old pin cannot be resolved in the single-branch checkout, rendering
+fetches that specific commit hash from `origin` and checks again. If the commit
+remains unavailable, including after a failed historical-branch fetch, rendering
+continues with `update to upstream <component-name> commit <current-hash>` as the
+upstream changes text. Other errors collecting the Git log remain fatal.
 An error reading the current pin is fatal.
 
 It then compares the prepared tree with existing output, ignoring the root `.git`
