@@ -14,6 +14,8 @@ for inspection or manual building. This is useful for verifying that
 overlays apply cleanly before running a full build.
 
 Only one component may be selected at a time.
+Lockless components are unsupported; use 'azldev component dist-git-repo' instead
+to extract their committed rendered files and history.
 
 ```
 azldev component prepare-sources [flags]

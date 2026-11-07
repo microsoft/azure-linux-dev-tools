@@ -60,8 +60,9 @@ Update (including `--bump`) skips listed components and leaves
 their locks untouched; refresh skips unlisted components and preserves their
 generated TOML files. All-component scans still prune files for components that
 no longer exist, not files belonging to components using the other mode.
-`component history` and `component query` skip listed components, matching the
-existing lockless no-op behavior. `component changed` compares resolved project
+`component history` skips listed components. `component query` extracts their
+committed rendered dist-git history and processes it with rpmautospec before
+querying; uncommitted rendered changes are ignored. `component changed` compares resolved project
 inputs for listed components and stored fingerprints for unlisted components;
 the current checkout's list determines which comparison to use.
 
@@ -71,11 +72,43 @@ the current checkout's list determines which comparison to use.
 |------|---------|----------------------|
 | Resolved commit storage | `locks/<name>.lock` | `base/upstream-commits/<name>.toml` |
 | Refresh command | `azldev component update` | `azldev component refresh-upstream-commit` |
-| Inspecting resolved state | `azldev component history`, `azldev component query` | read the generated TOML; no equivalent commands |
+| Inspecting resolved state | `azldev component history`, `azldev component query` | `component query` inspects committed rendered specs; `history` skips lockless components |
 | Lock consistency checks | On, with `--skip-lock-validation` to opt out | Skipped |
 | `component changed` | Compares stored input fingerprints | Compares project configuration resolved at each ref |
-| Synthetic dist-git history | Derived from lock-file fingerprint changes | Skipped during rendering; other workflows derive it from generated upstream-commit TOML changes |
+| Synthetic dist-git history | Derived from lock-file fingerprint changes | Not generated; build and query extract committed rendered history |
 | Agent skills and MCP tools | Both workflows are available | Both workflows are available |
+
+### Preparing, querying, and building committed dist-git
+
+Render and commit the component before querying or building it. Lockless
+`component query` and `component build` use the same extraction as
+`component dist-git-repo`: a temporary `--single-branch --no-local` clone of the
+current project branch, filtered with `git filter-repo --subdirectory-filter`
+using the component's repository-relative rendered directory. Install
+`git-filter-repo` on the host. Uncommitted rendered changes are not included,
+and extraction never modifies the original repository.
+
+`component query` processes the temporary spec with rpmautospec in the project's
+Mock chroot, then reports its source NEVR, required files, and binary subpackages.
+The temporary query repositories are removed on success and failure.
+Locked queries continue to read working-tree rendered files, including uncommitted edits.
+
+`component build` downloads sources listed in the extracted `sources` manifest,
+then builds the SRPM with Mock's `rpmautospec` plugin enabled and the extracted
+repository passed as `--sources`. This requires Mock 5.3 or newer and
+rpmautospec available from the build distro's package repositories.
+Mock's rpmautospec plugin must be installed on the host as well; enabling an
+unavailable plugin is an error, even if Mock itself would only warn.
+The plugin resolves `%autorelease` and `%autochangelog` using the filtered
+history; no synthetic history, overlay replay, or separate Release bump runs.
+Binary RPMs are built from that SRPM normally. `--no-check` is forwarded through
+Mock's `--nocheck`; `--srpm-only` skips binary builds. Lockless builds reject
+`--without-git` and `--rpmdev-bumpspec`. Locked build behavior is unchanged.
+
+`component prepare-sources` rejects lockless components before touching its
+output directory. Use `azldev component dist-git-repo <name> -o <directory>`
+instead to obtain a committed working dist-git repository. This extraction
+command does not download source archives.
 
 ## Configure the Project
 

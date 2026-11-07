@@ -6,6 +6,7 @@ package mock_test
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -410,6 +411,25 @@ func TestBuildSRPM(t *testing.T) {
 	assert.Contains(t, mockCmd, "-r "+testMockConfigPath)
 }
 
+func TestBuildSRPM_MissingRPMAutospecPlugin(t *testing.T) {
+	ctx := newTestCtxWithMockPrereqsPresent()
+	ctx.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+		_, err := io.WriteString(cmd.Stderr,
+			"WARNING: rpmautospec plugin is enabled in configuration but is not installed\n")
+
+		return testMockRootPath, err
+	}
+	ctx.CmdFactory.RunHandler = func(_ *exec.Cmd) error {
+		t.Fatal("must not build without the requested rpmautospec plugin")
+
+		return nil
+	}
+	runner := mock.NewRunner(ctx, testMockConfigPath)
+	err := runner.BuildSRPM(ctx, testSpecPath, testSourceDirPath, testOutputDirPath,
+		mock.SRPMBuildOptions{RPMAutospec: true})
+	require.ErrorContains(t, err, "rpmautospec plugin must be installed")
+}
+
 func TestBuildSRPM_MockFails(t *testing.T) {
 	testError := errors.New("injected mock failure")
 
@@ -421,6 +441,23 @@ func TestBuildSRPM_MockFails(t *testing.T) {
 
 	err := runner.BuildSRPM(ctx, testSpecPath, testSourceDirPath, testOutputDirPath, options)
 	require.ErrorIs(t, err, testError)
+}
+
+func TestBuildSRPM_RPMAutospec(t *testing.T) {
+	ctx := newTestCtxWithMockPrereqsPresent()
+
+	var args []string
+
+	ctx.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+		args = cmd.Args
+
+		return nil
+	}
+	runner := mock.NewRunner(ctx, testMockConfigPath)
+	require.NoError(t, runner.BuildSRPM(ctx, testSpecPath, testSourceDirPath, testOutputDirPath,
+		mock.SRPMBuildOptions{RPMAutospec: true}))
+	assert.Contains(t, strings.Join(args, " "), "--enable-plugin rpmautospec")
+	assert.Contains(t, strings.Join(args, " "), "--sources "+testSourceDirPath)
 }
 
 func TestBuildRPM(t *testing.T) {

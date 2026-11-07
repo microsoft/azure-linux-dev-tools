@@ -107,6 +107,12 @@ are placed in structured subdirectories under the project output directory:
   out/rpms/            - binary RPMs with no channel configured (or channel="none")
   out/rpms/<channel>/  - binary RPMs moved to their configured publish channel subdirectory
 
+For lockless components, build instead extracts committed rendered dist-git
+history using git-filter-repo, downloads lookaside sources, and builds the SRPM
+with mock's rpmautospec plugin (mock 5.3+). Uncommitted rendered changes are
+ignored. '--without-git' and '--rpmdev-bumpspec' are unsupported for lockless
+components. '--no-check' skips the binary build's package checks normally.
+
 The publish channel for each package is resolved from the project's package
 configuration (package groups and per-component overrides). See 'azldev package'
 for details.
@@ -328,6 +334,11 @@ func buildComponent(
 	options *ComponentBuildOptions,
 ) (results ComponentBuildResults, err error) {
 	env = env.WithMockRootComponents(component.GetName())
+
+	if env.ComponentWithoutLockfile(component.GetName()) {
+		return buildLocklessComponent(env, component, workDirFactory, options)
+	}
+
 	// Resolve the effective distro for this component before creating the source manager.
 	distro, err := sourceproviders.ResolveDistro(env, component)
 	if err != nil {

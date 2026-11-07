@@ -86,13 +86,15 @@ calculation = "manual"
 ```
 
 The temporary `--rpmdev-bumpspec` flag on `comp build`, `comp render`, and
-`comp prepare-sources` opts into transactional host handling while Azure Linux
+`comp prepare-sources` opts into transactional host handling for locked components while Azure Linux
 migrates. Only that path requires `rpmdev-bumpspec`, `rpmdev-packager`, `rpm`,
 `rpmspec`, and Python with its RPM module. It preserves the fixed team
 identity/comment/datestamp and strict source-EVR transaction checks; locks and
 synthetic history still determine the number and order of bumps. Without the
 flag, no bumpspec runtime discovery occurs and the legacy static calculation is
-used outside the lockless upstream render workflow. That workflow always runs
+used for locked components. Lockless builds reject this flag and use Mock's
+rpmautospec plugin with committed dist-git history; lockless `comp prepare-sources`
+is unsupported. The lockless upstream render workflow always runs
 host `rpmdev-bumpspec -c` only for non-autorelease specs and automatically commits
 the component output. Missing `--changelog-comment` opens `$EDITOR` or a local
 editor before output replacement, including for autorelease commits.

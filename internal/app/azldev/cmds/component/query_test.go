@@ -5,10 +5,12 @@ package component_test
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/component"
@@ -83,6 +85,160 @@ func TestNewComponentQueryCommand(t *testing.T) {
 	cmd := component.NewComponentQueryCommand()
 	require.NotNil(t, cmd)
 	assert.Equal(t, "query", cmd.Use)
+}
+
+func TestQueryComponents_LocklessCommittedDistGit(t *testing.T) {
+	for _, testCase := range []struct {
+		name, failure string
+		mixed         bool
+	}{
+		{name: "lockless"},
+		{name: "mixed", mixed: true},
+		{name: "missing filter-repo", failure: distGitTestFilterRepo},
+		{name: "processing failure", failure: "process"},
+		{name: "query failure", failure: "query"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			failure := testCase.failure
+			env := newDistGitRepoTestEnv(t, testComponentName)
+
+			env.Config.LocklessComponents = map[string]bool{testComponentName: true}
+			if testCase.mixed {
+				env.Config.Components["bash"] = projectconfig.ComponentConfig{
+					Name: "bash",
+					Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeLocal, Path: "/project/bash.spec"},
+				}
+				prepareSuccessfulBatchQuery(t, env, "bash", "/project/bash.spec")
+			}
+
+			lockedQueryHandler := env.CmdFactory.RunHandler
+			env.CmdFactory.RegisterCommandInSearchPath(mock.MockBinary)
+
+			sentinel := errors.New("injected failure")
+
+			var (
+				cloneDir                             string
+				cloned, filtered, processed, queried bool
+			)
+
+			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				if cmd.Args[0] != "git" {
+					return "", nil
+				}
+
+				switch cmd.Args[3] {
+				case "rev-parse":
+					if cmd.Args[4] == "--git-common-dir" {
+						return distGitTestMetadata, nil
+					}
+
+					return "/project", nil
+				case distGitTestClone:
+					assert.Equal(t, []string{"--single-branch", "--no-local", "--"},
+						cmd.Args[4:7])
+					cloneDir = cmd.Args[len(cmd.Args)-1]
+					cloned = true
+
+					require.NoError(t, fileutils.MkdirAll(env.FS(), cloneDir))
+				case distGitTestFilterRepo:
+					if failure == distGitTestFilterRepo {
+						return "", sentinel
+					}
+
+					if slices.Contains(cmd.Args, "--subdirectory-filter") {
+						assert.Equal(t, "specs/c/curl", cmd.Args[len(cmd.Args)-1])
+
+						filtered = true
+
+						require.NoError(t, fileutils.WriteFile(env.FS(), filepath.Join(cloneDir, "curl.spec"),
+							[]byte("committed spec"), fileperms.PublicFile))
+					}
+				}
+
+				return "", nil
+			}
+			env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+				args := strings.Join(cmd.Args, " ")
+				if !strings.Contains(args, "--chroot") {
+					return nil
+				}
+
+				if strings.Contains(args, "render_process.py") {
+					if failure == "process" {
+						return sentinel
+					}
+
+					processed = true
+
+					assert.True(t, filtered)
+
+					content, err := fileutils.ReadFile(env.FS(), filepath.Join(cloneDir, "curl.spec"))
+					require.NoError(t, err)
+					assert.Equal(t, "committed spec", string(content))
+
+					return fileutils.WriteFile(env.FS(), filepath.Join(filepath.Dir(cloneDir), "results.json"),
+						[]byte(`[{"name":"curl","specFiles":"","error":null}]`), fileperms.PublicFile)
+				}
+
+				if strings.Contains(args, "query_process.py") {
+					if testCase.mixed && !filtered {
+						return lockedQueryHandler(cmd)
+					}
+
+					if failure == "query" {
+						return sentinel
+					}
+
+					queried = true
+
+					assert.True(t, processed)
+
+					return fileutils.WriteFile(env.FS(), filepath.Join(filepath.Dir(filepath.Dir(cloneDir)), "results.json"),
+						[]byte(`[{"name":"curl","srpmOut":"name=curl\nepoch=0\nversion=1\nrelease=3\n","binOut":"","error":null}]`),
+						fileperms.PublicFile)
+				}
+
+				return nil
+			}
+
+			filter := components.ComponentFilter{ComponentNamePatterns: []string{testComponentName}}
+			if testCase.mixed {
+				filter.IncludeAllComponents = true
+			}
+
+			results, queryErr := component.QueryComponents(env.Env, &component.QueryComponentsOptions{
+				ComponentFilter: filter,
+			})
+			dirs, err := fileutils.Glob(env.FS(), filepath.Join(env.Env.WorkDir(), "azldev-query-scratch-*"))
+			require.NoError(t, err)
+			assert.Empty(t, dirs, "temporary clones must be removed after success or failure")
+
+			if failure != "" {
+				require.ErrorIs(t, queryErr, sentinel)
+
+				if failure == distGitTestFilterRepo {
+					assert.Contains(t, queryErr.Error(), "must be installed")
+				}
+
+				return
+			}
+
+			require.NoError(t, queryErr)
+
+			wantLen := 1
+			if testCase.mixed {
+				wantLen = 2
+			}
+
+			require.Len(t, results, wantLen)
+			assert.True(t, cloned && filtered && processed && queried)
+
+			releases := map[string]string{testComponentName: "3", "bash": "1.azl4"}
+			for _, result := range results {
+				assert.Equal(t, releases[result.Name], result.Version.Release())
+			}
+		})
+	}
 }
 
 func TestComponentQueryCmd_NoMatch(t *testing.T) {

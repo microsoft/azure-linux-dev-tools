@@ -10,13 +10,16 @@ Query detailed information for components from their locally rendered specs.
 
 This command reads the post-overlay specs from the project's rendered-specs-dir
 (produced by 'azldev component render') and runs rpmspec against them in a
-single shared mock chroot, batching all specs into one chroot invocation with
-parallel per-spec processing. For each component, it reports the source NEVR
+single shared mock chroot, querying specs in batches with parallel per-spec
+processing. For each component, it reports the source NEVR
 and the list of binary subpackages the spec would produce when built.
 
-Components using the lockless workflow via lockless-components.txt are skipped.
+For lockless components, queries use committed rendered files from a temporary
+dist-git repository extracted with git-filter-repo. rpmautospec resolves the
+release and changelog in that temporary repository before querying. Uncommitted
+rendered changes are ignored. Requires git-filter-repo for lockless components.
 
-The rendered-specs-dir must exist on disk; if it doesn't, run
+For locked components, rendered-specs-dir must exist on disk; if it doesn't, run
 'azldev component render' first. Components that previously failed to render
 (those with a RENDER_FAILED marker file) are skipped with a warning.
 

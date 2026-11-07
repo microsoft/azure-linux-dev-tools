@@ -49,7 +49,9 @@ The result is a directory containing the spec file and all sources, ready
 for inspection or manual building. This is useful for verifying that
 overlays apply cleanly before running a full build.
 
-Only one component may be selected at a time.`,
+Only one component may be selected at a time.
+Lockless components are unsupported; use 'azldev component dist-git-repo' instead
+to extract their committed rendered files and history.`,
 		Example: `  # Prepare sources for a component
   azldev component prep-sources -p curl -o ./build/work/scratch/curl --force
 
@@ -113,6 +115,11 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 	}
 
 	component := comps.Components()[0]
+
+	if env.ComponentWithoutLockfile(component.GetName()) {
+		return fmt.Errorf("component %#q uses the lockless workflow; use 'azldev component dist-git-repo' instead",
+			component.GetName())
+	}
 
 	event := env.StartEvent("Preparing sources", "component", component.GetName(), "outputDir", options.OutputDir)
 	defer event.End()

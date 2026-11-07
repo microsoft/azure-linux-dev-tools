@@ -140,7 +140,7 @@ calculation = "manual"
 
 ### Optional `rpmdev-bumpspec` preview
 
-By default, build, render, and `prepare-sources` use the legacy static Release
+For lock-file-based components, build, render, and `prepare-sources` use the legacy static Release
 calculation above. It supports only a bare integer or an integer followed by
 `%{?dist}` or `%{dist}`. Other static forms, such as dotted releases or custom
 macros, retain the existing non-standard Release error and require `manual` or
@@ -153,11 +153,15 @@ uses the existing fixed changelog metadata and requires `rpmdev-bumpspec`,
 `rpmdev-packager`, `rpm`, `rpmspec`, and Python with the RPM module only when
 explicitly selected for this transactional strategy. `%autorelease` behavior is unchanged.
 
-**Exception:** Rendering a lockless upstream component always invokes host
-`rpmdev-bumpspec -c` before the existing processing, without requiring the flag.
-Its `%autorelease` no-op is accepted. See the
+**Exception:** Rendering a lockless upstream component with a non-autorelease
+Release invokes host `rpmdev-bumpspec -c` without requiring the flag.
+Autorelease renders skip bumpspec. See the
 [lockless rendering workflow](../../how-to/preview-without-lockfile.md#render-and-commit-an-upstream-component)
 for release/changelog carryover and automatic output commits.
+
+Lockless builds instead use committed rendered dist-git history and Mock's
+rpmautospec plugin; they reject `--rpmdev-bumpspec` and `--without-git`.
+Lockless `prepare-sources` is unsupported; use `component dist-git-repo` instead.
 
 ## Render Configuration
 

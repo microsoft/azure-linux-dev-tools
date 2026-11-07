@@ -20,11 +20,13 @@ import (
 )
 
 const (
-	distGitTestOutput    = "/exports/component"
-	distGitTestProject   = "/project"
-	distGitTestRevParse  = "rev-parse"
-	distGitTestCommonDir = "--git-common-dir"
-	distGitTestClone     = "clone"
+	distGitTestOutput     = "/exports/component"
+	distGitTestProject    = "/project"
+	distGitTestRevParse   = "rev-parse"
+	distGitTestCommonDir  = "--git-common-dir"
+	distGitTestClone      = "clone"
+	distGitTestFilterRepo = "filter-repo"
+	distGitTestMetadata   = "/project/.git"
 )
 
 func newDistGitRepoTestEnv(t *testing.T, name string) *testutils.TestEnv {
@@ -88,7 +90,7 @@ func TestCreateComponentDistGitRepo(t *testing.T) {
 				switch cmd.Args[3] {
 				case distGitTestRevParse:
 					if cmd.Args[4] == distGitTestCommonDir {
-						return "/project/.git", nil
+						return distGitTestMetadata, nil
 					}
 
 					return distGitTestProject, nil
@@ -108,14 +110,14 @@ func TestCreateComponentDistGitRepo(t *testing.T) {
 			assert.Equal(t, testCase.component, result.Component)
 			assert.Equal(t, distGitTestOutput, result.OutputDir)
 			assert.Equal(t, [][]string{
-				{"git", "-C", distGitTestProject, "filter-repo", "--version"},
+				{"git", "-C", distGitTestProject, distGitTestFilterRepo, "--version"},
 				{"git", "-C", distGitTestProject, distGitTestRevParse, "--show-toplevel"},
 				{"git", "-C", distGitTestProject, distGitTestRevParse, distGitTestCommonDir},
 				{
 					"git", "-C", distGitTestProject, distGitTestClone, "--single-branch", "--no-local", "--",
 					distGitTestProject, distGitTestOutput,
 				},
-				{"git", "-C", distGitTestOutput, "filter-repo", "--subdirectory-filter", testCase.wantSubdir},
+				{"git", "-C", distGitTestOutput, distGitTestFilterRepo, "--subdirectory-filter", testCase.wantSubdir},
 			}, commands)
 		})
 	}
@@ -150,7 +152,7 @@ func TestCreateComponentDistGitRepo_ExistingOutput(t *testing.T) {
 }
 
 func TestCreateComponentDistGitRepo_FailuresPreserveOutput(t *testing.T) {
-	for _, step := range []string{"filter-repo", distGitTestRevParse} {
+	for _, step := range []string{distGitTestFilterRepo, distGitTestRevParse} {
 		t.Run(step, func(t *testing.T) {
 			env := newDistGitRepoTestEnv(t, "curl")
 			require.NoError(t, fileutils.MkdirAll(env.TestFS, distGitTestOutput))
@@ -173,7 +175,7 @@ func TestCreateComponentDistGitRepo_FailuresPreserveOutput(t *testing.T) {
 			})
 			require.ErrorIs(t, err, failure)
 
-			if step == "filter-repo" {
+			if step == distGitTestFilterRepo {
 				require.ErrorContains(t, err, "git-filter-repo must be installed to use the dist-git-repo command")
 			}
 
@@ -237,7 +239,7 @@ func TestCreateComponentDistGitRepo_CommandFailures(t *testing.T) {
 					}
 
 					cloned = true
-				case "filter-repo":
+				case distGitTestFilterRepo:
 					if cmd.Args[4] == "--subdirectory-filter" {
 						assert.True(t, cloned)
 

@@ -87,6 +87,7 @@ func NewMockProcessor(ctx opctx.Ctx, mockConfigPath string, opts ...MockProcesso
 type ComponentInput struct {
 	Name         string // Component name (matches subdirectory in staging dir)
 	SpecFilename string // Just the filename, e.g., "curl.spec"
+	SkipSpectool bool
 }
 
 // ComponentMockResult holds the mock processing result for one component.
@@ -402,6 +403,7 @@ func (p *MockProcessor) CalculateRelease(ctx context.Context, specHostDir, specF
 type componentInputJSON struct {
 	Name         string `json:"name"`
 	SpecFilename string `json:"specFilename"`
+	SkipSpectool bool   `json:"skipSpectool,omitempty"`
 }
 
 // componentResultJSON mirrors the JSON output from render_process.py.

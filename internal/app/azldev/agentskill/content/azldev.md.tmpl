@@ -139,6 +139,12 @@ and git-filter-repo. It clones the local project's current branch with
 Only committed rendered files/history are exported; it does not fetch upstream.
 Existing output requires `--force`, which deletes it after preflight checks.
 
+For lockless components, `comp query` extracts committed rendered history into
+temporary dist-git repositories and processes it with rpmautospec in Mock before
+querying. Uncommitted rendered edits are ignored; locked queries still read the
+working tree. `comp prepare-sources` rejects lockless components; use
+`comp dist-git-repo` instead. `comp history` continues to skip lockless components.
+
 The hidden `advanced` group (`adv`) contains specialist integrations such as MCP and
 mock helpers; it is intentionally omitted from normal help.
 

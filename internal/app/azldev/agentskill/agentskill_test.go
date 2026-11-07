@@ -226,6 +226,22 @@ func TestSkillsDocumentLocklessRPMContext(t *testing.T) {
 	}
 }
 
+func TestSkillsDocumentLocklessBuildAndQuery(t *testing.T) {
+	for _, withoutLockfile := range []bool{false, true} {
+		catalog := agentskill.NewCatalog(withoutLockfile)
+		doc, err := catalog.SkillDocument("azldev", testParams())
+		require.NoError(t, err)
+		assert.Contains(t, doc, "`comp query` extracts committed rendered history")
+		assert.Contains(t, doc, "`comp prepare-sources` rejects lockless components")
+		assert.Contains(t, doc, "locked queries still read the")
+		doc, err = catalog.SkillDocument("azldev-build-component", testParams())
+		require.NoError(t, err)
+		assert.Contains(t, doc, "Mock's rpmautospec plugin (Mock 5.3+)")
+		assert.Contains(t, doc, "Uncommitted rendered edits are ignored")
+		assert.Contains(t, doc, "Locked builds retain their existing")
+	}
+}
+
 func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
 	for _, withoutLockfile := range []bool{false, true} {
 		doc, err := agentskill.NewCatalog(withoutLockfile).SkillDocument("azldev", testParams())

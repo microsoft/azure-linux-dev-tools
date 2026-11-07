@@ -52,7 +52,7 @@ func TestNewComponentCommands_LockValidationFlags(t *testing.T) {
 	assert.NotNil(t, component.NewUpdateCmd().Flags().Lookup("skip-lock-validation"))
 }
 
-func TestLocklessComponents_SkipLegacyHistoryAndQuery(t *testing.T) {
+func TestLocklessComponents_SkipLegacyHistory(t *testing.T) {
 	env := testutils.NewTestEnv(t)
 	env.Config.LocklessComponents = map[string]bool{"rust-asyncband": true}
 	env.Config.Components["rust-asyncband"] = projectconfig.ComponentConfig{
@@ -67,8 +67,4 @@ func TestLocklessComponents_SkipLegacyHistoryAndQuery(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Empty(t, history)
-
-	query, err := component.QueryComponents(env.Env, &component.QueryComponentsOptions{ComponentFilter: filter})
-	require.NoError(t, err)
-	assert.Empty(t, query)
 }
