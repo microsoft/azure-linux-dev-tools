@@ -11,7 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/workdir"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
@@ -110,24 +109,5 @@ func TestLocklessBuildUsesDistGitAndCleansUp(t *testing.T) {
 			require.NoError(t, err)
 			require.False(t, exists)
 		})
-	}
-}
-
-func TestLocklessPrepareSourcesPreservesOutput(t *testing.T) {
-	for _, options := range []PrepareSourcesOptions{
-		{}, {Force: true}, {SkipOverlays: true}, {WithoutGitRepo: true}, {RPMDevBumpspec: true},
-	} {
-		env := testutils.NewTestEnv(t)
-		env.Config.LocklessComponents = map[string]bool{"curl": true}
-		env.Config.Components["curl"] = projectconfig.ComponentConfig{Name: "curl"}
-		options.ComponentFilter = components.ComponentFilter{ComponentNamePatterns: []string{"curl"}}
-		options.OutputDir = "/output"
-
-		require.NoError(t, fileutils.WriteFile(env.FS(), "/output/keep", []byte("original"), fileperms.PublicFile))
-		err := PrepareComponentSources(env.Env, &options)
-		require.ErrorContains(t, err, "use 'azldev component dist-git-repo' instead")
-		content, err := fileutils.ReadFile(env.FS(), "/output/keep")
-		require.NoError(t, err)
-		require.Equal(t, "original", string(content))
 	}
 }

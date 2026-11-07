@@ -105,10 +105,35 @@ Binary RPMs are built from that SRPM normally. `--no-check` is forwarded through
 Mock's `--nocheck`; `--srpm-only` skips binary builds. Lockless builds reject
 `--without-git` and `--rpmdev-bumpspec`. Locked build behavior is unchanged.
 
-`component prepare-sources` rejects lockless components before touching its
-output directory. Use `azldev component dist-git-repo <name> -o <directory>`
-instead to obtain a committed working dist-git repository. This extraction
-command does not download source archives.
+`component prepare-sources` uses lockless render preparation while writing
+directly into `--output-dir`, allowing uncommitted and untracked project files.
+Nonempty output requires `--force`, which removes existing contents before
+preparation. Failures can leave partially prepared output. It fetches upstream
+lookaside payloads with the spec/sidecars, prepares the upstream release/changelog,
+then downloads/generates configured `source-files`. Like locked preparation, it
+acquires payloads before writing the macro file and applying overlays. Archive
+overlays run first, followed by macro-file loading, configured spec/loose-file
+overlays, and generated check-skip/header overlays. It updates `sources` metadata
+with the configured post-overlay hashes. It does not compare
+rendered output, apply a final render release bump, or commit changes.
+Render history is read from
+`<project.rendered-specs-dir>/<lowercase-first-letter>/<component>` inside the
+project repository, independently of `--output-dir`. The configured root defaults
+to `specs/`. This path never generates synthetic history. Fetched upstream Git
+metadata is retained through preparation; `--without-git` removes `.git` after
+successful preparation. On failure, any remaining Git metadata is left for inspection.
+
+The source-preparation flags also apply to lockless components:
+
+| Flag | Behavior |
+|------|----------|
+| `--without-git` | Remove `.git` from prepared output after successful preparation. It remains available for upstream release/changelog preparation; no synthetic history is generated with or without the flag. |
+| `--skip-overlays` | Skip configured and generated overlays, macro-file creation/loading, and `sources` metadata updates. Source acquisition still runs unless `--skip-sources` is also set. Upstream release/changelog preparation still runs. |
+| `--skip-sources` | Skip upstream lookaside downloads, configured source downloads/generation, and archive overlays. Spec/sidecars are still fetched; other overlays and `sources` metadata updates still run unless `--skip-overlays` is set. Overlays requiring missing payloads can fail. |
+| `--allow-no-hashes` | Compute missing hashes from acquired files when updating `sources`, defaulting to SHA-512 when `hash-type` is omitted. This does not edit TOML. With `--skip-sources`, missing hashes cannot be computed and cause an error; with `--skip-overlays`, metadata updates and hash computation are skipped. |
+
+Use `azldev component dist-git-repo <name> -o <directory>` to obtain a committed
+working dist-git repository. That extraction command does not download archives.
 
 ## Configure the Project
 

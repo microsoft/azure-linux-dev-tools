@@ -94,7 +94,14 @@ synthetic history still determine the number and order of bumps. Without the
 flag, no bumpspec runtime discovery occurs and the legacy static calculation is
 used for locked components. Lockless builds reject this flag and use Mock's
 rpmautospec plugin with committed dist-git history; lockless `comp prepare-sources`
-is unsupported. The lockless upstream render workflow always runs
+writes directly to `--output-dir` and downloads/generates sources before macro-file
+setup, then applies archive overlays before spec/loose-file overlays. Nonempty output
+requires `--force`; failures can leave partial output. It does not commit changes.
+It reads history from `project.rendered-specs-dir`, not
+`--output-dir`, without generating synthetic history. `--without-git` removes `.git`
+after successful preparation, preserving it on failure.
+It supports `--skip-overlays`, `--skip-sources`, and `--allow-no-hashes`.
+The lockless upstream render workflow always runs
 host `rpmdev-bumpspec -c` only for non-autorelease specs and automatically commits
 the component output. Missing `--changelog-comment` opens `$EDITOR` or a local
 editor before output replacement, including for autorelease commits.

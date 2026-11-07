@@ -50,8 +50,16 @@ for inspection or manual building. This is useful for verifying that
 overlays apply cleanly before running a full build.
 
 Only one component may be selected at a time.
-Lockless components are unsupported; use 'azldev component dist-git-repo' instead
-to extract their committed rendered files and history.`,
+For lockless components, render-style preparation writes directly to '--output-dir'
+and preserves fetched upstream Git metadata. Nonempty output requires '--force'.
+It downloads/generates source payloads before macro-file setup and configured
+overlays. Archive overlays run before spec and loose-file overlays. It does not
+compare rendered output, apply a final render release bump, or commit changes.
+Render history comes from 'project.rendered-specs-dir'/<lowercase-first-letter>/<component>,
+independently of '--output-dir'. No synthetic history is generated.
+'--without-git' removes fetched Git metadata after successful preparation.
+It honors '--skip-overlays', '--skip-sources', and '--allow-no-hashes'.
+Use 'azldev component dist-git-repo' to extract committed rendered history.`,
 		Example: `  # Prepare sources for a component
   azldev component prep-sources -p curl -o ./build/work/scratch/curl --force
 
@@ -77,7 +85,7 @@ to extract their committed rendered files and history.`,
 
 	cmd.Flags().BoolVar(&options.SkipOverlays, "skip-overlays", false, "skip applying overlays to prepared sources")
 	cmd.Flags().BoolVar(&options.WithoutGitRepo, "without-git", false,
-		"Disable dist-git repository creation (enabled by default)")
+		"Exclude Git metadata from prepared output (locked components also skip synthetic dist-git creation)")
 	addRPMDevBumpspecFlag(cmd, &options.RPMDevBumpspec)
 
 	cmd.Flags().BoolVar(&options.Force, "force", false, "delete and recreate the output directory if it already exists")
@@ -91,10 +99,6 @@ to extract their committed rendered files and history.`,
 }
 
 func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) error {
-	if err := validatePrepareSourcesOptions(options); err != nil {
-		return err
-	}
-
 	var comps *components.ComponentSet
 
 	resolver := components.NewResolver(env)
@@ -116,9 +120,13 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 
 	component := comps.Components()[0]
 
-	if env.ComponentWithoutLockfile(component.GetName()) {
-		return fmt.Errorf("component %#q uses the lockless workflow; use 'azldev component dist-git-repo' instead",
-			component.GetName())
+	withoutLockfile := env.ComponentWithoutLockfile(component.GetName())
+	if err := validatePrepareSourcesOptions(options, withoutLockfile); err != nil {
+		return err
+	}
+
+	if withoutLockfile {
+		return prepareLocklessSources(env, component, options)
 	}
 
 	event := env.StartEvent("Preparing sources", "component", component.GetName(), "outputDir", options.OutputDir)
@@ -198,12 +206,12 @@ func buildPreparerOptions(
 	return opts
 }
 
-func validatePrepareSourcesOptions(options *PrepareSourcesOptions) error {
+func validatePrepareSourcesOptions(options *PrepareSourcesOptions, withoutLockfile bool) error {
 	if !options.RPMDevBumpspec {
 		return nil
 	}
 
-	if options.WithoutGitRepo {
+	if options.WithoutGitRepo && !withoutLockfile {
 		return errors.New("'--rpmdev-bumpspec' cannot be used with '--without-git'")
 	}
 

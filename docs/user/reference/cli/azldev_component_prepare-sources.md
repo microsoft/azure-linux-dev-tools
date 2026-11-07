@@ -14,8 +14,16 @@ for inspection or manual building. This is useful for verifying that
 overlays apply cleanly before running a full build.
 
 Only one component may be selected at a time.
-Lockless components are unsupported; use 'azldev component dist-git-repo' instead
-to extract their committed rendered files and history.
+For lockless components, render-style preparation writes directly to '--output-dir'
+and preserves fetched upstream Git metadata. Nonempty output requires '--force'.
+It downloads/generates source payloads before macro-file setup and configured
+overlays. Archive overlays run before spec and loose-file overlays. It does not
+compare rendered output, apply a final render release bump, or commit changes.
+Render history comes from 'project.rendered-specs-dir'/<lowercase-first-letter>/<component>,
+independently of '--output-dir'. No synthetic history is generated.
+'--without-git' removes fetched Git metadata after successful preparation.
+It honors '--skip-overlays', '--skip-sources', and '--allow-no-hashes'.
+Use 'azldev component dist-git-repo' to extract committed rendered history.
 
 ```
 azldev component prepare-sources [flags]
@@ -46,7 +54,7 @@ azldev component prepare-sources [flags]
       --skip-overlays[=true|false]          skip applying overlays to prepared sources
       --skip-sources[=true|false]           skip downloading fetched sources when preparing the package (useful to extract dist-git metadata when source files are not needed)
   -s, --spec-path stringArray               Spec path
-      --without-git[=true|false]            Disable dist-git repository creation (enabled by default)
+      --without-git[=true|false]            Exclude Git metadata from prepared output (locked components also skip synthetic dist-git creation)
 ```
 
 ### Options inherited from parent commands

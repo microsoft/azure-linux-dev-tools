@@ -7,7 +7,9 @@ import (
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/component"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
+	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/stretchr/testify/assert"
@@ -63,8 +65,10 @@ func TestPrepareSourcesCmd_NoMatch(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestPrepareSourcesOptions_RejectRPMDevBumpspecInvalidCombinationsBeforeDiscovery(t *testing.T) {
+func TestPrepareSourcesOptions_RejectRPMDevBumpspecInvalidCombinations(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
+	testEnv.Config.Components["curl"] = projectconfig.ComponentConfig{Name: "curl"}
+
 	for _, testCase := range []struct {
 		name    string
 		options component.PrepareSourcesOptions
@@ -82,6 +86,9 @@ func TestPrepareSourcesOptions_RejectRPMDevBumpspecInvalidCombinationsBeforeDisc
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
+			testCase.options.ComponentFilter = components.ComponentFilter{
+				ComponentNamePatterns: []string{"curl"}, SkipLockValidation: true,
+			}
 			err := component.PrepareComponentSources(testEnv.Env, &testCase.options)
 			require.EqualError(t, err, testCase.message)
 		})

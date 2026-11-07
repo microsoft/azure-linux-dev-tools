@@ -190,7 +190,9 @@ func TestPrepareSources_ArchiveOverlayRehashesSourcesEntry(t *testing.T) {
 
 	component.EXPECT().GetName().AnyTimes().Return(componentName)
 	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
+		Build: projectconfig.ComponentBuildConfig{Defines: map[string]string{"prepare_fixture": "ready"}},
 		Overlays: []projectconfig.ComponentOverlay{
+			{Type: projectconfig.ComponentOverlaySetSpecTag, Tag: "Summary", Value: "Overlaid"},
 			{
 				Type:     projectconfig.ComponentOverlayRemoveFile,
 				Archive:  archiveName,
@@ -208,14 +210,26 @@ func TestPrepareSources_ArchiveOverlayRehashesSourcesEntry(t *testing.T) {
 		},
 	})
 
-	// The archive and 'sources' file already exist on disk; the source manager
-	// only needs to provide the spec file (FetchFiles is a no-op download).
-	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, outputDir).Return(nil)
+	// The archive and 'sources' file stand in for acquired upstream payloads.
+	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, outputDir).DoAndReturn(
+		func(_ context.Context, _ components.Component, _ string) error {
+			content, err := fileutils.ReadFile(ctx.FS(), specPath)
+			require.NoError(t, err)
+			assert.NotContains(t, string(content), "%{load:")
+			assert.NotContains(t, string(content), "Summary: Overlaid")
+
+			hash, err := fileutils.ComputeFileHash(ctx.FS(), fileutils.HashTypeMD5, archivePath)
+			require.NoError(t, err)
+			assert.Equal(t, originalHash, hash, "archive overlays must follow acquisition")
+
+			return nil
+		})
+
 	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, outputDir, gomock.Any()).DoAndReturn(
 		func(_ interface{}, _ interface{}, dir string, _ ...sourceproviders.FetchComponentOption) error {
 			return fileutils.WriteFile(
 				ctx.FS(), filepath.Join(dir, componentName+".spec"),
-				[]byte("# test spec"), fileperms.PublicFile)
+				[]byte("Name: test-component\nVersion: 1.0\nRelease: 1\nSummary: Original\n"), fileperms.PublicFile)
 		},
 	)
 
@@ -245,6 +259,15 @@ func TestPrepareSources_ArchiveOverlayRehashesSourcesEntry(t *testing.T) {
 	assert.Equal(t, fileutils.HashTypeSHA512, entry.HashType, "configured post-overlay hash type must be used")
 	assert.Equal(t, repackedHash, entry.Hash, "'sources' entry must record the repacked archive's hash")
 	assert.NotEqual(t, originalHash, entry.Hash, "'sources' entry hash must have been updated")
+
+	extractedDir := t.TempDir()
+	require.NoError(t, archive.ExtractAuto(archivePath, extractedDir))
+	assert.FileExists(t, filepath.Join(extractedDir, "pkg-1.0/keep.txt"))
+	assert.NoFileExists(t, filepath.Join(extractedDir, "pkg-1.0/remove-me.txt"))
+
+	specContent, err := fileutils.ReadFile(ctx.FS(), specPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(specContent), "Summary: Overlaid")
 }
 
 func TestPrepareSources_ArchiveOverlayAssociationValidation(t *testing.T) {
