@@ -16,6 +16,9 @@ overlays apply cleanly before running a full build.
 Only one component may be selected at a time.
 For lockless components, render-style preparation writes directly to '--output-dir'
 and preserves fetched upstream Git metadata. Nonempty output requires '--force'.
+Current TOML and file inputs use the working tree, including modified and untracked
+files. Release/changelog baselines use only committed component dist-git files;
+uncommitted edits in that existing dist-git directory are ignored.
 It downloads/generates source payloads before macro-file setup and configured
 overlays. Archive overlays run before spec and loose-file overlays. It does not
 compare rendered output, apply a final render release bump, or commit changes.

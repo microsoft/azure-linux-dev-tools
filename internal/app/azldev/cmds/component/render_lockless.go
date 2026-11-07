@@ -114,7 +114,7 @@ func prepareLocklessRender(
 		return nil, err
 	}
 
-	history, err := readLastRender(env, repo, update.repoRoot, update.path, comp.GetName())
+	history, err := readLastRender(env, repo, update.repoRoot, update.path, comp.GetName(), false)
 	if err != nil {
 		return nil, fmt.Errorf("reading committed render state:\n%w", err)
 	}
@@ -172,7 +172,7 @@ func prepareLocklessRenderOutput(
 }
 
 func readLastRender(
-	env *azldev.Env, repo *gogit.Repository, root, path, name string,
+	env *azldev.Env, repo *gogit.Repository, root, path, name string, useWorkingInputs bool,
 ) (lastRender, error) {
 	var history lastRender
 
@@ -224,20 +224,26 @@ func readLastRender(
 		return history, fmt.Errorf("reading last render commit:\n%w", err)
 	}
 
-	err = readRenderedUpstreamCommits(env, root, name, tree, last, &history)
+	err = readRenderedUpstreamCommits(env, root, name, tree, last, &history, useWorkingInputs)
 
 	return history, err
 }
 
 func readRenderedUpstreamCommits(
 	env *azldev.Env, root, name string, tree *object.Tree, last *object.Commit, history *lastRender,
+	useWorkingInputs bool,
 ) error {
 	projectPath, err := git.RepoRelPath(root, env.ProjectDir())
 	if err != nil {
 		return err
 	}
 
-	history.current, history.currentBranch, err = renderUpstreamCommit(env, tree, projectPath, name, false)
+	if useWorkingInputs {
+		history.current, history.currentBranch, err = configuredRenderUpstreamCommit(env, name, false)
+	} else {
+		history.current, history.currentBranch, err = renderUpstreamCommit(env, tree, projectPath, name, false)
+	}
+
 	if err != nil {
 		return fmt.Errorf("reading current render upstream commit:\n%w", err)
 	}
@@ -266,14 +272,20 @@ func renderUpstreamCommit(
 		return "", "", err
 	}
 
-	comp, err := components.NewResolver(historicalEnv).GetComponentByName(name)
+	return configuredRenderUpstreamCommit(historicalEnv, name, allowLockFallback)
+}
+
+func configuredRenderUpstreamCommit(
+	env *azldev.Env, name string, allowLockFallback bool,
+) (commit string, branch string, err error) {
+	comp, err := components.NewResolver(env).GetComponentByName(name)
 	if err != nil {
-		return "", "", fmt.Errorf("resolving historical component %#q:\n%w", name, err)
+		return "", "", fmt.Errorf("resolving component %#q:\n%w", name, err)
 	}
 
 	commit = comp.GetConfig().Spec.UpstreamCommit
 	if commit == "" && allowLockFallback {
-		commit, err = lastRenderLockedUpstreamCommit(historicalEnv, name)
+		commit, err = lastRenderLockedUpstreamCommit(env, name)
 		if err != nil {
 			return "", "", err
 		}
@@ -283,9 +295,9 @@ func renderUpstreamCommit(
 		return "", "", fmt.Errorf("component %#q has no configured 'spec.upstream-commit'", name)
 	}
 
-	distro, err := sourceproviders.ResolveDistro(historicalEnv, comp)
+	distro, err := sourceproviders.ResolveDistro(env, comp)
 	if err != nil {
-		return "", "", fmt.Errorf("resolving historical upstream branch:\n%w", err)
+		return "", "", fmt.Errorf("resolving upstream branch:\n%w", err)
 	}
 
 	return commit, distro.Version.DistGitBranch, nil

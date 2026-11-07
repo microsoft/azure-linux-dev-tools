@@ -107,6 +107,11 @@ Mock's `--nocheck`; `--srpm-only` skips binary builds. Lockless builds reject
 
 `component prepare-sources` uses lockless render preparation while writing
 directly into `--output-dir`, allowing uncommitted and untracked project files.
+Current TOML configuration (including upstream pins and distro settings), overlay
+inputs, scripts, and local sources are read from the working tree. Modified and
+newly added files are used without committing them first. Only the existing
+component dist-git state used as the release/changelog baseline is read from
+committed files; modified and untracked files in that directory are ignored.
 Nonempty output requires `--force`, which removes existing contents before
 preparation. Failures can leave partially prepared output. It fetches upstream
 lookaside payloads with the spec/sidecars, prepares the upstream release/changelog,

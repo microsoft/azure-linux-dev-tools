@@ -93,7 +93,7 @@ dist-git-branch = "f42"
 
 		return hashes[0] + "\n", nil
 	}
-	history, err := readLastRender(env.Env, repo, "/project", "SPECS/c/curl", "curl")
+	history, err := readLastRender(env.Env, repo, "/project", "SPECS/c/curl", "curl", false)
 	require.NoError(t, err)
 	assert.Equal(t, oldSpec, history.spec)
 	require.NotNil(t, history.tree)
@@ -139,7 +139,7 @@ func TestReadLastRender_NativeHistoryErrors(t *testing.T) {
 				return testCase.output, testCase.commandErr
 			}
 
-			history, err := readLastRender(env.Env, repo, "/project", renderPath, "curl")
+			history, err := readLastRender(env.Env, repo, "/project", renderPath, "curl", false)
 			if testCase.wantError != "" {
 				require.ErrorContains(t, err, testCase.wantError)
 			} else {
@@ -241,7 +241,7 @@ dist-git-branch = "f40"
 				return hashes[0], nil
 			}
 
-			history, err := readLastRender(env.Env, repo, "/project", "SPECS/c/curl", "curl")
+			history, err := readLastRender(env.Env, repo, "/project", "SPECS/c/curl", "curl", false)
 			if testCase.missingCurrent {
 				require.ErrorContains(t, err, "current render upstream commit")
 
@@ -520,7 +520,7 @@ upstream-commit = "bbbbbbb"
 				return hashes[0], nil
 			}
 
-			history, err := readLastRender(env.Env, repo, "/project", "SPECS/c/curl", "curl")
+			history, err := readLastRender(env.Env, repo, "/project", "SPECS/c/curl", "curl", false)
 			if testCase.wantError != "" {
 				require.ErrorContains(t, err, testCase.wantError)
 

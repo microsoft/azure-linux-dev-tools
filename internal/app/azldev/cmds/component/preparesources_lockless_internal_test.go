@@ -6,6 +6,7 @@ package component
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -270,6 +271,198 @@ func TestLocklessPrepareSourcesRejectsNonemptyOutputWithoutForce(t *testing.T) {
 	content, err := fileutils.ReadFile(env.FS(), filepath.Join(output, "keep"))
 	require.NoError(t, err)
 	assert.Equal(t, "original output", string(content))
+}
+
+func TestLocklessPrepareSourcesUsesWorkingInputs(t *testing.T) {
+	const fetchCommand = "fetch"
+
+	for _, inputDir := range []string{"", "draft"} {
+		t.Run("inputs/"+inputDir, func(t *testing.T) {
+			env, repo, hashes := locklessWorkingInputsFixture(t, inputDir)
+			originalRepo, originalPreparer := openRenderRepo, newSourcePreparer
+			openRenderRepo = func(_ *azldev.Env) (*gogit.Repository, string, error) {
+				return repo, renderTestProjectRoot, nil
+			}
+
+			t.Cleanup(func() {
+				openRenderRepo = originalRepo
+				newSourcePreparer = originalPreparer
+			})
+
+			var upstreamRanges []string
+
+			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				require.Equal(t, "git", cmd.Args[0])
+
+				switch cmd.Args[3] {
+				case "--literal-pathspecs":
+					assert.Equal(t, []string{
+						"git", "-C", "/project", "--literal-pathspecs", "log", "-1", "--format=%H",
+						"--end-of-options", hashes[1], "--", "specs/c/curl/",
+					}, cmd.Args)
+
+					return hashes[0], nil
+				case fetchCommand:
+					assert.Equal(t, "+refs/heads/f40:refs/remotes/origin/f40", cmd.Args[len(cmd.Args)-1])
+
+					return "", nil
+				case "rev-parse":
+					assert.Equal(t, "aaaaaaa^{commit}", cmd.Args[len(cmd.Args)-1])
+
+					return "aaaaaaa", nil
+				case "log":
+					upstreamRanges = append(upstreamRanges, cmd.Args[len(cmd.Args)-2])
+
+					return "ccccccc Working upstream change\n", nil
+				default:
+					t.Fatalf("unexpected preparation command: %v", cmd.Args)
+
+					return "", errors.New("unexpected preparation command")
+				}
+			}
+			env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+				t.Fatalf("unexpected finalization command: %v", cmd.Args)
+
+				return nil
+			}
+
+			history, err := readLastRender(env.Env, repo, "/project", "specs/c/curl", "curl", true)
+			require.NoError(t, err)
+			assert.Equal(t, "aaaaaaa", history.previous)
+			assert.Equal(t, "ccccccc", history.current)
+			assert.Equal(t, "f40", history.previousBranch)
+			assert.Equal(t, "f42", history.currentBranch)
+			helper, err := history.tree.File("macros.inc")
+			require.NoError(t, err)
+			content, err := helper.Contents()
+			require.NoError(t, err)
+			assert.Equal(t, "committed helper", content)
+
+			_, err = history.tree.File("untracked.txt")
+			require.Error(t, err)
+
+			manager := sourceproviders_test.NewMockSourceManager(gomock.NewController(t))
+			manager.EXPECT().FetchComponent(gomock.Any(), gomock.Any(), "/external/output", gomock.Any()).DoAndReturn(
+				func(_ context.Context, comp components.Component, dir string, _ ...sourceproviders.FetchComponentOption) error {
+					assert.Equal(t, "ccccccc", comp.GetConfig().Spec.UpstreamCommit)
+
+					return fileutils.WriteFile(env.FS(), filepath.Join(dir, "curl.spec"),
+						[]byte(renderTestSpec("1", "1", "* Upstream changelog\n")), fileperms.PublicFile)
+				})
+			manager.EXPECT().FetchFiles(gomock.Any(), gomock.Any(), "/external/output").Return(nil)
+
+			newSourcePreparer = func(
+				_ sourceproviders.SourceManager, fs opctx.FS, events opctx.EventListener, dry opctx.DryRunnable,
+				options ...sources.PreparerOption,
+			) (sources.SourcePreparer, error) {
+				return sources.NewPreparer(manager, fs, events, dry, options...)
+			}
+
+			require.NoError(t, PrepareComponentSources(env.Env, &PrepareSourcesOptions{
+				ComponentFilter: components.ComponentFilter{ComponentNamePatterns: []string{"curl"}},
+				OutputDir:       "/external/output",
+			}))
+			assert.Equal(t, []string{"aaaaaaa..ccccccc"}, upstreamRanges)
+
+			prepared, err := fileutils.ReadFile(env.FS(), "/external/output/curl.spec")
+			require.NoError(t, err)
+			assert.Contains(t, string(prepared), "Release: 9\n")
+			assert.Contains(t, string(prepared), "* Committed changelog\n")
+			assert.NotContains(t, string(prepared), "* Upstream changelog\n")
+
+			copied, err := fileutils.ReadFile(env.FS(), "/external/output/overlay-input.txt")
+			require.NoError(t, err)
+			assert.Equal(t, "working overlay input", string(copied))
+
+			macros, err := fileutils.ReadFile(env.FS(), "/external/output/curl.azl.macros")
+			require.NoError(t, err)
+			assert.Contains(t, string(macros), "%working_input working\n")
+		})
+	}
+}
+
+func locklessWorkingInputsFixture(
+	t *testing.T, inputDir string,
+) (env *testutils.TestEnv, repo *gogit.Repository, hashes []string) {
+	t.Helper()
+
+	const (
+		project = `[project]
+default-distro = { name = "test", version = "3" }
+[distros.test.versions."1"]
+release-ver = "1"
+dist-git-branch = "f40"
+[distros.test.versions."2"]
+release-ver = "2"
+dist-git-branch = "f41"
+[distros.test.versions."3"]
+release-ver = "3"
+dist-git-branch = "f42"
+`
+		component = `[components.curl.spec]
+type = 'upstream'
+upstream-distro = { name = 'test', version = '1' }
+[components.curl.build.defines]
+working_input = 'committed'
+[[components.curl.overlays]]
+type = 'file-add'
+file = 'overlay-input.txt'
+source = 'input.txt'
+`
+	)
+
+	root := "includes = [\"component.toml\", \"pins/*.toml\"]\n" + project
+	repo, hashes = testRepoWithCommits(t, []testRepoCommit{
+		{files: map[string][]byte{
+			"azldev.toml":             []byte(root),
+			"lockless-components.txt": []byte("curl\n"),
+			"component.toml":          []byte(component),
+			"pins/curl.toml":          []byte("[components.curl.spec]\nupstream-commit = 'aaaaaaa'\n"),
+			"input.txt":               []byte("committed overlay input"),
+			"specs/c/curl/curl.spec":  []byte(renderTestSpec("1", "9", "* Committed changelog\n")),
+			"specs/c/curl/macros.inc": []byte("committed helper"),
+		}},
+		{files: map[string][]byte{
+			"component.toml": []byte(strings.Replace(component, "version = '1'", "version = '2'", 1)),
+			"pins/curl.toml": []byte("[components.curl.spec]\nupstream-commit = 'bbbbbbb'\n"),
+		}},
+	})
+	env = testutils.NewTestEnv(t)
+	tree, err := resolveTree(repo, hashes[1])
+	require.NoError(t, err)
+	require.NoError(t, copyTreeToFS(tree, env.FS(), "/project"))
+
+	workingComponent := strings.Replace(component, "version = '1'", "version = '3'", 1)
+	workingComponent = strings.Replace(workingComponent, "'committed'", "'working'", 1)
+	working := map[string][]byte{
+		"azldev.toml": []byte(fmt.Sprintf("includes = [%q, %q]\n%s",
+			filepath.Join(inputDir, "component.toml"), filepath.Join(inputDir, "pins/*.toml"), project)),
+		filepath.Join(inputDir, "component.toml"): []byte(workingComponent),
+		filepath.Join(inputDir, "pins/curl.toml"): []byte("[components.curl.spec]\nupstream-commit = 'ccccccc'\n"),
+		filepath.Join(inputDir, "input.txt"):      []byte("working overlay input"),
+		"specs/c/curl/curl.spec":                  []byte("invalid uncommitted dist-git spec"),
+		"specs/c/curl/macros.inc":                 []byte("uncommitted helper"),
+		"specs/c/curl/untracked.txt":              []byte("untracked dist-git sidecar"),
+	}
+	worktree, err := repo.Worktree()
+	require.NoError(t, err)
+
+	for path, content := range working {
+		require.NoError(t, fileutils.WriteFile(env.FS(), filepath.Join("/project", path), content, fileperms.PublicFile))
+		file, err := worktree.Filesystem.Create(path)
+		require.NoError(t, err)
+		_, err = file.Write(content)
+		require.NoError(t, err)
+		require.NoError(t, file.Close())
+	}
+
+	_, config, err := projectconfig.LoadProjectConfig(env.FS(), env.Env.OSEnv(),
+		"/project", true, "/work", nil, false, false)
+	require.NoError(t, err)
+
+	*env.Config = *config
+
+	return env, repo, hashes
 }
 
 func TestLocklessPrepareSourcesFlags(t *testing.T) {

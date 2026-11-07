@@ -233,6 +233,8 @@ func TestSkillsDocumentLocklessBuildAndQuery(t *testing.T) {
 		require.NoError(t, err)
 		assert.Contains(t, doc, "`comp query` extracts committed rendered history")
 		assert.Contains(t, doc, "Lockless `comp prepare-sources` writes directly to `--output-dir`")
+		assert.Contains(t, doc, "including modified and untracked files.")
+		assert.Contains(t, doc, "committed component dist-git files; edits in the existing dist-git directory are")
 		assert.Contains(t, doc, "removes `.git` after successful preparation, preserving it on failure.")
 		assert.Contains(t, doc, "It supports `--skip-overlays`, `--skip-sources`, and `--allow-no-hashes`.")
 		assert.Contains(t, doc, "from `--output-dir`")

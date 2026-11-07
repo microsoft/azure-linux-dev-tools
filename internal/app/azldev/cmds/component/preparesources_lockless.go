@@ -115,7 +115,7 @@ func prepareFetchedLocklessSources(
 		return nil
 	}
 
-	history, err := readLastRender(env, repo, root, path, component.GetName())
+	history, err := readLastRender(env, repo, root, path, component.GetName(), true)
 	if err != nil {
 		return fmt.Errorf("reading committed render state:\n%w", err)
 	}

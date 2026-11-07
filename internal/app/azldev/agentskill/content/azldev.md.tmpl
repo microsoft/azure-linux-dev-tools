@@ -143,7 +143,10 @@ For lockless components, `comp query` extracts committed rendered history into
 temporary dist-git repositories and processes it with rpmautospec in Mock before
 querying. Uncommitted rendered edits are ignored; locked queries still read the
 working tree. Lockless `comp prepare-sources` writes directly to `--output-dir`
-using render-style preparation. Nonempty output requires `--force`; failures can
+using render-style preparation. Current TOML and file inputs use the working tree,
+including modified and untracked files. Release/changelog baselines use only
+committed component dist-git files; edits in the existing dist-git directory are
+ignored. Nonempty output requires `--force`; failures can
 leave partial output. It downloads/generates sources before macro-file setup and
 overlays, matching locked preparation. Archive overlays run before spec and
 loose-file overlays. It does not compare
