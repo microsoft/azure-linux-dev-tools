@@ -62,8 +62,9 @@ Prefer `comp render` for quick overlay verification; use `comp diff-sources` to 
 exact overlay effect (it fetches sources once, applies overlays to a copy, and diffs the
 two trees). Builds can be slow — set generous timeouts.
 
-For all lockless components, uncommitted tracked changes or untracked files
-anywhere in the project repository require `comp render --allow-uncommitted`.
+For all lockless components, uncommitted tracked changes or untracked files outside
+`project.rendered-specs-dir` or in selected components' dist-git directories require
+`comp render --allow-uncommitted`. Other rendered changes are ignored.
 Git-ignored files are excluded; the override does not change committed-history
 carryover or failure recovery. Commit inputs before the final render (see the
 `azldev-refresh-upstream-commit` skill).

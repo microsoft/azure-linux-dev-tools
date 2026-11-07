@@ -53,15 +53,15 @@ Commit component inputs before rendering. For upstream components, rendering
 compares the fully parsed committed TOML at the last render commit and at HEAD;
 uncommitted generated pins do not count as a committed upstream change.
 
-Before any upstream checkout or component preparation, rendering requires a
-clean project Git repository: staged changes, unstaged tracked changes, and
-untracked files anywhere in the repository block the whole invocation.
+Before any upstream checkout or component preparation, rendering checks staged changes,
+unstaged tracked changes, and untracked files outside `project.rendered-specs-dir`
+and in selected components' dist-git directories. Other rendered changes are ignored.
 Git-ignored files are excluded. Use `--allow-uncommitted` for intentional dirty
 renders; `--check-only` and `--no-git-commit` do not bypass this check.
 The override does not change committed-history carryover or failure recovery,
 which can discard uncommitted files in the component output directory.
 Only locked components do not trigger this check.
-Local lockless components also require a clean repository, exclude the TOML defining
+Local lockless components use the same scoped cleanliness check, exclude the TOML defining
 the local spec path, and participate in unchanged-render checks and automatic commits.
 Their Release and changelog remain unchanged; `--changelog-comment` supplies only
 their Git message.

@@ -84,22 +84,57 @@ func validateRenderComponents(
 	}
 
 	for _, comp := range comps {
-		if !env.ComponentWithoutLockfile(comp.GetName()) {
-			continue
+		if env.ComponentWithoutLockfile(comp.GetName()) {
+			return checkRenderWorktree(env, comps)
+		}
+	}
+
+	return nil
+}
+
+func checkRenderWorktree(env *azldev.Env, comps []components.Component) error {
+	specDir := env.Config().Project.RenderedSpecsDir
+	if specDir == "" {
+		specDir = projectconfig.DefaultRenderedSpecsDir
+	}
+
+	if filepath.IsAbs(specDir) {
+		relative, err := filepath.Rel(env.ProjectDir(), specDir)
+		if err != nil {
+			return fmt.Errorf("resolving rendered-specs directory for repository check:\n%w", err)
 		}
 
-		status, err := git.RunInDir(env, env, env.ProjectDir(),
-			"status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none")
+		specDir = relative
+	}
+
+	specDir = filepath.Clean(specDir)
+	componentPaths := make([]string, 0, len(comps))
+
+	for _, comp := range comps {
+		name := comp.GetName()
+		path := filepath.Join(specDir, strings.ToLower(name[:1]), name)
+		componentPaths = append(componentPaths, ":(literal)"+filepath.ToSlash(path))
+	}
+
+	scopes := [][]string{
+		{":/", ":(exclude,literal)" + filepath.ToSlash(specDir)},
+		componentPaths,
+	}
+	for _, scope := range scopes {
+		args := append([]string{
+			"status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none", "--",
+		}, scope...)
+
+		status, err := git.RunInDir(env, env, env.ProjectDir(), args...)
 		if err != nil {
 			return fmt.Errorf("checking project repository for uncommitted files:\n%w", err)
 		}
 
 		if status != "" {
 			return errors.New("rendering will not be done due to uncommitted or untracked files " +
-				"in the project repository; use '--allow-uncommitted' to proceed")
+				"outside 'project.rendered-specs-dir' or in selected component dist-git directories; " +
+				"use '--allow-uncommitted' to proceed")
 		}
-
-		return nil
 	}
 
 	return nil

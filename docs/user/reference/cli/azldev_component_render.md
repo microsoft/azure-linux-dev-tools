@@ -69,9 +69,11 @@ preserved. When using a custom output directory (--output-dir), --force is
 required alongside --clean-stale as a safety measure. This flag is only
 valid with -a.
 
-Before rendering any lockless component, require a clean Git repository.
-Uncommitted tracked changes and untracked files anywhere in the repository block
-rendering; Git-ignored files are excluded. --allow-uncommitted bypasses this check.
+Before rendering any lockless component, check for uncommitted tracked changes
+and untracked files outside 'project.rendered-specs-dir' and in each selected
+component's dist-git directory. Other changes under the configured rendered-specs
+directory are ignored. Git-ignored files are excluded.
+--allow-uncommitted bypasses this check.
 --check-only and --no-git-commit do not bypass it. Locked components are unaffected.
 
 ```

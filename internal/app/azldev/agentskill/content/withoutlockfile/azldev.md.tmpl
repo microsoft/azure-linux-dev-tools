@@ -39,9 +39,10 @@ The list is written in lexical order, one name per line without blank lines or d
 Existing names and lock files are retained. Already-listed components
 are still refreshed; a refresh failure leaves the list updated.
 
-Before preparing any lockless component, rendering requires a clean project Git
-repository: staged changes, unstaged tracked changes, and untracked files anywhere
-in the repository block the whole invocation. Git-ignored files are excluded.
+Before preparing any lockless component, rendering checks staged changes,
+unstaged tracked changes, and untracked files outside `project.rendered-specs-dir`
+and in selected components' dist-git directories. Other rendered changes are ignored.
+Git-ignored files are excluded.
 Use `--allow-uncommitted` for intentional dirty renders; `--check-only` and
 `--no-git-commit` do not bypass this check. The override does not change
 committed-history carryover or failure recovery.

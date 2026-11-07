@@ -133,12 +133,17 @@ func TestRenderComponentsRequiresCleanLocklessRepository(t *testing.T) {
 			}
 			queried := false
 			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				scope := []string{":/", ":(exclude,literal)specs"}
+				if queried {
+					scope = []string{":(literal)specs/c/curl"}
+				}
+
 				queried = true
 
-				assert.Equal(t, []string{
+				assert.Equal(t, append([]string{
 					"git", "-C", "/project", "status", "--porcelain=v1",
-					"--untracked-files=all", "--ignore-submodules=none",
-				}, cmd.Args)
+					"--untracked-files=all", "--ignore-submodules=none", "--",
+				}, scope...), cmd.Args)
 
 				return testCase.status, testCase.statusErr
 			}
@@ -228,6 +233,96 @@ func TestLocklessRenderWorktreeCheckScope(t *testing.T) {
 	}
 }
 
+func TestLocklessRenderWorktreeConfiguredScopes(t *testing.T) {
+	statusErr := errors.New("component status failed")
+
+	for _, testCase := range []struct {
+		name, specDir, wantRoot        string
+		outsideStatus, componentStatus string
+		componentError, wantError      bool
+	}{
+		{name: "default rendered root"},
+		{name: "relative rendered root", specDir: "generated/specs", wantRoot: "generated/specs"},
+		{name: "absolute rendered root", specDir: "/project/generated/specs", wantRoot: "generated/specs"},
+		{name: "parent rendered root", specDir: "/specs", wantRoot: "../specs"},
+		{name: "normalized rendered root", specDir: "generated/../specs/"},
+		{name: "literal rendered root", specDir: "generated/[specs]*", wantRoot: "generated/[specs]*"},
+		{name: "changes outside rendered root", outsideStatus: " M input.toml\n", wantError: true},
+		{name: "selected component modified", componentStatus: " M specs/c/Curl/Curl.spec\n", wantError: true},
+		{name: "selected component staged", componentStatus: "M  specs/c/Curl/Curl.spec\n", wantError: true},
+		{name: "selected component untracked", componentStatus: "?? specs/c/Curl/new.patch\n", wantError: true},
+		{
+			name:            "another selected component modified",
+			componentStatus: " M specs/r/rust-asyncband/rust-asyncband.spec\n", wantError: true,
+		},
+		{name: "selected component status failure", componentError: true, wantError: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			env.Config.Project.RenderedSpecsDir = testCase.specDir
+			env.Config.LocklessComponents = map[string]bool{"Curl": true}
+			ctrl := gomock.NewController(t)
+			comps := make([]components.Component, 0, 2)
+
+			for _, name := range []string{"Curl", "rust-asyncband"} {
+				comp := components_testutils.NewMockComponent(ctrl)
+				comp.EXPECT().GetName().AnyTimes().Return(name)
+				comps = append(comps, comp)
+			}
+
+			root := testCase.wantRoot
+			if root == "" {
+				root = "specs"
+			}
+
+			calls := 0
+			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				calls++
+				require.LessOrEqual(t, calls, 2)
+
+				scope := []string{":/", ":(exclude,literal)" + root}
+				status := testCase.outsideStatus
+
+				if calls == 2 {
+					scope = []string{":(literal)" + root + "/c/Curl", ":(literal)" + root + "/r/rust-asyncband"}
+					status = testCase.componentStatus
+				}
+
+				assert.Equal(t, append([]string{
+					"git", "-C", "/project", "status", "--porcelain=v1",
+					"--untracked-files=all", "--ignore-submodules=none", "--",
+				}, scope...), cmd.Args)
+
+				if calls == 2 && testCase.componentError {
+					return "", statusErr
+				}
+
+				return status, nil
+			}
+
+			err := validateRenderComponents(env.Env, comps, false)
+			if testCase.wantError {
+				require.Error(t, err)
+
+				if testCase.componentError {
+					require.ErrorIs(t, err, statusErr)
+				} else {
+					assert.Contains(t, err.Error(), "--allow-uncommitted")
+				}
+			} else {
+				require.NoError(t, err)
+			}
+
+			wantCalls := 2
+			if testCase.outsideStatus != "" {
+				wantCalls = 1
+			}
+
+			assert.Equal(t, wantCalls, calls)
+		})
+	}
+}
+
 func TestLocklessRenderPreservesAllFilesWithoutMock(t *testing.T) {
 	env := testutils.NewTestEnvWithoutLockfile(t)
 	version := env.Config.Distros["test-distro"].Versions["1.0"]
@@ -237,11 +332,19 @@ func TestLocklessRenderPreservesAllFilesWithoutMock(t *testing.T) {
 		Name: "curl",
 		Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeLocal},
 	}
+	checked := false
 	env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
-		assert.Equal(t, []string{
+		scope := []string{":/", ":(exclude,literal)specs"}
+		if checked {
+			scope = []string{":(literal)specs/c/curl"}
+		}
+
+		checked = true
+
+		assert.Equal(t, append([]string{
 			"git", "-C", "/project", "status", "--porcelain=v1",
-			"--untracked-files=all", "--ignore-submodules=none",
-		}, cmd.Args)
+			"--untracked-files=all", "--ignore-submodules=none", "--",
+		}, scope...), cmd.Args)
 
 		return "", nil
 	}

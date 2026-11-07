@@ -50,9 +50,11 @@ func renderOnAppInit(_ *azldev.App, parentCmd *cobra.Command) {
 	parentCmd.AddCommand(NewRenderCmd())
 }
 
-const renderWorktreeHelp = `Before rendering any lockless component, require a clean Git repository.
-Uncommitted tracked changes and untracked files anywhere in the repository block
-rendering; Git-ignored files are excluded. --allow-uncommitted bypasses this check.
+const renderWorktreeHelp = `Before rendering any lockless component, check for uncommitted tracked changes
+and untracked files outside 'project.rendered-specs-dir' and in each selected
+component's dist-git directory. Other changes under the configured rendered-specs
+directory are ignored. Git-ignored files are excluded.
+--allow-uncommitted bypasses this check.
 --check-only and --no-git-commit do not bypass it. Locked components are unaffected.`
 
 const renderLocalHelp = `Local lockless components copy local files except the TOML defining the spec path.

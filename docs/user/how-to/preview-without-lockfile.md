@@ -209,17 +209,21 @@ output. Local components with `--no-git-commit` never prompt.
 All lockless rendering runs on the host without mock;
 components using lock files retain their existing mock-based rendering.
 
-Before any upstream checkout or component preparation, rendering checks the
-entire project Git repository for staged changes, unstaged tracked changes, and
-untracked files. Git-ignored files do not block rendering. If any selected
-component is lockless, a dirty repository stops the whole invocation.
+Before any upstream checkout or component preparation, rendering checks for staged
+changes, unstaged tracked changes, and untracked files outside the configured
+`project.rendered-specs-dir` and inside every selected component's dist-git
+directory (`<rendered-specs-dir>/<lowercase-first-letter>/<component>`).
+Changes elsewhere under `project.rendered-specs-dir`, including other components'
+rendered output, are ignored. This scope uses the configured root (default `specs/`),
+not a command-line `--output-dir`. Git-ignored files do not block rendering.
+If any selected component is lockless, changes in the checked paths stop the whole invocation.
 Commit or remove those changes first, or explicitly bypass this check:
 
 ```sh
 azldev comp render -p <name> --allow-uncommitted
 ```
 
-`--check-only` and `--no-git-commit` still require a clean repository unless
+`--check-only` and `--no-git-commit` still require the checked paths to be clean unless
 `--allow-uncommitted` is specified. The override bypasses only the cleanliness
 check: carryover and upstream-change comparison still use committed history,
 and failure recovery can discard uncommitted files in the component output
