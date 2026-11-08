@@ -60,7 +60,7 @@ func (s *legacySpec) UpdateExistingTag(packageName string, tag string, value str
 			return nil
 		}
 
-		ctx.ReplaceLine(updatedTagLine(ctx.Target.Line.Text, tag, value))
+		ctx.ReplaceLine(updatedTagLine(ctx.Target.Line.Text, tag, value, s.preserveReleaseFormatting))
 
 		updated = true
 

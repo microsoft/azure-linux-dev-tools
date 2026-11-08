@@ -640,24 +640,46 @@ Name: value
 func TestUpdateExistingTagUpdatesRepeatedConditionalTags(t *testing.T) {
 	for _, editor := range []spec.EditorMode{spec.EditorLegacy, spec.EditorStructural} {
 		t.Run(string(editor), func(t *testing.T) {
-			input := []string{
-				"Name: example",
-				"%if 0",
-				"Release:        1",
-				"%else",
-				"Release:\t 2",
-				"%endif",
+			for _, formatting := range []struct {
+				name     string
+				preserve bool
+			}{{name: "default"}, {name: "preserved", preserve: true}} {
+				t.Run(formatting.name, func(t *testing.T) {
+					for _, method := range []string{"update", "set"} {
+						t.Run(method, func(t *testing.T) {
+							input := []string{
+								"Name: example", "%if 0", "release:        1", "%else", "Release:\t 2", "%endif",
+							}
+
+							options := []spec.OpenOption{spec.WithEditor(editor)}
+							if formatting.preserve {
+								options = append(options, spec.WithPreservedReleaseFormatting())
+							}
+
+							specFile, err := spec.OpenSpec(strings.NewReader(strings.Join(input, "\n")+"\n"), options...)
+							require.NoError(t, err)
+
+							if method == "update" {
+								err = specFile.UpdateExistingTag("", "Release", "3%{?dist}")
+							} else {
+								err = specFile.SetTag("", "Release", "3%{?dist}")
+							}
+
+							require.NoError(t, err)
+
+							var actual bytes.Buffer
+							require.NoError(t, specFile.Serialize(&actual))
+
+							input[2], input[4] = "Release: 3%{?dist}", "Release: 3%{?dist}"
+							if formatting.preserve {
+								input[2], input[4] = "release:        3%{?dist}", "Release:\t 3%{?dist}"
+							}
+
+							assert.Equal(t, strings.Join(input, "\n")+"\n", actual.String())
+						})
+					}
+				})
 			}
-			specFile, err := spec.OpenSpec(strings.NewReader(strings.Join(input, "\n")+"\n"), spec.WithEditor(editor))
-			require.NoError(t, err)
-			require.NoError(t, specFile.UpdateExistingTag("", "Release", "3%{?dist}"))
-
-			var actual bytes.Buffer
-			require.NoError(t, specFile.Serialize(&actual))
-
-			input[2] = "Release:        3%{?dist}"
-			input[4] = "Release:\t 3%{?dist}"
-			assert.Equal(t, strings.Join(input, "\n")+"\n", actual.String())
 		})
 	}
 }

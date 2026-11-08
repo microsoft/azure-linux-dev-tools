@@ -1533,13 +1533,22 @@ func (p *sourcePreparerImpl) applyOverlayList(
 		}
 
 		if err := ApplyOverlayToSources(
-			p.dryRunnable, p.fs, overlay, sourcesDirPath, absSpecPath, spec.WithEditor(p.specEditor),
+			p.dryRunnable, p.fs, overlay, sourcesDirPath, absSpecPath, p.specOptions()...,
 		); err != nil {
 			return fmt.Errorf("failed to apply %#q overlay:\n%w", overlay.Type, err)
 		}
 	}
 
 	return nil
+}
+
+func (p *sourcePreparerImpl) specOptions() []spec.OpenOption {
+	options := []spec.OpenOption{spec.WithEditor(p.specEditor)}
+	if p.withoutLockfile {
+		options = append(options, spec.WithPreservedReleaseFormatting())
+	}
+
+	return options
 }
 
 func findSpecInDir(

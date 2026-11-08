@@ -30,7 +30,8 @@ func staticRenderHistory(
 		return history, nil
 	}
 
-	previous, err := spec.OpenSpec(strings.NewReader(history.spec), spec.WithEditor(editor))
+	previous, err := spec.OpenSpec(
+		strings.NewReader(history.spec), spec.WithEditor(editor), spec.WithPreservedReleaseFormatting())
 	if err != nil {
 		return history, fmt.Errorf("parsing committed release spec:\n%w", err)
 	}

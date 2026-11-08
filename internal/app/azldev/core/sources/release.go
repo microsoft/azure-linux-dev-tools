@@ -208,7 +208,7 @@ func (p *sourcePreparerImpl) readAndBumpRelease(
 		Value: newRelease,
 	}
 
-	if err := ApplySpecOverlayToFileInPlace(p.fs, overlay, specPath, spec.WithEditor(p.specEditor)); err != nil {
+	if err := ApplySpecOverlayToFileInPlace(p.fs, overlay, specPath, p.specOptions()...); err != nil {
 		return fmt.Errorf("failed to apply release bump overlay for component %#q:\n%w",
 			component.GetName(), err)
 	}

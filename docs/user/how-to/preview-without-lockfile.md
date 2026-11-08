@@ -39,6 +39,8 @@ on different filesystems. Lockless output continues to use moves.
 Only lockless `render --check-only` ignores root `.git` and
 `.no-change-rebuild` entries. Locked rendering compares all existing output
 entries after removing Git metadata from its staging directory.
+Lockless Release edits preserve existing tag casing and alignment; locked
+components retain the established `Release: value` normalization.
 
 A missing or empty file means all components use lock files. Blank lines and
 surrounding whitespace are ignored; names are not glob patterns. A file read

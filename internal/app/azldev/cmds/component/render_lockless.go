@@ -379,7 +379,7 @@ func openLocklessSpec(
 		return "", nil, fmt.Errorf("reading upstream spec:\n%w", err)
 	}
 
-	opened, err = spec.OpenSpec(bytes.NewReader(content), spec.WithEditor(editor))
+	opened, err = spec.OpenSpec(bytes.NewReader(content), spec.WithEditor(editor), spec.WithPreservedReleaseFormatting())
 	if err != nil {
 		return "", nil, fmt.Errorf("parsing upstream spec:\n%w", err)
 	}
@@ -469,7 +469,7 @@ func carryLocklessInlineChangelog(
 		return nil, err
 	}
 
-	carried, err := spec.OpenSpec(bytes.NewReader(content), spec.WithEditor(editor))
+	carried, err := spec.OpenSpec(bytes.NewReader(content), spec.WithEditor(editor), spec.WithPreservedReleaseFormatting())
 	if err != nil {
 		return nil, fmt.Errorf("parsing spec with committed changelog:\n%w", err)
 	}

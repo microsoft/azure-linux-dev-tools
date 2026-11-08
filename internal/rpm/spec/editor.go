@@ -23,7 +23,8 @@ const (
 )
 
 type editorOptions struct {
-	mode EditorMode
+	mode                      EditorMode
+	preserveReleaseFormatting bool
 }
 
 // OpenOption configures [OpenSpec].
@@ -33,6 +34,14 @@ type OpenOption func(*editorOptions)
 func WithEditor(mode EditorMode) OpenOption {
 	return func(options *editorOptions) {
 		options.mode = mode
+	}
+}
+
+// WithPreservedReleaseFormatting retains existing Release tag casing and spacing
+// when updating its value.
+func WithPreservedReleaseFormatting() OpenOption {
+	return func(options *editorOptions) {
+		options.preserveReleaseFormatting = true
 	}
 }
 
@@ -73,8 +82,8 @@ type Spec struct {
 	editor specEditor
 }
 
-func updatedTagLine(original, tag, value string) string {
-	if strings.EqualFold(tag, "Release") {
+func updatedTagLine(original, tag, value string, preserveReleaseFormatting bool) string {
+	if preserveReleaseFormatting && strings.EqualFold(tag, "Release") {
 		prefix, rest, found := strings.Cut(original, ":")
 		if found {
 			spacing := rest[:len(rest)-len(strings.TrimLeft(rest, " \t"))]
@@ -109,9 +118,9 @@ func OpenSpec(reader io.Reader, options ...OpenOption) (*Spec, error) {
 
 	switch config.mode {
 	case EditorLegacy, "":
-		editor, err = openLegacySpec(reader)
+		editor, err = openLegacySpec(reader, config.preserveReleaseFormatting)
 	case EditorStructural:
-		editor, err = openStructuralSpec(reader)
+		editor, err = openStructuralSpec(reader, config.preserveReleaseFormatting)
 	default:
 		return nil, fmt.Errorf("unknown spec editor %#q", config.mode)
 	}

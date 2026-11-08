@@ -52,7 +52,7 @@ func (s *structuralSpec) UpdateExistingTag(packageName string, tag string, value
 				return nil
 			}
 
-			line.Replace(updatedTagLine(line.Text, tag, value))
+			line.Replace(updatedTagLine(line.Text, tag, value, s.preserveReleaseFormatting))
 
 			updated = true
 
