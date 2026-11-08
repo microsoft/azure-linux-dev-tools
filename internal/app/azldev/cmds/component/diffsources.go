@@ -102,8 +102,7 @@ func DiffComponentSources(env *azldev.Env, options *DiffSourcesOptions) (interfa
 	}
 
 	preparer, err := newSourcePreparer(sourceManager, env.FS(), env, env,
-		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)),
-		sources.WithSpecEditor(options.specEditorMode()))
+		diffSourcesPreparerOptions(env, component.GetName(), distro, options)...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create source preparer:\n%w", err)
 	}
@@ -184,4 +183,18 @@ func shouldColorize(env *azldev.Env) bool {
 	}
 
 	return false
+}
+
+func diffSourcesPreparerOptions(
+	env *azldev.Env, componentName string, distro sourceproviders.ResolvedDistro, options *DiffSourcesOptions,
+) []sources.PreparerOption {
+	preparerOpts := []sources.PreparerOption{
+		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)),
+		sources.WithSpecEditor(options.specEditorMode()),
+	}
+	if env.ComponentWithoutLockfile(componentName) {
+		preparerOpts = append(preparerOpts, sources.WithPreservedReleaseFormatting())
+	}
+
+	return preparerOpts
 }

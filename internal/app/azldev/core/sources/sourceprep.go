@@ -135,6 +135,13 @@ func WithSpecEditor(mode spec.EditorMode) PreparerOption {
 	return func(p *sourcePreparerImpl) { p.specEditor = mode }
 }
 
+// WithPreservedReleaseFormatting returns a [PreparerOption] that keeps existing
+// 'Release' tag casing and spacing when overlays edit its value, for lockless
+// callers that do not otherwise select [WithoutLockfileHistory].
+func WithPreservedReleaseFormatting() PreparerOption {
+	return func(p *sourcePreparerImpl) { p.preserveReleaseFormatting = true }
+}
+
 // WithSkipLookaside returns a [PreparerOption] that skips all lookaside cache
 // downloads during source preparation. This includes both explicit source file
 // downloads ([SourceManager.FetchFiles]) and lookaside extraction during
@@ -215,9 +222,12 @@ type sourcePreparerImpl struct {
 	sourceManager         sourceproviders.SourceManager
 	prepareFetchedSources func(context.Context, components.Component, string) error
 	specEditor            spec.EditorMode
-	fs                    opctx.FS
-	eventListener         opctx.EventListener
-	dryRunnable           opctx.DryRunnable
+	// preserveReleaseFormatting keeps 'Release' tag formatting during overlay
+	// edits. Set via [WithPreservedReleaseFormatting].
+	preserveReleaseFormatting bool
+	fs                        opctx.FS
+	eventListener             opctx.EventListener
+	dryRunnable               opctx.DryRunnable
 
 	// withGitRepo, when true, enables dist-git creation by preserving the
 	// upstream .git directory and generating synthetic commit history.
@@ -1544,7 +1554,7 @@ func (p *sourcePreparerImpl) applyOverlayList(
 
 func (p *sourcePreparerImpl) specOptions() []spec.OpenOption {
 	options := []spec.OpenOption{spec.WithEditor(p.specEditor)}
-	if p.withoutLockfile {
+	if p.withoutLockfile || p.preserveReleaseFormatting {
 		options = append(options, spec.WithPreservedReleaseFormatting())
 	}
 
