@@ -6,6 +6,7 @@ package component
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
@@ -40,6 +41,20 @@ func prepareLocklessSources(
 	sourceManager, err := sourceproviders.NewSourceManager(env, distro)
 	if err != nil {
 		return fmt.Errorf("creating source manager for %#q:\n%w", component.GetName(), err)
+	}
+
+	if env.DryRun() {
+		// [CheckOutputDir] only mutates the filesystem when '--force' is set.
+		if !options.Force {
+			if err := CheckOutputDir(env, options); err != nil {
+				return err
+			}
+		}
+
+		slog.Info("Dry run; would prepare lockless sources",
+			"component", component.GetName(), "outputDir", options.OutputDir)
+
+		return nil
 	}
 
 	if err := CheckOutputDir(env, options); err != nil {

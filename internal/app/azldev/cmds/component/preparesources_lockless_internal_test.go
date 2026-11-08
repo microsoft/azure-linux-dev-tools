@@ -273,6 +273,44 @@ func TestLocklessPrepareSourcesRejectsNonemptyOutputWithoutForce(t *testing.T) {
 	assert.Equal(t, "original output", string(content))
 }
 
+func TestLocklessPrepareSourcesDryRunPreservesForcedOutput(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	env.Config.LocklessComponents = map[string]bool{"curl": true}
+	env.Config.Components["curl"] = projectconfig.ComponentConfig{
+		Name: "curl", Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeLocal},
+	}
+	dryEnv := azldev.NewEnv(t.Context(), azldev.EnvOptions{
+		ProjectDir: env.Env.ProjectDir(), Config: env.Config, Interfaces: env.TestInterfaces,
+		EventListener: env.EventListener, DryRunnable: azldev.NewAppDryRunnable(true),
+	})
+
+	const output = "/external/output"
+	require.NoError(t, fileutils.WriteFile(env.FS(), filepath.Join(output, "keep"),
+		[]byte("original output"), fileperms.PublicFile))
+
+	originalPreparer := newSourcePreparer
+	newSourcePreparer = func(
+		_ sourceproviders.SourceManager, _ opctx.FS, _ opctx.EventListener, _ opctx.DryRunnable,
+		_ ...sources.PreparerOption,
+	) (sources.SourcePreparer, error) {
+		t.Fatal("dry run must not prepare sources")
+
+		return nil, errors.New("unexpected source preparer construction")
+	}
+
+	t.Cleanup(func() { newSourcePreparer = originalPreparer })
+
+	require.NoError(t, PrepareComponentSources(dryEnv, &PrepareSourcesOptions{
+		ComponentFilter: components.ComponentFilter{ComponentNamePatterns: []string{"curl"}},
+		OutputDir:       output,
+		Force:           true,
+	}))
+
+	content, err := fileutils.ReadFile(env.FS(), filepath.Join(output, "keep"))
+	require.NoError(t, err)
+	assert.Equal(t, "original output", string(content))
+}
+
 func TestLocklessPrepareSourcesUsesWorkingInputs(t *testing.T) {
 	const fetchCommand = "fetch"
 
