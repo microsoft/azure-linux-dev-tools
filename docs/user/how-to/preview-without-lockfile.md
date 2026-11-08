@@ -28,8 +28,8 @@ rust-asyncband
 
 Rendering, builds, and source preparation ignore existing locks and lock
 validation for listed components. They use configured upstream commits.
-Lockless rendering does not generate synthetic history; builds and source
-preparation still derive it from committed upstream-commit TOML changes.
+Lockless rendering, builds, queries, and source preparation do not generate
+synthetic history; builds and queries use committed rendered history.
 Unlisted components use lock files, lock validation, and fingerprint-derived
 synthetic history. Both kinds can be processed together.
 
@@ -89,6 +89,12 @@ current project branch, filtered with `git filter-repo --subdirectory-filter`
 using the component's repository-relative rendered directory. Install
 `git-filter-repo` on the host. Uncommitted rendered changes are not included,
 and extraction never modifies the original repository.
+
+For a bulk query, the project branch is cloned once into a temporary bare
+snapshot. Component repositories initially share that immutable object store
+and are filtered with bounded CPU concurrency. Each filtered repository is then
+repacked and detached from the shared store before entering Mock, so it contains
+only its own history and does not depend on host-only object paths.
 
 `component query` processes the temporary spec with rpmautospec in the project's
 Mock chroot, then reports its source NEVR, required files, and binary subpackages.
