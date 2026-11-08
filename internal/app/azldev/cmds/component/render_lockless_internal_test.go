@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -1700,6 +1701,53 @@ func TestBumpLocklessSpec_Failures(t *testing.T) {
 			} else {
 				require.ErrorContains(t, err, "install 'rpmdevtools'")
 			}
+		})
+	}
+}
+
+func TestBumpLocklessSpec_IgnoresChangelogReleaseLines(t *testing.T) {
+	const path = "/working/curl.spec"
+
+	changelog := "* Previous\n- Example:\nRelease: %%{release_string}.2\nrelease : 3\n"
+	before := renderTestSpec("1", "1", changelog)
+
+	for _, fail := range []bool{false, true} {
+		t.Run(strconv.FormatBool(fail), func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			env.CmdFactory.RegisterCommandInSearchPath("rpmdev-bumpspec")
+			require.NoError(t, fileutils.WriteFile(env.TestFS, path, []byte(before), fileperms.PublicFile))
+
+			// Mimic rpmdev-bumpspec, which bumps every line starting with 'Release:'.
+			env.CmdFactory.RunHandler = func(_ *exec.Cmd) error {
+				current, err := fileutils.ReadFile(env.TestFS, path)
+				require.NoError(t, err)
+
+				bumped := regexp.MustCompile(`(?mi)^release\s*:.*$`).ReplaceAll(current, []byte("Release: BUMPED"))
+				require.NoError(t, fileutils.WriteFile(env.TestFS, path, bumped, fileperms.PublicFile))
+
+				if fail {
+					return errors.New("bumpspec failed")
+				}
+
+				return nil
+			}
+
+			changed, err := bumpLocklessSpec(env.Env, path, &locklessRenderUpdate{subject: "Render message"})
+
+			result, readErr := fileutils.ReadFile(env.TestFS, path)
+			require.NoError(t, readErr)
+
+			if fail {
+				require.ErrorContains(t, err, "bumpspec failed")
+				assert.False(t, changed)
+				assert.Equal(t, before, string(result))
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.True(t, changed)
+			assert.Equal(t, renderTestSpec("1", "BUMPED", changelog), string(result))
 		})
 	}
 }

@@ -1227,6 +1227,80 @@ func bumpLocklessSpec(env *azldev.Env, path string, update *locklessRenderUpdate
 		return false, fmt.Errorf("lockless upstream rendering requires 'rpmdev-bumpspec'; install 'rpmdevtools':\n%w", err)
 	}
 
+	masked, err := maskChangelogReleaseLines(opened, before)
+	if err != nil {
+		return false, err
+	}
+
+	if masked == nil {
+		return runLocklessBumpspec(env, path, update, before)
+	}
+
+	if err := fileutils.WriteFile(env.FS(), path, masked, fileperms.PublicFile); err != nil {
+		return false, fmt.Errorf("masking %%changelog Release lines before release bump:\n%w", err)
+	}
+
+	changed, err = runLocklessBumpspec(env, path, update, before)
+	if err != nil {
+		if restoreErr := fileutils.WriteFile(env.FS(), path, before, fileperms.PublicFile); restoreErr != nil {
+			err = errors.Join(err, fmt.Errorf("restoring spec after failed release bump:\n%w", restoreErr))
+		}
+
+		return false, err
+	}
+
+	return changed, nil
+}
+
+// changelogReleaseMask prefixes '%changelog' lines that rpmdev-bumpspec would otherwise
+// treat as Release tags; rpmdev-bumpspec does not distinguish spec sections.
+const changelogReleaseMask = "azldev-masked-changelog-line:"
+
+var changelogReleaseLinePattern = regexp.MustCompile(`(?i)^release\s*:`)
+
+// maskChangelogReleaseLines returns the spec with '%changelog' lines starting with 'Release:'
+// masked, or nil when there are no such lines.
+func maskChangelogReleaseLines(opened *spec.Spec, original []byte) ([]byte, error) {
+	masked := false
+
+	err := opened.Visit(func(ctx *spec.Context) error {
+		if ctx.Target.TargetType != spec.SectionLineTarget || ctx.RawLine == nil ||
+			ctx.CurrentSection.SectType != spec.ChangelogSection ||
+			!changelogReleaseLinePattern.MatchString(*ctx.RawLine) {
+			return nil
+		}
+
+		ctx.ReplaceLine(changelogReleaseMask + *ctx.RawLine)
+
+		masked = true
+
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("finding %%changelog Release lines:\n%w", err)
+	}
+
+	if !masked {
+		return nil, nil
+	}
+
+	if bytes.Contains(original, []byte(changelogReleaseMask)) {
+		return nil, fmt.Errorf("spec already contains reserved text %#q", changelogReleaseMask)
+	}
+
+	var buffer bytes.Buffer
+	if err := opened.Serialize(&buffer); err != nil {
+		return nil, fmt.Errorf("masking %%changelog Release lines:\n%w", err)
+	}
+
+	return buffer.Bytes(), nil
+}
+
+// runLocklessBumpspec runs rpmdev-bumpspec, unmasks any masked '%changelog' lines, and
+// reports whether the spec differs from before.
+func runLocklessBumpspec(
+	env *azldev.Env, path string, update *locklessRenderUpdate, before []byte,
+) (changed bool, err error) {
 	raw := exec.CommandContext(env, sources.RPMDevBumpspecBinary, "-c", update.subject, path)
 	raw.Dir = filepath.Dir(path)
 
@@ -1255,6 +1329,13 @@ func bumpLocklessSpec(env *azldev.Env, path string, update *locklessRenderUpdate
 	after, err := fileutils.ReadFile(env.FS(), path)
 	if err != nil {
 		return false, fmt.Errorf("reading spec after release bump:\n%w", err)
+	}
+
+	if bytes.Contains(after, []byte(changelogReleaseMask)) {
+		after = bytes.ReplaceAll(after, []byte(changelogReleaseMask), nil)
+		if err := fileutils.WriteFile(env.FS(), path, after, fileperms.PublicFile); err != nil {
+			return false, fmt.Errorf("unmasking %%changelog Release lines after release bump:\n%w", err)
+		}
 	}
 
 	return !bytes.Equal(before, after), nil

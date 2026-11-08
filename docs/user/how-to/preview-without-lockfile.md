@@ -413,7 +413,9 @@ For upstream non-autorelease specs, a temporary process-local RPM wrapper sets
 `_sourcedir` and `_specdir` to the spec's directory so sidecar macros resolve
 correctly. Rendering preserves your `HOME`, packager settings, locale, and
 timezone; it does not edit your `.rpmmacros`. The wrapper is removed after the
-invocation, including when bumpspec fails.
+invocation, including when bumpspec fails. `Release:` lines inside `%changelog`
+text (for example, quoted spec snippets) are temporarily masked so bumpspec
+changes only real `Release` tags; they are restored unchanged afterward.
 
 When `--changelog-comment` is omitted, the prompt depends on how the message is used:
 
