@@ -288,6 +288,15 @@ working static release and `baserelease` definition are left as supplied by
 upstream and overlays. Autorelease follows the case-specific rules below.
 There is no later restoration of the original upstream release.
 
+A spec may define several `Release:` tags, such as one per `%if`/`%else`
+branch. Each tag is updated separately and keeps its own value and options.
+All `Release:` tags in a spec must either use `%autorelease` or be static;
+mixing the two fails rendering. Static carryover copies each committed
+`Release:` value to the upstream tag at the same position, and fails if the
+upstream and committed specs have different numbers of `Release:` tags. When
+upstream switches from `%autorelease` to a static release, every committed
+`%autorelease` tag must have the same value.
+
 When release carryover runs for an existing non-`%autorelease` upstream spec, it
 checks the committed `Release:` value. If it references the `baserelease` macro,
 the renderer copies the committed `%global baserelease` or `%define baserelease`

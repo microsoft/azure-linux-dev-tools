@@ -36,12 +36,12 @@ func staticRenderHistory(
 		return history, fmt.Errorf("parsing committed release spec:\n%w", err)
 	}
 
-	previousRelease, err := previous.GetLastTag("", "Release")
+	previousReleases, err := committedReleases(previous)
 	if err != nil {
-		return history, fmt.Errorf("reading committed Release:\n%w", err)
+		return history, err
 	}
 
-	if !sources.ReleaseUsesAutorelease(previousRelease) {
+	if !sources.ReleaseUsesAutorelease(previousReleases[0]) {
 		return history, nil
 	}
 
@@ -71,11 +71,11 @@ func staticRenderHistory(
 	}
 
 	release = fields[len(fields)-1]
-	if !autoreleaseNoDist.MatchString(previousRelease) {
+	if !autoreleaseNoDist.MatchString(previousReleases[0]) {
 		release += "%{?dist}"
 	}
 
-	if err := previous.SetTag("", "Release", release); err != nil {
+	if err := previous.UpdateExistingTag("", "Release", release); err != nil {
 		return history, fmt.Errorf("carrying calculated autorelease:\n%w", err)
 	}
 
@@ -123,17 +123,13 @@ func carryStaticRenderRelease(
 		return fmt.Errorf("parsing committed release spec:\n%w", err)
 	}
 
-	oldRelease, err := previous.GetLastTag("", "Release")
+	oldReleases, err := previous.GetTags("", "Release")
 	if err != nil {
 		return fmt.Errorf("reading committed Release:\n%w", err)
 	}
 
-	if !baseReleaseMacro.MatchString(oldRelease) {
-		if err := working.SetTag("", "Release", oldRelease); err != nil {
-			return fmt.Errorf("carrying committed Release:\n%w", err)
-		}
-
-		return nil
+	if !baseReleaseMacro.MatchString(oldReleases[len(oldReleases)-1]) {
+		return carryCommittedReleases(working, oldReleases)
 	}
 
 	_, definition, err := baseReleaseDefinition(previous)
@@ -147,6 +143,65 @@ func carryStaticRenderRelease(
 	}
 
 	working.ReplaceLine(line, definition)
+
+	return nil
+}
+
+// ErrDifferingAutoreleaseTags is returned when a committed spec has several
+// '%autorelease' 'Release' tags with different values.
+var ErrDifferingAutoreleaseTags = errors.New("committed '%autorelease' 'Release' tags differ")
+
+// ErrReleaseTagCountMismatch is returned when the upstream and committed specs
+// have different numbers of 'Release' tags.
+var ErrReleaseTagCountMismatch = errors.New("upstream and committed 'Release' tag counts differ")
+
+// committedReleases returns the committed 'Release' values, requiring them all
+// to be static or all to be the same '%autorelease' value.
+func committedReleases(previous *spec.Spec) ([]string, error) {
+	releases, err := previous.GetTags("", "Release")
+	if err != nil {
+		return nil, fmt.Errorf("reading committed Release:\n%w", err)
+	}
+
+	if err := checkReleaseTagsConsistent(releases); err != nil {
+		return nil, fmt.Errorf("reading committed Release:\n%w", err)
+	}
+
+	if sources.ReleaseUsesAutorelease(releases[0]) {
+		for _, release := range releases[1:] {
+			if release != releases[0] {
+				return nil, fmt.Errorf("calculating committed autorelease:\n%w", ErrDifferingAutoreleaseTags)
+			}
+		}
+	}
+
+	return releases, nil
+}
+
+// carryCommittedReleases copies each committed 'Release' value onto the
+// upstream 'Release' tag at the same position.
+func carryCommittedReleases(working *spec.Spec, oldReleases []string) error {
+	releases, err := working.GetTags("", "Release")
+	if err != nil {
+		return fmt.Errorf("reading upstream Release:\n%w", err)
+	}
+
+	if len(releases) != len(oldReleases) {
+		return fmt.Errorf("carrying committed Release: upstream spec has %d 'Release' tags, committed spec has %d:\n%w",
+			len(releases), len(oldReleases), ErrReleaseTagCountMismatch)
+	}
+
+	index := 0
+
+	err = working.UpdateExistingTagFunc("", "Release", func(string) (string, error) {
+		release := oldReleases[index]
+		index++
+
+		return release, nil
+	})
+	if err != nil {
+		return fmt.Errorf("carrying committed Release:\n%w", err)
+	}
 
 	return nil
 }

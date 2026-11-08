@@ -1060,7 +1060,9 @@ func TestLocklessRenderRelease_StaticHistoryWithoutAutoreleaseMarker(t *testing.
 		env := testutils.NewTestEnv(t)
 		stub := &renderAutospecStub{}
 		history := lastRender{spec: testCase.header + renderTestSpec("1", "9", "old\n")}
-		got, err := locklessRenderRelease(env.Env, stub, "/working", "curl.spec", testCase.release, history, false)
+		update, err := locklessRenderRelease(env.Env, stub, "/working", "curl.spec", testCase.release, history, false)
+		require.NoError(t, err)
+		got, err := update(testCase.release)
 		require.NoError(t, err)
 		assert.Equal(t, testCase.release, got)
 		assert.Empty(t, stub.calls)
@@ -2078,5 +2080,93 @@ func TestCommitLocklessRender_PathOnlyAndNoEmptyCommits(t *testing.T) {
 				assert.Len(t, commands, 2)
 			}
 		})
+	}
+}
+
+func conditionalReleaseTestSpec(withRelease, withoutRelease string) string {
+	return fmt.Sprintf("Name: curl\nVersion: 1\n%%if %%{with release}\nRelease: %s\n%%else\n"+
+		"Release: %s\n%%endif\nSummary: Test\nLicense: MIT\n\n%%description\nTest\n\n%%changelog\n%%autochangelog\n",
+		withRelease, withoutRelease)
+}
+
+func TestPrepareLocklessSpec_ConditionalReleaseTags(t *testing.T) {
+	const snapshot = "%autorelease -s %{gitdate}git%{shortcommit}"
+
+	unprocessed := conditionalReleaseTestSpec("%autorelease -b 5", snapshot+" -b 5")
+	unprocessedRepo, unprocessedCommits := testRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{
+		"curl.spec": []byte(unprocessed), "changelog": []byte("committed changelog"),
+	}}})
+	unprocessedTree, err := resolveTree(unprocessedRepo, unprocessedCommits[0])
+	require.NoError(t, err)
+
+	for _, testCase := range []struct {
+		name, upstreamFirst, upstreamSecond string
+		history                             lastRender
+		want                                []string
+		wantErr                             error
+	}{
+		{
+			name: "initial autorelease", upstreamFirst: "%autorelease", upstreamSecond: snapshot,
+			want: []string{"%autorelease -b 42", snapshot + " -b 42"},
+		},
+		{
+			name: "unprocessed autorelease history", upstreamFirst: "%autorelease", upstreamSecond: snapshot,
+			history: lastRender{spec: unprocessed, tree: unprocessedTree},
+			want:    []string{"%autorelease -b 5", snapshot + " -b 5"},
+		},
+		{
+			name: "rendered autorelease history", upstreamFirst: "%autorelease", upstreamSecond: snapshot,
+			history: testCommittedAutoreleaseHistory(t),
+			want:    []string{"%autorelease -b 9", snapshot + " -b 9"},
+		},
+		{
+			name: "static release history", upstreamFirst: "1%{?dist}", upstreamSecond: "1.%{snap}%{?dist}",
+			history: lastRender{spec: conditionalReleaseTestSpec("5%{?dist}", "5.%{snap}%{?dist}")},
+			want:    []string{"5%{?dist}", "5.%{snap}%{?dist}"},
+		},
+		{
+			name: "static release count mismatch", upstreamFirst: "1%{?dist}", upstreamSecond: "1.%{snap}%{?dist}",
+			history: lastRender{spec: renderTestSpec("1", "5%{?dist}", "")},
+			wantErr: ErrReleaseTagCountMismatch,
+		},
+		{
+			name: "mixed upstream release", upstreamFirst: "%autorelease", upstreamSecond: "1%{?dist}",
+			wantErr: ErrMixedReleaseTags,
+		},
+		{
+			name: "differing committed autorelease", upstreamFirst: "1%{?dist}", upstreamSecond: "1.%{snap}%{?dist}",
+			history: lastRender{spec: conditionalReleaseTestSpec("%autorelease", snapshot)},
+			wantErr: ErrDifferingAutoreleaseTags,
+		},
+	} {
+		for _, editor := range []spec.EditorMode{spec.EditorLegacy, spec.EditorStructural} {
+			t.Run(testCase.name+"/"+string(editor), func(t *testing.T) {
+				env := testutils.NewTestEnv(t)
+				original := conditionalReleaseTestSpec(testCase.upstreamFirst, testCase.upstreamSecond)
+				require.NoError(t, fileutils.WriteFile(env.TestFS, "/working/curl.spec",
+					[]byte(original), fileperms.PublicFile))
+
+				stub := &renderAutospecStub{expand: func(_, _ string) (string, error) { return "9.fc43", nil }}
+				err := prepareLocklessSpec(env.Env, stub, "/working", "curl", editor, testCase.history)
+
+				content, readErr := fileutils.ReadFile(env.TestFS, "/working/curl.spec")
+				require.NoError(t, readErr)
+
+				if testCase.wantErr != nil {
+					require.ErrorIs(t, err, testCase.wantErr)
+					assert.Equal(t, original, string(content))
+
+					return
+				}
+
+				require.NoError(t, err)
+
+				prepared, err := spec.OpenSpec(strings.NewReader(string(content)), spec.WithEditor(editor))
+				require.NoError(t, err)
+				releases, err := prepared.GetTags("", "Release")
+				require.NoError(t, err)
+				assert.Equal(t, testCase.want, releases)
+			})
+		}
 	}
 }

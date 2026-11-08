@@ -396,9 +396,9 @@ func prepareLocklessSpec(
 		return err
 	}
 
-	original, err := opened.GetLastTag("", "Release")
+	original, err := upstreamRenderRelease(opened)
 	if err != nil {
-		return fmt.Errorf("reading upstream Release:\n%w", err)
+		return err
 	}
 
 	version, err := opened.GetLastTag("", "Version")
@@ -426,12 +426,12 @@ func prepareLocklessSpec(
 	}
 
 	if !versionChanged || sources.ReleaseUsesAutorelease(original) {
-		release, err := locklessRenderRelease(env, autospec, dir, filepath.Base(path), original, history, versionChanged)
+		update, err := locklessRenderRelease(env, autospec, dir, filepath.Base(path), original, history, versionChanged)
 		if err != nil {
 			return err
 		}
 
-		if err := opened.SetTag("", "Release", release); err != nil {
+		if err := opened.UpdateExistingTagFunc("", "Release", update); err != nil {
 			return fmt.Errorf("updating upstream Release:\n%w", err)
 		}
 
@@ -447,6 +447,42 @@ func prepareLocklessSpec(
 
 	if err := fileutils.WriteFile(env.FS(), path, result.Bytes(), fileperms.PublicFile); err != nil {
 		return fmt.Errorf("writing prepared upstream spec:\n%w", err)
+	}
+
+	return nil
+}
+
+// upstreamRenderRelease returns the final upstream 'Release' value after
+// verifying that every 'Release' tag agrees on whether it uses '%autorelease'.
+func upstreamRenderRelease(opened *spec.Spec) (string, error) {
+	releases, err := opened.GetTags("", "Release")
+	if err != nil {
+		return "", fmt.Errorf("reading upstream Release:\n%w", err)
+	}
+
+	if err := checkReleaseTagsConsistent(releases); err != nil {
+		return "", fmt.Errorf("reading upstream Release:\n%w", err)
+	}
+
+	return releases[len(releases)-1], nil
+}
+
+// ErrMixedReleaseTags is returned when some, but not all, 'Release' tags in a
+// spec use '%autorelease'.
+var ErrMixedReleaseTags = errors.New("'Release' tags mix '%autorelease' and static values")
+
+func checkReleaseTagsConsistent(releases []string) error {
+	autoreleases := 0
+
+	for _, release := range releases {
+		if sources.ReleaseUsesAutorelease(release) {
+			autoreleases++
+		}
+	}
+
+	if autoreleases != 0 && autoreleases != len(releases) {
+		return fmt.Errorf("%d of %d 'Release' tags use '%%autorelease':\n%w",
+			autoreleases, len(releases), ErrMixedReleaseTags)
 	}
 
 	return nil
@@ -544,24 +580,52 @@ func resolveRenderUpstreamCommit(env *azldev.Env, dir, commit string) error {
 	return nil
 }
 
+// releaseUpdate computes the new value of one 'Release' tag from its current value.
+type releaseUpdate func(release string) (string, error)
+
+func keepRelease(release string) (string, error) {
+	return release, nil
+}
+
+// autoreleaseBaseUpdate returns a [releaseUpdate] that applies the given
+// autorelease base to each '%autorelease' 'Release' tag, preserving any other
+// arguments on that tag. The base must already be validated.
+func autoreleaseBaseUpdate(output string, omitDefault bool) releaseUpdate {
+	return func(release string) (string, error) {
+		if !sources.ReleaseUsesAutorelease(release) {
+			return release, nil
+		}
+
+		return withAutoreleaseBase(release, output, omitDefault)
+	}
+}
+
+func stripAutoreleaseBase(release string) (string, error) {
+	return autoreleaseBaseArg.ReplaceAllString(release, ""), nil
+}
+
 func locklessRenderRelease(
 	env *azldev.Env, autospec renderAutorelease, dir, filename, release string, history lastRender,
 	versionChanged bool,
-) (string, error) {
+) (releaseUpdate, error) {
 	if !sources.ReleaseUsesAutorelease(release) || env.DryRun() {
-		return release, nil
+		return keepRelease, nil
 	}
 
 	if history.spec != "" && (!versionChanged || renderedAutoreleaseMarker.MatchString(history.spec)) {
-		return carryRenderedAutorelease(env, autospec, dir, filename, release, history)
+		return carryRenderedAutorelease(env, autospec, dir, filename, history)
 	}
 
 	calculated, err := autospec.CalculateBaseRelease(env, dir, filename)
 	if err != nil {
-		return "", fmt.Errorf("calculating upstream release base:\n%w", err)
+		return nil, fmt.Errorf("calculating upstream release base:\n%w", err)
 	}
 
-	return withAutoreleaseBase(release, calculated, true)
+	if _, _, err := parseAutoreleaseBase(calculated); err != nil {
+		return nil, err
+	}
+
+	return autoreleaseBaseUpdate(calculated, true), nil
 }
 
 var (
@@ -571,50 +635,50 @@ var (
 )
 
 func carryRenderedAutorelease(
-	env *azldev.Env, autospec renderAutorelease, dir, filename, release string, history lastRender,
-) (string, error) {
+	env *azldev.Env, autospec renderAutorelease, dir, filename string, history lastRender,
+) (releaseUpdate, error) {
 	if !renderedAutoreleaseMarker.MatchString(history.spec) {
-		return carryUnprocessedAutorelease(release, history)
+		return carryUnprocessedAutorelease(history)
 	}
 
 	expanded, err := expandCommittedRelease(env, autospec, dir, filename, history)
 	if err != nil {
-		return "", fmt.Errorf("expanding committed Release:\n%w", err)
+		return nil, fmt.Errorf("expanding committed Release:\n%w", err)
 	}
 
-	release, err = withAutoreleaseBase(release, renderedReleaseNumber.FindString(strings.TrimSpace(expanded)), true)
-	if err != nil {
-		return "", fmt.Errorf("using committed Release %#q as autorelease base:\n%w", expanded, err)
+	base := renderedReleaseNumber.FindString(strings.TrimSpace(expanded))
+	if _, _, err := parseAutoreleaseBase(base); err != nil {
+		return nil, fmt.Errorf("using committed Release %#q as autorelease base:\n%w", expanded, err)
 	}
 
-	return release, nil
+	return autoreleaseBaseUpdate(base, true), nil
 }
 
-func carryUnprocessedAutorelease(release string, history lastRender) (string, error) {
+func carryUnprocessedAutorelease(history lastRender) (releaseUpdate, error) {
 	previous, err := spec.OpenSpec(strings.NewReader(history.spec))
 	if err != nil {
-		return "", fmt.Errorf("parsing committed autorelease spec:\n%w", err)
+		return nil, fmt.Errorf("parsing committed autorelease spec:\n%w", err)
 	}
 
 	previousRelease, err := previous.GetLastTag("", "Release")
 	if err != nil {
-		return "", fmt.Errorf("reading committed Release:\n%w", err)
+		return nil, fmt.Errorf("reading committed Release:\n%w", err)
 	}
 
 	if !sources.ReleaseUsesAutorelease(previousRelease) {
-		return release, nil
+		return keepRelease, nil
 	}
 
-	if matches := renderedAutoreleaseBase.FindStringSubmatch(previousRelease); matches != nil {
-		release, err = withAutoreleaseBase(release, matches[1], false)
-		if err != nil {
-			return "", fmt.Errorf("using committed autorelease base:\n%w", err)
-		}
-	} else {
-		release = autoreleaseBaseArg.ReplaceAllString(release, "")
+	matches := renderedAutoreleaseBase.FindStringSubmatch(previousRelease)
+	if matches == nil {
+		return stripAutoreleaseBase, nil
 	}
 
-	return release, nil
+	if _, _, err := parseAutoreleaseBase(matches[1]); err != nil {
+		return nil, fmt.Errorf("using committed autorelease base:\n%w", err)
+	}
+
+	return autoreleaseBaseUpdate(matches[1], false), nil
 }
 
 func prepareLocklessChangelog(
@@ -787,17 +851,27 @@ func locklessVersionChanged(version string, history lastRender) (bool, error) {
 
 var autoreleaseBaseArg = regexp.MustCompile(`(^|\s)-b(?:\s+|=)?[0-9]+`)
 
-func withAutoreleaseBase(release, output string, omitDefault bool) (string, error) {
+// parseAutoreleaseBase returns the positive release number at the end of output.
+func parseAutoreleaseBase(output string) (number string, value int, err error) {
 	fields := strings.Fields(output)
 	if len(fields) == 0 {
-		return "", errors.New("empty autorelease base")
+		return "", 0, errors.New("empty autorelease base")
 	}
 
-	number := fields[len(fields)-1]
+	number = fields[len(fields)-1]
 
-	value, err := strconv.Atoi(number)
+	value, err = strconv.Atoi(number)
 	if err != nil || value < 1 {
-		return "", fmt.Errorf("invalid autorelease base %#q", output)
+		return "", 0, fmt.Errorf("invalid autorelease base %#q", output)
+	}
+
+	return number, value, nil
+}
+
+func withAutoreleaseBase(release, output string, omitDefault bool) (string, error) {
+	number, value, err := parseAutoreleaseBase(output)
+	if err != nil {
+		return "", err
 	}
 
 	if omitDefault && value == 1 {
