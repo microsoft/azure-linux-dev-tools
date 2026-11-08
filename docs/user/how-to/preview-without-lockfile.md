@@ -32,6 +32,8 @@ Lockless rendering, builds, queries, and source preparation do not generate
 synthetic history; builds and queries use committed rendered history.
 Unlisted components use lock files, lock validation, and fingerprint-derived
 synthetic history. Both kinds can be processed together.
+Locked rendering preserves existing non-symlink entries at percent-encoded alias
+paths and warns about the collision; lockless rendering replaces those entries.
 
 A missing or empty file means all components use lock files. Blank lines and
 surrounding whitespace are ignored; names are not glob patterns. A file read

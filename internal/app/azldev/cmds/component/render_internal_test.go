@@ -5,6 +5,7 @@ package component
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -439,7 +440,7 @@ func TestWriteAliasSymlink(t *testing.T) {
 		realDir := filepath.Join(letterDir, "libxml++")
 		require.NoError(t, fileutils.MkdirAll(osFS, realDir))
 
-		err := writeAliasSymlink(osFS, realDir, "libxml++")
+		err := writeAliasSymlink(osFS, realDir, "libxml++", false)
 		require.NoError(t, err)
 
 		aliasPath := filepath.Join(letterDir, "libxml%2B%2B")
@@ -458,7 +459,7 @@ func TestWriteAliasSymlink(t *testing.T) {
 		realDir := filepath.Join(letterDir, "vim")
 		require.NoError(t, fileutils.MkdirAll(osFS, realDir))
 
-		err := writeAliasSymlink(osFS, realDir, "vim")
+		err := writeAliasSymlink(osFS, realDir, "vim", false)
 		require.NoError(t, err)
 
 		entries, err := fileutils.ReadDir(osFS, letterDir)
@@ -477,7 +478,7 @@ func TestWriteAliasSymlink(t *testing.T) {
 		aliasPath := filepath.Join(letterDir, "gtk%2B")
 		osSymlink(t, osFS, "nonexistent-target", aliasPath)
 
-		err := writeAliasSymlink(osFS, realDir, "gtk+")
+		err := writeAliasSymlink(osFS, realDir, "gtk+", false)
 		require.NoError(t, err)
 
 		assert.Equal(t, "gtk+", osReadlink(t, osFS, aliasPath), "stale symlink should be replaced")
@@ -509,7 +510,7 @@ func TestWriteAliasSymlink(t *testing.T) {
 				osSymlink(t, osFS, "old-target", aliasPath)
 			}
 
-			require.NoError(t, writeAliasSymlink(osFS, realDir, "gtk+"))
+			require.NoError(t, writeAliasSymlink(osFS, realDir, "gtk+", true))
 			linkInfo := osLstat(t, osFS, aliasPath)
 			assert.NotZero(t, linkInfo.Mode()&os.ModeSymlink)
 			assert.Equal(t, "gtk+", osReadlink(t, osFS, aliasPath))
@@ -527,9 +528,57 @@ func TestWriteAliasSymlink(t *testing.T) {
 		memFS := afero.NewMemMapFs()
 		require.NoError(t, fileutils.MkdirAll(memFS, "/SPECS/l/libxml++"))
 
-		err := writeAliasSymlink(memFS, "/SPECS/l/libxml++", "libxml++")
+		err := writeAliasSymlink(memFS, "/SPECS/l/libxml++", "libxml++", false)
 		assert.NoError(t, err, "must not fail when FS doesn't support symlinks")
 	})
+}
+
+type renderAliasTestFS struct {
+	afero.Fs
+	linked bool
+}
+
+func (fs *renderAliasTestFS) SymlinkIfPossible(_, _ string) error {
+	fs.linked = true
+
+	return nil
+}
+
+func TestWriteRenderedAlias_LockModes(t *testing.T) {
+	for _, lockless := range []bool{false, true} {
+		for _, directory := range []bool{false, true} {
+			t.Run(fmt.Sprintf("lockless=%t/directory=%t", lockless, directory), func(t *testing.T) {
+				env := testutils.NewTestEnv(t)
+				aliasFS := &renderAliasTestFS{Fs: env.TestFS}
+				env.TestFS = aliasFS
+				comp := components_testutils.NewMockComponent(gomock.NewController(t))
+				comp.EXPECT().GetName().AnyTimes().Return("libxml++")
+
+				path := "/output/l/libxml%2B%2B"
+				if directory {
+					path = filepath.Join(path, "keep.txt")
+				}
+
+				require.NoError(t, fileutils.WriteFile(aliasFS, path, []byte("keep"), fileperms.PublicFile))
+
+				writeRenderedAlias(env.Env, &preparedComponent{
+					comp: comp, compOutputDir: "/output/l/libxml++", lockless: lockless,
+				})
+
+				assert.Equal(t, lockless, aliasFS.linked)
+
+				exists, err := fileutils.Exists(aliasFS, path)
+				require.NoError(t, err)
+				assert.Equal(t, !lockless, exists)
+
+				if !lockless {
+					content, err := fileutils.ReadFile(aliasFS, path)
+					require.NoError(t, err)
+					assert.Equal(t, "keep", string(content))
+				}
+			})
+		}
+	}
 }
 
 func TestPruneOrphanRenderedDirs(t *testing.T) {

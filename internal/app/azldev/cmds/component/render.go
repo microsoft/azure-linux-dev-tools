@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -931,7 +932,7 @@ func finishComponentRender(
 
 func writeRenderedAlias(env *azldev.Env, prep *preparedComponent) {
 	name := prep.comp.GetName()
-	if err := writeAliasSymlink(env.FS(), prep.compOutputDir, name); err != nil {
+	if err := writeAliasSymlink(env.FS(), prep.compOutputDir, name, prep.lockless); err != nil {
 		slog.Warn("Failed to create rendered-spec alias symlink; downstream build steps"+
 			" that consume the percent-encoded path may fail to locate this component",
 			"component", name, "error", err)
@@ -945,9 +946,8 @@ func writeRenderedAlias(env *azldev.Env, prep *preparedComponent) {
 // No-ops when no encoding is needed (plain ASCII names) or when the underlying
 // filesystem doesn't support symlinks (e.g., in-memory test FS).
 //
-// Removes any existing entry at the alias path, including nonempty directories,
-// before creating the symlink.
-func writeAliasSymlink(fileSystem opctx.FS, componentOutputDir, componentName string) error {
+// Only lockless rendering replaces non-symlink entries at the alias path.
+func writeAliasSymlink(fileSystem opctx.FS, componentOutputDir, componentName string, replaceExisting bool) error {
 	aliasName := components.RenderedSpecDirAliasName(componentName)
 	if aliasName == "" {
 		return nil
@@ -964,6 +964,16 @@ func writeAliasSymlink(fileSystem opctx.FS, componentOutputDir, componentName st
 	parentDir := filepath.Dir(componentOutputDir)
 	aliasPath := filepath.Join(parentDir, aliasName)
 
+	if !replaceExisting {
+		info, err := lstatIfPossible(fileSystem, aliasPath)
+		switch {
+		case err == nil && info.Mode()&os.ModeSymlink == 0:
+			return fmt.Errorf("alias path %#q is already occupied by a non-symlink entry; refusing to overwrite", aliasPath)
+		case err != nil && !errors.Is(err, os.ErrNotExist):
+			return fmt.Errorf("inspecting alias path %#q:\n%w", aliasPath, err)
+		}
+	}
+
 	if removeErr := fileSystem.RemoveAll(aliasPath); removeErr != nil {
 		return fmt.Errorf("removing existing alias path %#q:\n%w", aliasPath, removeErr)
 	}
@@ -975,6 +985,16 @@ func writeAliasSymlink(fileSystem opctx.FS, componentOutputDir, componentName st
 	}
 
 	return nil
+}
+
+func lstatIfPossible(fileSystem opctx.FS, path string) (os.FileInfo, error) {
+	if lstater, ok := fileSystem.(afero.Lstater); ok {
+		info, _, err := lstater.LstatIfPossible(path)
+
+		return info, err //nolint:wrapcheck // Preserve the filesystem error.
+	}
+
+	return fileSystem.Stat(path) //nolint:wrapcheck // Preserve the filesystem error.
 }
 
 // moveRenderedOutput recreates the output directory and moves all prepared entries
