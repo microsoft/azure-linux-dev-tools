@@ -1024,17 +1024,26 @@ func locklessSpecUsesAutorelease(env *azldev.Env, path string) (bool, error) {
 	return sources.ReleaseUsesAutorelease(release), nil
 }
 
+// validateRenderNEVR rejects replacing rendered output with a lower NEVR.
+// Unprocessed %autorelease specs are resolved against the component's filtered
+// dist-git history, as lockless builds resolve them, instead of plain rpmspec.
 func validateRenderNEVR(env *azldev.Env, preparedDir string, prep *preparedComponent) error {
-	existing, err := queryRenderSpecNEVR(env, filepath.Join(prep.compOutputDir, prep.specFilename))
-	if err != nil {
-		return fmt.Errorf("%w: querying existing NEVR:\n%w", errRenderNEVRValidation, err)
-	}
-
+	existingPath := filepath.Join(prep.compOutputDir, prep.specFilename)
 	newPath := filepath.Join(preparedDir, prep.specFilename)
 
-	rendered, err := queryRenderSpecNEVR(env, newPath)
+	existingHistory, err := renderSpecNeedsHistory(env, existingPath)
 	if err != nil {
-		return fmt.Errorf("%w: querying new NEVR:\n%w", errRenderNEVRValidation, err)
+		return fmt.Errorf("%w: checking existing spec autorelease:\n%w", errRenderNEVRValidation, err)
+	}
+
+	newHistory, err := renderSpecNeedsHistory(env, newPath)
+	if err != nil {
+		return fmt.Errorf("%w: checking new spec autorelease:\n%w", errRenderNEVRValidation, err)
+	}
+
+	existing, rendered, err := queryRenderNEVRs(env, preparedDir, prep, existingHistory, newHistory)
+	if err != nil {
+		return err
 	}
 
 	autorelease, err := locklessSpecUsesAutorelease(env, newPath)
@@ -1057,12 +1066,82 @@ func validateRenderNEVR(env *azldev.Env, preparedDir string, prep *preparedCompo
 	return nil
 }
 
-func queryRenderSpecNEVR(env *azldev.Env, path string) (*rpm.SpecInfo, error) {
+func queryRenderNEVRs(
+	env *azldev.Env, preparedDir string, prep *preparedComponent, existingHistory, newHistory bool,
+) (existing, rendered *rpm.SpecInfo, err error) {
+	var history renderNEVRHistory
+
+	if existingHistory || newHistory {
+		history, err = openRenderNEVRHistory(env, filepath.Dir(preparedDir), prep.compOutputDir)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w: reading dist-git history:\n%w", errRenderNEVRValidation, err)
+		}
+
+		defer func() {
+			if removeErr := history.Remove(); removeErr != nil && err == nil {
+				err = fmt.Errorf("%w:\n%w", errRenderNEVRValidation, removeErr)
+			}
+		}()
+	}
+
+	if existingHistory {
+		existing, err = history.Committed(prep.specFilename)
+	} else {
+		existing, err = queryRenderSpecNEVR(env, filepath.Join(prep.compOutputDir, prep.specFilename),
+			prep.compOutputDir)
+	}
+
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: querying existing NEVR:\n%w", errRenderNEVRValidation, err)
+	}
+
+	if newHistory {
+		rendered, err = history.Rendered(preparedDir, prep.specFilename)
+	} else {
+		rendered, err = queryRenderSpecNEVR(env, filepath.Join(preparedDir, prep.specFilename), preparedDir)
+	}
+
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: querying new NEVR:\n%w", errRenderNEVRValidation, err)
+	}
+
+	return existing, rendered, nil
+}
+
+// renderSpecNeedsHistory reports whether a spec uses %autorelease without
+// having been processed by rpmautospec, so its release depends on history.
+func renderSpecNeedsHistory(env *azldev.Env, path string) (bool, error) {
+	content, err := fileutils.ReadFile(env.FS(), path)
+	if err != nil {
+		return false, fmt.Errorf("reading spec %#q:\n%w", path, err)
+	}
+
+	if renderedAutoreleaseMarker.Match(content) {
+		return false, nil
+	}
+
+	opened, err := spec.OpenSpec(bytes.NewReader(content))
+	if err != nil {
+		return false, fmt.Errorf("parsing spec %#q:\n%w", path, err)
+	}
+
+	release, err := opened.GetLastTag("", "Release")
+	if errors.Is(err, spec.ErrNoSuchTag) {
+		return false, nil
+	}
+
+	if err != nil {
+		return false, fmt.Errorf("reading Release from %#q:\n%w", path, err)
+	}
+
+	return sources.ReleaseUsesAutorelease(release), nil
+}
+
+func queryRenderSpecNEVR(env *azldev.Env, path, dir string) (*rpm.SpecInfo, error) {
 	if err := prereqs.RequireExecutable(env, "rpmspec", nil); err != nil {
 		return nil, fmt.Errorf("lockless render NEVR validation requires 'rpmspec':\n%w", err)
 	}
 
-	dir := filepath.Dir(path)
 	raw := exec.CommandContext(env, "rpmspec", "-q", "--srpm",
 		"--define", "_sourcedir "+dir, "--define", "_specdir "+dir,
 		"--queryformat", rpm.SrpmQueryFormat, path)

@@ -460,12 +460,22 @@ the working checkout retains its Git metadata until staging cleanup.
 After comparison and the final release bump, but immediately before removing
 existing output, lockless rendering queries the existing and new source-package
 NEVRs with host `rpmspec`. Queries expand each spec's macros using its own dist-git
-directory. The package name must match. When the final new spec uses
+directory. A spec whose `Release` uses `%autorelease` without having been processed
+by rpmautospec (no `## RPMAUTOSPEC` header) is instead resolved as lockless builds
+resolve it: against the component's filtered rendered-directory history, as
+produced by `git filter-repo --subdirectory-filter`, using `rpmautospec
+process-distgit` before the `rpmspec` query. The existing spec uses the committed
+history; the new spec adds the prepared output as the next commit, unless its tree
+is unchanged. For merge-free project history, the filtered history is replayed in a
+temporary repository that reads project objects through Git alternates and never
+writes to the project repository; histories with merges are cloned and filtered
+with `git filter-repo`, which must then be installed. Plain `rpmspec` would expand
+`%autorelease -b N` to `N`, ignoring the commits that raise the built release.
+The package name must match. When the final new spec uses
 `%autorelease`, its new epoch/version/release must be equal to or higher than the
 existing value under RPM version ordering. Non-autorelease specs still require
-a strictly higher value. Autorelease permits equality because a subsequent Git
-commit can advance its Git-derived release; the query does not calculate that
-future release. Lower NEVRs, and equal non-autorelease NEVRs, fail with both values
+a strictly higher value. Autorelease permits equality because unchanged output
+creates no new commit. Lower NEVRs, and equal non-autorelease NEVRs, fail with both values
 in the error message; query failures also abort. These errors return
 a failing exit status even without `--fail-on-error`, and leave existing output
 untouched. First renders with no existing directory skip the check.

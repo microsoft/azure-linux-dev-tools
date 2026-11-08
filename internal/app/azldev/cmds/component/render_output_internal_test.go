@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components/components_testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
@@ -31,6 +32,7 @@ import (
 
 const (
 	testRenderOutputDir       = "/project/SPECS/c/curl"
+	testRenderStagingDir      = "/staging/curl"
 	renderTestDiffCommand     = "diff"
 	renderTestResetCommand    = "reset"
 	renderTestCheckoutCommand = "checkout"
@@ -97,6 +99,9 @@ func TestLocklessRenderNEVRBeforeReplacement(t *testing.T) {
 				newName = testCase.newName
 			}
 
+			history := &fakeRenderNEVRHistory{rendered: &rpm.SpecInfo{Name: newName, Version: *rendered}}
+			opened := stubRenderNEVRHistory(t, history)
+
 			queries := 0
 			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
 				queries++
@@ -108,7 +113,7 @@ func TestLocklessRenderNEVRBeforeReplacement(t *testing.T) {
 
 				name, version := "curl", existing
 				if queries == 2 {
-					dir, name, version = "/staging/curl", newName, rendered
+					dir, name, version = testRenderStagingDir, newName, rendered
 				}
 
 				assert.Equal(t, dir, cmd.Dir)
@@ -126,7 +131,7 @@ func TestLocklessRenderNEVRBeforeReplacement(t *testing.T) {
 					"\nversion=" + version.Version() + "\nrelease=" + version.Release() + "\n", nil
 			}
 
-			err = moveRenderedOutput(env.Env, "/staging/curl", prep, true)
+			err = moveRenderedOutput(env.Env, testRenderStagingDir, prep, true)
 			if testCase.reject {
 				require.ErrorIs(t, err, errRenderNEVRValidation)
 				assertOriginalRenderOutput(t, env.TestFS, true)
@@ -160,8 +165,15 @@ func TestLocklessRenderNEVRBeforeReplacement(t *testing.T) {
 				assert.Zero(t, queries)
 			case testCase.queryFails:
 				assert.Equal(t, 1, queries)
+			case testCase.rawRelease != "":
+				// Only the existing spec uses rpmspec; history resolves the new %autorelease.
+				assert.Equal(t, 1, queries)
+				assert.Equal(t, 1, *opened)
+				assert.Equal(t, testRenderStagingDir, history.preparedDir)
+				assert.True(t, history.removed)
 			default:
 				assert.Equal(t, 2, queries)
+				assert.Zero(t, *opened)
 			}
 		})
 	}
@@ -184,7 +196,7 @@ func TestRenderNEVRSkipsFirstAndLockedRenders(t *testing.T) {
 
 					return "", nil
 				}
-				require.NoError(t, moveRenderedOutput(env.Env, "/staging/curl", &preparedComponent{
+				require.NoError(t, moveRenderedOutput(env.Env, testRenderStagingDir, &preparedComponent{
 					lockless: !existing, specFilename: "curl.spec", compOutputDir: testRenderOutputDir,
 				}, true))
 			})
@@ -238,15 +250,79 @@ func TestMoveRenderedOutput_LockModes(t *testing.T) {
 	}
 }
 
+type fakeRenderNEVRHistory struct {
+	committed, rendered *rpm.SpecInfo
+	preparedDir         string
+	removed             bool
+}
+
+func (h *fakeRenderNEVRHistory) Committed(string) (*rpm.SpecInfo, error) {
+	if h.committed == nil {
+		return nil, errors.New("unexpected committed history query")
+	}
+
+	return h.committed, nil
+}
+
+func (h *fakeRenderNEVRHistory) Rendered(preparedDir, _ string) (*rpm.SpecInfo, error) {
+	h.preparedDir = preparedDir
+
+	return h.rendered, nil
+}
+
+func (h *fakeRenderNEVRHistory) Remove() error {
+	h.removed = true
+
+	return nil
+}
+
+// stubRenderNEVRHistory replaces dist-git history resolution; callers must not run in parallel.
+func stubRenderNEVRHistory(t *testing.T, history renderNEVRHistory) *int {
+	t.Helper()
+
+	opened := 0
+	original := openRenderNEVRHistory
+	openRenderNEVRHistory = func(_ *azldev.Env, parent, outputDir string) (renderNEVRHistory, error) {
+		opened++
+
+		assert.Equal(t, testRenderOutputDir, outputDir)
+		assert.Equal(t, "/staging", parent)
+
+		return history, nil
+	}
+
+	t.Cleanup(func() { openRenderNEVRHistory = original })
+
+	return &opened
+}
+
+func testSpecInfo(t *testing.T, evr string) *rpm.SpecInfo {
+	t.Helper()
+
+	version, err := rpm.NewVersion(evr)
+	require.NoError(t, err)
+
+	return &rpm.SpecInfo{Name: "curl", Version: *version}
+}
+
 func stubIncreasingRenderNEVR(t *testing.T, env *testutils.TestEnv) {
 	t.Helper()
+
+	originalHistory := openRenderNEVRHistory
+	openRenderNEVRHistory = func(*azldev.Env, string, string) (renderNEVRHistory, error) {
+		return &fakeRenderNEVRHistory{
+			committed: testSpecInfo(t, "1-1"), rendered: testSpecInfo(t, "1-2"),
+		}, nil
+	}
+
+	t.Cleanup(func() { openRenderNEVRHistory = originalHistory })
 
 	env.CmdFactory.RegisterCommandInSearchPath("rpmspec")
 	original := env.CmdFactory.RunAndGetOutputHandler
 	env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
 		if cmd.Args[0] == "rpmspec" {
 			release := "1"
-			if cmd.Dir == "/staging/curl" {
+			if cmd.Dir == testRenderStagingDir {
 				release = "2"
 			}
 
@@ -280,7 +356,7 @@ func setupRenderOutput(t *testing.T, fileSystem afero.Fs, existing bool) {
 	for name, content := range map[string]string{
 		"curl.spec": "Name: curl\nVersion: 1\nRelease: 1\n", "sidecar": "new sidecar", ".git/HEAD": "upstream",
 	} {
-		require.NoError(t, fileutils.WriteFile(fileSystem, filepath.Join("/staging/curl", name),
+		require.NoError(t, fileutils.WriteFile(fileSystem, filepath.Join(testRenderStagingDir, name),
 			[]byte(content), fileperms.PublicFile))
 	}
 
@@ -555,4 +631,70 @@ func (fs *renderOutputFaultFS) RemoveAll(path string) error {
 	}
 
 	return fs.Fs.RemoveAll(path)
+}
+
+func TestLocklessRenderNEVRResolvesAutoreleaseHistory(t *testing.T) {
+	const processedSpec = "## RPMAUTOSPEC: autorelease, autochangelog\nName: curl\nVersion: 1\nRelease: 7\n"
+
+	for _, testCase := range []struct {
+		name, existingSpec, committed, rendered string
+		reject                                  bool
+	}{
+		// rpmspec without history expands '-b 6' to 6, below the processed 7.
+		{name: "history raises base above processed release", existingSpec: processedSpec, rendered: "1-8"},
+		{name: "history release below processed release", existingSpec: processedSpec, rendered: "1-6", reject: true},
+		{
+			name: "unprocessed existing spec uses history", existingSpec: renderTestSpec("1", "%autorelease -b 2", ""),
+			committed: "1-5", rendered: "1-6",
+		},
+		{
+			name: "unprocessed existing release above new", existingSpec: renderTestSpec("1", "%autorelease -b 2", ""),
+			committed: "1-7", rendered: "1-6", reject: true,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			setupRenderOutput(t, env.TestFS, true)
+			env.CmdFactory.RegisterCommandInSearchPath("rpmspec")
+
+			for _, root := range []string{testRenderOutputDir, "/before"} {
+				require.NoError(t, fileutils.WriteFile(env.TestFS, filepath.Join(root, "curl.spec"),
+					[]byte(testCase.existingSpec), fileperms.PublicFile))
+			}
+
+			require.NoError(t, fileutils.WriteFile(env.TestFS, "/staging/curl/curl.spec",
+				[]byte(renderTestSpec("1", "%autorelease -b 6", "")), fileperms.PublicFile))
+
+			history := &fakeRenderNEVRHistory{rendered: testSpecInfo(t, testCase.rendered)}
+			if testCase.committed != "" {
+				history.committed = testSpecInfo(t, testCase.committed)
+			}
+
+			stubRenderNEVRHistory(t, history)
+
+			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				assert.Equal(t, processedSpec, testCase.existingSpec, "only processed specs use plain rpmspec")
+				assert.Equal(t, testRenderOutputDir, cmd.Dir)
+
+				release := "7"
+				if cmd.Dir == testRenderStagingDir {
+					release = "6"
+				}
+
+				return "name=curl\nepoch=0\nversion=1\nrelease=" + release + "\n", nil
+			}
+
+			err := moveRenderedOutput(env.Env, testRenderStagingDir, &preparedComponent{
+				lockless: true, specFilename: "curl.spec", compOutputDir: testRenderOutputDir,
+			}, true)
+			if testCase.reject {
+				require.ErrorIs(t, err, errRenderNEVRValidation)
+				assertOriginalRenderOutput(t, env.TestFS, true)
+			} else {
+				require.NoError(t, err)
+			}
+
+			assert.True(t, history.removed)
+		})
+	}
 }
