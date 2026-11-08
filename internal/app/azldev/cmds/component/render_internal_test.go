@@ -136,11 +136,11 @@ func TestMoveRenderedOutput(t *testing.T) {
 			require.NoError(t, err)
 			assert.True(t, emptyExists)
 
-			head, err := fileutils.ReadFile(fs, gitHead)
-			require.NoError(t, err)
-			assert.Equal(t, "upstream history", string(head))
-
 			if testCase.wantErr || testCase.dryRun {
+				head, err := fileutils.ReadFile(fs, gitHead)
+				require.NoError(t, err)
+				assert.Equal(t, "upstream history", string(head))
+
 				old, err := fileutils.ReadFile(fs, oldPath)
 				require.NoError(t, err)
 				assert.Equal(t, "old output", string(old))
@@ -148,12 +148,13 @@ func TestMoveRenderedOutput(t *testing.T) {
 				return
 			}
 
-			remaining, err := fileutils.ReadDir(fs, workingDir)
-			require.NoError(t, err)
-			require.Len(t, remaining, 1)
-			assert.Equal(t, ".git", remaining[0].Name())
+			for name, want := range files {
+				content, err := fileutils.ReadFile(fs, filepath.Join(workingDir, name))
+				require.NoError(t, err)
+				assert.Equal(t, want, string(content), "locked publication copies instead of moving")
+			}
 
-			for _, path := range []string{oldPath, filepath.Join(outputDir, ".git")} {
+			for _, path := range []string{oldPath, filepath.Join(outputDir, ".git"), gitHead} {
 				exists, err := fileutils.Exists(fs, path)
 				require.NoError(t, err)
 				assert.False(t, exists)

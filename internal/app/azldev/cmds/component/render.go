@@ -997,8 +997,8 @@ func lstatIfPossible(fileSystem opctx.FS, path string) (os.FileInfo, error) {
 	return fileSystem.Stat(path) //nolint:wrapcheck // Preserve the filesystem error.
 }
 
-// moveRenderedOutput recreates the output directory and moves all prepared entries
-// except '.git' into it. Existing output requires allowOverwrite.
+// moveRenderedOutput recreates the output directory and publishes prepared files
+// without '.git'. Locked output is copied; lockless output is moved.
 func moveRenderedOutput(env *azldev.Env, tempDir string, prep *preparedComponent, allowOverwrite bool) error {
 	componentOutputDir := prep.compOutputDir
 
@@ -1039,7 +1039,15 @@ func moveRenderedOutput(env *azldev.Env, tempDir string, prep *preparedComponent
 		return fmt.Errorf("creating output directory %#q:\n%w", componentOutputDir, mkdirErr)
 	}
 
-	entries, err := fileutils.ReadDir(env.FS(), tempDir)
+	if !prep.lockless {
+		return copyLockedRenderedOutput(env, tempDir, componentOutputDir)
+	}
+
+	return moveLocklessRenderedOutput(env.FS(), tempDir, componentOutputDir)
+}
+
+func moveLocklessRenderedOutput(fileSystem afero.Fs, tempDir, componentOutputDir string) error {
+	entries, err := fileutils.ReadDir(fileSystem, tempDir)
 	if err != nil {
 		return fmt.Errorf("reading prepared output directory %#q:\n%w", tempDir, err)
 	}
@@ -1052,9 +1060,25 @@ func moveRenderedOutput(env *azldev.Env, tempDir string, prep *preparedComponent
 		sourcePath := filepath.Join(tempDir, entry.Name())
 
 		destPath := filepath.Join(componentOutputDir, entry.Name())
-		if moveErr := env.FS().Rename(sourcePath, destPath); moveErr != nil {
+		if moveErr := fileSystem.Rename(sourcePath, destPath); moveErr != nil {
 			return fmt.Errorf("moving rendered entry %#q to %#q:\n%w", sourcePath, destPath, moveErr)
 		}
+	}
+
+	return nil
+}
+
+func copyLockedRenderedOutput(env *azldev.Env, tempDir, outputDir string) error {
+	gitDir := filepath.Join(tempDir, ".git")
+	if err := env.FS().RemoveAll(gitDir); err != nil {
+		slog.Debug("Failed to remove .git directory", "path", gitDir, "error", err)
+	}
+
+	options := fileutils.CopyDirOptions{
+		CopyFileOptions: fileutils.CopyFileOptions{PreserveFileMode: true},
+	}
+	if err := fileutils.CopyDirRecursive(env, env.FS(), tempDir, outputDir, options); err != nil {
+		return fmt.Errorf("copying rendered files to %#q:\n%w", outputDir, err)
 	}
 
 	return nil

@@ -5,9 +5,11 @@ package component
 
 import (
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"syscall"
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components/components_testutils"
@@ -185,6 +187,52 @@ func TestRenderNEVRSkipsFirstAndLockedRenders(t *testing.T) {
 				require.NoError(t, moveRenderedOutput(env.Env, "/staging/curl", &preparedComponent{
 					lockless: !existing, specFilename: "curl.spec", compOutputDir: testRenderOutputDir,
 				}, true))
+			})
+		}
+	}
+}
+
+func TestMoveRenderedOutput_LockModes(t *testing.T) {
+	for _, lockless := range []bool{false, true} {
+		for _, crossDevice := range []bool{false, true} {
+			t.Run(strconv.FormatBool(lockless)+"/"+strconv.FormatBool(crossDevice), func(t *testing.T) {
+				env := testutils.NewTestEnv(t)
+				setupRenderOutput(t, env.TestFS, false)
+
+				outputFS := &renderOutputFaultFS{Fs: env.TestFS}
+				if crossDevice {
+					outputFS.failure = "cross-device"
+				}
+
+				env.TestFS = outputFS
+				require.NoError(t, outputFS.Chmod("/staging/curl/sidecar", fileperms.PublicExecutable))
+
+				err := moveRenderedOutput(env.Env, "/staging/curl", &preparedComponent{
+					compOutputDir: testRenderOutputDir, lockless: lockless,
+				}, true)
+				if crossDevice && lockless {
+					require.ErrorIs(t, err, syscall.EXDEV)
+
+					return
+				}
+
+				require.NoError(t, err)
+
+				path := filepath.Join(testRenderOutputDir, "sidecar")
+				content, err := fileutils.ReadFile(outputFS, path)
+				require.NoError(t, err)
+				assert.Equal(t, "new sidecar", string(content))
+
+				info, err := outputFS.Stat(path)
+				require.NoError(t, err)
+				assert.Equal(t, fileperms.PublicExecutable, info.Mode().Perm())
+
+				exists, err := fileutils.Exists(outputFS, "/staging/curl/sidecar")
+				require.NoError(t, err)
+				assert.Equal(t, !lockless, exists)
+				exists, err = fileutils.Exists(outputFS, "/staging/curl/.git/HEAD")
+				require.NoError(t, err)
+				assert.Equal(t, lockless, exists)
 			})
 		}
 	}
@@ -485,6 +533,10 @@ type renderOutputFaultFS struct {
 }
 
 func (fs *renderOutputFaultFS) Rename(oldName, newName string) error {
+	if fs.failure == "cross-device" {
+		return &os.LinkError{Op: "rename", Old: oldName, New: newName, Err: syscall.EXDEV}
+	}
+
 	if fs.failure == "move" && oldName == "/staging/curl/sidecar" {
 		return errors.New("injected rename failure")
 	}
