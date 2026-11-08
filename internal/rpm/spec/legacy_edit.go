@@ -48,16 +48,35 @@ func (s *legacySpec) SetTag(packageName string, tag string, value string) (err e
 // UpdateExistingTag looks for the first instance of the named tag in the given package; if it
 // finds such a tag instance, it replaces its value with the provided value. If no such tag
 // exists, it returns an error.
-func (s *legacySpec) UpdateExistingTag(packageName string, tag string, value string) (err error) {
+func (s *legacySpec) UpdateExistingTag(packageName string, tag string, value string) error {
 	slog.Debug("Updating tag in spec", "package", packageName, "tag", tag, "newValue", value)
 
+	return s.UpdateExistingTagFunc(packageName, tag, func(string) (string, error) { return value, nil })
+}
+
+// UpdateExistingTagFunc replaces the value of every instance of the named tag in the given
+// package with the value returned by update for that instance's current value. If no such
+// tag exists, it returns an error.
+func (s *legacySpec) UpdateExistingTagFunc(
+	packageName string, tag string, update func(current string) (string, error),
+) (err error) {
 	tagToCompareAgainst := strings.ToLower(tag)
 
-	var updated bool
+	var (
+		updated   bool
+		updateErr error
+	)
 
 	err = s.VisitTagsPackage(packageName, func(tagLine *TagLine, ctx *Context) error {
 		if strings.ToLower(tagLine.Tag) != tagToCompareAgainst {
 			return nil
+		}
+
+		var value string
+
+		value, updateErr = update(tagLine.Value)
+		if updateErr != nil {
+			return updateErr
 		}
 
 		ctx.ReplaceLine(updatedTagLine(ctx.Target.Line.Text, tag, value, s.preserveReleaseFormatting))
@@ -66,6 +85,10 @@ func (s *legacySpec) UpdateExistingTag(packageName string, tag string, value str
 
 		return nil
 	})
+
+	if updateErr != nil {
+		return updateErr
+	}
 
 	if !updated {
 		return fmt.Errorf("tag %#q not found in spec:\n%w", tag, ErrNoSuchTag)
@@ -1164,6 +1187,28 @@ func (s *legacySpec) GetTag(packageName, tag string) (string, error) {
 	}
 
 	return value, nil
+}
+
+// GetTags returns the values of all matching tags in a package, in spec order.
+func (s *legacySpec) GetTags(packageName, tag string) ([]string, error) {
+	var values []string
+
+	err := s.VisitTagsPackage(packageName, func(tagLine *TagLine, _ *Context) error {
+		if strings.EqualFold(tagLine.Tag, tag) {
+			values = append(values, tagLine.Value)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if len(values) == 0 {
+		return nil, fmt.Errorf("tag %#q not found in package %#q:\n%w", tag, packageName, ErrNoSuchTag)
+	}
+
+	return values, nil
 }
 
 // GetLastTag returns the last matching tag in a package.

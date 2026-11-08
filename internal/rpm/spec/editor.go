@@ -57,6 +57,7 @@ type specEditor interface {
 	VisitTagsPackage(string, func(*TagLine, *Context) error) error
 	SetTag(string, string, string) error
 	UpdateExistingTag(string, string, string) error
+	UpdateExistingTagFunc(string, string, func(string) (string, error)) error
 	RemoveTag(string, string, string) error
 	RemoveTagsMatching(string, func(string, string) bool) (int, error)
 	AddTag(string, string, string) error
@@ -75,6 +76,7 @@ type specEditor interface {
 	RemoveSubpackage(string) error
 	GetTag(string, string) (string, error)
 	GetLastTag(string, string) (string, error)
+	GetTags(string, string) ([]string, error)
 }
 
 // Spec is the public facade for a configuration-selected RPM spec editor.
@@ -190,6 +192,15 @@ func (s *Spec) UpdateExistingTag(pkg, tag, value string) error {
 	return s.activeEditor().UpdateExistingTag(pkg, tag, value)
 }
 
+// UpdateExistingTagFunc updates every matching tag in the specified package to the
+// value returned by update for that tag's current value. It stops at the first
+// error returned by update. Returns [ErrNoSuchTag] if no matching tag exists.
+//
+//nolint:wrapcheck // Preserve errors returned by the selected editor.
+func (s *Spec) UpdateExistingTagFunc(pkg, tag string, update func(current string) (string, error)) error {
+	return s.activeEditor().UpdateExistingTagFunc(pkg, tag, update)
+}
+
 // RemoveTag removes matching tags from the specified package.
 //
 //nolint:wrapcheck // Preserve errors returned by the selected editor.
@@ -299,6 +310,14 @@ func (s *Spec) RemoveSubpackage(pkg string) error {
 //nolint:wrapcheck // Preserve errors returned by the selected editor.
 func (s *Spec) GetTag(pkg, tag string) (string, error) {
 	return s.activeEditor().GetTag(pkg, tag)
+}
+
+// GetTags returns the values of every matching tag in the specified package, in
+// spec order. Returns [ErrNoSuchTag] if no matching tag exists.
+//
+//nolint:wrapcheck // Preserve errors returned by the selected editor.
+func (s *Spec) GetTags(pkg, tag string) ([]string, error) {
+	return s.activeEditor().GetTags(pkg, tag)
 }
 
 // GetLastTag returns the final matching tag in the specified package.
