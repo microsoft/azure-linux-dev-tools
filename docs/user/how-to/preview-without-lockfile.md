@@ -60,6 +60,8 @@ Update (including `--bump`) skips listed components and leaves
 their locks untouched; refresh skips unlisted components and preserves their
 generated TOML files. All-component scans still prune files for components that
 no longer exist, not files belonging to components using the other mode.
+This preservation includes generated pins for unlisted local components, both
+when refreshing normally and when checking for stale files with `--check-only`.
 `component history` skips listed components. `component query` extracts their
 committed rendered dist-git history and processes it with rpmautospec before
 querying; uncommitted rendered changes are ignored. `component changed` compares resolved project

@@ -210,7 +210,7 @@ func RefreshUpstreamCommits(
 	// spec-glob-discovered components that aren't in config directly.
 	// Generated TOMLs are version controlled, so pruning is safe even if the
 	// resolved set is empty (e.g., all components removed from config).
-	wouldPrune, orphanErr := handleOrphanConfigs(store, allComps, options)
+	wouldPrune, orphanErr := handleOrphanConfigs(env, store, allComps, options)
 	if orphanErr != nil {
 		return filterRefreshDisplayResults(results), orphanErr
 	}
@@ -287,12 +287,20 @@ func excludePendingRemovals(
 // touching disk. Returns (nil, nil) when not running with --all-components,
 // since orphan handling is scoped to whole-set updates.
 func handleOrphanConfigs(
+	env *azldev.Env,
 	store *upstreamcommit.Store,
 	comps []components.Component,
 	options *RefreshUpstreamCommitOptions,
 ) ([]string, error) {
+	var ignored []string
+	for _, comp := range comps {
+		if !env.ComponentWithoutLockfile(comp.GetName()) {
+			ignored = append(ignored, comp.GetName())
+		}
+	}
+
 	return handleOrphans(
-		upstreamCommitOrphanStore{store: store},
+		upstreamCommitOrphanStore{store: store, ignored: ignored},
 		comps,
 		options.ComponentFilter.IncludeAllComponents,
 		options.CheckOnly,
@@ -305,13 +313,14 @@ func handleOrphanConfigs(
 
 // upstreamCommitOrphanStore adapts [upstreamcommit.Store] to [orphanStore].
 type upstreamCommitOrphanStore struct {
-	store *upstreamcommit.Store
+	store   *upstreamcommit.Store
+	ignored []string
 }
 
 func (s upstreamCommitOrphanStore) findOrphans(
 	resolved map[string]projectconfig.ComponentConfig,
 ) ([]string, error) {
-	orphans, err := s.store.FindOrphans(resolved)
+	orphans, err := s.store.FindOrphans(resolved, s.ignored...)
 	if err != nil {
 		return nil, fmt.Errorf("finding orphan upstream commit TOMLs:\n%w", err)
 	}
@@ -322,7 +331,7 @@ func (s upstreamCommitOrphanStore) findOrphans(
 func (s upstreamCommitOrphanStore) pruneOrphans(
 	resolved map[string]projectconfig.ComponentConfig,
 ) (int, error) {
-	pruned, err := s.store.PruneOrphans(resolved)
+	pruned, err := s.store.PruneOrphans(resolved, s.ignored...)
 	if err != nil {
 		return 0, fmt.Errorf("pruning orphan upstream commit TOMLs:\n%w", err)
 	}
