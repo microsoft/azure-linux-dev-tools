@@ -36,6 +36,9 @@ Locked rendering preserves existing non-symlink entries at percent-encoded alias
 paths and warns about the collision; lockless rendering replaces those entries.
 Locked rendered output is copied, so the work and output directories may reside
 on different filesystems. Lockless output continues to use moves.
+Only lockless `render --check-only` ignores root `.git` and
+`.no-change-rebuild` entries. Locked rendering compares all existing output
+entries after removing Git metadata from its staging directory.
 
 A missing or empty file means all components use lock files. Blank lines and
 surrounding whitespace are ignored; names are not glob patterns. A file read

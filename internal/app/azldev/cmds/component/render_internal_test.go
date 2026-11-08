@@ -16,6 +16,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components/components_testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
+	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/spf13/afero"
@@ -798,6 +799,52 @@ func TestFinishComponentRender_PreservesGitMetadata(t *testing.T) {
 	}
 }
 
+func TestFinishComponentRender_CheckOnlyMetadata(t *testing.T) {
+	for _, lockless := range []bool{false, true} {
+		for _, metadata := range []string{"", ".git/HEAD", noChangeRebuildMarker, "nested/" + noChangeRebuildMarker} {
+			t.Run(fmt.Sprintf("lockless=%t/%s", lockless, metadata), func(t *testing.T) {
+				env := testutils.NewTestEnv(t)
+				comp := components_testutils.NewMockComponent(gomock.NewController(t))
+				comp.EXPECT().GetName().AnyTimes().Return("curl")
+				comp.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
+					Render: projectconfig.ComponentRenderConfig{SkipFileFilter: true},
+				})
+
+				for _, root := range []string{"/staging/curl", "/output/curl"} {
+					require.NoError(t, fileutils.WriteFile(env.TestFS, filepath.Join(root, "curl.spec"),
+						[]byte("Name: curl\n"), fileperms.PublicFile))
+				}
+
+				const stagedGit = "/staging/curl/.git/HEAD"
+				require.NoError(t, fileutils.WriteFile(env.TestFS, stagedGit, []byte("upstream"), fileperms.PublicFile))
+
+				if metadata != "" {
+					require.NoError(t, fileutils.WriteFile(env.TestFS, filepath.Join("/output/curl", metadata),
+						[]byte("existing metadata"), fileperms.PublicFile))
+				}
+
+				prep := &preparedComponent{
+					comp: comp, specFilename: "curl.spec", compOutputDir: "/output/curl", lockless: lockless,
+				}
+				changed, err := finishComponentRender(env.Env, prep,
+					map[string]*sources.ComponentMockResult{"curl": {}}, "/staging", true, true, false)
+				require.NoError(t, err)
+				assert.Equal(t, metadata != "" && (!lockless || strings.HasPrefix(metadata, "nested/")), changed)
+
+				exists, err := fileutils.Exists(env.TestFS, stagedGit)
+				require.NoError(t, err)
+				assert.Equal(t, lockless, exists)
+
+				if metadata != "" {
+					content, err := fileutils.ReadFile(env.TestFS, filepath.Join("/output/curl", metadata))
+					require.NoError(t, err)
+					assert.Equal(t, "existing metadata", string(content), "check-only must not change existing output")
+				}
+			})
+		}
+	}
+}
+
 func TestFinishComponentRender_ComparisonBeforeBump(t *testing.T) {
 	for _, testCase := range []struct {
 		name            string
@@ -986,7 +1033,7 @@ func TestDiffRenderedOutput(t *testing.T) {
 		require.NoError(t, fileutils.WriteFile(testFS, "/act/curl.spec", []byte("Name: curl"), fileperms.PublicFile))
 		require.NoError(t, fileutils.WriteFile(testFS, "/act/sources", []byte("hash"), fileperms.PublicFile))
 
-		drifted, err := diffRenderedOutput(testFS, "/exp", "/act")
+		drifted, err := diffRenderedOutput(testFS, "/exp", "/act", false)
 		require.NoError(t, err)
 		assert.False(t, drifted)
 	})
@@ -997,7 +1044,7 @@ func TestDiffRenderedOutput(t *testing.T) {
 		testFS := afero.NewMemMapFs()
 		require.NoError(t, fileutils.WriteFile(testFS, "/exp/curl.spec", []byte("x"), fileperms.PublicFile))
 
-		drifted, err := diffRenderedOutput(testFS, "/exp", "/missing")
+		drifted, err := diffRenderedOutput(testFS, "/exp", "/missing", false)
 		require.NoError(t, err)
 		assert.True(t, drifted)
 	})
@@ -1009,7 +1056,7 @@ func TestDiffRenderedOutput(t *testing.T) {
 		require.NoError(t, fileutils.WriteFile(testFS, "/exp/curl.spec", []byte("v2"), fileperms.PublicFile))
 		require.NoError(t, fileutils.WriteFile(testFS, "/act/curl.spec", []byte("v1"), fileperms.PublicFile))
 
-		drifted, err := diffRenderedOutput(testFS, "/exp", "/act")
+		drifted, err := diffRenderedOutput(testFS, "/exp", "/act", false)
 		require.NoError(t, err)
 		assert.True(t, drifted)
 	})
@@ -1022,7 +1069,7 @@ func TestDiffRenderedOutput(t *testing.T) {
 		require.NoError(t, fileutils.WriteFile(testFS, "/act/curl.spec", []byte("x"), fileperms.PublicFile))
 		require.NoError(t, fileutils.WriteFile(testFS, "/act/stale.patch", []byte("y"), fileperms.PublicFile))
 
-		drifted, err := diffRenderedOutput(testFS, "/exp", "/act")
+		drifted, err := diffRenderedOutput(testFS, "/exp", "/act", false)
 		require.NoError(t, err)
 		assert.True(t, drifted)
 	})
@@ -1060,7 +1107,7 @@ func TestDiffRenderedOutput_RebuildMarker(t *testing.T) {
 					[]byte("working timestamp\n"), fileperms.PublicFile))
 			}
 
-			changed, err := diffRenderedOutput(testFS, "/working", "/existing")
+			changed, err := diffRenderedOutput(testFS, "/working", "/existing", true)
 			require.NoError(t, err)
 			assert.Equal(t, testCase.wantChanged, changed)
 		})

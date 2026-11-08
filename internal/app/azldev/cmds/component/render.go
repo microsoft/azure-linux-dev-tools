@@ -836,8 +836,8 @@ func finishOneComponent(
 }
 
 // finishComponentRender applies mock results, filters locked components' files,
-// diffs the staging tree against the existing output while ignoring the root '.git',
-// and (unless checkOnly is set) bumps lockless upstream specs and moves output.
+// diffs the staging tree against the existing output with mode-specific exclusions,
+// and (unless checkOnly is set) bumps lockless upstream specs and publishes output.
 // stagingDir is the root staging directory containing the component's subdirectory.
 //
 // Returns changed=true when the prepared tree differs from the existing output
@@ -868,6 +868,10 @@ func finishComponentRender(
 			"source processing failed for %#q:\n%w", componentName, mockResult.Error)
 	}
 
+	if !prep.lockless {
+		removeRenderedGitMetadata(env, componentDir)
+	}
+
 	// Filter locked components using the mock spectool result.
 	// Skip filtering when:
 	// 1. The component is lockless.
@@ -888,7 +892,7 @@ func finishComponentRender(
 	}
 
 	// Compare before the final bump so '--check-only' does not manufacture release drift.
-	changed, diffErr := diffRenderedOutput(env.FS(), componentDir, prep.compOutputDir)
+	changed, diffErr := diffRenderedOutput(env.FS(), componentDir, prep.compOutputDir, prep.lockless)
 	if diffErr != nil {
 		return false, fmt.Errorf("comparing rendered output for %#q:\n%w", componentName, diffErr)
 	}
@@ -1069,10 +1073,7 @@ func moveLocklessRenderedOutput(fileSystem afero.Fs, tempDir, componentOutputDir
 }
 
 func copyLockedRenderedOutput(env *azldev.Env, tempDir, outputDir string) error {
-	gitDir := filepath.Join(tempDir, ".git")
-	if err := env.FS().RemoveAll(gitDir); err != nil {
-		slog.Debug("Failed to remove .git directory", "path", gitDir, "error", err)
-	}
+	removeRenderedGitMetadata(env, tempDir)
 
 	options := fileutils.CopyDirOptions{
 		CopyFileOptions: fileutils.CopyFileOptions{PreserveFileMode: true},
@@ -1082,6 +1083,13 @@ func copyLockedRenderedOutput(env *azldev.Env, tempDir, outputDir string) error 
 	}
 
 	return nil
+}
+
+func removeRenderedGitMetadata(env *azldev.Env, tempDir string) {
+	gitDir := filepath.Join(tempDir, ".git")
+	if err := env.FS().RemoveAll(gitDir); err != nil {
+		slog.Debug("Failed to remove .git directory", "path", gitDir, "error", err)
+	}
 }
 
 // findUnexpandedMacro returns the first filename from specFiles that contains
@@ -1344,9 +1352,9 @@ const renderErrorMarkerContent = "Rendering failed. See azldev logs for details.
 // the existing on-disk output (actualDir) and returns true when they differ.
 // A missing actualDir always counts as drift. Symlinks are compared by target
 // (filesystems without symlink support skip that check; matches production
-// render behavior). The root '.git' entry is ignored without traversing it.
-// The root '.no-change-rebuild' marker is also ignored on both sides.
-func diffRenderedOutput(fileSystem opctx.FS, expectedDir, actualDir string) (bool, error) {
+// render behavior). Only lockless rendering ignores the root '.git' entry
+// and '.no-change-rebuild' marker on both sides.
+func diffRenderedOutput(fileSystem opctx.FS, expectedDir, actualDir string, lockless bool) (bool, error) {
 	actualExists, err := fileutils.DirExists(fileSystem, actualDir)
 	if err != nil {
 		return false, fmt.Errorf("checking actual output dir %#q:\n%w", actualDir, err)
@@ -1357,8 +1365,12 @@ func diffRenderedOutput(fileSystem opctx.FS, expectedDir, actualDir string) (boo
 		return true, nil
 	}
 
-	result, err := dirdiff.DiffDirs(fileSystem, actualDir, expectedDir,
-		dirdiff.WithIgnoredPaths(".git", noChangeRebuildMarker))
+	var options []dirdiff.DiffOption
+	if lockless {
+		options = append(options, dirdiff.WithIgnoredPaths(".git", noChangeRebuildMarker))
+	}
+
+	result, err := dirdiff.DiffDirs(fileSystem, actualDir, expectedDir, options...)
 	if err != nil {
 		return false, fmt.Errorf("diffing %#q vs %#q:\n%w", actualDir, expectedDir, err)
 	}
