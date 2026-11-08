@@ -183,6 +183,10 @@ func loadHistoricalEnv(
 
 	projectDir := filepath.Join(snapshotRepoRoot, projectRelDir)
 
+	// Historical snapshots may use config fields that this azldev no longer
+	// supports, so always parse them permissively.
+	const permissive = true
+
 	loadedProjectDir, config, err := projectconfig.LoadProjectConfig(
 		snapshotFS,
 		env.OSEnv(),
@@ -190,7 +194,7 @@ func loadHistoricalEnv(
 		false,
 		snapshotTempDir,
 		nil,
-		env.PermissiveConfigParsing(),
+		permissive,
 		true, /*withoutLockfile*/
 	)
 	if err != nil {
@@ -205,7 +209,7 @@ func loadHistoricalEnv(
 			FileSystemFactory: &fixedFileSystemFactory{fs: snapshotFS},
 		},
 	})
-	historicalEnv.SetPermissiveConfigParsing(env.PermissiveConfigParsing())
+	historicalEnv.SetPermissiveConfigParsing(permissive)
 
 	return historicalEnv, nil
 }

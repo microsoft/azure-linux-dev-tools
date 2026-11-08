@@ -302,6 +302,38 @@ path = "unavailable/curl.spec"
 	assert.Equal(t, "abcdef1234567", project.comparisonInputs["rust-asyncband"].SourceIdentity)
 }
 
+func TestLoadHistoricalProject_IgnoresUnknownHistoricalFields(t *testing.T) {
+	rootConfig := []byte(`
+[project]
+default-distro = { name = "testdistro", version = "1.0" }
+rendered-specs-dir = "SPECS"
+
+[distros.testdistro]
+description = "Test distro"
+[distros.testdistro.versions."1.0"]
+release-ver = "1.0"
+
+[test-suites.legacy]
+description = "Removed config table"
+
+[components.curl.spec]
+type = "upstream"
+upstream-commit = "abcdef1234567"
+`)
+	repo, hashes := testRepoWithCommits(t, []testRepoCommit{
+		{files: map[string][]byte{"azldev.toml": rootConfig}},
+	})
+	tree, err := resolveTree(repo, hashes[0])
+	require.NoError(t, err)
+
+	testEnv := testutils.NewTestEnvWithoutLockfile(t)
+	require.False(t, testEnv.Env.PermissiveConfigParsing())
+
+	project, err := loadHistoricalProject(testEnv.Env, tree, ".")
+	require.NoError(t, err)
+	assert.Equal(t, "abcdef1234567", project.components["curl"].Spec.UpstreamCommit)
+}
+
 func TestSelectHistoricalComponentNames_UsesBothRefs(t *testing.T) {
 	fromProject := &historicalProject{
 		components: map[string]projectconfig.ComponentConfig{
