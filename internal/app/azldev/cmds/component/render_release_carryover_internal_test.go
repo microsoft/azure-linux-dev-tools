@@ -4,17 +4,118 @@
 package component
 
 import (
+	"errors"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
+	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spec"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPrepareLocklessSpec_AutoreleaseToStatic(t *testing.T) {
+	for _, editor := range []spec.EditorMode{spec.EditorLegacy, spec.EditorStructural} {
+		for _, testCase := range []struct {
+			name, version, baseline, previous string
+			fail                              bool
+		}{
+			{name: "same version", version: "1", baseline: "12%{?dist}"},
+			{name: "new version", version: "2", baseline: "1%{?dist}"},
+			{name: "without dist", version: "1", baseline: "12", previous: "%{autorelease -b 8 -n}"},
+			{name: "release query fails", version: "1", fail: true},
+		} {
+			t.Run(string(editor)+"/"+testCase.name, func(t *testing.T) {
+				env := testutils.NewTestEnv(t)
+				env.Config.Project.RenderedSpecsDir = "/project/specs"
+				env.Config.Components["curl"] = projectconfig.ComponentConfig{Name: "curl"}
+				env.CmdFactory.RegisterCommandInSearchPath("git")
+				env.CmdFactory.RegisterCommandInSearchPath("rpmdev-bumpspec")
+
+				previous := testCase.previous
+				if previous == "" {
+					previous = "%autorelease -b 8"
+				}
+
+				history := lastRender{spec: renderTestSpec("1", previous, "%autochangelog\n")}
+
+				const path = "/working/curl.spec"
+				require.NoError(t, fileutils.WriteFile(env.TestFS, path,
+					[]byte(renderTestSpec(testCase.version, "1%{?dist}", "* Upstream entry\n")),
+					fileperms.PublicFile))
+
+				var snapshot string
+
+				env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+					switch cmd.Args[3] {
+					case renderTestRevParse:
+						if cmd.Args[4] == "--git-common-dir" {
+							return "/project/.git", nil
+						}
+
+						return renderTestProjectRoot, nil
+					case "clone":
+						snapshot = cmd.Args[len(cmd.Args)-1]
+						require.NoError(t, fileutils.MkdirAll(env.TestFS, filepath.Join(snapshot, ".git")))
+						require.NoError(t, fileutils.WriteFile(env.TestFS, filepath.Join(snapshot, "curl.spec"),
+							[]byte(history.spec), fileperms.PublicFile))
+					}
+
+					return "", nil
+				}
+				queryErr := errors.New("release query failed")
+				autospec := &renderAutospecStub{expand: func(dir, filename string) (string, error) {
+					assert.Equal(t, snapshot, dir)
+					assert.Equal(t, "curl.spec", filename)
+					content, err := fileutils.ReadFile(env.TestFS, filepath.Join(dir, filename))
+					require.NoError(t, err)
+					assert.Equal(t, history.spec, string(content))
+
+					if testCase.fail {
+						return "", queryErr
+					}
+
+					return "Calculated release number: 12\n", nil
+				}}
+
+				err := prepareLocklessSpec(env.Env, autospec, "/working", "curl", editor, history)
+				if testCase.fail {
+					require.ErrorIs(t, err, queryErr)
+				} else {
+					require.NoError(t, err)
+
+					content, readErr := fileutils.ReadFile(env.TestFS, path)
+					require.NoError(t, readErr)
+					assert.Contains(t, string(content), "Release: "+testCase.baseline+"\n")
+					assert.Contains(t, string(content), "* Full upstream history\n")
+					assert.NotContains(t, string(content), "%autorelease")
+					assert.NotContains(t, string(content), "%autochangelog")
+
+					bumped := false
+					env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+						bumped = true
+
+						assert.Equal(t, "rpmdev-bumpspec", cmd.Args[0])
+
+						return nil
+					}
+					_, err = bumpLocklessSpec(env.Env, path, &locklessRenderUpdate{subject: "test transition"})
+					require.NoError(t, err)
+					assert.True(t, bumped)
+				}
+
+				exists, checkErr := fileutils.Exists(env.TestFS, snapshot)
+				require.NoError(t, checkErr)
+				assert.False(t, exists, "remove the temporary history on success and failure")
+			})
+		}
+	}
+}
 
 func TestPrepareLocklessSpec_CarriesBaseRelease(t *testing.T) {
 	for _, editor := range []spec.EditorMode{spec.EditorLegacy, spec.EditorStructural} {

@@ -557,6 +557,12 @@ func (s *renderAutospecStub) CalculateBaseRelease(_ context.Context, _, _ string
 	return "Calculated release number: 42\n", s.err
 }
 
+func (s *renderAutospecStub) CalculateRelease(_ context.Context, dir, filename string) (string, error) {
+	s.calls = append(s.calls, "complete-release")
+
+	return s.expand(dir, filename)
+}
+
 func (s *renderAutospecStub) ExpandRelease(_ context.Context, dir, filename string) (string, error) {
 	s.calls = append(s.calls, "expand")
 

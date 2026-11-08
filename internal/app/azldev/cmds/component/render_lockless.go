@@ -65,6 +65,7 @@ type lastRender struct {
 type renderAutorelease interface {
 	GenerateChangelog(ctx context.Context, dir, filename string) (string, error)
 	CalculateBaseRelease(ctx context.Context, dir, filename string) (string, error)
+	CalculateRelease(ctx context.Context, dir, filename string) (string, error)
 	ExpandRelease(ctx context.Context, dir, filename string) (string, error)
 }
 
@@ -406,6 +407,11 @@ func prepareLocklessSpec(
 	}
 
 	versionChanged, err := locklessVersionChanged(version, history)
+	if err != nil {
+		return err
+	}
+
+	history, err = staticRenderHistory(env, autospec, dir, name, original, history, editor)
 	if err != nil {
 		return err
 	}

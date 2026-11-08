@@ -206,6 +206,7 @@ func TestRefreshUpstreamCommits_PreservesLockedPinsDuringOrphanCleanup(t *testin
 					Path:       "/project/locked-local.spec",
 				},
 			}
+
 			store := upstreamcommit.NewStore(env.TestFS, testUpstreamCommitsDir)
 			for _, name := range []string{"locked-local", "locked-upstream"} {
 				require.NoError(t, store.Save(name, "preserved-commit"))
@@ -218,6 +219,7 @@ func TestRefreshUpstreamCommits_PreservesLockedPinsDuringOrphanCleanup(t *testin
 			results, err := componentcmds.RefreshUpstreamCommits(env.Env, options)
 			require.NoError(t, err)
 			assert.Empty(t, results)
+
 			for _, name := range []string{"locked-local", "locked-upstream"} {
 				commit, exists, loadErr := store.Get(name)
 				require.NoError(t, loadErr)
@@ -226,6 +228,7 @@ func TestRefreshUpstreamCommits_PreservesLockedPinsDuringOrphanCleanup(t *testin
 			}
 
 			require.NoError(t, store.Save("removed-component", "orphan-commit"))
+
 			_, err = componentcmds.RefreshUpstreamCommits(env.Env, options)
 			if checkOnly {
 				require.ErrorContains(t, err, "removed-component")
@@ -233,6 +236,7 @@ func TestRefreshUpstreamCommits_PreservesLockedPinsDuringOrphanCleanup(t *testin
 			} else {
 				require.NoError(t, err)
 			}
+
 			exists, err := store.Exists("removed-component")
 			require.NoError(t, err)
 			assert.Equal(t, checkOnly, exists)

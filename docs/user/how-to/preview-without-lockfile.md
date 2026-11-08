@@ -281,6 +281,14 @@ unchanged. A missing or ambiguous macro definition fails rendering. Otherwise,
 it copies the committed `Release:` value into the upstream spec's `Release:`.
 No temporary release-bump probe is performed.
 
+When upstream switches from `%autorelease` to a static release, the renderer
+first extracts the committed component history and calculates its complete
+release with host rpmautospec. For an unchanged version, that concrete release
+is the baseline for the normal static bump; the old `%autorelease` macro is
+never restored. An existing `%autochangelog` is materialized from the same
+history before adding the static changelog entry. This transition requires
+`git-filter-repo`; a changed version still starts from the new upstream release.
+
 For an initial `%autorelease` render, it calculates the numeric upstream release
 and adds or replaces the macro's `-b` parameter. This rpmautospec operation runs
 on the host; it does not preprocess or rewrite the spec. Initial and legacy

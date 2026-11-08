@@ -293,6 +293,7 @@ func handleOrphanConfigs(
 	options *RefreshUpstreamCommitOptions,
 ) ([]string, error) {
 	var ignored []string
+
 	for _, comp := range comps {
 		if !env.ComponentWithoutLockfile(comp.GetName()) {
 			ignored = append(ignored, comp.GetName())
