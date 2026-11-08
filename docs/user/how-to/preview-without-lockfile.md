@@ -237,6 +237,8 @@ component's effective
 resolved distro version's `dist-git-branch` supplies the branch name. The clone
 retains that branch's full history, not every upstream branch, so pinned commits
 and snapshot selection remain available without a shallow-history limit.
+This branch restriction is specific to lockless preparation. Locked components
+retain normal multi-branch cloning so existing pins on other branches remain usable.
 
 Immediately after checking out the pinned upstream commit, rendering captures
 optional Fedora provenance values for `build.emit-upstream-provenance`, before

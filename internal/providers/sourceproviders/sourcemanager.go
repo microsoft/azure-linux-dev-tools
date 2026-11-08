@@ -77,6 +77,7 @@ type FetchComponentOptions struct {
 	SkipLookaside bool
 
 	SkipLocalSpecConfig bool
+	SingleBranch        bool
 }
 
 // FetchComponentOption is a functional option for configuring component fetch behavior.
@@ -101,6 +102,11 @@ func WithSkipLookaside() FetchComponentOption {
 // WithSkipLocalSpecConfig excludes the TOML defining a local spec's path from fetched files.
 func WithSkipLocalSpecConfig() FetchComponentOption {
 	return func(o *FetchComponentOptions) { o.SkipLocalSpecConfig = true }
+}
+
+// WithSingleBranch restricts upstream cloning to the selected distro branch.
+func WithSingleBranch() FetchComponentOption {
+	return func(o *FetchComponentOptions) { o.SingleBranch = true }
 }
 
 // resolveFetchComponentOptions applies all functional options and returns the resolved options.

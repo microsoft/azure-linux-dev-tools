@@ -405,12 +405,14 @@ func TestPrepareSources_WithSkipLookaside_SkipsFetchFiles(t *testing.T) {
 			}
 
 			assert.True(t, resolved.SkipLookaside, "FetchComponent should receive SkipLookaside option")
+			assert.True(t, resolved.SingleBranch, "lockless preparation should opt into single-branch cloning")
 
 			return fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte("# test spec"), fileperms.PublicFile)
 		},
 	)
 
-	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx, sources.WithSkipLookaside())
+	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx,
+		sources.WithSkipLookaside(), sources.WithoutLockfileHistory())
 	require.NoError(t, err)
 
 	err = preparer.PrepareSources(ctx, component, testOutputDir, true /*applyOverlays?*/)

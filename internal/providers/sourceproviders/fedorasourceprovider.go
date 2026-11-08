@@ -129,12 +129,17 @@ func (g *FedoraSourcesProviderImpl) GetComponent(
 	defer fileutils.RemoveAllAndUpdateErrorIfNil(g.fs, tempDir, &err)
 
 	// Clone the repository to temp directory with retry for transient network failures.
+	cloneOptions := []git.GitOptions{git.WithGitBranch(g.distroGitBranch)}
+	if resolved.SingleBranch {
+		cloneOptions = append(cloneOptions, git.WithSingleBranch())
+	}
+
 	err = retry.Do(ctx, g.retryConfig, func() error {
 		// Clean up temp directory contents from any prior failed clone attempt.
 		_ = g.fs.RemoveAll(tempDir)
 		_ = fileutils.MkdirAll(g.fs, tempDir)
 
-		return g.gitProvider.Clone(ctx, gitRepoURL, tempDir, git.WithGitBranch(g.distroGitBranch))
+		return g.gitProvider.Clone(ctx, gitRepoURL, tempDir, cloneOptions...)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to clone git repository %#q:\n%w", gitRepoURL, err)
@@ -308,6 +313,7 @@ func (g *FedoraSourcesProviderImpl) resolveCommit(
 
 		return g.gitProvider.Clone(ctx, gitRepoURL, tempDir,
 			git.WithGitBranch(g.distroGitBranch),
+			git.WithSingleBranch(),
 			git.WithMetadataOnly(),
 			git.WithQuiet(),
 		)

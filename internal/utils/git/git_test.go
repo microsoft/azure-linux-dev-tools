@@ -126,7 +126,7 @@ func TestCloneWithBranch(t *testing.T) {
 		called = true
 
 		assert.Equal(t, []string{
-			"git", "clone", "--branch", testRepoBranch, "--single-branch", testRepoURL, destDir,
+			"git", "clone", "--branch", testRepoBranch, testRepoURL, destDir,
 		}, cmd.Args)
 
 		return nil
@@ -140,6 +140,27 @@ func TestCloneWithBranch(t *testing.T) {
 	)
 
 	require.NoError(t, err)
+	assert.True(t, called)
+}
+
+func TestCloneWithSingleBranch(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	provider, err := git.NewGitProviderImpl(env.EventListener, env.CmdFactory)
+	require.NoError(t, err)
+
+	called := false
+	env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+		called = true
+
+		assert.Equal(t, []string{
+			"git", "clone", "--branch", testRepoBranch, "--single-branch", testRepoURL, "/working/repo",
+		}, cmd.Args)
+
+		return nil
+	}
+
+	require.NoError(t, provider.Clone(t.Context(), testRepoURL, "/working/repo",
+		git.WithGitBranch(testRepoBranch), git.WithSingleBranch()))
 	assert.True(t, called)
 }
 

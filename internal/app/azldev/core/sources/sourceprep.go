@@ -389,6 +389,10 @@ func (p *sourcePreparerImpl) PrepareSources(
 
 func (p *sourcePreparerImpl) componentFetchOptions(applyOverlays bool) []sourceproviders.FetchComponentOption {
 	var options []sourceproviders.FetchComponentOption
+	if p.withoutLockfile {
+		options = append(options, sourceproviders.WithSingleBranch())
+	}
+
 	if p.withGitRepo && (applyOverlays || p.skipSyntheticHistory) {
 		options = append(options, sourceproviders.WithPreserveGitDir())
 	}
