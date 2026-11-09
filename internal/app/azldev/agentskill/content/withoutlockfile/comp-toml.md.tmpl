@@ -35,6 +35,15 @@ Add sub-tables only for what you change. The fields you will reach for most:
 
 ## Spec source
 
+For generated Go dependencies, add a `source-files` entry with
+`origin.type = "go-vendor"`. This generates only a tarball, never converts the spec.
+Omit `filename` to discover a unique vendor Source; set a stable basename for new
+packaging. `hash` is optional output verification; configured mismatches fail.
+Native settings belong in `origin.config-file`, relative to the declaring TOML.
+Use `origin.module-dir` and `origin.prep-packages` only when needed. Generation
+runs after overlays, including during render/diff, and needs network/mock access.
+Maintain extraction, offline Go settings, and licensing in specs or overlays.
+
 The `spec` field selects where the spec is fetched from. When omitted, the component
 inherits the distro default (normally an upstream import).
 

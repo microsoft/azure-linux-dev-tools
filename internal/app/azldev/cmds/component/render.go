@@ -64,9 +64,9 @@ Within the output directory, components are organized into letter-prefixed
 subdirectories based on the first character of their name (e.g., specs/c/curl,
 specs/v/vim).
 
-Unlike prepare-sources, render skips downloading source tarballs from the
-lookaside cache — only spec files, patches, scripts, and other git-tracked
-sidecar files are included. Multiple components can be rendered at once.
+Render normally skips lookaside archives, retaining specs and git-tracked sidecars.
+Go-vendor source-files require downloads and regeneration; only the manifest,
+not archive payloads, is rendered. Multiple components can be rendered at once.
 
 When rendering all components (-a), the --clean-stale flag prunes orphan
 rendered-spec directories (per-component dirs that no longer correspond to
@@ -540,11 +540,12 @@ func prepareComponentSources(
 		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)),
 		sources.WithMockProcessor(mockProcessor),
 	)
+
 	if rpmDevBumpspec {
 		preparerOpts = append(preparerOpts, sources.WithRPMDevBumpspec(env, env.WorkDir(), ""))
 	}
 
-	preparer, err := newSourcePreparer(sourceManager, env.FS(), env, env, append(
+	preparer, err := newComponentSourcePreparer(env, comp, sourceManager, nil, append(
 		preparerOpts,
 		sources.WithSpecEditor(specEditor),
 	)...)
@@ -768,6 +769,11 @@ func finishComponentRender(
 	}
 
 	// Remove .git directory — must not appear in rendered output.
+	if prep.comp.GetConfig().HasGoVendorSources() {
+		if err := removeVendorRenderPayloads(env.FS(), componentDir); err != nil {
+			return false, err
+		}
+	}
 	// rpmautospec already read it during the batch mock phase.
 	gitDir := filepath.Join(componentDir, ".git")
 	if removeErr := env.FS().RemoveAll(gitDir); removeErr != nil {

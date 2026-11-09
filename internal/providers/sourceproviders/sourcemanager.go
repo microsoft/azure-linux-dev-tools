@@ -343,6 +343,9 @@ func (m *sourceManager) FetchFiles(
 
 	for i := range sourceFiles {
 		fileRef := &sourceFiles[i]
+		if fileRef.Origin.Type == projectconfig.OriginTypeGoVendor {
+			continue // Generation requires the patched prep tree, not the fetched tree.
+		}
 
 		// Fail fast when a 'custom' origin source file has no registered provider.
 		// This means the distro has no 'mock-config' set (or the file was inaccessible),
@@ -557,7 +560,7 @@ func (m *sourceManager) fetchFromDownloadOrigin(
 				"ensure the distro has a 'mock-config' configured",
 			fileRef.Filename)
 
-	case projectconfig.OriginTypeOverlay:
+	case projectconfig.OriginTypeOverlay, projectconfig.OriginTypeGoVendor:
 		// Overlay-origin files are skipped before reaching this point in fetchSourceFile.
 		// This case should never be reached.
 		return fmt.Errorf("internal error: download attempted for 'overlay'-origin source file %#q",

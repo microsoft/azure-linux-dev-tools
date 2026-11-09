@@ -185,6 +185,16 @@ func TestComponentTomlSkillDocumentsRPMDevBumpspecPreview(t *testing.T) {
 	assert.Contains(t, doc, "no bumpspec runtime discovery occurs")
 }
 
+func TestComponentSkillDocumentsVendorSource(t *testing.T) {
+	for _, mode := range []bool{false, true} {
+		doc, err := agentskill.NewCatalog(mode).SkillDocument("azldev-comp-toml", testParams())
+		require.NoError(t, err)
+		assert.Contains(t, doc, `origin.type = "go-vendor"`)
+		assert.Contains(t, doc, "never converts the spec")
+		assert.Contains(t, doc, "`hash` is optional output verification")
+	}
+}
+
 func TestImageSkillDocumentsSKUGroupGuidance(t *testing.T) {
 	doc, err := agentskill.SkillDocument("azldev-image", testParams())
 	require.NoError(t, err)

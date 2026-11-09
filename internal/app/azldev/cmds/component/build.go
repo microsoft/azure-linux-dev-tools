@@ -363,6 +363,7 @@ func buildComponent(
 	}, &err)
 
 	var preparerOpts []sources.PreparerOption
+
 	if !options.WithoutGitRepo {
 		preparerOpts = append(preparerOpts, gitRepoPreparerOptions(env, distro)...)
 	}
@@ -377,7 +378,7 @@ func buildComponent(
 
 	preparerOpts = append(preparerOpts, sources.WithMockProcessor(mockProcessor))
 
-	sourcePreparer, err := newSourcePreparer(sourceManager, env.FS(), env, env, append(
+	sourcePreparer, err := newComponentSourcePreparer(env, component, sourceManager, options.MockConfigOpts, append(
 		preparerOpts,
 		sources.WithSpecEditor(options.specEditorMode()),
 	)...)

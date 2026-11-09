@@ -99,7 +99,7 @@ func ComputeIdentity(
 	// 2. Verify all source files have a hash. Without a hash the fingerprint
 	//    cannot detect content changes, so we refuse to compute one.
 	for i := range component.SourceFiles {
-		if component.SourceFiles[i].Hash == "" {
+		if component.SourceFiles[i].Hash == "" && component.SourceFiles[i].Origin.Type != projectconfig.OriginTypeGoVendor {
 			return nil, fmt.Errorf(
 				"source file %#q has no hash; cannot compute a deterministic fingerprint",
 				component.SourceFiles[i].Filename,
@@ -140,6 +140,17 @@ func ComputeIdentity(
 	}
 
 	inputs.OverlayFileHashes = overlayHashes
+
+	for idx, ref := range component.SourceFiles {
+		identity, err := ref.Origin.VendorIdentity(fs)
+		if err != nil {
+			return nil, fmt.Errorf("hashing source %d vendor settings:\n%w", idx, err)
+		}
+
+		if identity != "" {
+			overlayHashes["source:"+strconv.Itoa(idx)] = identity
+		}
+	}
 
 	// 5. Combine all inputs into the overall fingerprint.
 	return &ComponentIdentity{
