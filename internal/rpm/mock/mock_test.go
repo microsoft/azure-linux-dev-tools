@@ -256,6 +256,46 @@ func TestScrubRoot(t *testing.T) {
 	}
 }
 
+func TestScrubRootDryRun(t *testing.T) {
+	for _, baseDir := range []string{"", "/private/mock"} {
+		t.Run("base="+baseDir, func(t *testing.T) {
+			ctx := newTestCtxWithMockPrereqsPresent()
+			ctx.DryRunValue = true
+			ctx.Ctx = mock.WithUniqueRoots(ctx.Ctx, true, "build")
+			runner := mock.NewRunner(ctx, testMockConfigPath).WithBaseDir(baseDir)
+
+			ctx.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				t.Errorf("unexpected discovery command during dry run: %v", cmd.Args)
+
+				return "", nil
+			}
+
+			var commands [][]string
+
+			ctx.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+				commands = append(commands, cmd.Args)
+
+				return nil
+			}
+
+			for _, candidate := range []*mock.Runner{runner, runner.Clone()} {
+				require.NoError(t, candidate.ScrubRoot(ctx))
+			}
+
+			require.Len(t, commands, 2)
+
+			for _, args := range commands {
+				assert.Equal(t, "mock", args[0])
+				assert.Contains(t, args, "--uniqueext")
+				assert.Contains(t, args, runner.UniqueExtension())
+				assert.Equal(t, []string{"--scrub", "chroot", "--scrub", "bootstrap"}, args[len(args)-4:])
+				assert.NotContains(t, args, "all")
+				assert.NotContains(t, args, "bootstrap-cache")
+			}
+		})
+	}
+}
+
 func TestScrubRootRejectsUnexpectedPaths(t *testing.T) {
 	for _, path := range []string{
 		"", "/", "/var/lib/mock/test", "relative-EXTENSION",

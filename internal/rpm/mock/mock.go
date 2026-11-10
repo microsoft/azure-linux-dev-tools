@@ -42,6 +42,7 @@ type Runner struct {
 	osEnv         opctx.OSEnv
 	cmdFactory    opctx.CmdFactory
 	eventListener opctx.EventListener
+	dryRunInfo    opctx.DryRunnable
 
 	// Verbosity
 	verbose bool
@@ -95,6 +96,7 @@ func NewRunner(ctx opctx.Ctx, mockConfigPath string) *Runner {
 		osEnv:           ctx.OSEnv(),
 		cmdFactory:      ctx,
 		eventListener:   ctx,
+		dryRunInfo:      ctx,
 		verbose:         ctx.Verbose(),
 		mockConfigPath:  mockConfigPath,
 		uniqueExtension: newUniqueExtension(ctx),
@@ -108,6 +110,7 @@ func (r *Runner) Clone() *Runner {
 		osEnv:           r.osEnv,
 		cmdFactory:      r.cmdFactory,
 		eventListener:   r.eventListener,
+		dryRunInfo:      r.dryRunInfo,
 		verbose:         r.verbose,
 		mockConfigPath:  r.mockConfigPath,
 		uniqueExtension: r.uniqueExtension,
@@ -678,6 +681,11 @@ func (r *Runner) ScrubRoot(ctx context.Context) error {
 // bootstrapCleanupPath returns the unique bootstrap directory to remove manually, or an empty
 // string when mock supports scrubbing the bootstrap without deleting its shared cache.
 func (r *Runner) bootstrapCleanupPath(ctx context.Context) (string, error) {
+	// Dry runs cannot discover capabilities or paths; only preview the wrapped scrub command.
+	if r.dryRunInfo.DryRun() {
+		return "", nil
+	}
+
 	cmd, err := r.cmdFactory.Command(exec.CommandContext(ctx, MockBinary, "--help"))
 	if err != nil {
 		return "", fmt.Errorf("failed to create command to query mock capabilities:\n%w", err)

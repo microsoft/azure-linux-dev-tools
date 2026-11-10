@@ -81,6 +81,8 @@ shared caches. azldev checks `mock --help` for `bootstrap-cache` support before
 cleanup: newer Mock versions can safely use `--scrub=bootstrap`; older versions
 require `sudo` to remove only the bootstrap directory with the matching extension
 after Mock finishes scrubbing the build root.
+With `--dry-run`, cleanup skips capability and path discovery and previews the
+scrub command without executing it.
 
 The flag also applies to queries, custom source generation, and
 `azldev advanced mock` commands. A unique `mock shell` session does not reuse a
