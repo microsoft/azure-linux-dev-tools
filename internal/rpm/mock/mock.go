@@ -629,7 +629,16 @@ func (r *Runner) ScrubRoot(ctx context.Context) error {
 
 	mockArgs := r.getBaseArgs()
 
-	if r.baseDir != "" {
+	var bootstrapPath string
+
+	if r.uniqueExtension != "" {
+		bootstrapPath, err = r.bootstrapCleanupPath(ctx)
+		if err != nil {
+			return err
+		}
+	}
+
+	if r.baseDir != "" && r.uniqueExtension == "" {
 		// Lie about the cache topdir so that mock doesn't delete our *actual* shared cache.
 		mockArgs = append(mockArgs, "--config-opts", "cache_topdir="+r.baseDir)
 		mockArgs = append(mockArgs, "--scrub", "all")
@@ -639,7 +648,7 @@ func (r *Runner) ScrubRoot(ctx context.Context) error {
 
 	// A unique extension gives the bootstrap root a unique name too, so it would never be reused
 	// or cleaned up by a later invocation.
-	if r.uniqueExtension != "" && r.baseDir == "" {
+	if r.uniqueExtension != "" && bootstrapPath == "" {
 		mockArgs = append(mockArgs, "--scrub", "bootstrap")
 	}
 
@@ -657,6 +666,89 @@ func (r *Runner) ScrubRoot(ctx context.Context) error {
 	err = extcmd.Run(ctx)
 	if err != nil {
 		return fmt.Errorf("mock failed to scrub root:\n%w", err)
+	}
+
+	if bootstrapPath != "" {
+		return r.removeBootstrapRoot(ctx, bootstrapPath)
+	}
+
+	return nil
+}
+
+// bootstrapCleanupPath returns the unique bootstrap directory to remove manually, or an empty
+// string when mock supports scrubbing the bootstrap without deleting its shared cache.
+func (r *Runner) bootstrapCleanupPath(ctx context.Context) (string, error) {
+	cmd, err := r.cmdFactory.Command(exec.CommandContext(ctx, MockBinary, "--help"))
+	if err != nil {
+		return "", fmt.Errorf("failed to create command to query mock capabilities:\n%w", err)
+	}
+
+	help, err := cmd.RunAndGetOutput(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to query mock capabilities:\n%w", err)
+	}
+
+	if strings.Contains(help, "bootstrap-cache") {
+		return "", nil
+	}
+
+	// Query the canonical root directory, ignoring custom '--rootdir' settings: mock always
+	// places the bootstrap beside this directory, even when the main root is elsewhere.
+	probe := r.Clone()
+
+	probe.rootDir = ""
+	if probe.configOpts == nil {
+		probe.configOpts = make(map[string]string)
+	}
+
+	probe.configOpts["rootdir"] = "{{basedir}}/{{root}}"
+
+	rootPath, err := probe.GetRootPath(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to locate unique mock bootstrap root:\n%w", err)
+	}
+
+	rootPath = filepath.Clean(rootPath)
+	rootName := filepath.Base(rootPath)
+	suffix := "-" + r.uniqueExtension
+
+	if !filepath.IsAbs(rootPath) || strings.ContainsAny(rootPath, "\r\n") ||
+		!strings.HasSuffix(rootName, suffix) || len(rootName) <= len(suffix) {
+		return "", fmt.Errorf("refusing to derive bootstrap root from unexpected mock root path %#q", rootPath)
+	}
+
+	bootstrapName := strings.TrimSuffix(rootName, suffix) + "-bootstrap" + suffix
+
+	return filepath.Join(filepath.Dir(rootPath), bootstrapName), nil
+}
+
+func (r *Runner) removeBootstrapRoot(ctx context.Context, bootstrapPath string) error {
+	exists, err := fileutils.Exists(r.fs, bootstrapPath)
+	if err != nil {
+		return fmt.Errorf("failed to check mock bootstrap root %#q:\n%w", bootstrapPath, err)
+	}
+
+	if !exists {
+		return nil
+	}
+
+	// Mock has exited and finalized both roots, unmounting their filesystems. The bootstrap
+	// contains root-owned files, so remove only its validated unique directory with sudo.
+	if !r.cmdFactory.CommandInSearchPath("sudo") {
+		return fmt.Errorf("sudo required to remove unique mock bootstrap root %#q", bootstrapPath)
+	}
+
+	rawCmd := exec.CommandContext(ctx, "sudo", "rm", "--recursive", "--force", "--one-file-system", "--", bootstrapPath)
+	rawCmd.Stdout = os.Stdout
+	rawCmd.Stderr = os.Stderr
+
+	cmd, err := r.cmdFactory.Command(rawCmd)
+	if err != nil {
+		return fmt.Errorf("failed to create command to remove mock bootstrap root:\n%w", err)
+	}
+
+	if err := cmd.Run(ctx); err != nil {
+		return fmt.Errorf("failed to remove mock bootstrap root %#q:\n%w", bootstrapPath, err)
 	}
 
 	return nil

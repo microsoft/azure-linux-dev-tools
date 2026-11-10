@@ -113,6 +113,10 @@ func TestUniqueExtensionLifecycle(t *testing.T) {
 		return nil
 	}
 	ctx.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+		if slices.Contains(cmd.Args, "--help") {
+			return "--scrub=[chroot|bootstrap|bootstrap-cache]", nil
+		}
+
 		capture(cmd)
 
 		return testMockRootPath, nil
