@@ -34,6 +34,13 @@ func WithUniqueRoots(ctx context.Context, enabled bool, action string) context.C
 	})
 }
 
+// UniqueRootsEnabled reports whether ctx was configured with [WithUniqueRoots] enabled.
+func UniqueRootsEnabled(ctx context.Context) bool {
+	options, _ := ctx.Value(uniqueRootKey{}).(uniqueRootOptions)
+
+	return options.enabled
+}
+
 // WithRootComponents specializes the component label for newly created runners,
 // without changing whether unique roots are enabled.
 func WithRootComponents(ctx context.Context, components ...string) context.Context {

@@ -196,7 +196,8 @@ func (app *App) registerGlobalFlags() {
 	app.cmd.PersistentFlags().BoolVar(&app.withoutLockfile, "without-lockfile", false,
 		"preview: track resolved upstream commits in generated config instead of lock files")
 	app.cmd.PersistentFlags().BoolVar(&app.uniqueMockRoot, "unique-mockroot", false,
-		"use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters)")
+		"use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); "+
+			"allows 'component build' to build multiple components concurrently")
 }
 
 // addAdvancedCommandHint embeds a hint about the hidden "advanced" command group
