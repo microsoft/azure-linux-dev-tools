@@ -45,6 +45,9 @@ func (e *event) End() {
 	}
 
 	// Decrement our event nesting level.
+	e.parentEventListener.mu.Lock()
+	defer e.parentEventListener.mu.Unlock()
+
 	if e.parentEventListener.eventLevel > 0 {
 		e.parentEventListener.eventLevel--
 	}

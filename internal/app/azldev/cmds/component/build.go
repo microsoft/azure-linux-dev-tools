@@ -281,14 +281,26 @@ func buildComponentsConcurrently(
 
 	var err error
 
+	cancelled := false
+
 	for _, outcome := range outcomes {
 		if outcome.Cancelled {
+			cancelled = true
+
 			continue
 		}
 
 		err = errors.Join(err, outcome.Value.err)
 
 		results = append(results, outcome.Value.results)
+	}
+
+	if ctxErr := env.Err(); ctxErr != nil {
+		err = errors.Join(err, ctxErr)
+	}
+
+	if cancelled && err == nil {
+		err = errors.New("component builds cancelled before completion")
 	}
 
 	return results, err
@@ -341,7 +353,10 @@ func buildComponent(
 	// Clean up the build environment before we return (unless we were asked not to do so).
 	defer defers.HandleDeferError(func() error {
 		if !options.BuildEnvPolicy.ShouldPreserve(err == nil) {
-			return buildEnv.Destroy(env)
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(env), mockProcessorCleanupTimeout)
+			defer cancel()
+
+			return buildEnv.Destroy(env.WithContext(ctx))
 		}
 
 		return nil

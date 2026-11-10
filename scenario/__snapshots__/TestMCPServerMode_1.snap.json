@@ -103,7 +103,7 @@
       },
       "unique-mockroot": {
        "default": false,
-       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters)",
+       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently",
        "type": "boolean"
       },
       "verbose": {
@@ -219,7 +219,7 @@
       },
       "unique-mockroot": {
        "default": false,
-       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters)",
+       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently",
        "type": "boolean"
       },
       "verbose": {
@@ -333,7 +333,7 @@
       },
       "unique-mockroot": {
        "default": false,
-       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters)",
+       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently",
        "type": "boolean"
       },
       "verbose": {
@@ -437,7 +437,7 @@
       },
       "unique-mockroot": {
        "default": false,
-       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters)",
+       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently",
        "type": "boolean"
       },
       "verbose": {
@@ -556,7 +556,7 @@
       },
       "unique-mockroot": {
        "default": false,
-       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters)",
+       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently",
        "type": "boolean"
       },
       "upstream-status": {
@@ -648,7 +648,7 @@
       },
       "unique-mockroot": {
        "default": false,
-       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters)",
+       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently",
        "type": "boolean"
       },
       "verbose": {
@@ -731,7 +731,7 @@
       },
       "unique-mockroot": {
        "default": false,
-       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters)",
+       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently",
        "type": "boolean"
       },
       "verbose": {
@@ -819,7 +819,7 @@
       },
       "unique-mockroot": {
        "default": false,
-       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters)",
+       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently",
        "type": "boolean"
       },
       "verbose": {
@@ -917,7 +917,7 @@
       },
       "unique-mockroot": {
        "default": false,
-       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters)",
+       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently",
        "type": "boolean"
       },
       "verbose": {
@@ -1002,7 +1002,7 @@
       },
       "unique-mockroot": {
        "default": false,
-       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters)",
+       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently",
        "type": "boolean"
       },
       "verbose": {
@@ -1104,7 +1104,7 @@
       },
       "unique-mockroot": {
        "default": false,
-       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters)",
+       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently",
        "type": "boolean"
       },
       "verbose": {
