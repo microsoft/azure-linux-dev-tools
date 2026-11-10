@@ -554,15 +554,15 @@
        "description": "Spec path",
        "type": "string"
       },
-      "upstream-status": {
-       "default": "",
-       "description": "only include entries whose metadata declares this upstream status ('upstreamed', 'upstreamable', 'needs-upstream-hook', 'inapplicable', or 'unknown')",
-       "type": "string"
-      },
       "unique-mockroot": {
        "default": false,
        "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters)",
        "type": "boolean"
+      },
+      "upstream-status": {
+       "default": "",
+       "description": "only include entries whose metadata declares this upstream status ('upstreamed', 'upstreamable', 'needs-upstream-hook', 'inapplicable', or 'unknown')",
+       "type": "string"
       },
       "verbose": {
        "default": false,
