@@ -233,6 +233,11 @@ func (env *Env) SetUniqueMockRoot(enabled bool, action string) {
 	env.ctx = mock.WithUniqueRoots(env.ctx, enabled, action)
 }
 
+// UniqueMockRootEnabled reports whether unique mock roots were requested for the current CLI action.
+func (env *Env) UniqueMockRootEnabled() bool {
+	return mock.UniqueRootsEnabled(env.ctx)
+}
+
 // WithMockRootComponents returns a shallow copy with component-specific mock root labels.
 func (env *Env) WithMockRootComponents(names ...string) *Env {
 	return env.WithContext(mock.WithRootComponents(env.ctx, names...))
