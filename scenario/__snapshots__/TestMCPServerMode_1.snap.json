@@ -101,6 +101,11 @@
        "description": "Git ref to compare to",
        "type": "string"
       },
+      "unique-mockroot": {
+       "default": false,
+       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters)",
+       "type": "boolean"
+      },
       "verbose": {
        "default": false,
        "description": "enable verbose output",
@@ -212,6 +217,11 @@
        "description": "Spec path",
        "type": "string"
       },
+      "unique-mockroot": {
+       "default": false,
+       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters)",
+       "type": "boolean"
+      },
       "verbose": {
        "default": false,
        "description": "enable verbose output",
@@ -321,6 +331,11 @@
        "description": "Spec path",
        "type": "string"
       },
+      "unique-mockroot": {
+       "default": false,
+       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters)",
+       "type": "boolean"
+      },
       "verbose": {
        "default": false,
        "description": "enable verbose output",
@@ -419,6 +434,11 @@
       "spec-path": {
        "description": "Spec path",
        "type": "string"
+      },
+      "unique-mockroot": {
+       "default": false,
+       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters)",
+       "type": "boolean"
       },
       "verbose": {
        "default": false,
@@ -539,6 +559,11 @@
        "description": "only include entries whose metadata declares this upstream status ('upstreamed', 'upstreamable', 'needs-upstream-hook', 'inapplicable', or 'unknown')",
        "type": "string"
       },
+      "unique-mockroot": {
+       "default": false,
+       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters)",
+       "type": "boolean"
+      },
       "verbose": {
        "default": false,
        "description": "enable verbose output",
@@ -621,6 +646,11 @@
        "description": "only enable minimal output",
        "type": "boolean"
       },
+      "unique-mockroot": {
+       "default": false,
+       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters)",
+       "type": "boolean"
+      },
       "verbose": {
        "default": false,
        "description": "enable verbose output",
@@ -697,6 +727,11 @@
       "quiet": {
        "default": false,
        "description": "only enable minimal output",
+       "type": "boolean"
+      },
+      "unique-mockroot": {
+       "default": false,
+       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters)",
        "type": "boolean"
       },
       "verbose": {
@@ -781,6 +816,11 @@
        "default": "",
        "description": "skill to print",
        "type": "string"
+      },
+      "unique-mockroot": {
+       "default": false,
+       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters)",
+       "type": "boolean"
       },
       "verbose": {
        "default": false,
@@ -875,6 +915,11 @@
        "description": "only enable minimal output",
        "type": "boolean"
       },
+      "unique-mockroot": {
+       "default": false,
+       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters)",
+       "type": "boolean"
+      },
       "verbose": {
        "default": false,
        "description": "enable verbose output",
@@ -953,6 +998,11 @@
       "quiet": {
        "default": false,
        "description": "only enable minimal output",
+       "type": "boolean"
+      },
+      "unique-mockroot": {
+       "default": false,
+       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters)",
        "type": "boolean"
       },
       "verbose": {
@@ -1050,6 +1100,11 @@
       "synthesize-debug-packages": {
        "default": false,
        "description": "Also synthesize '-debuginfo' packages (per reported package) and '-debugsource' packages (per component)",
+       "type": "boolean"
+      },
+      "unique-mockroot": {
+       "default": false,
+       "description": "use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters)",
        "type": "boolean"
       },
       "verbose": {
