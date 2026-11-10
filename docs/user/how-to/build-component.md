@@ -76,6 +76,12 @@ The extension stays the same for initialization, commands, and cleanup of that
 root; separate roots receive separate random suffixes. Without the flag,
 mock's existing root naming is unchanged.
 
+Cleanup removes both the unique build root and its bootstrap root while preserving
+shared caches. azldev checks `mock --help` for `bootstrap-cache` support before
+cleanup: newer Mock versions can safely use `--scrub=bootstrap`; older versions
+require `sudo` to remove only the bootstrap directory with the matching extension
+after Mock finishes scrubbing the build root.
+
 The flag also applies to queries, custom source generation, and
 `azldev advanced mock` commands. A unique `mock shell` session does not reuse a
 previous session's root. To inspect a preserved unique build root, take its

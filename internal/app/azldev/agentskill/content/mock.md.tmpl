@@ -90,6 +90,8 @@ react to output between commands.
 - **`--unique-mockroot` starts a separate root each time.** To re-enter a preserved unique root,
   use `mock -r <mock-config> --uniqueext <extension> --shell` with the extension from the
   verbose command log, not another azldev invocation.
+  Cleanup preserves shared caches. If `mock --help` does not list `bootstrap-cache`,
+  azldev uses `sudo` to remove only the matching unique bootstrap directory after Mock exits.
 - **One mock session per terminal.** Running `azldev adv mock shell` while a terminal is already
   inside a mock shell fails — run `exit` first.
 

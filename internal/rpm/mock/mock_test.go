@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -27,6 +28,7 @@ const (
 	testOutputDirPath  = "/output"
 	testSRPMPath       = "/output/component-1.0.0.src.rpm"
 	testRPMPath        = "/output/component-1.0.0.rpm"
+	testSudoBinary     = "sudo"
 )
 
 func newTestCtxWithMockPrereqsPresent() *testctx.TestCtx {
@@ -117,6 +119,229 @@ func TestGetRootPath(t *testing.T) {
 	rootPath, err := runner.GetRootPath(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, testMockRootPath, rootPath)
+}
+
+func TestScrubRoot(t *testing.T) {
+	tests := []struct {
+		name             string
+		unique           bool
+		bootstrapCache   bool
+		baseDir          string
+		missingBootstrap bool
+	}{
+		{name: "shared root"},
+		{name: "shared private base", baseDir: "/private/mock"},
+		{name: "unique modern mock", unique: true, bootstrapCache: true},
+		{name: "unique legacy mock", unique: true},
+		{name: "unique modern private base", unique: true, bootstrapCache: true, baseDir: "/private/mock"},
+		{name: "unique legacy private base", unique: true, baseDir: "/private/mock"},
+		{name: "unique missing bootstrap", unique: true, missingBootstrap: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := newTestCtxWithMockPrereqsPresent()
+			ctx.Ctx = mock.WithUniqueRoots(ctx.Ctx, test.unique, "build")
+			ctx.CmdFactory.RegisterCommandInSearchPath(testSudoBinary)
+			runner := mock.NewRunner(ctx, testMockConfigPath).WithBaseDir(test.baseDir)
+			runner.WithRootDir("/custom/root")
+			runner.WithConfigOpts(map[string]string{"rootdir": "/configured/root"})
+
+			baseDir := test.baseDir
+			if baseDir == "" {
+				baseDir = "/configured/mock"
+			}
+
+			rootName := "test"
+			bootstrapName := "test-bootstrap"
+
+			if test.unique {
+				rootName += "-" + runner.UniqueExtension()
+				bootstrapName += "-" + runner.UniqueExtension()
+			}
+
+			rootPath := filepath.Join(baseDir, rootName)
+			bootstrapPath := filepath.Join(baseDir, bootstrapName)
+			cachePath := "/var/cache/mock/test-bootstrap/root_cache/cache"
+			otherRoot := filepath.Join(baseDir, "test-bootstrap-other")
+
+			sharedRoot := filepath.Join(baseDir, "test-bootstrap")
+			for _, path := range []string{rootPath, otherRoot, sharedRoot, filepath.Dir(cachePath)} {
+				require.NoError(t, fileutils.MkdirAll(ctx.FS(), path))
+			}
+
+			if !test.missingBootstrap {
+				require.NoError(t, fileutils.MkdirAll(ctx.FS(), bootstrapPath))
+			}
+
+			require.NoError(t, fileutils.WriteFile(ctx.FS(), cachePath, []byte("shared cache"), fileperms.PrivateFile))
+
+			var actions []string
+
+			ctx.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				if slices.Contains(cmd.Args, "--help") {
+					actions = append(actions, "help")
+
+					assert.Equal(t, []string{"mock", "--help"}, cmd.Args)
+
+					if test.bootstrapCache {
+						return "--scrub=[all|bootstrap|chroot|cache|bootstrap-cache]", nil
+					}
+
+					return "--scrub=[all|bootstrap|chroot|cache]", nil
+				}
+
+				actions = append(actions, "path")
+
+				assert.Contains(t, cmd.Args, "--print-root-path")
+				assert.Contains(t, cmd.Args, "rootdir={{basedir}}/{{root}}")
+				assert.NotContains(t, cmd.Args, "--rootdir")
+				assert.NotContains(t, cmd.Args, "rootdir=/configured/root")
+
+				return rootPath + "\n", nil
+			}
+			ctx.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+				if cmd.Args[0] == testSudoBinary {
+					actions = append(actions, "remove")
+
+					assert.Equal(t, []string{
+						testSudoBinary, "rm", "--recursive", "--force", "--one-file-system", "--", bootstrapPath,
+					}, cmd.Args)
+
+					return ctx.FS().RemoveAll(bootstrapPath)
+				}
+
+				actions = append(actions, "scrub")
+
+				assert.Contains(t, cmd.Args, "--scrub")
+				assert.NotContains(t, cmd.Args, "bootstrap-cache")
+				assert.Equal(t, test.unique && test.bootstrapCache, slices.Contains(cmd.Args, "bootstrap"))
+				assert.Equal(t, !test.unique && test.baseDir != "", slices.Contains(cmd.Args, "all"))
+				require.NoError(t, ctx.FS().RemoveAll(rootPath))
+
+				if test.unique && test.bootstrapCache {
+					require.NoError(t, ctx.FS().RemoveAll(bootstrapPath))
+				}
+
+				return nil
+			}
+
+			require.NoError(t, runner.ScrubRoot(ctx))
+
+			expectedActions := []string{"scrub"}
+			if test.unique {
+				expectedActions = []string{"help", "scrub"}
+				if !test.bootstrapCache {
+					expectedActions = []string{"help", "path", "scrub"}
+					if !test.missingBootstrap {
+						expectedActions = append(expectedActions, "remove")
+					}
+				}
+			}
+
+			assert.Equal(t, expectedActions, actions)
+
+			if test.unique {
+				exists, err := fileutils.Exists(ctx.FS(), bootstrapPath)
+				require.NoError(t, err)
+				assert.False(t, exists)
+			}
+
+			for _, path := range []string{otherRoot, sharedRoot, cachePath} {
+				exists, err := fileutils.Exists(ctx.FS(), path)
+				require.NoError(t, err)
+				assert.True(t, exists, path)
+			}
+		})
+	}
+}
+
+func TestScrubRootRejectsUnexpectedPaths(t *testing.T) {
+	for _, path := range []string{
+		"", "/", "/var/lib/mock/test", "relative-EXTENSION",
+		"/var/lib/mock/-EXTENSION", "/var/lib/mock/unsafe\nroot-EXTENSION",
+	} {
+		t.Run(path, func(t *testing.T) {
+			ctx := newTestCtxWithMockPrereqsPresent()
+			ctx.Ctx = mock.WithUniqueRoots(ctx.Ctx, true, "build")
+			runner := mock.NewRunner(ctx, testMockConfigPath)
+			ctx.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				if slices.Contains(cmd.Args, "--help") {
+					return "--scrub=[bootstrap|chroot]", nil
+				}
+
+				return strings.ReplaceAll(path, "EXTENSION", runner.UniqueExtension()), nil
+			}
+			ctx.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+				t.Fatalf("unexpected destructive command: %v", cmd.Args)
+
+				return nil
+			}
+
+			err := runner.ScrubRoot(ctx)
+			require.ErrorContains(t, err, "refusing to derive bootstrap root")
+		})
+	}
+}
+
+func TestScrubRootFailures(t *testing.T) {
+	for _, stage := range []string{"help", "path", "scrub", "remove", "missing sudo"} {
+		t.Run(stage, func(t *testing.T) {
+			ctx := newTestCtxWithMockPrereqsPresent()
+
+			ctx.Ctx = mock.WithUniqueRoots(ctx.Ctx, true, "build")
+			if stage != "missing sudo" {
+				ctx.CmdFactory.RegisterCommandInSearchPath(testSudoBinary)
+			}
+
+			runner := mock.NewRunner(ctx, testMockConfigPath)
+			rootPath := "/var/lib/mock/test-" + runner.UniqueExtension()
+			bootstrapPath := "/var/lib/mock/test-bootstrap-" + runner.UniqueExtension()
+			require.NoError(t, fileutils.MkdirAll(ctx.FS(), bootstrapPath))
+
+			testError := errors.New("injected cleanup failure")
+			ctx.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				if slices.Contains(cmd.Args, "--help") {
+					if stage == "help" {
+						return "", testError
+					}
+
+					return "--scrub=[bootstrap|chroot]", nil
+				}
+
+				if stage == "path" {
+					return "", testError
+				}
+
+				return rootPath, nil
+			}
+			ctx.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+				if cmd.Args[0] == testSudoBinary {
+					assert.Equal(t, "remove", stage)
+				} else {
+					assert.Contains(t, []string{"scrub", "remove", "missing sudo"}, stage)
+					assert.NotContains(t, cmd.Args, "bootstrap")
+				}
+
+				if stage == "scrub" || stage == "remove" && cmd.Args[0] == testSudoBinary {
+					return testError
+				}
+
+				return nil
+			}
+
+			err := runner.ScrubRoot(ctx)
+			if stage == "missing sudo" {
+				require.ErrorContains(t, err, "sudo required")
+			} else {
+				require.ErrorIs(t, err, testError)
+			}
+
+			exists, err := fileutils.Exists(ctx.FS(), bootstrapPath)
+			require.NoError(t, err)
+			assert.True(t, exists)
+		})
+	}
 }
 
 func TestBuildSRPM(t *testing.T) {

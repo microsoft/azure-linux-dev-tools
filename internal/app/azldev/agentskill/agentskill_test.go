@@ -165,6 +165,14 @@ func TestSkillsDocumentUniqueMockRoots(t *testing.T) {
 	}
 }
 
+func TestMockSkillDocumentsBootstrapCleanup(t *testing.T) {
+	doc, err := agentskill.SkillDocument("azldev-mock", testParams())
+	require.NoError(t, err)
+	assert.Contains(t, doc, "Cleanup preserves shared caches.")
+	assert.Contains(t, doc, "`mock --help` does not list `bootstrap-cache`")
+	assert.Contains(t, doc, "matching unique bootstrap directory")
+}
+
 func TestComponentTomlSkillDocumentsRPMDevBumpspecPreview(t *testing.T) {
 	doc, err := agentskill.SkillDocument("azldev-comp-toml", testParams())
 	require.NoError(t, err)
