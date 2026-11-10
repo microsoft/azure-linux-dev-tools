@@ -191,6 +191,12 @@ func RunShell(env *azldev.Env, options *ShellOptions, extraArgs []string) error 
 		if err != nil {
 			return fmt.Errorf("failed to install packages in mock root (%v): %w", options.PackagesToAdd, err)
 		}
+	} else if runner.UniqueExtension() != "" {
+		// A unique root is brand new, and mock requires an initialized root for shell mode.
+		err = runner.InitRoot(env)
+		if err != nil {
+			return fmt.Errorf("failed to initialize mock root: %w", err)
+		}
 	}
 
 	cmd, err := runner.CmdInChroot(env, extraArgs, true /*interactive*/)

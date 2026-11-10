@@ -637,6 +637,12 @@ func (r *Runner) ScrubRoot(ctx context.Context) error {
 		mockArgs = append(mockArgs, "--scrub", "chroot")
 	}
 
+	// A unique extension gives the bootstrap root a unique name too, so it would never be reused
+	// or cleaned up by a later invocation.
+	if r.uniqueExtension != "" && r.baseDir == "" {
+		mockArgs = append(mockArgs, "--scrub", "bootstrap")
+	}
+
 	cmd := exec.CommandContext(ctx, MockBinary, mockArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
