@@ -517,8 +517,9 @@ func TestListPackages_SRPMFile_UsesSRPMChannel(t *testing.T) {
 }
 
 // TestListPackages_RPMFile_Validation exercises the JSON parsing and validation
-// error paths in 'loadRPMFile' (invalid JSON, missing fields, conflicting
-// mappings) and the silent dedup path for repeated identical mappings.
+// error paths in 'loadRPMFile' (invalid JSON, missing fields), the silent dedup
+// path for repeated identical mappings, and the one-entry-per-source behaviour
+// when a package name has several producers.
 func TestListPackages_RPMFile_Validation(t *testing.T) {
 	const path = "/test-rpm-map.json"
 
@@ -544,14 +545,14 @@ func TestListPackages_RPMFile_Validation(t *testing.T) {
 			wantErrSub: "missing non-empty 'sourcePackageName'",
 		},
 		{
-			// Conflicting source package names must dedup (first mapping wins):
-			// one SRPM result for "bash" + one RPM result, not two of either.
-			name: "conflicting source package names dedup",
+			// A package name produced by two sources is not a duplicate: each pair is
+			// reported, so two SRPM results and two RPM results.
+			name: "same package from two sources reported once per source",
 			body: `[
 				{"packageName":"bash","sourcePackageName":"bash"},
 				{"packageName":"bash","sourcePackageName":"other"}
 			]`,
-			wantResults: 2,
+			wantResults: 4,
 		},
 		{
 			// Identical duplicate mappings must not produce duplicate entries:
@@ -584,6 +585,73 @@ func TestListPackages_RPMFile_Validation(t *testing.T) {
 			assert.Len(t, results, testCase.wantResults)
 		})
 	}
+}
+
+// TestListPackages_RPMFile_MultipleProducersResolvePerSource verifies that a binary package
+// name emitted by two components resolves to each component's own publish channel, and that the
+// answer does not depend on the order of entries in the source map.
+//
+// Previously the loader kept the first mapping for a name and discarded the rest, so a caller
+// that sent both producers got a single entry whose channel depended on which one happened to
+// come first. Callers building the map from an unordered collection therefore got different
+// answers for the same package in different batches.
+func TestListPackages_RPMFile_MultipleProducersResolvePerSource(t *testing.T) {
+	const path = "/test-rpm-map.json"
+
+	// Two components emit a binary named "rubygem-bundler", publishing to different channels.
+	newEnv := func(t *testing.T) *testutils.TestEnv {
+		t.Helper()
+
+		testEnv := testutils.NewTestEnv(t)
+		testEnv.Config.Components["ruby"] = projectconfig.ComponentConfig{
+			Name:    "ruby",
+			Publish: projectconfig.ComponentPublishConfig{RPMChannel: "rpm-base", SRPMChannel: "rpm-base-srpm"},
+		}
+		testEnv.Config.Components["rubygem-bundler"] = projectconfig.ComponentConfig{
+			Name:    "rubygem-bundler",
+			Publish: projectconfig.ComponentPublishConfig{RPMChannel: "rpm-sdk", SRPMChannel: "rpm-sdk-srpm"},
+		}
+
+		return testEnv
+	}
+
+	channelByComponent := func(t *testing.T, body string) map[string]string {
+		t.Helper()
+
+		testEnv := newEnv(t)
+		require.NoError(t, fileutils.WriteFile(testEnv.TestFS, path, []byte(body), fileperms.PublicFile))
+
+		results, err := pkgcmds.ListPackages(testEnv.Env, &pkgcmds.ListPackageOptions{RPMFile: path})
+		require.NoError(t, err)
+
+		channels := make(map[string]string)
+
+		for _, r := range results {
+			if r.PackageName == "rubygem-bundler" && r.Type == pkgcmds.PackageTypeRPM {
+				channels[r.Component] = r.Channel
+			}
+		}
+
+		return channels
+	}
+
+	bundlerFirst := channelByComponent(t, `[
+		{"packageName":"rubygem-bundler","sourcePackageName":"rubygem-bundler"},
+		{"packageName":"rubygem-bundler","sourcePackageName":"ruby"}
+	]`)
+
+	rubyFirst := channelByComponent(t, `[
+		{"packageName":"rubygem-bundler","sourcePackageName":"ruby"},
+		{"packageName":"rubygem-bundler","sourcePackageName":"rubygem-bundler"}
+	]`)
+
+	want := map[string]string{
+		"ruby":            "rpm-base",
+		"rubygem-bundler": "rpm-sdk",
+	}
+
+	assert.Equal(t, want, bundlerFirst, "each producer should resolve to its own component's channel")
+	assert.Equal(t, want, rubyFirst, "entry order in the source map must not change the result")
 }
 
 // TestListPackages_ComponentGroupsReportedSorted verifies that the
