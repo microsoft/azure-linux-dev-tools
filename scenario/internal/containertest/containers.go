@@ -13,6 +13,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -43,11 +44,9 @@ const (
 	reconnectionTimeout       = 10 * time.Minute
 
 	// Container image reference.
-	containerURI = "github.com/azldev/azldev-test/scenario/container"
-	containerTag = "latest"
-
-	// Container refresh time, timestamp is rounded to this value. If it changes, the container will be rebuilt.
-	containerRefreshTime = time.Hour * 24 // 24 hours
+	containerURI      = "github.com/azldev/azldev-test/scenario/container"
+	containerTag      = "latest"
+	defaultDockerfile = "Dockerfile"
 )
 
 var (
@@ -67,6 +66,10 @@ type ContainerCmdTestCollateral struct {
 	filesDstContents map[string]io.Reader
 	extraMounts      []ContainerMount
 	env              map[string]string
+	dockerfile       string
+	init             bool
+	devices          []container.DeviceMapping
+	groupAdd         []string
 }
 
 // NewContainerTestCollateral constructs a new, default collateral object for a containerized test.
@@ -82,6 +85,7 @@ func NewContainerTestCollateral(t *testing.T) *ContainerCmdTestCollateral {
 		network:          false,
 		privileged:       false,
 		env:              map[string]string{},
+		dockerfile:       defaultDockerfile,
 	}
 }
 
@@ -137,6 +141,52 @@ func (c *ContainerCmdTestCollateral) WithEnv(env map[string]string) *ContainerCm
 	return c
 }
 
+// WithDockerfile selects a Dockerfile from the scenario Docker build context.
+func (c *ContainerCmdTestCollateral) WithDockerfile(dockerfile string) *ContainerCmdTestCollateral {
+	if dockerfile == "" || path.Base(dockerfile) != dockerfile {
+		panic(fmt.Sprintf("invalid scenario Dockerfile %#q", dockerfile))
+	}
+
+	c.dockerfile = dockerfile
+
+	return c
+}
+
+// WithInit enables Docker's minimal init process for the test container.
+func (c *ContainerCmdTestCollateral) WithInit() *ContainerCmdTestCollateral {
+	c.init = true
+
+	return c
+}
+
+// WithDevice maps a host device into the test container.
+func (c *ContainerCmdTestCollateral) WithDevice(
+	hostPath, containerPath, permissions string,
+) *ContainerCmdTestCollateral {
+	if hostPath == "" || containerPath == "" || permissions == "" {
+		panic("container device path and permissions cannot be empty")
+	}
+
+	c.devices = append(c.devices, container.DeviceMapping{
+		PathOnHost:        hostPath,
+		PathInContainer:   containerPath,
+		CgroupPermissions: permissions,
+	})
+
+	return c
+}
+
+// WithSupplementalGroup adds a group to the container process.
+func (c *ContainerCmdTestCollateral) WithSupplementalGroup(group string) *ContainerCmdTestCollateral {
+	if group == "" {
+		panic("supplemental group cannot be empty")
+	}
+
+	c.groupAdd = append(c.groupAdd, group)
+
+	return c
+}
+
 // Workdir returns the work directory for the test.
 func (c *ContainerCmdTestCollateral) Workdir() string {
 	return c.workdir
@@ -145,15 +195,26 @@ func (c *ContainerCmdTestCollateral) Workdir() string {
 type logger struct {
 	stdout, stderr []string
 	buildLogWriter *bytes.Buffer
+	mutex          sync.Mutex
 }
 
 func (l *logger) Accept(log testcontainers.Log) {
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+
 	switch log.LogType {
 	case testcontainers.StdoutLog:
 		l.stdout = append(l.stdout, string(log.Content))
 	case testcontainers.StderrLog:
 		l.stderr = append(l.stderr, string(log.Content))
 	}
+}
+
+func (l *logger) snapshot() (stdout, stderr string) {
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+
+	return strings.Join(l.stdout, ""), strings.Join(l.stderr, "")
 }
 
 // RunCmdInContainer runs a command in a container. The command is run as the current user, and the working
@@ -174,9 +235,11 @@ func RunCmdInContainer(
 		t.Skipf("skipping test %s because network tests are disabled", t.Name())
 	}
 
-	// Try to pre-provision the container image. This will run only once, and is best-effort. Errors
-	// will be logged but not returned.
-	cacheContainerImage(t)
+	// Try to pre-provision the default container image. Alternate Dockerfiles
+	// build their own purpose-specific images and must not depend on this image.
+	if collateral.dockerfile == defaultDockerfile {
+		cacheContainerImage(t)
+	}
 
 	return runCmdInContainerImpl(t, collateral, cmd, timeout)
 }
@@ -231,24 +294,20 @@ func runCmdInContainerImpl(
 			FromDockerfile: testcontainers.FromDockerfile{
 				// This path is relative to this file.
 				Context:        dockerPath,
-				Dockerfile:     "Dockerfile",
+				Dockerfile:     collateral.dockerfile,
 				Repo:           containerURI,
-				Tag:            containerTag,
+				Tag:            containerImageTag(collateral.dockerfile),
 				KeepImage:      true,
 				BuildLogWriter: logger.buildLogWriter,
 				BuildArgs: map[string]*string{
-					"UID":       &uidStr,
-					"GID":       &gidStr,
-					"WORK_DIR":  &containerWorkDir,
-					"TIMESTAMP": getRefreshTimestamp(t),
+					"UID":      &uidStr,
+					"GID":      &gidStr,
+					"WORK_DIR": &containerWorkDir,
 				},
 			},
 
 			// Mount the workdir for the test into the container.
-			HostConfigModifier: func(h *container.HostConfig) {
-				h.Binds = binds
-				h.Privileged = collateral.privileged
-			},
+			HostConfigModifier: hostConfigModifier(collateral, binds),
 
 			// Run from the workdir.
 			WorkingDir: "/workdir",
@@ -277,6 +336,31 @@ func runCmdInContainerImpl(
 	}
 
 	return generateResults(t, req, logger, collateral.workdir)
+}
+
+func hostConfigModifier(
+	collateral *ContainerCmdTestCollateral,
+	binds []string,
+) func(*container.HostConfig) {
+	return func(hostConfig *container.HostConfig) {
+		hostConfig.Binds = binds
+		hostConfig.Privileged = collateral.privileged
+		hostConfig.Devices = collateral.devices
+		hostConfig.GroupAdd = collateral.groupAdd
+
+		if collateral.init {
+			hostConfig.Init = &collateral.init
+		}
+	}
+}
+
+func containerImageTag(dockerfile string) string {
+	suffix := strings.TrimPrefix(dockerfile, defaultDockerfile)
+	if suffix == "" {
+		return containerTag
+	}
+
+	return containerTag + strings.ReplaceAll(suffix, ".", "-")
 }
 
 func composeContainerFileList(collateral *ContainerCmdTestCollateral,
@@ -327,18 +411,19 @@ func generateResults(t *testing.T, req testcontainers.GenericContainerRequest, l
 	t.Helper()
 
 	exitCode, err := runContainer(t, req, logs)
+	stdout, stderr := logs.snapshot()
+	results = testhelpers.TestResults{
+		ExitCode: exitCode,
+		Stdout:   stdout,
+		Stderr:   stderr,
+		Workdir:  workdir,
+	}
+
 	if errors.Is(err, context.DeadlineExceeded) {
-		return testhelpers.TestResults{}, fmt.Errorf("%w: %w", ErrTimeout, err)
+		return results, fmt.Errorf("%w: %w", ErrTimeout, err)
 	}
 
 	require.NoError(t, err)
-
-	results = testhelpers.TestResults{
-		ExitCode: exitCode,
-		Stdout:   strings.Join(logs.stdout, ""),
-		Stderr:   strings.Join(logs.stderr, ""),
-		Workdir:  workdir,
-	}
 
 	return results, nil
 }
@@ -443,18 +528,6 @@ func getNetworkConfig(t *testing.T, network bool) []string {
 
 	// Disable the network for the container.
 	return []string{"none"}
-}
-
-// getRefreshTimestamp returns a timestamp which is rounded to the nearest container refresh time. This is used to
-// force the container to be refreshed on a regular basis, e.g. once a day.
-func getRefreshTimestamp(t *testing.T) *string {
-	t.Helper()
-
-	now := time.Now()
-	rounded := now.Truncate(containerRefreshTime)
-	result := rounded.Format(time.RFC3339)
-
-	return &result
 }
 
 func setReaperTimeouts() {

@@ -74,6 +74,12 @@ type ConfigFile struct {
 	// Definitions of test groups (new schema, [test-groups.X]).
 	TestGroups map[string]TestGroup `toml:"test-groups,omitempty" validate:"dive" jsonschema:"title=Test Groups,description=Definitions of named bundles of tests"`
 
+	// Definitions of SKU groups used for test fan-out (new schema, [sku-groups.X]).
+	SKUGroups map[string]SKUGroup `toml:"sku-groups,omitempty" validate:"dive" jsonschema:"title=SKU Groups,description=Definitions of named Azure VM size lists for test fan-out"`
+
+	// Metadata keyed by Azure VM size. Values are consumed by external test orchestration.
+	VMSKUs map[string]map[string]any `toml:"vm-skus,omitempty" jsonschema:"title=VM SKUs,description=Per-VM-size metadata used for test parameter resolution"`
+
 	// Internal fields used to track the origin of the config file; `dir` is the directory
 	// that the config file's relative paths are based from.
 	sourcePath string `toml:"-"`
@@ -242,7 +248,7 @@ func validateNewTestReferences(
 		}
 
 		scope := fmt.Sprintf("component %#q tests.tests", componentName)
-		if err := validateTestRefList(scope, component.Tests.Tests, tests, groups); err != nil {
+		if err := validateTestRefList(scope, component.Tests.Tests, tests, groups, false); err != nil {
 			return err
 		}
 	}
@@ -253,7 +259,7 @@ func validateNewTestReferences(
 		}
 
 		scope := fmt.Sprintf("image %#q tests.tests", imageName)
-		if err := validateTestRefList(scope, image.Tests.Tests, tests, groups); err != nil {
+		if err := validateTestRefList(scope, image.Tests.Tests, tests, groups, true); err != nil {
 			return err
 		}
 	}
@@ -290,6 +296,10 @@ func validateTestGroupMembers(
 			)
 		}
 
+		if err := rejectSKUGroupRef(scope, idx, ref); err != nil {
+			return err
+		}
+
 		if _, ok := tests[ref.Name]; !ok {
 			return fmt.Errorf(
 				"%w: %s[%d].name references undefined test %#q",
@@ -319,33 +329,96 @@ func validateTestGroupMembers(
 	return nil
 }
 
+// testRefDedupKey identifies a resolved test for duplicate detection. SKUGroup is
+// part of the identity so the same test or test-group may be referenced once per
+// SKU group (e.g. a dual-arch image fanning a multi-SKU group over both an amd64
+// and an arm64 SKU group). Refs without a SKU group still collide as before.
+type testRefDedupKey struct {
+	test     string
+	skuGroup string
+}
+
+// testRefDesc describes a ref for duplicate-error messages, including the SKU
+// group only when set.
+func testRefDesc(scope string, idx int, kind, value, skuGroup string) string {
+	if skuGroup == "" {
+		return fmt.Sprintf("%s[%d] (%s=%#q)", scope, idx, kind, value)
+	}
+
+	return fmt.Sprintf("%s[%d] (%s=%#q, sku-group=%#q)", scope, idx, kind, value, skuGroup)
+}
+
+// checkDuplicateTestRef records a resolved test + SKU group and errors if the
+// same combination was already contributed by an earlier ref.
+func checkDuplicateTestRef(seen map[testRefDedupKey]string, testName, skuGroup, desc string) error {
+	key := testRefDedupKey{test: testName, skuGroup: skuGroup}
+	if firstDesc, exists := seen[key]; exists {
+		return fmt.Errorf(
+			"%w: %s duplicates %s (both resolve to test %#q)",
+			ErrDuplicateTestRef, desc, firstDesc, testName,
+		)
+	}
+
+	seen[key] = desc
+
+	return nil
+}
+
+// rejectSKUGroupRef errors if a ref carries 'sku-groups', which is only allowed
+// on image test references. A non-nil slice means the field was set — including
+// an explicit empty 'sku-groups = []' — so both are rejected outside images.
+func rejectSKUGroupRef(scope string, idx int, ref TestRef) error {
+	if ref.SKUGroups == nil {
+		return nil
+	}
+
+	return fmt.Errorf("%w: %s[%d] sets 'sku-groups' %#q", ErrSKUGroupNotAllowed, scope, idx, ref.SKUGroups)
+}
+
+// refSKUGroups returns the SKU groups a ref fans out over, or a single empty
+// entry when none are set so the ref deduplicates like an ordinary test.
+func refSKUGroups(ref TestRef) []string {
+	if len(ref.SKUGroups) == 0 {
+		return []string{""}
+	}
+
+	return ref.SKUGroups
+}
+
+// checkUniqueSKUGroups rejects a ref that lists the same SKU group more than
+// once. It runs before group expansion so an empty test group (no members to
+// iterate) still catches sku-groups = ["x", "x"].
+func checkUniqueSKUGroups(scope string, idx int, skuGroups []string) error {
+	seen := make(map[string]struct{}, len(skuGroups))
+
+	for _, skuGroup := range skuGroups {
+		if skuGroup == "" {
+			continue
+		}
+
+		if _, exists := seen[skuGroup]; exists {
+			return fmt.Errorf("%w: %s[%d] duplicates sku-group %#q", ErrDuplicateTestRef, scope, idx, skuGroup)
+		}
+
+		seen[skuGroup] = struct{}{}
+	}
+
+	return nil
+}
+
 func validateTestRefList(
 	scope string,
 	refs []TestRef,
 	tests map[string]TestDefinition,
 	groups map[string]TestGroup,
+	allowSKUGroup bool,
 ) error {
-	// seenTests maps a resolved (post-group-expansion) test name to a description of
-	// the ref that first contributed it, so that a name ref and a group ref (or two
-	// group refs) which both resolve to the same underlying test are caught, not just
-	// two textually-identical refs.
-	seenTests := make(map[string]string, len(refs))
-
-	checkDuplicate := func(testName, desc string) error {
-		if firstDesc, exists := seenTests[testName]; exists {
-			return fmt.Errorf(
-				"%w: %s duplicates %s (both resolve to test %#q)",
-				ErrDuplicateTestRef,
-				desc,
-				firstDesc,
-				testName,
-			)
-		}
-
-		seenTests[testName] = desc
-
-		return nil
-	}
+	// seenTests maps a resolved (post-group-expansion) test plus its SKU group to a
+	// description of the ref that first contributed it, so that a name ref and a
+	// group ref (or two group refs) which both resolve to the same underlying test
+	// and SKU group are caught, while the same test under different SKU groups is
+	// allowed.
+	seenTests := make(map[testRefDedupKey]string, len(refs))
 
 	for idx, ref := range refs {
 		hasName := ref.Name != ""
@@ -360,6 +433,31 @@ func validateTestRefList(
 			)
 		}
 
+		// Reject 'sku-groups' outside image refs first, so a forbidden key (even an
+		// explicit empty list) reports the scope error rather than the empty-list one.
+		if !allowSKUGroup {
+			if err := rejectSKUGroupRef(scope, idx, ref); err != nil {
+				return err
+			}
+		}
+
+		// An explicit empty list (sku-groups = []) is meaningless: require the key
+		// to be omitted or to list at least one group. nil means the key was omitted.
+		if ref.SKUGroups != nil && len(ref.SKUGroups) == 0 {
+			return fmt.Errorf(
+				"%w: %s[%d] has an empty 'sku-groups' list; omit the key or list at least one SKU group",
+				ErrInvalidTestRef, scope, idx,
+			)
+		}
+
+		skuGroups := refSKUGroups(ref)
+
+		// Reject in-ref duplicate SKU groups before expansion, so an empty test
+		// group (no members to iterate) still catches sku-groups = ["x", "x"].
+		if err := checkUniqueSKUGroups(scope, idx, skuGroups); err != nil {
+			return err
+		}
+
 		if hasName {
 			if _, ok := tests[ref.Name]; !ok {
 				return fmt.Errorf(
@@ -371,8 +469,7 @@ func validateTestRefList(
 				)
 			}
 
-			desc := fmt.Sprintf("%s[%d] (name=%#q)", scope, idx, ref.Name)
-			if err := checkDuplicate(ref.Name, desc); err != nil {
+			if err := dedupTestRefSKUGroups(seenTests, scope, idx, "name", ref.Name, ref.Name, skuGroups); err != nil {
 				return err
 			}
 
@@ -390,12 +487,29 @@ func validateTestRefList(
 			)
 		}
 
-		desc := fmt.Sprintf("%s[%d] (group=%#q)", scope, idx, ref.Group)
-
 		for _, groupRef := range group.Tests {
-			if err := checkDuplicate(groupRef.Name, desc); err != nil {
+			if err := dedupTestRefSKUGroups(seenTests, scope, idx, "group", ref.Group, groupRef.Name, skuGroups); err != nil {
 				return err
 			}
+		}
+	}
+
+	return nil
+}
+
+// dedupTestRefSKUGroups records testName once per SKU group and errors on any
+// (test, SKU group) pair already contributed by an earlier ref.
+func dedupTestRefSKUGroups(
+	seen map[testRefDedupKey]string,
+	scope string,
+	idx int,
+	kind, refValue, testName string,
+	skuGroups []string,
+) error {
+	for _, skuGroup := range skuGroups {
+		desc := testRefDesc(scope, idx, kind, refValue, skuGroup)
+		if err := checkDuplicateTestRef(seen, testName, skuGroup, desc); err != nil {
+			return err
 		}
 	}
 

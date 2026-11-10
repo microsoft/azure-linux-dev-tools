@@ -43,11 +43,11 @@ func ApplyOverlayToSources(
 	dryRunnable opctx.DryRunnable,
 	fs opctx.FS,
 	overlay projectconfig.ComponentOverlay,
-	sourcesDirPath, specPath string,
+	sourcesDirPath, specPath string, options ...spec.OpenOption,
 ) error {
 	// Apply the spec component, if any.
 	if overlay.ModifiesSpec() {
-		err := ApplySpecOverlayToFileInPlace(fs, overlay, specPath)
+		err := ApplySpecOverlayToFileInPlace(fs, overlay, specPath, options...)
 		if err != nil {
 			return err
 		}
@@ -78,13 +78,15 @@ func ApplyOverlayToSources(
 
 // ApplySpecOverlayToFileInPlace applies the given overlay to the specified spec file.
 // Changes are made in-place.
-func ApplySpecOverlayToFileInPlace(fs opctx.FS, overlay projectconfig.ComponentOverlay, specPath string) error {
+func ApplySpecOverlayToFileInPlace(
+	fs opctx.FS, overlay projectconfig.ComponentOverlay, specPath string, options ...spec.OpenOption,
+) error {
 	specFile, err := fs.Open(specPath)
 	if err != nil {
 		return fmt.Errorf("failed to open spec %#q for reading:\n%w", specPath, err)
 	}
 
-	openedSpec, err := spec.OpenSpec(specFile)
+	openedSpec, err := spec.OpenSpec(specFile, options...)
 	specFile.Close()
 
 	if err != nil {

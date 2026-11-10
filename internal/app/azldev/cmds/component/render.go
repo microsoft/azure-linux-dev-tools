@@ -19,6 +19,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
+	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spec"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/dirdiff"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
@@ -29,6 +30,7 @@ import (
 
 // RenderOptions holds the options for the render command.
 type RenderOptions struct {
+	componentCommandOptions
 	ComponentFilter   components.ComponentFilter
 	OutputDir         string
 	OutputDirExplicit bool // True when --output-dir was explicitly passed on the CLI.
@@ -36,6 +38,7 @@ type RenderOptions struct {
 	Force             bool
 	CleanStale        bool
 	CheckOnly         bool
+	RPMDevBumpspec    bool
 }
 
 func renderOnAppInit(app *azldev.App, parentCmd *cobra.Command) {
@@ -88,6 +91,7 @@ valid with -a.`,
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
 			options.ComponentFilter.ComponentNamePatterns = append(args, options.ComponentFilter.ComponentNamePatterns...)
 			options.OutputDirExplicit = cmd.Flags().Changed("output-dir")
+			options.SpecEditor = specEditorFromCommand(cmd)
 
 			return RenderComponents(env, &options)
 		}),
@@ -106,8 +110,7 @@ valid with -a.`,
 	cmd.Flags().BoolVar(&options.FailOnError, "fail-on-error", false,
 		"exit with error if any component fails to render (useful for CI)")
 
-	cmd.Flags().BoolVarP(&options.Force, "force", "f", false,
-		"allow overwriting existing rendered component directories")
+	cmd.Flags().BoolVarP(&options.Force, "force", "f", false, "allow overwriting existing rendered component directories")
 
 	cmd.Flags().BoolVar(&options.CleanStale, "clean-stale", false,
 		"prune rendered-spec directories that no longer correspond to a configured "+
@@ -119,6 +122,7 @@ valid with -a.`,
 			"without modifying the output directory. Exits 0 when nothing would change "+
 			"and 1 when any component would drift. With -a + --clean-stale, also fails "+
 			"on orphan rendered-spec directories. Intended for CI gates.")
+	addRPMDevBumpspecFlag(cmd, &options.RPMDevBumpspec)
 
 	// --check-only is a read-only diff against on-disk state; --fail-on-error
 	// is the loud-failure-per-run knob. Combining them is semantically
@@ -204,7 +208,7 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 	results := make([]*RenderResult, len(componentList))
 
 	// ── Phase 1: Parallel source preparation ──
-	prepared := parallelPrepare(env, mockProcessor, componentList, stagingDir, options.OutputDir, results)
+	prepared := parallelPrepare(env, mockProcessor, componentList, stagingDir, options, results)
 
 	// ── Phase 2: Batch mock processing ──
 	mockResultMap := batchMockProcess(env, mockProcessor, stagingDir, prepared)
@@ -386,7 +390,7 @@ func parallelPrepare(
 	mockProcessor *sources.MockProcessor,
 	comps []components.Component,
 	stagingDir string,
-	outputDir string,
+	options *RenderOptions,
 	results []*RenderResult,
 ) []*preparedComponent {
 	progressEvent := env.StartEvent("Preparing component sources", "count", len(comps))
@@ -406,7 +410,9 @@ func parallelPrepare(
 			// workerEnv (captured) is the effective context for this call chain;
 			// the parmap-supplied ctx is identical and unused here.
 			//nolint:contextcheck // env carries the ctx
-			return prepareOneComponent(workerEnv, mockProcessor, comp, stagingDir, outputDir)
+			return prepareOneComponent(
+				workerEnv, mockProcessor, comp, stagingDir, options.OutputDir,
+				options.specEditorMode(), options.RPMDevBumpspec)
 		},
 	)
 
@@ -418,7 +424,7 @@ func parallelPrepare(
 			// Worker never started — ctx ended before parmap reached it.
 			compName := comps[idx].GetName()
 
-			compOutputDir, nameErr := components.RenderedSpecDir(outputDir, compName)
+			compOutputDir, nameErr := components.RenderedSpecDir(options.OutputDir, compName)
 			if nameErr != nil {
 				compOutputDir = "(invalid)"
 			}
@@ -453,6 +459,8 @@ func prepareOneComponent(
 	comp components.Component,
 	stagingDir string,
 	outputDir string,
+	specEditor spec.EditorMode,
+	rpmDevBumpspec bool,
 ) prepResult {
 	componentName := comp.GetName()
 
@@ -467,7 +475,7 @@ func prepareOneComponent(
 		}}
 	}
 
-	prep, err := prepareComponentSources(env, mockProcessor, comp, stagingDir)
+	prep, err := prepareComponentSources(env, mockProcessor, comp, stagingDir, specEditor, rpmDevBumpspec)
 	if err != nil {
 		slog.Error("Failed to prepare component sources",
 			"component", componentName, "error", err)
@@ -493,6 +501,8 @@ func prepareComponentSources(
 	mockProcessor *sources.MockProcessor,
 	comp components.Component,
 	stagingDir string,
+	specEditor spec.EditorMode,
+	rpmDevBumpspec bool,
 ) (*preparedComponent, error) {
 	componentName := comp.GetName()
 
@@ -528,8 +538,14 @@ func prepareComponentSources(
 		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)),
 		sources.WithMockProcessor(mockProcessor),
 	)
+	if rpmDevBumpspec {
+		preparerOpts = append(preparerOpts, sources.WithRPMDevBumpspec(env, env.WorkDir(), ""))
+	}
 
-	preparer, err := sources.NewPreparer(sourceManager, env.FS(), env, env, preparerOpts...)
+	preparer, err := newSourcePreparer(sourceManager, env.FS(), env, env, append(
+		preparerOpts,
+		sources.WithSpecEditor(specEditor),
+	)...)
 	if err != nil {
 		return nil, fmt.Errorf("creating source preparer for %#q:\n%w", componentName, err)
 	}

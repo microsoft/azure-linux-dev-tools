@@ -51,6 +51,73 @@ func TestProjectConfigFileValidation_TestDefinitionMatchingSubtable(t *testing.T
 	assert.NoError(t, file.Validate())
 }
 
+func TestProjectConfigFileValidation_TmtTestDefinitionPlanAndSourceOptional(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Tests: map[string]projectconfig.TestDefinition{
+			"hostname": {
+				Type: "tmt",
+				// Neither 'plan' nor 'source' set: valid when the caller supplies
+				// the test source directly (e.g. 'azldev component test --source-dir').
+				Tmt: map[string]any{},
+			},
+		},
+	}
+
+	assert.NoError(t, file.Validate())
+}
+
+func TestProjectConfigFileValidation_TmtTestDefinitionValidPlanAndSource(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Tests: map[string]projectconfig.TestDefinition{
+			"bash-fedora-shell": {
+				Type: "tmt",
+				Tmt: map[string]any{
+					"plan": "/plans/shell",
+					"source": map[string]any{
+						"git-url": "https://example.com/tmt-tests.git",
+						"ref":     "0123456789abcdef0123456789abcdef01234567",
+					},
+				},
+			},
+		},
+	}
+
+	assert.NoError(t, file.Validate())
+}
+
+func TestProjectConfigFileValidation_TmtTestDefinitionEmptyPlanRejected(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Tests: map[string]projectconfig.TestDefinition{
+			"hostname": {
+				Type: "tmt",
+				Tmt:  map[string]any{"plan": ""},
+			},
+		},
+	}
+
+	err := file.Validate()
+	require.Error(t, err)
+	require.ErrorIs(t, err, projectconfig.ErrInvalidTmtConfig)
+	assert.Contains(t, err.Error(), "tmt.plan")
+}
+
+func TestProjectConfigFileValidation_TmtTestDefinitionNonTableSourceRejected(t *testing.T) {
+	file := projectconfig.ConfigFile{
+		Tests: map[string]projectconfig.TestDefinition{
+			"hostname": {
+				Type: "tmt",
+				Tmt:  map[string]any{"source": "https://example.com/tmt-tests.git"},
+			},
+		},
+	}
+
+	err := file.Validate()
+	require.Error(t, err)
+	require.ErrorIs(t, err, projectconfig.ErrInvalidTmtConfig)
+	assert.Contains(t, err.Error(), "tmt.source")
+	assert.Contains(t, err.Error(), "table")
+}
+
 func TestProjectConfigFileValidation_TestDefinitionRequiredSubtablePresentButEmpty(t *testing.T) {
 	file := projectconfig.ConfigFile{
 		Tests: map[string]projectconfig.TestDefinition{
@@ -274,6 +341,336 @@ func TestProjectConfigValidation_DuplicateTestGroupReferenceInImage(t *testing.T
 	assert.Contains(t, err.Error(), "bvt")
 }
 
+func TestProjectConfigValidation_SameGroupDifferentSKUGroupsAllowed(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.Tests = map[string]projectconfig.TestDefinition{
+		"smoke": {
+			Type:   "pytest",
+			Pytest: map[string]any{"working-dir": "tests", "test-paths": []any{"test_smoke.py"}},
+		},
+	}
+	cfg.TestGroups = map[string]projectconfig.TestGroup{
+		"bvt": {Tests: []projectconfig.TestRef{{Name: "smoke"}}},
+	}
+	cfg.SKUGroups["amd"] = projectconfig.SKUGroup{Arch: projectconfig.SKUArchAMD64, VMSizes: []string{"Standard_D4s_v5"}}
+	cfg.SKUGroups["arm"] = projectconfig.SKUGroup{Arch: projectconfig.SKUArchARM64, VMSizes: []string{"Standard_D4ps_v5"}}
+	cfg.Images = map[string]projectconfig.ImageConfig{
+		"base": {
+			Tests: &projectconfig.ImageTestsConfig{
+				Tests: []projectconfig.TestRef{
+					{Group: "bvt", SKUGroups: []string{"amd", "arm"}},
+				},
+			},
+		},
+	}
+
+	// Same group fanned over two different SKU groups is allowed.
+	require.NoError(t, cfg.Validate())
+}
+
+func TestProjectConfigValidation_SameGroupSameSKUGroupDuplicate(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.Tests = map[string]projectconfig.TestDefinition{
+		"smoke": {
+			Type:   "pytest",
+			Pytest: map[string]any{"working-dir": "tests", "test-paths": []any{"test_smoke.py"}},
+		},
+	}
+	cfg.TestGroups = map[string]projectconfig.TestGroup{
+		"bvt": {Tests: []projectconfig.TestRef{{Name: "smoke"}}},
+	}
+	cfg.SKUGroups["amd"] = projectconfig.SKUGroup{Arch: projectconfig.SKUArchAMD64, VMSizes: []string{"Standard_D4s_v5"}}
+	cfg.Images = map[string]projectconfig.ImageConfig{
+		"base": {
+			Tests: &projectconfig.ImageTestsConfig{
+				Tests: []projectconfig.TestRef{
+					{Group: "bvt", SKUGroups: []string{"amd", "amd"}},
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	require.ErrorIs(t, err, projectconfig.ErrDuplicateTestRef)
+	assert.Contains(t, err.Error(), "sku-group")
+}
+
+func TestProjectConfigValidation_EmptySKUGroupsListRejected(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.Tests = map[string]projectconfig.TestDefinition{
+		"smoke": {
+			Type:   "pytest",
+			Pytest: map[string]any{"working-dir": "tests", "test-paths": []any{"test_smoke.py"}},
+		},
+	}
+	cfg.Images = map[string]projectconfig.ImageConfig{
+		"base": {
+			Tests: &projectconfig.ImageTestsConfig{
+				// Explicit empty list (sku-groups = []) must be rejected.
+				Tests: []projectconfig.TestRef{{Name: "smoke", SKUGroups: []string{}}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	require.ErrorIs(t, err, projectconfig.ErrInvalidTestRef)
+	assert.Contains(t, err.Error(), "empty 'sku-groups'")
+}
+
+func TestProjectConfigValidation_DuplicateSKUGroupsOnEmptyGroup(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	// Empty group has no members to expand, so duplicate sku-groups must still be
+	// rejected by the pre-expansion uniqueness check.
+	cfg.TestGroups = map[string]projectconfig.TestGroup{"empty": {}}
+	cfg.SKUGroups["perf"] = projectconfig.SKUGroup{Arch: projectconfig.SKUArchAMD64, VMSizes: []string{"Standard_D4s_v5"}}
+	cfg.Images = map[string]projectconfig.ImageConfig{
+		"base": {
+			Tests: &projectconfig.ImageTestsConfig{
+				Tests: []projectconfig.TestRef{
+					{Group: "empty", SKUGroups: []string{"perf", "perf"}},
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	require.ErrorIs(t, err, projectconfig.ErrDuplicateTestRef)
+	assert.Contains(t, err.Error(), "sku-group")
+}
+
+func TestProjectConfigValidation_ImageSKUGroup(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.SKUGroups["performance"] = projectconfig.SKUGroup{
+		Arch:    projectconfig.SKUArchAMD64,
+		VMSizes: []string{"Standard_D4s_v5", "Standard_L8s_v3"},
+	}
+	cfg.VMSKUs["Standard_D4s_v5"] = map[string]any{"vcpus": 4}
+	cfg.VMSKUs["Standard_L8s_v3"] = map[string]any{"vcpus": 8}
+	cfg.Images["vm-base"] = projectconfig.ImageConfig{
+		Tests: &projectconfig.ImageTestsConfig{
+			Tests: []projectconfig.TestRef{{Group: "multi-sku", SKUGroups: []string{"performance"}}},
+		},
+	}
+	cfg.TestGroups["multi-sku"] = projectconfig.TestGroup{}
+
+	require.NoError(t, cfg.Validate())
+}
+
+func TestProjectConfigValidation_UndefinedImageSKUGroup(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.Images["vm-base"] = projectconfig.ImageConfig{
+		Tests: &projectconfig.ImageTestsConfig{
+			Tests: []projectconfig.TestRef{{Group: "multi-sku", SKUGroups: []string{"missing"}}},
+		},
+	}
+	cfg.TestGroups["multi-sku"] = projectconfig.TestGroup{}
+
+	err := cfg.Validate()
+	require.ErrorIs(t, err, projectconfig.ErrUndefinedSKUGroup)
+}
+
+func TestProjectConfigValidation_EmptyOrWhitespaceSKUGroupRefRejected(t *testing.T) {
+	for _, skuGroup := range []string{"", "   "} {
+		cfg := projectconfig.NewProjectConfig()
+		cfg.Images["vm-base"] = projectconfig.ImageConfig{
+			Tests: &projectconfig.ImageTestsConfig{
+				Tests: []projectconfig.TestRef{{Group: "multi-sku", SKUGroups: []string{skuGroup}}},
+			},
+		}
+		cfg.TestGroups["multi-sku"] = projectconfig.TestGroup{}
+
+		err := cfg.Validate()
+		require.ErrorIsf(t, err, projectconfig.ErrInvalidSKUGroup, "sku-group %q", skuGroup)
+		assert.Contains(t, err.Error(), "empty or whitespace-only")
+	}
+}
+
+func TestProjectConfigValidation_SKUGroupArchMismatchRejected(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.SKUGroups["arm-perf"] = projectconfig.SKUGroup{
+		Arch:    projectconfig.SKUArchARM64,
+		VMSizes: []string{"Standard_D4ps_v5"},
+	}
+	// An x86_64-only image cannot run an arm64 SKU group.
+	cfg.Images["vm-base"] = projectconfig.ImageConfig{
+		Architectures: []string{projectconfig.ImageArchitectureX86_64},
+		Tests: &projectconfig.ImageTestsConfig{
+			Tests: []projectconfig.TestRef{{Group: "multi-sku", SKUGroups: []string{"arm-perf"}}},
+		},
+	}
+	cfg.TestGroups["multi-sku"] = projectconfig.TestGroup{}
+
+	err := cfg.Validate()
+	require.ErrorIs(t, err, projectconfig.ErrSKUGroupArchMismatch)
+}
+
+func TestProjectConfigValidation_SKUGroupArchAllowedOnUnrestrictedImage(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.SKUGroups["amd-perf"] = projectconfig.SKUGroup{
+		Arch:    projectconfig.SKUArchAMD64,
+		VMSizes: []string{"Standard_D4s_v5"},
+	}
+	cfg.SKUGroups["arm-perf"] = projectconfig.SKUGroup{
+		Arch:    projectconfig.SKUArchARM64,
+		VMSizes: []string{"Standard_D4ps_v5"},
+	}
+	// No declared Architectures: the image is unrestricted, so a single test group
+	// may reference both an amd64 and an arm64 SKU group (external orchestration
+	// picks the matching group per build arch).
+	cfg.Images["vm-base"] = projectconfig.ImageConfig{
+		Tests: &projectconfig.ImageTestsConfig{
+			Tests: []projectconfig.TestRef{{Group: "multi-sku", SKUGroups: []string{"amd-perf", "arm-perf"}}},
+		},
+	}
+	cfg.TestGroups["multi-sku"] = projectconfig.TestGroup{}
+
+	require.NoError(t, cfg.Validate())
+}
+
+func TestProjectConfigValidation_DuplicateVMSizeInSKUGroup(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.SKUGroups["performance"] = projectconfig.SKUGroup{
+		Arch:    projectconfig.SKUArchAMD64,
+		VMSizes: []string{"Standard_D4s_v5", "Standard_D4s_v5"},
+	}
+	cfg.VMSKUs["Standard_D4s_v5"] = map[string]any{"vcpus": 4}
+
+	err := cfg.Validate()
+	require.ErrorIs(t, err, projectconfig.ErrInvalidSKUGroup)
+}
+
+func TestProjectConfigValidation_SKUGroupMissingArch(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.SKUGroups["performance"] = projectconfig.SKUGroup{
+		VMSizes: []string{"Standard_D4s_v5"},
+	}
+	cfg.VMSKUs["Standard_D4s_v5"] = map[string]any{"vcpus": 4}
+
+	err := cfg.Validate()
+	require.ErrorIs(t, err, projectconfig.ErrInvalidSKUGroup)
+	assert.Contains(t, err.Error(), "arch")
+}
+
+func TestProjectConfigValidation_SKUGroupInvalidArch(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.SKUGroups["performance"] = projectconfig.SKUGroup{
+		Arch:    "x86",
+		VMSizes: []string{"Standard_D4s_v5"},
+	}
+	cfg.VMSKUs["Standard_D4s_v5"] = map[string]any{"vcpus": 4}
+
+	err := cfg.Validate()
+	require.ErrorIs(t, err, projectconfig.ErrInvalidSKUGroup)
+	assert.Contains(t, err.Error(), "invalid arch")
+}
+
+func TestProjectConfigValidation_SKUGroupEmptyVMSizes(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	// VMSizes intentionally omitted; ProjectConfig.Validate does not dive into
+	// SKUGroups via the struct validator, so this must be caught explicitly.
+	cfg.SKUGroups["performance"] = projectconfig.SKUGroup{Arch: projectconfig.SKUArchAMD64}
+
+	err := cfg.Validate()
+	require.ErrorIs(t, err, projectconfig.ErrInvalidSKUGroup)
+	assert.Contains(t, err.Error(), "at least one")
+}
+
+func TestProjectConfigValidation_SKUGroupWhitespaceVMSize(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.SKUGroups["performance"] = projectconfig.SKUGroup{
+		Arch:    projectconfig.SKUArchAMD64,
+		VMSizes: []string{" Standard_D4s_v5 "},
+	}
+
+	err := cfg.Validate()
+	require.ErrorIs(t, err, projectconfig.ErrInvalidSKUGroup)
+	assert.Contains(t, err.Error(), "surrounding whitespace")
+}
+
+func TestProjectConfigValidation_SKUGroupOnComponentRefRejected(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.Tests = map[string]projectconfig.TestDefinition{
+		"smoke": {
+			Type:   "pytest",
+			Pytest: map[string]any{"working-dir": "tests", "test-paths": []any{"test_smoke.py"}},
+		},
+	}
+	cfg.SKUGroups["performance"] = projectconfig.SKUGroup{
+		Arch:    projectconfig.SKUArchAMD64,
+		VMSizes: []string{"Standard_D4s_v5"},
+	}
+	cfg.Components = map[string]projectconfig.ComponentConfig{
+		"bash": {
+			Tests: &projectconfig.ComponentTestsConfig{
+				Tests: []projectconfig.TestRef{{Name: "smoke", SKUGroups: []string{"performance"}}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	require.ErrorIs(t, err, projectconfig.ErrSKUGroupNotAllowed)
+}
+
+func TestProjectConfigValidation_EmptySKUGroupsOnComponentRefRejected(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.Tests = map[string]projectconfig.TestDefinition{
+		"smoke": {
+			Type:   "pytest",
+			Pytest: map[string]any{"working-dir": "tests", "test-paths": []any{"test_smoke.py"}},
+		},
+	}
+	// An explicit empty 'sku-groups = []' on a component ref must report the scope
+	// error (sku-groups not allowed), not the empty-list error.
+	cfg.Components = map[string]projectconfig.ComponentConfig{
+		"bash": {
+			Tests: &projectconfig.ComponentTestsConfig{
+				Tests: []projectconfig.TestRef{{Name: "smoke", SKUGroups: []string{}}},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	require.ErrorIs(t, err, projectconfig.ErrSKUGroupNotAllowed)
+}
+
+func TestProjectConfigValidation_SKUGroupOnTestGroupMemberRejected(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.Tests = map[string]projectconfig.TestDefinition{
+		"smoke": {
+			Type:   "pytest",
+			Pytest: map[string]any{"working-dir": "tests", "test-paths": []any{"test_smoke.py"}},
+		},
+	}
+	cfg.SKUGroups["performance"] = projectconfig.SKUGroup{
+		Arch:    projectconfig.SKUArchAMD64,
+		VMSizes: []string{"Standard_D4s_v5"},
+	}
+	cfg.TestGroups = map[string]projectconfig.TestGroup{
+		"bvt": {Tests: []projectconfig.TestRef{{Name: "smoke", SKUGroups: []string{"performance"}}}},
+	}
+
+	err := cfg.Validate()
+	require.ErrorIs(t, err, projectconfig.ErrSKUGroupNotAllowed)
+}
+
+func TestProjectConfigValidation_EmptySKUGroupsOnTestGroupMemberRejected(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.Tests = map[string]projectconfig.TestDefinition{
+		"smoke": {
+			Type:   "pytest",
+			Pytest: map[string]any{"working-dir": "tests", "test-paths": []any{"test_smoke.py"}},
+		},
+	}
+	// Explicit empty 'sku-groups = []' is still the field being set and is
+	// forbidden on test-group members, not just a non-empty list.
+	cfg.TestGroups = map[string]projectconfig.TestGroup{
+		"bvt": {Tests: []projectconfig.TestRef{{Name: "smoke", SKUGroups: []string{}}}},
+	}
+
+	err := cfg.Validate()
+	require.ErrorIs(t, err, projectconfig.ErrSKUGroupNotAllowed)
+}
+
 func TestProjectConfigValidation_DuplicateTestViaNameAndGroupInImage(t *testing.T) {
 	cfg := projectconfig.NewProjectConfig()
 	cfg.Tests = map[string]projectconfig.TestDefinition{
@@ -340,12 +737,14 @@ func TestProjectConfigValidation_NonContradictingImageCapabilities(t *testing.T)
 			Capabilities: projectconfig.ImageCapabilities{
 				MachineBootable: &trueVal,
 			},
+			Properties: map[string]string{"openssl-fips-provider": "upstream"},
 		},
 		"container-base": {
 			Architectures: []string{"x86_64"},
 			Capabilities: projectconfig.ImageCapabilities{
 				Container: &trueVal,
 			},
+			Properties: map[string]string{"openssl-fips-provider": "symcrypt"},
 		},
 		"wsl": {
 			Architectures: []string{"x86_64"},
@@ -475,6 +874,32 @@ func TestImageConfig_SupportsArchitecture(t *testing.T) {
 	}
 }
 
+func TestArchMappingHelpers(t *testing.T) {
+	// Forward: image architecture (x86_64/aarch64) -> SKU arch token (amd64/arm64).
+	skuAMD, found := projectconfig.SKUArchForImageArchitecture(projectconfig.ImageArchitectureX86_64)
+	require.True(t, found)
+	assert.Equal(t, projectconfig.SKUArchAMD64, skuAMD)
+
+	skuARM, found := projectconfig.SKUArchForImageArchitecture(projectconfig.ImageArchitectureAarch64)
+	require.True(t, found)
+	assert.Equal(t, projectconfig.SKUArchARM64, skuARM)
+
+	_, found = projectconfig.SKUArchForImageArchitecture("riscv64")
+	assert.False(t, found)
+
+	// Reverse: SKU arch token -> image architecture.
+	imgX86, found := projectconfig.ImageArchitectureForSKUArch(projectconfig.SKUArchAMD64)
+	require.True(t, found)
+	assert.Equal(t, projectconfig.ImageArchitectureX86_64, imgX86)
+
+	imgArm, found := projectconfig.ImageArchitectureForSKUArch(projectconfig.SKUArchARM64)
+	require.True(t, found)
+	assert.Equal(t, projectconfig.ImageArchitectureAarch64, imgArm)
+
+	_, found = projectconfig.ImageArchitectureForSKUArch("x86_64")
+	assert.False(t, found)
+}
+
 func TestProjectConfigValidation_NewShapeTestsNoDeprecationWarning(t *testing.T) {
 	var buf bytes.Buffer
 
@@ -560,6 +985,32 @@ func TestProjectConfigResolveImageTests_ExpandsGroups(t *testing.T) {
 		resolved[1].Name,
 		resolved[2].Name,
 	})
+}
+
+func TestProjectConfigResolveImageTests_DedupesAcrossSKUGroups(t *testing.T) {
+	cfg := projectconfig.NewProjectConfig()
+	cfg.Tests = map[string]projectconfig.TestDefinition{
+		"multi-sku-boot": {Type: "lisa", Lisa: map[string]any{"criteria": map[string]any{"area": "boot"}}},
+	}
+	cfg.TestGroups = map[string]projectconfig.TestGroup{
+		"multi-sku-tests": {Tests: []projectconfig.TestRef{{Name: "multi-sku-boot"}}},
+	}
+
+	// Same group referenced under two SKU groups (allowed by validation, fans out
+	// externally). Local resolution must collapse it to a single ResolvedTest so
+	// `azldev image test` does not run it twice.
+	imageCfg := &projectconfig.ImageConfig{
+		Tests: &projectconfig.ImageTestsConfig{
+			Tests: []projectconfig.TestRef{
+				{Group: "multi-sku-tests", SKUGroups: []string{"multi-sku-amd64", "multi-sku-arm64"}},
+			},
+		},
+	}
+
+	resolved, err := cfg.ResolveImageTests(imageCfg)
+	require.NoError(t, err)
+	require.Len(t, resolved, 1)
+	assert.Equal(t, "multi-sku-boot", resolved[0].Name)
 }
 
 func TestProjectConfigResolveComponentTests_ExpandsGroups(t *testing.T) {

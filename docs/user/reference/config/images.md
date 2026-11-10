@@ -9,7 +9,8 @@ The `[images]` section defines system images (VMs, containers, etc.) that azldev
 | Description | `description` | string | No | Human-readable description of the image |
 | Definition | `definition` | [ImageDefinition](#image-definition) | No | Specifies the image definition format, file path, and optional profile |
 | Architectures | `architectures` | string array | No | Architectures supported by this image |
-| Capabilities | `capabilities` | [ImageCapabilities](#image-capabilities) | No | Describes features and properties of this image |
+| Capabilities | `capabilities` | [ImageCapabilities](#image-capabilities) | No | Describes features supported by this image |
+| Properties | `properties` | string-to-string table | No | Extensible metadata describing this image |
 | Tests | `tests` | [ImageTests](#image-tests) | No | Test configuration for this image |
 | Publish | `publish` | [ImagePublish](#image-publish) | No | Publishing settings for this image |
 
@@ -31,7 +32,7 @@ The `definition` field tells azldev where to find the image definition file and 
 
 ## Image Capabilities
 
-The `capabilities` subtable describes what the image supports. All fields are optional booleans using tri-state semantics: `true` (explicitly enabled), `false` (explicitly disabled), or omitted (unspecified / inherit from defaults).
+The `capabilities` subtable describes what the image supports. Boolean fields use tri-state semantics: `true` (explicitly enabled), `false` (explicitly disabled), or omitted (unspecified).
 
 | Field | TOML Key | Type | Default | Description |
 |-------|----------|------|---------|-------------|
@@ -44,6 +45,22 @@ The `capabilities` subtable describes what the image supports. All fields are op
 | FIPS Enabled | `fips-enabled` | bool | unset | Whether the image is built or configured to run in FIPS mode |
 | CVM | `cvm` | bool | unset | Whether the image supports running as a Confidential VM (CVM) |
 
+## Image Properties
+
+The `properties` subtable is an open string-to-string property bag for image metadata
+that is useful to tests or external orchestration but is not interpreted by azldev.
+Adding a property does not require an azldev schema change.
+
+```toml
+[images.vm-base.properties]
+openssl-fips-provider = "upstream"
+release-channel = "preview"
+```
+
+The `{properties}` test-runner placeholder serializes the complete property bag as a
+JSON object. The existing `{capabilities}` placeholder remains a comma-separated list
+of enabled boolean capability names.
+
 ## Image Tests
 
 The `tests` subtable links an image to one or more tests or test groups defined in the top-level [`[tests]` / `[test-groups]`](tests.md) sections.
@@ -51,6 +68,19 @@ The `tests` subtable links an image to one or more tests or test groups defined 
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
 | Tests | `tests` | array of [TestRef](tests.md#test-reference) | No | References to `[tests.<name>]` entries or `[test-groups.<name>]` entries (parse-only; see [Tests and Test Groups](tests.md)). |
+
+Image test references may additionally set [`sku-groups`](tests.md#test-reference) to fan a test or group out across the Azure VM sizes of one or more [`[sku-groups.<name>]`](tests.md#sku-groups) entries:
+
+```toml
+[images.marketplace-gen2.tests]
+tests = [{ group = "multi-sku-tests", sku-groups = ["multi-sku-amd64", "multi-sku-arm64"] }]
+```
+
+> **Note:** `sku-groups` cannot be mapped to arbitrary LISA tests. LISA tests
+> carry their own requirements and are skipped when the SKU does not satisfy
+> them, so fanning a normal test across a SKU group only yields skips on
+> non-matching SKUs. SKU mapping is meaningful only for the special case of
+> multi-SKU performance tests. See [SKU Groups](tests.md#sku-groups).
 
 ## Image Publish
 
@@ -76,6 +106,9 @@ architectures = ["x86_64", "aarch64"]
 machine-bootable = true
 systemd = true
 runtime-package-management = true
+
+[images.vm-base.properties]
+openssl-fips-provider = "upstream"
 ```
 
 ### Container image with capabilities

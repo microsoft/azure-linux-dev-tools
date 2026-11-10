@@ -21,6 +21,19 @@ Configuration is loaded in four phases, in this order:
 
 Later phases can override values from earlier phases according to the [merge rules](#merge-rules) described below. The progression project → user → invocation matches the conventional priority order used by most command-line tools.
 
+### Keeping Build Output Out of the Checkout
+
+Because the user config is loaded after the project config, it can redirect the directories that a project configures under its checkout. To keep logs, work files, and build output out of every azldev project's git tree, set absolute paths in `~/.config/azldev/config.toml`:
+
+```toml
+[project]
+log-dir = "/home/me/azldev/logs"
+work-dir = "/home/me/azldev/work"
+output-dir = "/home/me/azldev/out"
+```
+
+Relative paths in the user config are resolved against the directory containing the user config file, not the project root, so absolute paths are the clearest choice. TOML does not expand `~` or environment variables, so write the full path. Passing `--config-file` with a different `[project]` section still takes precedence over the user config.
+
 ## Include Resolution
 
 The `includes` field specifies glob patterns for additional config files to load:

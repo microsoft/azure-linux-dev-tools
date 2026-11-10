@@ -57,6 +57,7 @@ azldev component build [flags]
       --mock-config-opt stringToString   Pass a configuration option through to mock (key=value, can be specified multiple times) (default [])
       --no-check                         Skip package %check tests
       --preserve-buildenv policy         Preserve build environment {on-failure, always, never} (default on-failure)
+      --rpmdev-bumpspec                  Use rpmdev-bumpspec instead of the legacy static release calculation
       --skip-lock-validation             skip lock file consistency checks
   -s, --spec-path stringArray            Spec path
       --srpm-only                        Build SRPM (source RPM) *only*
@@ -77,6 +78,7 @@ azldev component build [flags]
       --permissive-config         do not fail on unknown fields in TOML config files
   -C, --project string            path to Azure Linux project
   -q, --quiet                     only enable minimal output
+      --spec-editor editor        Select the RPM spec editor (legacy or experimental) (default legacy)
   -v, --verbose                   enable verbose output
       --without-lockfile          preview: track resolved upstream commits in generated config instead of lock files
 ```

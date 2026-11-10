@@ -65,14 +65,17 @@ jobs:
           mage -v scenario
 
   e2e-tests:
-    name: "End-to-end tests"
+    name: "End-to-end tests (${{ matrix.target }}, ${{ matrix.host }})"
     # E2E tests are tagged separately from scenario tests (build tag 'e2e' vs.
     # 'scenario') so they do not run as part of 'mage scenario' / 'mage all'.
     # They clone large upstream repositories and exercise full mock pipelines,
     # so they live in their own job and are gated on network access.
     strategy:
+      fail-fast: false
       matrix:
         host: [ubuntu-latest]
+        # Add 'tmt' once the quarantined readiness regression is fixed.
+        target: [component-idempotency, image, full-render]
     runs-on: ${{ matrix.host }}
     permissions:
       contents: read
@@ -97,5 +100,7 @@ jobs:
           sudo aa-disable /usr/sbin/unix_chkpwd
 
       - name: Run tests
+        env:
+          E2E_TARGET: ${{ matrix.target }}
         run: |
-          mage -v e2e
+          mage -v e2e -target="$E2E_TARGET"

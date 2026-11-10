@@ -62,6 +62,7 @@ azldev component render [flags]
   -f, --force                         allow overwriting existing rendered component directories
   -h, --help                          help for render
   -o, --output-dir string             output directory for rendered specs (overrides rendered-specs-dir from config)
+      --rpmdev-bumpspec               Use rpmdev-bumpspec instead of the legacy static release calculation
       --skip-lock-validation          skip lock file consistency checks
   -s, --spec-path stringArray         Spec path
 ```
@@ -80,6 +81,7 @@ azldev component render [flags]
       --permissive-config         do not fail on unknown fields in TOML config files
   -C, --project string            path to Azure Linux project
   -q, --quiet                     only enable minimal output
+      --spec-editor editor        Select the RPM spec editor (legacy or experimental) (default legacy)
   -v, --verbose                   enable verbose output
       --without-lockfile          preview: track resolved upstream commits in generated config instead of lock files
 ```

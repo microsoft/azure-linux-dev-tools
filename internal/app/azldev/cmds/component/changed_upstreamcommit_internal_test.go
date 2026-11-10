@@ -124,6 +124,43 @@ func TestClassifyHistoricalComponent_ExcludedFieldsUnchanged(t *testing.T) {
 	assert.Equal(t, changeTypeUnchanged, result.ChangeType)
 }
 
+func TestBuildHistoricalResults_UnchangedSkipsSourcesComparison(t *testing.T) {
+	repo, fromRef, toRef := testRepoWithTwoCommits(t,
+		map[string][]byte{
+			"SPECS/c/curl/sources": []byte("SHA512 (curl-1.tar.gz) = aaa"),
+		},
+		map[string][]byte{
+			"SPECS/c/curl/sources": []byte("SHA512 (curl-2.tar.gz) = bbb"),
+		},
+	)
+
+	fromTree, err := resolveTree(repo, fromRef)
+	require.NoError(t, err)
+	toTree, err := resolveTree(repo, toRef)
+	require.NoError(t, err)
+
+	inputs := map[string]componentComparisonInputs{
+		"curl": {Config: projectconfig.ComponentConfig{Name: "curl"}},
+	}
+	fromProject := &historicalProject{
+		comparisonInputs:    inputs,
+		renderedSpecsRelDir: "SPECS",
+	}
+	toProject := &historicalProject{
+		comparisonInputs:    inputs,
+		renderedSpecsRelDir: "SPECS",
+	}
+
+	results, err := buildHistoricalResults(
+		[]string{"curl"}, fromProject, toProject, fromTree, toTree,
+		true, true,
+	)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, changeTypeUnchanged, results[0].ChangeType)
+	assert.False(t, results[0].SourcesChange)
+}
+
 func TestBuildComponentComparisonInputs_ContentIdentities(t *testing.T) {
 	testEnv := testutils.NewTestEnvWithoutLockfile(t)
 	specPath := "/specs/curl/curl.spec"

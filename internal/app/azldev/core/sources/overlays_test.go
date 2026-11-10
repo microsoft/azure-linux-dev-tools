@@ -394,6 +394,52 @@ newname package
 	}
 }
 
+func TestApplySpecOverlay_ShimConditionalRepairAcrossOverlays(t *testing.T) {
+	openedSpec, err := spec.OpenSpec(strings.NewReader(`Name: shim-unsigned-%{efiarch}
+
+%build
+%if 0%{?dbxfile}
+echo dbx
+%endif
+cd build-%{efiarch}
+cd build-%{efialtarch}
+%install
+`), spec.WithEditor(spec.EditorStructural))
+	require.NoError(t, err)
+
+	require.NoError(t, sources.ApplySpecOverlay(projectconfig.ComponentOverlay{
+		Type:        projectconfig.ComponentOverlaySearchAndReplaceInSpec,
+		SectionName: "%build",
+		Regex:       `^cd build-%\{efialtarch\}$`,
+		Replacement: "%if 0\ncd build-%{efialtarch}",
+	}, openedSpec))
+
+	var intermediate bytes.Buffer
+	require.NoError(t, openedSpec.Serialize(&intermediate))
+	assert.Contains(t, intermediate.String(), "%if 0\ncd build-%{efialtarch}\n")
+
+	require.NoError(t, sources.ApplySpecOverlay(projectconfig.ComponentOverlay{
+		Type:        projectconfig.ComponentOverlayAppendSpecLines,
+		SectionName: "%build",
+		Lines:       []string{"%endif"},
+	}, openedSpec))
+
+	var result bytes.Buffer
+	require.NoError(t, openedSpec.Serialize(&result))
+	assert.Equal(t, `Name: shim-unsigned-%{efiarch}
+
+%build
+%if 0%{?dbxfile}
+echo dbx
+%endif
+cd build-%{efiarch}
+%if 0
+cd build-%{efialtarch}
+%endif
+%install
+`, result.String())
+}
+
 func TestApplyNonSpecOverlay(t *testing.T) {
 	testCases := []struct {
 		name           string

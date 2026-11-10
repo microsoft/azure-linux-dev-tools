@@ -1,0 +1,29 @@
+FROM mcr.microsoft.com/azurelinux/core:4@sha256:e75907a2bfb30e26e3cb6f95803a9aea32811907c33f42cdf1e837dcd85d80bd
+SHELL ["/bin/bash", "-c"]
+
+ARG UID
+ARG GID
+ARG WORK_DIR
+
+RUN tdnf -y install \
+    ca-certificates \
+    git \
+    kiwi-cli \
+    kiwi-systemdeps-disk-images \
+    qemu-img \
+    shadow-utils \
+    sudo \
+    && tdnf clean all
+
+RUN groupadd -f -g "${GID}" testgroup && \
+    useradd -u "${UID}" -g "${GID}" -m testuser && \
+    mkdir -p /etc/sudoers.d && \
+    printf '%s\n' 'testuser ALL=(root) NOPASSWD: /usr/sbin/kiwi *' > /etc/sudoers.d/azldev-kiwi && \
+    chmod 0440 /etc/sudoers.d/azldev-kiwi && \
+    visudo -cf /etc/sudoers.d/azldev-kiwi
+
+COPY build-image.sh /usr/local/bin/build-image
+RUN chmod 0755 /usr/local/bin/build-image
+
+USER testuser:testgroup
+WORKDIR ${WORK_DIR}

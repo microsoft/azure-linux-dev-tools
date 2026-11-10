@@ -64,13 +64,14 @@ func TestTimeout(t *testing.T) {
 
 	// Test the timeout for a command to run in a container. The command will sleep for 10 seconds, and the
 	// timeout is set to 5 seconds.
-	_, err := containertest.RunCmdInContainer(
+	results, err := containertest.RunCmdInContainer(
 		t,
 		containertest.NewContainerTestCollateral(t),
-		[]string{"bash", "-c", "sleep 10"},
+		[]string{"bash", "-c", "echo before-timeout; sleep 10"},
 		5*time.Second,
 	)
 	assert.ErrorIs(t, err, containertest.ErrTimeout)
+	assert.Contains(t, results.Stdout, "before-timeout")
 }
 
 // Test the scenario runner. Create some input files, then inside the container move them to the mounted

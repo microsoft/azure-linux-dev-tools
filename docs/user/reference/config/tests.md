@@ -46,23 +46,23 @@ VM).
 | Testcase names | `testcase-names` | string array | Shorthand for a single criteria matching multiple test cases by name (joined as an OR). |
 | Pip pre-install | `pip-pre-install` | string array | Pip packages to install before the framework (for overriding version pins); used only for local execution. |
 | Pip extras | `pip-extras` | string array | Pip extras to install from the LISA framework package; used only for local execution. |
-| Extra args | `extra-args` | string array | Additional arguments passed to LISA. Supports `{image-path}`, `{image-name}`, `{capabilities}` placeholders; used only for local execution. |
+| Extra args | `extra-args` | string array | Additional arguments passed to LISA. Supports `{image-path}`, `{image-name}`, `{capabilities}`, `{properties}` placeholders; used only for local execution. |
 
 At least one of `criteria`, `name`, `testcase-name`, or `testcase-names` is
 required.
 
 ### TMT Fields
 
-The `[tests.<name>.tmt]` subtable identifies a pinned upstream TMT plan. It is
-also used by [`azldev component test`](../cli/azldev_component_test.md) to run
-the mapped plan locally in a QEMU VM. Local execution clones the source at the
+The `[tests.<name>.tmt]` subtable identifies an upstream TMT plan. It is also
+used by [`azldev component test`](../cli/azldev_component_test.md) to run the
+mapped plan locally in a QEMU VM. Local execution clones the source at the
 configured commit, provisions the supplied image with TMT/testcloud, and
 installs the RPMs passed through `--rpm` before the plan runs.
 
 | Field | TOML Key | Type | Description |
 |-------|----------|------|-------------|
-| Source | `source` | table (`git-url`, `ref`) | Git repository containing the plan. Required; `ref` must be a full 40-character hex commit SHA. |
-| Plan | `plan` | string | Absolute TMT plan name to run. Required. |
+| Source | `source` | table (`git-url`, `ref`) | Git repository containing the plan. Optional; when omitted, the test source must instead be supplied directly with `--source-dir`. When present, `ref` must be a full 40-character hex commit SHA. |
+| Plan | `plan` | string | Absolute TMT plan name to run. Optional; when omitted, tmt discovers and runs every enabled plan it finds (see [TMT Tests & fmf Metadata](../../explanation/tmt-tests.md)). `--provision virtual` always requires an explicit plan (via this field or `--plan`), since hardware export is resolved per-plan. |
 
 For example, define a plan as follows:
 
@@ -114,7 +114,8 @@ substituted at run time. They are **not** substituted in `test-paths`.
 |-------------|--------------|
 | `{image-path}` | Absolute path to the image artifact under test |
 | `{image-name}` | Name of the image being tested |
-| `{capabilities}` | Comma-separated list of capability names enabled on the image |
+| `{capabilities}` | Comma-separated names of enabled boolean capabilities |
+| `{properties}` | JSON object containing the image's string properties |
 
 ## Test Group
 
@@ -134,6 +135,7 @@ references that callers can target as a single unit.
 |-------|----------|------|-------------|
 | Name | `name` | string | References a `[tests.<name>]` entry |
 | Group | `group` | string | References a `[test-groups.<name>]` entry |
+| SKU groups | `sku-groups` | string array | **Image test references only.** References one or more [`[sku-groups.<name>]`](#sku-groups) entries; external orchestration fans the referenced test or group out once per Azure VM size across every listed SKU group. Entries must be unique. Rejected on component tests and on `[test-groups]` members. |
 
 ## Referencing from Components and Images
 
@@ -146,6 +148,59 @@ tests = [{ group = "kernel-bvt" }, { name = "kdump-smoke" }]
 
 [images.vm-base.tests]
 tests = [{ group = "bvt" }]
+```
+
+An **image** reference may additionally carry `sku-groups` to fan the test or
+group out across the VM sizes of one or more [SKU groups](#sku-groups):
+
+```toml
+[images.marketplace-gen2.tests]
+tests = [{ group = "multi-sku-tests", sku-groups = ["multi-sku-amd64", "multi-sku-arm64"] }]
+```
+
+`sku-groups` is only valid on image test references; it is rejected on component
+tests and on `[test-groups]` members.
+
+## SKU Groups
+
+`[sku-groups.<name>]` defines a named list of Azure VM sizes used to fan out an
+image's tests across multiple SKUs. External test orchestration runs the
+referenced test (or test group) once per VM size. SKU groups are referenced only
+from **image** test references via the [`sku-groups`](#test-reference) field.
+
+| Field | TOML Key | Type | Required | Description |
+|-------|----------|------|----------|-------------|
+| Description | `description` | string | No | Human-readable description |
+| Arch | `arch` | string | Yes | CPU architecture of every VM size in the group; one of `amd64` or `arm64`. These map to the image [`architectures`](images.md) values `x86_64` and `aarch64` respectively (SKU groups use the Azure/Go `GOARCH` tokens, images use the kernel `uname` names). azldev rejects a SKU group whose arch is not supported by an **arch-restricted** image that references it. |
+| VM sizes | `vm-sizes` | string array | Yes | Azure VM size names (e.g. `Standard_D4s_v5`). Must be non-empty with no duplicate entries. |
+
+SKU group names must be unique across all config files; a duplicate name is an
+error.
+
+```toml
+[sku-groups.multi-sku-amd64]
+description = "x86-64 VM sizes for multi-SKU coverage"
+arch = "amd64"
+vm-sizes = ["Standard_D4s_v5", "Standard_L8s_v3"]
+```
+
+> **Note:** A `sku-groups` entry cannot be mapped to arbitrary LISA tests. LISA tests
+> declare their own requirements (CPU count, memory, features such as NVMe, etc.)
+> and LISA skips a test when the SKU it runs on does not satisfy those
+> requirements. Fanning a normal test out across a SKU group therefore just
+> produces skips on SKUs that do not match. SKU mapping is only meaningful for
+> the special case of multi-SKU performance tests, which are written to run
+> across the SKUs in a group and report per-SKU results.
+
+## VM SKUs
+
+`[vm-skus.<vm-size>]` carries free-form per-VM-size metadata consumed by external
+test orchestration to resolve test parameters; azldev does not interpret the
+values. Each VM size may be defined only once across all config files.
+
+```toml
+[vm-skus.Standard_D4s_v5]
+vcpus = 4
 ```
 
 ## Example

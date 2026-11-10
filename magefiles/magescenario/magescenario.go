@@ -5,6 +5,7 @@ package magescenario
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path"
 	"strings"
@@ -18,6 +19,14 @@ import (
 )
 
 var ErrScenario = errors.New("scenario test failed")
+
+const (
+	e2eTargetAll                  = "all"
+	e2eTargetComponentIdempotency = "component-idempotency"
+	e2eTargetFullRender           = "full-render"
+	e2eTargetImage                = "image"
+	e2eTargetTMT                  = "tmt"
+)
 
 // Scenario runs the scenario tests.
 func Scenario() error {
@@ -43,17 +52,21 @@ func ScenarioUpdate() error {
 	return nil
 }
 
-// E2E runs the end-to-end tests. These are tagged with the `e2e` build tag
+// E2E runs one of: [all, component-idempotency, full-render, image, tmt]. The default is all.
+// These tests are tagged with the `e2e` build tag
 // (separate from `scenario`) so that they do not run as part of `mage scenario`,
 // `mage scenarioUpdate`, or `mage all` — they are intentionally heavier
 // (network access, large clones, full mock pipelines) and meant to be run
 // from CI on a dedicated job.
-func E2E() error {
+func E2E(target *string) error {
 	startTime := time.Now()
 
-	mageutil.MagePrintln(mageutil.MsgStart, "Starting end-to-end tests...")
+	selectedTarget := e2eTargetAll
+	if target != nil {
+		selectedTarget = *target
+	}
 
-	err := runScenarioGoTest(scenarioGoTestOptions{
+	options := scenarioGoTestOptions{
 		label: "end-to-end",
 		// Use the dedicated 'e2e' tag so that scenario tests are excluded.
 		buildTag: "e2e",
@@ -66,12 +79,55 @@ func E2E() error {
 		// internal-package tests — already covered by 'mage scenario' — are
 		// not duplicated here.
 		packagePattern: "./scenario",
-	})
-	if err != nil {
+	}
+
+	switch selectedTarget {
+	case e2eTargetAll:
+	case e2eTargetImage:
+		options.label = "image-build end-to-end"
+		options.timeout = "25m"
+		options.testSelector = "^TestAzureLinuxImageBuild$"
+	case e2eTargetFullRender:
+		options.label = "full-render end-to-end"
+		options.testSelector = "^TestAzureLinuxComponentRenderIsIdempotent$"
+	case e2eTargetComponentIdempotency:
+		options.label = "component-idempotency end-to-end"
+		options.timeout = "45m"
+		options.testSelector = "^(TestAzureLinuxComponentUpdateIsIdempotent|" +
+			"TestAzureLinuxComponentRenderSubsetIsIdempotent)$"
+	case e2eTargetTMT:
+		options.label = "virtual TMT end-to-end"
+		options.timeout = "45m"
+		options.testSelector = "^TestTMTVirtualProvisioning$"
+		options.additionalEnv = map[string]string{
+			"TESTING_ENABLE_TMT_VIRTUAL_E2E": "1",
+		}
+	default:
+		return fmt.Errorf(
+			"%w: unknown end-to-end target %#q; available targets: %q",
+			ErrScenario,
+			selectedTarget,
+			[]string{
+				e2eTargetAll,
+				e2eTargetComponentIdempotency,
+				e2eTargetFullRender,
+				e2eTargetImage,
+				e2eTargetTMT,
+			},
+		)
+	}
+
+	mageutil.MagePrintf(mageutil.MsgStart, "Starting %s tests...\n", options.label)
+
+	if err := runScenarioGoTest(options); err != nil {
 		return err
 	}
 
-	mageutil.MagePrintf(mageutil.MsgSuccess, "End-to-end tests complete: %v.\n", time.Since(startTime))
+	mageutil.MagePrintf(
+		mageutil.MsgSuccess,
+		"End-to-end tests complete: %v.\n",
+		time.Since(startTime),
+	)
 
 	return nil
 }
@@ -113,6 +169,11 @@ type scenarioGoTestOptions struct {
 	// doSnapshotUpdate, when true, sets the env var that puts the snapshot
 	// helper into update mode. Only meaningful for the scenario tier.
 	doSnapshotUpdate bool
+	// testSelector, when set, is passed to 'go test -run' to execute one
+	// focused test without running the rest of the selected tier.
+	testSelector string
+	// additionalEnv adds target-specific environment variables to the test process.
+	additionalEnv map[string]string
 }
 
 func runScenarioGoTest(options scenarioGoTestOptions) error {
@@ -131,6 +192,9 @@ func runScenarioGoTest(options scenarioGoTestOptions) error {
 	env := map[string]string{
 		buildtestenv.TestingAzldevBinPathEnvVar: path.Join(mageutil.BinDir(), "azldev"),
 	}
+	for name, value := range options.additionalEnv {
+		env[name] = value
+	}
 
 	if options.doSnapshotUpdate {
 		env[buildtestenv.TestingUpdateSnapshotsEnvVar] = buildtestenv.TestingUpdateSnapshotsEnvValue
@@ -138,12 +202,19 @@ func runScenarioGoTest(options scenarioGoTestOptions) error {
 
 	// '-count=1' causes the cache to be ignored for scenario tests so they always re-run (it would only rebuild if
 	// we changed the test code itself, not the application code).
-	output, err := sh.OutputWith(env, mg.GoCmd(), "test",
-		"-tags="+options.buildTag,
-		"-timeout="+options.timeout,
+	args := []string{
+		"test",
+		"-tags=" + options.buildTag,
+		"-timeout=" + options.timeout,
 		"-count=1",
-		options.packagePattern,
-	)
+	}
+	if options.testSelector != "" {
+		args = append(args, "-run="+options.testSelector)
+	}
+
+	args = append(args, options.packagePattern)
+
+	output, err := sh.OutputWith(env, mg.GoCmd(), args...)
 	if err != nil {
 		titledLabel := strings.ToUpper(options.label[:1]) + options.label[1:]
 		mageutil.MagePrintf(mageutil.MsgError, "%s test failed; details follow.\n", titledLabel)

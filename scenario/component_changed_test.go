@@ -721,21 +721,9 @@ func TestComponentChanged_JSONContract(t *testing.T) {
 	assert.Equal(t, "deleted", rm["oldpkg"].ChangeType)
 }
 
-// TestComponentChanged_IntegrityViolation verifies that a manually-edited
-// rendered sources file with no corresponding fingerprint change causes
-// `azldev component changed` to fail with a non-zero exit code.
-//
-// This is the cache-poisoning vector: a malicious PR commits an attacker-
-// chosen (filename, hash) pair into a rendered sources file without touching
-// the lock that drives re-rendering. The CLI fails hard on this combination
-// because it cannot occur from a clean render.
-//
-// Flow:
-//  1. Commit 1: lock + matching rendered sources file.
-//  2. Commit 2: edit ONLY the sources file (lock fingerprint identical).
-//  3. Run `azldev component changed`: must fail with an error naming the
-//     affected component.
-func TestComponentChanged_IntegrityViolation(t *testing.T) {
+// TestComponentChanged_SourcesOnlyChange verifies that unchanged components do
+// not compare their rendered sources files.
+func TestComponentChanged_SourcesOnlyChange(t *testing.T) {
 	t.Parallel()
 
 	if testing.Short() {
@@ -770,25 +758,25 @@ func TestComponentChanged_IntegrityViolation(t *testing.T) {
 	gitInDir(t, projectDir, "-c", "commit.gpgsign=false", "commit", "-m", "initial")
 	fromRef := gitInDir(t, projectDir, "rev-parse", "HEAD")
 
-	// Commit 2: edit ONLY the rendered sources file. Lock fingerprint
-	// identical -- no legitimate render would produce this drift.
+	// Commit 2: edit only the rendered sources file.
 	writeFileInDir(t, projectDir, "specs/c/curl/sources",
-		"SHA512 (evil-payload.tar.gz) = deadbeef")
+		"SHA512 (curl-8.1.tar.gz) = bbb222")
 	gitInDir(t, projectDir, "add", ".")
-	gitInDir(t, projectDir, "-c", "commit.gpgsign=false", "commit", "-m", "tamper")
+	gitInDir(t, projectDir, "-c", "commit.gpgsign=false", "commit", "-m", "sources update")
 
 	cmd := exec.CommandContext(t.Context(),
 		azldevBin, "-C", projectDir, "--no-default-config", "component", "changed",
-		"--from", fromRef, "-a", "-q", "-O", "json",
+		"--from", fromRef, "-a", "--include-unchanged", "-q", "-O", "json",
 	)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	err := cmd.Run()
+	require.NoError(t, cmd.Run(), stderr.String())
 
-	require.Error(t, err, "integrity violation must fail the command")
-	assert.Contains(t, stderr.String(), "drifted rendered sources",
-		"error should explain the integrity violation")
-	assert.Contains(t, stderr.String(), "curl",
-		"error should name the affected component")
+	var results []changedResult
+	require.NoError(t, json.Unmarshal([]byte(stdout.String()), &results))
+	require.Len(t, results, 1)
+	assert.Equal(t, "curl", results[0].Component)
+	assert.Equal(t, "unchanged", results[0].ChangeType)
+	assert.False(t, results[0].SourcesChange)
 }

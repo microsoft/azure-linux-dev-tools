@@ -6,10 +6,13 @@ package kiwi_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"os/exec"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/acobaugh/osrelease"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
@@ -22,6 +25,11 @@ import (
 )
 
 const addRepoFlag = "--add-repo"
+
+type versionProbeExitError int
+
+func (e versionProbeExitError) Error() string { return fmt.Sprintf("exit status %d", e) }
+func (e versionProbeExitError) ExitCode() int { return int(e) }
 
 func TestNewRunner(t *testing.T) {
 	t.Parallel()
@@ -529,6 +537,11 @@ func TestCheckPrerequisites(t *testing.T) {
 		ctx.CmdFactory.RegisterCommandInSearchPath(kiwi.KiwiBinary)
 		ctx.CmdFactory.RegisterCommandInSearchPath("sgdisk")
 		ctx.DryRunValue = true
+		ctx.CmdFactory.RunAndGetOutputHandler = func(*exec.Cmd) (string, error) {
+			t.Fatal("dry run must not probe KIWI")
+
+			return "", nil
+		}
 
 		err := kiwi.CheckPrerequisites(ctx)
 
@@ -607,6 +620,107 @@ func TestCheckPrerequisites(t *testing.T) {
 		// Note: Still errors because kiwi won't be in path after mock install
 		require.Error(t, err)
 	})
+}
+
+func TestCheckPrerequisitesVersion(t *testing.T) {
+	probeErr := errors.New("probe failed")
+
+	for name, testCase := range map[string]struct {
+		output       string
+		stderr       string
+		probeErr     error
+		wantErr      string
+		wantProbeErr bool
+	}{
+		"supported":          {output: "KIWI (next generation) version 11.1.3"},
+		"stderr":             {stderr: "KIWI (next generation) version 11.1.3"},
+		"minimum release":    {output: "KIWI (next generation) version 11.0.0"},
+		"older major":        {output: "KIWI (next generation) version 10.3.11", wantErr: "install KIWI 11.0.0 or newer"},
+		"prerelease":         {output: "KIWI (next generation) version 11.0.0-rc1", wantErr: "install KIWI 11.0.0 or newer"},
+		"compact prerelease": {output: "KIWI (next generation) version 11.0.0rc1", wantErr: "install KIWI 11.0.0 or newer"},
+		"future major":       {output: "KIWI (next generation) version 12.0.0"},
+		"unknown":            {output: "unreleased", wantErr: "could not extract KIWI version"},
+		"other tool":         {output: "Python 3.14.0", wantErr: "could not extract KIWI version"},
+		"malformed":          {output: "KIWI (next generation) version unknown", wantErr: "could not parse KIWI version"},
+		"sudo warning": {
+			output: "KIWI (next generation) version 11.1.3", stderr: "sudo: unable to resolve host builder",
+		},
+		"surrounding output": {
+			output: "notice\nKIWI (next generation) version 11.1.3\nanother notice",
+		},
+		"stderr banner with warning": {
+			stderr: "sudo: unable to resolve host builder\nKIWI (next generation) version 11.1.3\n",
+		},
+		"CRLF banner": {output: "notice\r\nKIWI (next generation) version 11.1.3\r\n"},
+		"embedded banner": {
+			output: "not KIWI (next generation) version 11.1.3", wantErr: "could not extract KIWI version",
+		},
+		"trailing banner text": {
+			output: "KIWI (next generation) version 11.1.3 unknown", wantErr: "could not extract KIWI version",
+		},
+		"failure": {
+			stderr: "broken installation", probeErr: probeErr, wantErr: "broken installation", wantProbeErr: true,
+		},
+		"supported exit one": {
+			output: "KIWI (next generation) version 11.1.3", probeErr: versionProbeExitError(1),
+		},
+		"unsupported exit one": {
+			output: "KIWI (next generation) version 10.3.11", probeErr: versionProbeExitError(1),
+			wantErr: "install KIWI 11.0.0 or newer",
+		},
+		"authentication failure": {
+			stderr: "sudo: a password is required", probeErr: versionProbeExitError(1), wantErr: "via sudo", wantProbeErr: true,
+		},
+		"other exit status": {
+			output:   "KIWI (next generation) version 11.1.3",
+			probeErr: versionProbeExitError(2), wantErr: "via sudo", wantProbeErr: true,
+		},
+		"cancelled": {
+			output:   "KIWI (next generation) version 11.1.3",
+			probeErr: context.Canceled, wantErr: "via sudo", wantProbeErr: true,
+		},
+		"exit one with diagnostics": {
+			output: "KIWI (next generation) version 11.1.3", stderr: "initialization failed",
+			probeErr: versionProbeExitError(1),
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := testctx.NewCtx()
+			for _, tool := range []string{"sudo", kiwi.KiwiBinary, "sgdisk"} {
+				ctx.CmdFactory.RegisterCommandInSearchPath(tool)
+			}
+
+			probes := 0
+			ctx.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				probes++
+
+				assert.Equal(t, []string{"sudo", kiwi.KiwiBinary, "--version"}, cmd.Args)
+				assert.Same(t, os.Stdin, cmd.Stdin)
+				assert.NotNil(t, cmd.Cancel)
+				assert.Equal(t, time.Second, cmd.WaitDelay)
+				_, err := fmt.Fprint(cmd.Stderr, testCase.stderr)
+				require.NoError(t, err)
+
+				return testCase.output, testCase.probeErr
+			}
+
+			err := kiwi.CheckPrerequisites(ctx)
+			if testCase.wantErr == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, testCase.wantErr)
+				require.ErrorContains(t, err, "kiwi prerequisite check failed")
+			}
+
+			if testCase.wantProbeErr {
+				require.ErrorIs(t, err, testCase.probeErr)
+				require.ErrorContains(t, err, "via sudo")
+				require.ErrorContains(t, err, "including authentication")
+			}
+
+			assert.Equal(t, 1, probes)
+		})
+	}
 }
 
 func TestParseResult(t *testing.T) {

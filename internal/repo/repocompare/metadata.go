@@ -36,12 +36,15 @@ type Repository struct {
 
 // Package identifies one package in RPM primary metadata.
 type Package struct {
-	Name    string
-	Epoch   string
-	Version string
-	Release string
-	Arch    string
-	Kind    projectconfig.SubrepoKind
+	Name         string
+	Epoch        string
+	Version      string
+	Release      string
+	Arch         string
+	Kind         projectconfig.SubrepoKind
+	ChecksumType string
+	Checksum     string
+	Size         int64
 }
 
 // Identity returns the stable key used to compare package inventories.
@@ -177,6 +180,15 @@ type primaryPackage struct {
 		Version string `xml:"ver,attr"`
 		Release string `xml:"rel,attr"`
 	} `xml:"version"`
+	Checksum xmlChecksum `xml:"checksum"`
+	Size     struct {
+		Package int64 `xml:"package,attr"`
+	} `xml:"size"`
+}
+
+type xmlChecksum struct {
+	Type  string `xml:"type,attr"`
+	Value string `xml:",chardata"`
 }
 
 type pendingRepository struct {
@@ -232,7 +244,7 @@ func LoadRepositories(
 			return nil, fmt.Errorf("loading primary metadata for repository %#q:\n%w", entry.repository.ID, err)
 		}
 
-		repositoryPackages, err := parsePrimary(data, entry.primary.Location.Href, entry.repository.Kind)
+		repositoryPackages, err := parsePrimary(data, entry.primary.Location.Href, entry.repository)
 		if err != nil {
 			return nil, fmt.Errorf("parsing primary metadata for repository %#q:\n%w", entry.repository.ID, err)
 		}
@@ -257,7 +269,7 @@ func findPrimary(data []repoMDData) (repoMDData, error) {
 	return repoMDData{}, errors.New("repomd contains no primary metadata")
 }
 
-func parsePrimary(data []byte, name string, kind projectconfig.SubrepoKind) ([]Package, error) {
+func parsePrimary(data []byte, name string, repository Repository) ([]Package, error) {
 	reader, closeReader, err := decompressedReader(bytes.NewReader(data), name)
 	if err != nil {
 		return nil, err
@@ -292,12 +304,15 @@ func parsePrimary(data []byte, name string, kind projectconfig.SubrepoKind) ([]P
 		}
 
 		packages = append(packages, Package{
-			Name:    raw.Name,
-			Epoch:   normalizedEpoch(raw.Version.Epoch),
-			Version: raw.Version.Version,
-			Release: raw.Version.Release,
-			Arch:    raw.Arch,
-			Kind:    kind,
+			Name:         raw.Name,
+			Epoch:        normalizedEpoch(raw.Version.Epoch),
+			Version:      raw.Version.Version,
+			Release:      raw.Version.Release,
+			Arch:         raw.Arch,
+			Kind:         repository.Kind,
+			ChecksumType: raw.Checksum.Type,
+			Checksum:     strings.TrimSpace(raw.Checksum.Value),
+			Size:         raw.Size.Package,
 		})
 	}
 

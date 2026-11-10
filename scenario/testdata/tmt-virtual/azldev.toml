@@ -1,0 +1,16 @@
+[project]
+description = 'TMT virtual provisioning regression fixture'
+default-distro = { name = 'azurelinux', version = '4.0' }
+log-dir = 'build/logs'
+work-dir = 'build/work'
+output-dir = 'out'
+
+[distros.azurelinux]
+default-version = '4.0'
+
+[distros.azurelinux.versions.'4.0']
+release-ver = '4.0'
+
+[components.azldev-tmt-probe.spec]
+type = 'local'
+path = 'azldev-tmt-probe.spec'

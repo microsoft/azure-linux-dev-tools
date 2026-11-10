@@ -1,0 +1,10 @@
+summary: Verify Azure Linux virtual component testing
+discover:
+  how: fmf
+provision:
+  how: virtual
+  connection: session
+  user: azureuser
+  become: true
+execute:
+  how: tmt

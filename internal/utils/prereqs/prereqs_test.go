@@ -4,6 +4,7 @@
 package prereqs_test
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"testing"
@@ -21,9 +22,7 @@ import (
 func newTestCtx() *testctx.TestCtx {
 	ctx := testctx.NewCtx()
 
-	// We set dry-run mode to avoid actually executing commands.
-	// This is necessary because the [prereqs] package doesn't call through
-	// the [opctx] package to execute commands.
+	// Most prerequisite tests exercise dry-run acquisition without installing packages.
 	ctx.DryRunValue = true
 
 	return ctx
@@ -85,6 +84,91 @@ func TestRequireExecutable_Existent(t *testing.T) {
 
 	err := prereqs.RequireExecutable(ctx, testProgramName, nil)
 	require.NoError(t, err)
+}
+
+func TestRequireExecutableVersionCheck(t *testing.T) {
+	checkErr := errors.New("unsupported version")
+
+	for name, testCase := range map[string]struct {
+		missing bool
+		dryRun  bool
+		nilHook bool
+		fail    bool
+	}{
+		"installed":              {},
+		"installed error":        {fail: true},
+		"installed without hook": {nilHook: true},
+		"installed dry run":      {dryRun: true},
+		"post-install":           {missing: true},
+		"post-install error":     {missing: true, fail: true},
+		"post-install no hook":   {missing: true, nilHook: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := testctx.NewCtx()
+			ctx.DryRunValue = testCase.dryRun
+
+			ctx.AllPromptsAcceptedValue = true
+			if !testCase.missing {
+				ctx.CmdFactory.RegisterCommandInSearchPath("tool")
+			}
+
+			setupOSReleaseFile(t, ctx, prereqs.OSIDFedora)
+
+			installs, checks := 0, 0
+			ctx.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+				installs++
+
+				assert.Contains(t, cmd.Args, "tool-package")
+				ctx.CmdFactory.RegisterCommandInSearchPath("tool")
+
+				return nil
+			}
+			ctx.CmdFactory.RunAndGetOutputHandler = func(*exec.Cmd) (string, error) {
+				t.Fatal("unexpected version probe")
+
+				return "", nil
+			}
+
+			prereq := &prereqs.PackagePrereq{FedoraPackages: []string{"tool-package"}}
+			if !testCase.nilHook {
+				prereq.VersionCheck = func(checkCtx opctx.Ctx) error {
+					checks++
+
+					assert.Same(t, ctx, checkCtx)
+					assert.True(t, checkCtx.CommandInSearchPath("tool"))
+
+					if testCase.missing {
+						assert.Equal(t, 1, installs)
+					}
+
+					if testCase.fail {
+						return checkErr
+					}
+
+					return nil
+				}
+			}
+
+			err := prereqs.RequireExecutable(ctx, "tool", prereq)
+			if testCase.fail {
+				require.ErrorIs(t, err, checkErr)
+			} else {
+				require.NoError(t, err)
+			}
+
+			if testCase.nilHook || testCase.dryRun {
+				assert.Zero(t, checks)
+			} else {
+				assert.Equal(t, 1, checks)
+			}
+
+			if testCase.missing {
+				assert.Equal(t, 1, installs)
+			} else {
+				assert.Zero(t, installs)
+			}
+		})
+	}
 }
 
 func TestRequireAzureLinux4(t *testing.T) {

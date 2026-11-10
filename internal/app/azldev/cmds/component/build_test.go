@@ -29,6 +29,11 @@ func TestNewBuildCommand(t *testing.T) {
 	assert.Equal(t, "false", withoutGitFlag.DefValue, "dist-git flow should be enabled by default")
 	assert.Contains(t, withoutGitFlag.Usage, "dist-git")
 
+	rpmDevBumpspecFlag := cmd.Flags().Lookup("rpmdev-bumpspec")
+	require.NotNil(t, rpmDevBumpspecFlag)
+	assert.Equal(t, "false", rpmDevBumpspecFlag.DefValue)
+	assert.Equal(t, "Use rpmdev-bumpspec instead of the legacy static release calculation", rpmDevBumpspecFlag.Usage)
+
 	// Legacy --with-git flag must NOT exist.
 	withGitFlag := cmd.Flags().Lookup("with-git")
 	assert.Nil(t, withGitFlag, "--with-git flag must not be registered")
@@ -76,6 +81,15 @@ func TestValidateBuildOptions_SRPMOnlyWithPublish(t *testing.T) {
 		t, err.Error(),
 		"if any flags in the group [srpm-only local-repo-with-publish] are set none of the others can be",
 	)
+}
+
+func TestValidateBuildOptions_RPMDevBumpspecWithoutGit(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+	_, err := componentcmds.SelectAndBuildComponents(testEnv.Env, &componentcmds.ComponentBuildOptions{
+		RPMDevBumpspec: true,
+		WithoutGitRepo: true,
+	})
+	require.EqualError(t, err, "'--rpmdev-bumpspec' cannot be used with '--without-git'")
 }
 
 func TestValidateBuildOptions_PathOverlap(t *testing.T) {

@@ -80,6 +80,15 @@ func TestSkillDocumentUnknown(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestImageSkillDependencyGuidance(t *testing.T) {
+	for _, withoutLockfile := range []bool{false, true} {
+		doc, err := agentskill.NewCatalog(withoutLockfile).SkillDocument("azldev-image", testParams())
+		require.NoError(t, err)
+		assert.Contains(t, doc, "Use KIWI 11.0.0 or newer")
+		assert.Contains(t, doc, "does not automatically change installed tool versions")
+	}
+}
+
 func TestOverlayMetadataSkillDocument(t *testing.T) {
 	params := testParams()
 	params.Bindings = agentskill.Bindings{RenderedSpecsDir: "build/specs"}
@@ -132,6 +141,37 @@ func TestImageSkillDocumentsArchitecturesField(t *testing.T) {
 
 	assert.Contains(t, doc, "architectures = ")
 	assert.Contains(t, doc, "unrestricted")
+}
+
+func TestBuildComponentSkillDocumentsRPMDevBumpspecPreview(t *testing.T) {
+	doc, err := agentskill.SkillDocument("azldev-build-component", testParams())
+	require.NoError(t, err)
+	assert.Contains(t, doc, "non-standard `Release` tag")
+	assert.Contains(t, doc, "temporary `--rpmdev-bumpspec` preview")
+	assert.Contains(t, doc, "`rpmdev-packager`, `rpm`, `rpmspec`,\n   `python3`, or the Python RPM module")
+	assert.Contains(t, doc, "Without the flag, azldev keeps the legacy static Release calculation.")
+	assert.NotContains(t, doc, "rpmdev-bumpspec` or RPM macros")
+}
+
+func TestComponentTomlSkillDocumentsRPMDevBumpspecPreview(t *testing.T) {
+	doc, err := agentskill.SkillDocument("azldev-comp-toml", testParams())
+	require.NoError(t, err)
+	assert.Contains(t, doc, "The temporary `--rpmdev-bumpspec` flag")
+	assert.Contains(t, doc, "no bumpspec runtime discovery occurs")
+}
+
+func TestImageSkillDocumentsSKUGroupGuidance(t *testing.T) {
+	doc, err := agentskill.SkillDocument("azldev-image", testParams())
+	require.NoError(t, err)
+
+	fields := parseFrontmatter(t, doc)
+	assert.Equal(t, "azldev-image", fields["name"])
+	assert.Contains(t, doc, "sku-groups = ")
+	assert.Contains(t, doc, "[sku-groups.<name>]")
+	assert.Contains(t, doc, "multi-SKU performance tests")
+	assert.Contains(t, strings.Join(strings.Fields(doc), " "),
+		"Combine `--image-path` with `--format` to specify the disk format; "+
+			"otherwise it is inferred from the filename extension.")
 }
 
 func TestSkillFrontmatterInvariants(t *testing.T) {
@@ -480,6 +520,31 @@ func TestOverlayMetadataSkillCoversSchemaEnums(t *testing.T) {
 				schemaField.structType.Name(), schemaField.fieldName, value)
 		}
 	}
+}
+
+// TestImageSkillCoversCapabilities is a drift guard: the azldev-image skill must
+// document every boolean capability and the extensible properties bag.
+func TestImageSkillCoversCapabilities(t *testing.T) {
+	doc, err := agentskill.SkillDocument("azldev-image", agentskill.Params{})
+	require.NoError(t, err)
+
+	capabilitiesType := reflect.TypeOf(projectconfig.ImageCapabilities{})
+	boolPointerType := reflect.TypeOf((*bool)(nil))
+
+	for i := range capabilitiesType.NumField() {
+		field := capabilitiesType.Field(i)
+		if field.Type != boolPointerType {
+			continue
+		}
+
+		tomlName, _, _ := strings.Cut(field.Tag.Get("toml"), ",")
+		require.NotEmptyf(t, tomlName, "expected TOML name for ImageCapabilities.%s", field.Name)
+		assert.Containsf(t, doc, "`"+tomlName+"`",
+			"azldev-image skill must document boolean capability %q", tomlName)
+	}
+
+	assert.Contains(t, doc, "`properties`")
+	assert.Contains(t, doc, "openssl-fips-provider")
 }
 
 // TestCatalog_SkillsByMode verifies that each mode advertises the skill describing

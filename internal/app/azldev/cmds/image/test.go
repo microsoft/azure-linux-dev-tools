@@ -11,10 +11,12 @@ import (
 	"strings"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
-	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/imagebuilder"
+	"github.com/microsoft/azure-linux-dev-tools/internal/lisa"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/pytest"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
-	"github.com/pelletier/go-toml/v2"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/imageformat"
 	"github.com/spf13/cobra"
 )
 
@@ -148,8 +150,9 @@ func runImageTest(env *azldev.Env, options *ImageTestOptions) error {
 }
 
 func prepareImageTest(env *azldev.Env, options *ImageTestOptions) (*projectconfig.ImageConfig, error) {
-	imageConfig, err := ResolveImageByName(env, options.ImageName)
+	imageConfig, err := imagebuilder.ResolveImageByName(env, options.ImageName)
 	if err != nil {
+		//nolint:wrapcheck // Preserve the existing command-facing error unchanged.
 		return nil, err
 	}
 
@@ -158,7 +161,7 @@ func prepareImageTest(env *azldev.Env, options *ImageTestOptions) (*projectconfi
 		return nil, err
 	}
 
-	if err := validateFileExists(env.FS(), imagePath); err != nil {
+	if err := fileutils.ValidateFileExists(env.FS(), imagePath); err != nil {
 		return nil, fmt.Errorf("image path:\n%w", err)
 	}
 
@@ -181,7 +184,7 @@ func resolveImageTestPath(env *azldev.Env, options *ImageTestOptions) (string, e
 		return options.ImagePath, nil
 	}
 
-	imagePath, _, err := findImageArtifact(env, options.ImageName, "", AllImageFormats())
+	imagePath, _, err := findImageArtifact(env, options.ImageName, "", imageformat.All())
 	if err != nil {
 		return "", err
 	}
@@ -251,15 +254,20 @@ func runResolvedTest(
 ) error {
 	switch resolvedTest.Definition.Type {
 	case string(projectconfig.TestTypePytest):
-		suiteConfig, err := testDefinitionToSuiteConfig(resolvedTest)
-		if err != nil {
-			return err
-		}
-
-		return RunPytestSuite(env, suiteConfig, imageConfig, options)
+		//nolint:wrapcheck // Preserve the existing command-facing error unchanged.
+		return pytest.RunTestDefinition(env, resolvedTest, imageConfig, &pytest.Options{
+			ImageName:    options.ImageName,
+			ImagePath:    options.ImagePath,
+			JUnitXMLPath: options.JUnitXMLPath,
+		})
 
 	case string(projectconfig.TestTypeLisa):
-		return RunLisaTestDefinition(env, resolvedTest, imageConfig, options)
+		//nolint:wrapcheck // Preserve the existing command-facing diagnostic unchanged.
+		return lisa.RunTestDefinition(env, resolvedTest, imageConfig, &lisa.Options{
+			ImageName: options.ImageName,
+			ImagePath: options.ImagePath,
+			LisaDir:   options.LisaDir,
+		})
 
 	case "tmt":
 		return fmt.Errorf(
@@ -271,69 +279,4 @@ func runResolvedTest(
 	default:
 		return fmt.Errorf("unsupported test type %#q for test %#q", resolvedTest.Definition.Type, resolvedTest.Name)
 	}
-}
-
-func testDefinitionToSuiteConfig(resolvedTest projectconfig.ResolvedTest) (*projectconfig.TestSuiteConfig, error) {
-	pytestConfig, err := decodePytestConfig(resolvedTest.Definition.Pytest)
-	if err != nil {
-		return nil, fmt.Errorf("decode pytest config for test %#q:\n%w", resolvedTest.Name, err)
-	}
-
-	// The stored config keeps 'working-dir' as authored; resolve it relative to
-	// the defining config file's directory only here, for execution.
-	pytestConfig.WorkingDir = resolvedTest.Definition.PytestWorkingDir()
-
-	suiteConfig := &projectconfig.TestSuiteConfig{
-		Name:        resolvedTest.Name,
-		Description: resolvedTest.Definition.Description,
-		Type:        projectconfig.TestTypePytest,
-		Pytest:      pytestConfig,
-	}
-
-	if err := suiteConfig.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid pytest test %#q:\n%w", resolvedTest.Name, err)
-	}
-
-	return suiteConfig, nil
-}
-
-func decodePytestConfig(raw map[string]any) (*projectconfig.PytestConfig, error) {
-	if raw == nil {
-		return nil, errors.New("missing [pytest] subtable")
-	}
-
-	bytes, err := toml.Marshal(raw)
-	if err != nil {
-		return nil, fmt.Errorf("marshal pytest config:\n%w", err)
-	}
-
-	pytestConfig := &projectconfig.PytestConfig{}
-	if err := toml.Unmarshal(bytes, pytestConfig); err != nil {
-		return nil, fmt.Errorf("unmarshal pytest config:\n%w", err)
-	}
-
-	return pytestConfig, nil
-}
-
-// validateFileExists returns an error if the path does not point to an existing regular file.
-func validateFileExists(fs opctx.FS, path string) error {
-	isDir, err := fileutils.DirExists(fs, path)
-	if err != nil {
-		return fmt.Errorf("cannot access %#q:\n%w", path, err)
-	}
-
-	if isDir {
-		return fmt.Errorf("%#q is a directory, expected a file", path)
-	}
-
-	exists, err := fileutils.Exists(fs, path)
-	if err != nil {
-		return fmt.Errorf("cannot access %#q:\n%w", path, err)
-	}
-
-	if !exists {
-		return fmt.Errorf("file not found: %#q", path)
-	}
-
-	return nil
 }

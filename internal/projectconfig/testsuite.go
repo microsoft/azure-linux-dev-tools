@@ -19,11 +19,36 @@ const (
 	TestTypeLisa TestType = "lisa"
 )
 
+const (
+	// ImagePlaceholder is the placeholder token for the image path.
+	ImagePlaceholder = "{image-path}"
+	// ImageNamePlaceholder is the placeholder token for the image name.
+	ImageNamePlaceholder = "{image-name}"
+	// CapabilitiesPlaceholder is the placeholder token for the comma-delimited capabilities.
+	CapabilitiesPlaceholder = "{capabilities}"
+	// PropertiesPlaceholder is the placeholder token for the JSON-encoded image properties.
+	PropertiesPlaceholder = "{properties}"
+)
+
 var (
 	// ErrDuplicateTests is returned when duplicate conflicting [tests] entries are found.
 	ErrDuplicateTests = errors.New("duplicate test")
 	// ErrDuplicateTestGroups is returned when duplicate conflicting [test-groups] entries are found.
 	ErrDuplicateTestGroups = errors.New("duplicate test group")
+	// ErrDuplicateSKUGroups is returned when duplicate conflicting [sku-groups] entries are found.
+	ErrDuplicateSKUGroups = errors.New("duplicate SKU group")
+	// ErrInvalidSKUGroup is returned when a SKU group contains invalid VM sizes.
+	ErrInvalidSKUGroup = errors.New("invalid SKU group")
+	// ErrUndefinedSKUGroup is returned when an image references a missing SKU group.
+	ErrUndefinedSKUGroup = errors.New("undefined SKU group reference")
+	// ErrSKUGroupArchMismatch is returned when an arch-restricted image references a
+	// SKU group whose architecture the image does not support.
+	ErrSKUGroupArchMismatch = errors.New("SKU group architecture not supported by image")
+	// ErrSKUGroupNotAllowed is returned when 'sku-groups' is set on a test reference
+	// outside an image's tests; it only applies to image test fan-out.
+	ErrSKUGroupNotAllowed = errors.New("sku-groups not allowed outside image test references")
+	// ErrDuplicateVMSKU is returned when duplicate conflicting [vm-skus] entries are found.
+	ErrDuplicateVMSKU = errors.New("duplicate VM SKU")
 	// ErrUnknownTestType is returned for unrecognized test types.
 	ErrUnknownTestType = errors.New("unknown test type")
 	// ErrMissingTestField is returned when a required test config field is missing.
@@ -104,9 +129,9 @@ type PytestConfig struct {
 	TestPaths []string `toml:"test-paths,omitempty" json:"testPaths,omitempty" jsonschema:"title=Test paths,description=Test file paths or directories passed to pytest. Glob patterns are expanded."`
 
 	// ExtraArgs is the list of additional arguments to pass to pytest. These are passed
-	// verbatim after placeholder substitution. Use {image-path} as a placeholder for the
-	// image path, which will be substituted at runtime.
-	ExtraArgs []string `toml:"extra-args,omitempty" json:"extraArgs,omitempty" jsonschema:"title=Extra arguments,description=Additional arguments passed to pytest. Use {image-path} as a placeholder for the image path."`
+	// verbatim after placeholder substitution. Supports {image-path}, {image-name},
+	// {capabilities}, and {properties} placeholders.
+	ExtraArgs []string `toml:"extra-args,omitempty" json:"extraArgs,omitempty" jsonschema:"title=Extra arguments,description=Additional arguments passed to pytest. Supports {image-path} {image-name} {capabilities} {properties} placeholders."`
 
 	// Install specifies how Python dependencies are installed into the venv before running
 	// pytest. Defaults to "none" (no install) when not specified.
@@ -134,8 +159,8 @@ type LisaConfig struct {
 
 	// ExtraArgs is the list of additional arguments to pass to LISA. These are passed
 	// verbatim after placeholder substitution. Supports {image-path}, {image-name},
-	// and {capabilities} placeholders.
-	ExtraArgs []string `toml:"extra-args,omitempty" json:"extraArgs,omitempty" jsonschema:"title=Extra arguments,description=Additional arguments passed to LISA. Supports {image-path} {image-name} {capabilities} placeholders."`
+	// {capabilities}, and {properties} placeholders.
+	ExtraArgs []string `toml:"extra-args,omitempty" json:"extraArgs,omitempty" jsonschema:"title=Extra arguments,description=Additional arguments passed to LISA. Supports {image-path} {image-name} {capabilities} {properties} placeholders."`
 }
 
 // GitSourceConfig identifies a git repository at a specific commit.

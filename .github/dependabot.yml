@@ -92,3 +92,29 @@ updates:
         applies-to: version-updates
         patterns:
           - "*"
+
+  # Scenario container base images
+  - package-ecosystem: "docker"
+    directory: "/scenario/docker"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      dependabot-docker-scenario:
+        applies-to: version-updates
+        patterns:
+          - "*"
+
+  # TMT component-test runtime
+  - package-ecosystem: "pip"
+    directory: "/internal/tmt"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      dependabot-tmt:
+        applies-to: version-updates
+        patterns:
+          - "*"

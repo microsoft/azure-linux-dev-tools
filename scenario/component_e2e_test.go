@@ -219,6 +219,6 @@ func TestAzureLinuxComponentRenderIsIdempotent(t *testing.T) {
 	}
 
 	runAzureLinuxIdempotencyTest(t,
-		[]string{"component", "render", "-a", "--clean-stale"},
+		[]string{"component", "render", "--quiet", "-a", "--clean-stale"},
 		true)
 }

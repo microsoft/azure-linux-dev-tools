@@ -13,6 +13,49 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestResolveDiskSource_ImagePath(t *testing.T) {
+	tests := []struct {
+		name       string
+		path       string
+		format     ImageFormat
+		wantFormat string
+		wantError  string
+	}{
+		{name: "explicit raw", path: "/image.raw", format: ImageFormatRaw, wantFormat: "raw"},
+		{name: "explicit qcow2", path: "/image.qcow2", format: ImageFormatQcow2, wantFormat: "qcow2"},
+		{name: "explicit vhd", path: "/image.vhd", format: ImageFormatVhd, wantFormat: "vhd"},
+		{name: "explicit vhdx", path: "/image.vhdx", format: ImageFormatVhdx, wantFormat: "vhdx"},
+		{name: "override extension", path: "/image.qcow2", format: ImageFormatRaw, wantFormat: "raw"},
+		{name: "no extension", path: "/image", format: ImageFormatQcow2, wantFormat: "qcow2"},
+		{name: "unknown extension", path: "/image.disk", format: ImageFormatRaw, wantFormat: "raw"},
+		{name: "infer raw", path: "/image.raw", wantFormat: "raw"},
+		{name: "infer qcow2", path: "/image.qcow2", wantFormat: "qcow2"},
+		{name: "infer vhd", path: "/image.vhdfixed", wantFormat: "vhd"},
+		{name: "infer vhdx", path: "/image.vhdx", wantFormat: "vhdx"},
+		{name: "missing format", path: "/image", wantError: "no file extension"},
+		{name: "unknown format", path: "/image.disk", wantError: "unsupported image format"},
+		{name: "non-bootable format", path: "/image.oci.tar", wantError: "not bootable"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			testEnv := testutils.NewTestEnv(t)
+			options := &ImageBootOptions{ImagePath: test.path, Format: test.format}
+
+			path, format, err := resolveDiskSource(testEnv.Env, options)
+			if test.wantError != "" {
+				require.ErrorContains(t, err, test.wantError)
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, test.path, path)
+			assert.Equal(t, test.wantFormat, format)
+		})
+	}
+}
+
 func TestShouldBuildCloudInit(t *testing.T) {
 	tests := []struct {
 		name             string

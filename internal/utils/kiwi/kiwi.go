@@ -5,6 +5,7 @@
 package kiwi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,9 +15,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/brunoga/deep"
+	"github.com/hashicorp/go-version"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/prereqs"
@@ -26,6 +30,8 @@ import (
 const (
 	// KiwiBinary is the name of the kiwi executable.
 	KiwiBinary = "kiwi"
+
+	minimumKiwiVersion = "11.0.0"
 
 	// ResultFilename is the name of the JSON result file that kiwi-ng produces.
 	ResultFilename = "kiwi.result.json"
@@ -449,6 +455,62 @@ func enhanceKiwiError(err error) error {
 	return fmt.Errorf("kiwi build failed:\n%w", err)
 }
 
+var kiwiVersionPattern = regexp.MustCompile(`(?m)^KIWI \(next generation\) version (\S+)[ \t]*\r?$`)
+
+func checkKiwiVersion(ctx opctx.Ctx) error {
+	const versionProbeTimeout = 10 * time.Second
+
+	probeCtx, cancel := context.WithTimeout(ctx, versionProbeTimeout)
+	defer cancel()
+
+	// Match the build's sudo PATH resolution, allowing sudo to authenticate.
+	raw := exec.CommandContext(probeCtx, "sudo", KiwiBinary, "--version")
+	raw.Stdin = os.Stdin
+	raw.WaitDelay = time.Second
+
+	var stderr bytes.Buffer
+
+	raw.Stderr = &stderr
+
+	cmd, err := ctx.Command(raw)
+	if err != nil {
+		return fmt.Errorf("failed to prepare KIWI version probe:\n%w", err)
+	}
+
+	output, err := cmd.RunAndGetOutput(probeCtx)
+	output = strings.TrimSpace(output + "\n" + stderr.String())
+	matches := kiwiVersionPattern.FindStringSubmatch(output)
+
+	if err != nil {
+		var exitErr interface{ ExitCode() int }
+
+		// Some KIWI installations print the version successfully but exit with status 1.
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 || len(matches) == 0 || probeCtx.Err() != nil {
+			return fmt.Errorf("failed to query KIWI version via sudo (time limit %s including authentication; stderr: %s):\n%w",
+				versionProbeTimeout, stderr.String(), err)
+		}
+	}
+
+	if len(matches) == 0 {
+		return fmt.Errorf("could not extract KIWI version from output %#q", output)
+	}
+
+	current, err := version.NewVersion(matches[1])
+	if err != nil {
+		return fmt.Errorf("could not parse KIWI version %#q:\n%w", matches[1], err)
+	}
+
+	// KIWI 11 replaced lists with mappings in runtime config.
+	// https://github.com/OSInside/kiwi/commit/ff9f584a6445f7267cfd84f2fda34abb5721be84
+	minimum := version.Must(version.NewVersion(minimumKiwiVersion))
+	if current.LessThan(minimum) {
+		return fmt.Errorf("installed KIWI version %s is not supported; install KIWI %s or newer; "+
+			"this azldev release requires KIWI 11's runtime configuration format", current.Original(), minimum)
+	}
+
+	return nil
+}
+
 // CheckPrerequisites verifies that required tools are available for running kiwi-ng.
 // This checks for sudo, kiwi, and sgdisk (used by kiwi for disk partitioning).
 func CheckPrerequisites(ctx opctx.Ctx) error {
@@ -458,6 +520,7 @@ func CheckPrerequisites(ctx opctx.Ctx) error {
 
 	if err := prereqs.RequireExecutable(ctx, KiwiBinary, &prereqs.PackagePrereq{
 		FedoraPackages: []string{"kiwi-cli"},
+		VersionCheck:   checkKiwiVersion,
 	}); err != nil {
 		return fmt.Errorf("kiwi prerequisite check failed:\n%w", err)
 	}

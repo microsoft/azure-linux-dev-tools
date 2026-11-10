@@ -4,6 +4,7 @@
 package projectconfig
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 
@@ -24,6 +25,38 @@ func SupportedImageArchitectures() []string {
 	return []string{ImageArchitectureX86_64, ImageArchitectureAarch64}
 }
 
+// SKUArchForImageArchitecture maps an image architecture name (x86_64/aarch64)
+// to its SKU-group architecture token (amd64/arm64). It is one half of the
+// single source of truth bridging the two architecture naming conventions in the
+// config: image builders use the kernel uname names while SKU groups use the
+// Azure/Go GOARCH tokens. Keep it in sync with ImageArchitectureForSKUArch,
+// SupportedImageArchitectures, and the SKUArch* constants. found is false when
+// imageArch is not a recognized image architecture.
+func SKUArchForImageArchitecture(imageArch string) (skuArch string, found bool) {
+	switch imageArch {
+	case ImageArchitectureX86_64:
+		return SKUArchAMD64, true
+	case ImageArchitectureAarch64:
+		return SKUArchARM64, true
+	default:
+		return "", false
+	}
+}
+
+// ImageArchitectureForSKUArch maps a SKU-group architecture token (amd64/arm64)
+// to its image architecture name (x86_64/aarch64). found is false when skuArch
+// is not a recognized SKU architecture.
+func ImageArchitectureForSKUArch(skuArch string) (imageArch string, found bool) {
+	switch skuArch {
+	case SKUArchAMD64:
+		return ImageArchitectureX86_64, true
+	case SKUArchARM64:
+		return ImageArchitectureAarch64, true
+	default:
+		return "", false
+	}
+}
+
 // Defines an image.
 type ImageConfig struct {
 	// The image's name; not actually present in serialized TOML files.
@@ -39,8 +72,8 @@ type ImageConfig struct {
 	// Where to find its definition.
 	Definition ImageDefinition `toml:"definition,omitempty" json:"definition,omitempty" jsonschema:"title=Definition,description=Identifies where to find the definition for this image"`
 
-	// Capabilities describes the features and properties of this image.
-	Capabilities ImageCapabilities `toml:"capabilities,omitempty" json:"capabilities,omitempty" jsonschema:"title=Capabilities,description=Features and properties of this image"`
+	// Capabilities describes the features supported by this image.
+	Capabilities ImageCapabilities `toml:"capabilities,omitempty" json:"capabilities,omitempty" jsonschema:"title=Capabilities,description=Features supported by this image"`
 
 	// Tests holds the test configuration for this image, including which test suites
 	// apply to it.
@@ -54,6 +87,24 @@ type ImageConfig struct {
 	// architectures azldev recognizes), preserving compatibility with
 	// images.toml files written before this field existed.
 	Architectures []string `toml:"architectures,omitempty" json:"architectures,omitempty" jsonschema:"title=Architectures,description=Architectures supported by this image (optional; unset means unrestricted),enum=x86_64,enum=aarch64"`
+
+	// Properties holds extensible string metadata describing the image.
+	Properties map[string]string `toml:"properties,omitempty" json:"properties,omitempty" jsonschema:"title=Properties,description=Extensible string properties describing this image"`
+}
+
+// PropertiesJSON encodes the image property bag for test arguments and listings.
+func (i *ImageConfig) PropertiesJSON() (string, error) {
+	properties := i.Properties
+	if properties == nil {
+		properties = map[string]string{}
+	}
+
+	serialized, err := json.Marshal(properties)
+	if err != nil {
+		return "", fmt.Errorf("failed to serialize image properties:\n%w", err)
+	}
+
+	return string(serialized), nil
 }
 
 // SupportsArchitecture reports whether the image supports arch. An image with no
@@ -80,10 +131,9 @@ type ImagePublishConfig struct {
 	Channels []string `toml:"channels,omitempty" json:"channels,omitempty" validate:"dive,required,ne=.,ne=..,excludesall=/\\" jsonschema:"title=Channels,description=List of publish channels for this image"`
 }
 
-// ImageCapabilities describes the features and properties of an image. Boolean fields
-// use *bool to distinguish "explicitly true", "explicitly false", and "unspecified"
-// (nil). This tristate enables correct merge semantics (unspecified inherits, false
-// overrides) and detection of underspecification.
+// ImageCapabilities describes the features supported by an image. Pointer fields
+// distinguish explicit values from unspecified values so configuration merging can
+// preserve inheritance and explicit overrides.
 type ImageCapabilities struct {
 	// MachineBootable indicates whether the image can be booted on a machine (bare metal,
 	// VM, etc.). Images that lack a kernel are not machine-bootable.
@@ -272,6 +322,7 @@ func (i *ImageConfig) WithAbsolutePaths(referenceDir string) *ImageConfig {
 		Tests:            deep.MustCopy(i.Tests),
 		Publish:          deep.MustCopy(i.Publish),
 		Architectures:    deep.MustCopy(i.Architectures),
+		Properties:       deep.MustCopy(i.Properties),
 	}
 
 	// Fix up paths.

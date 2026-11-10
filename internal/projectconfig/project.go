@@ -51,6 +51,12 @@ type ProjectConfig struct {
 	// Definitions of named test groups.
 	TestGroups map[string]TestGroup `toml:"test-groups,omitempty" json:"testGroups,omitempty" jsonschema:"title=Test Groups,description=Mapping of test group names to configurations"`
 
+	// Definitions of named Azure VM size groups for external test orchestration.
+	SKUGroups map[string]SKUGroup `toml:"sku-groups,omitempty" json:"skuGroups,omitempty" jsonschema:"title=SKU Groups,description=Mapping of SKU group names to Azure VM size lists"`
+
+	// Metadata keyed by Azure VM size for external test parameter resolution.
+	VMSKUs map[string]map[string]any `toml:"vm-skus,omitempty" json:"vmSkus,omitempty" jsonschema:"title=VM SKUs,description=Per-VM-size metadata used for test parameter resolution"`
+
 	// Root config file path; not serialized.
 	RootConfigFilePath string `toml:"-" json:"-"`
 	// Map from component names to groups they belong to; not serialized.
@@ -70,6 +76,8 @@ func NewProjectConfig() ProjectConfig {
 		PackageGroups:     make(map[string]PackageGroupConfig),
 		Tests:             make(map[string]TestDefinition),
 		TestGroups:        make(map[string]TestGroup),
+		SKUGroups:         make(map[string]SKUGroup),
+		VMSKUs:            make(map[string]map[string]any),
 	}
 }
 
@@ -105,11 +113,7 @@ func (cfg *ProjectConfig) validate(withoutLockfile bool) error {
 		return err
 	}
 
-	if err := validateImageCapabilities(cfg.Images); err != nil {
-		return err
-	}
-
-	if err := validateImageArchitectures(cfg.Images); err != nil {
+	if err := validateImages(cfg); err != nil {
 		return err
 	}
 
@@ -138,6 +142,119 @@ func (cfg *ProjectConfig) validate(withoutLockfile bool) error {
 
 	if err := validateDistroVersionInputs(cfg.Distros, &cfg.Resources, effectiveRepos); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+// validateImages runs the image-scoped validations: capabilities, architectures,
+// and SKU groups.
+func validateImages(cfg *ProjectConfig) error {
+	if err := validateImageCapabilities(cfg.Images); err != nil {
+		return err
+	}
+
+	if err := validateImageArchitectures(cfg.Images); err != nil {
+		return err
+	}
+
+	if err := validateSKUGroups(cfg.SKUGroups, cfg.Images); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func validateSKUGroups(
+	groups map[string]SKUGroup,
+	images map[string]ImageConfig,
+) error {
+	for groupName, group := range groups {
+		if err := validateSKUGroupDefinition(groupName, group); err != nil {
+			return err
+		}
+	}
+
+	for imageName, image := range images {
+		if image.Tests == nil {
+			continue
+		}
+
+		for _, ref := range image.Tests.Tests {
+			for _, skuGroup := range ref.SKUGroups {
+				if strings.TrimSpace(skuGroup) == "" {
+					return fmt.Errorf("%w: image %#q lists an empty or whitespace-only sku-group %#q",
+						ErrInvalidSKUGroup, imageName, skuGroup)
+				}
+
+				group, defined := groups[skuGroup]
+				if !defined {
+					return fmt.Errorf("%w %#q for image %#q", ErrUndefinedSKUGroup, skuGroup, imageName)
+				}
+
+				if err := checkSKUGroupArchMatchesImage(imageName, image, skuGroup, group); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// validateSKUGroupDefinition checks a single SKU group's arch and VM sizes.
+func validateSKUGroupDefinition(groupName string, group SKUGroup) error {
+	switch group.Arch {
+	case SKUArchAMD64, SKUArchARM64:
+	case "":
+		return fmt.Errorf("%w %#q: 'arch' is required (one of %#q, %#q)",
+			ErrInvalidSKUGroup, groupName, SKUArchAMD64, SKUArchARM64)
+	default:
+		return fmt.Errorf("%w %#q: invalid arch %#q (must be %#q or %#q)",
+			ErrInvalidSKUGroup, groupName, group.Arch, SKUArchAMD64, SKUArchARM64)
+	}
+
+	if len(group.VMSizes) == 0 {
+		return fmt.Errorf("%w %#q: vm-sizes must contain at least one value", ErrInvalidSKUGroup, groupName)
+	}
+
+	seen := make(map[string]struct{}, len(group.VMSizes))
+	for _, vmSize := range group.VMSizes {
+		if trimmed := strings.TrimSpace(vmSize); vmSize != trimmed || trimmed == "" {
+			return fmt.Errorf("%w %#q: vm-sizes must contain non-empty values without surrounding whitespace",
+				ErrInvalidSKUGroup, groupName)
+		}
+
+		if _, ok := seen[vmSize]; ok {
+			return fmt.Errorf("%w %#q: duplicate VM size %#q", ErrInvalidSKUGroup, groupName, vmSize)
+		}
+
+		seen[vmSize] = struct{}{}
+	}
+
+	return nil
+}
+
+// checkSKUGroupArchMatchesImage ensures a SKU group referenced by an
+// arch-restricted image targets an architecture the image supports, mapping the
+// group's SKU arch token (amd64/arm64) to the image arch name (x86_64/aarch64).
+// Images with no declared architectures are unrestricted and skip the check.
+func checkSKUGroupArchMatchesImage(imageName string, image ImageConfig, groupName string, group SKUGroup) error {
+	if len(image.Architectures) == 0 {
+		return nil
+	}
+
+	imageArch, found := ImageArchitectureForSKUArch(group.Arch)
+	if !found {
+		// An unrecognized group.Arch is already rejected by the arch enum check above.
+		return nil
+	}
+
+	if !image.SupportsArchitecture(imageArch) {
+		return fmt.Errorf(
+			"%w: group %#q (%s/%s) referenced by image %#q which supports %v",
+			ErrSKUGroupArchMismatch, groupName, group.Arch, imageArch, imageName, image.Architectures,
+		)
 	}
 
 	return nil

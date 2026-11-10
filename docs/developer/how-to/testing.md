@@ -6,6 +6,7 @@ This document provides guidelines for writing and maintaining tests within the A
 
 - [Unit Tests](#unit-tests)
 - [Scenario Tests](#scenario-tests)
+- [End-to-End Tests](#end-to-end-tests)
 - [Mutation Testing](#mutation-testing)
 - [Test Utilities](#test-utilities)
 - [Mocking dependencies](#mocking-dependencies)
@@ -35,6 +36,54 @@ This document provides guidelines for writing and maintaining tests within the A
 - Include both positive and negative test cases
 - Use `mage scenarioUpdate` when test expectations change and snapshots need updating
 - Use existing test helpers in `scenario/internal/cmdtest`
+
+## End-to-End Tests
+
+Tests tagged `e2e` are excluded from `mage scenario` and `mage all`. Run the
+general end-to-end suite with:
+
+```bash
+mage e2e
+```
+
+The GitHub Actions workflow runs three E2E shards in parallel:
+
+- `mage e2e -target=component-idempotency` runs update idempotency and subset render
+  idempotency.
+- `mage e2e -target=image` runs Azure Linux image construction.
+- `mage e2e -target=full-render` runs the full Azure Linux render idempotency
+  check, which dominates the suite runtime.
+
+`mage e2e -target=tmt` runs the temporarily quarantined virtual TMT
+regression; add it to the CI matrix when the readiness fix lands.
+
+### Azure Linux image build
+
+`mage e2e -target=image` runs only the Azure Linux image-build test. It checks out the
+current head of the Azure Linux `4.0` branch, records the resolved commit, builds
+the current azldev binary, and invokes the real
+`azldev image build 1p-vm-base-gen2` command in a dedicated privileged KIWI
+container.
+
+The checkout and KIWI work tree live entirely in the disposable builder
+container. Only the resolved source revision and checked qcow2 are written to a
+host artifact mount. The privileged container is restricted to this
+image-construction test; ordinary scenario and e2e containers remain unchanged.
+
+### Virtual TMT provisioning regression
+
+`mage e2e -target=tmt` builds the current Azure Linux image, then runs the real
+`azldev component test` flow with the pinned TMT/testcloud runtime and a tiny
+test-only probe RPM. The non-privileged TMT runner maps `/dev/kvm`, uses private
+session-libvirt state, and retains diagnostics under `out/tmt-virtual-e2e/`.
+Production and test dependency pins share
+`internal/tmt/requirements.txt`, which Dependabot tracks.
+
+This regression is temporarily quarantined while the known testcloud readiness
+failure is fixed. The normal `mage e2e` suite compiles the test but skips it;
+`mage e2e -target=tmt` explicitly enables and executes the known-red path. Remove the
+temporary environment guard once the provisioning fixes land so the standard
+E2E job enforces the regression.
 
 ## Mutation Testing
 
