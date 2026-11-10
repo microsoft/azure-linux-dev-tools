@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
@@ -34,6 +35,8 @@ const customGenOutputDir = "/azldev-gen/output"
 // generation script. The tail is retained because failures are typically reported
 // near the end of command output.
 const maxCustomScriptOutputBytes = 64 * 1024
+
+const customSourceCleanupTimeout = 5 * time.Minute
 
 // customFileSourceProvider implements [FileSourceProvider] for source files with
 // [projectconfig.OriginTypeCustom]. It executes a user-supplied script inside a
@@ -276,7 +279,10 @@ func execScriptInChroot(
 
 	defer func() {
 		// Best-effort cleanup. Log on failure rather than overwriting the primary error.
-		if scrubErr := runner.ScrubRoot(ctx); scrubErr != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), customSourceCleanupTimeout)
+		defer cancel()
+
+		if scrubErr := runner.ScrubRoot(cleanupCtx); scrubErr != nil {
 			slog.Warn("Failed to scrub mock root after custom source generation",
 				"filename", ref.Filename,
 				"error", scrubErr)
