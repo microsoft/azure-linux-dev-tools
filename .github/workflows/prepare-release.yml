@@ -61,9 +61,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Nothing to release: `mage changelog` left CHANGELOG.md unchanged (no new entries since
-          # the last release). Report it in the job summary and stop -- this is not a failure.
-          if git diff --quiet -- CHANGELOG.md; then
+          # Nothing to release: `mage changelog` left both release files unchanged (no new entries
+          # since the last release). Report it in the job summary and stop -- this is not a failure.
+          if git diff --quiet -- CHANGELOG.md packaging/azldev.spec; then
             {
               echo "### Nothing to release"
               echo ""
@@ -76,6 +76,11 @@ jobs:
           version="$(sed -n 's/^##[[:space:]]\+\[\([0-9]\+\.[0-9]\+\.[0-9]\+\)\].*/\1/p' CHANGELOG.md | head -1)"
           if [ -z "$version" ]; then
             echo "no '## [X.Y.Z]' heading found in CHANGELOG.md" >&2
+            exit 1
+          fi
+          spec_version="$(sed -n 's/^Version:[[:space:]]*\([0-9]\+\.[0-9]\+\.[0-9]\+\)[[:space:]]*$/\1/p' packaging/azldev.spec)"
+          if [ "$spec_version" != "$version" ]; then
+            echo "RPM spec version '${spec_version}' does not match changelog version '${version}'" >&2
             exit 1
           fi
           branch="release/v${version}"
@@ -101,7 +106,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git switch -c "$branch"
-          git add CHANGELOG.md
+          git add CHANGELOG.md packaging/azldev.spec
           git commit -m "chore: prepare release v${version}"
           gh auth setup-git
           git push origin "$branch"
@@ -110,7 +115,7 @@ jobs:
           # upstream). GitHub's pull/new/<branch> form targets the repo's default branch as the base.
           pr_url="${SERVER_URL}/${REPO}/pull/new/${branch}"
           {
-            echo "Pushed branch \`$branch\` with the v${version} changelog draft."
+            echo "Pushed branch \`$branch\` with the v${version} changelog draft and RPM spec bump."
             echo ""
             echo "**[Open the pull request →](${pr_url})**, curate the changelog into user-facing notes, then merge."
           } >> "$GITHUB_STEP_SUMMARY"

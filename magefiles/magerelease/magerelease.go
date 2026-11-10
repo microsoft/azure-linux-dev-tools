@@ -4,6 +4,7 @@
 package magerelease
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -11,18 +12,24 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/magefile/mage/sh"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/magefiles/mageutil"
 )
 
 var (
-	ErrChangelog = errors.New("changelog generation failed")
-	ErrRelease   = errors.New("release tagging failed")
+	ErrChangelog     = errors.New("changelog generation failed")
+	ErrRelease       = errors.New("release tagging failed")
+	rpmSpecVersionRE = regexp.MustCompile(`(?m)^Version:[\t ]*(\S+)[\t ]*$`)
 )
 
+const rpmSpecPath = "packaging/azldev.spec"
+
 // Changelog generates a draft changelog section for the next release from the Conventional Commit
-// history and prepends it to 'CHANGELOG.md', using git-cliff and the repo's 'cliff.toml'.
+// history, prepends it to 'CHANGELOG.md', and synchronizes the version and release entry in the RPM
+// spec.
 //
 // The output is a *draft*: review and curate it into user-facing notes before releasing. See
 // docs/developer/how-to/releasing.md.
@@ -48,6 +55,11 @@ func Changelog() error {
 	configPath := filepath.Join(projectDir, "cliff.toml")
 	changelogPath := filepath.Join(projectDir, "CHANGELOG.md")
 
+	originalChangelog, err := os.ReadFile(changelogPath)
+	if err != nil {
+		return mageutil.PrintAndReturnError("Could not read CHANGELOG.md.", ErrChangelog, err)
+	}
+
 	// Guard against double-prepending: if CHANGELOG.md already starts with the version git-cliff
 	// would bump to, the draft is already present. Re-running would add a duplicate section.
 	bumped := bumpedVersion(cliff, configPath)
@@ -58,25 +70,41 @@ func Changelog() error {
 			"CHANGELOG.md already has a draft for v%s; nothing to do "+
 				"(run 'git restore CHANGELOG.md' to regenerate).\n", bumped)
 
-		return nil
+		return syncRPMSpecFromChangelog(changelogPath)
 	}
 
 	// --bump computes the next version from the commits; --unreleased limits to commits since the
 	// last release tag; --prepend inserts the new section at the top of the existing changelog.
-	err := sh.Run(cliff, "--config", configPath, "--bump", "--unreleased", "--prepend", changelogPath)
+	err = sh.Run(cliff, "--config", configPath, "--bump", "--unreleased", "--prepend", changelogPath)
 	if err != nil {
 		return mageutil.PrintAndReturnError("git-cliff failed to generate the changelog.", ErrChangelog, err)
 	}
 
+	updatedChangelog, err := os.ReadFile(changelogPath)
+	if err != nil {
+		return mageutil.PrintAndReturnError("Could not read the updated CHANGELOG.md.", ErrChangelog, err)
+	}
+
+	if bytes.Equal(originalChangelog, updatedChangelog) {
+		mageutil.MagePrintln(mageutil.MsgInfo, "No releasable changes found; nothing to update.")
+
+		return nil
+	}
+
+	if err := syncRPMSpecFromChangelog(changelogPath); err != nil {
+		return mageutil.PrintAndReturnError("Could not update the RPM spec for the release.", ErrChangelog, err)
+	}
+
 	mageutil.MagePrintf(mageutil.MsgSuccess,
-		"Updated %#q. Review and curate the new section before releasing.\n", changelogPath)
+		"Updated %#q and %#q. Review and curate the new changelog section before releasing.\n",
+		changelogPath, rpmSpecPath)
 
 	return nil
 }
 
 // Release creates the release tag from CHANGELOG.md. It reads the version from the top
-// `## [X.Y.Z]` heading and creates a matching annotated git tag (vX.Y.Z) on HEAD, so the tag and
-// the changelog can never disagree. It does not push: pushing the tag is the point of no return
+// `## [X.Y.Z]` heading, verifies that the RPM spec has the same version, and creates a matching
+// annotated git tag (vX.Y.Z) on HEAD. It does not push: pushing the tag is the point of no return
 // for a release, so that stays an explicit step (manual locally, or a dedicated CI step).
 //
 // It is idempotent: if the changelog version is already tagged it does nothing, so it is safe to
@@ -88,6 +116,10 @@ func Release() error {
 	version, err := latestChangelogVersion()
 	if err != nil {
 		return mageutil.PrintAndReturnError("Could not read the release version from CHANGELOG.md.", ErrRelease, err)
+	}
+
+	if err := verifyRPMSpecVersion(version); err != nil {
+		return mageutil.PrintAndReturnError("Could not verify the RPM spec version.", ErrRelease, err)
 	}
 
 	tag := "v" + version
@@ -134,6 +166,121 @@ func latestChangelogVersion() (string, error) {
 	}
 
 	return match[1], nil
+}
+
+func syncRPMSpecFromChangelog(changelogPath string) error {
+	changelog, err := os.ReadFile(changelogPath)
+	if err != nil {
+		return fmt.Errorf("read changelog %#q:\n%w", changelogPath, err)
+	}
+
+	version, releaseDate, err := parseLatestChangelogRelease(string(changelog))
+	if err != nil {
+		return err
+	}
+
+	specPath := filepath.Join(mageutil.AzldevProjectDir(), rpmSpecPath)
+
+	spec, err := os.ReadFile(specPath)
+	if err != nil {
+		return fmt.Errorf("read RPM spec %#q:\n%w", specPath, err)
+	}
+
+	updated, err := updateRPMSpec(string(spec), version, releaseDate)
+	if err != nil {
+		return fmt.Errorf("update RPM spec %#q:\n%w", specPath, err)
+	}
+
+	if err := os.WriteFile(specPath, []byte(updated), fileperms.PublicFile); err != nil {
+		return fmt.Errorf("write RPM spec %#q:\n%w", specPath, err)
+	}
+
+	return nil
+}
+
+func parseLatestChangelogRelease(content string) (version string, releaseDate time.Time, err error) {
+	headingRe := regexp.MustCompile(`(?m)^##[\t ]+\[(\d+\.\d+\.\d+)\](?:[\t ]+-[\t ]+([^\r\n]+))?[\t ]*$`)
+
+	match := headingRe.FindStringSubmatch(content)
+	if match == nil || match[2] == "" {
+		return "", time.Time{}, errors.New("no '## [X.Y.Z] - YYYY-MM-DD' release heading found in changelog")
+	}
+
+	releaseDate, err = time.Parse(time.DateOnly, strings.TrimSpace(match[2]))
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("parse release date %#q:\n%w", match[2], err)
+	}
+
+	return match[1], releaseDate, nil
+}
+
+func verifyRPMSpecVersion(expectedVersion string) error {
+	specPath := filepath.Join(mageutil.AzldevProjectDir(), rpmSpecPath)
+
+	spec, err := os.ReadFile(specPath)
+	if err != nil {
+		return fmt.Errorf("read RPM spec %#q:\n%w", specPath, err)
+	}
+
+	if err := requireRPMSpecVersion(string(spec), expectedVersion); err != nil {
+		return fmt.Errorf("validate RPM spec %#q:\n%w", specPath, err)
+	}
+
+	return nil
+}
+
+func requireRPMSpecVersion(content, expectedVersion string) error {
+	actualVersion, err := parseRPMSpecVersion(content)
+	if err != nil {
+		return err
+	}
+
+	if actualVersion != expectedVersion {
+		return fmt.Errorf("RPM spec version %#q does not match changelog version %#q", actualVersion, expectedVersion)
+	}
+
+	return nil
+}
+
+func parseRPMSpecVersion(content string) (string, error) {
+	matches := rpmSpecVersionRE.FindAllStringSubmatch(content, -1)
+	if len(matches) != 1 {
+		return "", errors.New("spec must contain exactly one 'Version:' field")
+	}
+
+	return matches[0][1], nil
+}
+
+func updateRPMSpec(content, version string, releaseDate time.Time) (string, error) {
+	if _, err := parseRPMSpecVersion(content); err != nil {
+		return "", err
+	}
+
+	content = rpmSpecVersionRE.ReplaceAllString(content, "Version:        "+version)
+
+	releaseRe := regexp.MustCompile(`(?m)^Release:[\t ]*\S+[\t ]*$`)
+	if len(releaseRe.FindAllStringIndex(content, -1)) != 1 {
+		return "", errors.New("spec must contain exactly one 'Release:' field")
+	}
+
+	content = releaseRe.ReplaceAllString(content, "Release:        1%{?dist}")
+
+	entryRe := regexp.MustCompile(`(?m)^\* .+ - ` + regexp.QuoteMeta(version) + `-1$`)
+	if entryRe.MatchString(content) {
+		return content, nil
+	}
+
+	changelogRe := regexp.MustCompile(`(?m)^%changelog\s*$`)
+
+	marker := changelogRe.FindStringIndex(content)
+	if marker == nil {
+		return "", errors.New("spec must contain a '%changelog' section")
+	}
+
+	entry := fmt.Sprintf("\n* %s Azure Linux Dev Tools <azldev@microsoft.com> - %s-1\n- Release azldev %s.\n",
+		releaseDate.Format("Mon Jan 2 2006"), version, version)
+
+	return content[:marker[1]] + entry + content[marker[1]:], nil
 }
 
 // tagExists reports whether the given git tag already exists locally.
