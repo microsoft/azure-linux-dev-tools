@@ -47,41 +47,41 @@ azldev component build [flags]
 ### Options
 
 ```
-  -a, --all-components                   Include all components
-  -p, --component stringArray            Component name pattern
-  -g, --component-group stringArray      Component group name
-  -k, --continue-on-error                Continue building when some components fail
-  -h, --help                             help for build
-      --local-repo stringArray           Paths to local repositories to include during build (can be specified multiple times)
-      --local-repo-with-publish string   Path to local repository to include during build and publish built RPMs to
-      --mock-config-opt stringToString   Pass a configuration option through to mock (key=value, can be specified multiple times) (default [])
-      --no-check                         Skip package %check tests
-      --preserve-buildenv policy         Preserve build environment {on-failure, always, never} (default on-failure)
-      --rpmdev-bumpspec                  Use rpmdev-bumpspec instead of the legacy static release calculation
-      --skip-lock-validation             skip lock file consistency checks
-  -s, --spec-path stringArray            Spec path
-      --srpm-only                        Build SRPM (source RPM) *only*
-      --without-git                      Skip creating a dist-git repository with synthetic commit history
+  -a, --all-components[=true|false]         Include all components
+  -p, --component stringArray               Component name pattern
+  -g, --component-group stringArray         Component group name
+  -k, --continue-on-error[=true|false]      Continue building when some components fail
+  -h, --help[=true|false]                   help for build
+      --local-repo stringArray              Paths to local repositories to include during build (can be specified multiple times)
+      --local-repo-with-publish string      Path to local repository to include during build and publish built RPMs to
+      --mock-config-opt stringToString      Pass a configuration option through to mock (key=value, can be specified multiple times) (default [])
+      --no-check[=true|false]               Skip package %check tests
+      --preserve-buildenv policy            Preserve build environment {on-failure, always, never} (default on-failure)
+      --rpmdev-bumpspec[=true|false]        Use rpmdev-bumpspec instead of the legacy static release calculation
+      --skip-lock-validation[=true|false]   skip lock file consistency checks
+  -s, --spec-path stringArray               Spec path
+      --srpm-only[=true|false]              Build SRPM (source RPM) *only*
+      --without-git[=true|false]            Skip creating a dist-git repository with synthetic commit history
 ```
 
 ### Options inherited from parent commands
 
 ```
-  -y, --accept-all                accept all prompts
-      --color mode                output colorization mode {always, auto, never} (default auto)
-      --concurrency int           base concurrency limit (default: number of logical CPUs; minimum 1)
-      --config-file stringArray   additional TOML config file(s) to merge (may be repeated)
-  -n, --dry-run                   dry run only (do not take action)
-      --network-retries int       maximum number of attempts for network operations (minimum 1) (default 3)
-      --no-default-config         disable default configuration
-  -O, --output-format fmt         output format {csv, json, markdown, table} (default table)
-      --permissive-config         do not fail on unknown fields in TOML config files
-  -C, --project string            path to Azure Linux project
-  -q, --quiet                     only enable minimal output
-      --spec-editor editor        Select the RPM spec editor (legacy or experimental) (default legacy)
-      --unique-mockroot           use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently
-  -v, --verbose                   enable verbose output
-      --without-lockfile          preview: track resolved upstream commits in generated config instead of lock files
+  -y, --accept-all[=true|false]          accept all prompts
+      --color mode                       output colorization mode {always, auto, never} (default auto)
+      --concurrency int                  base concurrency limit (default: number of logical CPUs; minimum 1)
+      --config-file stringArray          additional TOML config file(s) to merge (may be repeated)
+  -n, --dry-run[=true|false]             dry run only (do not take action)
+      --network-retries int              maximum number of attempts for network operations (minimum 1) (default 3)
+      --no-default-config[=true|false]   disable default configuration
+  -O, --output-format fmt                output format {csv, json, markdown, table} (default table)
+      --permissive-config[=true|false]   do not fail on unknown fields in TOML config files
+  -C, --project string                   path to Azure Linux project
+  -q, --quiet[=true|false]               only enable minimal output
+      --spec-editor editor               Select the RPM spec editor (legacy or experimental) (default legacy)
+      --unique-mockroot[=true|false]     use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently
+  -v, --verbose[=true|false]             enable verbose output
+      --without-lockfile[=true|false]    preview: track resolved upstream commits in generated config instead of lock files
 ```
 
 ### SEE ALSO

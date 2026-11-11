@@ -70,12 +70,12 @@ azldev image boot [IMAGE_NAME] [flags]
       --cpus int                       Number of CPU cores for the VM (default 8)
       --disk-size string               Size of the empty virtual disk created for ISO boot (e.g., 10G, 20G, 512M) (default "10G")
   -f, --format format                  Image format to boot (raw, qcow2, vhdx, vhd). Auto-detected if not specified.
-  -h, --help                           help for boot
+  -h, --help[=true|false]              help for boot
   -i, --image-path string              Path to the disk image file (overrides positional image name)
       --iso string                     Path to an ISO file to boot from (livecd, installer, or rescue media)
       --memory string                  Amount of memory for the VM (e.g., 4G, 8192M) (default "4G")
-      --rwdisk                         Allow writes to persist to the disk image
-      --secure-boot                    Enable secure boot for the VM
+      --rwdisk[=true|false]            Allow writes to persist to the disk image
+      --secure-boot[=true|false]       Enable secure boot for the VM
       --ssh-port uint16                Host port to forward to guest SSH (port 22) (default 8888)
       --test-password string           Password for the test account (visible in process list; prefer --test-password-file)
       --test-password-file string      Path to file containing the password for the test account
@@ -85,20 +85,20 @@ azldev image boot [IMAGE_NAME] [flags]
 ### Options inherited from parent commands
 
 ```
-  -y, --accept-all                accept all prompts
-      --color mode                output colorization mode {always, auto, never} (default auto)
-      --concurrency int           base concurrency limit (default: number of logical CPUs; minimum 1)
-      --config-file stringArray   additional TOML config file(s) to merge (may be repeated)
-  -n, --dry-run                   dry run only (do not take action)
-      --network-retries int       maximum number of attempts for network operations (minimum 1) (default 3)
-      --no-default-config         disable default configuration
-  -O, --output-format fmt         output format {csv, json, markdown, table} (default table)
-      --permissive-config         do not fail on unknown fields in TOML config files
-  -C, --project string            path to Azure Linux project
-  -q, --quiet                     only enable minimal output
-      --unique-mockroot           use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently
-  -v, --verbose                   enable verbose output
-      --without-lockfile          preview: track resolved upstream commits in generated config instead of lock files
+  -y, --accept-all[=true|false]          accept all prompts
+      --color mode                       output colorization mode {always, auto, never} (default auto)
+      --concurrency int                  base concurrency limit (default: number of logical CPUs; minimum 1)
+      --config-file stringArray          additional TOML config file(s) to merge (may be repeated)
+  -n, --dry-run[=true|false]             dry run only (do not take action)
+      --network-retries int              maximum number of attempts for network operations (minimum 1) (default 3)
+      --no-default-config[=true|false]   disable default configuration
+  -O, --output-format fmt                output format {csv, json, markdown, table} (default table)
+      --permissive-config[=true|false]   do not fail on unknown fields in TOML config files
+  -C, --project string                   path to Azure Linux project
+  -q, --quiet[=true|false]               only enable minimal output
+      --unique-mockroot[=true|false]     use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently
+  -v, --verbose[=true|false]             enable verbose output
+      --without-lockfile[=true|false]    preview: track resolved upstream commits in generated config instead of lock files
 ```
 
 ### SEE ALSO

@@ -26,33 +26,33 @@ azldev repo compare [flags]
 ### Options
 
 ```
-      --arch strings                  comma-separated target architectures (default [x86_64,aarch64])
-      --compare-checksums             compare checksum and size for matching package identities
-  -h, --help                          help for compare
-      --ignore-older-added-in-right   ignore right-only identities older than a matching left package identity
-      --left string                   left [resources.rpm-repo-sets] name
-      --missing-from-right            show package versions absent from the right, ignoring architecture and artifact kind
-      --right string                  right [resources.rpm-repo-sets] name
-      --stat                          show only package-level difference counts
+      --arch strings                               comma-separated target architectures (default [x86_64,aarch64])
+      --compare-checksums[=true|false]             compare checksum and size for matching package identities
+  -h, --help[=true|false]                          help for compare
+      --ignore-older-added-in-right[=true|false]   ignore right-only identities older than a matching left package identity
+      --left string                                left [resources.rpm-repo-sets] name
+      --missing-from-right[=true|false]            show package versions absent from the right, ignoring architecture and artifact kind
+      --right string                               right [resources.rpm-repo-sets] name
+      --stat[=true|false]                          show only package-level difference counts
 ```
 
 ### Options inherited from parent commands
 
 ```
-  -y, --accept-all                accept all prompts
-      --color mode                output colorization mode {always, auto, never} (default auto)
-      --concurrency int           base concurrency limit (default: number of logical CPUs; minimum 1)
-      --config-file stringArray   additional TOML config file(s) to merge (may be repeated)
-  -n, --dry-run                   dry run only (do not take action)
-      --network-retries int       maximum number of attempts for network operations (minimum 1) (default 3)
-      --no-default-config         disable default configuration
-  -O, --output-format fmt         output format {csv, json, markdown, table} (default table)
-      --permissive-config         do not fail on unknown fields in TOML config files
-  -C, --project string            path to Azure Linux project
-  -q, --quiet                     only enable minimal output
-      --unique-mockroot           use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently
-  -v, --verbose                   enable verbose output
-      --without-lockfile          preview: track resolved upstream commits in generated config instead of lock files
+  -y, --accept-all[=true|false]          accept all prompts
+      --color mode                       output colorization mode {always, auto, never} (default auto)
+      --concurrency int                  base concurrency limit (default: number of logical CPUs; minimum 1)
+      --config-file stringArray          additional TOML config file(s) to merge (may be repeated)
+  -n, --dry-run[=true|false]             dry run only (do not take action)
+      --network-retries int              maximum number of attempts for network operations (minimum 1) (default 3)
+      --no-default-config[=true|false]   disable default configuration
+  -O, --output-format fmt                output format {csv, json, markdown, table} (default table)
+      --permissive-config[=true|false]   do not fail on unknown fields in TOML config files
+  -C, --project string                   path to Azure Linux project
+  -q, --quiet[=true|false]               only enable minimal output
+      --unique-mockroot[=true|false]     use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently
+  -v, --verbose[=true|false]             enable verbose output
+      --without-lockfile[=true|false]    preview: track resolved upstream commits in generated config instead of lock files
 ```
 
 ### SEE ALSO

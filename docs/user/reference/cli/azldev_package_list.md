@@ -60,30 +60,30 @@ azldev package list [package-name...] [flags]
 ### Options
 
 ```
-  -a, --all-packages                List all explicitly-configured binary packages
-  -h, --help                        help for list
-  -p, --package stringArray         Package name to look up (repeatable)
-      --rpm-file string             Path to a JSON RPM source map file (lists all SRPMs and their binary RPMs)
-      --synthesize-debug-packages   Also synthesize '-debuginfo' packages (per reported package) and '-debugsource' packages (per component)
+  -a, --all-packages[=true|false]                List all explicitly-configured binary packages
+  -h, --help[=true|false]                        help for list
+  -p, --package stringArray                      Package name to look up (repeatable)
+      --rpm-file string                          Path to a JSON RPM source map file (lists all SRPMs and their binary RPMs)
+      --synthesize-debug-packages[=true|false]   Also synthesize '-debuginfo' packages (per reported package) and '-debugsource' packages (per component)
 ```
 
 ### Options inherited from parent commands
 
 ```
-  -y, --accept-all                accept all prompts
-      --color mode                output colorization mode {always, auto, never} (default auto)
-      --concurrency int           base concurrency limit (default: number of logical CPUs; minimum 1)
-      --config-file stringArray   additional TOML config file(s) to merge (may be repeated)
-  -n, --dry-run                   dry run only (do not take action)
-      --network-retries int       maximum number of attempts for network operations (minimum 1) (default 3)
-      --no-default-config         disable default configuration
-  -O, --output-format fmt         output format {csv, json, markdown, table} (default table)
-      --permissive-config         do not fail on unknown fields in TOML config files
-  -C, --project string            path to Azure Linux project
-  -q, --quiet                     only enable minimal output
-      --unique-mockroot           use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently
-  -v, --verbose                   enable verbose output
-      --without-lockfile          preview: track resolved upstream commits in generated config instead of lock files
+  -y, --accept-all[=true|false]          accept all prompts
+      --color mode                       output colorization mode {always, auto, never} (default auto)
+      --concurrency int                  base concurrency limit (default: number of logical CPUs; minimum 1)
+      --config-file stringArray          additional TOML config file(s) to merge (may be repeated)
+  -n, --dry-run[=true|false]             dry run only (do not take action)
+      --network-retries int              maximum number of attempts for network operations (minimum 1) (default 3)
+      --no-default-config[=true|false]   disable default configuration
+  -O, --output-format fmt                output format {csv, json, markdown, table} (default table)
+      --permissive-config[=true|false]   do not fail on unknown fields in TOML config files
+  -C, --project string                   path to Azure Linux project
+  -q, --quiet[=true|false]               only enable minimal output
+      --unique-mockroot[=true|false]     use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently
+  -v, --verbose[=true|false]             enable verbose output
+      --without-lockfile[=true|false]    preview: track resolved upstream commits in generated config instead of lock files
 ```
 
 ### SEE ALSO
