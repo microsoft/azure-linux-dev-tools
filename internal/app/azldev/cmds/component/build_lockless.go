@@ -12,6 +12,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/componentbuilder"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/workdir"
+	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/mock"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/defers"
@@ -38,7 +39,7 @@ func buildLocklessComponent(
 		return results, err
 	}
 
-	if err := downloadDistGitSources(env, name, dir); err != nil {
+	if err := downloadDistGitSources(env, component, dir); err != nil {
 		return results, err
 	}
 
@@ -70,7 +71,23 @@ func buildLocklessComponent(
 		options.NoCheck, options.LocalRepoWithPublishPath)
 }
 
-func downloadDistGitSources(env *azldev.Env, name, dir string) error {
+func downloadDistGitSources(env *azldev.Env, component components.Component, dir string) error {
+	if len(component.GetConfig().SourceFiles) > 0 {
+		distro, err := sourceproviders.ResolveDistro(env, component)
+		if err != nil {
+			return fmt.Errorf("resolving source distro:\n%w", err)
+		}
+
+		manager, err := sourceproviders.NewSourceManager(env, distro)
+		if err != nil {
+			return fmt.Errorf("creating source manager:\n%w", err)
+		}
+
+		if err := manager.FetchFiles(env, component, dir); err != nil {
+			return fmt.Errorf("fetching configured dist-git sources:\n%w", err)
+		}
+	}
+
 	path := filepath.Join(dir, "sources")
 
 	exists, err := fileutils.Exists(env.FS(), path)
@@ -104,7 +121,7 @@ func downloadDistGitSources(env *azldev.Env, name, dir string) error {
 
 		if !exists {
 			if err := downloadsources.DownloadSources(env, &downloadsources.DownloadSourcesOptions{
-				Directory: dir, ComponentName: name,
+				Directory: dir, ComponentName: component.GetName(),
 			}); err != nil {
 				return fmt.Errorf("downloading dist-git sources:\n%w", err)
 			}

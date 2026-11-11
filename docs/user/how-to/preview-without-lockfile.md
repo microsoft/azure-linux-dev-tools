@@ -110,9 +110,11 @@ Mock chroot, then reports its source NEVR, required files, and binary subpackage
 The temporary query repositories are removed on success and failure.
 Locked queries continue to read working-tree rendered files, including uncommitted edits.
 
-`component build` downloads sources listed in the extracted `sources` manifest,
-then builds the SRPM with Mock's `rpmautospec` plugin enabled and the extracted
-repository passed as `--sources`. This requires Mock 5.3 or newer and
+`component build` fetches configured source files through the normal source manager,
+including custom generation and download-origin fallback unless `disable-origins`
+is enabled. It then downloads any remaining payloads listed in the extracted
+`sources` manifest from lookaside and builds the SRPM with Mock's `rpmautospec`
+plugin enabled and the extracted repository passed as `--sources`. This requires Mock 5.3 or newer and
 rpmautospec available from the build distro's package repositories.
 Mock's rpmautospec plugin must be installed on the host as well; enabling an
 unavailable plugin is an error, even if Mock itself would only warn.

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/h2non/gock"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/workdir"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
@@ -19,6 +20,74 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/stretchr/testify/require"
 )
+
+func TestDownloadDistGitSources_ConfiguredOrigins(t *testing.T) {
+	const (
+		filename = "extra-source.tar.gz"
+		payload  = "hello world"
+		digest   = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+	)
+
+	for _, testCase := range []struct {
+		name           string
+		manifest       bool
+		disableOrigins bool
+		custom         bool
+		wantError      string
+	}{
+		{name: "download with manifest", manifest: true},
+		{name: "download without manifest"},
+		{name: "origins disabled", manifest: true, disableOrigins: true, wantError: "disable-origins is enabled"},
+		{name: "custom origin dispatched", manifest: true, custom: true, wantError: "generation script"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			env.Config.LocklessComponents = map[string]bool{"curl": true}
+			distro := env.Config.Distros["test-distro"]
+			distro.LookasideBaseURI = ""
+			distro.DisableOrigins = testCase.disableOrigins
+			env.Config.Distros["test-distro"] = distro
+
+			ref := projectconfig.SourceFileReference{
+				Filename: filename, Hash: digest, HashType: fileutils.HashTypeSHA256,
+				Origin: projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: "https://origin.invalid/source"},
+			}
+			if testCase.custom {
+				ref.Origin = projectconfig.Origin{Type: projectconfig.OriginTypeCustom, Script: "/project/generate.sh"}
+			}
+
+			env.Config.Components["curl"] = projectconfig.ComponentConfig{
+				Name: "curl", SourceFiles: []projectconfig.SourceFileReference{ref},
+			}
+			dir := "/project/dist-git"
+			require.NoError(t, fileutils.MkdirAll(env.FS(), dir))
+
+			if testCase.manifest {
+				require.NoError(t, fileutils.WriteFile(env.FS(), filepath.Join(dir, "sources"),
+					[]byte("SHA256 ("+filename+") = "+digest+"\n"), fileperms.PublicFile))
+			}
+
+			if testCase.wantError == "" {
+				gock.New("https://origin.invalid").Get("/source").Reply(200).BodyString(payload)
+				t.Cleanup(gock.OffAll)
+			}
+
+			err := downloadDistGitSources(env.Env, resolveComponents(t, env, "curl")[0], dir)
+			if testCase.wantError != "" {
+				require.ErrorContains(t, err, testCase.wantError)
+
+				return
+			}
+
+			require.NoError(t, err)
+			require.True(t, gock.IsDone())
+
+			content, err := fileutils.ReadFile(env.FS(), filepath.Join(dir, filename))
+			require.NoError(t, err)
+			require.Equal(t, payload, string(content))
+		})
+	}
+}
 
 func TestLocklessBuildRejectsSyntheticHistoryFlags(t *testing.T) {
 	for _, options := range []ComponentBuildOptions{{WithoutGitRepo: true}, {RPMDevBumpspec: true}} {

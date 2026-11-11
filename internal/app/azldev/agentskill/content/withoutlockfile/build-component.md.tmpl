@@ -27,7 +27,8 @@ Use `--unique-mockroot` to isolate mock roots. azldev also passes
 ## The inner loop
 
 For lockless components, build uses committed rendered dist-git history extracted
-with git-filter-repo; render and commit first. It downloads lookaside sources and
+with git-filter-repo; render and commit first. It fetches configured sources through
+the source manager (including download/custom origins), then remaining lookaside payloads, and
 builds the SRPM with Mock's rpmautospec plugin (Mock 5.3+), then builds binary RPMs.
 Uncommitted rendered edits are ignored. `--without-git` and `--rpmdev-bumpspec`
 are rejected for lockless builds; `--no-check` is forwarded normally.
