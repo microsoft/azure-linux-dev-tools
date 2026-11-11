@@ -76,6 +76,10 @@ The extension stays the same for initialization, commands, and cleanup of that
 root; separate roots receive separate random suffixes. Without the flag,
 mock's existing root naming is unchanged.
 
+Unique-root commands also pass `--disable-plugin yum_cache` to disable mock's
+shared yum cache. Commands without `--unique-mockroot` retain the configured cache
+behavior.
+
 Cleanup removes both the unique build root and its bootstrap root while preserving
 shared caches. azldev checks `mock --help` for `bootstrap-cache` support before
 cleanup: newer Mock versions can safely use `--scrub=bootstrap`; older versions

@@ -25,6 +25,7 @@ Use the global `--unique-mockroot` flag to isolate mock roots from other azldev
 operations. Extensions contain abbreviated action/component labels and a random
 suffix, use at most 24 characters total (up to 12 for the component label), and
 remain stable through each root's cleanup.
+azldev also passes `--disable-plugin yum_cache` for unique-root commands.
 To inspect a preserved unique root, use
 `mock -r <mock-config> --uniqueext <extension> --shell` with the extension from
 the verbose command log; a new azldev shell invocation creates a different root.

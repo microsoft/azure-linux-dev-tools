@@ -782,7 +782,7 @@ func (r *Runner) getBaseArgs() (args []string) {
 
 	args = append(args, "--configdir", filepath.Dir(r.mockConfigPath))
 	if r.uniqueExtension != "" {
-		args = append(args, "--uniqueext", r.uniqueExtension)
+		args = append(args, "--uniqueext", r.uniqueExtension, "--disable-plugin", "yum_cache")
 	}
 
 	if r.baseDir != "" {

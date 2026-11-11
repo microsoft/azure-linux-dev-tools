@@ -106,6 +106,11 @@ func TestUniqueExtensionLifecycle(t *testing.T) {
 		require.Positive(t, index)
 		require.Less(t, index+1, len(cmd.Args))
 		extensions = append(extensions, cmd.Args[index+1])
+
+		pluginIndex := slices.Index(cmd.Args, "--disable-plugin")
+		require.Positive(t, pluginIndex)
+		require.Less(t, pluginIndex+1, len(cmd.Args))
+		assert.Equal(t, "yum_cache", cmd.Args[pluginIndex+1])
 	}
 	ctx.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
 		capture(cmd)
@@ -155,6 +160,7 @@ func TestUniqueExtensionDisabled(t *testing.T) {
 			ctx.Ctx = mock.WithRootComponents(ctx.Ctx, "curl")
 			ctx.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
 				assert.NotContains(t, cmd.Args, "--uniqueext")
+				assert.NotContains(t, cmd.Args, "--disable-plugin")
 
 				return nil
 			}
