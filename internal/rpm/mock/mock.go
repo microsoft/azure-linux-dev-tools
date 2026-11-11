@@ -407,7 +407,7 @@ func (r *Runner) requireRPMAutospec(ctx context.Context) error {
 	}
 
 	if _, err := cmd.RunAndGetOutput(ctx); err != nil {
-		return fmt.Errorf("checking mock rpmautospec plugin:\n%w", err)
+		return fmt.Errorf("checking mock rpmautospec plugin:\n%w\n%s", err, strings.TrimSpace(stderr.String()))
 	}
 
 	if strings.Contains(stderr.String(), "rpmautospec plugin") &&

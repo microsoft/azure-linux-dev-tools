@@ -443,6 +443,31 @@ func TestBuildSRPM_MockFails(t *testing.T) {
 	require.ErrorIs(t, err, testError)
 }
 
+func TestBuildSRPM_RPMAutospecProbeFailure(t *testing.T) {
+	ctx := newTestCtxWithMockPrereqsPresent()
+	testError := &exec.ExitError{}
+
+	const diagnostic = "ERROR: could not load mock configuration"
+
+	ctx.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+		_, err := io.WriteString(cmd.Stderr, diagnostic+"\n")
+		require.NoError(t, err)
+
+		return "", testError
+	}
+	ctx.CmdFactory.RunHandler = func(_ *exec.Cmd) error {
+		t.Fatal("must not build when the plugin probe fails")
+
+		return nil
+	}
+
+	runner := mock.NewRunner(ctx, testMockConfigPath)
+	err := runner.BuildSRPM(ctx, testSpecPath, testSourceDirPath, testOutputDirPath,
+		mock.SRPMBuildOptions{RPMAutospec: true})
+	require.ErrorIs(t, err, testError)
+	require.ErrorContains(t, err, diagnostic)
+}
+
 func TestBuildSRPM_RPMAutospec(t *testing.T) {
 	ctx := newTestCtxWithMockPrereqsPresent()
 
