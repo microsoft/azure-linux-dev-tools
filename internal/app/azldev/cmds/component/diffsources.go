@@ -101,7 +101,7 @@ func DiffComponentSources(env *azldev.Env, options *DiffSourcesOptions) (interfa
 		return nil, fmt.Errorf("failed to create source manager:\n%w", err)
 	}
 
-	preparer, err := newSourcePreparer(sourceManager, env.FS(), env, env,
+	preparer, err := newComponentSourcePreparer(env, component, sourceManager, nil,
 		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)),
 		sources.WithSpecEditor(options.specEditorMode()))
 	if err != nil {

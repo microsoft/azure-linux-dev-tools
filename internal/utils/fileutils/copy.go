@@ -18,11 +18,14 @@ import (
 type CopyFileOptions struct {
 	// Whether or not to preserve POSIX mode bits on files. Does *not* apply to directories.
 	PreserveFileMode bool
+	// NoFollow requires a regular source file and rejects final-component symlinks.
+	NoFollow bool
 }
 
 // Copies the contents of an existing file to a new file at the given destination path.
 // May preserve mode bits if "options" says so but does *not* preserve ownership, timestamps,
-// or other metadata. *Does* follow symlinks. Is enlightened to skip copying in dry-run mode.
+// or other metadata. Follows source symlinks unless [CopyFileOptions.NoFollow] is set.
+// Is enlightened to skip copying in dry-run mode.
 func CopyFile(dryRunnable opctx.DryRunnable, fs opctx.FS, sourcePath, destPath string, options CopyFileOptions) error {
 	return CopyFileCrossFS(dryRunnable, fs, sourcePath, fs, destPath, options)
 }
@@ -30,7 +33,8 @@ func CopyFile(dryRunnable opctx.DryRunnable, fs opctx.FS, sourcePath, destPath s
 // Copies the contents of an existing file to a new file at the given destination path,
 // potentially across two [opctx.FS] filesystem instances. May preserve mode bits if
 // "options" says so but does *not* preserve ownership, timestamps, or other metadata.
-// *Does* follow symlinks. Is enlightened to skip copying in dry-run mode.
+// Follows source symlinks unless [CopyFileOptions.NoFollow] is set.
+// Is enlightened to skip copying in dry-run mode.
 func CopyFileCrossFS(
 	dryRunnable opctx.DryRunnable,
 	sourceFS opctx.FS, sourcePath string,
@@ -67,7 +71,14 @@ func copyFileCrossFS(
 		destFileMode = stat.Mode()
 	}
 
-	sourceFile, err := sourceFS.Open(sourcePath)
+	var sourceFile opctx.File
+
+	if options.NoFollow {
+		sourceFile, err = OpenRegularFileNoFollow(sourceFS, sourcePath)
+	} else {
+		sourceFile, err = sourceFS.Open(sourcePath)
+	}
+
 	if err != nil {
 		err = fmt.Errorf("failed to open copy source '%s':\n%w", sourcePath, err)
 

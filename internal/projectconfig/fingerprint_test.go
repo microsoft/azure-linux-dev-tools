@@ -36,6 +36,7 @@ func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
 		reflect.TypeFor[projectconfig.Origin](),
 		reflect.TypeFor[projectconfig.ReleaseConfig](),
 		reflect.TypeFor[projectconfig.ComponentRenderConfig](),
+		reflect.TypeFor[projectconfig.GoVendorConfig](),
 	}
 
 	// Maps "StructName.FieldName" for every field that should carry a
@@ -105,6 +106,9 @@ func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
 		// SpecSource.Path — absolute path that varies by checkout location.
 		// Spec content identity is captured separately via SourceIdentity.
 		"SpecSource.Path": true,
+
+		// GoVendorConfig.ConfigFile — absolute declaration path; contents are hashed separately.
+		"GoVendorConfig.ConfigFile": true,
 	}
 
 	// Collect all actual exclusions found via reflection, and flag invalid tag values.

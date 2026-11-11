@@ -29,6 +29,31 @@ func collectCustomizations(name string, config *projectconfig.ComponentConfig) [
 	items = appendRenderItems(items, config.Render)
 	items = appendPackageItems(items, config.Packages)
 	items = appendSourceFileItems(items, config.SourceFiles)
+	items = appendGoVendorItems(items, config.GoVendor)
+
+	return items
+}
+
+func appendGoVendorItems(items []CustomizationItem, config *projectconfig.GoVendorConfig) []CustomizationItem {
+	if config == nil {
+		return items
+	}
+
+	if config.Enabled != nil {
+		items = append(items, CustomizationItem{Kind: "go-vendor.enabled", Value: strconv.FormatBool(*config.Enabled)})
+	}
+
+	if config.ModuleDir != "" {
+		items = append(items, CustomizationItem{Kind: "go-vendor.module-dir", Value: config.ModuleDir})
+	}
+
+	if config.ConfigFile != "" {
+		items = append(items, CustomizationItem{Kind: "go-vendor.config-file", Value: config.ConfigFile})
+	}
+
+	for _, name := range config.PrepPackages {
+		items = append(items, CustomizationItem{Kind: "go-vendor.prep-packages", Value: name})
+	}
 
 	return items
 }

@@ -64,9 +64,9 @@ Within the output directory, components are organized into letter-prefixed
 subdirectories based on the first character of their name (e.g., specs/c/curl,
 specs/v/vim).
 
-Unlike prepare-sources, render skips downloading source tarballs from the
-lookaside cache — only spec files, patches, scripts, and other git-tracked
-sidecar files are included. Multiple components can be rendered at once.
+Render normally skips source downloads. Go vendoring downloads and prepares sources for archive generation
+and license checks, but excludes payloads from checked-in output. Only specs, patches, scripts, checksums,
+and sidecar files are included. Multiple components can be rendered at once.
 
 When rendering all components (-a), the --clean-stale flag prunes orphan
 rendered-spec directories (per-component dirs that no longer correspond to
@@ -531,8 +531,8 @@ func prepareComponentSources(
 	// Prepare sources with overlays, skipping lookaside downloads.
 	// WithGitRepo preserves upstream .git and creates synthetic history so
 	// rpmautospec can expand %autorelease and %autochangelog correctly.
-	// WithSkipLookaside avoids expensive tarball downloads — only spec +
-	// sidecar files are needed for rendering.
+	// WithSkipLookaside avoids tarball downloads unless Go vendoring requires
+	// the prepared sources to generate the archive and cumulative license.
 	preparerOpts := append(gitRepoPreparerOptions(env, distro),
 		sources.WithSkipLookaside(),
 		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)),
@@ -542,7 +542,7 @@ func prepareComponentSources(
 		preparerOpts = append(preparerOpts, sources.WithRPMDevBumpspec(env, env.WorkDir(), ""))
 	}
 
-	preparer, err := newSourcePreparer(sourceManager, env.FS(), env, env, append(
+	preparer, err := newComponentSourcePreparer(env, comp, sourceManager, nil, append(
 		preparerOpts,
 		sources.WithSpecEditor(specEditor),
 	)...)
@@ -763,6 +763,12 @@ func finishComponentRender(
 		env.FS(), componentDir, specPath, mockResult.SpecFiles, componentName,
 	); filterErr != nil {
 		return false, fmt.Errorf("filtering unreferenced files for %#q:\n%w", componentName, filterErr)
+	}
+
+	if err := removeGoVendorRenderPayloads(
+		env.FS(), componentDir, prep.comp.GetConfig().GoVendor.IsEnabled(),
+	); err != nil {
+		return false, fmt.Errorf("removing generated render payloads for %#q:\n%w", componentName, err)
 	}
 
 	// Remove .git directory — must not appear in rendered output.

@@ -24,6 +24,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource"
+	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/mock"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spec"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/dirdiff"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
@@ -133,7 +134,8 @@ func WithSpecEditor(mode spec.EditorMode) PreparerOption {
 // component fetching ([FedoraSourceDownloader.ExtractSourcesFromRepo]).
 // Git-tracked files (spec, patches, scripts, configs) are still fetched from
 // the upstream clone. This is useful for rendering, where only the spec and
-// sidecar files are needed and downloading large source tarballs is unnecessary.
+// sidecar files are normally needed. Enabled Go vendor conversion overrides this
+// optimization because its archive and license expression require prepared sources.
 func WithSkipLookaside() PreparerOption {
 	return func(p *sourcePreparerImpl) {
 		p.skipLookaside = true
@@ -184,11 +186,12 @@ func WithAllowNoHashes() PreparerOption {
 
 // Standard implementation of the [SourcePreparer] interface.
 type sourcePreparerImpl struct {
-	sourceManager sourceproviders.SourceManager
-	specEditor    spec.EditorMode
-	fs            opctx.FS
-	eventListener opctx.EventListener
-	dryRunnable   opctx.DryRunnable
+	sourceManager  sourceproviders.SourceManager
+	specEditor     spec.EditorMode
+	fs             opctx.FS
+	eventListener  opctx.EventListener
+	dryRunnable    opctx.DryRunnable
+	goVendorRunner *mock.Runner
 
 	// withGitRepo, when true, enables dist-git creation by preserving the
 	// upstream .git directory and generating synthetic commit history.
@@ -297,6 +300,8 @@ func NewPreparer(
 func (p *sourcePreparerImpl) PrepareSources(
 	ctx context.Context, component components.Component, outputDir string, applyOverlays bool,
 ) error {
+	p = p.withRequiredDownloads(component, applyOverlays)
+
 	if applyOverlays {
 		if err := p.validateArchiveOverlayConfig(component); err != nil {
 			return err
@@ -360,6 +365,21 @@ func (p *sourcePreparerImpl) PrepareSources(
 	return nil
 }
 
+func (p *sourcePreparerImpl) withRequiredDownloads(
+	component components.Component, applyConversion bool,
+) *sourcePreparerImpl {
+	if applyConversion && p.skipLookaside && component.GetConfig().GoVendor.IsEnabled() {
+		effective := *p
+		effective.skipLookaside = false
+
+		slog.Info("Go vendoring requires source downloads, including during rendering", "component", component.GetName())
+
+		return &effective
+	}
+
+	return p
+}
+
 func (p *sourcePreparerImpl) validateArchiveOverlayConfig(component components.Component) error {
 	config := component.GetConfig()
 	if err := config.ValidateArchiveOverlays(p.allowNoHashes); err != nil {
@@ -392,6 +412,10 @@ func (p *sourcePreparerImpl) applyOverlaysToSources(
 	if err != nil {
 		return nil, fmt.Errorf("failed to apply overlays for component %#q:\n%w",
 			component.GetName(), err)
+	}
+
+	if err := p.prepareGoVendor(ctx, component, outputDir); err != nil {
+		return nil, fmt.Errorf("preparing Go vendor sources for component %#q:\n%w", component.GetName(), err)
 	}
 
 	return repackedArchives, nil
@@ -740,6 +764,8 @@ func removeSubmoduleEntries(fs opctx.FS, repo *gogit.Repository, repoDir string)
 func (p *sourcePreparerImpl) DiffSources(
 	ctx context.Context, component components.Component, baseDir string,
 ) (result *dirdiff.DiffResult, err error) {
+	p = p.withRequiredDownloads(component, true)
+
 	event := p.eventListener.StartEvent("Computing overlay diff", "component", component.GetName())
 	defer event.End()
 

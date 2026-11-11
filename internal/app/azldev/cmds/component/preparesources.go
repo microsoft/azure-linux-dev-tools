@@ -73,7 +73,8 @@ Only one component may be selected at a time.`,
 	_ = cmd.MarkFlagRequired("output-dir")
 	_ = cmd.MarkFlagDirname("output-dir")
 
-	cmd.Flags().BoolVar(&options.SkipOverlays, "skip-overlays", false, "skip applying overlays to prepared sources")
+	cmd.Flags().BoolVar(&options.SkipOverlays, "skip-overlays", false,
+		"skip overlays and Go vendor conversion, preserving upstream packaging")
 	cmd.Flags().BoolVar(&options.WithoutGitRepo, "without-git", false,
 		"Disable dist-git repository creation (enabled by default)")
 	addRPMDevBumpspecFlag(cmd, &options.RPMDevBumpspec)
@@ -82,8 +83,7 @@ Only one component may be selected at a time.`,
 	cmd.Flags().BoolVar(&options.AllowNoHashes, "allow-no-hashes", false,
 		"compute missing hashes by downloading source files from their origin")
 	cmd.Flags().BoolVar(&options.SkipSources, "skip-sources", false,
-		"skip downloading fetched sources when preparing the package (useful to extract "+
-			"dist-git metadata when source files are not needed)")
+		"skip downloading sources unless Go vendor conversion requires them")
 
 	return cmd
 }
@@ -142,6 +142,14 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 	}
 
 	preparerOpts := buildPreparerOptions(env, distro, options)
+	if !options.SkipOverlays {
+		vendorOpts, err := goVendorPreparerOptions(env, component, nil)
+		if err != nil {
+			return err
+		}
+
+		preparerOpts = append(preparerOpts, vendorOpts...)
+	}
 
 	preparer, err := newSourcePreparer(sourceManager, env.FS(), env, env, append(
 		preparerOpts,
