@@ -102,3 +102,24 @@ func TestRepoRelPath_EscapesRoot(t *testing.T) {
 		assert.Contains(t, err.Error(), "escapes repository root")
 	}
 }
+
+func TestRepoRelPath_SymlinkCycle(t *testing.T) {
+	tempDir := t.TempDir()
+
+	repoDir := filepath.Join(tempDir, "repo")
+	require.NoError(t, os.MkdirAll(repoDir, fileperms.PrivateDir))
+
+	require.NoError(t, os.Symlink("missing/../self", filepath.Join(repoDir, "self")))
+	require.NoError(t, os.Symlink("missing/../second", filepath.Join(repoDir, "first")))
+	require.NoError(t, os.Symlink("missing/../first", filepath.Join(repoDir, "second")))
+
+	for _, absPath := range []string{
+		filepath.Join(repoDir, "self"),
+		filepath.Join(repoDir, "self", "curl.lock"),
+		filepath.Join(repoDir, "first", "curl.lock"),
+	} {
+		_, err := git.RepoRelPath(repoDir, absPath)
+		require.Error(t, err, absPath)
+		assert.Contains(t, err.Error(), "too many levels of symbolic links")
+	}
+}
