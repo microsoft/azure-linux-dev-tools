@@ -1,0 +1,79 @@
+Render the final spec and sidecar files for components after applying all
+configured overlays. The output is written to a directory as generated artifacts
+intended for check-in.
+
+The output directory is set via rendered-specs-dir in the project config, or
+via --output-dir on the command line. If neither is set, an error is returned.
+Within the output directory, components are organized into letter-prefixed
+subdirectories based on the first character of their name (e.g., specs/c/curl,
+specs/v/vim).
+
+Unlike prepare-sources, render skips downloading source tarballs from the
+lookaside cache — only spec files, patches, scripts, and other git-tracked
+sidecar files are included. Multiple components can be rendered at once.
+
+Added-patch application diagnostics are logged and included as patchWarnings
+in -O json output. Missing unconditional patch selection, uncertain application,
+and likely strip mismatches are warnings unless --patch-warnings=error promotes
+them to component errors. Conditional branches and duplicate application are not checked.
+Use --fail-on-error to exit nonzero on component failures. This is static
+analysis, not proof a patch applies.
+
+When rendering all components (-a), the --clean-stale flag prunes orphan
+rendered-spec directories (per-component dirs that no longer correspond to
+any component in the project config). Per-component dirs that ARE in config
+are overwritten in place by the render itself; this means each render's
+result table accurately reflects which components actually changed on disk.
+Top-level non-component siblings (e.g. a hand-placed README.md) are
+preserved. When using a custom output directory (--output-dir), --force is
+required alongside --clean-stale as a safety measure. This flag is only
+valid with -a.
+
+Usage:
+  azldev component render [flags]
+
+Examples:
+  # Render all components (output dir from config)
+  azldev component render -a
+
+  # Render a single component
+  azldev component render -p curl
+
+  # Render to a custom directory, allowing removal of existing rendered component directories
+  azldev component render -a -o rendered/ --force
+
+  # Render all and remove stale directories
+  azldev component render -a --clean-stale
+
+Flags:
+  -a, --all-components[=true|false]         Include all components
+      --check-only[=true|false]             render to a staging area and compare against the existing on-disk output without modifying the output directory. Exits 0 when nothing would change and 1 when any component would drift. With -a + --clean-stale, also fails on orphan rendered-spec directories. Intended for CI gates.
+      --clean-stale[=true|false]            prune rendered-spec directories that no longer correspond to a configured component (only with -a; requires -f with -o). Top-level non-component siblings are preserved.
+  -p, --component stringArray               Component name pattern
+  -g, --component-group stringArray         Component group name
+      --fail-on-error[=true|false]          exit with error if any component fails to render (useful for CI)
+  -f, --force[=true|false]                  allow overwriting existing rendered component directories
+  -h, --help[=true|false]                   help for render
+  -o, --output-dir string                   output directory for rendered specs (overrides rendered-specs-dir from config)
+      --patch-warnings string               added-patch warning policy: warn or error (error rejects affected components; use --fail-on-error for a nonzero exit) (default "warn")
+      --rpmdev-bumpspec[=true|false]        Use rpmdev-bumpspec instead of the legacy static release calculation
+      --skip-lock-validation[=true|false]   skip lock file consistency checks
+  -s, --spec-path stringArray               Spec path
+
+Global Flags:
+  -y, --accept-all[=true|false]          accept all prompts
+      --color mode                       output colorization mode {always, auto, never} (default auto)
+      --concurrency int                  base concurrency limit (default: number of logical CPUs; minimum 1)
+      --config-file stringArray          additional TOML config file(s) to merge (may be repeated)
+  -n, --dry-run[=true|false]             dry run only (do not take action)
+      --network-retries int              maximum number of attempts for network operations (minimum 1) (default 3)
+      --no-default-config[=true|false]   disable default configuration
+  -O, --output-format fmt                output format {csv, json, markdown, table} (default table)
+      --permissive-config[=true|false]   do not fail on unknown fields in TOML config files
+  -C, --project string                   path to Azure Linux project
+  -q, --quiet[=true|false]               only enable minimal output
+      --spec-editor editor               Select the RPM spec editor (legacy or experimental) (default legacy)
+      --unique-mockroot[=true|false]     use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently
+  -v, --verbose[=true|false]             enable verbose output
+      --without-lockfile[=true|false]    preview: track resolved upstream commits in generated config instead of lock files
+
