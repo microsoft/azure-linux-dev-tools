@@ -60,6 +60,8 @@ on the host; git is required for azldev's own catalog clone unless
 '--source-dir' is used, though the selected plan's 'discover' step may still
 invoke git itself regardless of '--source-dir'.
 
+Reports and logs stay under --work-dir. Use -O json for artifact paths and TMT exit codes, including on failure.
+
 ```
 azldev component test COMPONENT [flags]
 ```
@@ -90,7 +92,7 @@ azldev component test COMPONENT [flags]
   -r, --rpm strings         Local RPM to install before testing (required; may be repeated). Typically include the main package and -tests package.
       --source-dir string   Run tmt straight from this local fmf tree instead of cloning the catalog 'source'. Accepts the output of either 'azldev component render' (with 'render.skip-file-filter = true') or 'azldev component prepare-sources'. Local inner-loop convenience; not used by cloud (TEE) runs.
   -t, --test strings        Mapped TMT test name to run (may be repeated; defaults to all)
-      --work-dir string     Directory for cloned metadata and TMT artifacts (default: current directory)
+      --work-dir string     Parent for the reusable TMT venv and fresh retained test artifacts (default: current directory)
 ```
 
 ### Options inherited from parent commands

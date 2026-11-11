@@ -72,7 +72,9 @@ azldev creates or reuses an isolated Python environment under --work-dir and
 installs TMT with virtual-provisioner support there. python3 must be available
 on the host; git is required for azldev's own catalog clone unless
 '--source-dir' is used, though the selected plan's 'discover' step may still
-invoke git itself regardless of '--source-dir'.`,
+invoke git itself regardless of '--source-dir'.
+
+Reports and logs stay under --work-dir. Use -O json for artifact paths and TMT exit codes, including on failure.`,
 		Example: `  # Build the component first
   azldev component build buildah
 
@@ -86,7 +88,7 @@ invoke git itself regardless of '--source-dir'.`,
     --rpm ./base/out/rpms/rpm-base/buildah-tests-1.29.0-5.x86_64.rpm`,
 		Args: cobra.ExactArgs(1),
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
-			return nil, tmt.RunComponentTests(env, args[0], options)
+			return tmt.RunComponentTests(env, args[0], options)
 		}),
 	}
 
@@ -107,7 +109,8 @@ func registerComponentTestFlags(cmd *cobra.Command, options *tmt.Options) {
 		&options.Tests, "test", "t", nil, "Mapped TMT test name to run (may be repeated; defaults to all)",
 	)
 	cmd.Flags().StringVar(
-		&options.WorkDir, "work-dir", "", "Directory for cloned metadata and TMT artifacts (default: current directory)",
+		&options.WorkDir, "work-dir", "", "Parent for the reusable TMT venv and fresh retained test artifacts "+
+			"(default: current directory)",
 	)
 	_ = cmd.MarkFlagDirname("work-dir")
 	cmd.Flags().StringVar(&options.Provision, "provision", tmt.ProvisionVirtual,

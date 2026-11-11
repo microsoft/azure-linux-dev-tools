@@ -38,6 +38,15 @@ Prefer `comp render` for quick overlay verification; use `comp diff-sources` to 
 exact overlay effect (it fetches sources once, applies overlays to a copy, and diffs the
 two trees). Builds can be slow — set generous timeouts.
 
+For components with TMT tests, `azldev component test <name> --image-path <qcow2>
+--rpm <candidate.rpm> --plan /plans/smoke --work-dir <artifacts> -O json` retains
+logs and available native JUnit reports. JSON rows give the test, TMT exit code,
+artifact directory, and relative JUnit paths. Keep the command's nonzero exit
+status; early failures may have logs but no JUnit. Artifacts persist until removed.
+Do not use
+`--provision local` on a development host: it installs packages and executes
+tests on that machine; use a disposable Azure Linux 4 test container instead.
+
 Finalize with `azldev comp refresh-upstream-commit -p <name>` before opening a PR (see the
 `azldev-refresh-upstream-commit` skill).
 

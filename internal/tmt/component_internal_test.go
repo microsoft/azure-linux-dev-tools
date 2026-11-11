@@ -24,6 +24,12 @@ import (
 
 const testRenderedSpecDir = "/project/specs/u/util-linux"
 
+const (
+	testProjectDir = "/project"
+	testImagePath  = "/project/image.qcow2"
+	testRPMPath    = "/project/component.rpm"
+)
+
 func TestDecodeTMTConfig(t *testing.T) {
 	config, err := decodeTMTConfig(map[string]any{
 		"source": map[string]any{
@@ -87,8 +93,8 @@ func TestValidateTMTProvisionOptions(t *testing.T) {
 }
 
 func TestTMTInstallRequirementUsesProvisionerExtra(t *testing.T) {
-	assert.Equal(t, "tmt", tmtInstallRequirement(tmtProvisionLocal))
-	assert.Equal(t, "tmt[provision-virtual]", tmtInstallRequirement(ProvisionVirtual))
+	assert.Equal(t, "tmt[report-junit]", tmtInstallRequirement(tmtProvisionLocal))
+	assert.Equal(t, "tmt[provision-virtual,report-junit]", tmtInstallRequirement(ProvisionVirtual))
 }
 
 func TestSelectTMTTests(t *testing.T) {
@@ -148,7 +154,7 @@ func TestFlattenHardwareConstraintsRejectsBooleanGroups(t *testing.T) {
 func TestResolvedPlanHardwareArgsDryRunSkipsPlanExport(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
 	dryRunOptions := azldev.NewEnvOptions()
-	dryRunOptions.ProjectDir = "/project"
+	dryRunOptions.ProjectDir = testProjectDir
 	dryRunOptions.Config = testEnv.Config
 	dryRunOptions.DryRunnable = azldev.NewAppDryRunnable(true)
 	dryRunOptions.EventListener = testEnv.EventListener
@@ -163,7 +169,7 @@ func TestResolvedPlanHardwareArgsDryRunSkipsPlanExport(t *testing.T) {
 	}
 
 	args, err := resolvedPlanHardwareArgs(
-		dryRunEnv, "/work/repo", "/work/tmt", "/plans/smoke",
+		dryRunEnv, "/work/repo", "/work/tmt", "/plans/smoke", "",
 	)
 
 	require.NoError(t, err)
@@ -245,14 +251,14 @@ func TestComponentTMTWorkDirDefaultsToCurrentDirectory(t *testing.T) {
 func TestPrepareTMTEnvironmentDryRunAvoidsFilesystemChanges(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
 	dryRunOptions := azldev.NewEnvOptions()
-	dryRunOptions.ProjectDir = "/project"
+	dryRunOptions.ProjectDir = testProjectDir
 	dryRunOptions.Config = testEnv.Config
 	dryRunOptions.DryRunnable = azldev.NewAppDryRunnable(true)
 	dryRunOptions.EventListener = testEnv.EventListener
 	dryRunOptions.Interfaces = testEnv.TestInterfaces
 	dryRunEnv := azldev.NewEnv(t.Context(), dryRunOptions)
 
-	workDir, tmtProgramPath, err := prepareTMTEnvironment(dryRunEnv, "artifacts", ProvisionVirtual, false)
+	workDir, tmtProgramPath, err := prepareTMTEnvironment(dryRunEnv, "artifacts", ProvisionVirtual, false, "")
 
 	require.NoError(t, err)
 	assert.Equal(t, "/project/artifacts", workDir)
@@ -323,7 +329,7 @@ func TestRunOneTMTTestFromSourceDirDoesNotClone(t *testing.T) {
 		SourceDir:      sourceDir,
 	}
 
-	require.NoError(t, runOneTMTTest(testEnv.Env, test, settings))
+	require.NoError(t, runOneTMTTest(testEnv.Env, test, settings, &azldev.TestRunResult{}))
 
 	ranTMT := false
 
@@ -368,7 +374,7 @@ func TestRunOneTMTTestFromSourceDirWithNoCatalogEntryAutoDiscoversPlan(t *testin
 		SourceDir:      sourceDir,
 	}
 
-	require.NoError(t, runOneTMTTest(testEnv.Env, test, settings))
+	require.NoError(t, runOneTMTTest(testEnv.Env, test, settings, &azldev.TestRunResult{}))
 
 	var tmtArgs []string
 
@@ -609,7 +615,7 @@ func TestDirsOverlap(t *testing.T) {
 		"identical paths":             {"/project/source", "/project/source", true},
 		"b nested under a":            {"/project/source", "/project/source/nested", true},
 		"a nested under b":            {"/project/source/nested", "/project/source", true},
-		"project root contains work":  {"/project", "/project/work", true},
+		"project root contains work":  {testProjectDir, "/project/work", true},
 		"unrelated sibling paths":     {"/project/source", "/project/work", false},
 		"similar but distinct prefix": {"/project/source", "/project/source-other", false},
 	} {
@@ -619,23 +625,56 @@ func TestDirsOverlap(t *testing.T) {
 	}
 }
 
-func TestRemovePreviousTMTRepositoryRemovesOnlyRepository(t *testing.T) {
+func TestExecuteComponentTMTTestsUsesFreshMetadataRepositories(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
-	testDir := "/project/tmt-test"
-	repoDir := filepath.Join(testDir, "repo")
-	artifactPath := filepath.Join(testDir, "tmt", "results.yaml")
-	staleMetadataPath := filepath.Join(repoDir, "stale-metadata")
+	testEnv.CmdFactory.RegisterCommandInSearchPath("python3")
+	testEnv.CmdFactory.RegisterCommandInSearchPath("git")
 
-	require.NoError(t, testEnv.TestFS.MkdirAll(repoDir, fileperms.PublicDir))
-	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, staleMetadataPath, []byte("stale"), fileperms.PrivateFile))
-	require.NoError(t, testEnv.TestFS.MkdirAll(filepath.Dir(artifactPath), fileperms.PublicDir))
-	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, artifactPath, []byte("preserve"), fileperms.PrivateFile))
+	var repositories []string
 
-	require.NoError(t, removePreviousTMTRepository(testEnv.Env, repoDir))
-	_, err := testEnv.TestFS.Stat(repoDir)
-	require.ErrorIs(t, err, fs.ErrNotExist)
-	_, err = testEnv.TestFS.Stat(artifactPath)
-	assert.NoError(t, err)
+	testEnv.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+		if filepath.Base(cmd.Args[0]) == "git" && len(cmd.Args) > 1 && cmd.Args[1] == "clone" {
+			repoDir := cmd.Args[len(cmd.Args)-1]
+			_, err := testEnv.TestFS.Stat(repoDir)
+			require.ErrorIs(t, err, fs.ErrNotExist)
+			require.NoError(t, testEnv.TestFS.MkdirAll(repoDir, fileperms.PublicDir))
+			require.NoError(t, fileutils.WriteFile(
+				testEnv.TestFS, filepath.Join(repoDir, "metadata"), []byte("retained"), fileperms.PrivateFile,
+			))
+			repositories = append(repositories, repoDir)
+		}
+
+		return nil
+	}
+
+	tests := []projectconfig.ResolvedTest{{
+		Name: "ci",
+		Definition: projectconfig.TestDefinition{Type: "tmt", Tmt: map[string]any{
+			"source": map[string]any{
+				"git-url": "https://example.test/tests.git",
+				"ref":     "0123456789012345678901234567890123456789",
+			},
+		}},
+	}}
+
+	roots := make([]string, 0, 2)
+
+	for range 2 {
+		results, err := executeComponentTMTTests(testEnv.Env, "/work", tests, tmtRunSettings{Provision: tmtProvisionLocal})
+		require.NoError(t, err)
+		require.Len(t, results, 1)
+		roots = append(roots, results[0].ArtifactDir)
+	}
+
+	require.Len(t, repositories, 2)
+	assert.NotEqual(t, roots[0], roots[1])
+
+	for i, root := range roots {
+		assert.Equal(t, filepath.Join(root, "001-ci", "repo"), repositories[i])
+		data, err := fileutils.ReadFile(testEnv.TestFS, filepath.Join(repositories[i], "metadata"))
+		require.NoError(t, err)
+		assert.Equal(t, "retained", string(data))
+	}
 }
 
 func TestRunHostCommandOutputIncludesStderr(t *testing.T) {
@@ -648,10 +687,13 @@ func TestRunHostCommandOutputIncludesStderr(t *testing.T) {
 		return "", errors.New("command failed")
 	}
 
-	_, err := runHostCommandOutput(testEnv.Env, "/project", "tmt", "plan", "export")
+	_, err := runHostCommandOutput(testEnv.Env, "/project/setup.log", testProjectDir, tmtProgram, "plan", "export")
 
 	require.Error(t, err)
-	require.ErrorContains(t, err, "tmt export diagnostic")
+
+	log, readErr := fileutils.ReadFile(testEnv.TestFS, "/project/setup.log")
+	require.NoError(t, readErr)
+	assert.Contains(t, string(log), "tmt export diagnostic")
 	require.ErrorContains(t, err, "command failed")
 }
 
@@ -661,9 +703,9 @@ func TestRunHostCommandOutputOmitsEmptyStderr(t *testing.T) {
 		return "", errors.New("command failed")
 	}
 
-	_, err := runHostCommandOutput(testEnv.Env, "/project", "tmt", "plan", "export")
+	_, err := runHostCommandOutput(testEnv.Env, "", testProjectDir, tmtProgram, "plan", "export")
 
-	require.EqualError(t, err, "run host command `tmt`:\ncommand failed")
+	require.ErrorContains(t, err, "command failed")
 }
 
 func TestComponentTMTArgsPreservesNativePlanSteps(t *testing.T) {
@@ -677,17 +719,17 @@ func TestComponentTMTArgsPreservesNativePlanSteps(t *testing.T) {
 	)
 
 	assert.Equal(t, []string{
-		"run", "--all", "--keep", "--workdir-root", "/work/tmt",
+		"run", "--all", "--keep", "--id", "/work/tmt", "--workdir-root", "/work/workdir-root",
 		"plan", "--name", "/plans/smoke",
 		"provision", "--how", "virtual", "--become", "--image", "/path/to/image.qcow2",
 		"--hardware", "memory >= 4 GB", "--hardware", "boot.method = uefi",
 		"prepare", "--insert", "--how", "install", "--name", tmtCandidateRPMPrepareStepName,
 		"--package", "/rpms/component.rpm",
 		"--package", "/rpms/component-tests.rpm",
+		"report", "--insert", "--how", "junit", "--name", tmtJUnitPhase, "--no-include-output-log",
 	}, args)
 	assert.NotContains(t, args, "discover")
 	assert.NotContains(t, args, "execute")
-	assert.NotContains(t, args, "report")
 	assert.NotContains(t, args, "finish")
 }
 
@@ -702,12 +744,13 @@ func TestComponentTMTArgsVirtualProvisioner(t *testing.T) {
 	)
 
 	assert.Equal(t, []string{
-		"run", "--all", "--keep", "--workdir-root", "/work/tmt",
+		"run", "--all", "--keep", "--id", "/work/tmt", "--workdir-root", "/work/workdir-root",
 		"plan", "--name", "/plans/smoke",
 		"provision", "--how", "virtual", "--become", "--image", "/path/to/image.qcow2",
 		"--hardware", "boot.method = uefi",
 		"prepare", "--insert", "--how", "install", "--name", tmtCandidateRPMPrepareStepName,
 		"--package", "/rpms/component.rpm",
+		"report", "--insert", "--how", "junit", "--name", tmtJUnitPhase, "--no-include-output-log",
 	}, args)
 }
 
@@ -725,11 +768,12 @@ func TestComponentTMTArgsLocalProvisioner(t *testing.T) {
 	)
 
 	assert.Equal(t, []string{
-		"run", "--all", "--keep", "--workdir-root", "/work/tmt",
+		"run", "--all", "--keep", "--id", "/work/tmt", "--workdir-root", "/work/workdir-root",
 		"plan", "--name", "/plans/smoke",
 		"provision", "--how", "local", "--become",
 		"prepare", "--insert", "--how", "install", "--name", tmtCandidateRPMPrepareStepName,
 		"--package", "/rpms/component.rpm",
+		"report", "--insert", "--how", "junit", "--name", tmtJUnitPhase, "--no-include-output-log",
 	}, args)
 	assert.NotContains(t, args, "--image")
 	assert.NotContains(t, args, "--hardware")
@@ -746,11 +790,12 @@ func TestComponentTMTArgsOmitsNameWhenPlanIsEmpty(t *testing.T) {
 	)
 
 	assert.Equal(t, []string{
-		"run", "--all", "--keep", "--workdir-root", "/work/tmt",
+		"run", "--all", "--keep", "--id", "/work/tmt", "--workdir-root", "/work/workdir-root",
 		"plan",
 		"provision", "--how", "local", "--become",
 		"prepare", "--insert", "--how", "install", "--name", tmtCandidateRPMPrepareStepName,
 		"--package", "/rpms/component.rpm",
+		"report", "--insert", "--how", "junit", "--name", tmtJUnitPhase, "--no-include-output-log",
 	}, args)
 }
 

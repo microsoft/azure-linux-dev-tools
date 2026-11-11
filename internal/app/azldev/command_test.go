@@ -5,6 +5,7 @@ package azldev_test
 
 import (
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -13,6 +14,38 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 )
+
+type failingReportWriter struct{}
+
+func (failingReportWriter) Write([]byte) (int, error) {
+	return 0, io.ErrClosedPipe
+}
+
+type shortReportWriter struct{}
+
+func (shortReportWriter) Write([]byte) (int, error) {
+	return 0, nil
+}
+
+func TestRunFuncJSONShortWriteFailure(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	env.Env.SetDefaultReportFormat(azldev.ReportFormatJSON)
+	env.Env.SetReportFile(shortReportWriter{})
+	run := azldev.RunFunc(func(*azldev.Env) (interface{}, error) {
+		return []string{"result"}, nil
+	})
+	assert.ErrorIs(t, run(testCmd(env.Env), nil), io.ErrShortWrite)
+}
+
+func TestRunFuncJSONWriteFailure(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	env.Env.SetDefaultReportFormat(azldev.ReportFormatJSON)
+	env.Env.SetReportFile(failingReportWriter{})
+	run := azldev.RunFunc(func(*azldev.Env) (interface{}, error) {
+		return []string{"result"}, nil
+	})
+	assert.ErrorIs(t, run(testCmd(env.Env), nil), io.ErrClosedPipe)
+}
 
 func testCmd(env *azldev.Env) (cmd *cobra.Command) {
 	cmd = &cobra.Command{}
