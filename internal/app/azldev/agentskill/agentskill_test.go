@@ -161,6 +161,11 @@ func TestSkillsDocumentUniqueMockRoots(t *testing.T) {
 			assert.Contains(t, doc, "--unique-mockroot")
 			assert.Contains(t, doc, "at most 24 characters")
 			assert.Contains(t, doc, "--uniqueext <extension> --shell")
+			assert.Contains(t, doc, "--disable-plugin yum_cache")
+
+			withoutLockfileDoc, err := agentskill.NewCatalog(true).SkillDocument(name, testParams())
+			require.NoError(t, err)
+			assert.Contains(t, withoutLockfileDoc, "--disable-plugin yum_cache")
 		})
 	}
 }

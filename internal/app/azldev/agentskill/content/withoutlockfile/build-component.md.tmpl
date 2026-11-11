@@ -21,6 +21,9 @@ Build foundational packages before their dependents. RPMs land in the project's
 configured output directory (`out` by default). `-q` quiets output but hides build
 progress — use it only for inner-loop builds you expect to succeed.
 
+Use `--unique-mockroot` to isolate mock roots. azldev also passes
+`--disable-plugin yum_cache` for unique-root commands.
+
 ## The inner loop
 
 investigate → modify → render → build → test → inspect
