@@ -26,6 +26,8 @@ func OpenProjectRepo(path string) (*gogit.Repository, error) {
 	})
 }
 
+const maxSymlinkHops = 255
+
 func RepoRelPath(repoRoot, absPath string) (string, error) {
 	resolvedRoot, err := resolveSymlinks(repoRoot)
 	if err != nil {
@@ -50,6 +52,12 @@ func RepoRelPath(repoRoot, absPath string) (string, error) {
 }
 
 func resolveSymlinks(path string) (string, error) {
+	remainingLinks := maxSymlinkHops
+
+	return resolveSymlinksLimited(path, &remainingLinks)
+}
+
+func resolveSymlinksLimited(path string, remainingLinks *int) (string, error) {
 	resolved, err := filepath.EvalSymlinks(path)
 	if err == nil {
 		return resolved, nil
@@ -64,7 +72,7 @@ func resolveSymlinks(path string) (string, error) {
 		return path, nil
 	}
 
-	resolvedParent, err := resolveSymlinks(parent)
+	resolvedParent, err := resolveSymlinksLimited(parent, remainingLinks)
 	if err != nil {
 		return "", err
 	}
@@ -84,6 +92,12 @@ func resolveSymlinks(path string) (string, error) {
 		return joined, nil
 	}
 
+	if *remainingLinks == 0 {
+		return "", fmt.Errorf("too many levels of symbolic links resolving %#q", joined)
+	}
+
+	*remainingLinks--
+
 	target, err := os.Readlink(joined)
 	if err != nil {
 		return "", fmt.Errorf("reading symlink %#q:\n%w", joined, err)
@@ -93,5 +107,5 @@ func resolveSymlinks(path string) (string, error) {
 		target = filepath.Join(resolvedParent, target)
 	}
 
-	return resolveSymlinks(target)
+	return resolveSymlinksLimited(target, remainingLinks)
 }
