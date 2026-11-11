@@ -39,6 +39,7 @@ type RenderOptions struct {
 	CleanStale        bool
 	CheckOnly         bool
 	RPMDevBumpspec    bool
+	PatchWarnings     string
 }
 
 func renderOnAppInit(app *azldev.App, parentCmd *cobra.Command) {
@@ -67,6 +68,13 @@ specs/v/vim).
 Unlike prepare-sources, render skips downloading source tarballs from the
 lookaside cache — only spec files, patches, scripts, and other git-tracked
 sidecar files are included. Multiple components can be rendered at once.
+
+Added-patch application diagnostics are logged and included as patchWarnings
+in -O json output. Missing unconditional patch selection, uncertain application,
+and likely strip mismatches are warnings unless --patch-warnings=error promotes
+them to component errors. Conditional branches and duplicate application are not checked.
+Use --fail-on-error to exit nonzero on component failures. This is static
+analysis, not proof a patch applies.
 
 When rendering all components (-a), the --clean-stale flag prunes orphan
 rendered-spec directories (per-component dirs that no longer correspond to
@@ -102,13 +110,26 @@ valid with -a.`,
 	}
 
 	addComponentFilterOptions(cmd, &options.ComponentFilter, newCmdOptions(opts...))
+	addRenderFlags(cmd, &options)
 
+	return cmd
+}
+
+func addRenderFlags(cmd *cobra.Command, options *RenderOptions) {
 	cmd.Flags().StringVarP(&options.OutputDir, "output-dir", "o", "",
 		"output directory for rendered specs (overrides rendered-specs-dir from config)")
 	_ = cmd.MarkFlagDirname("output-dir")
 
 	cmd.Flags().BoolVar(&options.FailOnError, "fail-on-error", false,
 		"exit with error if any component fails to render (useful for CI)")
+
+	cmd.Flags().StringVar(&options.PatchWarnings, "patch-warnings", patchWarningsWarn,
+		"added-patch warning policy: warn or error "+
+			"(error rejects affected components; use --fail-on-error for a nonzero exit)")
+	_ = cmd.RegisterFlagCompletionFunc("patch-warnings",
+		func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+			return []string{patchWarningsWarn, patchWarningsError}, cobra.ShellCompDirectiveNoFileComp
+		})
 
 	cmd.Flags().BoolVarP(&options.Force, "force", "f", false, "allow overwriting existing rendered component directories")
 
@@ -129,17 +150,16 @@ valid with -a.`,
 	// muddled (CI would fail on stale failures even when on-disk markers
 	// already record them) and forcing a choice keeps the contract crisp.
 	cmd.MarkFlagsMutuallyExclusive("fail-on-error", "check-only")
-
-	return cmd
 }
 
 // RenderResult holds the result of rendering a single component.
 type RenderResult struct {
-	Component string `json:"component"       table:"Component"`
-	OutputDir string `json:"outputDir"       table:"Output"`
-	Status    string `json:"status"          table:"Status"`
-	Error     string `json:"error,omitempty" table:"Error,omitempty"`
-	Changed   bool   `json:"changed"         table:"Changed"`
+	Component     string                            `json:"component"               table:"Component"`
+	OutputDir     string                            `json:"outputDir"               table:"Output"`
+	Status        string                            `json:"status"                  table:"Status"`
+	Error         string                            `json:"error,omitempty"         table:"Error,omitempty"`
+	Changed       bool                              `json:"changed"                 table:"Changed"`
+	PatchWarnings []spec.PatchApplicationDiagnostic `json:"patchWarnings,omitempty" table:"-"`
 }
 
 // Render status constants.
@@ -147,6 +167,8 @@ const (
 	renderStatusOK        = "ok"
 	renderStatusError     = "error"
 	renderStatusCancelled = "cancelled"
+	patchWarningsWarn     = "warn"
+	patchWarningsError    = "error"
 )
 
 // RenderComponents renders the post-overlay spec and sidecar files for each
@@ -155,6 +177,10 @@ const (
 //  2. Batch mock processing (rpmautospec + spectool in a single chroot call)
 //  3. Parallel finishing (filter files, remove .git, copy output)
 func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult, error) {
+	if err := validatePatchWarningPolicy(options.PatchWarnings); err != nil {
+		return nil, err
+	}
+
 	if err := resolveAndValidateOutputDir(env, options); err != nil {
 		return nil, err
 	}
@@ -252,11 +278,26 @@ func RenderComponents(env *azldev.Env, options *RenderOptions) ([]*RenderResult,
 	// Sort results alphabetically for consistent output.
 	sortRenderResults(results)
 
+	return results, checkRenderOutcome(env.FS(), options, componentList, results)
+}
+
+func checkRenderOutcome(
+	fs opctx.FS, options *RenderOptions, comps []components.Component, results []*RenderResult,
+) error {
 	if options.CheckOnly {
-		return results, checkOnlyRenderResult(env.FS(), options, componentList, results)
+		return checkOnlyRenderResult(fs, options, comps, results)
 	}
 
-	return results, checkRenderErrors(results, options.FailOnError)
+	return checkRenderErrors(results, options.FailOnError)
+}
+
+func validatePatchWarningPolicy(policy string) error {
+	switch policy {
+	case "", patchWarningsWarn, patchWarningsError:
+		return nil
+	default:
+		return fmt.Errorf("invalid '--patch-warnings' value %#q; expected 'warn' or 'error'", policy)
+	}
 }
 
 // checkOnlyRenderResult inspects results from a --check-only run and returns
@@ -370,6 +411,7 @@ type preparedComponent struct {
 	comp          components.Component
 	specFilename  string // e.g., "curl.spec"
 	compOutputDir string // validated output path computed in phase 1
+	patchWarnings []spec.PatchApplicationDiagnostic
 }
 
 // prepResult pairs a prepared component (on success) or a render result (on error).
@@ -414,7 +456,7 @@ func parallelPrepare(
 			//nolint:contextcheck // env carries the ctx
 			return prepareOneComponent(
 				workerEnv, mockProcessor, comp, stagingDir, options.OutputDir,
-				options.specEditorMode(), options.RPMDevBumpspec)
+				options.specEditorMode(), options.RPMDevBumpspec, options.PatchWarnings)
 		},
 	)
 
@@ -448,6 +490,30 @@ func parallelPrepare(
 	return prepared
 }
 
+func applyPatchDiagnosticPolicy(
+	ctx context.Context, componentName string, diagnostics []spec.PatchApplicationDiagnostic, policy string,
+) error {
+	rejected := false
+
+	for _, diagnostic := range diagnostics {
+		level := slog.LevelWarn
+		if policy == patchWarningsError {
+			level = slog.LevelError
+			rejected = true
+		}
+
+		slog.Log(ctx, level, "Added patch application diagnostic",
+			"component", componentName, "patch", diagnostic.Filename,
+			"patchNumber", diagnostic.PatchNumber, "command", diagnostic.Command, "reason", diagnostic.Reason)
+	}
+
+	if rejected {
+		return errors.New("added-patch application rejected; see 'patchWarnings' diagnostics")
+	}
+
+	return nil
+}
+
 // prepareOneComponent validates the output path for a single component and
 // prepares its sources. Returns a [prepResult] carrying either a successful
 // preparedComponent or a [RenderResult] describing the error.
@@ -463,6 +529,7 @@ func prepareOneComponent(
 	outputDir string,
 	specEditor spec.EditorMode,
 	rpmDevBumpspec bool,
+	patchWarnings string,
 ) prepResult {
 	componentName := comp.GetName()
 
@@ -478,16 +545,25 @@ func prepareOneComponent(
 	}
 
 	prep, err := prepareComponentSources(env, mockProcessor, comp, stagingDir, specEditor, rpmDevBumpspec)
+	if prep != nil {
+		err = errors.Join(err, applyPatchDiagnosticPolicy(env, componentName, prep.patchWarnings, patchWarnings))
+	}
+
 	if err != nil {
 		slog.Error("Failed to prepare component sources",
 			"component", componentName, "error", err)
 
-		return prepResult{result: &RenderResult{
+		result := &RenderResult{
 			Component: componentName,
 			OutputDir: compOutputDir,
 			Status:    renderStatusError,
 			Error:     err.Error(),
-		}}
+		}
+		if prep != nil {
+			result.PatchWarnings = prep.patchWarnings
+		}
+
+		return prepResult{result: result}
 	}
 
 	prep.compOutputDir = compOutputDir
@@ -540,6 +616,11 @@ func prepareComponentSources(
 		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)),
 		sources.WithMockProcessor(mockProcessor),
 	)
+	prepared := &preparedComponent{comp: comp}
+
+	preparerOpts = append(preparerOpts, sources.WithPatchDiagnostics(func(diagnostics []spec.PatchApplicationDiagnostic) {
+		prepared.patchWarnings = diagnostics
+	}))
 	if rpmDevBumpspec {
 		preparerOpts = append(preparerOpts, sources.WithRPMDevBumpspec(env, env.WorkDir(), ""))
 	}
@@ -553,19 +634,18 @@ func prepareComponentSources(
 	}
 
 	if prepErr := preparer.PrepareSources(env, comp, componentDir, true /*applyOverlays*/); prepErr != nil {
-		return nil, fmt.Errorf("preparing sources for %#q:\n%w", componentName, prepErr)
+		return prepared, fmt.Errorf("preparing sources for %#q:\n%w", componentName, prepErr)
 	}
 
 	// Find the spec file so we can pass the filename to mock.
 	specPath, specErr := findSpecFile(env.FS(), componentDir, componentName)
 	if specErr != nil {
-		return nil, fmt.Errorf("finding spec file for %#q:\n%w", componentName, specErr)
+		return prepared, fmt.Errorf("finding spec file for %#q:\n%w", componentName, specErr)
 	}
 
-	return &preparedComponent{
-		comp:         comp,
-		specFilename: filepath.Base(specPath),
-	}, nil
+	prepared.specFilename = filepath.Base(specPath)
+
+	return prepared, nil
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -661,10 +741,11 @@ func parallelFinish(
 		case result.Cancelled:
 			// Worker never started — ctx ended before parmap reached it.
 			results[prep.index] = &RenderResult{
-				Component: prep.comp.GetName(),
-				OutputDir: prep.compOutputDir,
-				Status:    renderStatusCancelled,
-				Error:     "context cancelled",
+				Component:     prep.comp.GetName(),
+				OutputDir:     prep.compOutputDir,
+				Status:        renderStatusCancelled,
+				Error:         "context cancelled",
+				PatchWarnings: prep.patchWarnings,
 			}
 		default:
 			results[prep.index] = result.Value
@@ -691,17 +772,19 @@ func finishOneComponent(
 	// a Ctrl-C while the worker pool is draining.
 	if workerEnv.Err() != nil {
 		return &RenderResult{
-			Component: componentName,
-			OutputDir: compOutputDir,
-			Status:    renderStatusCancelled,
-			Error:     "context cancelled",
+			Component:     componentName,
+			OutputDir:     compOutputDir,
+			Status:        renderStatusCancelled,
+			Error:         "context cancelled",
+			PatchWarnings: prep.patchWarnings,
 		}
 	}
 
 	result := &RenderResult{
-		Component: componentName,
-		OutputDir: compOutputDir,
-		Status:    renderStatusOK,
+		Component:     componentName,
+		OutputDir:     compOutputDir,
+		Status:        renderStatusOK,
+		PatchWarnings: prep.patchWarnings,
 	}
 
 	drifted, err := finishComponentRender(env, prep, mockResultMap, stagingDir, allowOverwrite, checkOnly)

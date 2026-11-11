@@ -27,6 +27,7 @@ func TestSnapshots(t *testing.T) {
 
 	tests := map[string]testhelpers.ScenarioTest{
 		"help":                   cmdtest.NewScenarioTest("help").Locally(),
+		"component render help":  cmdtest.NewScenarioTest("component", "render", "--help").Locally(),
 		"config generate-schema": cmdtest.NewScenarioTest("config", "generate-schema").Locally(),
 		"--help":                 cmdtest.NewScenarioTest("--help").Locally(),
 		"--help with color":      cmdtest.NewScenarioTest("--help", "--color=always").Locally(),

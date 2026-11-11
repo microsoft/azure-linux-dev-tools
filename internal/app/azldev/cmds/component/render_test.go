@@ -37,6 +37,11 @@ func TestNewRenderCmd_Flags(t *testing.T) {
 	require.NotNil(t, failOnErrorFlag, "fail-on-error flag should be registered")
 	assert.Equal(t, "false", failOnErrorFlag.DefValue)
 
+	patchWarningsFlag := cmd.Flags().Lookup("patch-warnings")
+	require.NotNil(t, patchWarningsFlag)
+	assert.Equal(t, "warn", patchWarningsFlag.DefValue)
+	assert.Contains(t, patchWarningsFlag.Usage, "use --fail-on-error for a nonzero exit")
+
 	forceFlag := cmd.Flags().Lookup("force")
 	require.NotNil(t, forceFlag, "force flag should be registered")
 	assert.Equal(t, "false", forceFlag.DefValue)
@@ -55,6 +60,16 @@ func TestNewRenderCmd_Flags(t *testing.T) {
 	assert.Equal(t, "Use rpmdev-bumpspec instead of the legacy static release calculation", rpmDevBumpspecFlag.Usage)
 
 	assert.Nil(t, componentcmds.NewDiffSourcesCmd().Flags().Lookup("rpmdev-bumpspec"))
+}
+
+func TestRenderCmd_InvalidPatchWarningPolicy(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+	cmd := componentcmds.NewRenderCmd()
+	cmd.SetArgs([]string{"--patch-warnings", "ignore", "-o", "SPECS", "-a"})
+
+	err := cmd.ExecuteContext(testEnv.Env)
+	require.ErrorContains(t, err, "invalid '--patch-warnings' value")
+	assert.Empty(t, testEnv.CommandsExecuted, "validate the policy before preparing sources")
 }
 
 func TestRenderCmd_NoComponents(t *testing.T) {
