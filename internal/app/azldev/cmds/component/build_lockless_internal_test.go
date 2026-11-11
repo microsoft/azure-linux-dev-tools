@@ -106,7 +106,14 @@ func TestLocklessBuildUsesDistGitAndCleansUp(t *testing.T) {
 			env := testutils.NewTestEnv(t)
 			env.Config.Project.RenderedSpecsDir = "/project/specs"
 			env.Config.LocklessComponents = map[string]bool{"curl": true}
-			env.Config.Components["curl"] = projectconfig.ComponentConfig{Name: "curl"}
+			env.Config.Components["curl"] = projectconfig.ComponentConfig{
+				Name: "curl",
+				Build: projectconfig.ComponentBuildConfig{
+					With: []string{"feature"}, Without: []string{"other"},
+					Defines:   map[string]string{"dist": ".azl3", "custom": "working-tree-value"},
+					Undefines: []string{"dist"},
+				},
+			}
 			env.CmdFactory.RegisterCommandInSearchPath("git")
 			env.CmdFactory.RegisterCommandInSearchPath(mock.MockBinary)
 
@@ -133,7 +140,9 @@ func TestLocklessBuildUsesDistGitAndCleansUp(t *testing.T) {
 					if slices.Contains(cmd.Args, "--subdirectory-filter") {
 						require.Equal(t, "specs/c/curl", cmd.Args[len(cmd.Args)-1])
 						require.NoError(t, fileutils.WriteFile(env.FS(), filepath.Join(cloneDir, "curl.spec"),
-							[]byte("committed spec"), fileperms.PublicFile))
+							[]byte("%{load:%{_sourcedir}/curl.azl.macros}\n"), fileperms.PublicFile))
+						require.NoError(t, fileutils.WriteFile(env.FS(), filepath.Join(cloneDir, "curl.azl.macros"),
+							[]byte("%custom committed-value\n"), fileperms.PublicFile))
 					}
 				}
 
@@ -149,8 +158,14 @@ func TestLocklessBuildUsesDistGitAndCleansUp(t *testing.T) {
 
 				built = true
 
+				require.NotContains(t, cmd.Args, "--define")
+				require.NotContains(t, cmd.Args, "--with")
+				require.NotContains(t, cmd.Args, "--without")
 				require.Contains(t, strings.Join(cmd.Args, " "), "--enable-plugin rpmautospec")
 				require.Equal(t, cloneDir, cmd.Args[slices.Index(cmd.Args, "--sources")+1])
+				macros, err := fileutils.ReadFile(env.FS(), filepath.Join(cloneDir, "curl.azl.macros"))
+				require.NoError(t, err)
+				require.Equal(t, "%custom committed-value\n", string(macros))
 
 				if fail {
 					return sentinel

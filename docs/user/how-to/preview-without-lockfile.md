@@ -120,6 +120,9 @@ Mock's rpmautospec plugin must be installed on the host as well; enabling an
 unavailable plugin is an error, even if Mock itself would only warn.
 The plugin resolves `%autorelease` and `%autochangelog` using the filtered
 history; no synthetic history, overlay replay, or separate Release bump runs.
+Build macros come from the macro file loaded by the committed spec, not duplicate
+Mock `--define`, `--with`, or `--without` arguments. Render and commit macro changes
+before building; live configuration cannot override committed macro settings.
 Binary RPMs are built from that SRPM normally. `--no-check` is forwarded through
 Mock's `--nocheck`; `--srpm-only` skips binary builds. Lockless builds reject
 `--without-git` and `--rpmdev-bumpspec`. Locked build behavior is unchanged.

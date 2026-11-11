@@ -47,7 +47,6 @@ type Builder struct {
 	buildEnv       buildenv.RPMAwareBuildEnv
 	workDirFactory *workdir.Factory
 	distGitDir     string
-	buildOptions   mock.CommonBuildOptions
 }
 
 // Ensure that [Builder] implements the [ComponentBuilder] interface.
@@ -83,9 +82,8 @@ func (b *Builder) BuildSourcePackage(
 }
 
 // UseDistGitSources builds the prepared repository without replaying overlays or synthetic history.
-func (b *Builder) UseDistGitSources(dir string, options mock.CommonBuildOptions) {
+func (b *Builder) UseDistGitSources(dir string) {
 	b.distGitDir = dir
-	b.buildOptions = options
 }
 
 func (b *Builder) BuildBinaryPackage(
@@ -175,8 +173,6 @@ func (b *Builder) buildSRPMFromPreparedSources(
 		},
 	}
 	if b.distGitDir != "" {
-		srpmOptions.CommonBuildOptions = b.buildOptions
-		srpmOptions.LocalRepoPaths = localRepoPaths
 		srpmOptions.RPMAutospec = true
 	}
 
@@ -247,10 +243,6 @@ func (b *Builder) buildRPM(
 		},
 		NoCheck:      noCheck,
 		ForceRebuild: false, // Could be added to config if needed
-	}
-	if b.distGitDir != "" {
-		rpmOptions.CommonBuildOptions = b.buildOptions
-		rpmOptions.LocalRepoPaths = localRepoPaths
 	}
 
 	err = buildEnv.BuildRPM(ctx, srpmPath, tempRPMDir, rpmOptions)

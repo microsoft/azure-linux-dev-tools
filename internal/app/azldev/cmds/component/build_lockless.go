@@ -14,7 +14,6 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/workdir"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource"
-	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/mock"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/defers"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 )
@@ -57,10 +56,7 @@ func buildLocklessComponent(
 	}, &err)
 
 	builder := componentbuilder.New(env, env.FS(), env, nil, buildEnv, factory)
-	cfg := component.GetConfig()
-	builder.UseDistGitSources(dir, mock.CommonBuildOptions{
-		With: cfg.Build.With, Without: cfg.Build.Without, Defines: cfg.Build.Defines,
-	})
+	builder.UseDistGitSources(dir)
 
 	repos := append([]string{}, options.LocalRepoPaths...)
 	if options.LocalRepoWithPublishPath != "" {

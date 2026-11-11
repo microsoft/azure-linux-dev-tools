@@ -23,7 +23,6 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/sourceproviders_test"
-	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/mock"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/stretchr/testify/require"
@@ -166,17 +165,17 @@ func TestBuildFromDistGit(t *testing.T) {
 
 	const dir = "/committed-dist-git"
 
-	opts := mock.CommonBuildOptions{With: []string{"feature"}, Defines: map[string]string{"custom": "1"}}
 	// A nil preparer ensures dist-git builds cannot accidentally replay the old preparation pipeline.
 	builder := componentbuilder.New(params.testEnv.Env, params.testEnv.FS(), params.testEnv.Env,
 		nil, params.buildEnv, params.workDirFactory)
-	builder.UseDistGitSources(dir, opts)
+	builder.UseDistGitSources(dir)
 	params.buildEnv.EXPECT().BuildSRPM(gomock.Any(), dir+"/"+comp.GetName()+".spec", dir,
 		gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, _, _, output string, options buildenv.SRPMBuildOptions) error {
 			require.True(t, options.RPMAutospec)
-			require.Equal(t, opts.With, options.With)
-			require.Equal(t, opts.Defines, options.Defines)
+			require.Empty(t, options.With)
+			require.Empty(t, options.Without)
+			require.Empty(t, options.Defines)
 			require.Equal(t, []string{"/local-repo"}, options.LocalRepoPaths)
 
 			return fileutils.WriteFile(params.testEnv.FS(), filepath.Join(output, "package.src.rpm"),
@@ -187,8 +186,9 @@ func TestBuildFromDistGit(t *testing.T) {
 	params.buildEnv.EXPECT().BuildRPM(gomock.Any(), srpm, gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, _ string, _ string, options buildenv.RPMBuildOptions) error {
 			require.True(t, options.NoCheck)
-			require.Equal(t, opts.With, options.With)
-			require.Equal(t, opts.Defines, options.Defines)
+			require.Empty(t, options.With)
+			require.Empty(t, options.Without)
+			require.Empty(t, options.Defines)
 			require.Equal(t, []string{"/local-repo"}, options.LocalRepoPaths)
 
 			return nil
