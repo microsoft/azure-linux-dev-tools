@@ -412,9 +412,11 @@ func TestLocklessPrepareSourcesUsesWorkingInputs(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, "working overlay input", string(copied))
 
-			macros, err := fileutils.ReadFile(env.FS(), "/external/output/curl.azl.macros")
+			assert.Contains(t, string(prepared), "%define working_input working\n")
+
+			exists, err := fileutils.Exists(env.FS(), "/external/output/curl.azl.macros")
 			require.NoError(t, err)
-			assert.Contains(t, string(macros), "%working_input working\n")
+			assert.False(t, exists)
 		})
 	}
 }
@@ -558,18 +560,22 @@ func TestLocklessPrepareSourcesFlags(t *testing.T) {
 			assert.Equal(t, !testCase.options.SkipSources, exists)
 			exists, err = fileutils.Exists(env.FS(), filepath.Join(dir, "curl.azl.macros"))
 			require.NoError(t, err)
-			assert.Equal(t, !testCase.options.SkipOverlays, exists)
+			assert.False(t, exists)
 
 			content, err := fileutils.ReadFile(env.FS(), filepath.Join(dir, "sources"))
 			require.NoError(t, err)
 			specContent, err := fileutils.ReadFile(env.FS(), filepath.Join(dir, "curl.spec"))
 			require.NoError(t, err)
 
+			assert.NotContains(t, string(specContent), "%{load:")
+			assert.NotContains(t, string(specContent), "Source9999")
+
 			if testCase.options.SkipOverlays {
 				assert.Equal(t, "# upstream metadata\n", string(content))
 				assert.Equal(t, renderTestSpec("1", "7", ""), string(specContent))
 			} else {
 				assert.Contains(t, string(specContent), "Summary: Prepared summary\n")
+				assert.Contains(t, string(specContent), "%define prepare_fixture ready\n")
 
 				hash, hashType := helloSHA256, fileutils.HashTypeSHA256
 				if testCase.missingType {
@@ -729,7 +735,12 @@ func assertLocklessPreparedSourceTree(t *testing.T, fs opctx.FS, dir, release, h
 	specContent, err := fileutils.ReadFile(fs, filepath.Join(dir, "curl.spec"))
 	require.NoError(t, err)
 	assert.Contains(t, string(specContent), "Summary: Prepared summary\n")
-	assert.Equal(t, 1, strings.Count(string(specContent), "%{load:"))
+	assert.NotContains(t, string(specContent), "%{load:")
+	assert.NotContains(t, string(specContent), "Source9999")
+
+	exists, err := fileutils.Exists(fs, filepath.Join(dir, "curl.azl.macros"))
+	require.NoError(t, err)
+	assert.False(t, exists)
 	assert.Contains(t, string(specContent), "Release: "+release+"\n")
 
 	content, err := fileutils.ReadFile(fs, filepath.Join(dir, "generated-input.txt"))

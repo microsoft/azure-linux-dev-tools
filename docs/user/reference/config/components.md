@@ -259,10 +259,11 @@ emit-upstream-provenance = true
 
 The values are captured immediately after fetching the pinned upstream checkout,
 **before** release/changelog carryover, release bumping, or overlays can modify
-the spec. The captured values are reused when writing the component's generated
-macros file (loaded via `%{load:...}`), rather than querying the modified checkout.
+the spec. The captured values are reused when emitting inline `%define` entries
+for lockless components, or writing the generated macros file (loaded via
+`%{load:...}`) for locked components, rather than querying the modified checkout.
 
-For specs whose `Release` uses rpmautospec (`Release: %autorelease`), the pristine Fedora release number is computed by running `rpmautospec calculate-release` against the upstream dist-git checkout (whose history is Fedora's, not azldev's synthetic overlay history). Lockless rendering runs this query on the host; other workflows use the project distro's mock chroot. The query runs only when overlays will be applied, provenance is enabled for a Fedora upstream component, and `build.defines` does not already supply `fedora_upstream_release`. Static releases do not need this query. If resolution is unavailable or fails, `%fedora_upstream_release` is skipped (with a warning) rather than emitting the literal `%autorelease`; the query is not retried when writing the macros file.
+For specs whose `Release` uses rpmautospec (`Release: %autorelease`), the pristine Fedora release number is computed by running `rpmautospec calculate-release` against the upstream dist-git checkout (whose history is Fedora's, not azldev's synthetic overlay history). Lockless rendering runs this query on the host; other workflows use the project distro's mock chroot. The query runs only when overlays will be applied, provenance is enabled for a Fedora upstream component, and `build.defines` does not already supply `fedora_upstream_release`. Static releases do not need this query. If resolution is unavailable or fails, `%fedora_upstream_release` is skipped (with a warning) rather than emitting the literal `%autorelease`; the query is not retried when emitting macros.
 
 Example: for a component pinned to Fedora 43's `grub2-2.12-5.fc43`, the spec can reference:
 
@@ -276,7 +277,7 @@ Notes:
 
 - The flag has no effect on local or SRPM components (they have no upstream provenance) or on non-Fedora upstreams; for those it is silently ignored.
 - If a component defines a macro of the same name via `build.defines`, the user-defined value wins — the injected value does not overwrite it.
-- **How tag values are resolved:** `Version` and `Release` are read as plain text from the pristine upstream spec. `%{?dist}` is substituted with the Fedora dist tag, and `%autorelease` is resolved to a concrete number via `rpmautospec` (see above). Any *other* in-spec macros — e.g. `Version: %{majorver}.%{minorver}` — are emitted into the macros file unexpanded. Because that file is loaded back into the same spec via `%{load:...}`, RPM expands them lazily at build time using the spec's own macro definitions, so the consuming spec still sees the correct fully-expanded value.
+- **How tag values are resolved:** `Version` and `Release` are read as plain text from the pristine upstream spec. `%{?dist}` is substituted with the Fedora dist tag, and `%autorelease` is resolved to a concrete number via `rpmautospec` (see above). Any *other* in-spec macros — e.g. `Version: %{majorver}.%{minorver}` — remain unexpanded in the generated definitions. Lockless specs use lazy `%define` entries; locked specs load their macros file via `%{load:...}`. Both expand these references at build time using the spec's own macro definitions, so the consuming spec still sees the correct fully-expanded value.
 
 Limitations:
 

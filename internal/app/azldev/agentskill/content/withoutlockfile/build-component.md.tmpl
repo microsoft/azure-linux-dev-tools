@@ -30,12 +30,14 @@ For lockless components, build uses committed rendered dist-git history extracte
 with git-filter-repo; render and commit first. It fetches configured sources through
 the source manager (including download/custom origins), then remaining lookaside payloads, and
 builds the SRPM with Mock's rpmautospec plugin (Mock 5.3+), then builds binary RPMs.
-Build macros are loaded from the committed spec's macro file, not passed again as
-Mock command-line overrides. Render and commit macro changes before building.
+Build macros are inline `%define` entries in the committed spec, not passed again
+as Mock command-line overrides. Lockless rendering adds no macros file, load
+directive, or `Source9999` entry. Locked components retain their macros file.
+Render and commit macro changes before building.
 Uncommitted rendered edits are ignored. `--without-git` and `--rpmdev-bumpspec`
 are rejected for lockless builds; `--no-check` is forwarded normally.
 Lockless `comp prepare-sources` writes directly to `--output-dir` and downloads/generates
-sources before macro-file setup, then applies archive overlays before spec and
+sources before inline macro setup, then applies archive overlays before spec and
 loose-file overlays. History comes from `project.rendered-specs-dir`, not
 `--output-dir`; no synthetic history is generated. `--without-git` removes `.git`
 after successful preparation, preserving it on failure.

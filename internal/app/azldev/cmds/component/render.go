@@ -119,8 +119,8 @@ Lockless rendering never uses mock or rpmautospec process-distgit.
 The spec retains its RPM macros, including %autorelease and %autochangelog.
 All prepared files except .git are retained, without filtering or spectool. Host
 rpmautospec generate-changelog/calculate-release are used only when needed for
-release history or provenance. Provenance is captured before carryover/bumping
-and reused for the macros file. Locked components keep their existing behavior.` + "\n\n" + renderLocalHelp + `
+release history or provenance. Provenance is captured before carryover/bumping and inlined with %define.
+Lockless output adds no macros file, load directive, or Source9999. Locked components keep their existing behavior.` + "\n\n" + renderLocalHelp + `
 
 When rendering all components (-a), the --clean-stale flag prunes orphan
 rendered-spec directories (per-component dirs that no longer correspond to

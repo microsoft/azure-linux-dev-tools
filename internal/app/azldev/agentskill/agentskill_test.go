@@ -321,7 +321,7 @@ func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
 	assert.Contains(t, doc, "All prepared dist-git files except `.git` are retained")
 	assert.Contains(t, doc, "immediately after checking out the pinned upstream commit")
 	assert.Contains(t, doc, "that step never repeats the provenance query")
-	assert.Contains(t, doc, "the changelog before Release, then writes the macros file")
+	assert.Contains(t, doc, "the changelog before Release, then emits inline macros")
 	assert.Contains(t, doc, "Version detection and carryover use the upstream spec before overlays")
 	assert.Contains(t, doc, "Overlays can override the prepared release and changelog")
 	assert.Contains(t, doc, "compares output before the final release bump; `--check-only` stops before that bump")

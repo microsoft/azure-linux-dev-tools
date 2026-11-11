@@ -89,10 +89,10 @@ immediately after checking out the pinned upstream commit, before
 release/changelog carryover or bumping. Host `rpmautospec calculate-release`
 runs here only for an upstream `%autorelease` whose `fedora_upstream_release`
 is not already supplied by `build.defines`. The captured values are reused
-when writing the macros file; that step never repeats the provenance query.
+when emitting inline `%define` entries; that step never repeats the provenance query.
 
 After reading render history and collecting upstream changes, rendering prepares
-the changelog before Release, then writes the macros file, applies overlays, and
+the changelog before Release, then emits inline macros, applies overlays, and
 updates `sources` before comparison and the final `rpmdev-bumpspec`.
 Release edits preserve the existing spaces and tabs after `Release:`.
 Version detection and carryover use the upstream spec before overlays.

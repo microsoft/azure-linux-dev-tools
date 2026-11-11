@@ -94,8 +94,10 @@ synthetic history still determine the number and order of bumps. Without the
 flag, no bumpspec runtime discovery occurs and the legacy static calculation is
 used for locked components. Lockless builds reject this flag and use Mock's
 rpmautospec plugin with committed dist-git history; lockless `comp prepare-sources`
-writes directly to `--output-dir` and downloads/generates sources before macro-file
-setup, then applies archive overlays before spec/loose-file overlays. Nonempty output
+writes directly to `--output-dir` and downloads/generates sources before inline macro
+setup, then applies archive overlays before spec/loose-file overlays. Lockless specs
+use `%define` entries without a macros file, load directive, or generated `Source9999`.
+Locked specs retain their separate macros file. Nonempty output
 requires `--force`; failures can leave partial output. It does not commit changes.
 It reads history from `project.rendered-specs-dir`, not
 `--output-dir`, without generating synthetic history. `--without-git` removes `.git`

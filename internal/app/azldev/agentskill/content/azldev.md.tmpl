@@ -147,15 +147,17 @@ using render-style preparation. Current TOML and file inputs use the working tre
 including modified and untracked files. Release/changelog baselines use only
 committed component dist-git files; edits in the existing dist-git directory are
 ignored. Nonempty output requires `--force`; failures can
-leave partial output. It downloads/generates sources before macro-file setup and
-overlays, matching locked preparation. Archive overlays run before spec and
+leave partial output. It downloads/generates sources before inline macro setup and
+overlays. Lockless specs use `%define` entries, with no separate macros file,
+load directive, or generated `Source9999`; locked specs retain their macros file.
+Archive overlays run before spec and
 loose-file overlays. It does not compare
 rendered output, apply a final render release bump, or commit. It reads render history from
 `project.rendered-specs-dir` using `<lowercase-first-letter>/<component>`, never
 from `--output-dir`. It never generates synthetic history. `--without-git`
 removes `.git` after successful preparation, preserving it on failure.
 It supports `--skip-overlays`, `--skip-sources`, and `--allow-no-hashes`.
-Skipping overlays also skips macro-file setup and `sources` metadata updates;
+Skipping overlays also skips inline macro setup and `sources` metadata updates;
 skipping sources also skips archive overlays. Missing hashes cannot be computed
 when source acquisition is skipped.
 Use `comp dist-git-repo` for committed history extraction.

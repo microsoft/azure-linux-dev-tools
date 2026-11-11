@@ -111,8 +111,8 @@ The temporary query repositories are removed on success and failure.
 Locked queries continue to read working-tree rendered files, including uncommitted edits.
 
 `component build` fetches configured source files through the normal source manager,
-including custom generation and download-origin fallback unless `disable-origins`
-is enabled. It then downloads any remaining payloads listed in the extracted
+including custom generation. Download-origin fallback is enabled unless
+`disable-origins` is set. It then downloads any remaining payloads listed in the extracted
 `sources` manifest from lookaside and builds the SRPM with Mock's `rpmautospec`
 plugin enabled and the extracted repository passed as `--sources`. This requires Mock 5.3 or newer and
 rpmautospec available from the build distro's package repositories.
@@ -120,9 +120,13 @@ Mock's rpmautospec plugin must be installed on the host as well; enabling an
 unavailable plugin is an error, even if Mock itself would only warn.
 The plugin resolves `%autorelease` and `%autochangelog` using the filtered
 history; no synthetic history, overlay replay, or separate Release bump runs.
-Build macros come from the macro file loaded by the committed spec, not duplicate
+Build macros come from the committed spec, not duplicate
 Mock `--define`, `--with`, or `--without` arguments. Render and commit macro changes
 before building; live configuration cannot override committed macro settings.
+Lockless rendering emits sorted `%define` entries at the top of the spec instead
+of a separate `.azl.macros` file, `%{load:...}` directive, or generated `Source9999`.
+These lazy definitions preserve references to macros defined later in the spec.
+Locked components retain the separate macros file and its source entry.
 Binary RPMs are built from that SRPM normally. `--no-check` is forwarded through
 Mock's `--nocheck`; `--srpm-only` skips binary builds. Lockless builds reject
 `--without-git` and `--rpmdev-bumpspec`. Locked build behavior is unchanged.
@@ -138,8 +142,8 @@ Nonempty output requires `--force`, which removes existing contents before
 preparation. Failures can leave partially prepared output. It fetches upstream
 lookaside payloads with the spec/sidecars, prepares the upstream release/changelog,
 then downloads/generates configured `source-files`. Like locked preparation, it
-acquires payloads before writing the macro file and applying overlays. Archive
-overlays run first, followed by macro-file loading, configured spec/loose-file
+acquires payloads before emitting build macros and applying overlays. Archive
+overlays run first, followed by inline macro definitions, configured spec/loose-file
 overlays, and generated check-skip/header overlays. It updates `sources` metadata
 with the configured post-overlay hashes. It does not compare
 rendered output, apply a final render release bump, or commit changes.
@@ -155,7 +159,7 @@ The source-preparation flags also apply to lockless components:
 | Flag | Behavior |
 |------|----------|
 | `--without-git` | Remove `.git` from prepared output after successful preparation. It remains available for upstream release/changelog preparation; no synthetic history is generated with or without the flag. |
-| `--skip-overlays` | Skip configured and generated overlays, macro-file creation/loading, and `sources` metadata updates. Source acquisition still runs unless `--skip-sources` is also set. Upstream release/changelog preparation still runs. |
+| `--skip-overlays` | Skip configured and generated overlays, inline macro definitions, and `sources` metadata updates. Source acquisition still runs unless `--skip-sources` is also set. Upstream release/changelog preparation still runs. |
 | `--skip-sources` | Skip upstream lookaside downloads, configured source downloads/generation, and archive overlays. Spec/sidecars are still fetched; other overlays and `sources` metadata updates still run unless `--skip-overlays` is set. Overlays requiring missing payloads can fail. |
 | `--allow-no-hashes` | Compute missing hashes from acquired files when updating `sources`, defaulting to SHA-512 when `hash-type` is omitted. This does not edit TOML. With `--skip-sources`, missing hashes cannot be computed and cause an error; with `--skip-overlays`, metadata updates and hash computation are skipped. |
 
@@ -255,28 +259,28 @@ check: carryover and upstream-change comparison still use committed history,
 and failure recovery can discard uncommitted files in the component output
 directory. Locked components do not trigger this check.
 
-For upstream components, the renderer clones only the branch selected by the
-component's effective
-`spec.upstream-distro` (or the project default) into temporary storage. The
-resolved distro version's `dist-git-branch` supplies the branch name. The clone
-retains that branch's full history, not every upstream branch, so pinned commits
-and snapshot selection remain available without a shallow-history limit.
-This branch restriction is specific to lockless preparation. Locked components
-retain normal multi-branch cloning so existing pins on other branches remain usable.
+For unpinned upstream components, the renderer clones only the branch selected by
+the component's effective `spec.upstream-distro` (or the project default) into
+temporary storage. The resolved distro version's `dist-git-branch` supplies the
+branch name. The clone retains that branch's full history so snapshot selection
+remains available without a shallow-history limit. Pinned components fetch all
+branches so commits outside the selected branch remain usable. This branch
+restriction is specific to unpinned lockless preparation; locked components
+retain normal multi-branch cloning.
 
 Immediately after checking out the pinned upstream commit, rendering captures
 optional Fedora provenance values for `build.emit-upstream-provenance`, before
 release/changelog carryover or bumping changes the spec. If the upstream release
 uses `%autorelease` and `build.defines` does not already provide
 `fedora_upstream_release`, it runs host `rpmautospec calculate-release` at this
-point. The captured values are reused later when writing the macros file, without
+point. The captured values are reused later when emitting inline macros, without
 repeating the query against the modified checkout. No provenance query runs when
 provenance is disabled or the component is not sourced from Fedora upstream.
 
 The renderer then finds the existing committed output under
 `<rendered-specs-dir>/<lowercase-first-letter>/<component-name>`, ignoring
 uncommitted spec changes. It prepares the changelog first, then Release, before
-writing the macros file, applying overlays, or updating `sources`.
+emitting inline macros, applying overlays, or updating `sources`.
 
 Changelog handling is independent of version changes. For non-`%autorelease`
 specs, the committed inline `%changelog` section is preserved. For an initial

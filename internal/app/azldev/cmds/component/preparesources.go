@@ -55,8 +55,9 @@ and preserves fetched upstream Git metadata. Nonempty output requires '--force'.
 Current TOML and file inputs use the working tree, including modified and untracked
 files. Release/changelog baselines use only committed component dist-git files;
 uncommitted edits in that existing dist-git directory are ignored.
-It downloads/generates source payloads before macro-file setup and configured
-overlays. Archive overlays run before spec and loose-file overlays. It does not
+It downloads/generates source payloads before inline macro definitions and configured
+overlays. Lockless specs contain %define entries, not a separate macros file,
+load directive, or Source9999 entry. Archive overlays run before spec and loose-file overlays. It does not
 compare rendered output, apply a final render release bump, or commit changes.
 Render history comes from 'project.rendered-specs-dir'/<lowercase-first-letter>/<component>,
 independently of '--output-dir'. No synthetic history is generated.

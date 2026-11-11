@@ -1433,12 +1433,13 @@ upstream-commit = "aaaaaaa"
 				assert.Contains(t, string(content), releaseTag+wantRelease+"\n")
 				assert.Contains(t, string(content), "Version: "+overlayVersion+"\n")
 				assert.Contains(t, string(content), "%changelog\n* Overlaid entry\n")
-				assert.Contains(t, string(content), "%{load:%{_sourcedir}/curl.azl.macros}")
-				assert.Contains(t, string(content), "Source9999")
+				assert.Contains(t, string(content), "%define _with_feature 1\n")
+				assert.NotContains(t, string(content), "%{load:")
+				assert.NotContains(t, string(content), "Source9999")
 
-				macros, err := fileutils.ReadFile(env.TestFS, "/staging/curl/curl.azl.macros")
+				exists, err := fileutils.Exists(env.TestFS, "/staging/curl/curl.azl.macros")
 				require.NoError(t, err)
-				assert.Contains(t, string(macros), "%_with_feature 1\n")
+				assert.False(t, exists)
 
 				manifest, err := fileutils.ReadFile(env.TestFS, "/staging/curl/sources")
 				require.NoError(t, err)
