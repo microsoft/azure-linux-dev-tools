@@ -58,34 +58,34 @@ azldev component update [flags]
 ### Options
 
 ```
-  -a, --all-components                Include all components
-      --bump                          increment the manual-rebuild counter to trigger a new release
-      --check-only                    resolve identities and recompute fingerprints but do not write lock files or prune orphans. Exits 0 when nothing would change and 1 when any component is stale (or, with --all-components, when any orphan lock would be pruned). Intended for CI gates. Cannot be combined with --bump
-  -p, --component stringArray         Component name pattern
-  -g, --component-group stringArray   Component group name
-      --force-recalculate             force re-resolution of all components, ignoring freshness checks that would skip unchanged components. Use when upstream state may have changed independently of the snapshot time and the new commit is preferred
-  -h, --help                          help for update
-  -s, --spec-path stringArray         Spec path
+  -a, --all-components[=true|false]      Include all components
+      --bump[=true|false]                increment the manual-rebuild counter to trigger a new release
+      --check-only[=true|false]          resolve identities and recompute fingerprints but do not write lock files or prune orphans. Exits 0 when nothing would change and 1 when any component is stale (or, with --all-components, when any orphan lock would be pruned). Intended for CI gates. Cannot be combined with --bump
+  -p, --component stringArray            Component name pattern
+  -g, --component-group stringArray      Component group name
+      --force-recalculate[=true|false]   force re-resolution of all components, ignoring freshness checks that would skip unchanged components. Use when upstream state may have changed independently of the snapshot time and the new commit is preferred
+  -h, --help[=true|false]                help for update
+  -s, --spec-path stringArray            Spec path
 ```
 
 ### Options inherited from parent commands
 
 ```
-  -y, --accept-all                accept all prompts
-      --color mode                output colorization mode {always, auto, never} (default auto)
-      --concurrency int           base concurrency limit (default: number of logical CPUs; minimum 1)
-      --config-file stringArray   additional TOML config file(s) to merge (may be repeated)
-  -n, --dry-run                   dry run only (do not take action)
-      --network-retries int       maximum number of attempts for network operations (minimum 1) (default 3)
-      --no-default-config         disable default configuration
-  -O, --output-format fmt         output format {csv, json, markdown, table} (default table)
-      --permissive-config         do not fail on unknown fields in TOML config files
-  -C, --project string            path to Azure Linux project
-  -q, --quiet                     only enable minimal output
-      --spec-editor editor        Select the RPM spec editor (legacy or experimental) (default legacy)
-      --unique-mockroot           use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently
-  -v, --verbose                   enable verbose output
-      --without-lockfile          preview: track resolved upstream commits in generated config instead of lock files
+  -y, --accept-all[=true|false]          accept all prompts
+      --color mode                       output colorization mode {always, auto, never} (default auto)
+      --concurrency int                  base concurrency limit (default: number of logical CPUs; minimum 1)
+      --config-file stringArray          additional TOML config file(s) to merge (may be repeated)
+  -n, --dry-run[=true|false]             dry run only (do not take action)
+      --network-retries int              maximum number of attempts for network operations (minimum 1) (default 3)
+      --no-default-config[=true|false]   disable default configuration
+  -O, --output-format fmt                output format {csv, json, markdown, table} (default table)
+      --permissive-config[=true|false]   do not fail on unknown fields in TOML config files
+  -C, --project string                   path to Azure Linux project
+  -q, --quiet[=true|false]               only enable minimal output
+      --spec-editor editor               Select the RPM spec editor (legacy or experimental) (default legacy)
+      --unique-mockroot[=true|false]     use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently
+  -v, --verbose[=true|false]             enable verbose output
+      --without-lockfile[=true|false]    preview: track resolved upstream commits in generated config instead of lock files
 ```
 
 ### SEE ALSO

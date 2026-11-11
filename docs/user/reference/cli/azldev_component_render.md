@@ -53,38 +53,38 @@ azldev component render [flags]
 ### Options
 
 ```
-  -a, --all-components                Include all components
-      --check-only                    render to a staging area and compare against the existing on-disk output without modifying the output directory. Exits 0 when nothing would change and 1 when any component would drift. With -a + --clean-stale, also fails on orphan rendered-spec directories. Intended for CI gates.
-      --clean-stale                   prune rendered-spec directories that no longer correspond to a configured component (only with -a; requires -f with -o). Top-level non-component siblings are preserved.
-  -p, --component stringArray         Component name pattern
-  -g, --component-group stringArray   Component group name
-      --fail-on-error                 exit with error if any component fails to render (useful for CI)
-  -f, --force                         allow overwriting existing rendered component directories
-  -h, --help                          help for render
-  -o, --output-dir string             output directory for rendered specs (overrides rendered-specs-dir from config)
-      --rpmdev-bumpspec               Use rpmdev-bumpspec instead of the legacy static release calculation
-      --skip-lock-validation          skip lock file consistency checks
-  -s, --spec-path stringArray         Spec path
+  -a, --all-components[=true|false]         Include all components
+      --check-only[=true|false]             render to a staging area and compare against the existing on-disk output without modifying the output directory. Exits 0 when nothing would change and 1 when any component would drift. With -a + --clean-stale, also fails on orphan rendered-spec directories. Intended for CI gates.
+      --clean-stale[=true|false]            prune rendered-spec directories that no longer correspond to a configured component (only with -a; requires -f with -o). Top-level non-component siblings are preserved.
+  -p, --component stringArray               Component name pattern
+  -g, --component-group stringArray         Component group name
+      --fail-on-error[=true|false]          exit with error if any component fails to render (useful for CI)
+  -f, --force[=true|false]                  allow overwriting existing rendered component directories
+  -h, --help[=true|false]                   help for render
+  -o, --output-dir string                   output directory for rendered specs (overrides rendered-specs-dir from config)
+      --rpmdev-bumpspec[=true|false]        Use rpmdev-bumpspec instead of the legacy static release calculation
+      --skip-lock-validation[=true|false]   skip lock file consistency checks
+  -s, --spec-path stringArray               Spec path
 ```
 
 ### Options inherited from parent commands
 
 ```
-  -y, --accept-all                accept all prompts
-      --color mode                output colorization mode {always, auto, never} (default auto)
-      --concurrency int           base concurrency limit (default: number of logical CPUs; minimum 1)
-      --config-file stringArray   additional TOML config file(s) to merge (may be repeated)
-  -n, --dry-run                   dry run only (do not take action)
-      --network-retries int       maximum number of attempts for network operations (minimum 1) (default 3)
-      --no-default-config         disable default configuration
-  -O, --output-format fmt         output format {csv, json, markdown, table} (default table)
-      --permissive-config         do not fail on unknown fields in TOML config files
-  -C, --project string            path to Azure Linux project
-  -q, --quiet                     only enable minimal output
-      --spec-editor editor        Select the RPM spec editor (legacy or experimental) (default legacy)
-      --unique-mockroot           use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently
-  -v, --verbose                   enable verbose output
-      --without-lockfile          preview: track resolved upstream commits in generated config instead of lock files
+  -y, --accept-all[=true|false]          accept all prompts
+      --color mode                       output colorization mode {always, auto, never} (default auto)
+      --concurrency int                  base concurrency limit (default: number of logical CPUs; minimum 1)
+      --config-file stringArray          additional TOML config file(s) to merge (may be repeated)
+  -n, --dry-run[=true|false]             dry run only (do not take action)
+      --network-retries int              maximum number of attempts for network operations (minimum 1) (default 3)
+      --no-default-config[=true|false]   disable default configuration
+  -O, --output-format fmt                output format {csv, json, markdown, table} (default table)
+      --permissive-config[=true|false]   do not fail on unknown fields in TOML config files
+  -C, --project string                   path to Azure Linux project
+  -q, --quiet[=true|false]               only enable minimal output
+      --spec-editor editor               Select the RPM spec editor (legacy or experimental) (default legacy)
+      --unique-mockroot[=true|false]     use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently
+  -v, --verbose[=true|false]             enable verbose output
+      --without-lockfile[=true|false]    preview: track resolved upstream commits in generated config instead of lock files
 ```
 
 ### SEE ALSO

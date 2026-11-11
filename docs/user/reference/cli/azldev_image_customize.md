@@ -30,34 +30,34 @@ azldev image customize [flags]
 ### Options
 
 ```
-      --disable-base-image-rpm-repos   Disable the base image's RPM repos as an RPM source
-  -h, --help                           help for customize
-      --image-config string            Path of the image customization config file
-      --image-file string              Path of the base Azure Linux image to be customized. Cannot be specified with --image-tag
-      --image-tag string               Container tag for the MCR base Azure Linux image to be downloaded and customized. Cannot be specified with --image-file
-      --output-image-format string     Format of output image (vhd, vhd-fixed, vhdx, qcow2, raw, iso, pxe-dir, pxe-tar, cosi)
-      --output-path string             Path to write the customized image artifacts to. It can be a path to a file if the output format is a single file format (e.g., vhd, qcow2), or a path to a directory if the output format is a multi-file format (e.g., pxe-dir, pxe-tar)
-      --package-snapshot-time string   Only packages published before this snapshot time will be available during customization. Supports 'YYYY-MM-DD' or full RFC3339 timestamp (e.g., 2024-05-20T23:59:59Z)
-      --rpm-source strings             Path to a RPM repo config file or a directory containing RPMs
+      --disable-base-image-rpm-repos[=true|false]   Disable the base image's RPM repos as an RPM source
+  -h, --help[=true|false]                           help for customize
+      --image-config string                         Path of the image customization config file
+      --image-file string                           Path of the base Azure Linux image to be customized. Cannot be specified with --image-tag
+      --image-tag string                            Container tag for the MCR base Azure Linux image to be downloaded and customized. Cannot be specified with --image-file
+      --output-image-format string                  Format of output image (vhd, vhd-fixed, vhdx, qcow2, raw, iso, pxe-dir, pxe-tar, cosi)
+      --output-path string                          Path to write the customized image artifacts to. It can be a path to a file if the output format is a single file format (e.g., vhd, qcow2), or a path to a directory if the output format is a multi-file format (e.g., pxe-dir, pxe-tar)
+      --package-snapshot-time string                Only packages published before this snapshot time will be available during customization. Supports 'YYYY-MM-DD' or full RFC3339 timestamp (e.g., 2024-05-20T23:59:59Z)
+      --rpm-source strings                          Path to a RPM repo config file or a directory containing RPMs
 ```
 
 ### Options inherited from parent commands
 
 ```
-  -y, --accept-all                accept all prompts
-      --color mode                output colorization mode {always, auto, never} (default auto)
-      --concurrency int           base concurrency limit (default: number of logical CPUs; minimum 1)
-      --config-file stringArray   additional TOML config file(s) to merge (may be repeated)
-  -n, --dry-run                   dry run only (do not take action)
-      --network-retries int       maximum number of attempts for network operations (minimum 1) (default 3)
-      --no-default-config         disable default configuration
-  -O, --output-format fmt         output format {csv, json, markdown, table} (default table)
-      --permissive-config         do not fail on unknown fields in TOML config files
-  -C, --project string            path to Azure Linux project
-  -q, --quiet                     only enable minimal output
-      --unique-mockroot           use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently
-  -v, --verbose                   enable verbose output
-      --without-lockfile          preview: track resolved upstream commits in generated config instead of lock files
+  -y, --accept-all[=true|false]          accept all prompts
+      --color mode                       output colorization mode {always, auto, never} (default auto)
+      --concurrency int                  base concurrency limit (default: number of logical CPUs; minimum 1)
+      --config-file stringArray          additional TOML config file(s) to merge (may be repeated)
+  -n, --dry-run[=true|false]             dry run only (do not take action)
+      --network-retries int              maximum number of attempts for network operations (minimum 1) (default 3)
+      --no-default-config[=true|false]   disable default configuration
+  -O, --output-format fmt                output format {csv, json, markdown, table} (default table)
+      --permissive-config[=true|false]   do not fail on unknown fields in TOML config files
+  -C, --project string                   path to Azure Linux project
+  -q, --quiet[=true|false]               only enable minimal output
+      --unique-mockroot[=true|false]     use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently
+  -v, --verbose[=true|false]             enable verbose output
+      --without-lockfile[=true|false]    preview: track resolved upstream commits in generated config instead of lock files
 ```
 
 ### SEE ALSO
