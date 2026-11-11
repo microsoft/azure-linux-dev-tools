@@ -130,7 +130,7 @@ func (g *FedoraSourcesProviderImpl) GetComponent(
 
 	// Clone the repository to temp directory with retry for transient network failures.
 	cloneOptions := []git.GitOptions{git.WithGitBranch(g.distroGitBranch)}
-	if resolved.SingleBranch {
+	if resolved.SingleBranch && effectiveCommit == "" {
 		cloneOptions = append(cloneOptions, git.WithSingleBranch())
 	}
 

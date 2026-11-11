@@ -180,6 +180,10 @@ supplies the source type and everything else. Newly written files use one table,
 upstream-commit = 'abcdef1234567'
 ```
 
+Explicit upstream pins may refer to commits on other branches. Source preparation
+fetches all branches when an effective commit pin is present; floating lockless
+sources retain the single-branch clone optimization.
+
 Existing files with explicit parent tables remain readable. Because a single file
 may hold a partial component definition for a lockless component, its validation runs after
 all config files have been merged. Unlisted components retain normal additive
