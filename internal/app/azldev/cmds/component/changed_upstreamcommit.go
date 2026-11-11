@@ -6,6 +6,7 @@ package component
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -28,9 +29,9 @@ import (
 
 // This file implements 'component changed' for lock-file-free mode. Without lock
 // files there are no stored fingerprints to compare, so the project configuration
-// is loaded independently at both refs and the resolved component build inputs are
-// compared directly. The git plumbing helpers are shared with the default
-// implementation in changed.go.
+// is loaded independently at both refs and the resolved component build inputs and
+// rendered trees are compared directly. The git plumbing helpers are shared with
+// the default implementation in changed.go.
 
 // changedComponentsFromProjectConfigs loads and compares resolved project
 // components and rendered sources between two git refs. It is the lock-file-free
@@ -570,6 +571,22 @@ func buildHistoricalResults(
 		}
 
 		if result.ChangeType == changeTypeUnchanged {
+			fromHash, err := historicalRenderedTreeHash(fromTree, fromProject.renderedSpecsRelDir, name)
+			if err != nil {
+				return nil, fmt.Errorf("reading rendered tree for %#q at --from:\n%w", name, err)
+			}
+
+			toHash, err := historicalRenderedTreeHash(toTree, toProject.renderedSpecsRelDir, name)
+			if err != nil {
+				return nil, fmt.Errorf("reading rendered tree for %#q at --to:\n%w", name, err)
+			}
+
+			if fromHash != toHash {
+				result.ChangeType = changeTypeChanged
+			}
+		}
+
+		if result.ChangeType == changeTypeUnchanged {
 			if includeAllComponents && !includeUnchanged {
 				continue
 			}
@@ -590,6 +607,24 @@ func buildHistoricalResults(
 	}
 
 	return results, nil
+}
+
+func historicalRenderedTreeHash(tree *object.Tree, renderedDir, name string) (string, error) {
+	dir, err := components.RenderedSpecDir(renderedDir, name)
+	if err != nil {
+		return "", fmt.Errorf("resolving rendered component directory:\n%w", err)
+	}
+
+	rendered, err := tree.Tree(filepath.ToSlash(dir))
+	if errors.Is(err, object.ErrDirectoryNotFound) {
+		return "", nil
+	}
+
+	if err != nil {
+		return "", fmt.Errorf("reading rendered component directory:\n%w", err)
+	}
+
+	return rendered.Hash.String(), nil
 }
 
 // classifyHistoricalComponent compares the serialized build-relevant inputs for a

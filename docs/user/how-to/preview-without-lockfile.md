@@ -74,7 +74,7 @@ when refreshing normally and when checking for stale files with `--check-only`.
 `component history` skips listed components. `component query` extracts their
 committed rendered dist-git history and processes it with rpmautospec before
 querying; uncommitted rendered changes are ignored. `component changed` compares resolved project
-inputs for listed components and stored fingerprints for unlisted components;
+inputs and committed rendered output for listed components, and stored fingerprints for unlisted components;
 the current checkout's list determines which comparison to use.
 
 ## What Changes
@@ -85,7 +85,7 @@ the current checkout's list determines which comparison to use.
 | Refresh command | `azldev component update` | `azldev component refresh-upstream-commit` |
 | Inspecting resolved state | `azldev component history`, `azldev component query` | `component query` inspects committed rendered specs; `history` skips lockless components |
 | Lock consistency checks | On, with `--skip-lock-validation` to opt out | Skipped |
-| `component changed` | Compares stored input fingerprints | Compares project configuration resolved at each ref |
+| `component changed` | Compares stored input fingerprints | Compares resolved build inputs and committed rendered output at each ref |
 | Synthetic dist-git history | Derived from lock-file fingerprint changes | Not generated; build and query extract committed rendered history |
 | Agent skills and MCP tools | Both workflows are available | Both workflows are available |
 
@@ -559,6 +559,10 @@ configuration, upstream commit or local spec-directory contents, overlay source
 filenames and contents, and the effective distro release version. Documentation,
 publishing, test-selection, scheduling-hint, snapshot-time, and checkout-path-only
 fields do not mark a component as changed.
+It also compares the committed rendered component directories, including specs,
+sidecars, and `.no-change-rebuild` markers. Render-only commits therefore select
+the component for rebuilding even when its configuration and upstream pin are
+unchanged. `sources-change` still reports only changes to the `sources` manifest.
 
 ## Emit Agent Files for the Preview Mode
 
