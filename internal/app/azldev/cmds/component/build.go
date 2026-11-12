@@ -405,16 +405,11 @@ func buildComponent(
 		allLocalRepoPaths = append(allLocalRepoPaths, options.LocalRepoWithPublishPath)
 	}
 
-	results, err = buildComponentUsingBuilder(
+	return buildComponentUsingBuilder(
 		env, component, builder, allLocalRepoPaths,
 		options.SourcePackageOnly, options.NoCheck,
 		options.LocalRepoWithPublishPath,
 	)
-	if err != nil {
-		return results, err
-	}
-
-	return results, nil
 }
 
 func buildComponentUsingBuilder(

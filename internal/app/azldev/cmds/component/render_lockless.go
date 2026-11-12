@@ -271,7 +271,7 @@ func readRenderedUpstreamCommits(
 ) error {
 	projectPath, err := git.RepoRelPath(root, env.ProjectDir())
 	if err != nil {
-		return err
+		return fmt.Errorf("resolving project directory within repository:\n%w", err)
 	}
 
 	if useWorkingInputs {
