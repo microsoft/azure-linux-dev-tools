@@ -5,7 +5,7 @@ package component
 
 // Required-package presets for the shared MockProcessor.
 //
-// Render needs rpmautospec (macro expansion), rpmdevtools (spectool), and git
+// Locked render needs rpmautospec (macro expansion), rpmdevtools (spectool), and git
 // (required for rpmautospec to read commit history). python3-click is required
 // by rpmautospec but not declared as an RPM dependency. Ecosystem macro
 // packages (go-srpm-macros, etc.) are already present via @buildsys-build →

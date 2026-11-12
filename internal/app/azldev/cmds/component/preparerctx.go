@@ -17,9 +17,15 @@ import (
 // is derived from the component's generated upstream-commit TOML, which has no
 // fingerprint to compare against, so only committed changes are represented.
 func gitRepoPreparerOptions(
-	env *azldev.Env, distro sourceproviders.ResolvedDistro,
+	env *azldev.Env, distro sourceproviders.ResolvedDistro, componentName string,
 ) []sources.PreparerOption {
-	if env.WithoutLockfile() {
+	return gitRepoPreparerOptionsForMode(env, distro, env.ComponentWithoutLockfile(componentName))
+}
+
+func gitRepoPreparerOptionsForMode(
+	env *azldev.Env, distro sourceproviders.ResolvedDistro, withoutLockfile bool,
+) []sources.PreparerOption {
+	if withoutLockfile {
 		return []sources.PreparerOption{
 			sources.WithGitRepo(env, nil, ""),
 			sources.WithoutLockfileHistory(),

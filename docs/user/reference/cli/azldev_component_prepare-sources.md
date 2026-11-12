@@ -14,6 +14,20 @@ for inspection or manual building. This is useful for verifying that
 overlays apply cleanly before running a full build.
 
 Only one component may be selected at a time.
+For lockless components, render-style preparation writes directly to '--output-dir'
+and preserves fetched upstream Git metadata. Nonempty output requires '--force'.
+Current TOML and file inputs use the working tree, including modified and untracked
+files. Release/changelog baselines use only committed component dist-git files;
+uncommitted edits in that existing dist-git directory are ignored.
+It downloads/generates source payloads before inline macro definitions and configured
+overlays. Lockless specs contain %define entries, not a separate macros file,
+load directive, or Source9999 entry. Archive overlays run before spec and loose-file overlays. It does not
+compare rendered output, apply a final render release bump, or commit changes.
+Render history comes from 'project.rendered-specs-dir'/<lowercase-first-letter>/<component>,
+independently of '--output-dir'. No synthetic history is generated.
+'--without-git' removes fetched Git metadata after successful preparation.
+It honors '--skip-overlays', '--skip-sources', and '--allow-no-hashes'.
+Use 'azldev component dist-git-repo' to extract committed rendered history.
 
 ```
 azldev component prepare-sources [flags]
@@ -44,7 +58,7 @@ azldev component prepare-sources [flags]
       --skip-overlays[=true|false]          skip applying overlays to prepared sources
       --skip-sources[=true|false]           skip downloading fetched sources when preparing the package (useful to extract dist-git metadata when source files are not needed)
   -s, --spec-path stringArray               Spec path
-      --without-git[=true|false]            Disable dist-git repository creation (enabled by default)
+      --without-git[=true|false]            Exclude Git metadata from prepared output (locked components also skip synthetic dist-git creation)
 ```
 
 ### Options inherited from parent commands
@@ -64,7 +78,6 @@ azldev component prepare-sources [flags]
       --spec-editor editor               Select the RPM spec editor (legacy or experimental) (default legacy)
       --unique-mockroot[=true|false]     use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently
   -v, --verbose[=true|false]             enable verbose output
-      --without-lockfile[=true|false]    preview: track resolved upstream commits in generated config instead of lock files
 ```
 
 ### SEE ALSO

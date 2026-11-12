@@ -159,6 +159,44 @@ func TestBuilderNew(t *testing.T) {
 	require.NotNil(t, params)
 }
 
+func TestBuildFromDistGit(t *testing.T) {
+	params := setupBuilder(t)
+	comp := params.createTestComponent(t)
+
+	const dir = "/committed-dist-git"
+
+	// A nil preparer ensures dist-git builds cannot accidentally replay the old preparation pipeline.
+	builder := componentbuilder.New(params.testEnv.Env, params.testEnv.FS(), params.testEnv.Env,
+		nil, params.buildEnv, params.workDirFactory)
+	builder.UseDistGitSources(dir)
+	params.buildEnv.EXPECT().BuildSRPM(gomock.Any(), dir+"/"+comp.GetName()+".spec", dir,
+		gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _, _, output string, options buildenv.SRPMBuildOptions) error {
+			require.True(t, options.RPMAutospec)
+			require.Empty(t, options.With)
+			require.Empty(t, options.Without)
+			require.Empty(t, options.Defines)
+			require.Equal(t, []string{"/local-repo"}, options.LocalRepoPaths)
+
+			return fileutils.WriteFile(params.testEnv.FS(), filepath.Join(output, "package.src.rpm"),
+				[]byte("srpm"), fileperms.PublicFile)
+		})
+	srpm, err := builder.BuildSourcePackage(params.testEnv.Env, comp, []string{"/local-repo"}, "/output")
+	require.NoError(t, err)
+	params.buildEnv.EXPECT().BuildRPM(gomock.Any(), srpm, gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ string, _ string, options buildenv.RPMBuildOptions) error {
+			require.True(t, options.NoCheck)
+			require.Empty(t, options.With)
+			require.Empty(t, options.Without)
+			require.Empty(t, options.Defines)
+			require.Equal(t, []string{"/local-repo"}, options.LocalRepoPaths)
+
+			return nil
+		})
+	_, err = builder.BuildBinaryPackage(params.testEnv.Env, comp, srpm, []string{"/local-repo"}, "/output", true)
+	require.NoError(t, err)
+}
+
 func TestBuildSourcePackage(t *testing.T) {
 	const testOutputDir = "/output"
 

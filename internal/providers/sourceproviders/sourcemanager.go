@@ -75,6 +75,9 @@ type FetchComponentOptions struct {
 	// fetching. Git-tracked files (spec, patches, scripts) are still fetched from the
 	// upstream clone. The sources manifest file remains available for validation.
 	SkipLookaside bool
+
+	SkipLocalSpecConfig bool
+	SingleBranch        bool
 }
 
 // FetchComponentOption is a functional option for configuring component fetch behavior.
@@ -94,6 +97,16 @@ func WithSkipLookaside() FetchComponentOption {
 	return func(o *FetchComponentOptions) {
 		o.SkipLookaside = true
 	}
+}
+
+// WithSkipLocalSpecConfig excludes the TOML defining a local spec's path from fetched files.
+func WithSkipLocalSpecConfig() FetchComponentOption {
+	return func(o *FetchComponentOptions) { o.SkipLocalSpecConfig = true }
+}
+
+// WithSingleBranch restricts upstream cloning to the selected distro branch.
+func WithSingleBranch() FetchComponentOption {
+	return func(o *FetchComponentOptions) { o.SingleBranch = true }
 }
 
 // resolveFetchComponentOptions applies all functional options and returns the resolved options.
@@ -705,7 +718,8 @@ func (m *sourceManager) resolveUpstreamSourceIdentity(
 func (m *sourceManager) fetchLocalComponent(
 	ctx context.Context, component components.Component, destDirPath string, opts FetchComponentOptions,
 ) error {
-	err := FetchLocalComponent(m.dryRunnable, m.eventListener, m.fs, component, destDirPath, false)
+	err := FetchLocalComponent(m.dryRunnable, m.eventListener, m.fs, component, destDirPath, false,
+		func(o *FetchComponentOptions) { *o = opts })
 	if err != nil {
 		return fmt.Errorf("failed to fetch local component %#q:\n%w",
 			component.GetName(), err)

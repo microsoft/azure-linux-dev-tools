@@ -257,45 +257,13 @@ func createDir(dir string) error {
 // GetToolAbsPath returns the command to run a go tool that is managed within
 // one of the tools-focused modules in this repository.
 func GetToolAbsPath(toolName string) (toolPath string, err error) {
-	var origWd string
-
-	// Save the current working directory so we can restore it later.
-	origWd, err = os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("%w: could not get current working directory: %w", ErrCmdLookup, err)
-	}
-
-	// Restore the original working directory before returning.
-	defer func() {
-		chdirErr := os.Chdir(origWd)
-		if chdirErr != nil {
-			if err == nil {
-				err = fmt.Errorf("%w: could not restore original working directory %q: %w",
-					ErrCmdLookup, origWd, chdirErr)
-			} else {
-				err = fmt.Errorf("%w: could not restore original working directory %q: %w; original error: %w",
-					ErrCmdLookup, origWd, chdirErr, err)
-			}
-		}
-	}()
+	toolWd := filepath.Join(AzldevProjectDir(), "tools", toolName)
 
 	// NOTE: We've found that we typically get a temporary-and-no-longer-resolvable path back
 	// the first time we invoke "go tool". Thereafter, it's in the cache. We call a second
 	// time for the *good* path.
 	for range 2 {
-		var err error
-
-		toolWd := filepath.Join(origWd, "tools", toolName)
-
-		// NOTE: To avoid errors with "go" not being willing to handle the -modfile flag in case
-		// a go workspace (go.work) is present, we chdir to the directory where we expect to find
-		// the go.mod.
-		err = os.Chdir(filepath.Join(origWd, "tools", toolName))
-		if err != nil {
-			return "", fmt.Errorf("%w: could not change directory to %q: %w", ErrCmdLookup, toolWd, err)
-		}
-
-		toolPath, err = sh.Output(mg.GoCmd(), "tool", "-n", toolName)
+		toolPath, err = sh.Output(mg.GoCmd(), "-C", toolWd, "tool", "-n", toolName)
 		if err != nil {
 			return "", fmt.Errorf("%w: could not find the executable path for tool %q using cwd %q: %w",
 				ErrCmdLookup, toolName, toolWd, err)

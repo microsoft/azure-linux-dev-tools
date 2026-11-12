@@ -22,13 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// These tests cover the opt-in lock-file-free mode selected by the global
-// '--without-lockfile' flag, and assert that omitting the flag keeps azldev's
-// default lock-file behavior.
-
-// TestWithoutLockfile_GlobalFlagIsDocumented verifies that the preview flag is part
-// of the CLI surface and defaults to off.
-func TestWithoutLockfile_GlobalFlagIsDocumented(t *testing.T) {
+func TestLocklessComponents_NoGlobalFlag(t *testing.T) {
 	t.Parallel()
 
 	if testing.Short() {
@@ -38,69 +32,25 @@ func TestWithoutLockfile_GlobalFlagIsDocumented(t *testing.T) {
 	results, err := cmdtest.NewScenarioTest("--help").Locally().Run(t)
 	require.NoError(t, err)
 	require.Zero(t, results.ExitCode)
-	assert.Contains(t, results.Stdout, "--without-lockfile")
+	assert.NotContains(t, results.Stdout, "--without-lockfile")
 }
 
-// TestWithoutLockfile_ComponentCommandsByMode verifies that the component command
-// set matches the selected mode: the lock-file commands by default, and the
-// refresh-upstream-commit command when the preview flag is passed.
-func TestWithoutLockfile_ComponentCommandsByMode(t *testing.T) {
+func TestLocklessComponents_BothWorkflowsAvailable(t *testing.T) {
 	t.Parallel()
 
 	if testing.Short() {
 		t.Skip("skipping long test")
 	}
 
-	testCases := []struct {
-		name        string
-		args        []string
-		expected    []string
-		notExpected []string
-	}{
-		{
-			name:        "default mode",
-			args:        []string{"component", "--help"},
-			expected:    []string{"update", "history", "query"},
-			notExpected: []string{"refresh-upstream-commit"},
-		},
-		{
-			name:        "explicitly disabled",
-			args:        []string{"--without-lockfile=false", "component", "--help"},
-			expected:    []string{"update", "history", "query"},
-			notExpected: []string{"refresh-upstream-commit"},
-		},
-		{
-			name:     "lock-file-free mode",
-			args:     []string{"--without-lockfile", "component", "--help"},
-			expected: []string{"refresh-upstream-commit"},
-			// The lock-file commands remain registered as hidden no-ops, so they
-			// must not be advertised in help.
-			notExpected: []string{"Refresh component lock files"},
-		},
-	}
-
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			t.Parallel()
-
-			results, err := cmdtest.NewScenarioTest(testCase.args...).Locally().Run(t)
-			require.NoError(t, err)
-			require.Zero(t, results.ExitCode)
-
-			for _, expected := range testCase.expected {
-				assert.Contains(t, results.Stdout, expected)
-			}
-
-			for _, notExpected := range testCase.notExpected {
-				assert.NotContains(t, results.Stdout, notExpected)
-			}
-		})
+	results, err := cmdtest.NewScenarioTest("component", "--help").Locally().Run(t)
+	require.NoError(t, err)
+	require.Zero(t, results.ExitCode)
+	for _, name := range []string{"update", "history", "query", "refresh-upstream-commit"} {
+		assert.Contains(t, results.Stdout, name)
 	}
 }
 
-// TestWithoutLockfile_BuildFlagsByMode verifies that the lock-file-only component
-// flags are registered only in the default mode.
-func TestWithoutLockfile_BuildFlagsByMode(t *testing.T) {
+func TestLocklessComponents_LockValidationFlagAvailable(t *testing.T) {
 	t.Parallel()
 
 	if testing.Short() {
@@ -112,34 +62,9 @@ func TestWithoutLockfile_BuildFlagsByMode(t *testing.T) {
 	require.Zero(t, defaultResults.ExitCode)
 	assert.Contains(t, defaultResults.Stdout, "--skip-lock-validation")
 
-	previewResults, err := cmdtest.NewScenarioTest(
-		"--without-lockfile", "component", "build", "--help",
-	).Locally().Run(t)
-	require.NoError(t, err)
-	require.Zero(t, previewResults.ExitCode)
-	assert.NotContains(t, previewResults.Stdout, "--skip-lock-validation")
 }
 
-// TestWithoutLockfile_LegacyCommandIsNoOp verifies that a lock-file command invoked
-// in lock-file-free mode reports that it does nothing instead of failing.
-func TestWithoutLockfile_LegacyCommandIsNoOp(t *testing.T) {
-	t.Parallel()
-
-	if testing.Short() {
-		t.Skip("skipping long test")
-	}
-
-	results, err := cmdtest.NewScenarioTest(
-		"--without-lockfile", "component", "update", "--all-components",
-	).Locally().Run(t)
-	require.NoError(t, err)
-	require.Zero(t, results.ExitCode)
-	assert.Contains(t, results.Stdout+results.Stderr, "no longer does anything")
-}
-
-// TestWithoutLockfile_AgentSkillsByMode verifies that the emitted agent skills
-// describe the workflow of the selected mode.
-func TestWithoutLockfile_AgentSkillsByMode(t *testing.T) {
+func TestLocklessComponents_AgentSkillsCoverBothWorkflows(t *testing.T) {
 	t.Parallel()
 
 	if testing.Short() {
@@ -150,29 +75,11 @@ func TestWithoutLockfile_AgentSkillsByMode(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, defaultResults.ExitCode)
 	assert.Contains(t, defaultResults.Stdout, "azldev-update-component")
-	assert.NotContains(t, defaultResults.Stdout, "azldev-refresh-upstream-commit")
+	assert.Contains(t, defaultResults.Stdout, "azldev-refresh-upstream-commit")
 
-	previewResults, err := cmdtest.NewScenarioTest(
-		"--without-lockfile", "docs", "agent", "show",
-	).Locally().Run(t)
-	require.NoError(t, err)
-	require.Zero(t, previewResults.ExitCode)
-	assert.Contains(t, previewResults.Stdout, "azldev-refresh-upstream-commit")
-	assert.NotContains(t, previewResults.Stdout, "azldev-update-component")
 }
 
-// TestWithoutLockfile_ComponentChanged compares components across two commits in
-// lock-file-free mode, where change detection compares the project configuration
-// resolved at each ref instead of stored lock files.
-//
-// Flow:
-//  1. Create a project with two local components (curl, bash).
-//  2. Commit the project as the baseline.
-//  3. In a second commit, change only curl's spec content.
-//  4. Run 'azldev --without-lockfile component changed' between the two commits.
-//  5. Assert curl is "changed" (its spec directory contents differ) and bash is
-//     "unchanged", with no lock files anywhere in the project.
-func TestWithoutLockfile_ComponentChanged(t *testing.T) {
+func TestLocklessComponents_ComponentChanged(t *testing.T) {
 	t.Parallel()
 
 	if testing.Short() {
@@ -216,6 +123,8 @@ func TestWithoutLockfile_ComponentChanged(t *testing.T) {
 
 	project.Serialize(t, projectDir)
 	patchProjectForLocal(t, projectDir)
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "lockless-components.txt"),
+		[]byte("curl\n"), fileperms.PublicFile))
 
 	gitInDir(t, projectDir, "init")
 	gitInDir(t, projectDir, "config", "user.email", "test@test.com")
@@ -238,10 +147,11 @@ func TestWithoutLockfile_ComponentChanged(t *testing.T) {
 	gitInDir(t, projectDir, "add", filepath.Join("specs", "curl", "curl.spec"))
 	gitInDir(t, projectDir, "-c", "commit.gpgsign=false", "commit", "-m", "change curl")
 
-	cmd := exec.CommandContext(t.Context(),
-		azldevBin, "--without-lockfile", "-C", projectDir, "--no-default-config",
+	args := []string{
+		"-C", projectDir, "--no-default-config",
 		"component", "changed", "--from", fromRef, "-a", "--include-unchanged", "-q", "-O", "json",
-	)
+	}
+	cmd := exec.CommandContext(t.Context(), azldevBin, args...)
 
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "azldev failed: %s", string(out))
@@ -262,19 +172,17 @@ func TestWithoutLockfile_ComponentChanged(t *testing.T) {
 	require.True(t, ok, "bash should be in results (--all-components)")
 	assert.Equal(t, "unchanged", bashResult.ChangeType, "bash is untouched")
 
-	// No lock files are consulted or created in this mode.
+	// Change detection does not create lock files.
 	entries, err := os.ReadDir(projectDir)
 	require.NoError(t, err)
 
 	for _, entry := range entries {
-		assert.NotEqual(t, "locks", entry.Name(), "lock-file-free mode must not create a lock directory")
+		assert.NotEqual(t, "locks", entry.Name(), "change detection must not create a lock directory")
 		assert.False(t, strings.HasSuffix(entry.Name(), ".lock"))
 	}
 }
 
-// TestWithoutLockfile_MCPToolsByMode verifies that the MCP tool surface follows the
-// selected mode's command set.
-func TestWithoutLockfile_MCPToolsByMode(t *testing.T) {
+func TestLocklessComponents_MCPTools(t *testing.T) {
 	t.Parallel()
 
 	if testing.Short() {
@@ -289,10 +197,5 @@ func TestWithoutLockfile_MCPToolsByMode(t *testing.T) {
 	require.Zero(t, defaultResults.ExitCode)
 	assert.Contains(t, defaultResults.Stdout, `"component-history"`)
 
-	previewResults, err := cmdtest.NewScenarioTest("--without-lockfile", "advanced", "mcp").
-		Locally().WithStdin(strings.NewReader(listToolsRequest)).Run(t)
-	require.NoError(t, err)
-	require.Zero(t, previewResults.ExitCode)
-	assert.NotContains(t, previewResults.Stdout, `"component-history"`)
-	assert.Contains(t, previewResults.Stdout, `"component-changed"`)
+	assert.Contains(t, defaultResults.Stdout, `"component-changed"`)
 }

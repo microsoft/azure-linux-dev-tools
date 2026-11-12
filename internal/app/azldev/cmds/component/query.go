@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"slices"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
@@ -49,11 +50,16 @@ func NewComponentQueryCommand() *cobra.Command {
 
 This command reads the post-overlay specs from the project's rendered-specs-dir
 (produced by 'azldev component render') and runs rpmspec against them in a
-single shared mock chroot, batching all specs into one chroot invocation with
-parallel per-spec processing. For each component, it reports the source NEVR
+single shared mock chroot, querying specs in batches with parallel per-spec
+processing. For each component, it reports the source NEVR
 and the list of binary subpackages the spec would produce when built.
 
-The rendered-specs-dir must exist on disk; if it doesn't, run
+For lockless components, queries use committed rendered files from a temporary
+dist-git repository extracted with git-filter-repo. rpmautospec resolves the
+release and changelog in that temporary repository before querying. Uncommitted
+rendered changes are ignored. Requires git-filter-repo for lockless components.
+
+For locked components, rendered-specs-dir must exist on disk; if it doesn't, run
 'azldev component render' first. Components that previously failed to render
 (those with a RENDER_FAILED marker file) are skipped with a warning.`,
 		Example: `  # Query a single component
@@ -69,7 +75,7 @@ The rendered-specs-dir must exist on disk; if it doesn't, run
 		ValidArgsFunction: components.GenerateComponentNameCompletions,
 	}
 
-	addComponentFilterOptions(cmd, &options.ComponentFilter, cmdOptions{})
+	addComponentFilterOptions(cmd, &options.ComponentFilter)
 
 	cmd.Flags().Var(&options.Arch, "arch",
 		"Target architecture passed to rpmspec via --target (x86_64, aarch64). "+
@@ -110,29 +116,24 @@ type componentDetails struct {
 func QueryComponents(
 	env *azldev.Env, options *QueryComponentsOptions,
 ) ([]*componentDetails, error) {
-	renderedSpecsDir := env.Config().Project.RenderedSpecsDir
-	if renderedSpecsDir == "" {
-		return nil, errors.New(
-			"project.rendered-specs-dir is not configured; " +
-				"set it in the project config and run 'azldev component render' first")
-	}
-
-	dirExists, err := fileutils.DirExists(env.FS(), renderedSpecsDir)
-	if err != nil {
-		return nil, fmt.Errorf("checking rendered-specs-dir %#q:\n%w", renderedSpecsDir, err)
-	}
-
-	if !dirExists {
-		return nil, fmt.Errorf(
-			"rendered-specs-dir %#q does not exist; run 'azldev component render' first",
-			renderedSpecsDir)
-	}
-
 	resolver := components.NewResolver(env)
+	comps, resolveErr := resolver.FindComponents(&options.ComponentFilter)
 
-	comps, err := resolver.FindComponents(&options.ComponentFilter)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve components:\n%w", err)
+	var lockedComps, locklessComps []components.Component
+
+	if resolveErr == nil {
+		lockedComps, locklessComps = splitQueryComponents(env, comps.Components())
+	}
+
+	renderedSpecsDir := env.Config().Project.RenderedSpecsDir
+
+	checkRenderedDir := len(locklessComps) == 0 || len(lockedComps) > 0
+	if err := validateQueryRenderedDirectory(env, renderedSpecsDir, checkRenderedDir); err != nil {
+		return nil, err
+	}
+
+	if resolveErr != nil {
+		return nil, fmt.Errorf("failed to resolve components:\n%w", resolveErr)
 	}
 
 	cfg := env.Config()
@@ -142,12 +143,18 @@ func QueryComponents(
 			"please use command-line options to indicate which components to query")
 	}
 
-	inputs, _, err := buildSpecQueryInputs(env, comps.Components(), renderedSpecsDir)
+	if len(locklessComps) > 0 {
+		if err := requireGitFilterRepo(env); err != nil {
+			return nil, err
+		}
+	}
+
+	inputs, _, err := buildSpecQueryInputs(env, lockedComps, renderedSpecsDir)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(inputs) == 0 {
+	if len(inputs) == 0 && len(locklessComps) == 0 {
 		return nil, fmt.Errorf(
 			"none of the %d resolved components have a rendered spec on disk; "+
 				"run 'azldev component render' first",
@@ -157,6 +164,10 @@ func QueryComponents(
 	env = env.WithMockRootComponents(comps.Names()...)
 
 	mockProcessor := createQueryMockProcessor(env)
+	if len(locklessComps) > 0 {
+		mockProcessor = newMockProcessor(env, "", append(mockPackagesForQuery(), mockPackagesForRender()...))
+	}
+
 	if mockProcessor == nil {
 		return nil, errors.New(
 			"mock config required for querying; ensure the project has a valid distro with mock config")
@@ -190,6 +201,24 @@ func QueryComponents(
 	})
 	if err != nil {
 		return nil, fmt.Errorf("batch-querying rendered specs:\n%w", err)
+	}
+
+	if len(locklessComps) > 0 {
+		locklessResults, queryErr := queryLocklessComponents(env, mockProcessor, locklessComps, scratchDir, archStr)
+		if queryErr != nil {
+			return nil, queryErr
+		}
+
+		queryResults = append(queryResults, locklessResults...)
+
+		order := make(map[string]int, comps.Len())
+		for idx, comp := range comps.Components() {
+			order[comp.GetName()] = idx
+		}
+
+		slices.SortStableFunc(queryResults, func(a, b sources.SpecQueryResult) int {
+			return order[a.Name] - order[b.Name]
+		})
 	}
 
 	allDetails := make([]*componentDetails, 0, len(queryResults))

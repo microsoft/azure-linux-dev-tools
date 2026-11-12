@@ -4,6 +4,7 @@
 package mock
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -305,7 +306,7 @@ type CommonBuildOptions struct {
 // SRPMBuildOptions encapsulates options for building source RPMs using mock.
 type SRPMBuildOptions struct {
 	CommonBuildOptions
-	// Add any SRPM-specific options here in the future if needed
+	RPMAutospec bool
 }
 
 // RPMBuildOptions encapsulates options for building binary RPMs using mock.
@@ -334,6 +335,14 @@ func (r *Runner) BuildSRPM(
 		"--sources", sourceDirPath,
 		"--resultdir", outputDirPath,
 	)
+
+	if options.RPMAutospec {
+		if err := r.requireRPMAutospec(ctx); err != nil {
+			return err
+		}
+
+		args = append(args, "--enable-plugin", "rpmautospec")
+	}
 
 	// Add 'with'-style enabled conditionals.
 	for _, with := range options.With {
@@ -379,6 +388,31 @@ func (r *Runner) BuildSRPM(
 	err = extcmd.Run(ctx)
 	if err != nil {
 		return fmt.Errorf("mock failed to build SRPM:\n%w", err)
+	}
+
+	return nil
+}
+
+func (r *Runner) requireRPMAutospec(ctx context.Context) error {
+	args := append(r.getBaseArgs(), "--enable-plugin", "rpmautospec", "--print-root-path")
+	raw := exec.CommandContext(ctx, MockBinary, args...)
+
+	var stderr bytes.Buffer
+
+	raw.Stderr = &stderr
+
+	cmd, err := r.cmdFactory.Command(raw)
+	if err != nil {
+		return fmt.Errorf("checking mock rpmautospec plugin:\n%w", err)
+	}
+
+	if _, err := cmd.RunAndGetOutput(ctx); err != nil {
+		return fmt.Errorf("checking mock rpmautospec plugin:\n%w\n%s", err, strings.TrimSpace(stderr.String()))
+	}
+
+	if strings.Contains(stderr.String(), "rpmautospec plugin") &&
+		strings.Contains(stderr.String(), "not installed") {
+		return errors.New("mock's rpmautospec plugin must be installed for lockless builds (requires mock 5.3 or newer)")
 	}
 
 	return nil

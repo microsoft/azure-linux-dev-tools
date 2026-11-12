@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"runtime"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -209,6 +210,23 @@ func TestEnvWithCancel(t *testing.T) {
 	cancel()
 	require.Error(t, child.Err())
 	assert.NoError(t, original.Err())
+}
+
+func TestEnvComponentWithoutLockfile(t *testing.T) {
+	for _, global := range []bool{false, true} {
+		t.Run(strconv.FormatBool(global), func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			if global {
+				env = testutils.NewTestEnvWithoutLockfile(t)
+			}
+
+			env.Config.LocklessComponents = map[string]bool{"rust-asyncband": true}
+
+			assert.True(t, env.Env.ComponentWithoutLockfile("rust-asyncband"))
+			assert.Equal(t, global, env.Env.ComponentWithoutLockfile("curl"))
+			assert.Equal(t, global, env.Env.WithoutLockfile())
+		})
+	}
 }
 
 func TestFixSuggestions(t *testing.T) {

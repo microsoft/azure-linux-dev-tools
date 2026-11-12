@@ -26,6 +26,15 @@ Built packages are placed in structured subdirectories under the project's outpu
 
 ## Common Options
 
+For components listed in `lockless-components.txt`, render and commit first.
+Build extracts the committed component dist-git history using `git-filter-repo`,
+fetches configured source files (including download and custom origins), downloads
+remaining manifest payloads from lookaside, and builds the SRPM with Mock's `rpmautospec` plugin.
+Install `git-filter-repo` and Mock 5.3 or newer. Uncommitted rendered edits are
+ignored. Lockless builds reject `--without-git` and `--rpmdev-bumpspec`;
+lock-file-based builds are unchanged. See the
+[lockless workflow](preview-without-lockfile.md#preparing-querying-and-building-committed-dist-git).
+
 | Flag | Description |
 |------|-------------|
 | `--no-check` | Skip the `%check` section (package test suite) |

@@ -4,6 +4,8 @@
 package component_test
 
 import (
+	"os/exec"
+	"slices"
 	"testing"
 
 	componentcmds "github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/component"
@@ -49,6 +51,26 @@ func TestNewRenderCmd_Flags(t *testing.T) {
 	require.NotNil(t, checkOnlyFlag, "check-only flag should be registered")
 	assert.Equal(t, "false", checkOnlyFlag.DefValue)
 
+	noChangeRebuildFlag := cmd.Flags().Lookup("no-change-rebuild")
+	require.NotNil(t, noChangeRebuildFlag)
+	require.NoError(t, cmd.ParseFlags([]string{"--no-change-rebuild"}))
+	assert.Equal(t, "true", noChangeRebuildFlag.Value.String())
+
+	commentFlag := cmd.Flags().Lookup("changelog-comment")
+	require.NotNil(t, commentFlag)
+
+	noGitCommitFlag := cmd.Flags().Lookup("no-git-commit")
+	require.NotNil(t, noGitCommitFlag)
+	require.NoError(t, cmd.ParseFlags([]string{"--changelog-comment", "Fix curl patches", "--no-git-commit"}))
+	assert.Equal(t, "Fix curl patches", commentFlag.Value.String())
+	assert.Equal(t, "true", noGitCommitFlag.Value.String())
+
+	allowUncommittedFlag := cmd.Flags().Lookup("allow-uncommitted")
+	require.NotNil(t, allowUncommittedFlag)
+	assert.Equal(t, "false", allowUncommittedFlag.DefValue)
+	require.NoError(t, cmd.ParseFlags([]string{"--allow-uncommitted"}))
+	assert.Equal(t, "true", allowUncommittedFlag.Value.String())
+
 	rpmDevBumpspecFlag := cmd.Flags().Lookup("rpmdev-bumpspec")
 	require.NotNil(t, rpmDevBumpspecFlag)
 	assert.Equal(t, "false", rpmDevBumpspecFlag.DefValue)
@@ -61,13 +83,71 @@ func TestRenderCmd_NoComponents(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
 
 	cmd := componentcmds.NewRenderCmd()
-	cmd.SetArgs([]string{"-o", "SPECS", "nonexistent-component"})
+	cmd.SetArgs([]string{
+		"-o", "SPECS", "--no-change-rebuild", "--no-git-commit",
+		"--changelog-comment", "Fix patches", "nonexistent-component",
+	})
 
 	err := cmd.ExecuteContext(testEnv.Env)
 
 	// We expect an error because no components match (not the output-dir error).
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "component not found")
+}
+
+func TestRenderCmd_AllowUncommitted(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		allow bool
+	}{
+		{name: "dirty repository refused"},
+		{name: "override skips status", allow: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			env.AddUpstreamComponent(t, "curl")
+			env.Config.LocklessComponents = map[string]bool{"curl": true}
+			config := env.Config.Components["curl"]
+			config.Spec.UpstreamCommit = "configured-commit"
+			env.Config.Components["curl"] = config
+			queried := false
+			original := env.CmdFactory.RunAndGetOutputHandler
+			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				if slices.Contains(cmd.Args, "--porcelain=v1") {
+					queried = true
+
+					return "?? scratch\n", nil
+				}
+
+				return original(cmd)
+			}
+			cmd := componentcmds.NewRenderCmd()
+
+			args := []string{"-p", "curl", "-o", "SPECS", "--fail-on-error"}
+			if testCase.allow {
+				args = append(args, "--allow-uncommitted")
+			}
+
+			cmd.SetArgs(args)
+			err := cmd.ExecuteContext(env.Env)
+
+			assert.Equal(t, !testCase.allow, queried)
+			require.Error(t, err)
+
+			if !testCase.allow {
+				assert.Contains(t, err.Error(), "uncommitted or untracked files")
+			} else {
+				assert.NotContains(t, err.Error(), "uncommitted or untracked files")
+			}
+		})
+	}
+}
+
+func TestRenderCmd_ChangelogCommentRequiresValue(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+	cmd := componentcmds.NewRenderCmd()
+	cmd.SetArgs([]string{"--changelog-comment"})
+	require.ErrorContains(t, cmd.ExecuteContext(testEnv.Env), "flag needs an argument")
 }
 
 func TestRenderCmd_NoOutputDir(t *testing.T) {

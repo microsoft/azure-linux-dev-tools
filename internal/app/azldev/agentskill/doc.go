@@ -62,9 +62,8 @@
 //
 // # Modes
 //
-// A [Catalog] selects the content for one of azldev's two modes. The default mode
-// documents the lock-file workflow; the mode selected by the global
-// '--without-lockfile' flag documents the generated upstream-commit workflow. Skills,
+// The CLI always uses the default [Catalog], which documents both per-component
+// workflows. An internal all-lockless variant is also available. Skills,
 // instruction files, and emitted layout are shared; templates under
 // 'content/withoutlockfile' replace the same-named default template, and a small
 // registry replaces the skills whose subject differs.

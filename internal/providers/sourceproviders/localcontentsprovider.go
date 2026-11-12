@@ -15,6 +15,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
+	"github.com/pelletier/go-toml/v2"
 	"github.com/spf13/afero"
 )
 
@@ -26,6 +27,7 @@ func FetchLocalComponent(
 	dryRunnable opctx.DryRunnable, eventListener opctx.EventListener,
 	fileSystem opctx.FS, component components.Component, destDirPath string,
 	resolveRequiredFiles bool,
+	options ...FetchComponentOption,
 ) error {
 	if dryRunnable == nil {
 		return errors.New("dry runnable cannot be nil")
@@ -57,7 +59,9 @@ func FetchLocalComponent(
 	}
 
 	// Copy all files from the source directory to the destination directory
-	err = copySourceDirectory(dryRunnable, fileSystem, sourceDirPath, destDirPath)
+	opts := resolveFetchComponentOptions(options)
+
+	err = copySourceDirectory(dryRunnable, fileSystem, sourceDirPath, destDirPath, component, opts.SkipLocalSpecConfig)
 	if err != nil {
 		return fmt.Errorf("failed to copy source directory for component %#q:\n%w",
 			component.GetName(), err)
@@ -90,11 +94,25 @@ func acquireSourceDirPath(component components.Component) (string, error) {
 
 // copySourceDirectory copies all files from the source directory to the destination directory,
 // preserving file mode bits (e.g., executable bits for scripts).
-func copySourceDirectory(dryRunnable opctx.DryRunnable, fs opctx.FS, sourceDirPath, destDirPath string) error {
+func copySourceDirectory(
+	dryRunnable opctx.DryRunnable, fs opctx.FS, sourceDirPath, destDirPath string,
+	component components.Component, skipLocalSpecConfig bool,
+) error {
 	copyOptions := fileutils.CopyDirOptions{
 		CopyFileOptions: fileutils.CopyFileOptions{
 			PreserveFileMode: true,
 		},
+	}
+
+	if skipLocalSpecConfig {
+		copyOptions.FileFilter = func(_ opctx.FS, destPath string) (bool, error) {
+			relative, err := filepath.Rel(destDirPath, destPath)
+			if err != nil {
+				return false, fmt.Errorf("resolving copied local file path:\n%w", err)
+			}
+
+			return shouldCopyLocalSource(fs, component, filepath.Join(sourceDirPath, relative))
+		}
 	}
 
 	err := fileutils.CopyDirRecursive(dryRunnable, fs, sourceDirPath, destDirPath, copyOptions)
@@ -104,6 +122,42 @@ func copySourceDirectory(dryRunnable opctx.DryRunnable, fs opctx.FS, sourceDirPa
 	}
 
 	return nil
+}
+
+func shouldCopyLocalSource(fs opctx.FS, component components.Component, sourcePath string) (bool, error) {
+	if filepath.Ext(sourcePath) != ".toml" {
+		return true, nil
+	}
+
+	content, err := fileutils.ReadFile(fs, sourcePath)
+	if err != nil {
+		return false, fmt.Errorf("reading local TOML file %#q:\n%w", sourcePath, err)
+	}
+
+	var (
+		config    projectconfig.ConfigFile
+		localPath string
+	)
+
+	// Unrelated TOML sidecars need not parse as azldev configuration.
+	if toml.Unmarshal(content, &config) == nil {
+		localPath = config.Components[component.GetName()].Spec.Path
+	}
+
+	if localPath == "" {
+		return true, nil
+	}
+
+	if !filepath.IsAbs(localPath) {
+		localPath = filepath.Join(filepath.Dir(sourcePath), localPath)
+	}
+
+	specPath, err := component.GetSpec().GetPath()
+	if err != nil {
+		return false, fmt.Errorf("getting local spec path:\n%w", err)
+	}
+
+	return filepath.Clean(localPath) != filepath.Clean(specPath), nil
 }
 
 // copyRequiredFiles resolves and copies any required files that may be stored separately

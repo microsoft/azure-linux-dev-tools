@@ -214,12 +214,18 @@ func validateConsistency(
 	lockDir string,
 	components map[string]projectconfig.ComponentConfig,
 	checkOrphans bool,
+	ignoredComponents ...string,
 ) (missingOrStale, orphans []string, err error) {
+	ignored := make(map[string]bool, len(ignoredComponents))
+	for _, name := range ignoredComponents {
+		ignored[name] = true
+	}
+
 	// Check each component that may need a lock file. Only skip components
 	// that are explicitly local — unspecified source type inherits upstream
 	// from distro defaults, so those need validation too.
 	for name, comp := range components {
-		if comp.Spec.SourceType == projectconfig.SpecSourceTypeLocal {
+		if ignored[name] || comp.Spec.SourceType == projectconfig.SpecSourceTypeLocal {
 			continue
 		}
 

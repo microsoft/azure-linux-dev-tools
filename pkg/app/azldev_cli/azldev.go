@@ -39,20 +39,18 @@ func Main() {
 }
 
 // InstantiateApp constructs a new instance of the azldev CLI application with
-// all subcommands registered for azldev's default (lock file) mode.
+// all subcommands registered.
 func InstantiateApp() *azldev.App {
 	return InstantiateAppForArgs(nil)
 }
 
 // InstantiateAppForArgs constructs a new instance of the azldev CLI application
-// with the subcommands registered for the mode selected by args. Global flags
-// that select a mode (such as '--without-lockfile') are hand-parsed from args
-// before registration, because the registered command set differs by mode.
+// with configuration flags pre-parsed from args and all subcommands registered.
 func InstantiateAppForArgs(args []string) *azldev.App {
 	// Instantiate the main CLI application.
 	app := azldev.NewApp(azldev.DefaultFileSystemFactory(), azldev.DefaultOSEnvFactory())
 
-	// Resolve the global flags that command registration depends on.
+	// Pre-parse flags needed for configuration loading.
 	app.PreParseGlobalFlags(args)
 
 	// Give top level command packages an opportunity to register their commands (or in some cases,

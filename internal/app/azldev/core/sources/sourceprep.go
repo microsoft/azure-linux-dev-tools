@@ -114,7 +114,7 @@ func WithDirtyDetection() PreparerOption {
 
 // WithoutLockfileHistory returns a [PreparerOption] that derives synthetic history
 // from the component's generated upstream-commit TOML instead of its lock file.
-// It selects the behavior of the global '--without-lockfile' flag; the lock reader
+// It selects lockless component behavior; the lock reader
 // and release version passed to [WithGitRepo] are unused in that mode.
 func WithoutLockfileHistory() PreparerOption {
 	return func(p *sourcePreparerImpl) {
@@ -122,9 +122,24 @@ func WithoutLockfileHistory() PreparerOption {
 	}
 }
 
+// WithoutSyntheticHistory preserves the upstream Git repository without generating
+// synthetic commits or applying their release adjustments.
+func WithoutSyntheticHistory() PreparerOption {
+	return func(p *sourcePreparerImpl) {
+		p.skipSyntheticHistory = true
+	}
+}
+
 // WithSpecEditor selects the [spec.EditorMode] used for source preparation.
 func WithSpecEditor(mode spec.EditorMode) PreparerOption {
 	return func(p *sourcePreparerImpl) { p.specEditor = mode }
+}
+
+// WithPreservedReleaseFormatting returns a [PreparerOption] that keeps existing
+// 'Release' tag casing and spacing when overlays edit its value, for lockless
+// callers that do not otherwise select [WithoutLockfileHistory].
+func WithPreservedReleaseFormatting() PreparerOption {
+	return func(p *sourcePreparerImpl) { p.preserveReleaseFormatting = true }
 }
 
 // WithSkipLookaside returns a [PreparerOption] that skips all lookaside cache
@@ -137,6 +152,19 @@ func WithSpecEditor(mode spec.EditorMode) PreparerOption {
 func WithSkipLookaside() PreparerOption {
 	return func(p *sourcePreparerImpl) {
 		p.skipLookaside = true
+	}
+}
+
+// WithSkipLocalSpecConfig excludes the TOML defining the local spec path from fetched files.
+func WithSkipLocalSpecConfig() PreparerOption {
+	return func(p *sourcePreparerImpl) { p.skipLocalSpecConfig = true }
+}
+
+// WithFetchedSources runs prepare on the fetched checkout before overlays and
+// synthetic history are applied.
+func WithFetchedSources(prepare func(context.Context, components.Component, string) error) PreparerOption {
+	return func(p *sourcePreparerImpl) {
+		p.prepareFetchedSources = prepare
 	}
 }
 
@@ -153,14 +181,21 @@ func WithUpstreamProvenance(distTag string) PreparerOption {
 
 // WithMockProcessor returns a [PreparerOption] that supplies the mock chroot
 // used to resolve an rpmautospec %autorelease when emitting
-// %fedora_upstream_release. Without it, upstream components whose Release uses
-// %autorelease get no release macro (best-effort). Running rpmautospec inside
-// mock keeps it out of azldev's host dependencies. A nil processor is ignored.
+// %fedora_upstream_release. Without a resolver, upstream components whose Release
+// uses %autorelease get no release macro (best-effort). Lockless rendering uses
+// [WithAutoreleaseResolver] instead to run on the host. A nil processor is ignored.
 func WithMockProcessor(mp *MockProcessor) PreparerOption {
 	return func(p *sourcePreparerImpl) {
 		if mp != nil {
 			p.autoreleaseResolver = mp
 		}
+	}
+}
+
+// WithAutoreleaseResolver selects how upstream provenance release numbers are calculated.
+func WithAutoreleaseResolver(resolver AutoreleaseResolver) PreparerOption {
+	return func(p *sourcePreparerImpl) {
+		p.autoreleaseResolver = resolver
 	}
 }
 
@@ -184,19 +219,26 @@ func WithAllowNoHashes() PreparerOption {
 
 // Standard implementation of the [SourcePreparer] interface.
 type sourcePreparerImpl struct {
-	sourceManager sourceproviders.SourceManager
-	specEditor    spec.EditorMode
-	fs            opctx.FS
-	eventListener opctx.EventListener
-	dryRunnable   opctx.DryRunnable
+	sourceManager         sourceproviders.SourceManager
+	prepareFetchedSources func(context.Context, components.Component, string) error
+	specEditor            spec.EditorMode
+	// preserveReleaseFormatting keeps 'Release' tag formatting during overlay
+	// edits. Set via [WithPreservedReleaseFormatting].
+	preserveReleaseFormatting bool
+	fs                        opctx.FS
+	eventListener             opctx.EventListener
+	dryRunnable               opctx.DryRunnable
 
 	// withGitRepo, when true, enables dist-git creation by preserving the
 	// upstream .git directory and generating synthetic commit history.
-	withGitRepo bool
+	withGitRepo          bool
+	skipSyntheticHistory bool
 
 	// skipLookaside, when true, skips all lookaside cache downloads during
 	// source preparation. Git-tracked files are still fetched.
 	skipLookaside bool
+
+	skipLocalSpecConfig bool
 
 	// cmdFactory is used to shell out to git for fingerprint change detection
 	// in the project repository. Set via [WithGitRepo].
@@ -229,11 +271,11 @@ type sourcePreparerImpl struct {
 	// [WithUpstreamProvenance].
 	upstreamDistTag string
 
-	// autoreleaseResolver runs rpmautospec inside a mock chroot to resolve an
+	// autoreleaseResolver runs rpmautospec to resolve an
 	// %autorelease Release into a concrete Fedora release number for
 	// %fedora_upstream_release. Nil disables autorelease resolution (the release
-	// macro is skipped for such specs). Set via [WithMockProcessor].
-	autoreleaseResolver autoreleaseResolver
+	// macro is skipped for such specs). Set via [WithMockProcessor] or [WithAutoreleaseResolver].
+	autoreleaseResolver AutoreleaseResolver
 
 	releaseStrategy    releaseStrategy
 	bumpspecCtx        opctx.Ctx
@@ -303,23 +345,18 @@ func (p *sourcePreparerImpl) PrepareSources(
 		}
 	}
 
-	// Preserve the upstream .git directory only when dist-git creation is
-	// requested via --with-git. This is required so that overlay commits can be
-	// appended on top of the upstream commit log during synthetic history generation.
-	var fetchOpts []sourceproviders.FetchComponentOption
-	if applyOverlays && p.withGitRepo {
-		fetchOpts = append(fetchOpts, sourceproviders.WithPreserveGitDir())
-	}
-
-	if p.skipLookaside {
-		fetchOpts = append(fetchOpts, sourceproviders.WithSkipLookaside())
-	}
-
 	// Fetch the component first (spec, sidecar files, and upstream source tarballs).
-	err := p.sourceManager.FetchComponent(ctx, component, outputDir, fetchOpts...)
+	err := p.sourceManager.FetchComponent(ctx, component, outputDir, p.componentFetchOptions(applyOverlays)...)
 	if err != nil {
 		return fmt.Errorf("failed to fetch sources for component %#q:\n%w",
 			component.GetName(), err)
+	}
+
+	// Capture provenance before fetched-source preparation changes the upstream spec.
+	macros := p.resolveMacros(ctx, component, outputDir, applyOverlays)
+
+	if err := p.prepareFetched(ctx, component, outputDir); err != nil {
+		return fmt.Errorf("preparing fetched sources for %#q:\n%w", component.GetName(), err)
 	}
 
 	// Fetch custom and downloaded source files.
@@ -333,7 +370,7 @@ func (p *sourcePreparerImpl) PrepareSources(
 	fingerprintConfig := component.GetConfig()
 
 	if applyOverlays {
-		repackedArchives, err := p.applyOverlaysToSources(ctx, component, outputDir)
+		repackedArchives, err := p.applyOverlaysToSources(component, outputDir, macros)
 		if err != nil {
 			return err
 		}
@@ -360,6 +397,37 @@ func (p *sourcePreparerImpl) PrepareSources(
 	return nil
 }
 
+func (p *sourcePreparerImpl) componentFetchOptions(applyOverlays bool) []sourceproviders.FetchComponentOption {
+	var options []sourceproviders.FetchComponentOption
+	if p.withoutLockfile {
+		options = append(options, sourceproviders.WithSingleBranch())
+	}
+
+	if p.withGitRepo && (applyOverlays || p.skipSyntheticHistory) {
+		options = append(options, sourceproviders.WithPreserveGitDir())
+	}
+
+	if p.skipLookaside {
+		options = append(options, sourceproviders.WithSkipLookaside())
+	}
+
+	if p.skipLocalSpecConfig {
+		options = append(options, sourceproviders.WithSkipLocalSpecConfig())
+	}
+
+	return options
+}
+
+func (p *sourcePreparerImpl) prepareFetched(
+	ctx context.Context, component components.Component, dir string,
+) error {
+	if p.prepareFetchedSources == nil {
+		return nil
+	}
+
+	return p.prepareFetchedSources(ctx, component, dir)
+}
+
 func (p *sourcePreparerImpl) validateArchiveOverlayConfig(component components.Component) error {
 	config := component.GetConfig()
 	if err := config.ValidateArchiveOverlays(p.allowNoHashes); err != nil {
@@ -369,26 +437,19 @@ func (p *sourcePreparerImpl) validateArchiveOverlayConfig(component components.C
 	return nil
 }
 
-// applyOverlaysToSources writes the macros file and then applies all overlays.
+// applyOverlaysToSources prepares macro definitions and then applies all overlays.
 // It returns the names of any archives that were repacked by archive overlays
 // (empty in dry-run mode or when no archive overlays ran), so the caller can
 // rehash exactly those entries in the 'sources' file.
 func (p *sourcePreparerImpl) applyOverlaysToSources(
-	ctx context.Context, component components.Component, outputDir string,
+	component components.Component, outputDir string, macros map[string]string,
 ) ([]string, error) {
-	var macrosFileName string
-
-	macrosFilePath, err := p.writeMacrosFile(ctx, component, outputDir)
+	macroOverlays, err := p.prepareMacroOverlays(component, outputDir, macros)
 	if err != nil {
-		return nil, fmt.Errorf("failed to write macros file for component %#q:\n%w",
-			component.GetName(), err)
+		return nil, err
 	}
 
-	if macrosFilePath != "" {
-		macrosFileName = filepath.Base(macrosFilePath)
-	}
-
-	repackedArchives, err := p.applyOverlays(component, outputDir, macrosFileName)
+	repackedArchives, err := p.applyOverlays(component, outputDir, macroOverlays)
 	if err != nil {
 		return nil, fmt.Errorf("failed to apply overlays for component %#q:\n%w",
 			component.GetName(), err)
@@ -397,11 +458,35 @@ func (p *sourcePreparerImpl) applyOverlaysToSources(
 	return repackedArchives, nil
 }
 
+func (p *sourcePreparerImpl) prepareMacroOverlays(
+	component components.Component, outputDir string, macros map[string]string,
+) ([]projectconfig.ComponentOverlay, error) {
+	if p.withoutLockfile {
+		return synthesizeInlineMacroOverlays(macros), nil
+	}
+
+	macrosFilePath, err := p.writeMacrosFile(component, outputDir, macros)
+	if err != nil {
+		return nil, fmt.Errorf("failed to write macros file for component %#q:\n%w", component.GetName(), err)
+	}
+
+	if macrosFilePath == "" {
+		return nil, nil
+	}
+
+	overlays, err := synthesizeMacroLoadOverlays(filepath.Base(macrosFilePath))
+	if err != nil {
+		return nil, fmt.Errorf("failed to compute macros load overlays:\n%w", err)
+	}
+
+	return overlays, nil
+}
+
 // applyOverlays applies all overlays (user-defined and system-generated) to the
 // component sources. It returns the names of any archives that were repacked by
 // archive overlays.
 func (p *sourcePreparerImpl) applyOverlays(
-	component components.Component, sourcesDirPath, macrosFileName string,
+	component components.Component, sourcesDirPath string, macroOverlays []projectconfig.ComponentOverlay,
 ) ([]string, error) {
 	event := p.eventListener.StartEvent("Applying overlays", "component", component.GetName())
 	defer event.End()
@@ -411,10 +496,7 @@ func (p *sourcePreparerImpl) applyOverlays(
 		return nil, err
 	}
 
-	allOverlays, err := p.collectOverlays(component, macrosFileName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to collect overlays for component %#q:\n%w", component.GetName(), err)
-	}
+	allOverlays := p.collectOverlays(component, macroOverlays)
 
 	if len(allOverlays) == 0 {
 		return nil, nil
@@ -473,28 +555,20 @@ func (p *sourcePreparerImpl) applyArchiveOverlayGroup(
 }
 
 // collectOverlays gathers all overlays for a component into a single ordered slice:
-// macros-load first, then user overlays, followed by check-skip and file-header overlays.
+// macro definitions first, then user overlays, followed by check-skip and file-header overlays.
 func (p *sourcePreparerImpl) collectOverlays(
-	component components.Component, macrosFileName string,
-) ([]projectconfig.ComponentOverlay, error) {
+	component components.Component, macroOverlays []projectconfig.ComponentOverlay,
+) []projectconfig.ComponentOverlay {
 	config := component.GetConfig()
 
 	var allOverlays []projectconfig.ComponentOverlay
 
-	if macrosFileName != "" {
-		macroOverlays, err := synthesizeMacroLoadOverlays(macrosFileName)
-		if err != nil {
-			return nil, fmt.Errorf("failed to compute macros load overlays:\n%w", err)
-		}
-
-		allOverlays = append(allOverlays, macroOverlays...)
-	}
-
+	allOverlays = append(allOverlays, macroOverlays...)
 	allOverlays = append(allOverlays, config.Overlays...)
 	allOverlays = append(allOverlays, synthesizeCheckSkipOverlays(config.Build.Check)...)
 	allOverlays = append(allOverlays, generateFileHeaderOverlay()...)
 
-	return allOverlays, nil
+	return allOverlays
 }
 
 // initSourcesRepo initializes a new git repository in sourcesDirPath, stages all files,
@@ -543,6 +617,10 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 	fingerprintConfig *projectconfig.ComponentConfig,
 	sourcesDirPath string,
 ) error {
+	if p.skipSyntheticHistory {
+		return nil
+	}
+
 	config := component.GetConfig()
 	componentName := component.GetName()
 
@@ -775,7 +853,8 @@ func (p *sourcePreparerImpl) DiffSources(
 	// Apply overlays in-place to the copied directory only. The repacked-archive
 	// list is unused here: DiffSources diffs the trees directly and does not
 	// rewrite a 'sources' file.
-	if _, err := p.applyOverlaysToSources(ctx, component, overlaidDir); err != nil {
+	macros := p.resolveMacros(ctx, component, overlaidDir, true)
+	if _, err := p.applyOverlaysToSources(component, overlaidDir, macros); err != nil {
 		return nil, fmt.Errorf("failed to apply overlays for component %#q:\n%w", component.GetName(), err)
 	}
 
@@ -1251,19 +1330,24 @@ func (p *sourcePreparerImpl) resolveSourceHash(
 	return hash, hashType, nil
 }
 
-// writeMacrosFile writes a macros file containing the resolved macros for a component.
-// This includes with/without flags converted to macro format, and any explicit defines.
-// If the build configuration produces no macros, no file is written and an empty path is
-// returned. Otherwise, the path to the written macros file is returned.
-func (p *sourcePreparerImpl) writeMacrosFile(
-	ctx context.Context, component components.Component, outputDir string,
-) (string, error) {
-	macros := buildMacrosMap(component.GetConfig().Build)
+func (p *sourcePreparerImpl) resolveMacros(
+	ctx context.Context, component components.Component, outputDir string, applyOverlays bool,
+) map[string]string {
+	if !applyOverlays {
+		return nil
+	}
 
-	// Layer Fedora upstream provenance macros on top, reading the pristine
-	// upstream spec that is already on disk (before overlays are applied).
+	macros := buildMacrosMap(component.GetConfig().Build)
 	p.addUpstreamProvenanceMacros(ctx, macros, component, outputDir)
 
+	return macros
+}
+
+// writeMacrosFile writes the previously resolved macros, returning the file's path
+// or an empty string when no macros are needed.
+func (p *sourcePreparerImpl) writeMacrosFile(
+	component components.Component, outputDir string, macros map[string]string,
+) (string, error) {
 	contents := renderMacrosFile(macros)
 	if contents == "" {
 		return "", nil
@@ -1361,6 +1445,34 @@ func renderMacrosFile(macros map[string]string) string {
 	}
 
 	return strings.Join(lines, "\n") + "\n"
+}
+
+func synthesizeInlineMacroOverlays(macros map[string]string) []projectconfig.ComponentOverlay {
+	if len(macros) == 0 {
+		return nil
+	}
+
+	names := lo.Keys(macros)
+	slices.Sort(names)
+
+	lines := []string{"# Build macros generated by azldev."}
+
+	for _, name := range names {
+		value := macros[name]
+		if value == "" {
+			value = "%{nil}"
+		}
+
+		// Lazy definitions retain macros-file semantics, including references to later spec tags.
+		lines = append(lines, fmt.Sprintf("%%define %s %s", name, value))
+	}
+
+	lines = append(lines, "")
+
+	return []projectconfig.ComponentOverlay{{
+		Type:  projectconfig.ComponentOverlayPrependSpecLines,
+		Lines: lines,
+	}}
 }
 
 func synthesizeMacroLoadOverlays(macrosFileName string) ([]projectconfig.ComponentOverlay, error) {
@@ -1465,13 +1577,22 @@ func (p *sourcePreparerImpl) applyOverlayList(
 		}
 
 		if err := ApplyOverlayToSources(
-			p.dryRunnable, p.fs, overlay, sourcesDirPath, absSpecPath, spec.WithEditor(p.specEditor),
+			p.dryRunnable, p.fs, overlay, sourcesDirPath, absSpecPath, p.specOptions()...,
 		); err != nil {
 			return fmt.Errorf("failed to apply %#q overlay:\n%w", overlay.Type, err)
 		}
 	}
 
 	return nil
+}
+
+func (p *sourcePreparerImpl) specOptions() []spec.OpenOption {
+	options := []spec.OpenOption{spec.WithEditor(p.specEditor)}
+	if p.withoutLockfile || p.preserveReleaseFormatting {
+		options = append(options, spec.WithPreservedReleaseFormatting())
+	}
+
+	return options
 }
 
 func findSpecInDir(

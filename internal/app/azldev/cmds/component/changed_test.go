@@ -60,11 +60,9 @@ func TestChangedCmd_NoComponents(t *testing.T) {
 	assert.Contains(t, err.Error(), "component not found")
 }
 
-func TestNewChangedCmd_LongDescriptionByMode(t *testing.T) {
-	defaultCmd := componentcmds.NewChangedCmd()
-	assert.Contains(t, defaultCmd.Long, "Compare component lock files")
-
-	withoutLockfileCmd := componentcmds.NewChangedCmd(componentcmds.WithoutLockfileFlags())
-	assert.Contains(t, withoutLockfileCmd.Long, "Load the project configuration independently")
-	assert.NotContains(t, withoutLockfileCmd.Long, "lock file")
+func TestNewChangedCmd_DocumentsPerComponentSelection(t *testing.T) {
+	cmd := componentcmds.NewChangedCmd()
+	assert.Contains(t, cmd.Long, "Compare component lock files")
+	assert.Contains(t, cmd.Long, "lockless-components.txt")
+	assert.Contains(t, cmd.Long, "compare resolved project build inputs")
 }

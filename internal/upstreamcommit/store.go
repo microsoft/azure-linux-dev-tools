@@ -6,6 +6,7 @@
 package upstreamcommit
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -162,6 +163,10 @@ func (s *Store) Save(componentName, upstreamCommit string) error {
 		return fmt.Errorf("serializing upstream commit TOML %#q:\n%w", path, err)
 	}
 
+	// Only the spec table has values; omit the encoder's two empty parent headers.
+	_, data, _ = bytes.Cut(data, []byte("\n"))
+	_, data, _ = bytes.Cut(data, []byte("\n"))
+
 	data = append([]byte(generatedFileHeader), data...)
 
 	if err := fileutils.MkdirAll(s.fs, s.dir); err != nil {
@@ -176,9 +181,11 @@ func (s *Store) Save(componentName, upstreamCommit string) error {
 }
 
 // FindOrphans returns generated component TOMLs that do not correspond to an
-// upstream component in components.
+// upstream component in components. Configured ignoredComponents are preserved
+// regardless of their source type.
 func (s *Store) FindOrphans(
 	components map[string]projectconfig.ComponentConfig,
+	ignoredComponents ...string,
 ) ([]string, error) {
 	entries, err := fileutils.ReadDir(s.fs, s.dir)
 	if err != nil {
@@ -194,6 +201,11 @@ func (s *Store) FindOrphans(
 		return nil, fmt.Errorf("reading upstream commit TOML directory %#q:\n%w", s.dir, err)
 	}
 
+	ignored := make(map[string]bool, len(ignoredComponents))
+	for _, name := range ignoredComponents {
+		ignored[name] = true
+	}
+
 	var orphans []string
 
 	for _, entry := range entries {
@@ -205,7 +217,7 @@ func (s *Store) FindOrphans(
 		name := strings.TrimSuffix(entry.Name(), fileExtension)
 
 		component, ok := components[name]
-		if !ok || component.Spec.SourceType != projectconfig.SpecSourceTypeUpstream {
+		if !ok || (!ignored[name] && component.Spec.SourceType != projectconfig.SpecSourceTypeUpstream) {
 			orphans = append(orphans, name)
 		}
 	}
@@ -216,8 +228,10 @@ func (s *Store) FindOrphans(
 }
 
 // PruneOrphans removes generated TOMLs that are no longer needed.
-func (s *Store) PruneOrphans(components map[string]projectconfig.ComponentConfig) (int, error) {
-	orphans, err := s.FindOrphans(components)
+func (s *Store) PruneOrphans(
+	components map[string]projectconfig.ComponentConfig, ignoredComponents ...string,
+) (int, error) {
+	orphans, err := s.FindOrphans(components, ignoredComponents...)
 	if err != nil {
 		return 0, err
 	}

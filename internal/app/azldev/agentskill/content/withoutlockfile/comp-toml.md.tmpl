@@ -31,7 +31,7 @@ Add sub-tables only for what you change. The fields you will reach for most:
 | `overlays` / `overlay-files` | targeted spec/source edits (see the `azldev-overlays` skill) |
 | `build.defines` / `build.with` / `build.without` | RPM macro and bcond build tweaks |
 | `release.calculation` | how the `Release` tag is managed |
-| `render.skip-file-filter` | rendering edge-case escape hatch |
+| `render.skip-file-filter` | locked-rendering edge-case escape hatch |
 
 ## Spec source
 
@@ -86,9 +86,44 @@ calculation = "manual"
 
 ## Render configuration
 
-`render.skip-file-filter = true` keeps all source and patch files during render.
-azldev normally prunes files not referenced by the rendered spec; set this only for
+Upstream rendering runs host `rpmdev-bumpspec -c` only for non-autorelease specs
+and automatically commits the component output directory. Missing
+`--changelog-comment` opens `$EDITOR` or a local editor before output replacement,
+including for autorelease commits.
+Autorelease with `--no-git-commit` never prompts. Blank/comment-only edited messages fail rendering.
+The final Git commit never prompts; its first message line is the summary, and remaining lines are body.
+Required message prompts require both stdin and stdout to be TTYs; otherwise rendering fails.
+Non-interactive renders must use `--changelog-comment` and/or `--no-git-commit`.
+With no upstream changes, the editor starts with two blank lines and `#`-commented instructions.
+Otherwise, non-autorelease changes start on line 2; autorelease puts `...` on line 2
+and starts changes on line 3. Each change line is prefixed with `- ` and is editable.
+Blank lines and lines starting with `#` are removed, with no trailing newline;
+the cleaned text is reused for the Git message. Explicit flag values remain unchanged.
+Commit input TOML first, install host `rpmdevtools`, `rpm-build`, and `rpmautospec` as
+needed, and configure Git author identity. Lockless rendering never uses mock
+or `rpmautospec process-distgit`; RPM macros remain unexpanded and the
+`changelog` sidecar is preserved. Synthetic history and its legacy release
+adjustment are skipped during rendering.
+`--check-only` never creates project commits.
+Local lockless components skip upstream carryover; Release and changelog remain unchanged.
+They exclude the TOML defining the local spec path, retain other TOML sidecars,
+and participate in unchanged-render checks and automatic commits.
+For local components, `--changelog-comment` supplies only the Git message.
+Local components with `--no-git-commit` never prompt.
+The first automatic commit also includes pending repository changes outside the
+rendered output directory; later commits contain only their component output.
+
+azldev reads `lockless-components.txt` beside the top-level `azldev.toml`.
+Listed component names use the lockless workflow for every command;
+all others use lock files. A missing or empty list means all components use
+locks. List every component to use a fully lockless workflow.
+Use `comp refresh-upstream-commit` for lockless components.
+
+`render.skip-file-filter = true` keeps all source and patch files during locked render.
+Locked rendering normally prunes files not referenced by the rendered spec; set this only for
 the rare spec whose `Source`/`Patch` filenames use macros the filter cannot expand.
+Lockless rendering always retains all prepared dist-git files except `.git`,
+without file filtering or `spectool` queries; this setting has no effect on it.
 
 ## File organization
 

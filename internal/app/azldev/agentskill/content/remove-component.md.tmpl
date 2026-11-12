@@ -23,8 +23,9 @@ Check for **reverse dependencies** first: if other components `BuildRequires` or
 `Requires` this one, removing it breaks their builds. Search the tree for the
 component name. Identify its binary subpackage names from the rendered output under
 `{{ .RenderedSpecsDir }}/<first-char>/<name>/`, then search for those names too.
-`azldev comp query` currently supports local spec sources only, not the usual upstream
-spec source.
+`azldev comp query` reads rendered specs for either source type. Locked components
+use working-tree rendered files; lockless components use committed rendered
+dist-git history processed with rpmautospec.
 
 ## Steps
 

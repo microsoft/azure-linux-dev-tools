@@ -14,6 +14,10 @@ For local components, this computes a content hash of the spec directory.
 Subsequent commands (render, build) use the locked state for deterministic,
 reproducible results.
 
+Components listed in lockless-components.txt beside the top-level azldev.toml
+are skipped, including with --bump. Use refresh-upstream-commit for them.
+Their existing lock files are left untouched.
+
 If a component fails to resolve, successful components are still written
 before the command returns an error. Failed components are left unchanged,
 and orphan pruning is skipped for that run.
@@ -85,7 +89,6 @@ azldev component update [flags]
       --spec-editor editor               Select the RPM spec editor (legacy or experimental) (default legacy)
       --unique-mockroot[=true|false]     use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently
   -v, --verbose[=true|false]             enable verbose output
-      --without-lockfile[=true|false]    preview: track resolved upstream commits in generated config instead of lock files
 ```
 
 ### SEE ALSO

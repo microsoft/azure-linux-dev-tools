@@ -63,6 +63,8 @@ func NewHistoryCmd() *cobra.Command {
 Use this to find which packages get the most attention (for documentation,
 review prioritization, or refactoring planning).
 
+Components using the lockless workflow via lockless-components.txt are skipped.
+
 When a component shares its source TOML with other components (e.g., a bare
 entry in a shared components.toml), the toml-commit count is coarse and the
 component is marked 'toml-shared'. Use --shared=omit to drop those rows.
@@ -108,7 +110,7 @@ hand-picking entries to document.`,
 		ValidArgsFunction: components.GenerateComponentNameCompletions,
 	}
 
-	addComponentFilterOptions(cmd, &options.ComponentFilter, cmdOptions{})
+	addComponentFilterOptions(cmd, &options.ComponentFilter)
 
 	cmd.Flags().StringVar(&options.SharedTomlMode, "shared", sharedTomlModeShow,
 		"How to report rows for components that share a TOML file with others: "+
@@ -295,6 +297,11 @@ func ComponentHistory(env *azldev.Env, options *HistoryOptions) ([]HistoryResult
 		return nil, fmt.Errorf("resolving components:\n%w", err)
 	}
 
+	lockedComps := componentsForLockMode(env, comps.Components(), false)
+	if len(lockedComps) == 0 {
+		return []HistoryResult{}, nil
+	}
+
 	ctx, err := newHistoryContext(env)
 	if err != nil {
 		return nil, err
@@ -308,7 +315,7 @@ func ComponentHistory(env *azldev.Env, options *HistoryOptions) ([]HistoryResult
 	explicit := hasExplicitComponentSelection(&options.ComponentFilter)
 	effectiveIncludeBare := options.IncludeBare || explicit
 
-	stubs := buildHistoryStubs(env, comps.Components(), effectiveIncludeBare)
+	stubs := buildHistoryStubs(env, lockedComps, effectiveIncludeBare)
 	if len(stubs) == 0 {
 		return nil, nil
 	}

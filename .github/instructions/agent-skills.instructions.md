@@ -68,10 +68,9 @@ Before shipping any skill/instruction:
 
 ## Mode-specific content
 
-azldev has two modes, and the emitted content follows the one it runs in. A `Catalog`
-(`NewCatalog(withoutLockfile)`) resolves the skills, instruction wrappers, and templates;
-the package-level `Skills`, `Instructions`, `FindSkill`, `SkillDocument`, and `Files`
-helpers are the default (lock-file) mode.
+The CLI always emits the default catalog, covering both workflows selected by
+`lockless-components.txt`. `NewCatalog(true)` retains an internal all-lockless
+variant; the package-level helpers use the default mixed-workflow catalog.
 
 - **Shared by default.** Registry entries and templates under `content/` describe the
   default mode and are used by both, so most edits need nothing extra.
@@ -82,11 +81,11 @@ helpers are the default (lock-file) mode.
   same-named default template for that mode; add one only when the document's content
   actually differs.
 
-When you add or edit a skill, check whether its content names a command that exists in
-only one mode (for example `comp update` versus `comp refresh-upstream-commit`) and, if
-so, provide the mode-specific variant. Verify both with
-`./out/bin/azldev docs agent show --skill <name>` and
-`./out/bin/azldev --without-lockfile docs agent show --skill <name>`.
+When editing a skill, describe which components each command processes:
+`comp update` handles locked components; `comp refresh-upstream-commit` handles
+listed lockless components. Verify CLI output with
+`./out/bin/azldev docs agent show --skill <name>` and cover catalog variants in
+unit tests. There is no global CLI mode selector.
 
 ## Config-resolved bindings
 

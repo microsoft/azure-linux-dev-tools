@@ -134,6 +134,44 @@ func TestFetchLocalComponent_NoRequiredFiles(t *testing.T) {
 	require.Equal(t, testParams.specContents, string(contents))
 }
 
+func TestFetchLocalComponent_SkipDefiningSpecConfig(t *testing.T) {
+	for _, skip := range []bool{false, true} {
+		t.Run(map[bool]string{false: "ordinary fetch", true: "lockless render"}[skip], func(t *testing.T) {
+			params := setupLocalFetcherTest(t)
+
+			files := map[string]string{
+				"definition.toml": "[components.test.spec]\ntype = 'local'\npath = 'test.spec'\n",
+				"metadata.toml":   "[components.test]\n",
+				"settings.toml":   "setting = true\n",
+				"other.toml":      "[components.other.spec]\ntype = 'local'\npath = 'test.spec'\n",
+				"overridden.toml": "[components.test.spec]\ntype = 'local'\npath = 'other.spec'\n",
+				"invalid.toml":    "not valid TOML [\n",
+				"nested/def.toml": "[components.test.spec]\ntype = 'local'\npath = '../test.spec'\n",
+			}
+			for name, content := range files {
+				require.NoError(t, fileutils.WriteFile(params.env.TestFS, filepath.Join(params.specDir, name),
+					[]byte(content), fileperms.PublicFile))
+			}
+
+			var options []sourceproviders.FetchComponentOption
+			if skip {
+				options = append(options, sourceproviders.WithSkipLocalSpecConfig())
+			}
+
+			require.NoError(t, sourceproviders.FetchLocalComponent(params.env.DryRunnable,
+				params.env.EventListener, params.env.TestFS, params.component, testOutputDir, false, options...))
+
+			for name := range files {
+				exists, err := fileutils.Exists(params.env.TestFS, filepath.Join(testOutputDir, name))
+				require.NoError(t, err)
+
+				want := !skip || (name != "definition.toml" && name != "nested/def.toml")
+				require.Equal(t, want, exists, name)
+			}
+		})
+	}
+}
+
 func TestFetchLocalComponent_RequiredFileMissing(t *testing.T) {
 	testParams := setupLocalFetcherTest(t)
 

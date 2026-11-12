@@ -110,11 +110,6 @@
        "default": false,
        "description": "enable verbose output",
        "type": "boolean"
-      },
-      "without-lockfile": {
-       "default": false,
-       "description": "preview: track resolved upstream commits in generated config instead of lock files",
-       "type": "boolean"
       }
      },
      "required": [
@@ -226,11 +221,6 @@
        "default": false,
        "description": "enable verbose output",
        "type": "boolean"
-      },
-      "without-lockfile": {
-       "default": false,
-       "description": "preview: track resolved upstream commits in generated config instead of lock files",
-       "type": "boolean"
       }
      },
      "required": [],
@@ -340,11 +330,6 @@
        "default": false,
        "description": "enable verbose output",
        "type": "boolean"
-      },
-      "without-lockfile": {
-       "default": false,
-       "description": "preview: track resolved upstream commits in generated config instead of lock files",
-       "type": "boolean"
       }
      },
      "required": [],
@@ -443,11 +428,6 @@
       "verbose": {
        "default": false,
        "description": "enable verbose output",
-       "type": "boolean"
-      },
-      "without-lockfile": {
-       "default": false,
-       "description": "preview: track resolved upstream commits in generated config instead of lock files",
        "type": "boolean"
       }
      },
@@ -568,11 +548,6 @@
        "default": false,
        "description": "enable verbose output",
        "type": "boolean"
-      },
-      "without-lockfile": {
-       "default": false,
-       "description": "preview: track resolved upstream commits in generated config instead of lock files",
-       "type": "boolean"
       }
      },
      "required": [],
@@ -655,11 +630,6 @@
        "default": false,
        "description": "enable verbose output",
        "type": "boolean"
-      },
-      "without-lockfile": {
-       "default": false,
-       "description": "preview: track resolved upstream commits in generated config instead of lock files",
-       "type": "boolean"
       }
      },
      "required": [],
@@ -737,11 +707,6 @@
       "verbose": {
        "default": false,
        "description": "enable verbose output",
-       "type": "boolean"
-      },
-      "without-lockfile": {
-       "default": false,
-       "description": "preview: track resolved upstream commits in generated config instead of lock files",
        "type": "boolean"
       }
      },
@@ -825,11 +790,6 @@
       "verbose": {
        "default": false,
        "description": "enable verbose output",
-       "type": "boolean"
-      },
-      "without-lockfile": {
-       "default": false,
-       "description": "preview: track resolved upstream commits in generated config instead of lock files",
        "type": "boolean"
       }
      },
@@ -924,11 +884,6 @@
        "default": false,
        "description": "enable verbose output",
        "type": "boolean"
-      },
-      "without-lockfile": {
-       "default": false,
-       "description": "preview: track resolved upstream commits in generated config instead of lock files",
-       "type": "boolean"
       }
      },
      "required": [
@@ -1008,11 +963,6 @@
       "verbose": {
        "default": false,
        "description": "enable verbose output",
-       "type": "boolean"
-      },
-      "without-lockfile": {
-       "default": false,
-       "description": "preview: track resolved upstream commits in generated config instead of lock files",
        "type": "boolean"
       }
      },
@@ -1110,11 +1060,6 @@
       "verbose": {
        "default": false,
        "description": "enable verbose output",
-       "type": "boolean"
-      },
-      "without-lockfile": {
-       "default": false,
-       "description": "preview: track resolved upstream commits in generated config instead of lock files",
        "type": "boolean"
       }
      },

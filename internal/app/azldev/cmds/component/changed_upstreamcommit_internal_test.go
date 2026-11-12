@@ -124,13 +124,76 @@ func TestClassifyHistoricalComponent_ExcludedFieldsUnchanged(t *testing.T) {
 	assert.Equal(t, changeTypeUnchanged, result.ChangeType)
 }
 
-func TestBuildHistoricalResults_UnchangedSkipsSourcesComparison(t *testing.T) {
+func TestBuildHistoricalResults_RenderOnlyChanges(t *testing.T) {
+	for _, testCase := range []struct {
+		name        string
+		path        string
+		missingTree bool
+		reverse     bool
+		wantChanged bool
+		wantSources bool
+	}{
+		{name: "spec", path: "SPECS/c/curl/curl.spec", wantChanged: true},
+		{name: "sources", path: "SPECS/c/curl/sources", wantChanged: true, wantSources: true},
+		{name: "sidecar", path: "SPECS/c/curl/patches/fix.patch", wantChanged: true},
+		{name: "no-change rebuild", path: "SPECS/c/curl/.no-change-rebuild", wantChanged: true},
+		{name: "other component", path: "SPECS/z/zlib/zlib.spec"},
+		{name: "new render", path: "SPECS/c/curl/curl.spec", missingTree: true, wantChanged: true},
+		{name: "removed render", path: "SPECS/c/curl/curl.spec", missingTree: true, reverse: true, wantChanged: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			fromPath := testCase.path
+			if testCase.missingTree {
+				fromPath = "README.md"
+			}
+
+			repo, fromRef, toRef := testRepoWithTwoCommits(t,
+				map[string][]byte{fromPath: []byte("before")},
+				map[string][]byte{testCase.path: []byte("after")},
+			)
+
+			fromTree, err := resolveTree(repo, fromRef)
+			require.NoError(t, err)
+			toTree, err := resolveTree(repo, toRef)
+			require.NoError(t, err)
+
+			if testCase.reverse {
+				fromTree, toTree = toTree, fromTree
+			}
+
+			project := &historicalProject{
+				comparisonInputs: map[string]componentComparisonInputs{
+					"curl": {Config: projectconfig.ComponentConfig{Name: "curl"}},
+				},
+				renderedSpecsRelDir: "SPECS",
+			}
+
+			results, err := buildHistoricalResults(
+				[]string{"curl"}, project, project, fromTree, toTree, false, true,
+			)
+			require.NoError(t, err)
+
+			if !testCase.wantChanged {
+				assert.Empty(t, results)
+
+				return
+			}
+
+			require.Len(t, results, 1)
+			assert.Equal(t, changeTypeChanged, results[0].ChangeType)
+			assert.Equal(t, testCase.wantSources, results[0].SourcesChange)
+		})
+	}
+}
+
+func TestBuildHistoricalResults_UnchangedRenderedTree(t *testing.T) {
 	repo, fromRef, toRef := testRepoWithTwoCommits(t,
 		map[string][]byte{
 			"SPECS/c/curl/sources": []byte("SHA512 (curl-1.tar.gz) = aaa"),
 		},
 		map[string][]byte{
-			"SPECS/c/curl/sources": []byte("SHA512 (curl-2.tar.gz) = bbb"),
+			"SPECS/c/curl/sources": []byte("SHA512 (curl-1.tar.gz) = aaa"),
+			"README.md":            []byte("unrelated change"),
 		},
 	)
 
@@ -266,6 +329,72 @@ upstream-commit = "abcdef1234567"
 	assert.Equal(t, "1.0", project.comparisonInputs["curl"].ReleaseVer)
 	assert.Equal(t, "SPECS", project.renderedSpecsRelDir)
 	assert.Equal(t, []string{"curl"}, project.componentGroups["core"])
+}
+
+func TestLoadHistoricalProject_OnlyBuildsInputsForLocklessComponents(t *testing.T) {
+	rootConfig := []byte(`
+[project]
+default-distro = { name = "testdistro", version = "1.0" }
+rendered-specs-dir = "SPECS"
+
+[distros.testdistro]
+description = "Test distro"
+[distros.testdistro.versions."1.0"]
+release-ver = "1.0"
+
+[components.rust-asyncband.spec]
+type = "upstream"
+upstream-commit = "abcdef1234567"
+
+[components.curl.spec]
+type = "local"
+path = "unavailable/curl.spec"
+`)
+	repo, hashes := testRepoWithCommits(t, []testRepoCommit{
+		{files: map[string][]byte{"azldev.toml": rootConfig}},
+	})
+	tree, err := resolveTree(repo, hashes[0])
+	require.NoError(t, err)
+	env := testutils.NewTestEnv(t)
+	env.Config.LocklessComponents = map[string]bool{"rust-asyncband": true}
+
+	project, err := loadHistoricalProject(env.Env, tree, ".")
+	require.NoError(t, err, "locked component inputs must not be read for the lockless comparison")
+	assert.Contains(t, project.components, "curl")
+	assert.NotContains(t, project.comparisonInputs, "curl")
+	assert.Equal(t, "abcdef1234567", project.comparisonInputs["rust-asyncband"].SourceIdentity)
+}
+
+func TestLoadHistoricalProject_IgnoresUnknownHistoricalFields(t *testing.T) {
+	rootConfig := []byte(`
+[project]
+default-distro = { name = "testdistro", version = "1.0" }
+rendered-specs-dir = "SPECS"
+
+[distros.testdistro]
+description = "Test distro"
+[distros.testdistro.versions."1.0"]
+release-ver = "1.0"
+
+[test-suites.legacy]
+description = "Removed config table"
+
+[components.curl.spec]
+type = "upstream"
+upstream-commit = "abcdef1234567"
+`)
+	repo, hashes := testRepoWithCommits(t, []testRepoCommit{
+		{files: map[string][]byte{"azldev.toml": rootConfig}},
+	})
+	tree, err := resolveTree(repo, hashes[0])
+	require.NoError(t, err)
+
+	testEnv := testutils.NewTestEnvWithoutLockfile(t)
+	require.False(t, testEnv.Env.PermissiveConfigParsing())
+
+	project, err := loadHistoricalProject(testEnv.Env, tree, ".")
+	require.NoError(t, err)
+	assert.Equal(t, "abcdef1234567", project.components["curl"].Spec.UpstreamCommit)
 }
 
 func TestSelectHistoricalComponentNames_UsesBothRefs(t *testing.T) {
