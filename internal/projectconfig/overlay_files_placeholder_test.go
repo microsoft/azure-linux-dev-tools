@@ -27,12 +27,20 @@ func TestValidateOverlayFilesPlaceholder(t *testing.T) {
 		{name: "backslash separator rejected", entry: "comps\\{component}\\x.toml", wantErr: true},
 		{name: "glob metachar before placeholder", entry: "**/{component}/*.overlay.toml", wantErr: true},
 		{name: "star before placeholder", entry: "comps*/{component}/*.overlay.toml", wantErr: true},
+		{name: "brace alternatives before placeholder", entry: "{base,extra}/{component}/*.overlay.toml", wantErr: true},
+		{name: "brace suffix allowed", entry: "comps/{component}/{base,extra}/*.overlay.toml", wantErr: false},
 		{name: "whole segment at start", entry: "{component}/overlays/*.overlay.toml", wantErr: false},
 		{name: "whole segment in middle", entry: "comps/{component}/overlays/*.overlay.toml", wantErr: false},
 		{name: "placeholder at end rejected", entry: "comps/overlays/{component}", wantErr: true},
 		{name: "placeholder followed by only slash rejected", entry: "comps/{component}/", wantErr: true},
 		{name: "doublestar in suffix allowed", entry: "comps/{component}/**/*.overlay.toml", wantErr: false},
 		{name: "absolute path", entry: "/project/base/comps/{component}/overlays/*.overlay.toml", wantErr: false},
+		{name: "parent directory in prefix allowed", entry: "../comps/{component}/overlays/*.overlay.toml"},
+		{name: "parent after placeholder rejected", entry: "comps/{component}/../overlays/*.overlay.toml", wantErr: true},
+		{name: "nested parent rejected", entry: "comps/{component}/nested/../overlays/*.overlay.toml", wantErr: true},
+		{name: "nested escape rejected", entry: "comps/{component}/nested/../../overlays/*.overlay.toml", wantErr: true},
+		{name: "trailing parent rejected", entry: "comps/{component}/overlays/..", wantErr: true},
+		{name: "two dots in filename allowed", entry: "comps/{component}/overlays/fix..overlay.toml"},
 	}
 
 	for _, testCase := range tests {

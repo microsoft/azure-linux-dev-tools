@@ -6,16 +6,17 @@ package projectconfig
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
 )
 
 // OverlayFilesComponentPlaceholder is the single supported placeholder in an
-// [ComponentConfig.OverlayFiles] entry. It is required in every project-scope
-// entry (discovery) and forbidden in distro/component-group/component-scope
-// entries; when present it must appear exactly once and must be a whole path
-// segment.
+// [ComponentConfig.OverlayFiles] entry. Project-level defaults may opt into
+// discovery with this placeholder; components permit only plain patterns, and
+// distro-version and component-group defaults must omit 'overlay-files'.
+// When present it must appear exactly once and must be a whole path segment.
 const OverlayFilesComponentPlaceholder = "{component}"
 
 // ErrInvalidOverlayFilesEntry is returned when an entry in
@@ -32,10 +33,11 @@ func hasOverlayFilesPlaceholder(entry string) bool {
 // validateOverlayFilesPlaceholder verifies that entry contains exactly one
 // [OverlayFilesComponentPlaceholder] and that the placeholder is a whole path
 // segment. Path separators must be '/' (POSIX-style), and no glob
-// metacharacters ('*', '?', '[') may appear before the placeholder because
+// metacharacters ('*', '?', '[', '{') may appear before the placeholder because
 // pattern-discovery extracts the captured component name by literal-prefix
 // matching against the concrete glob result. Metacharacters after the
-// placeholder are allowed. Returns nil when the entry is well-formed.
+// placeholder are allowed, but '..' path segments are allowed only before the
+// placeholder. Returns nil when the entry is well-formed.
 func validateOverlayFilesPlaceholder(entry string) error {
 	if entry == "" {
 		return fmt.Errorf("%w: entry is empty", ErrInvalidOverlayFilesEntry)
@@ -94,8 +96,13 @@ func validateOverlayFilesPlaceholder(entry string) error {
 		)
 	}
 
+	if slices.Contains(strings.Split(entry[tail+1:], "/"), "..") {
+		return fmt.Errorf("%w: entry %#q must not contain '..' path segments after %q",
+			ErrInvalidOverlayFilesEntry, entry, OverlayFilesComponentPlaceholder)
+	}
+
 	prefix := entry[:idx]
-	if globMetaIdx := strings.IndexAny(prefix, "*?["); globMetaIdx >= 0 {
+	if globMetaIdx := strings.IndexAny(prefix, "*?[{"); globMetaIdx >= 0 {
 		return fmt.Errorf(
 			"%w: entry %#q must not contain glob metacharacters (%q) before %q; "+
 				"the discovery capture uses a literal prefix",

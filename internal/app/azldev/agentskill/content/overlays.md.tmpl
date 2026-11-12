@@ -59,10 +59,26 @@ mechanism (such as a group's `specs` glob). Keep a dedicated `.comp.toml` when i
 contains actual component-specific settings, such as upstream pins, build options,
 inline overlays, or local-spec configuration.
 
-Project-level `overlay-files` entries require `{component}` exactly once as a whole
-directory segment, with no glob metacharacters before it and a file glob after it.
-Use `/` separators. Component-level entries are plain globs (no placeholder);
-distro-version and component-group defaults cannot set `overlay-files`.
+Discovery is opt-in. Plain legacy patterns such as `overlays/*.overlay.toml` and
+`[]` remain supported in project defaults and component settings, with unchanged
+path resolution and precedence; they do not discover components. Distro-version
+and component-group defaults must omit `overlay-files`, including empty lists.
+Inherited plain globs resolve relative to the concrete component config file or
+matched spec directory. A higher-priority list replaces a lower-priority one;
+an empty list disables inherited overlay files.
+
+Only project-level defaults may use `{component}`. Placeholder entries require
+it exactly once as a whole directory segment, with no glob metacharacters
+(`*`, `?`, `[`, `{`) before it and a file pattern after it. Brace alternatives
+are allowed only after the placeholder. `..` path segments are allowed before
+`{component}`, but never after it. For example,
+`../comps/{component}/overlays/*.overlay.toml` is valid; simplify
+`comps/{component}/nested/../overlays/*.overlay.toml` to
+`comps/{component}/overlays/*.overlay.toml`. Use `/` separators. Component settings
+allow plain patterns and `[]` but reject the placeholder.
+Discovered components use the complete inherited project overlay list,
+not just the discovery matches. An inherited placeholder entry with no matching
+files is optional, even with a literal suffix; an ordinary literal path must exist.
 
 ## Diagnose common failures
 

@@ -72,6 +72,37 @@ func TestFindAllComponents_PatternDiscoveryAtProjectScope(t *testing.T) {
 	assert.Len(t, bar.GetConfig().Overlays, 1)
 }
 
+func TestFindAllComponents_PatternDiscoveryCompleteInheritance(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	env.Config.DefaultComponentConfig.OverlayFiles = []string{
+		"/project/shared/*.overlay.toml",
+		"/project/comps/{component}/overlays/*.overlay.toml",
+	}
+
+	for path, value := range map[string]string{
+		"/project/shared/shared.overlay.toml":              "shared",
+		"/project/comps/curl/overlays/fix[1].overlay.toml": "brackets",
+		"/project/comps/curl/overlays/fix1.overlay.toml":   "sibling",
+	} {
+		require.NoError(t, fileutils.WriteFile(env.TestFS, path,
+			[]byte(patternTestOverlayContent+"\nreplacement = \""+value+"\"\n"), fileperms.PrivateFile))
+	}
+
+	all, err := components.NewResolver(env.Env).FindAllComponents()
+	require.NoError(t, err)
+
+	found, ok := all.TryGet("curl")
+	require.True(t, ok)
+	require.Nil(t, found.GetConfig().SourceConfigFile)
+
+	values := make([]string, 0, len(found.GetConfig().Overlays))
+	for _, overlay := range found.GetConfig().Overlays {
+		values = append(values, overlay.Replacement)
+	}
+
+	assert.Equal(t, []string{"shared", "sibling", "brackets"}, values)
+}
+
 // Declared components with no 'overlay-files' inherit the project pattern; the
 // placeholder is substituted with the component's own name at glob time.
 func TestFindAllComponents_DeclaredComponentInheritsProjectPattern(t *testing.T) {

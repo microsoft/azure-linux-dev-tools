@@ -103,6 +103,12 @@ the rare spec whose `Source`/`Patch` filenames use macros the filter cannot expa
 
 ## File organization
 
+Discovery is opt-in. Plain legacy patterns such as `overlays/*.overlay.toml` and
+`[]` remain supported in project defaults and component settings, with unchanged
+path resolution and precedence; they do not discover components. Distro-version
+and component-group defaults must omit `overlay-files`, including empty lists.
+Only project-level defaults may use `{component}`.
+
 - **Declaration-free** — for components whose only customization is per-file
   overlays, add files under `base/comps/<name>/overlays/`; do not create an empty
   `<name>.comp.toml`. A shared project-level `default-component-config.overlay-files`

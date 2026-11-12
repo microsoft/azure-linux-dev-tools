@@ -1719,7 +1719,7 @@ func TestProjectConfigFileValidation_OverlayFilesPlaceholderOnProjectDefault(t *
 	assert.NoError(t, file.Validate())
 }
 
-func TestProjectConfigFileValidation_OverlayFilesOnDistroDefaultRejected(t *testing.T) {
+func TestProjectConfigFileValidation_OverlayFilesPlaceholderOnDistroDefaultRejected(t *testing.T) {
 	file := projectconfig.ConfigFile{
 		Distros: map[string]projectconfig.DistroDefinition{
 			"my-distro": {
@@ -1727,7 +1727,7 @@ func TestProjectConfigFileValidation_OverlayFilesOnDistroDefaultRejected(t *test
 					"1.0": {
 						ReleaseVer: "1.0",
 						DefaultComponentConfig: projectconfig.ComponentConfig{
-							OverlayFiles: []string{"distro/*.overlay.toml"},
+							OverlayFiles: []string{"distro/{component}/*.overlay.toml"},
 						},
 					},
 				},
@@ -1740,12 +1740,12 @@ func TestProjectConfigFileValidation_OverlayFilesOnDistroDefaultRejected(t *test
 	assert.Contains(t, err.Error(), "overlay-files")
 }
 
-func TestProjectConfigFileValidation_OverlayFilesOnGroupDefaultRejected(t *testing.T) {
+func TestProjectConfigFileValidation_OverlayFilesPlaceholderOnGroupDefaultRejected(t *testing.T) {
 	file := projectconfig.ConfigFile{
 		ComponentGroups: map[string]projectconfig.ComponentGroupConfig{
 			"core": {
 				DefaultComponentConfig: projectconfig.ComponentConfig{
-					OverlayFiles: []string{"core/*.overlay.toml"},
+					OverlayFiles: []string{"core/{component}/*.overlay.toml"},
 				},
 			},
 		},
@@ -1770,16 +1770,13 @@ func TestProjectConfigFileValidation_OverlayFilesPlaceholderOnComponentRejected(
 	assert.Contains(t, err.Error(), "{component}")
 }
 
-func TestProjectConfigFileValidation_PlainGlobOnProjectDefaultRejected(t *testing.T) {
+func TestProjectConfigFileValidation_PlainGlobOnProjectDefaultAllowed(t *testing.T) {
 	file := projectconfig.ConfigFile{
 		DefaultComponentConfig: &projectconfig.ComponentConfig{
 			OverlayFiles: []string{"comps/no-placeholder/*.overlay.toml"},
 		},
 	}
-	err := file.Validate()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid project 'default-component-config'")
-	assert.Contains(t, err.Error(), "{component}")
+	assert.NoError(t, file.Validate())
 }
 
 func TestProjectConfigFileValidation_MalformedPlaceholderOnProjectDefault(t *testing.T) {
@@ -1808,10 +1805,7 @@ func TestProjectConfigFileValidation_EmptyOverlayFilesOnDistroDefaultRejected(t 
 			},
 		},
 	}
-	err := file.Validate()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "my-distro")
-	assert.Contains(t, err.Error(), "overlay-files")
+	require.ErrorIs(t, file.Validate(), projectconfig.ErrInvalidOverlayFilesEntry)
 }
 
 func TestProjectConfigFileValidation_EmptyOverlayFilesOnGroupDefaultRejected(t *testing.T) {
@@ -1824,8 +1818,5 @@ func TestProjectConfigFileValidation_EmptyOverlayFilesOnGroupDefaultRejected(t *
 			},
 		},
 	}
-	err := file.Validate()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "core")
-	assert.Contains(t, err.Error(), "overlay-files")
+	require.ErrorIs(t, file.Validate(), projectconfig.ErrInvalidOverlayFilesEntry)
 }

@@ -80,7 +80,7 @@ func ExpandResolvedOverlayFiles(
 		)
 	}
 
-	loaded, err := loadOverlayFiles(fs, referenceDir, expanded, permissiveConfigParsing)
+	loaded, err := loadOverlayFiles(fs, referenceDir, component.OverlayFiles, permissiveConfigParsing, component.Name)
 	if err != nil {
 		return ComponentConfig{}, fmt.Errorf("component %#q overlay-files:\n%w", component.Name, err)
 	}
@@ -111,9 +111,11 @@ func overlayFilesHasRelativePattern(patterns []string) bool {
 // pattern, matches are applied in filename (lexicographic) order, using the full
 // path as a tie-breaker when filenames match. Duplicate matches across patterns
 // are de-duplicated, preserving first occurrence. Glob patterns that match no
-// files contribute no overlays; literal paths must match a file.
+// files contribute no overlays; explicit literal paths must match a file.
+// Inherited placeholder entries may match no files even with a literal suffix.
 func loadOverlayFiles(
 	fs opctx.FS, referenceDir string, patterns []string, permissiveConfigParsing bool,
+	componentName string,
 ) ([]ComponentOverlay, error) {
 	var (
 		ordered []string
@@ -121,6 +123,9 @@ func loadOverlayFiles(
 	)
 
 	for _, pattern := range patterns {
+		inheritedPlaceholder := hasOverlayFilesPlaceholder(pattern)
+		pattern = substituteOverlayFilesPlaceholder(pattern, componentName)
+
 		absPattern := pattern
 		if !filepath.IsAbs(absPattern) {
 			absPattern = path.Join(referenceDir, absPattern)
@@ -135,7 +140,7 @@ func loadOverlayFiles(
 		switch {
 		case err != nil:
 			return nil, fmt.Errorf("failed to scan for overlay files matching %q:\n%w", pattern, err)
-		case len(matches) == 0 && !containsPattern(pattern):
+		case len(matches) == 0 && !inheritedPlaceholder && !containsPattern(pattern):
 			return nil, fmt.Errorf("%w: %q", ErrOverlayFilesNoMatches, pattern)
 		case len(matches) == 0:
 			continue

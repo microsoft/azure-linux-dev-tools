@@ -724,10 +724,8 @@ value = "Microsoft"
 
 	env.Config.ComponentGroups["specs"] = projectconfig.ComponentGroupConfig{
 		SpecPathPatterns: []string{"/specs/**/*.spec"},
-		DefaultComponentConfig: projectconfig.ComponentConfig{
-			OverlayFiles: []string{"overlays/*.overlay.toml"},
-		},
 	}
+	env.Config.DefaultComponentConfig.OverlayFiles = []string{"overlays/*.overlay.toml"}
 
 	filter := &components.ComponentFilter{
 		IncludeAllComponents: true,
@@ -749,7 +747,7 @@ value = "Microsoft"
 	assert.Equal(t, projectconfig.OverlayCategoryAZLBrandingPolicy, overlays[0].Metadata.Category)
 }
 
-func TestFindComponents_SpecPathFilterInheritsOverlayFilesFromGroupDefaults(t *testing.T) {
+func TestFindComponents_SpecPathFilterInheritsOverlayFilesFromProjectDefaults(t *testing.T) {
 	env := testutils.NewTestEnv(t)
 
 	touchFile(t, env, "/specs/ant/ant.spec")
@@ -768,10 +766,8 @@ value = "Microsoft"
 
 	env.Config.ComponentGroups["specs"] = projectconfig.ComponentGroupConfig{
 		SpecPathPatterns: []string{"/specs/**/*.spec"},
-		DefaultComponentConfig: projectconfig.ComponentConfig{
-			OverlayFiles: []string{"overlays/*.overlay.toml"},
-		},
 	}
+	env.Config.DefaultComponentConfig.OverlayFiles = []string{"overlays/*.overlay.toml"}
 
 	filter := &components.ComponentFilter{
 		SpecPaths:          []string{"/specs/ant/ant.spec"},

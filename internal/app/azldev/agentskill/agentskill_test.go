@@ -503,6 +503,10 @@ func TestComponentSkillsExplainDeclarationFreeOverlays(t *testing.T) {
 					assert.Contains(t, doc, "base/comps/components.toml")
 					assert.Contains(t, doc, "without matching overlay files")
 					assert.Contains(t, doc, "upstream pins, build options, inline overlays,")
+					assert.Contains(t, doc, "Discovery is opt-in.")
+					assert.Contains(t, doc, "unchanged path resolution and precedence")
+					assert.Contains(t, doc,
+						"Distro-version and component-group defaults must omit `overlay-files`, including empty lists.")
 					assert.NotContains(t, doc, "Every component lives under")
 					assert.NotContains(t, doc, "anything that needs overlays")
 				})

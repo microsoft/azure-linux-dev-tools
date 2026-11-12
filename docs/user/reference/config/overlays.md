@@ -241,7 +241,7 @@ When a single logical change (a CVE backport, a feature disablement, a Fedora ch
 
 Set `overlay-files` on the component to one or more globs (relative to the component config) and drop one overlay file per logical change into a directory of your choosing. The conventional layout uses a sibling `overlays/` directory and a `*.overlay.toml` filename suffix, but neither is required — `overlay-files` is just a glob, so any layout you can describe with `**`/`*` patterns works.
 
-`overlay-files` on `[components.X]` is a plain glob resolved relative to the component's config file. `overlay-files` can also be set on the project-level `default-component-config`, where **every entry must contain the `{component}` placeholder** (see [Discovering components by pattern](#discovering-components-by-pattern-component-in-overlay-files) below). A component that doesn't declare its own `overlay-files` inherits the project pattern with `{component}` substituted for its own name; use `overlay-files = []` at component scope to disable the inherited list, or set your own list to replace it wholesale.
+`overlay-files` on `[components.X]` is a plain glob resolved relative to the component's config file. Plain legacy patterns such as `overlays/*.overlay.toml` and explicit empty lists remain supported in project-level defaults and component settings, with unchanged path resolution and precedence. Inherited plain patterns resolve relative to the concrete component config file or matched spec directory; they do not discover components. Project-level defaults can optionally use `{component}` to opt into [component discovery](#discovering-components-by-pattern-component-in-overlay-files). A component that inherits such a pattern substitutes its own name for `{component}`; use `overlay-files = []` to disable the inherited list, or set your own list to replace it wholesale.
 
 `overlay-files` is only settable at project scope (the top-level `default-component-config`) or at component scope (`[components.X]`). Setting it inside a distro-version or component-group `default-component-config` is rejected at load time — even an empty list (`overlay-files = []`).
 
@@ -299,14 +299,19 @@ Use `azldev component metadata` to list documentation metadata for one or more c
 
 For projects that keep each component's overlay files in a predictable per-component directory (e.g. `base/comps/<name>/overlays/*.overlay.toml`), you can skip declaring a one-line `[components.<name>]` table for every component. Set `overlay-files` on the **project-level** `default-component-config` to a pattern containing `{component}`, and every match becomes an implicit component.
 
-Project-scope `overlay-files` entries **must** contain `{component}` exactly once, as a whole path segment, and **must** have at least one more path segment after it (the placeholder names a component directory, not a file). Additional constraints enforced at load time:
+Discovery is **opt-in**: plain project-scope patterns remain valid and do not discover components. An entry that uses `{component}` **must** contain it exactly once, as a whole path segment, and **must** have at least one more path segment after it (the placeholder names a component directory, not a file). Additional constraints for placeholder entries enforced at load time:
 
-* Use `/` as the path separator (backslashes are rejected, even on Windows).
-* No glob metacharacters (`*`, `?`, `[`) before `{component}` — the prefix is a literal used to capture the component name.
+* Use `/` as the path separator (backslashes are rejected; Windows is not supported).
+* No glob metacharacters (`*`, `?`, `[`, `{`) before `{component}` — the prefix is a literal used to capture the component name. Brace alternatives are allowed only after the placeholder.
+* `..` path segments are allowed before `{component}`, but never after it. For example, `../comps/{component}/overlays/*.overlay.toml` is valid. Both `comps/{component}/../overlays/*.overlay.toml` and `comps/{component}/nested/../overlays/*.overlay.toml` are rejected. Write the latter as `comps/{component}/overlays/*.overlay.toml` instead.
 * The rest of the entry (after `{component}/`) must be a valid `doublestar` glob (validated with `doublestar.ValidatePattern`).
 * The captured segment must be a safe component name (no spaces, no path traversal, no absolute paths); matches with unsafe names are skipped with a `slog.Debug` entry.
 
-For each entry, `{component}` is expanded to `*` for globbing, and the captured path segment becomes the discovered component's name. The matched files are attached to that component (as if it had declared `overlay-files = [<matched paths>]` explicitly). Explicit components with no `overlay-files` of their own inherit the same pattern and re-expand it with their own name substituted for `{component}`.
+For example, `comps/{component}/overlays/*.overlay.toml` discovers `curl` when it finds `comps/curl/overlays/fix.overlay.toml`. `{component}` takes its name from that directory.
+
+After discovery, `curl` inherits the project-level `overlay-files` list, including any shared patterns and `{component}` patterns. An explicitly declared component also inherits that list unless it sets its own: a component-specific list replaces the project list, and `[]` disables inherited overlay files. When loading its overlays, `{component}` is replaced with the component's name.
+
+An inherited `{component}` entry that matches no files is skipped, even if it ends in a literal filename such as `{component}/overlays.toml`. An ordinary literal path without `{component}` must still exist.
 
 ```toml
 # base/comps/components.toml (included at project scope)
@@ -331,7 +336,7 @@ base/comps/
         └── 0001-cve-2024-5678.overlay.toml
 ```
 
-**Where `{component}` is allowed.** Only in **project-level** `default-component-config`. At every project-level `overlay-files` entry the placeholder is *required* — plain globs at that scope are rejected because they would apply the same files to every component in the project, which is almost never what you want. At component scope, `overlay-files` entries are plain globs relative to the declaring config file; `{component}` is rejected there. `overlay-files` cannot be set at all in distro-version or component-group `default-component-config` — those broad-scope defaults would silently displace project-level discovery.
+**Where `{component}` is allowed.** Only in **project-level** `default-component-config`, where plain and placeholder entries may coexist. Component settings accept plain patterns and `[]`, but reject `{component}`. Distro-version and component-group defaults must omit `overlay-files` entirely, including empty lists. A component-specific list replaces the project list rather than merging with it; an empty component list disables inherited overlay files.
 
 **Inheritance with `{component}`.** A project-level `overlay-files` entry containing `{component}` serves two purposes at once:
 

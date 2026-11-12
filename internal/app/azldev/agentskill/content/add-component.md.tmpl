@@ -48,6 +48,12 @@ a shared project-level `default-component-config.overlay-files` pattern such as
 pattern discovers components from matching files and attaches their overlays.
 Remove any provisional bare entry once discovery supplies it.
 
+Discovery is opt-in. Plain legacy patterns such as `overlays/*.overlay.toml` and
+`[]` remain supported in project defaults and component settings, with unchanged
+path resolution and precedence; they do not discover components. Distro-version
+and component-group defaults must omit `overlay-files`, including empty lists.
+Only project-level defaults may use `{component}`.
+
 If a component is explicitly listed in a component group, retain `[components.<name>]`
 in `base/comps/components.toml`: pattern discovery does not satisfy explicit group
 membership validation. Components without matching overlay files still need an

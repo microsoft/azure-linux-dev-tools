@@ -210,9 +210,7 @@ func (r *Resolver) FindAllComponents() (components *ComponentSet, err error) {
 			// documented way to opt out of overlays for a component and is not
 			// treated as shadowing.
 			//
-			// 'overlay-files' can only be set at project or component scope
-			// (validated by [projectconfig.ConfigFile.validateOverlayFilesByScope]),
-			// so a shadowing declaration always lives in Config().Components.
+			// Inherited legacy defaults retain their existing precedence.
 			if declared, ok := r.env.Config().Components[name]; ok && len(declared.OverlayFiles) > 0 {
 				logShadowedByDeclaration(entry)
 			}
@@ -971,10 +969,7 @@ func (r *Resolver) patternDiscoveredComponents() (map[string]*patternDiscoveredC
 func (r *Resolver) componentFromPatternDiscovered(
 	entry *patternDiscoveredComponent, groupNames []string,
 ) (Component, error) {
-	synth := projectconfig.ComponentConfig{
-		Name:         entry.Name,
-		OverlayFiles: slices.Clone(entry.OverlayFiles),
-	}
+	synth := projectconfig.ComponentConfig{Name: entry.Name}
 
 	updated, err := applyInheritedDefaultsToComponent(r.env, synth, entry.ReferenceDir, groupNames)
 	if err != nil {

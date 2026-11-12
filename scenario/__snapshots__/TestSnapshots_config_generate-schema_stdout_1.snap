@@ -130,7 +130,7 @@
           },
           "type": "array",
           "title": "Overlay files",
-          "description": "Path or glob patterns matched against the filesystem to locate per-file overlay documents. Only settable at project scope (top-level 'default-component-config') or at component scope ('[components.X]'). At project scope every entry must contain the {component} placeholder as a whole path segment (drives discovery and per-component substitution). At component scope {component} is not allowed and entries are plain globs relative to the config file. Distro-version and component-group 'default-component-config' tables must not set this field. Use an empty list at component scope to disable inheritance."
+          "description": "Path or glob patterns matched against the filesystem to locate per-file overlay documents. Allowed only in project-level 'default-component-config' and explicit component settings. Distro-version and component-group defaults must omit 'overlay-files' including empty lists. Plain legacy patterns and empty lists remain supported at project and component scope with unchanged path resolution and precedence. Project-level defaults may opt into component discovery with {component} exactly once as a whole directory segment. In discovery patterns '..' path segments are allowed before {component} but forbidden after it. The placeholder is forbidden at component scope. Plain inherited globs resolve relative to the concrete component config file or matched spec directory. Use an empty list at component scope to disable inherited overlay files."
         },
         "build": {
           "$ref": "#/$defs/ComponentBuildConfig",

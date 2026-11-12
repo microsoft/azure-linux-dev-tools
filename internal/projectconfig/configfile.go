@@ -526,18 +526,10 @@ func dedupTestRefSKUGroups(
 	return nil
 }
 
-// validateOverlayFilesByScope enforces where 'overlay-files' may appear.
+// validateOverlayFilesByScope restricts default 'overlay-files' lists to project scope.
 //
-//   - Project scope (top-level 'default-component-config'): each entry must
-//     contain the '{component}' placeholder as a whole path segment; the
-//     placeholder drives pattern-based component discovery.
-//   - Component scope ('[components.X]'): plain globs; the '{component}'
-//     placeholder is forbidden (the name is already fixed).
-//   - Distro-version and component-group 'default-component-config':
-//     'overlay-files' is not allowed at all. Broad-scope defaults for this
-//     field silently displace project-level discovery and per-component
-//     overrides, so we require callers to place the list at project or
-//     component scope where the intent is unambiguous.
+// Distro-version and component-group defaults must omit the field, including empty lists.
+// Project defaults accept plain patterns and may opt into discovery with '{component}'.
 func (f ConfigFile) validateOverlayFilesByScope() error {
 	if f.DefaultComponentConfig != nil {
 		if err := validateOverlayFilesEntries(
@@ -551,12 +543,8 @@ func (f ConfigFile) validateOverlayFilesByScope() error {
 		for versionName, version := range distro.Versions {
 			if version.DefaultComponentConfig.OverlayFiles != nil {
 				return fmt.Errorf(
-					"invalid 'default-component-config' for distro %#q version %#q:\n"+
-						"%w: 'overlay-files' is only allowed on the project-level "+
-						"'default-component-config' (with '%s' patterns) or on individual "+
-						"'[components.X]' entries",
-					distroName, versionName,
-					ErrInvalidOverlayFilesEntry, OverlayFilesComponentPlaceholder,
+					"%w: 'overlay-files' is not allowed in 'default-component-config' for distro %#q version %#q",
+					ErrInvalidOverlayFilesEntry, distroName, versionName,
 				)
 			}
 		}
@@ -565,12 +553,8 @@ func (f ConfigFile) validateOverlayFilesByScope() error {
 	for groupName, group := range f.ComponentGroups {
 		if group.DefaultComponentConfig.OverlayFiles != nil {
 			return fmt.Errorf(
-				"invalid 'default-component-config' for component group %#q:\n"+
-					"%w: 'overlay-files' is only allowed on the project-level "+
-					"'default-component-config' (with '%s' patterns) or on individual "+
-					"'[components.X]' entries",
-				groupName,
-				ErrInvalidOverlayFilesEntry, OverlayFilesComponentPlaceholder,
+				"%w: 'overlay-files' is not allowed in 'default-component-config' for component group %#q",
+				ErrInvalidOverlayFilesEntry, groupName,
 			)
 		}
 	}
@@ -583,16 +567,18 @@ func (f ConfigFile) validateOverlayFilesByScope() error {
 type overlayFilesValidator func(entry string) error
 
 // validateProjectOverlayFilesEntry validates entries in the project-level
-// default-component-config. Every entry MUST contain the '{component}'
-// placeholder exactly once as a whole path segment — it's the discovery
-// mechanism.
+// default-component-config. Legacy plain globs remain valid; entries containing
+// '{component}' opt into discovery and must obey the placeholder rules.
 func validateProjectOverlayFilesEntry(entry string) error {
+	if !hasOverlayFilesPlaceholder(entry) {
+		return nil
+	}
+
 	return validateOverlayFilesPlaceholder(entry)
 }
 
-// validateComponentOverlayFilesEntry validates entries in a '[components.X]'
-// table. Entries are plain globs; '{component}' is forbidden because the
-// component name is already fixed by the table key.
+// validateComponentOverlayFilesEntry validates plain globs at component scope,
+// where '{component}' is forbidden.
 func validateComponentOverlayFilesEntry(entry string) error {
 	if !hasOverlayFilesPlaceholder(entry) {
 		return nil
