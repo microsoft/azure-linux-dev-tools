@@ -39,7 +39,20 @@ dist-git often fail bot detection):
 
 4. Read the spec and plan any overlays.
 
-## Inline vs dedicated file
+## Declaration-free, inline, or dedicated
+
+For components whose only customization is per-file overlays, add files under
+`base/comps/<name>/overlays/`; do not create an empty `<name>.comp.toml`. This requires
+a shared project-level `default-component-config.overlay-files` pattern such as
+`base/comps/{component}/overlays/*.overlay.toml` in the root config. The `{component}`
+pattern discovers components from matching files and attaches their overlays.
+Remove any provisional bare entry once discovery supplies it.
+
+If a component is explicitly listed in a component group, retain `[components.<name>]`
+in `base/comps/components.toml`: pattern discovery does not satisfy explicit group
+membership validation. Components without matching overlay files still need an
+explicit declaration or another supported discovery mechanism (such as a group's
+`specs` glob).
 
 - **Inline** — a bare upstream import with no changes stays in a shared config file:
 
@@ -47,9 +60,10 @@ dist-git often fail bot detection):
   [components.jq]
   ```
 
-- **Dedicated** — anything that needs overlays, build config, or a local spec gets its
-  own `<name>/<name>.comp.toml`. Rule of thumb: more than `[components.<name>]` earns a
-  dedicated file. An `includes = ["**/*.comp.toml"]` glob picks it up automatically.
+- **Dedicated** — keep `<name>/<name>.comp.toml` when it contains actual
+  component-specific settings, such as upstream pins, build options, inline overlays,
+  or local-spec configuration. An `includes = ["**/*.comp.toml"]` glob picks it up
+  automatically.
 
 `azldev comp add <name> [<name>...]` adds bare `[components.<name>]` entries that inherit
 the distro defaults; it writes to the **root** config file and does not scaffold spec or

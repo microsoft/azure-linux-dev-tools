@@ -309,16 +309,20 @@ Project-scope `overlay-files` entries **must** contain `{component}` exactly onc
 For each entry, `{component}` is expanded to `*` for globbing, and the captured path segment becomes the discovered component's name. The matched files are attached to that component (as if it had declared `overlay-files = [<matched paths>]` explicitly). Explicit components with no `overlay-files` of their own inherit the same pattern and re-expand it with their own name substituted for `{component}`.
 
 ```toml
-# components.toml (project-level)
+# base/comps/components.toml (included at project scope)
 [default-component-config]
-overlay-files = ["base/comps/{component}/overlays/*.overlay.toml"]
+overlay-files = ["{component}/overlays/*.overlay.toml"]
 ```
 
-With the layout below, no per-component `[components.<name>]` table is needed — `openssl` and `curl` are discovered automatically, each carrying its overlay files.
+The pattern is relative to the file that declares it. If declared in the root
+`azldev.toml` instead, use `base/comps/{component}/overlays/*.overlay.toml`.
+With the layout below, no per-component `[components.<name>]` table is needed —
+`anaconda` and `curl` are discovered automatically, each carrying its overlay files.
+This is the declaration-free case: do not create an empty `anaconda.comp.toml`.
 
 ```
 base/comps/
-├── openssl/
+├── anaconda/
 │   └── overlays/
 │       ├── 0001-cve-2024-1234.overlay.toml
 │       └── 0002-disable-fips-tests.overlay.toml
@@ -340,14 +344,25 @@ A component that sets its own `overlay-files = [...]` replaces the inherited val
 
 **Shadowing.** An explicit `[components.<name>]` declaration supersedes pattern discovery for the same name. If that declaration also sets a non-empty `overlay-files` list (which replaces inheritance with a different set of files), `azldev` emits an `slog.Warn` naming the shadowed pattern so you can spot the genuine displacement. An explicit declaration that leaves `overlay-files` unset still inherits the project pattern, so the discovered files apply and no warning is emitted. An explicit empty list (`overlay-files = []`) is the documented off-switch for a component and is not treated as shadowing.
 
-**Limitation: explicit component-group members need a `[components.<name>]` table.** A component group can enumerate its members two ways: via a `specs` glob (spec files on disk) or via an explicit `components = ["<name>", ...]` list. Only the *explicit list* interacts with pattern discovery: every name in that list must have a matching `[components.<name>]` table in the project (validated at load time, error `ErrUndefinedComponent`). Even a one-liner is enough:
+**Limitation: explicit component-group members need a `[components.<name>]` table.** A component group can enumerate its members two ways: via a `specs` glob (spec files on disk) or via an explicit `components = ["<name>", ...]` list. Every name in the *explicit list* must have a matching `[components.<name>]` table in the project (validated at load time, error `ErrUndefinedComponent`); pattern discovery alone does not satisfy this validation. For example, if `anaconda` is explicitly listed, retain its declaration centrally rather than adding an empty dedicated file:
 
 ```toml
-# base/comps/openssl/openssl.comp.toml
-[components.openssl]
+# base/comps/components.toml (included at project scope)
+[default-component-config]
+overlay-files = ["{component}/overlays/*.overlay.toml"]
+
+[components.anaconda]
+
+[component-groups.installer]
+components = ["anaconda"]
 ```
 
 Once the table exists, the component inherits the project-level `{component}` overlay pattern normally. Group members discovered via `specs` (not the explicit list) do **not** need a `.comp.toml` — the resolver synthesizes an empty config for them and inheritance still applies.
+
+Keep a dedicated `.comp.toml` when it contains actual component-specific settings,
+such as upstream pins, build options, inline overlays, or local-spec configuration.
+Components without matching overlay files still need an explicit declaration or
+another supported discovery mechanism, such as a group's `specs` glob.
 
 ## Examples
 

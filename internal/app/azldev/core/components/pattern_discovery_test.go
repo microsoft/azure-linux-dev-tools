@@ -18,6 +18,7 @@ import (
 const patternTestOverlayContent = `
 [metadata]
 category = "azl-branding-policy"
+upstream-status = "inapplicable"
 
 [[overlays]]
 description = "Bump release"
