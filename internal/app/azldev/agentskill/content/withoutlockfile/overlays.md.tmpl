@@ -128,7 +128,55 @@ the config loads, so a missing field fails fast rather than at apply time.
   references. Keep the spec `Name` aligned with the component instead.
 - To add a real `.patch` file (rather than an inline edit), use `patch-add`; it copies
   the `source` into the component sources and registers a `PatchN` tag or `%patchlist`
-  entry.
+  entry. It does not add application commands or change strip levels. After all
+  overlays, source preparation warns if an added patch's application cannot be
+  verified or its paths suggest a strip-level mismatch. Fix the final `%prep` with
+  a spec overlay; warnings do not prove that the patch applies.
+  Recognized unconditional selections take precedence over unrelated opaque flow.
+  An unconditional `%patch -P2202 -p1`, selected `%autopatch -p1 2202`, or understood
+  bulk `%autopatch -p1` / `%autosetup -p1` accounts for the added patch. Ordinary
+  preamble macros and unrelated surrounding commands do not invalidate selection.
+  Directory-name macros such as `-n %{name}-%{version}` are accepted without expansion;
+  selection, strip, and backend options must be literal.
+  Conditional branches and their side effects are skipped. Duplicate application
+  is not detected, even among understood commands. Known preceding unconditional
+  directory/control-flow changes and relevant helper redefinitions still affect a
+  candidate; later commands do not retroactively invalidate it. Another supported
+  candidate without a detected problem can establish selection.
+  Standard `%forgeautosetup` applies patches unless `-N`; `%goprep` applies them
+  only when `-p` is explicitly supplied. Custom layouts, source blocks, local
+  redefinitions, and Go vendor removal can remain unverified.
+  Relevant unconditional inline definitions and `%undefine` directives preceding
+  a command are tracked. This includes `__patch`,
+  `__scm_apply_patch`, and `_default_patch_flags`. Affected invocations and unresolved command arguments
+  stay unverified without macro evaluation. Disabled application ignores patch-helper
+  overrides, but not overridden setup dependencies. The corresponding
+  `__scm_apply_<backend>` helper is checked for each supported backend. Visible commands
+  beside an expansion are still checked. Macro-generated definitions and conditional
+  effects are not modeled. `_default_patch_fuzz`
+  alone does not warn because actual hunk applicability is outside scope.
+  Loaded macro files are not inspected or verified, whether azldev-generated or
+  user-supplied, even if later overlays change or remove them. Hidden patch-macro
+  and `__scm` overrides are unsupported;
+  assuming standard behavior can miss diagnostics or cause false unused-patch errors
+  and misleading strip warnings, including in strict mode. Review these cases manually.
+  Render exposes per-component `patchWarnings` with `-O json`: `filename`,
+  `patchNumber` (-1 when unknown; zero is explicit), optional `command`, and
+  human-readable `reason` (not a stable machine code).
+  Both parsers warn, rather than declaring a patch definitely unused, when no supported
+  unconditional application is found, including excluding manual/range commands and
+  setup-only flows. An unknown patch number can be selected by unrestricted bulk
+  application; numbered selections and limited ranges require a known number.
+  The whole prep is scanned; disabled setups and excluding
+  ranges do not hide later application commands. Conditional, repeated, and augmented
+  prep sections (`%prep -a` or `%prep -p`) warn as unsupported; do not blindly add
+  another application command. Uncertain application and likely strip mismatches
+  remain warnings. Use `component render --patch-warnings=error --fail-on-error`
+  to promote warnings to component errors and exit nonzero on component failures.
+  Without `--fail-on-error`, component errors can still exit zero.
+  JSON diagnostics are still emitted. `--check-only` checks output freshness, not
+  component success, and can pass when a failure marker is already current.
+  This does not prove that a CVE is fixed.
 
 ## Document intent with `metadata`
 

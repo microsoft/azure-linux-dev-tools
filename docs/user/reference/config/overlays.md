@@ -499,6 +499,177 @@ file = "fix-upstream-bug.patch"
 description = "Rename upstream patch for clarity"
 ```
 
+After all overlays have run, source preparation (including `component render`) checks
+whether the final spec has a recognizable application command for each added patch.
+It reports missing unconditional selection, uncertain application, and likely strip-level mismatches.
+For example, a git-style patch to `a/lib/file.c` usually needs `-p1`.
+
+The legacy and experimental structural parsers use the same read-only analysis.
+It recognizes `%patch`, `%autopatch`, `%autosetup`, and straightforward forms of
+the following standard wrappers:
+
+| Wrapper | Patch application |
+|---------|-------------------|
+| `%forgeautosetup` | Like `%autosetup`, applies declared patches unless `-N` is supplied; honors `-p` and `-S`. |
+| `%goprep` with an explicit `-p` | Uses `%autosetup` to apply declared patches at the requested strip level, for example `%goprep -p1`. |
+| Bare `%goprep` | Only prepares sources; does not automatically apply declared patches. |
+
+**Recognized unconditional selections take precedence over unrelated opaque flow.**
+An unconditional `%patch -P2202 -p1`, selected `%autopatch -p1 2202`, or bulk
+`%autopatch -p1` / `%autosetup -p1` accounts for the added patch when its selection
+and application options are understood. Ordinary preamble macros, unrelated macro
+definitions, and surrounding commands such as `cp` or `autoreconf` do not invalidate
+that selection. Directory-name macros such as `-n %{name}-%{version}` are accepted
+without expanding them; selection, strip, and backend options must be literal.
+
+Conditional branches and their side effects are not evaluated. Their commands
+cannot establish unconditional application, and conditional helper redefinitions
+or directory changes do not affect later analysis. Duplicate application is not
+detected, even among understood commands. These are scope limitations, not proof
+that conditional behavior or duplicate application is harmless.
+
+Each candidate retains relevant preceding unconditional directory/control-flow
+uncertainty and inline helper redefinitions. Later commands do not retroactively
+invalidate it. A candidate with unsupported setup, backend, arguments, or likely
+strip mismatch remains unverified unless another supported candidate accounts for
+the patch without a detected problem. Use the build to verify actual application.
+
+Only the added patch's declaration is checked. An unknown automatic or macro-based
+number can be accepted by an unrestricted bulk application command; an individual
+selection or limited range requires a known number. Conditional or conflicting
+declarations of the added patch remain uncertain. Unrelated declarations with
+unknown numbers do not invalidate a known explicit number.
+Automatic numbers for bare `Patch:` tags and `%patchlist` entries follow the highest
+assigned patch number, not the most recent explicit tag. For example, `Patch10:`
+followed by `Patch1:` leaves the next automatic number at 11. Conditional or
+opaque declarations can make subsequent automatic numbers uncertain; a later
+explicit tag does not by itself remove that uncertainty.
+
+**Limitation: loaded macro files are not inspected.** The analyzer ignores external
+macro loads, whether azldev-generated or user-supplied, without reading or verifying
+their contents. It assumes standard patch-macro behavior; definitions hidden in
+those files, including configured `build.defines` overrides of `%setup`,
+`%autosetup`, `%autopatch`, their wrappers, or `__scm`, are not modeled.
+Later overlays that change or remove loaded files are not checked either. These cases can cause
+missed diagnostics, false unused-patch errors, or misleading strip warnings;
+strict mode does not remove this limitation. Unconditional relevant macro definitions and
+`%undefine` directives preceding an invocation are tracked across sections, including
+between `%description` and `%prep`. This includes patch helpers
+`__patch`, `__apply_patch`, `__scm_apply_patch`, and `_default_patch_flags`. Affected invocations and
+unresolved command arguments produce uncertainty diagnostics without evaluating
+macros. The corresponding `__scm_apply_<backend>` helper is checked for each supported
+backend. Bulk application checks `__apply_patch`; source-setup wrappers also check
+`__scm_setup_<backend>` for their selected backend. Direct `%patch` commands do
+not depend on those bulk/setup helpers, and `%autopatch` does not initialize the
+backend. Unrelated backend helpers do not trigger warnings.
+Git-backed setup and application also check `__git`; patch-backed commands do not.
+Invoking a locally redefined setup/application macro or relevant dependency makes
+subsequent application uncertain: the replacement can emit arbitrary shell,
+including an early `exit`. Setup dependencies are invoked even when setup uses
+`-N` to disable patch application; disabled application dependencies do not
+affect subsequent commands. Bulk application helpers are not treated as invoked
+when no declared patch can enter the selection; the bulk macro itself is still invoked.
+Defining an unrelated or uninvoked helper has no such effect, and an earlier
+sound selection remains valid.
+Shell context visible beside an expansion is still checked.
+Macro-generated definitions and conditional effects are outside the analysis.
+`_default_patch_fuzz` alone does not trigger a
+warning: actual hunk applicability is outside the analyzer's scope.
+Path checks require paired file headers, ignoring isolated header-like prose in
+mail-style patch commit messages. They skip unified- and context-diff hunk contents, even when changed source
+lines or range markers resemble `---` or `+++` file headers.
+Shell function definitions, including `name () {`
+syntax, make commands in their bodies unverified rather than treating them as
+unconditional application.
+Execution checks also recognize leading shell negation (`!`), variable assignments, and `command` /
+`builtin` prefixes before directory changes or shell-exit commands; lookup-only
+`command -v` / `-V` forms do not execute their operands. Shell continuation is
+tracked from active, uncommented trailing escapes, not backslashes in comments
+or escaped backslash pairs.
+Review affected specs manually and use a build or `%prep` execution to verify
+their actual behavior.
+
+When no supported unconditional application is found, the analyzer warns rather
+than declaring the patch definitely unused. This also applies to an excluding
+manual/range command and setup-only flows such as `%setup`, `%autosetup -N`, and
+`%goprep` without `-p`. These cases share a generic missing-selection warning rather
+than attributing patch application to unrelated commands or opaque macros.
+Command-specific diagnostics are retained for actual selecting candidates.
+The whole `%prep` is scanned:
+an excluding range or disabled setup does not hide a later application command.
+One ordinary unconditional `%prep` is supported; conditional, repeated, and augmented
+sections such as `%prep -a` or `%prep -p` warn as unsupported preparation rather than
+recommending a potentially duplicate application command. An unrelated conditional
+closed before `%prep` does not make it conditional. Missing selection, ambiguous
+declarations, unsupported preparation, and likely strip mismatches are warnings
+by default.
+Other source-preparation callers continue to log all findings as warnings.
+
+Preparation does not execute `%prep` or check the extracted source tree, and render
+does not download source tarballs. An empty warning list is
+**not proof that a patch applies or a CVE is fixed**.
+`patch-add` still only copies and declares the patch; it does not add application
+commands or change strip levels. Use a spec overlay to add or adjust the command
+where necessary. A later overlay can resolve the warning. If a later overlay removes
+the patch's declaration, that patch is no longer checked.
+
+#### Machine-readable diagnostics and strict rendering
+
+`component render -O json` includes a `patchWarnings` array on each affected
+component. It is omitted when there are no added-patch diagnostics. Each entry
+contains the patch `filename` and `patchNumber`, a human-readable `reason`, and a
+`command` when a relevant application command exists. Unknown numbering is
+reported as `patchNumber: -1`; zero is reported explicitly. The `reason` explains the
+specific cause and is human-readable, not a stable machine code. A diagnostic does
+not necessarily mean the patch is never applied.
+
+```json
+[
+  {
+    "component": "mypackage",
+    "outputDir": "specs/m/mypackage",
+    "status": "ok",
+    "changed": true,
+    "patchWarnings": [
+      {
+        "filename": "fix-build-flags.patch",
+        "patchNumber": 0,
+        "reason": "no recognized command outside conditional branches selects this patch in '%prep'; verify the preparation flow before adding an application command"
+      }
+    ]
+  }
+]
+```
+
+For a CI gate, use:
+
+```bash
+azldev component render -a --patch-warnings=error --fail-on-error -O json
+```
+
+The default policy is `--patch-warnings=warn`. With `error`, warnings are logged
+as errors and reject their components too:
+
+| Finding | Default policy | Strict policy |
+|---------|----------------|---------------|
+| No recognized unconditional selection, including an excluding manual/range flow | Warning; component can render | Component error |
+| Setup-only flow with no applying command | Warning; component can render | Component error |
+| Uncertain application or likely strip mismatch | Warning; component can render | Component error |
+
+Rejected components get `status: "error"` before RPM processing or publication.
+Normal renders use the existing `RENDER_FAILED` marker behavior; unaffected components
+can still render successfully. JSON results retain the diagnostics under `patchWarnings`,
+including findings treated as errors. Existing overwrite/`--force` safeguards still apply.
+The default policy does not reject a component solely for an added-patch diagnostic.
+
+As with ordinary component failures, the command can exit zero unless
+`--fail-on-error` is set. Command-level validation/setup failures remain nonzero.
+`--check-only` remains a freshness check: it can pass for a rejected component whose
+existing output is already exactly the expected failure marker, but output drift
+returns nonzero. It never writes rendered output and cannot be combined with
+`--fail-on-error`. The patch-warning policy applies only to render and does not
+change `prepare-sources` or build's warning behavior.
+
 ### Removing a Patch
 
 The `patch-remove` overlay removes patch references from the spec (`PatchN` tags and/or

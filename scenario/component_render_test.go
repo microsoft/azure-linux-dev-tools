@@ -6,6 +6,7 @@
 package scenario_tests
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,9 +14,11 @@ import (
 	"strings"
 	"testing"
 
+	componentcmds "github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/cmds/component"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/scenario/internal/cmdtest"
 	"github.com/microsoft/azure-linux-dev-tools/scenario/internal/projecttest"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -220,6 +223,12 @@ func TestRenderWithPatchSidecar(t *testing.T) {
 	output := results.GetJSONResult()
 	require.Len(t, output, 1)
 	assert.Equal(t, "ok", output[0]["status"], "Spec should render as ok when rpmautospec is installed")
+	var structured []componentcmds.RenderResult
+	require.NoError(t, json.Unmarshal(results.GetRawJSONBytes(), &structured))
+	require.Len(t, structured, 1)
+	require.Len(t, structured[0].PatchWarnings, 1)
+	assert.NotEmpty(t, structured[0].PatchWarnings[0].Reason)
+	assert.Equal(t, "fix-stuff.patch", structured[0].PatchWarnings[0].Filename)
 
 	// Verify the patch file is in the rendered output.
 	patchPath := results.GetProjectOutputPath("SPECS", "t", "test-patch", "fix-stuff.patch")
@@ -232,6 +241,91 @@ func TestRenderWithPatchSidecar(t *testing.T) {
 
 	assert.Contains(t, string(content), "fix-stuff.patch",
 		"Rendered spec should reference the added patch")
+}
+
+func TestRenderStrictPatchWarningsJSON(t *testing.T) {
+	for _, editor := range []string{"legacy", "experimental"} {
+		for _, test := range []struct {
+			name        string
+			policy      string
+			unused      bool
+			failOnError bool
+		}{
+			{name: "strict warnings", policy: "error"},
+			{name: "strict warnings with fail-on-error", policy: "error", failOnError: true},
+			{name: "strict excluded selection", policy: "error", unused: true},
+			{name: "strict excluded selection with fail-on-error", policy: "error", unused: true, failOnError: true},
+		} {
+			t.Run(editor+"/"+test.name, func(t *testing.T) {
+				projectDir := t.TempDir()
+				component := localComponentConfig("test-patch", projectconfig.ComponentOverlay{
+					Type: projectconfig.ComponentOverlayAddPatch, Source: "patches/fix.patch",
+				})
+				prep := []string{"%prep", "%setup -q"}
+				if test.unused {
+					prep = append(prep, "%patch -P1 -p1")
+				}
+				component.Overlays = append(component.Overlays, projectconfig.ComponentOverlay{
+					Type: projectconfig.ComponentOverlayAppendSpecLines, Lines: prep,
+				})
+
+				project := projecttest.NewDynamicTestProject(
+					projecttest.AddSpec(projecttest.NewSpec(
+						projecttest.WithName("test-patch"), projecttest.WithRelease("1"),
+					)),
+					projecttest.AddFile("patches/fix.patch", "--- a/file.txt\n+++ b/file.txt\n"),
+					projecttest.AddFile("mock.cfg", ""),
+				)
+				project.Serialize(t, projectDir)
+
+				config := projectconfig.ConfigFile{
+					Project:    &projectconfig.ProjectInfo{Description: "strict patch diagnostics"},
+					Components: map[string]projectconfig.ComponentConfig{"test-patch": *component},
+					Distros: map[string]projectconfig.DistroDefinition{
+						"test-distro": {
+							DistGitBaseURI: "https://example.invalid/$pkg.git",
+							Versions: map[string]projectconfig.DistroVersionDefinition{
+								"1": {MockConfigPath: "mock.cfg", ReleaseVer: "1"},
+							},
+						},
+					},
+				}
+				config.Project.DefaultDistro.Name = "test-distro"
+				config.Project.DefaultDistro.Version = "1"
+				require.NoError(t, config.Serialize(afero.NewOsFs(),
+					filepath.Join(projectDir, projectconfig.DefaultConfigFileName)))
+
+				outputDir := filepath.Join(projectDir, "SPECS")
+				args := []string{
+					"-C", projectDir, "component", "render", "test-patch",
+					"-o", outputDir, "--spec-editor", editor, "--patch-warnings=" + test.policy, "-O", "json",
+				}
+				if test.failOnError {
+					args = append(args, "--fail-on-error")
+				}
+
+				results, err := cmdtest.NewScenarioTest(args...).Locally().Run(t)
+				require.NoError(t, err)
+				if test.failOnError {
+					results.AssertNonZeroExitCode(t)
+				} else {
+					assert.Equal(t, 0, results.ExitCode)
+				}
+
+				var report []componentcmds.RenderResult
+				require.NoError(t, json.Unmarshal([]byte(results.Stdout), &report),
+					"strict failure must still print machine-readable diagnostics")
+				require.Len(t, report, 1)
+				assert.Equal(t, "error", report[0].Status)
+				require.Len(t, report[0].PatchWarnings, 1)
+				assert.Contains(t, report[0].PatchWarnings[0].Reason, "no recognized command")
+				assert.Equal(t, "fix.patch", report[0].PatchWarnings[0].Filename)
+				renderedDir := filepath.Join(outputDir, "t", "test-patch")
+				assert.NoFileExists(t, filepath.Join(renderedDir, "test-patch.spec"))
+				assert.FileExists(t, filepath.Join(renderedDir, "RENDER_FAILED"))
+			})
+		}
+	}
 }
 
 func TestRenderStaleCleanup(t *testing.T) {
