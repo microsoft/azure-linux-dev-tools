@@ -13,12 +13,12 @@ overwritten.
 
 ## The inner loop
 
-Overlays live in the component's TOML config — inline `[[components.<name>.overlays]]`
+Overlays can live in the component's TOML config — inline `[[components.<name>.overlays]]`
 entries, or per-file overlay documents referenced by the component's `overlay-files`
 glob. They apply **in order** and are **non-atomic**: if one fails part-way, the
 overlays before it stay applied.
 
-1. Add or edit the overlay in the component config.
+1. Add or edit the inline overlay or per-file overlay document.
 2. Re-render and inspect the result:
 
    ```sh
@@ -32,6 +32,58 @@ overlays before it stay applied.
 
 Config errors reference the offending overlay by its `description`, so give every
 overlay a short, specific `description`.
+
+## Shared patterns and central declarations
+
+For components whose only customization is per-file overlays, add files under
+`base/comps/<name>/overlays/`; do not create an empty `<name>.comp.toml`. Configure
+the shared pattern at project scope (paths are relative to the declaring config):
+
+```toml
+# Root config, e.g. azldev.toml
+[default-component-config]
+overlay-files = ["base/comps/{component}/overlays/*.overlay.toml"]
+
+# These declarations can instead live in included base/comps/components.toml.
+[components.anaconda]
+```
+
+The `{component}` segment substitutes the resolved component's name. For example,
+`anaconda` loads `base/comps/anaconda/overlays/0001-branding.overlay.toml`.
+Overlay files do not discover undeclared components. A component with
+no `overlay-files` of its own inherits the pattern; its own list replaces it, and
+`overlay-files = []` disables inheritance.
+
+If a component is explicitly listed in a component group's `components` list,
+retain `[components.<name>]` in `base/comps/components.toml` for membership
+validation. Components with or without matching
+overlay files still need an explicit declaration or another supported discovery
+mechanism (such as a group's `specs` glob). Keep a dedicated `.comp.toml` when it
+contains actual component-specific settings, such as upstream pins, build options,
+inline overlays, or local-spec configuration.
+
+Plain legacy patterns such as `overlays/*.overlay.toml` and
+`[]` remain supported in project defaults and component settings, with unchanged
+path resolution and precedence; they do not discover components. Distro-version
+and component-group defaults must omit `overlay-files`, including empty lists.
+Inherited plain globs resolve relative to the concrete component config file or
+matched spec directory. A higher-priority list replaces a lower-priority one;
+an empty list disables inherited overlay files.
+
+Only project-level defaults may use `{component}`. Placeholder entries require
+it exactly once as a whole directory segment, with no glob metacharacters
+(`*`, `?`, `[`, `{`) before it and a file pattern after it. Additional braces
+are forbidden after `{component}`; use separate list entries for multiple directories.
+Ordinary patterns without `{component}` retain their existing brace support.
+`..` path segments are allowed before
+`{component}`, but never after it. For example,
+`../comps/{component}/overlays/*.overlay.toml` is valid; simplify
+`comps/{component}/nested/../overlays/*.overlay.toml` to
+`comps/{component}/overlays/*.overlay.toml`. Use `/` separators. Component settings
+allow plain patterns and `[]` but reject the placeholder.
+Components use the complete inherited project overlay list.
+An inherited placeholder entry with no matching
+files is optional, even with a literal suffix; an ordinary literal path must exist.
 
 ## Diagnose common failures
 

@@ -109,7 +109,9 @@ func (r *Resolver) FindComponents(filter *ComponentFilter) (components *Componen
 	return components, r.validateLockFiles(components, false, skipValidation)
 }
 
-// Finds *all* components defined in the environment.
+// Finds *all* components defined in the environment. This unions two sources:
+//   - components reached via component-group spec-path patterns,
+//   - loose components declared in the project config.
 func (r *Resolver) FindAllComponents() (components *ComponentSet, err error) {
 	components = NewComponentSet()
 

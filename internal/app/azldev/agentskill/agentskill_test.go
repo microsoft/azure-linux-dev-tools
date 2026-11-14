@@ -480,6 +480,48 @@ func TestFilesGitHubLayout(t *testing.T) {
 	assert.Contains(t, mockFile.Content, "name: azldev-mock")
 }
 
+func TestComponentSkillsExplainCentralDeclarationsAndPlaceholderOverlays(t *testing.T) {
+	for _, mode := range []struct {
+		name            string
+		withoutLockfile bool
+	}{
+		{name: "default"},
+		{name: "without-lockfile", withoutLockfile: true},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			catalog := agentskill.NewCatalog(mode.withoutLockfile)
+
+			for _, name := range []string{"azldev-add-component", "azldev-comp-toml", "azldev-overlays"} {
+				t.Run(name, func(t *testing.T) {
+					doc, err := catalog.SkillDocument(name, testParams())
+					require.NoError(t, err)
+
+					doc = strings.Join(strings.Fields(doc), " ")
+					assert.Contains(t, doc, "name: "+name)
+					assert.Contains(t, doc, "base/comps/{component}/overlays/*.overlay.toml")
+					assert.Contains(t, doc, "do not create an empty")
+					assert.Contains(t, doc, "base/comps/components.toml")
+					assert.Contains(t, doc, "without matching overlay files")
+					assert.Contains(t, doc, "upstream pins, build options, inline overlays,")
+					assert.Contains(t, doc, "do not discover undeclared components")
+					assert.NotContains(t, doc, "Declaration-free")
+					assert.NotContains(t, doc, "Discovery is opt-in.")
+					assert.Contains(t, doc, "unchanged path resolution and precedence")
+					assert.Contains(t, doc,
+						"Distro-version and component-group defaults must omit `overlay-files`, including empty lists.")
+					assert.NotContains(t, doc, "Every component lives under")
+					assert.NotContains(t, doc, "anything that needs overlays")
+
+					if name == "azldev-overlays" {
+						assert.Contains(t, doc, "Additional braces are forbidden after `{component}`")
+						assert.Contains(t, doc, "use separate list entries for multiple directories")
+					}
+				})
+			}
+		})
+	}
+}
+
 // schemaEnum extracts values from an authoritative jsonschema enum tag.
 func schemaEnum(t *testing.T, structType reflect.Type, fieldName string) []string {
 	t.Helper()
