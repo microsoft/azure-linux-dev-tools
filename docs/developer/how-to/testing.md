@@ -37,6 +37,22 @@ This document provides guidelines for writing and maintaining tests within the A
 - Use `mage scenarioUpdate` when test expectations change and snapshots need updating
 - Use existing test helpers in `scenario/internal/cmdtest`
 
+The container harness builds the selected Dockerfile for each container request.
+Each request gets a unique image tag so parallel tests and
+packages cannot replace each other's image references. A matching unique build
+label also keeps the final image from being shared with another request. Each test
+removes its request's image tag after container cleanup, without pruning
+intermediate images that concurrent builds may still be using. There is no
+process-wide image cache.
+Images also carry session labels for Ryuk cleanup if a test process exits early.
+Docker can reuse available build layers. The harness sets its reaper timeout
+defaults before calling Testcontainers.
+Inspection and image-cleanup clients use the same Testcontainers Docker host
+resolution as container creation, including properties-based and rootless setups.
+
+The concurrent image-lifecycle regression test requires at least two parallel test
+slots and is skipped with `-parallel=1`, including the default with `GOMAXPROCS=1`.
+
 ## End-to-End Tests
 
 Tests tagged `e2e` are excluded from `mage scenario` and `mage all`. Run the
