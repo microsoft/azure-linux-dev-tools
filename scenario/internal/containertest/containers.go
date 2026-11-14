@@ -17,10 +17,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/buildtestenv"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/scenario/internal/testhelpers"
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 	"github.com/stretchr/testify/require"
 	testcontainers "github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -45,7 +47,6 @@ const (
 
 	// Container image reference.
 	containerURI      = "github.com/azldev/azldev-test/scenario/container"
-	containerTag      = "latest"
 	defaultDockerfile = "Dockerfile"
 )
 
@@ -235,26 +236,6 @@ func RunCmdInContainer(
 		t.Skipf("skipping test %s because network tests are disabled", t.Name())
 	}
 
-	// Try to pre-provision the default container image. Alternate Dockerfiles
-	// build their own purpose-specific images and must not depend on this image.
-	if collateral.dockerfile == defaultDockerfile {
-		cacheContainerImage(t)
-	}
-
-	return runCmdInContainerImpl(t, collateral, cmd, timeout)
-}
-
-// runCmdInContainerImpl is the actual implementation of running a command in a container. It makes no attempt to
-// cache the container image or check environment variables. It is split out from RunCmdInContainer so that it can be
-// called from the cacheContainerImage function without causing a circular dependency.
-func runCmdInContainerImpl(
-	t *testing.T,
-	collateral *ContainerCmdTestCollateral,
-	cmd []string,
-	timeout time.Duration,
-) (results testhelpers.TestResults, err error) {
-	t.Helper()
-
 	// Compose the `ContainerFile` list to specify the files to copy into / write into the container.
 	files := composeContainerFileList(collateral)
 
@@ -271,13 +252,6 @@ func runCmdInContainerImpl(
 	dockerPath, err := testhelpers.FindTestDockerDirectory()
 	require.NoError(t, err)
 
-	// Need to duplicate the workdir here because the testcontainers library
-	// expects a string pointer for the build args and consts can't be used.
-	containerWorkDir := ContainerWorkDir
-
-	uidStr := strconv.Itoa(os.Getuid())
-	gidStr := strconv.Itoa(os.Getgid())
-
 	binds := []string{collateral.workdir + ":" + ContainerWorkDir}
 	if collateral.extraMounts != nil {
 		for _, mount := range collateral.extraMounts {
@@ -290,21 +264,8 @@ func runCmdInContainerImpl(
 	// the azldev command at /azldev, and run the command in the container.
 	req := testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
-			// Build the container from the Dockerfile in the "docker" directory.
-			FromDockerfile: testcontainers.FromDockerfile{
-				// This path is relative to this file.
-				Context:        dockerPath,
-				Dockerfile:     collateral.dockerfile,
-				Repo:           containerURI,
-				Tag:            containerImageTag(collateral.dockerfile),
-				KeepImage:      true,
-				BuildLogWriter: logger.buildLogWriter,
-				BuildArgs: map[string]*string{
-					"UID":      &uidStr,
-					"GID":      &gidStr,
-					"WORK_DIR": &containerWorkDir,
-				},
-			},
+			FromDockerfile: containerImageBuild(dockerPath, collateral.dockerfile, logger.buildLogWriter),
+			LifecycleHooks: []testcontainers.ContainerLifecycleHooks{containerImageCleanup(t)},
 
 			// Mount the workdir for the test into the container.
 			HostConfigModifier: hostConfigModifier(collateral, binds),
@@ -338,6 +299,71 @@ func runCmdInContainerImpl(
 	return generateResults(t, req, logger, collateral.workdir)
 }
 
+// NewDockerClient initializes harness timeouts before resolving Testcontainers' Docker configuration.
+func NewDockerClient(ctx context.Context) (*client.Client, error) {
+	setReaperTimeouts()
+
+	dockerClient, err := testcontainers.NewDockerClientWithOpts(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("create scenario Docker client:\n%w", err)
+	}
+
+	return dockerClient.Client, nil
+}
+
+func containerImageBuild(dockerPath, dockerfile string, buildLogWriter io.Writer) testcontainers.FromDockerfile {
+	uidStr := strconv.Itoa(os.Getuid())
+	gidStr := strconv.Itoa(os.Getgid())
+	containerWorkDir := ContainerWorkDir
+	imageTag := uuid.NewString()
+
+	return testcontainers.FromDockerfile{
+		Context:    dockerPath,
+		Dockerfile: dockerfile,
+		Repo:       containerURI,
+		Tag:        imageTag,
+		// Testcontainers' automatic image cleanup also prunes shared build intermediates.
+		KeepImage:      true,
+		BuildLogWriter: buildLogWriter,
+		BuildOptionsModifier: func(options *client.ImageBuildOptions) {
+			options.Labels = testcontainers.GenericLabels()
+			options.Labels["org.azldev.scenario.request"] = imageTag
+		},
+		BuildArgs: map[string]*string{
+			"UID":      &uidStr,
+			"GID":      &gidStr,
+			"WORK_DIR": &containerWorkDir,
+		},
+	}
+}
+
+func containerImageCleanup(t *testing.T) testcontainers.ContainerLifecycleHooks {
+	t.Helper()
+
+	return testcontainers.ContainerLifecycleHooks{
+		PostBuilds: []testcontainers.ContainerRequestHook{
+			func(ctx context.Context, req testcontainers.ContainerRequest) error {
+				t.Cleanup(func() {
+					ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+					defer cancel()
+
+					dockerClient, err := NewDockerClient(ctx)
+					require.NoError(t, err)
+
+					defer dockerClient.Close()
+
+					_, err = dockerClient.ImageRemove(ctx, req.Image, client.ImageRemoveOptions{
+						PruneChildren: false,
+					})
+					require.NoErrorf(t, err, "remove scenario image %#q", req.Image)
+				})
+
+				return nil
+			},
+		},
+	}
+}
+
 func hostConfigModifier(
 	collateral *ContainerCmdTestCollateral,
 	binds []string,
@@ -352,15 +378,6 @@ func hostConfigModifier(
 			hostConfig.Init = &collateral.init
 		}
 	}
-}
-
-func containerImageTag(dockerfile string) string {
-	suffix := strings.TrimPrefix(dockerfile, defaultDockerfile)
-	if suffix == "" {
-		return containerTag
-	}
-
-	return containerTag + strings.ReplaceAll(suffix, ".", "-")
 }
 
 func composeContainerFileList(collateral *ContainerCmdTestCollateral,
