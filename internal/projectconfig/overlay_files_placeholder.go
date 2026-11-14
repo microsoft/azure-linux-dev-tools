@@ -13,8 +13,8 @@ import (
 )
 
 // OverlayFilesComponentPlaceholder is the single supported placeholder in an
-// [ComponentConfig.OverlayFiles] entry. Project-level defaults may opt into
-// discovery with this placeholder; components permit only plain patterns, and
+// [ComponentConfig.OverlayFiles] entry. Project-level defaults may substitute
+// the resolved component's name with this placeholder; components permit only plain patterns, and
 // distro-version and component-group defaults must omit 'overlay-files'.
 // When present it must appear exactly once and must be a whole path segment.
 const OverlayFilesComponentPlaceholder = "{component}"
@@ -33,10 +33,9 @@ func hasOverlayFilesPlaceholder(entry string) bool {
 // validateOverlayFilesPlaceholder verifies that entry contains exactly one
 // [OverlayFilesComponentPlaceholder] and that the placeholder is a whole path
 // segment. Path separators must be '/' (POSIX-style), and no glob
-// metacharacters ('*', '?', '[', '{') may appear before the placeholder because
-// pattern-discovery extracts the captured component name by literal-prefix
-// matching against the concrete glob result. Metacharacters after the
-// placeholder are allowed, but '..' path segments are allowed only before the
+// metacharacters ('*', '?', '[', '{') may appear before the placeholder.
+// The prefix must be literal. Glob metacharacters after the placeholder are
+// allowed except for braces. '..' path segments are allowed only before the
 // placeholder. Returns nil when the entry is well-formed.
 func validateOverlayFilesPlaceholder(entry string) error {
 	if entry == "" {
@@ -96,22 +95,20 @@ func validateOverlayFilesPlaceholder(entry string) error {
 		)
 	}
 
-	if slices.Contains(strings.Split(entry[tail+1:], "/"), "..") {
-		return fmt.Errorf("%w: entry %#q must not contain '..' path segments after %q",
-			ErrInvalidOverlayFilesEntry, entry, OverlayFilesComponentPlaceholder)
+	if err := validateOverlayFilesPlaceholderSuffix(entry, entry[tail+1:]); err != nil {
+		return err
 	}
 
 	prefix := entry[:idx]
 	if globMetaIdx := strings.IndexAny(prefix, "*?[{"); globMetaIdx >= 0 {
 		return fmt.Errorf(
 			"%w: entry %#q must not contain glob metacharacters (%q) before %q; "+
-				"the discovery capture uses a literal prefix",
+				"the prefix must be literal",
 			ErrInvalidOverlayFilesEntry, entry, string(prefix[globMetaIdx]), OverlayFilesComponentPlaceholder,
 		)
 	}
 
-	// Substitute '*' for {component} to build the concrete glob that
-	// pattern-discovery will hand to doublestar.
+	// Validate the glob syntax independently of the resolved component's name.
 	globPattern := prefix + "*" + entry[tail:]
 	if !doublestar.ValidatePattern(globPattern) {
 		return fmt.Errorf(
@@ -123,21 +120,18 @@ func validateOverlayFilesPlaceholder(entry string) error {
 	return nil
 }
 
-// SplitOverlayFilesPlaceholder splits an entry at its
-// [OverlayFilesComponentPlaceholder] and returns the prefix and suffix. The
-// caller can then substitute a concrete component name (or a glob wildcard)
-// for the placeholder. Passing an entry without a placeholder is a programming
-// error and panics with a diagnostic message.
-func SplitOverlayFilesPlaceholder(entry string) (prefix, suffix string) {
-	idx := strings.Index(entry, OverlayFilesComponentPlaceholder)
-	if idx < 0 {
-		panic(fmt.Sprintf(
-			"SplitOverlayFilesPlaceholder: entry %q does not contain %q",
-			entry, OverlayFilesComponentPlaceholder,
-		))
+func validateOverlayFilesPlaceholderSuffix(entry, suffix string) error {
+	if strings.ContainsAny(suffix, "{}") {
+		return fmt.Errorf("%w: entry %#q must not contain braces after %q",
+			ErrInvalidOverlayFilesEntry, entry, OverlayFilesComponentPlaceholder)
 	}
 
-	return entry[:idx], entry[idx+len(OverlayFilesComponentPlaceholder):]
+	if slices.Contains(strings.Split(suffix, "/"), "..") {
+		return fmt.Errorf("%w: entry %#q must not contain '..' path segments after %q",
+			ErrInvalidOverlayFilesEntry, entry, OverlayFilesComponentPlaceholder)
+	}
+
+	return nil
 }
 
 // substituteOverlayFilesPlaceholder returns entry with the single

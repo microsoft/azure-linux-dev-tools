@@ -25,6 +25,27 @@ func touchFile(t *testing.T, testEnv *testutils.TestEnv, path string) {
 	require.NoError(t, fileutils.WriteFile(testEnv.TestFS, path, []byte{}, fileperms.PrivateFile))
 }
 
+const patternTestOverlayContent = `
+[metadata]
+category = "azl-branding-policy"
+upstream-status = "inapplicable"
+
+[[overlays]]
+description = "Bump release"
+type        = "spec-search-replace"
+section     = "%install"
+regex       = "unused"
+`
+
+func writeOverlayFile(t *testing.T, env *testutils.TestEnv, path string) {
+	t.Helper()
+
+	require.NoError(t, fileutils.MkdirAll(env.TestFS, filepath.Dir(path)))
+	require.NoError(t, fileutils.WriteFile(
+		env.TestFS, path, []byte(patternTestOverlayContent), fileperms.PrivateFile,
+	))
+}
+
 // Creates a test spec and returns its expected config.
 func setupTestSpec(t *testing.T, testEnv *testutils.TestEnv, path string) projectconfig.ComponentConfig {
 	t.Helper()
@@ -787,6 +808,183 @@ value = "Microsoft"
 	assert.Equal(t, "Vendor", overlays[0].Tag)
 	require.NotNil(t, overlays[0].Metadata)
 	assert.Equal(t, projectconfig.OverlayCategoryAZLBrandingPolicy, overlays[0].Metadata.Category)
+}
+
+func TestFindAllComponents_PlaceholderOnlyAppliesToKnownComponents(t *testing.T) {
+	for _, mode := range []struct {
+		name   string
+		newEnv func(*testing.T) *testutils.TestEnv
+	}{
+		{name: "locked", newEnv: testutils.NewTestEnv},
+		{name: "without-lockfile", newEnv: testutils.NewTestEnvWithoutLockfile},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			env := mode.newEnv(t)
+			require.NoError(t, fileutils.WriteFile(env.TestFS, "/project/azldev.toml",
+				[]byte("includes = ['base/comps/components.toml']\n"), fileperms.PrivateFile))
+			require.NoError(t, fileutils.WriteFile(env.TestFS, "/project/base/comps/components.toml",
+				[]byte("[default-component-config]\noverlay-files = ['{component}/overlays/*.overlay.toml']\n"+
+					"[components.foo]\n[components.no-overlays]\n"), fileperms.PrivateFile))
+
+			_, loaded, err := projectconfig.LoadProjectConfig(
+				env.TestFS, env.TestOSEnv, "/project", true, "/tmp", nil, false, env.Env.WithoutLockfile())
+			require.NoError(t, err)
+
+			env.Config.Components = loaded.Components
+			env.Config.DefaultComponentConfig = loaded.DefaultComponentConfig
+
+			writeOverlayFile(t, env, "/project/base/comps/foo/overlays/0001.overlay.toml")
+			writeOverlayFile(t, env, "/project/base/comps/foo/overlays/0002.overlay.toml")
+			// An undeclared directory must not add a component or cause its invalid file to be parsed.
+			require.NoError(t, fileutils.WriteFile(env.TestFS,
+				"/project/base/comps/bar/overlays/0001.overlay.toml", []byte("invalid TOML"), fileperms.PrivateFile))
+
+			resolver := components.NewResolver(env.Env)
+			all, err := resolver.FindAllComponents()
+			require.NoError(t, err)
+			assert.ElementsMatch(t, []string{"foo", "no-overlays"}, all.Names())
+
+			foo, ok := all.TryGet("foo")
+			require.True(t, ok)
+			assert.Len(t, foo.GetConfig().Overlays, 2)
+
+			noOverlays, ok := all.TryGet("no-overlays")
+			require.True(t, ok)
+			assert.Empty(t, noOverlays.GetConfig().Overlays)
+
+			_, err = resolver.GetComponentByName("bar")
+			require.ErrorContains(t, err, "component not found")
+		})
+	}
+}
+
+func TestFindAllComponents_PlaceholderCompleteInheritance(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	env.Config.Components["curl"] = projectconfig.ComponentConfig{Name: "curl"}
+	env.Config.DefaultComponentConfig.OverlayFiles = []string{
+		"/project/shared/*.overlay.toml",
+		"/project/comps/{component}/overlays/*.overlay.toml",
+	}
+
+	for path, value := range map[string]string{
+		"/project/shared/shared.overlay.toml":              "shared",
+		"/project/comps/curl/overlays/fix[1].overlay.toml": "brackets",
+		"/project/comps/curl/overlays/fix1.overlay.toml":   "sibling",
+	} {
+		require.NoError(t, fileutils.WriteFile(env.TestFS, path,
+			[]byte(patternTestOverlayContent+"\nreplacement = \""+value+"\"\n"), fileperms.PrivateFile))
+	}
+
+	all, err := components.NewResolver(env.Env).FindAllComponents()
+	require.NoError(t, err)
+
+	found, ok := all.TryGet("curl")
+	require.True(t, ok)
+	require.Nil(t, found.GetConfig().SourceConfigFile)
+
+	values := make([]string, 0, len(found.GetConfig().Overlays))
+	for _, overlay := range found.GetConfig().Overlays {
+		values = append(values, overlay.Replacement)
+	}
+
+	assert.Equal(t, []string{"shared", "sibling", "brackets"}, values)
+}
+
+// Declared components with no 'overlay-files' inherit the project pattern; the
+// placeholder is substituted with the component's own name at glob time.
+func TestFindAllComponents_DeclaredComponentInheritsProjectPattern(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	env.Config.DefaultComponentConfig.OverlayFiles = []string{
+		"/project/comps/{component}/overlays/*.overlay.toml",
+	}
+
+	writeOverlayFile(t, env, "/project/comps/foo/overlays/0001.overlay.toml")
+	writeOverlayFile(t, env, "/project/comps/foo/overlays/0002.overlay.toml")
+
+	env.Config.Components["foo"] = projectconfig.ComponentConfig{Name: "foo"}
+
+	all, err := components.NewResolver(env.Env).FindAllComponents()
+	require.NoError(t, err)
+
+	foo, ok := all.TryGet("foo")
+	require.True(t, ok)
+	assert.Len(t, foo.GetConfig().Overlays, 2,
+		"foo should inherit the project pattern with {component}=foo")
+}
+
+// A component that sets its own 'overlay-files' replaces the inherited project
+// pattern wholesale; the placeholder pattern no longer applies.
+func TestFindAllComponents_ComponentOverlayFilesReplacesInherited(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	env.Config.DefaultComponentConfig.OverlayFiles = []string{
+		"/project/comps/{component}/overlays/*.overlay.toml",
+	}
+
+	// This file would match the inherited pattern (component=bar).
+	writeOverlayFile(t, env, "/project/comps/bar/overlays/0001.overlay.toml")
+
+	// But this file lives elsewhere and is the only one bar's config points to.
+	writeOverlayFile(t, env, "/project/custom/bar/0001.overlay.toml")
+
+	env.Config.Components["bar"] = projectconfig.ComponentConfig{
+		Name:         "bar",
+		OverlayFiles: []string{"/project/custom/bar/*.overlay.toml"},
+	}
+
+	all, err := components.NewResolver(env.Env).FindAllComponents()
+	require.NoError(t, err)
+
+	bar, ok := all.TryGet("bar")
+	require.True(t, ok)
+	assert.Len(t, bar.GetConfig().Overlays, 1,
+		"bar overrides overlay-files wholesale; inherited pattern must not apply")
+}
+
+// Empty per-component 'overlay-files' disables the inherited project pattern.
+func TestFindAllComponents_ComponentOverlayFilesEmptyDisablesInheritance(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+
+	env.Config.DefaultComponentConfig.OverlayFiles = []string{
+		"/project/comps/{component}/overlays/*.overlay.toml",
+	}
+
+	writeOverlayFile(t, env, "/project/comps/baz/overlays/0001.overlay.toml")
+
+	env.Config.Components["baz"] = projectconfig.ComponentConfig{
+		Name:         "baz",
+		OverlayFiles: []string{},
+	}
+
+	all, err := components.NewResolver(env.Env).FindAllComponents()
+	require.NoError(t, err)
+
+	baz, ok := all.TryGet("baz")
+	require.True(t, ok)
+	assert.Empty(t, baz.GetConfig().Overlays,
+		"empty overlay-files must disable inherited pattern")
+}
+
+func TestFindAllComponents_MultiplePlaceholderPatterns(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	env.Config.Components["dup"] = projectconfig.ComponentConfig{Name: "dup"}
+
+	env.Config.DefaultComponentConfig.OverlayFiles = []string{
+		"/project/a/{component}/*.overlay.toml",
+		"/project/b/{component}/*.overlay.toml",
+		"/project/a/{component}/*.overlay.toml",
+	}
+
+	writeOverlayFile(t, env, "/project/a/dup/0001.overlay.toml")
+	writeOverlayFile(t, env, "/project/b/dup/0002.overlay.toml")
+
+	all, err := components.NewResolver(env.Env).FindAllComponents()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"dup"}, all.Names())
+	dup, ok := all.TryGet("dup")
+	require.True(t, ok)
+	assert.Len(t, dup.GetConfig().Overlays, 2, "overlapping patterns load each file once")
 }
 
 // When a lock file exists for a component, the resolver should attach all of

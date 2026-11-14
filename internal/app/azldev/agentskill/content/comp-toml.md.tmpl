@@ -7,7 +7,8 @@ description: {{ printf "%q" .Description }}
 
 A component definition tells azldev where a package's spec comes from and how to
 customize it for your distro. Explicit definitions live under `[components.<name>]`;
-components can also be discovered from matching overlay files without a declaration.
+components may also be identified by component-group spec globs, but overlay files
+do not discover undeclared components.
 
 Get the authoritative, always-current field list from the schema:
 
@@ -103,21 +104,21 @@ the rare spec whose `Source`/`Patch` filenames use macros the filter cannot expa
 
 ## File organization
 
-Discovery is opt-in. Plain legacy patterns such as `overlays/*.overlay.toml` and
+Plain legacy patterns such as `overlays/*.overlay.toml` and
 `[]` remain supported in project defaults and component settings, with unchanged
 path resolution and precedence; they do not discover components. Distro-version
 and component-group defaults must omit `overlay-files`, including empty lists.
 Only project-level defaults may use `{component}`.
 
-- **Declaration-free** — for components whose only customization is per-file
+- **Central declarations** — for components whose only customization is per-file
   overlays, add files under `base/comps/<name>/overlays/`; do not create an empty
   `<name>.comp.toml`. A shared project-level `default-component-config.overlay-files`
   pattern such as `base/comps/{component}/overlays/*.overlay.toml` in the root config
-  discovers these components and attaches their overlays.
+  substitutes the component's name to load its overlays. Retain
+  `[components.<name>]` in `base/comps/components.toml`.
 - **Explicit group members** — if a component is explicitly listed in a component
   group's `components` list, retain `[components.<name>]` in
-  `base/comps/components.toml`. Pattern discovery alone does not satisfy that
-  validation. Components without matching overlay files still need an explicit
+  `base/comps/components.toml`. Components with or without matching overlay files still need an explicit
   declaration or another supported discovery mechanism (such as a group's `specs`
   glob).
 - **Inline** — put simple, customization-free components directly in a shared config
@@ -135,7 +136,7 @@ Start with `azldev comp list -p <name> -q -O json`, then use
 For a change review, focus on the diff while checking enough surrounding context to
 ensure it fits the component and repository conventions.
 
-- **Organization:** The component follows the repository's declaration-free, inline, or dedicated-file
+- **Organization:** The component follows the repository's central or dedicated-file
   convention; its name matches upstream or sets `spec.upstream-name`; no stale or
   orphaned component files remain.
 - **Spec source:** The default upstream source is preferred. Pins explain why they are

@@ -425,14 +425,12 @@ type ComponentConfig struct {
 	// with unchanged path resolution and precedence. Distro-version and component-group
 	// defaults must omit 'overlay-files', including empty lists.
 	//
-	// Project-level 'default-component-config' may opt into discovery by using the
-	// '{component}' placeholder exactly once as a whole path segment. These entries
-	// drive component discovery (each
-	// captured segment becomes an implicit component) and, when inherited by an explicit
-	// component that does not override, `{component}` is substituted with that
-	// component's name at glob time. Two project-scope entries that produce the same
-	// component name is a hard error.
+	// Project-level 'default-component-config' may use the '{component}' placeholder
+	// exactly once as a whole path segment. At glob time it is substituted with
+	// the resolved component's name. These entries are anchored to the config file
+	// that declares the default and only apply to already-resolved components.
 	// '..' path segments may appear before '{component}', but never after it.
+	// Additional braces are forbidden after '{component}'; use separate list entries.
 	//
 	// The placeholder is forbidden at component scope. Plain inherited globs are
 	// interpreted relative to the concrete component
@@ -441,7 +439,7 @@ type ComponentConfig struct {
 	//
 	// Excluded from the fingerprint because the value affects only where overlays are
 	// sourced from, not their content.
-	OverlayFiles []string `toml:"overlay-files,omitempty" json:"overlayFiles,omitempty" table:"-" validate:"dive,required" jsonschema:"title=Overlay files,description=Path or glob patterns matched against the filesystem to locate per-file overlay documents. Allowed only in project-level 'default-component-config' and explicit component settings. Distro-version and component-group defaults must omit 'overlay-files' including empty lists. Plain legacy patterns and empty lists remain supported at project and component scope with unchanged path resolution and precedence. Project-level defaults may opt into component discovery with {component} exactly once as a whole directory segment. In discovery patterns '..' path segments are allowed before {component} but forbidden after it. The placeholder is forbidden at component scope. Plain inherited globs resolve relative to the concrete component config file or matched spec directory. Use an empty list at component scope to disable inherited overlay files." fingerprint:"-"`
+	OverlayFiles []string `toml:"overlay-files,omitempty" json:"overlayFiles,omitempty" table:"-" validate:"dive,required" jsonschema:"title=Overlay files,description=Path or glob patterns matched against the filesystem to locate per-file overlay documents. Allowed only in project-level 'default-component-config' and explicit component settings. Distro-version and component-group defaults must omit 'overlay-files' including empty lists. Plain legacy patterns and empty lists remain supported at project and component scope with unchanged path resolution and precedence. Project-level defaults may use {component} exactly once as a whole directory segment to substitute the resolved component's name. Placeholder patterns are relative to the config file declaring the default and only apply to already-resolved components. '..' path segments are allowed before {component} but forbidden after it. Additional braces are forbidden after {component}; use separate list entries for multiple directories. The placeholder is forbidden at component scope. Plain inherited globs resolve relative to the concrete component config file or matched spec directory. Use an empty list at component scope to disable inherited overlay files." fingerprint:"-"`
 
 	// Configuration for building the component.
 	Build ComponentBuildConfig `toml:"build,omitempty" json:"build,omitempty" table:"-" jsonschema:"title=Build configuration,description=Configuration for building the component"`
@@ -658,7 +656,7 @@ func (c *ComponentConfig) WithAbsolutePaths(referenceDir string) *ComponentConfi
 		Packages:                 deep.MustCopy(c.Packages),
 		Publish:                  deep.MustCopy(c.Publish),
 		// OverlayFiles: entries with the {component} placeholder are project-scope
-		// discovery patterns and are absolutized now so downstream code sees stable
+		// shared patterns and are absolutized now so downstream code sees stable
 		// absolute paths regardless of where the config was inherited from. Non-placeholder
 		// entries are left verbatim so component-scope patterns are still interpreted
 		// relative to the concrete component config file at glob time.

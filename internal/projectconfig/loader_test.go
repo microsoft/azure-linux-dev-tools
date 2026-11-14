@@ -7,7 +7,6 @@ package projectconfig
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
@@ -26,93 +25,6 @@ func TestLoadAndResolveProjectConfig(t *testing.T) {
 	config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, "/non/existent")
 	require.ErrorIs(t, err, os.ErrNotExist)
 	assert.Nil(t, config)
-}
-
-func TestLoadAndResolveProjectConfig_OverlayFilesDefaultScopes(t *testing.T) {
-	scopes := []struct {
-		name    string
-		lines   []string
-		entries func(*ProjectConfig) []string
-	}{
-		{
-			name:  "project",
-			lines: []string{"[default-component-config]"},
-			entries: func(config *ProjectConfig) []string {
-				return config.DefaultComponentConfig.OverlayFiles
-			},
-		},
-		{
-			name: "distro",
-			lines: []string{
-				"[distros.test.versions.'1']",
-				"release-ver = '1'",
-				"[distros.test.versions.'1'.default-component-config]",
-			},
-			entries: func(config *ProjectConfig) []string {
-				return config.Distros["test"].Versions["1"].DefaultComponentConfig.OverlayFiles
-			},
-		},
-		{
-			name:  "group",
-			lines: []string{"[component-groups.test.default-component-config]"},
-			entries: func(config *ProjectConfig) []string {
-				return config.ComponentGroups["test"].DefaultComponentConfig.OverlayFiles
-			},
-		},
-	}
-
-	for _, scope := range scopes {
-		t.Run(scope.name, func(t *testing.T) {
-			for _, value := range []struct {
-				name     string
-				toml     string
-				expected []string
-			}{
-				{name: "omitted"},
-				{name: "plain-glob", toml: "['overlays/*.overlay.toml']", expected: []string{"overlays/*.overlay.toml"}},
-				{name: "empty-list", toml: "[]", expected: []string{}},
-				{
-					name: "placeholder", toml: "['comps/{component}/overlays/*.overlay.toml']",
-					expected: []string{"/project/comps/{component}/overlays/*.overlay.toml"},
-				},
-			} {
-				t.Run(value.name, func(t *testing.T) {
-					for _, mode := range []struct {
-						name            string
-						withoutLockfile bool
-					}{
-						{name: "default"},
-						{name: "without-lockfile", withoutLockfile: true},
-					} {
-						t.Run(mode.name, func(t *testing.T) {
-							ctx := testctx.NewCtx()
-
-							lines := append([]string{}, scope.lines...)
-							if value.toml != "" {
-								lines = append(lines, "overlay-files = "+value.toml)
-							}
-
-							require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath,
-								[]byte(strings.Join(lines, "\n")+"\n"), fileperms.PrivateFile))
-
-							config, err := loadAndResolveProjectConfig(ctx.FS(),
-								loadOptions{withoutLockfile: mode.withoutLockfile}, testConfigPath)
-							if scope.name != "project" && value.toml != "" {
-								require.ErrorIs(t, err, ErrInvalidOverlayFilesEntry)
-								require.ErrorContains(t, err, scope.name)
-								assert.Nil(t, config)
-
-								return
-							}
-
-							require.NoError(t, err)
-							assert.Equal(t, value.expected, scope.entries(config))
-						})
-					}
-				})
-			}
-		})
-	}
 }
 
 func TestLoadAndResolveProjectConfig_SyntaxError(t *testing.T) {

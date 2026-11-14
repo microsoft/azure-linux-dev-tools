@@ -529,7 +529,7 @@ func dedupTestRefSKUGroups(
 // validateOverlayFilesByScope restricts default 'overlay-files' lists to project scope.
 //
 // Distro-version and component-group defaults must omit the field, including empty lists.
-// Project defaults accept plain patterns and may opt into discovery with '{component}'.
+// Project defaults accept plain patterns and may substitute component names with '{component}'.
 func (f ConfigFile) validateOverlayFilesByScope() error {
 	if f.DefaultComponentConfig != nil {
 		if err := validateOverlayFilesEntries(
@@ -568,7 +568,7 @@ type overlayFilesValidator func(entry string) error
 
 // validateProjectOverlayFilesEntry validates entries in the project-level
 // default-component-config. Legacy plain globs remain valid; entries containing
-// '{component}' opt into discovery and must obey the placeholder rules.
+// '{component}' substitute the resolved component's name and must obey the placeholder rules.
 func validateProjectOverlayFilesEntry(entry string) error {
 	if !hasOverlayFilesPlaceholder(entry) {
 		return nil

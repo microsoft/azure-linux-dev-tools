@@ -39,24 +39,25 @@ dist-git often fail bot detection):
 
 4. Read the spec and plan any overlays.
 
-## Declaration-free, inline, or dedicated
+## Central or dedicated declarations
 
 For components whose only customization is per-file overlays, add files under
 `base/comps/<name>/overlays/`; do not create an empty `<name>.comp.toml`. This requires
 a shared project-level `default-component-config.overlay-files` pattern such as
 `base/comps/{component}/overlays/*.overlay.toml` in the root config. The `{component}`
-pattern discovers components from matching files and attaches their overlays.
-Remove any provisional bare entry once discovery supplies it.
+pattern substitutes each resolved component's name to load its overlays.
+Retain `[components.<name>]` in `base/comps/components.toml`.
+Overlay files do not discover undeclared components.
 
-Discovery is opt-in. Plain legacy patterns such as `overlays/*.overlay.toml` and
+Plain legacy patterns such as `overlays/*.overlay.toml` and
 `[]` remain supported in project defaults and component settings, with unchanged
 path resolution and precedence; they do not discover components. Distro-version
 and component-group defaults must omit `overlay-files`, including empty lists.
 Only project-level defaults may use `{component}`.
 
 If a component is explicitly listed in a component group, retain `[components.<name>]`
-in `base/comps/components.toml`: pattern discovery does not satisfy explicit group
-membership validation. Components without matching overlay files still need an
+in `base/comps/components.toml` for membership validation. Components with or
+without matching overlay files still need an
 explicit declaration or another supported discovery mechanism (such as a group's
 `specs` glob).
 
