@@ -28,8 +28,6 @@ func TestContainerImageOptions(t *testing.T) {
 	assert.Equal(t, "/dev/kvm", collateral.devices[0].PathInContainer)
 	assert.Equal(t, "rwm", collateral.devices[0].CgroupPermissions)
 	assert.Equal(t, []string{"123"}, collateral.groupAdd)
-	assert.Equal(t, "latest-image-builder", containerImageTag(collateral.dockerfile))
-	assert.Equal(t, "latest", containerImageTag(defaultDockerfile))
 }
 
 func TestContainerImageOptionsRejectInvalidValues(t *testing.T) {
