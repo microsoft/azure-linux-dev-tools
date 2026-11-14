@@ -11,7 +11,6 @@ import (
 	"io"
 	"os"
 	"path"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -45,7 +44,6 @@ const (
 
 	// Container image reference.
 	containerURI      = "github.com/azldev/azldev-test/scenario/container"
-	containerTag      = "latest"
 	defaultDockerfile = "Dockerfile"
 )
 
@@ -235,26 +233,6 @@ func RunCmdInContainer(
 		t.Skipf("skipping test %s because network tests are disabled", t.Name())
 	}
 
-	// Try to pre-provision the default container image. Alternate Dockerfiles
-	// build their own purpose-specific images and must not depend on this image.
-	if collateral.dockerfile == defaultDockerfile {
-		cacheContainerImage(t)
-	}
-
-	return runCmdInContainerImpl(t, collateral, cmd, timeout)
-}
-
-// runCmdInContainerImpl is the actual implementation of running a command in a container. It makes no attempt to
-// cache the container image or check environment variables. It is split out from RunCmdInContainer so that it can be
-// called from the cacheContainerImage function without causing a circular dependency.
-func runCmdInContainerImpl(
-	t *testing.T,
-	collateral *ContainerCmdTestCollateral,
-	cmd []string,
-	timeout time.Duration,
-) (results testhelpers.TestResults, err error) {
-	t.Helper()
-
 	// Compose the `ContainerFile` list to specify the files to copy into / write into the container.
 	files := composeContainerFileList(collateral)
 
@@ -268,15 +246,12 @@ func runCmdInContainerImpl(
 		buildLogWriter: &bytes.Buffer{},
 	}
 
-	dockerPath, err := testhelpers.FindTestDockerDirectory()
+	image, err := cacheContainerImage(t, collateral.dockerfile, logger.buildLogWriter)
+	if err != nil {
+		t.Logf("Container image build log: %s", logger.buildLogWriter.String())
+	}
+
 	require.NoError(t, err)
-
-	// Need to duplicate the workdir here because the testcontainers library
-	// expects a string pointer for the build args and consts can't be used.
-	containerWorkDir := ContainerWorkDir
-
-	uidStr := strconv.Itoa(os.Getuid())
-	gidStr := strconv.Itoa(os.Getgid())
 
 	binds := []string{collateral.workdir + ":" + ContainerWorkDir}
 	if collateral.extraMounts != nil {
@@ -290,21 +265,7 @@ func runCmdInContainerImpl(
 	// the azldev command at /azldev, and run the command in the container.
 	req := testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
-			// Build the container from the Dockerfile in the "docker" directory.
-			FromDockerfile: testcontainers.FromDockerfile{
-				// This path is relative to this file.
-				Context:        dockerPath,
-				Dockerfile:     collateral.dockerfile,
-				Repo:           containerURI,
-				Tag:            containerImageTag(collateral.dockerfile),
-				KeepImage:      true,
-				BuildLogWriter: logger.buildLogWriter,
-				BuildArgs: map[string]*string{
-					"UID":      &uidStr,
-					"GID":      &gidStr,
-					"WORK_DIR": &containerWorkDir,
-				},
-			},
+			Image: image,
 
 			// Mount the workdir for the test into the container.
 			HostConfigModifier: hostConfigModifier(collateral, binds),
@@ -352,15 +313,6 @@ func hostConfigModifier(
 			hostConfig.Init = &collateral.init
 		}
 	}
-}
-
-func containerImageTag(dockerfile string) string {
-	suffix := strings.TrimPrefix(dockerfile, defaultDockerfile)
-	if suffix == "" {
-		return containerTag
-	}
-
-	return containerTag + strings.ReplaceAll(suffix, ".", "-")
 }
 
 func composeContainerFileList(collateral *ContainerCmdTestCollateral,

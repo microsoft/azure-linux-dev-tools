@@ -37,6 +37,11 @@ This document provides guidelines for writing and maintaining tests within the A
 - Use `mage scenarioUpdate` when test expectations change and snapshots need updating
 - Use existing test helpers in `scenario/internal/cmdtest`
 
+The container harness builds each selected Dockerfile once per test process and
+reuses its generated image reference. Image tags are unique across test processes
+so parallel packages cannot replace each other's images. Build failures are
+reported to every caller instead of retrying with a potentially missing image.
+
 ## End-to-End Tests
 
 Tests tagged `e2e` are excluded from `mage scenario` and `mage all`. Run the
