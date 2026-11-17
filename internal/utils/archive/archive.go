@@ -27,7 +27,6 @@ import (
 	"archive/tar"
 	"bufio"
 	"bytes"
-	"compress/gzip"
 	"errors"
 	"fmt"
 	"io"
@@ -38,6 +37,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/klauspost/compress/gzip"
 	"github.com/klauspost/compress/zstd"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/defers"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
