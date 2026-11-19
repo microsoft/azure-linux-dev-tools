@@ -7,7 +7,6 @@ package rpm
 
 import (
 	"compress/bzip2"
-	"compress/gzip"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/cavaliergopher/cpio"
 	rpmlib "github.com/cavaliergopher/rpm"
+	"github.com/klauspost/compress/gzip"
 	"github.com/klauspost/compress/zstd"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/defers"
