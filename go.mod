@@ -31,7 +31,7 @@ require (
 	github.com/invopop/jsonschema v0.14.0
 	github.com/jedib0t/go-pretty/v6 v6.8.3
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51
-	github.com/klauspost/compress v1.20.3
+	github.com/klauspost/compress v1.20.4
 	github.com/knqyf263/go-rpm-version v0.0.0-20240918084003-2afd7dc6a38f
 	github.com/lmittmann/tint v1.2.1
 	github.com/magefile/mage v1.17.2
@@ -39,7 +39,7 @@ require (
 	github.com/mattn/go-isatty v0.0.24
 	github.com/mitchellh/hashstructure/v2 v2.0.2
 	github.com/moby/moby/api v1.56.1
-	github.com/moby/moby/client v0.5.0
+	github.com/moby/moby/client v0.6.2
 	github.com/muesli/termenv v0.16.0
 	github.com/nxadm/tail v1.4.11
 	github.com/opencontainers/selinux v1.15.1
@@ -53,19 +53,19 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.1.0
 	github.com/stretchr/testify v1.12.1
-	github.com/testcontainers/testcontainers-go v0.44.0
+	github.com/testcontainers/testcontainers-go v0.45.0
 	github.com/thejerf/slogassert v0.3.4
 	github.com/ulikunitz/xz v0.5.17
 	go.szostok.io/version v1.2.0
 	go.uber.org/mock v0.6.0
 	golang.org/x/sync v0.25.0
-	golang.org/x/sys v0.49.0
+	golang.org/x/sys v0.50.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
 	cyphar.com/go-pathrs v0.2.4 // indirect
-	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
+	github.com/Azure/go-ansiterm v0.0.0-20261006220739-8c912ac31dd4 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProtonMail/go-crypto v1.1.6 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
@@ -88,7 +88,7 @@ require (
 	github.com/cpuguy83/go-md2man/v2 v2.0.7 // indirect
 	github.com/cyphar/filepath-securejoin v0.6.1 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
-	github.com/docker/go-connections v0.7.0 // indirect
+	github.com/docker/go-connections v0.8.2 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/ebitengine/purego v0.10.1 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
@@ -115,13 +115,13 @@ require (
 	github.com/leodido/go-urn v1.5.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e // indirect
-	github.com/magiconair/properties v1.8.10 // indirect
+	github.com/magiconair/properties v1.18.12 // indirect
 	github.com/maruel/natural v1.3.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect
 	github.com/mattn/go-runewidth v0.0.21 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
-	github.com/moby/go-archive v0.3.0 // indirect
+	github.com/moby/go-archive v0.3.3 // indirect
 	github.com/moby/patternmatcher v0.6.1 // indirect
 	github.com/moby/sys/sequential v0.7.0 // indirect
 	github.com/moby/sys/user v0.4.1 // indirect
