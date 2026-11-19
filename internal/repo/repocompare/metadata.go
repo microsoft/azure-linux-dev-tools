@@ -7,7 +7,6 @@ package repocompare
 import (
 	"bytes"
 	"compress/bzip2"
-	"compress/gzip"
 	"context"
 	"crypto/tls"
 	"encoding/xml"
@@ -20,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/klauspost/compress/gzip"
 	"github.com/klauspost/compress/zstd"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/retry"
