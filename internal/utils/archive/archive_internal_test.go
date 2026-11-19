@@ -7,6 +7,9 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -51,4 +54,23 @@ func TestExtract_OversizedEntryRejected(t *testing.T) {
 
 	_, statErr := os.Stat(filepath.Join(extractDir, "pkg", "huge.bin"))
 	assert.True(t, os.IsNotExist(statErr), "oversized entry must not leave a partial file (stat err=%v)", statErr)
+}
+
+func TestNewCompressor_GzipOutputIsPinned(t *testing.T) {
+	var input bytes.Buffer
+	for index := range 20000 {
+		fmt.Fprintf(&input, "entry %d value %d\n", index, index*index%7919)
+	}
+
+	var output bytes.Buffer
+
+	compressor, closer, err := newCompressor(&output, CompressionGzip)
+	require.NoError(t, err)
+
+	_, err = compressor.Write(input.Bytes())
+	require.NoError(t, err)
+	require.NoError(t, closer.Close())
+
+	sum := sha256.Sum256(output.Bytes())
+	assert.Equal(t, "1eaa59dd773566d71c8f53b8760cfa2372cb260e0bd328fc35dd742dbf7afc3c", hex.EncodeToString(sum[:]))
 }
