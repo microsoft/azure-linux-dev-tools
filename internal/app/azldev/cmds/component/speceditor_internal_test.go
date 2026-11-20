@@ -62,7 +62,6 @@ func TestSpecEditorOptionWarnsOnlyForLegacy(t *testing.T) {
 	}{
 		{name: "legacy", value: specEditorLegacy, warning: true},
 		{name: "structural", value: specEditorStructural},
-		{name: "experimental alias", value: specEditorExperimental},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			logs.Reset()
@@ -98,13 +97,6 @@ func TestSpecEditorOptionParsesStructural(t *testing.T) {
 	assert.Equal(t, spec.EditorStructural, editor)
 }
 
-func TestSpecEditorOptionSupportsExperimentalAlias(t *testing.T) {
-	editor, err := executeSpecEditorProductionCommand(t, "render", "--spec-editor", specEditorExperimental)
-
-	require.NoError(t, err)
-	assert.Equal(t, spec.EditorStructural, editor)
-}
-
 func TestSpecEditorOptionDoesNotLeakBetweenCommands(t *testing.T) {
 	legacy, err := executeSpecEditorProductionCommand(t, "render", "--spec-editor", specEditorLegacy)
 	require.NoError(t, err)
@@ -118,12 +110,12 @@ func TestSpecEditorOptionDoesNotLeakBetweenCommands(t *testing.T) {
 func TestSpecEditorOptionIsInheritedByNonConsumingCommands(t *testing.T) {
 	testEnv := testutils.NewTestEnv(t)
 	cmd := newComponentCmd(&azldev.App{})
-	cmd.SetArgs([]string{"list", "--spec-editor", specEditorExperimental})
+	cmd.SetArgs([]string{"list", "--spec-editor", specEditorStructural})
 
 	require.NoError(t, cmd.ExecuteContext(testEnv.Env))
 }
 
-func TestSpecEditorOptionRejectsUnsupportedValuesWithoutFallback(t *testing.T) {
+func TestSpecEditorOptionRejectsExperimentalWithoutFallback(t *testing.T) {
 	executed := false
 	originalNewSourcePreparer := newSourcePreparer
 	newSourcePreparer = func(
@@ -143,12 +135,12 @@ func TestSpecEditorOptionRejectsUnsupportedValuesWithoutFallback(t *testing.T) {
 	})
 
 	cmd := newComponentCmd(&azldev.App{})
-	cmd.SetArgs([]string{"render", "--spec-editor", "unknown"})
+	cmd.SetArgs([]string{"render", "--spec-editor", "experimental"})
 
 	err := cmd.Execute()
 
 	require.Error(t, err)
-	require.ErrorContains(t, err, "unsupported RPM spec editor `unknown`; expected `legacy` or `structural`")
+	require.ErrorContains(t, err, "unsupported RPM spec editor `experimental`; expected `legacy` or `structural`")
 	assert.False(t, executed)
 }
 
@@ -170,11 +162,6 @@ func TestSpecEditorOptionRoutesToRelevantComponentCommands(t *testing.T) {
 		{
 			name:     "structural uses structural",
 			args:     []string{"--spec-editor", specEditorStructural},
-			expected: spec.EditorStructural,
-		},
-		{
-			name:     "experimental alias uses structural",
-			args:     []string{"--spec-editor", specEditorExperimental},
 			expected: spec.EditorStructural,
 		},
 	} {
