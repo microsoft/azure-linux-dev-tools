@@ -268,7 +268,7 @@ func NewPreparer(
 
 	impl := &sourcePreparerImpl{
 		sourceManager: sourceManager,
-		specEditor:    spec.EditorLegacy,
+		specEditor:    spec.EditorStructural,
 		fs:            fs,
 		eventListener: eventListener,
 		dryRunnable:   dryRunnable,

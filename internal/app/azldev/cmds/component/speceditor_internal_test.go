@@ -26,15 +26,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestComponentCommandOptionsDefaultsToLegacy(t *testing.T) {
-	assert.Equal(t, spec.EditorLegacy, componentCommandOptions{}.specEditorMode())
+func TestComponentCommandOptionsDefaultsToStructural(t *testing.T) {
+	assert.Equal(t, spec.EditorStructural, componentCommandOptions{}.specEditorMode())
 }
 
-func TestSpecEditorOptionDefaultsToLegacy(t *testing.T) {
+func TestSpecEditorOptionDefaultsToStructural(t *testing.T) {
 	editor, err := executeSpecEditorProductionCommand(t, "render")
 
 	require.NoError(t, err)
-	assert.Equal(t, spec.EditorLegacy, editor)
+	assert.Equal(t, spec.EditorStructural, editor)
 }
 
 func TestSpecEditorOptionParsesLegacy(t *testing.T) {
@@ -44,7 +44,14 @@ func TestSpecEditorOptionParsesLegacy(t *testing.T) {
 	assert.Equal(t, spec.EditorLegacy, editor)
 }
 
-func TestSpecEditorOptionParsesExperimental(t *testing.T) {
+func TestSpecEditorOptionParsesStructural(t *testing.T) {
+	editor, err := executeSpecEditorProductionCommand(t, "render", "--spec-editor", specEditorStructural)
+
+	require.NoError(t, err)
+	assert.Equal(t, spec.EditorStructural, editor)
+}
+
+func TestSpecEditorOptionSupportsExperimentalAlias(t *testing.T) {
 	editor, err := executeSpecEditorProductionCommand(t, "render", "--spec-editor", specEditorExperimental)
 
 	require.NoError(t, err)
@@ -52,13 +59,13 @@ func TestSpecEditorOptionParsesExperimental(t *testing.T) {
 }
 
 func TestSpecEditorOptionDoesNotLeakBetweenCommands(t *testing.T) {
-	experimental, err := executeSpecEditorProductionCommand(t, "render", "--spec-editor", specEditorExperimental)
-	require.NoError(t, err)
-	assert.Equal(t, spec.EditorStructural, experimental)
-
-	legacy, err := executeSpecEditorProductionCommand(t, "render")
+	legacy, err := executeSpecEditorProductionCommand(t, "render", "--spec-editor", specEditorLegacy)
 	require.NoError(t, err)
 	assert.Equal(t, spec.EditorLegacy, legacy)
+
+	structural, err := executeSpecEditorProductionCommand(t, "render")
+	require.NoError(t, err)
+	assert.Equal(t, spec.EditorStructural, structural)
 }
 
 func TestSpecEditorOptionIsInheritedByNonConsumingCommands(t *testing.T) {
@@ -89,12 +96,12 @@ func TestSpecEditorOptionRejectsUnsupportedValuesWithoutFallback(t *testing.T) {
 	})
 
 	cmd := newComponentCmd(&azldev.App{})
-	cmd.SetArgs([]string{"render", "--spec-editor", "structural"})
+	cmd.SetArgs([]string{"render", "--spec-editor", "unknown"})
 
 	err := cmd.Execute()
 
 	require.Error(t, err)
-	require.ErrorContains(t, err, "unsupported RPM spec editor `structural`; expected `legacy` or `experimental`")
+	require.ErrorContains(t, err, "unsupported RPM spec editor `unknown`; expected `legacy` or `structural`")
 	assert.False(t, executed)
 }
 
@@ -105,8 +112,8 @@ func TestSpecEditorOptionRoutesToRelevantComponentCommands(t *testing.T) {
 		expected spec.EditorMode
 	}{
 		{
-			name:     "omitted flag uses legacy",
-			expected: spec.EditorLegacy,
+			name:     "omitted flag uses structural",
+			expected: spec.EditorStructural,
 		},
 		{
 			name:     "explicit legacy uses legacy",
@@ -114,7 +121,12 @@ func TestSpecEditorOptionRoutesToRelevantComponentCommands(t *testing.T) {
 			expected: spec.EditorLegacy,
 		},
 		{
-			name:     "experimental uses structural",
+			name:     "structural uses structural",
+			args:     []string{"--spec-editor", specEditorStructural},
+			expected: spec.EditorStructural,
+		},
+		{
+			name:     "experimental alias uses structural",
 			args:     []string{"--spec-editor", specEditorExperimental},
 			expected: spec.EditorStructural,
 		},
