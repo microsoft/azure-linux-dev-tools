@@ -65,7 +65,7 @@ value = "Microsoft"
 		filepath.Join(overlayDir, "0001-backport-drop-openjdk21.overlay.toml"),
 		[]byte(validBackportOverlayFile), fileperms.PrivateFile))
 
-	loaded, err := loadOverlayFiles(ctx.FS(), "/project", []string{overlayGlob(overlayDir)}, false)
+	loaded, err := loadOverlayFiles(ctx.FS(), "/project", []string{overlayGlob(overlayDir)}, false, "ant")
 	require.NoError(t, err)
 	require.Len(t, loaded, 3, "two overlays from 0001 + one from 0002")
 
@@ -146,7 +146,8 @@ tag   = "Order"
 value = "fourth"
 `), fileperms.PrivateFile))
 
-	loaded, err := loadOverlayFiles(ctx.FS(), "/project", []string{"/project/comps/ant/overlays/**/*.overlay.toml"}, false)
+	loaded, err := loadOverlayFiles(
+		ctx.FS(), "/project", []string{"/project/comps/ant/overlays/**/*.overlay.toml"}, false, "ant")
 	require.NoError(t, err)
 	require.Len(t, loaded, 4)
 	assert.Equal(t, "first", loaded[0].Value)
@@ -165,7 +166,7 @@ func TestLoadOverlayFiles_NoMatchesIsNoop(t *testing.T) {
 		filepath.Join(overlayDir, "README.md"),
 		[]byte("not an overlay"), fileperms.PrivateFile))
 
-	loaded, err := loadOverlayFiles(ctx.FS(), "/project", []string{overlayGlob(overlayDir)}, false)
+	loaded, err := loadOverlayFiles(ctx.FS(), "/project", []string{overlayGlob(overlayDir)}, false, "ant")
 	require.NoError(t, err)
 	assert.Empty(t, loaded)
 }
@@ -175,7 +176,7 @@ func TestLoadOverlayFiles_MissingDirIsNoop(t *testing.T) {
 
 	loaded, err := loadOverlayFiles(
 		ctx.FS(), "/project",
-		[]string{overlayGlob("/project/comps/does-not-exist/overlays")}, false,
+		[]string{overlayGlob("/project/comps/does-not-exist/overlays")}, false, "ant",
 	)
 	require.NoError(t, err)
 	assert.Empty(t, loaded)
@@ -186,7 +187,7 @@ func TestLoadOverlayFiles_MissingLiteralPathErrors(t *testing.T) {
 
 	_, err := loadOverlayFiles(
 		ctx.FS(), "/project",
-		[]string{"/project/comps/does-not-exist/overlays/0001-missing.overlay.toml"}, false,
+		[]string{"/project/comps/does-not-exist/overlays/0001-missing.overlay.toml"}, false, "ant",
 	)
 	require.ErrorIs(t, err, ErrOverlayFilesNoMatches)
 }
@@ -202,7 +203,7 @@ func TestLoadOverlayFiles_NoMatchDoesNotBlockLaterMatches(t *testing.T) {
 	loaded, err := loadOverlayFiles(ctx.FS(), "/project", []string{
 		overlayGlob("/project/comps/does-not-exist/overlays"),
 		overlayGlob(overlayDir),
-	}, false)
+	}, false, "ant")
 	require.NoError(t, err)
 	require.Len(t, loaded, 2)
 }
@@ -225,7 +226,7 @@ value = "Microsoft"
 metadata = { category = "azl-branding-policy", upstream-status = "inapplicable" }
 `), fileperms.PrivateFile))
 
-	_, err := loadOverlayFiles(ctx.FS(), "/project", []string{overlayGlob(overlayDir)}, false)
+	_, err := loadOverlayFiles(ctx.FS(), "/project", []string{overlayGlob(overlayDir)}, false, "ant")
 	require.ErrorIs(t, err, ErrOverlayFilePerOverlayMetadata)
 }
 
@@ -241,7 +242,7 @@ category = "azl-compatibility"
 upstream-status = "inapplicable"
 `), fileperms.PrivateFile))
 
-	_, err := loadOverlayFiles(ctx.FS(), "/project", []string{overlayGlob(overlayDir)}, false)
+	_, err := loadOverlayFiles(ctx.FS(), "/project", []string{overlayGlob(overlayDir)}, false, "ant")
 	require.ErrorIs(t, err, ErrOverlayFileEmpty)
 }
 
@@ -262,7 +263,7 @@ tag = "Vendor"
 value = "Microsoft"
 `), fileperms.PrivateFile))
 
-	_, err := loadOverlayFiles(ctx.FS(), "/project", []string{overlayGlob(overlayDir)}, false)
+	_, err := loadOverlayFiles(ctx.FS(), "/project", []string{overlayGlob(overlayDir)}, false, "ant")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "category")
 }
@@ -283,7 +284,7 @@ type = "spec-set-tag"
 tag = "Vendor"
 `), fileperms.PrivateFile))
 
-	_, err := loadOverlayFiles(ctx.FS(), "/project", []string{overlayGlob(overlayDir)}, false)
+	_, err := loadOverlayFiles(ctx.FS(), "/project", []string{overlayGlob(overlayDir)}, false, "ant")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid overlay 1")
 	assert.Contains(t, err.Error(), "requires")
@@ -336,7 +337,7 @@ type   = "patch-add"
 source = "patches/fix.patch"
 `), fileperms.PrivateFile))
 
-	loaded, err := loadOverlayFiles(ctx.FS(), "/project", []string{overlayGlob(overlayDir)}, false)
+	loaded, err := loadOverlayFiles(ctx.FS(), "/project", []string{overlayGlob(overlayDir)}, false, "ant")
 	require.NoError(t, err)
 	require.Len(t, loaded, 1)
 	assert.Equal(t,
@@ -358,7 +359,7 @@ func TestLoadOverlayFiles_DedupsAcrossPatterns(t *testing.T) {
 	loaded, err := loadOverlayFiles(ctx.FS(), "/project", []string{
 		overlayGlob(overlayDir),
 		filepath.Join(overlayDir, "0001-*.overlay.toml"),
-	}, false)
+	}, false, "ant")
 	require.NoError(t, err)
 	require.Len(t, loaded, 2, "overlapping globs must not double-apply matched files")
 }
@@ -373,7 +374,7 @@ func TestLoadOverlayFiles_DoubleStarMatchesNested(t *testing.T) {
 
 	loaded, err := loadOverlayFiles(
 		ctx.FS(), "/project",
-		[]string{filepath.Join(root, "**", "*.overlay.toml")}, false,
+		[]string{filepath.Join(root, "**", "*.overlay.toml")}, false, "ant",
 	)
 	require.NoError(t, err)
 	require.Len(t, loaded, 2, "**-style glob must descend into subdirectories")
@@ -439,6 +440,65 @@ func TestExpandResolvedOverlayFiles_NoopWhenUnset(t *testing.T) {
 	expanded, err := ExpandResolvedOverlayFiles(ctx.FS(), component, "", false)
 	require.NoError(t, err)
 	require.Len(t, expanded.Overlays, 1, "no overlay-files, no merging")
+}
+
+func TestExpandResolvedOverlayFiles_UnmatchedPlaceholderLiteral(t *testing.T) {
+	tests := []struct {
+		name     string
+		patterns []string
+		wantErr  bool
+	}{
+		{
+			name:     "unrelated explicit component inherits optional placeholder",
+			patterns: []string{"comps/{component}/overlays.toml"},
+		},
+		{
+			name:     "explicit missing literal remains an error",
+			patterns: []string{"comps/ant/overlays.toml"},
+			wantErr:  true,
+		},
+		{
+			name:     "placeholder before equivalent explicit literal",
+			patterns: []string{"comps/{component}/overlays.toml", "comps/ant/overlays.toml"},
+			wantErr:  true,
+		},
+		{
+			name:     "explicit literal before equivalent placeholder",
+			patterns: []string{"comps/ant/overlays.toml", "comps/{component}/overlays.toml"},
+			wantErr:  true,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			ctx := testctx.NewCtx()
+			component := ComponentConfig{Name: "ant", OverlayFiles: testCase.patterns}
+
+			expanded, err := ExpandResolvedOverlayFiles(ctx.FS(), component, "/project", false)
+			if testCase.wantErr {
+				require.ErrorIs(t, err, ErrOverlayFilesNoMatches)
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Empty(t, expanded.Overlays)
+			assert.Empty(t, expanded.OverlayFiles)
+		})
+	}
+}
+
+func TestExpandResolvedOverlayFiles_EquivalentPlaceholderEntriesDeduplicate(t *testing.T) {
+	ctx := testctx.NewCtx()
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), "/project/comps/ant/overlays.toml",
+		[]byte(validBackportOverlayFile), fileperms.PrivateFile))
+
+	expanded, err := ExpandResolvedOverlayFiles(ctx.FS(), ComponentConfig{
+		Name:         "ant",
+		OverlayFiles: []string{"comps/{component}/overlays.toml", "comps/ant/overlays.toml"},
+	}, "/project", false)
+	require.NoError(t, err)
+	require.Len(t, expanded.Overlays, 2)
 }
 
 func TestExpandResolvedOverlayFiles_AcceptsAbsoluteGlob(t *testing.T) {

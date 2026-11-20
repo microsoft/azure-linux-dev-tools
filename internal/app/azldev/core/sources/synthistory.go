@@ -547,8 +547,8 @@ func updateHead(repo *gogit.Repository, commitHash plumbing.Hash) error {
 }
 
 // buildSyntheticCommits resolves the project repository from the component's
-// config file, walks the lock file's git history for fingerprint changes, and
-// returns the matching [FingerprintChange] entries sorted chronologically.
+// config file or configured lock directory, walks the lock file's git history
+// for fingerprint changes, and returns matching entries sorted chronologically.
 // Returns (nil, "", nil) when there are no changes to represent — either the
 // lock file is missing, has no fingerprint changes (with a warning), or the
 // current fingerprint matches the committed one.
@@ -568,7 +568,7 @@ func buildSyntheticCommits(
 	lockDir string,
 	currentFingerprint string,
 ) (changes []FingerprintChange, importCommit string, err error) {
-	projectRepo, projectRepoDir, err := openProjectRepo(config, componentName)
+	projectRepo, projectRepoDir, err := openProjectRepo(config, componentName, lockDir)
 	if err != nil {
 		return nil, "", err
 	}
@@ -681,19 +681,31 @@ func BuildDirtyChange(
 }
 
 // openProjectRepo opens the git repository that contains the component's
-// config file and returns both the [gogit.Repository] and the worktree root
-// directory. Returns (nil, "", nil) when the config file path cannot be
-// resolved, indicating that synthetic commits should be skipped.
+// config file, or its configured lock directory for declaration-free components.
+// The lock directory anchors history to the repository containing the committed
+// lock, without inventing config provenance or using the process working directory.
+// Returns (nil, "", nil) for undeclared components with no resolved lock data.
 func openProjectRepo(
 	config *projectconfig.ComponentConfig,
-	componentName string,
+	componentName, lockDir string,
 ) (*gogit.Repository, string, error) {
-	var configFilePath string
-	if config.SourceConfigFile != nil {
-		configFilePath = config.SourceConfigFile.SourcePath()
+	if config.SourceConfigFile != nil && config.SourceConfigFile.SourcePath() != "" {
+		return openProjectRepoForConfigFile(config.SourceConfigFile.SourcePath(), componentName)
 	}
 
-	return openProjectRepoForConfigFile(configFilePath, componentName)
+	if config.Locked == nil {
+		slog.Debug("Undeclared component has no lock data; skipping synthetic history",
+			"component", componentName)
+
+		return nil, "", nil
+	}
+
+	if !filepath.IsAbs(lockDir) {
+		return nil, "", fmt.Errorf("cannot locate project repository for component %#q: absolute lock directory required",
+			componentName)
+	}
+
+	return openProjectRepoAtDir(lockDir)
 }
 
 // openProjectRepoForConfigFile opens the git repository containing configFilePath
@@ -711,10 +723,14 @@ func openProjectRepoForConfigFile(
 		return nil, "", nil
 	}
 
-	repo, err := git.OpenProjectRepo(filepath.Dir(configFilePath))
+	return openProjectRepoAtDir(filepath.Dir(configFilePath))
+}
+
+func openProjectRepoAtDir(directory string) (*gogit.Repository, string, error) {
+	repo, err := git.OpenProjectRepo(directory)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to find project repository for config file %#q:\n%w",
-			configFilePath, err)
+		return nil, "", fmt.Errorf("failed to find project repository from directory %#q:\n%w",
+			directory, err)
 	}
 
 	worktree, err := repo.Worktree()
