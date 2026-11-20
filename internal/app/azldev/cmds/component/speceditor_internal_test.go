@@ -5,8 +5,10 @@
 package component
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -42,6 +44,51 @@ func TestSpecEditorOptionParsesLegacy(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, spec.EditorLegacy, editor)
+}
+
+func TestSpecEditorOptionWarnsOnlyForLegacy(t *testing.T) {
+	var logs bytes.Buffer
+
+	originalLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() {
+		slog.SetDefault(originalLogger)
+	})
+
+	for _, testCase := range []struct {
+		name    string
+		value   string
+		warning bool
+	}{
+		{name: "legacy", value: specEditorLegacy, warning: true},
+		{name: "structural", value: specEditorStructural},
+		{name: "experimental alias", value: specEditorExperimental},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			logs.Reset()
+
+			value := newSpecEditorFlagValue()
+
+			require.NoError(t, value.Set(testCase.value))
+
+			if testCase.warning {
+				assert.Contains(t, logs.String(), "deprecated")
+				assert.Contains(t, logs.String(), "removed in a future release")
+				assert.Contains(t, logs.String(), "'structural'")
+			} else {
+				assert.Empty(t, logs.String())
+			}
+		})
+	}
+}
+
+func TestSpecEditorOptionHelpMarksLegacyDeprecated(t *testing.T) {
+	cmd := newComponentCmd(&azldev.App{})
+	flag := cmd.PersistentFlags().Lookup("spec-editor")
+
+	require.NotNil(t, flag)
+	assert.Contains(t, flag.Usage, "deprecated")
+	assert.Contains(t, flag.Usage, "structural")
 }
 
 func TestSpecEditorOptionParsesStructural(t *testing.T) {

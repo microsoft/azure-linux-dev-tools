@@ -55,7 +55,9 @@ func (v *specEditorFlagValue) Set(value string) error {
 	switch value {
 	case specEditorLegacy:
 		v.mode = spec.EditorLegacy
-		slog.Warn("The RPM spec 'legacy' editor is deprecated and will be removed in a future release; use 'structural' instead")
+
+		slog.Warn("The RPM spec 'legacy' editor is deprecated and will be removed in a future release; " +
+			"use 'structural' instead")
 	case specEditorStructural, specEditorExperimental:
 		v.mode = spec.EditorStructural
 	default:
