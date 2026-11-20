@@ -273,6 +273,10 @@ func isConditionalBranchDirective(rawLine string) bool {
 func (s *legacySpec) InsertTag(packageName string, tag string, value string) error {
 	slog.Debug("Inserting tag to spec", "package", packageName, "tag", tag, "value", value)
 
+	return s.insertTagAfterFamily(packageName, tag, value, true)
+}
+
+func (s *legacySpec) insertTagAfterFamily(packageName, tag, value string, fallbackToAnyTag bool) error {
 	family := tagFamily(tag)
 	newLine := fmt.Sprintf("%s: %s", tag, value)
 
@@ -288,7 +292,7 @@ func (s *legacySpec) InsertTag(packageName string, tag string, value string) err
 
 	// Determine insertion point: prefer same-family, then any tag, then fall back to AddTag.
 	insertAfterLine := result.lastFamilyTagLineNum
-	if insertAfterLine < 0 {
+	if insertAfterLine < 0 && fallbackToAnyTag {
 		insertAfterLine = result.lastAnyTagLineNum
 	}
 
@@ -671,7 +675,7 @@ func (s *legacySpec) AddPatchEntry(packageName, filename string) error {
 		return fmt.Errorf("failed to scan for existing patch tags:\n%w", err)
 	}
 
-	return s.AddTag(packageName, fmt.Sprintf("Patch%d", highest+1), filename)
+	return s.insertTagAfterFamily(packageName, fmt.Sprintf("Patch%d", highest+1), filename, false)
 }
 
 // RemovePatchEntry removes all references to patches matching the given pattern from the spec.
