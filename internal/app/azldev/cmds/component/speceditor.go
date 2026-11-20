@@ -12,6 +12,8 @@ import (
 )
 
 const (
+	// specEditorLegacy remains supported temporarily for backward compatibility.
+	// It is deprecated and will be removed in a future release.
 	specEditorLegacy       = "legacy"
 	specEditorStructural   = "structural"
 	specEditorExperimental = "experimental"

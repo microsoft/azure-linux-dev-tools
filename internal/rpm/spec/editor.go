@@ -16,6 +16,8 @@ const (
 	elseDirective = "%else"
 
 	// EditorLegacy uses the established line-oriented editor.
+	// Deprecated: EditorLegacy is deprecated and will be removed in a future
+	// release. Use EditorStructural unless legacy behavior is explicitly required.
 	EditorLegacy EditorMode = "legacy"
 	// EditorStructural uses the lossless structural editor.
 	EditorStructural EditorMode = "structural"

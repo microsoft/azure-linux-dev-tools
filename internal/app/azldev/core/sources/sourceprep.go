@@ -123,6 +123,7 @@ func WithoutLockfileHistory() PreparerOption {
 }
 
 // WithSpecEditor selects the [spec.EditorMode] used for source preparation.
+// [spec.EditorLegacy] is deprecated and will be removed in a future release.
 func WithSpecEditor(mode spec.EditorMode) PreparerOption {
 	return func(p *sourcePreparerImpl) { p.specEditor = mode }
 }
