@@ -20,6 +20,13 @@ Unlike prepare-sources, render skips downloading source tarballs from the
 lookaside cache — only spec files, patches, scripts, and other git-tracked
 sidecar files are included. Multiple components can be rendered at once.
 
+Added-patch application diagnostics are logged and included as patchWarnings
+in -O json output. Missing unconditional patch selection, uncertain application,
+and likely strip mismatches are warnings unless --patch-warnings=error promotes
+them to component errors. Conditional branches and duplicate application are not checked.
+Use --fail-on-error to exit nonzero on component failures. This is static
+analysis, not proof a patch applies.
+
 When rendering all components (-a), the --clean-stale flag prunes orphan
 rendered-spec directories (per-component dirs that no longer correspond to
 any component in the project config). Per-component dirs that ARE in config
@@ -62,6 +69,7 @@ azldev component render [flags]
   -f, --force[=true|false]                  allow overwriting existing rendered component directories
   -h, --help[=true|false]                   help for render
   -o, --output-dir string                   output directory for rendered specs (overrides rendered-specs-dir from config)
+      --patch-warnings string               added-patch warning policy: warn or error (error rejects affected components; use --fail-on-error for a nonzero exit) (default "warn")
       --rpmdev-bumpspec[=true|false]        Use rpmdev-bumpspec instead of the legacy static release calculation
       --skip-lock-validation[=true|false]   skip lock file consistency checks
   -s, --spec-path stringArray               Spec path

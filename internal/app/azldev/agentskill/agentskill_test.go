@@ -89,6 +89,24 @@ func TestImageSkillDependencyGuidance(t *testing.T) {
 	}
 }
 
+func TestOverlaySkillPatchDiagnostics(t *testing.T) {
+	for _, withoutLockfile := range []bool{false, true} {
+		doc, err := agentskill.NewCatalog(withoutLockfile).SkillDocument("azldev-overlays", testParams())
+		require.NoError(t, err)
+		assert.Contains(t, doc, "warn, rather than declaring a patch definitely unused")
+		assert.Contains(t, doc, "Recognized unconditional selections take precedence")
+		assert.Contains(t, doc, "Conditional branches and their side effects are skipped")
+		assert.Contains(t, doc, "Duplicate application\n  is not detected")
+		assert.Contains(t, doc, "Loaded macro files are not inspected")
+		assert.Contains(t, doc, "`%prep -a` or `%prep -p`")
+		assert.Contains(t, doc, "--patch-warnings=error --fail-on-error")
+		assert.Contains(t, doc, "Strict mode is not report-only")
+		assert.Contains(t, doc, "output directory is cleared and replaced with a `RENDER_FAILED` marker")
+		assert.Contains(t, doc, "verify vendor sources exist before `%goprep` applies")
+		assert.Contains(t, doc, "`-k` prevents cleanup, not")
+	}
+}
+
 func TestOverlayMetadataSkillDocument(t *testing.T) {
 	params := testParams()
 	params.Bindings = agentskill.Bindings{RenderedSpecsDir: "build/specs"}

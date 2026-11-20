@@ -127,6 +127,13 @@ func WithSpecEditor(mode spec.EditorMode) PreparerOption {
 	return func(p *sourcePreparerImpl) { p.specEditor = mode }
 }
 
+// WithPatchDiagnostics reports added-patch diagnostics synchronously after all
+// overlays. The sink owns logging and policy; without a sink, findings are logged
+// as warnings. Use a separate sink for each preparer when preparing components concurrently.
+func WithPatchDiagnostics(sink func([]spec.PatchApplicationDiagnostic)) PreparerOption {
+	return func(p *sourcePreparerImpl) { p.patchDiagnostics = sink }
+}
+
 // WithSkipLookaside returns a [PreparerOption] that skips all lookaside cache
 // downloads during source preparation. This includes both explicit source file
 // downloads ([SourceManager.FetchFiles]) and lookaside extraction during
@@ -184,11 +191,12 @@ func WithAllowNoHashes() PreparerOption {
 
 // Standard implementation of the [SourcePreparer] interface.
 type sourcePreparerImpl struct {
-	sourceManager sourceproviders.SourceManager
-	specEditor    spec.EditorMode
-	fs            opctx.FS
-	eventListener opctx.EventListener
-	dryRunnable   opctx.DryRunnable
+	sourceManager    sourceproviders.SourceManager
+	specEditor       spec.EditorMode
+	fs               opctx.FS
+	eventListener    opctx.EventListener
+	dryRunnable      opctx.DryRunnable
+	patchDiagnostics func([]spec.PatchApplicationDiagnostic)
 
 	// withGitRepo, when true, enables dist-git creation by preserving the
 	// upstream .git directory and generating synthetic commit history.
@@ -430,6 +438,12 @@ func (p *sourcePreparerImpl) applyOverlays(
 
 	if err := p.applyOverlayList(allOverlays, sourcesDirPath, absSpecPath); err != nil {
 		return nil, fmt.Errorf("failed to apply overlays for component %#q:\n%w", component.GetName(), err)
+	}
+
+	if err := p.inspectAddedPatchApplications(
+		component.GetName(), sourcesDirPath, absSpecPath, allOverlays,
+	); err != nil {
+		return nil, err
 	}
 
 	return repackedArchives, nil
