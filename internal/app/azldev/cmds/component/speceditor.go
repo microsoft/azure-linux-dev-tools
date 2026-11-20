@@ -5,6 +5,7 @@ package component
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spec"
 	"github.com/spf13/cobra"
@@ -54,6 +55,7 @@ func (v *specEditorFlagValue) Set(value string) error {
 	switch value {
 	case specEditorLegacy:
 		v.mode = spec.EditorLegacy
+		slog.Warn("The RPM spec 'legacy' editor is deprecated and will be removed in a future release; use 'structural' instead")
 	case specEditorStructural, specEditorExperimental:
 		v.mode = spec.EditorStructural
 	default:
