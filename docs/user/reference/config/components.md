@@ -76,6 +76,11 @@ When the upstream package has a different name than the component, use `upstream
 spec = { type = "upstream", upstream-name = "redhat-rpm-config" }
 ```
 
+Upstream clones fetch only the effective distro version's `dist-git-branch`,
+including its full history. They are not shallow clones and do not fetch every
+upstream branch. Select a different branch through `spec.upstream-distro` and
+the referenced distro version's `dist-git-branch`.
+
 ### Commit-Pinned Specs
 
 When you need to pin to a specific git commit — for example, to pick up a fix that hasn't been included in a tagged release yet — use `upstream-commit`:
@@ -86,6 +91,10 @@ spec = { type = "upstream", upstream-commit = "a1b2c3d4e5f6789" }
 ```
 
 The value must be a hex string between 7 and 40 characters (a short or full git commit hash). When `upstream-commit` is set, it takes priority over the distro snapshot date — azldev checks out the exact commit instead of finding the latest commit before a snapshot timestamp.
+
+The pinned commit must be available from the selected upstream branch. Lockless
+rendering additionally fetches the last render's branch when it differs and
+the old and current pins must be compared.
 
 > **Note:** Commit-pinning is intended for temporary use. Once the desired change lands in a tagged upstream release, switch back to version-based pinning or the default snapshot to keep the component aligned with the upstream distro.
 
@@ -131,7 +140,7 @@ calculation = "manual"
 
 ### Optional `rpmdev-bumpspec` preview
 
-By default, build, render, and `prepare-sources` use the legacy static Release
+For lock-file-based components, build, render, and `prepare-sources` use the legacy static Release
 calculation above. It supports only a bare integer or an integer followed by
 `%{?dist}` or `%{dist}`. Other static forms, such as dotted releases or custom
 macros, retain the existing non-standard Release error and require `manual` or
@@ -142,19 +151,35 @@ or `azldev component prepare-sources` to preview transactional
 `rpmdev-bumpspec` handling instead. This temporary Azure Linux migration flag
 uses the existing fixed changelog metadata and requires `rpmdev-bumpspec`,
 `rpmdev-packager`, `rpm`, `rpmspec`, and Python with the RPM module only when
-explicitly selected. `%autorelease` behavior is unchanged.
+explicitly selected for this transactional strategy. `%autorelease` behavior is unchanged.
+
+**Exception:** Rendering a lockless upstream component with a non-autorelease
+Release invokes host `rpmdev-bumpspec -c` without requiring the flag.
+Autorelease renders skip bumpspec. See the
+[lockless rendering workflow](../../how-to/preview-without-lockfile.md#render-and-commit-an-upstream-component)
+for release/changelog carryover and automatic output commits.
+
+Lockless builds instead use committed rendered dist-git history and Mock's
+rpmautospec plugin; they reject `--rpmdev-bumpspec` and `--without-git`.
+Lockless `prepare-sources` is unsupported; use `component dist-git-repo` instead.
 
 ## Render Configuration
 
 The `[components.<name>.render]` section controls rendering behavior for a component.
 
+Lock mode for every command is selected by `lockless-components.txt` beside the
+top-level `azldev.toml`: listed components use the lockless workflow, and
+unlisted components use lock files. A missing or empty list selects lock-file
+behavior for every component. List every component for a fully lockless project. See
+[per-component lock modes](../../how-to/preview-without-lockfile.md#select-lock-mode-per-component).
+
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
-| Skip file filter | `skip-file-filter` | boolean | No | Disable post-render file filtering (defaults to `false`) |
+| Skip file filter | `skip-file-filter` | boolean | No | Disable post-render file filtering for locked components (defaults to `false`; ignored for lockless components) |
 
 ### Skip File Filter
 
-During rendering, azldev uses `spectool` to determine which files are referenced by `Source` and `Patch` tags in the spec, then removes unreferenced files from the rendered output. Some specs use dynamic macros (e.g., `%{fontpkgname1}`) that `spectool` cannot expand, causing it to report incorrect filenames. This results in referenced files being incorrectly removed.
+When rendering locked components, azldev uses `spectool` to determine which files are referenced by `Source` and `Patch` tags in the spec, then removes unreferenced files from the rendered output. Some specs use dynamic macros (e.g., `%{fontpkgname1}`) that `spectool` cannot expand, causing it to report incorrect filenames. This results in referenced files being incorrectly removed.
 
 Set `skip-file-filter = true` to preserve all files from the dist-git checkout:
 
@@ -163,7 +188,11 @@ Set `skip-file-filter = true` to preserve all files from the dist-git checkout:
 skip-file-filter = true
 ```
 
-> **Note:** This should only be used for specs with macros that `spectool` cannot resolve. For most components, the default filtering behavior is correct and keeps the rendered output clean.
+> **Note:** This should only be used for specs with macros that `spectool` cannot resolve. For most locked components, the default filtering behavior is correct and keeps the rendered output clean.
+
+Lockless rendering does not query `spectool` or filter files: it always retains
+all prepared dist-git files except `.git`. This setting has no effect on
+components selected by `lockless-components.txt`.
 
 ## Build Configuration
 
@@ -228,9 +257,13 @@ emit-upstream-provenance = true
 | `%fedora_upstream_version` | The `Version` tag from the pristine upstream Fedora spec |
 | `%fedora_upstream_release` | The `Release` tag from the pristine upstream Fedora spec, with `%{?dist}` expanded to the Fedora dist tag (e.g. `.fc43`) |
 
-The values are read from the upstream spec **before** any azldev overlays are applied, so they reflect the true upstream Name-Version-Release, not the Azure Linux–modified spec. The macros are derived fresh at render/build time from the pinned upstream commit and emitted into the component's generated macros file (loaded via `%{load:...}`).
+The values are captured immediately after fetching the pinned upstream checkout,
+**before** release/changelog carryover, release bumping, or overlays can modify
+the spec. The captured values are reused when emitting inline `%define` entries
+for lockless components, or writing the generated macros file (loaded via
+`%{load:...}`) for locked components, rather than querying the modified checkout.
 
-For specs whose `Release` uses rpmautospec (`Release: %autorelease`), the pristine Fedora release number is computed by running `rpmautospec calculate-release` in the project distro's mock chroot against the upstream dist-git checkout (whose history is Fedora's, not azldev's synthetic overlay history). This keeps `rpmautospec` out of azldev's host dependencies. If the project distro has no mock config, or mock resolution fails, `%fedora_upstream_release` is skipped (with a warning) rather than emitting the literal `%autorelease`.
+For specs whose `Release` uses rpmautospec (`Release: %autorelease`), the pristine Fedora release number is computed by running `rpmautospec calculate-release` against the upstream dist-git checkout (whose history is Fedora's, not azldev's synthetic overlay history). Lockless rendering runs this query on the host; other workflows use the project distro's mock chroot. The query runs only when overlays will be applied, provenance is enabled for a Fedora upstream component, and `build.defines` does not already supply `fedora_upstream_release`. Static releases do not need this query. If resolution is unavailable or fails, `%fedora_upstream_release` is skipped (with a warning) rather than emitting the literal `%autorelease`; the query is not retried when emitting macros.
 
 Example: for a component pinned to Fedora 43's `grub2-2.12-5.fc43`, the spec can reference:
 
@@ -244,7 +277,7 @@ Notes:
 
 - The flag has no effect on local or SRPM components (they have no upstream provenance) or on non-Fedora upstreams; for those it is silently ignored.
 - If a component defines a macro of the same name via `build.defines`, the user-defined value wins — the injected value does not overwrite it.
-- **How tag values are resolved:** `Version` and `Release` are read as plain text from the pristine upstream spec. `%{?dist}` is substituted with the Fedora dist tag, and `%autorelease` is resolved to a concrete number via `rpmautospec` (see above). Any *other* in-spec macros — e.g. `Version: %{majorver}.%{minorver}` — are emitted into the macros file unexpanded. Because that file is loaded back into the same spec via `%{load:...}`, RPM expands them lazily at build time using the spec's own macro definitions, so the consuming spec still sees the correct fully-expanded value.
+- **How tag values are resolved:** `Version` and `Release` are read as plain text from the pristine upstream spec. `%{?dist}` is substituted with the Fedora dist tag, and `%autorelease` is resolved to a concrete number via `rpmautospec` (see above). Any *other* in-spec macros — e.g. `Version: %{majorver}.%{minorver}` — remain unexpanded in the generated definitions. Lockless specs use lazy `%define` entries; locked specs load their macros file via `%{load:...}`. Both expand these references at build time using the spec's own macro definitions, so the consuming spec still sees the correct fully-expanded value.
 
 Limitations:
 

@@ -33,6 +33,85 @@ images assemble RPMs into bootable artifacts.
 
 ## Common commands
 
+`azldev comp make-lockless` adds selected exact names to the top-level
+`lockless-components.txt` if needed, then runs the refresh pipeline.
+The list is written in lexical order, one name per line without blank lines or duplicates.
+Existing names and lock files are retained. Already-listed components
+are still refreshed; a refresh failure leaves the list updated.
+
+Before preparing any lockless component, rendering checks staged changes,
+unstaged tracked changes, and untracked files outside `project.rendered-specs-dir`
+and in selected components' dist-git directories. Other rendered changes are ignored.
+Git-ignored files are excluded.
+Use `--allow-uncommitted` for intentional dirty renders; `--check-only` and
+`--no-git-commit` do not bypass this check. The override does not change
+committed-history carryover or failure recovery.
+
+For upstream components, rendering prepares the changelog before Release,
+then writes macros, applies overlays, and updates `sources`.
+Version detection and carryover use the upstream spec before overlays.
+Overlays can override the prepared release and changelog.
+Non-autorelease rendering then runs host `rpmdev-bumpspec`.
+A temporary process-local RPM wrapper sets `_sourcedir` and `_specdir` to the spec directory
+without changing `HOME` or editing the user's `.rpmmacros`; it is removed after the invocation,
+including on failure.
+Release edits preserve the existing spaces and tabs after `Release:`.
+Rendering compares output before the final release bump; `--check-only` stops before that bump.
+Unchanged lockless renders require `--no-change-rebuild`; otherwise rendering errors
+without replacing existing output. For unchanged autorelease components (upstream or local),
+the flag records host `date -Is` output in `.no-change-rebuild`.
+Upstream non-autorelease rebuilds proceed without a timestamp marker.
+Unchanged local non-autorelease components must manually update their release and changelog,
+even with `--no-change-rebuild`. Comparison
+ignores this root marker in both existing output and the working upstream checkout.
+Lockless failures never write `RENDER_FAILED`. Before replacement, output is
+untouched; failures after replacement starts clear the component directory and
+use Git to restore committed output, or leave no directory if none existed.
+Recovery discards uncommitted changes in that directory and keeps no backups.
+Before removing existing lockless output, host `rpmspec` compares source-package NEVRs.
+The package name must match. The new NEVR must be equal or higher for a final autorelease spec;
+non-autorelease requires a higher NEVR. Invalid values fail with both NEVRs shown.
+Validation errors leave existing output untouched and fail even without `--fail-on-error`.
+First renders, `--check-only`, and dry runs skip this replacement-time check.
+`--no-change-rebuild` never bypasses the NEVR check.
+It replaces and automatically commits the component output directory.
+The first commit also includes all staged changes, unstaged tracked changes,
+and non-ignored untracked files outside the rendered output directory.
+Other rendered paths are excluded even if staged; later commits include only
+their component's dist-git changes.
+`--changelog-comment` supplies the exact `rpmdev-bumpspec -c` value and commit
+message, with no default. If omitted, `$EDITOR` or a local editor collects the
+entry using a template with two blank lines and `#`-commented instructions
+when no upstream changes exist. Otherwise, line 1 is blank for the summary;
+non-autorelease changes start on line 2, while autorelease puts `...` on line 2
+and starts changes on line 3. Each change line is prefixed with `- ` and is editable.
+Blank lines and lines starting with `#` are removed, with no trailing newline;
+the cleaned text is reused for the Git message. Explicit flag values remain unchanged.
+Autorelease skips `rpmdev-bumpspec`; missing messages are collected before output replacement.
+Autorelease with `--no-git-commit` never prompts. Blank/comment-only edited messages fail rendering.
+The final Git commit never prompts; its first message line is the summary, and remaining lines are body.
+Provide `--changelog-comment` for unattended rendering.
+Required message prompts require both stdin and stdout to be TTYs; otherwise rendering fails.
+Non-interactive renders must use `--changelog-comment` and/or `--no-git-commit`.
+Upstream non-autorelease still needs `--changelog-comment` even with `--no-git-commit`.
+`--no-git-commit` skips automatic staging and committing, but still renders and
+bumps non-autorelease specs.
+Edited upstream changes are not appended again; explicit flag messages retain the upstream Git body.
+Commit refreshed TOML before rendering; configure Git author identity and install
+`rpmdevtools`, `rpm-build`, and `rpmautospec` as needed.
+Lockless rendering never uses mock or `rpmautospec process-distgit`; RPM macros
+remain unexpanded. Lockless rendering retains all prepared dist-git files except `.git`,
+without file filtering or `spectool` queries. Synthetic history
+and its legacy release adjustment are skipped during rendering.
+
+Local lockless components skip upstream carryover; Release and changelog remain unchanged.
+They exclude the TOML defining the local spec path, while retaining other TOML sidecars.
+They participate in unchanged-render checks and automatic commits.
+For local components, `--changelog-comment` supplies only the Git message; otherwise
+rendering collects it before output replacement, with commit-only instructions for non-autorelease.
+Local components with `--no-git-commit` never prompt.
+`--check-only` never creates project commits.
+
 Top-level commands in this build:
 
 {{ range .TopLevelCommands }}- `azldev {{ .Name }}` — {{ .Short }}
@@ -46,11 +125,43 @@ Everyday tasks (add `-q -O json` when scripting):
 | Add a component | `azldev comp add` |
 | Build a component | `azldev comp build -p <name>` |
 | Render specs | `azldev comp render -p <name>` (or `-a`) |
+| Extract committed dist-git history | `azldev comp dist-git-repo <name> -o <directory>` |
 | Refresh an upstream commit | `azldev comp refresh-upstream-commit -p <name>` |
 | List / build images | `azldev image list` / `azldev image build` |
 
 `comp` is an alias for `component`. Always confirm current syntax with
 `azldev <command> --help`.
+
+`comp dist-git-repo` requires exactly one component name, `--output-dir` (`-o`),
+and git-filter-repo. It clones the local project's current branch with
+`--single-branch --no-local`, then filters
+`{{ .RenderedSpecsDir }}/<lowercase-first-letter>/<name>` into the repository root.
+Only committed rendered files/history are exported; it does not fetch upstream.
+Existing output requires `--force`, which deletes it after preflight checks.
+
+For lockless components, `comp query` extracts committed rendered history into
+temporary dist-git repositories and processes it with rpmautospec in Mock before
+querying. Uncommitted rendered edits are ignored; locked queries still read the
+working tree. Lockless `comp prepare-sources` writes directly to `--output-dir`
+using render-style preparation. Current TOML and file inputs use the working tree,
+including modified and untracked files. Release/changelog baselines use only
+committed component dist-git files; edits in the existing dist-git directory are
+ignored. Nonempty output requires `--force`; failures can
+leave partial output. It downloads/generates sources before inline macro setup and
+overlays. Lockless specs use `%define` entries, with no separate macros file,
+load directive, or generated `Source9999`; locked specs retain their macros file.
+Archive overlays run before spec and
+loose-file overlays. It does not compare
+rendered output, apply a final render release bump, or commit. It reads render history from
+`project.rendered-specs-dir` using `<lowercase-first-letter>/<component>`, never
+from `--output-dir`. It never generates synthetic history. `--without-git`
+removes `.git` after successful preparation, preserving it on failure.
+It supports `--skip-overlays`, `--skip-sources`, and `--allow-no-hashes`.
+Skipping overlays also skips inline macro setup and `sources` metadata updates;
+skipping sources also skips archive overlays. Missing hashes cannot be computed
+when source acquisition is skipped.
+Use `comp dist-git-repo` for committed history extraction.
+`comp history` continues to skip lockless components.
 
 The hidden `advanced` group (`adv`) contains specialist integrations such as MCP and
 mock helpers; it is intentionally omitted from normal help.

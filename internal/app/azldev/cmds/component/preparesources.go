@@ -29,11 +29,11 @@ type PrepareSourcesOptions struct {
 	SkipSources    bool
 }
 
-func prepareOnAppInit(app *azldev.App, sourceCmd *cobra.Command) {
-	sourceCmd.AddCommand(NewPrepareSourcesCmd(cmdOptionsForApp(app)...))
+func prepareOnAppInit(_ *azldev.App, sourceCmd *cobra.Command) {
+	sourceCmd.AddCommand(NewPrepareSourcesCmd())
 }
 
-func NewPrepareSourcesCmd(opts ...CmdOption) *cobra.Command {
+func NewPrepareSourcesCmd() *cobra.Command {
 	var options PrepareSourcesOptions
 
 	var cmd *cobra.Command
@@ -49,7 +49,21 @@ The result is a directory containing the spec file and all sources, ready
 for inspection or manual building. This is useful for verifying that
 overlays apply cleanly before running a full build.
 
-Only one component may be selected at a time.`,
+Only one component may be selected at a time.
+For lockless components, render-style preparation writes directly to '--output-dir'
+and preserves fetched upstream Git metadata. Nonempty output requires '--force'.
+Current TOML and file inputs use the working tree, including modified and untracked
+files. Release/changelog baselines use only committed component dist-git files;
+uncommitted edits in that existing dist-git directory are ignored.
+It downloads/generates source payloads before inline macro definitions and configured
+overlays. Lockless specs contain %define entries, not a separate macros file,
+load directive, or Source9999 entry. Archive overlays run before spec and loose-file overlays. It does not
+compare rendered output, apply a final render release bump, or commit changes.
+Render history comes from 'project.rendered-specs-dir'/<lowercase-first-letter>/<component>,
+independently of '--output-dir'. No synthetic history is generated.
+'--without-git' removes fetched Git metadata after successful preparation.
+It honors '--skip-overlays', '--skip-sources', and '--allow-no-hashes'.
+Use 'azldev component dist-git-repo' to extract committed rendered history.`,
 		Example: `  # Prepare sources for a component
   azldev component prep-sources -p curl -o ./build/work/scratch/curl --force
 
@@ -67,7 +81,7 @@ Only one component may be selected at a time.`,
 		},
 	}
 
-	addComponentFilterOptions(cmd, &options.ComponentFilter, newCmdOptions(opts...))
+	addComponentFilterOptions(cmd, &options.ComponentFilter)
 
 	cmd.Flags().StringVarP(&options.OutputDir, "output-dir", "o", "", "output directory")
 	_ = cmd.MarkFlagRequired("output-dir")
@@ -75,7 +89,7 @@ Only one component may be selected at a time.`,
 
 	cmd.Flags().BoolVar(&options.SkipOverlays, "skip-overlays", false, "skip applying overlays to prepared sources")
 	cmd.Flags().BoolVar(&options.WithoutGitRepo, "without-git", false,
-		"Disable dist-git repository creation (enabled by default)")
+		"Exclude Git metadata from prepared output (locked components also skip synthetic dist-git creation)")
 	addRPMDevBumpspecFlag(cmd, &options.RPMDevBumpspec)
 
 	cmd.Flags().BoolVar(&options.Force, "force", false, "delete and recreate the output directory if it already exists")
@@ -89,10 +103,6 @@ Only one component may be selected at a time.`,
 }
 
 func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) error {
-	if err := validatePrepareSourcesOptions(options); err != nil {
-		return err
-	}
-
 	var comps *components.ComponentSet
 
 	resolver := components.NewResolver(env)
@@ -113,6 +123,15 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 	}
 
 	component := comps.Components()[0]
+
+	withoutLockfile := env.ComponentWithoutLockfile(component.GetName())
+	if err := validatePrepareSourcesOptions(options, withoutLockfile); err != nil {
+		return err
+	}
+
+	if withoutLockfile {
+		return prepareLocklessSources(env, component, options)
+	}
 
 	event := env.StartEvent("Preparing sources", "component", component.GetName(), "outputDir", options.OutputDir)
 	defer event.End()
@@ -141,7 +160,7 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 			"synthetic history requires overlays to be applied")
 	}
 
-	preparerOpts := buildPreparerOptions(env, distro, options)
+	preparerOpts := buildPreparerOptions(env, distro, options, component.GetName())
 
 	preparer, err := newSourcePreparer(sourceManager, env.FS(), env, env, append(
 		preparerOpts,
@@ -165,11 +184,12 @@ func buildPreparerOptions(
 	env *azldev.Env,
 	distro sourceproviders.ResolvedDistro,
 	options *PrepareSourcesOptions,
+	componentName string,
 ) []sources.PreparerOption {
 	var opts []sources.PreparerOption
 
 	if !options.WithoutGitRepo && !options.SkipOverlays {
-		opts = append(opts, gitRepoPreparerOptions(env, distro)...)
+		opts = append(opts, gitRepoPreparerOptions(env, distro, componentName)...)
 	}
 
 	if options.RPMDevBumpspec {
@@ -190,12 +210,12 @@ func buildPreparerOptions(
 	return opts
 }
 
-func validatePrepareSourcesOptions(options *PrepareSourcesOptions) error {
+func validatePrepareSourcesOptions(options *PrepareSourcesOptions, withoutLockfile bool) error {
 	if !options.RPMDevBumpspec {
 		return nil
 	}
 
-	if options.WithoutGitRepo {
+	if options.WithoutGitRepo && !withoutLockfile {
 		return errors.New("'--rpmdev-bumpspec' cannot be used with '--without-git'")
 	}
 

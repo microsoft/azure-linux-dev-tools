@@ -185,6 +185,169 @@ func TestComponentTomlSkillDocumentsRPMDevBumpspecPreview(t *testing.T) {
 	assert.Contains(t, doc, "no bumpspec runtime discovery occurs")
 }
 
+func TestComponentTomlSkillDocumentsPerComponentRenderModes(t *testing.T) {
+	for _, withoutLockfile := range []bool{false, true} {
+		doc, err := agentskill.NewCatalog(withoutLockfile).SkillDocument("azldev-comp-toml", testParams())
+		require.NoError(t, err)
+		assert.Contains(t, doc, "`lockless-components.txt` beside the top-level `azldev.toml`")
+		assert.Contains(t, doc, "all others use lock files")
+		assert.Contains(t, doc, "for every command")
+		assert.Contains(t, doc, "two blank lines and `#`-commented instructions")
+		assert.Contains(t, doc, "Blank lines and lines starting with `#` are removed, with no trailing newline")
+		assert.Contains(t, doc, "Local lockless components skip upstream carryover; Release and changelog remain unchanged")
+		assert.Contains(t, doc, "TOML defining the local spec path")
+		assert.Contains(t, doc, "participate in unchanged-render checks and automatic commits")
+		assert.Contains(t, doc, "The final Git commit never prompts")
+		assert.Contains(t, doc, "both stdin and stdout to be TTYs")
+		assert.Contains(t, doc, "Autorelease with `--no-git-commit` never prompts")
+		assert.Contains(t, doc, "Blank/comment-only edited messages fail rendering")
+		assert.Contains(t, doc, "Each change line is prefixed with `- ` and is editable")
+	}
+}
+
+func TestSkillsDocumentDistGitRepo(t *testing.T) {
+	for _, withoutLockfile := range []bool{false, true} {
+		doc, err := agentskill.NewCatalog(withoutLockfile).SkillDocument("azldev", testParams())
+		require.NoError(t, err)
+		assert.Contains(t, doc, "azldev comp dist-git-repo <name> -o <directory>")
+		assert.Contains(t, doc, "--single-branch --no-local")
+		assert.Contains(t, doc, "specs/<lowercase-first-letter>/<name>")
+		assert.Contains(t, doc, "and git-filter-repo")
+	}
+}
+
+func TestSkillsDocumentLocklessRPMContext(t *testing.T) {
+	for _, withoutLockfile := range []bool{false, true} {
+		doc, err := agentskill.NewCatalog(withoutLockfile).SkillDocument("azldev", testParams())
+		require.NoError(t, err)
+		assert.Contains(t, doc, "temporary process-local RPM wrapper sets `_sourcedir` and `_specdir`")
+		assert.Contains(t, doc, "without changing `HOME` or editing the user's `.rpmmacros`")
+		assert.Contains(t, doc, "removed after the invocation")
+	}
+}
+
+func TestSkillsDocumentLocklessBuildAndQuery(t *testing.T) {
+	for _, withoutLockfile := range []bool{false, true} {
+		catalog := agentskill.NewCatalog(withoutLockfile)
+		doc, err := catalog.SkillDocument("azldev", testParams())
+		require.NoError(t, err)
+		assert.Contains(t, doc, "`comp query` extracts committed rendered history")
+		assert.Contains(t, doc, "Lockless `comp prepare-sources` writes directly to `--output-dir`")
+		assert.Contains(t, doc, "including modified and untracked files.")
+		assert.Contains(t, doc, "committed component dist-git files; edits in the existing dist-git directory are")
+		assert.Contains(t, doc, "removes `.git` after successful preparation, preserving it on failure.")
+		assert.Contains(t, doc, "It supports `--skip-overlays`, `--skip-sources`, and `--allow-no-hashes`.")
+		assert.Contains(t, doc, "from `--output-dir`")
+		assert.Contains(t, doc, "locked queries still read the")
+		doc, err = catalog.SkillDocument("azldev-build-component", testParams())
+		require.NoError(t, err)
+		assert.Contains(t, doc, "Mock's rpmautospec plugin (Mock 5.3+)")
+		assert.Contains(t, doc, "Uncommitted rendered edits are ignored")
+		assert.Contains(t, doc, "Locked builds retain their existing")
+	}
+}
+
+func TestSkillsDocumentAutomaticLocklessRenderCommits(t *testing.T) {
+	for _, withoutLockfile := range []bool{false, true} {
+		doc, err := agentskill.NewCatalog(withoutLockfile).SkillDocument("azldev", testParams())
+		require.NoError(t, err)
+		assert.Contains(t, doc, "host `rpmdev-bumpspec`")
+		assert.Contains(t, doc, "`--check-only` never creates project commits")
+		assert.Contains(t, doc, "never uses mock or `rpmautospec process-distgit`")
+		assert.Contains(t, doc, "all prepared dist-git files except `.git`")
+		assert.NotContains(t, doc, "host `spectool` filtering")
+		assert.Contains(t, doc, "prepares the changelog before Release")
+		assert.Contains(t, doc, "Git-ignored files are excluded")
+		assert.Contains(t, doc, "and in selected components' dist-git directories. Other rendered changes are ignored.")
+		assert.Contains(t, doc, "`--allow-uncommitted`")
+		assert.Contains(t, doc, "first commit also includes")
+		assert.Contains(t, doc, "Other rendered paths are excluded even if staged")
+		assert.Contains(t, doc, "Version detection and carryover use the upstream spec before overlays")
+		assert.Contains(t, doc, "Overlays can override the prepared release and changelog")
+		assert.Contains(t, doc, "compares output before the final release bump; `--check-only` stops before that bump")
+		assert.Contains(t, doc, "Unchanged lockless renders require `--no-change-rebuild`")
+		assert.Contains(t, doc, "Local lockless components skip upstream carryover; Release and changelog remain unchanged")
+		assert.Contains(t, doc, "TOML defining the local spec path")
+		assert.Contains(t, doc, "participate in unchanged-render checks and automatic commits")
+		assert.Contains(t, doc, "host `date -Is` output")
+		assert.Contains(t, doc, "Upstream non-autorelease rebuilds proceed without a timestamp marker")
+		assert.Contains(t, doc, "must manually update their release and changelog")
+		assert.Contains(t, doc, "ignores this root marker in both existing output and the working upstream checkout")
+		assert.Contains(t, doc, "Lockless failures never write `RENDER_FAILED`")
+		assert.Contains(t, doc, "Recovery discards uncommitted changes in that directory and keeps no backups")
+		assert.Contains(t, doc, "The new NEVR must be equal or higher for a final autorelease spec")
+		assert.Contains(t, doc, "non-autorelease requires a higher NEVR")
+		assert.Contains(t, doc, "`--changelog-comment`")
+		assert.Contains(t, doc, "Autorelease skips `rpmdev-bumpspec`")
+		assert.Contains(t, doc, "`$EDITOR` or a local editor")
+		assert.Contains(t, doc, "The final Git commit never prompts")
+		assert.Contains(t, doc, "Local components with `--no-git-commit` never prompt")
+		assert.Contains(t, doc, "Each change line is prefixed with `- ` and is editable")
+		assert.Contains(t, doc, "two blank lines and `#`-commented instructions")
+		assert.Contains(t, doc, "Blank lines and lines starting with `#` are removed, with no trailing newline")
+		assert.Contains(t, doc, "`--no-git-commit` skips automatic staging and committing")
+		assert.Contains(t, doc, "`azldev comp make-lockless`")
+		assert.Contains(t, doc, "lexical order")
+		assert.Contains(t, doc, "without blank lines or duplicates")
+		assert.Contains(t, doc, "spaces and tabs after `Release:`")
+	}
+
+	doc, err := agentskill.SkillDocument("azldev-refresh-upstream-commit", testParams())
+	require.NoError(t, err)
+	assert.Contains(t, doc, "fully parsed committed TOML")
+	assert.Contains(t, doc, "Git-ignored files are excluded")
+	assert.Contains(t, doc, "and in selected components' dist-git directories. Other rendered changes are ignored.")
+	assert.Contains(t, doc, "`--allow-uncommitted`")
+	assert.Contains(t, doc, "`render --allow-uncommitted`")
+	assert.Contains(t, doc, "automatically commits that directory")
+	assert.Contains(t, doc, "first commit also includes")
+	assert.Contains(t, doc, "Other rendered paths are excluded even if staged")
+	assert.Contains(t, doc, "## RPMAUTOSPEC:")
+	assert.Contains(t, doc, "leading integer of the committed,")
+	assert.Contains(t, doc, "an omitted `-b` stays omitted")
+	assert.Contains(t, doc, "committed file byte-for-byte")
+	assert.Contains(t, doc, "Static release carryover runs only when committed output exists and the version")
+	assert.Contains(t, doc, "Initial and legacy autorelease handling do not depend on version changes")
+	assert.Contains(t, doc, "base only when the version is unchanged")
+	assert.Contains(t, doc, "When the version changes, rendering calculates the upstream numeric base and sets `-b`")
+	assert.Contains(t, doc, "The committed changelog is still carried over, not regenerated")
+	assert.Contains(t, doc, "A calculated base of `1` omits `-b`")
+	assert.Contains(t, doc, "Changelog handling precedes release preparation and is independent of version")
+	assert.Contains(t, doc, "retains `%autorelease`, `%autochangelog`")
+	assert.Contains(t, doc, "effective upstream distro's `dist-git-branch`")
+	assert.Contains(t, doc, "fetches that historical branch before comparing commits")
+	assert.Contains(t, doc, "fetches that specific commit hash")
+	assert.Contains(t, doc, "update to upstream <component-name> commit <current-hash>")
+	assert.Contains(t, doc, "All prepared dist-git files except `.git` are retained")
+	assert.Contains(t, doc, "immediately after checking out the pinned upstream commit")
+	assert.Contains(t, doc, "that step never repeats the provenance query")
+	assert.Contains(t, doc, "the changelog before Release, then emits inline macros")
+	assert.Contains(t, doc, "Version detection and carryover use the upstream spec before overlays")
+	assert.Contains(t, doc, "Overlays can override the prepared release and changelog")
+	assert.Contains(t, doc, "compares output before the final release bump; `--check-only` stops before that bump")
+	assert.Contains(t, doc, "Unchanged lockless renders require `--no-change-rebuild`")
+	assert.Contains(t, doc, "host `date -Is` output")
+	assert.Contains(t, doc, "Upstream non-autorelease rebuilds proceed without a timestamp marker")
+	assert.Contains(t, doc, "must manually update their release and changelog")
+	assert.Contains(t, doc, "ignores this root marker in both existing output and the working upstream checkout")
+	assert.Contains(t, doc, "Lockless failures never write `RENDER_FAILED`")
+	assert.Contains(t, doc, "Recovery discards uncommitted changes in that directory and keeps no backups")
+	assert.Contains(t, doc, "The new NEVR must be equal or higher for a final autorelease spec")
+	assert.Contains(t, doc, "non-autorelease requires a higher NEVR")
+	assert.Contains(t, doc, "`--changelog-comment`")
+	assert.Contains(t, doc, "Autorelease skips `rpmdev-bumpspec`")
+	assert.Contains(t, doc, "`$EDITOR` or a local editor")
+	assert.Contains(t, doc, "The final Git commit never prompts")
+	assert.Contains(t, doc, "Autorelease with `--no-git-commit` never prompts")
+	assert.Contains(t, doc, "Each change line is prefixed with `- ` and is editable")
+	assert.Contains(t, doc, "two blank lines and `#`-commented instructions")
+	assert.Contains(t, doc, "Blank lines and lines starting with `#` are removed, with no trailing newline")
+	assert.Contains(t, doc, "`--no-git-commit` skips automatic staging and committing")
+	assert.Contains(t, doc, "`azldev comp make-lockless`")
+	assert.Contains(t, doc, "spaces and tabs after `Release:`")
+	assert.NotContains(t, doc, "git commit --amend")
+}
+
 func TestImageSkillDocumentsSKUGroupGuidance(t *testing.T) {
 	doc, err := agentskill.SkillDocument("azldev-image", testParams())
 	require.NoError(t, err)
@@ -573,18 +736,18 @@ func TestImageSkillCoversCapabilities(t *testing.T) {
 }
 
 // TestCatalog_SkillsByMode verifies that each mode advertises the skill describing
-// how it maintains resolved component state, and only that one.
+// how it maintains resolved component state, including both workflows by default.
 func TestCatalog_SkillsByMode(t *testing.T) {
 	defaultNames := skillNamesOf(agentskill.NewCatalog(false))
 	assert.Contains(t, defaultNames, "azldev-update-component")
-	assert.NotContains(t, defaultNames, "azldev-refresh-upstream-commit")
+	assert.Contains(t, defaultNames, "azldev-refresh-upstream-commit")
 
 	withoutLockfileNames := skillNamesOf(agentskill.NewCatalog(true))
 	assert.Contains(t, withoutLockfileNames, "azldev-refresh-upstream-commit")
 	assert.NotContains(t, withoutLockfileNames, "azldev-update-component")
 
 	// The two catalogs otherwise describe the same set of skills, in the same order.
-	assert.Len(t, withoutLockfileNames, len(defaultNames))
+	assert.Len(t, withoutLockfileNames, len(defaultNames)-1)
 }
 
 // TestCatalog_SkillContentByMode verifies that the rendered skill bodies describe

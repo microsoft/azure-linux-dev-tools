@@ -36,7 +36,6 @@ components defined in the project configuration.
   -q, --quiet[=true|false]               only enable minimal output
       --unique-mockroot[=true|false]     use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently
   -v, --verbose[=true|false]             enable verbose output
-      --without-lockfile[=true|false]    preview: track resolved upstream commits in generated config instead of lock files
 ```
 
 ### SEE ALSO
@@ -46,11 +45,14 @@ components defined in the project configuration.
 * [azldev component build](azldev_component_build.md)	 - Build packages for components
 * [azldev component changed](azldev_component_changed.md)	 - Detect which components changed between two git refs
 * [azldev component diff-sources](azldev_component_diff-sources.md)	 - Show the diff that overlays apply to a component's sources
+* [azldev component dist-git-repo](azldev_component_dist-git-repo.md)	 - Extract a component's committed dist-git history into a repository
 * [azldev component history](azldev_component_history.md)	 - Report per-component change activity and customization detail
 * [azldev component list](azldev_component_list.md)	 - List components in this project
+* [azldev component make-lockless](azldev_component_make-lockless.md)	 - Select the lockless workflow and refresh upstream commits
 * [azldev component metadata](azldev_component_metadata.md)	 - List documentation metadata for components' overlays and groups
 * [azldev component prepare-sources](azldev_component_prepare-sources.md)	 - Prepare buildable sources for components
 * [azldev component query](azldev_component_query.md)	 - Query info from locally rendered component specs
+* [azldev component refresh-upstream-commit](azldev_component_refresh-upstream-commit.md)	 - Resolve and record upstream commits for components
 * [azldev component render](azldev_component_render.md)	 - Render post-overlay specs and sidecar files to a checked-in directory
 * [azldev component test](azldev_component_test.md)	 - Run a component's TMT tests in a local QEMU VM
 * [azldev component update](azldev_component_update.md)	 - Resolve and lock source identities for components

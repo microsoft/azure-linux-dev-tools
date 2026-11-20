@@ -35,11 +35,10 @@ const distPlaceholder = "%{?dist}"
 // against the Azure Linux buildroot's dist tag at build time.
 const distPlaceholderPlain = "%{dist}"
 
-// autoreleaseResolver resolves an rpmautospec %autorelease to a concrete Fedora
-// release number by running rpmautospec in an isolated environment (a mock
-// chroot in production). Abstracted so tests can substitute a fake without a
-// real mock. Implemented by [*MockProcessor].
-type autoreleaseResolver interface {
+// AutoreleaseResolver resolves an rpmautospec %autorelease to a concrete Fedora
+// release number. Lockless rendering runs it on the host; other workflows use
+// [MockProcessor].
+type AutoreleaseResolver interface {
 	// CalculateRelease returns the raw `rpmautospec calculate-release` output
 	// for the spec named specFilename inside specHostDir (which must hold the
 	// pristine .git history). The caller parses and validates the result.
@@ -108,6 +107,13 @@ func (p *sourcePreparerImpl) addUpstreamProvenanceMacros(
 		return
 	}
 
+	_, versionDefined := macros[fedoraUpstreamVersionMacro]
+
+	_, releaseDefined := macros[fedoraUpstreamReleaseMacro]
+	if versionDefined && releaseDefined {
+		return
+	}
+
 	specPath, err := findSpecInDir(p.fs, component, sourcesDir)
 	if err != nil {
 		// The user opted in via emit-upstream-provenance, so surface the
@@ -129,6 +135,10 @@ func (p *sourcePreparerImpl) addUpstreamProvenanceMacros(
 
 	if version != "" {
 		setMacroIfAbsent(macros, fedoraUpstreamVersionMacro, version)
+	}
+
+	if releaseDefined {
+		return
 	}
 
 	resolvedRelease := p.resolveUpstreamRelease(ctx, component.GetName(), release, sourcesDir, specPath)
@@ -185,8 +195,8 @@ func replaceDistTag(release, distTag string) string {
 }
 
 // calculateAutorelease resolves an rpmautospec %autorelease to the pristine
-// Fedora release number (without the dist tag) by running rpmautospec inside a
-// mock chroot via the configured [autoreleaseResolver]. Best-effort: returns ""
+// Fedora release number (without the dist tag) through the configured
+// [AutoreleaseResolver]. Best-effort: returns ""
 // with a warning when the dist-git history is unavailable, no resolver is
 // configured, the command fails, or the output is not a usable release number.
 func (p *sourcePreparerImpl) calculateAutorelease(
@@ -202,7 +212,7 @@ func (p *sourcePreparerImpl) calculateAutorelease(
 	}
 
 	if p.autoreleaseResolver == nil {
-		slog.Warn("Skipping %fedora_upstream_release; no mock processor available to resolve %autorelease",
+		slog.Warn("Skipping %fedora_upstream_release; no resolver available to resolve %autorelease",
 			"component", componentName)
 
 		return ""

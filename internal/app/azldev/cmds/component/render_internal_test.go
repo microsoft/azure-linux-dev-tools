@@ -4,15 +4,25 @@
 package component
 
 import (
+	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components/components_testutils"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
+	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 func TestFindSpecFile(t *testing.T) {
@@ -55,6 +65,103 @@ func TestFindSpecFile(t *testing.T) {
 		_, err := findSpecFile(fs, "/nonexistent", "curl")
 		require.Error(t, err)
 	})
+}
+
+func TestMoveRenderedOutput(t *testing.T) {
+	const (
+		workingDir = "/working/curl"
+		outputDir  = "/rendered/c/curl"
+	)
+
+	for _, testCase := range []struct {
+		name           string
+		existing       bool
+		allowOverwrite bool
+		dryRun         bool
+		wantErr        bool
+	}{
+		{name: "new output"},
+		{name: "replaces output", existing: true, allowOverwrite: true},
+		{name: "requires overwrite permission", existing: true, wantErr: true},
+		{name: "dry run preserves both trees", existing: true, allowOverwrite: true, dryRun: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			testEnv := testutils.NewTestEnv(t)
+			fs := testEnv.TestFS
+			env := azldev.NewEnv(t.Context(), azldev.EnvOptions{
+				ProjectDir: testEnv.Env.ProjectDir(), Config: testEnv.Config,
+				Interfaces: testEnv.TestInterfaces, EventListener: testEnv.EventListener,
+				DryRunnable: azldev.NewAppDryRunnable(testCase.dryRun),
+			})
+
+			files := map[string]string{
+				"curl.spec": "Name: curl\n", ".gitignore": "upstream ignore rules",
+				"extras/nested.patch": "nested sidecar",
+			}
+			for name, content := range files {
+				path := filepath.Join(workingDir, name)
+				require.NoError(t, fileutils.MkdirAll(fs, filepath.Dir(path)))
+				require.NoError(t, fileutils.WriteFile(fs, path, []byte(content), fileperms.PublicFile))
+			}
+
+			require.NoError(t, fileutils.MkdirAll(fs, filepath.Join(workingDir, "empty")))
+			require.NoError(t, fileutils.MkdirAll(fs, filepath.Join(workingDir, ".git")))
+			gitHead := filepath.Join(workingDir, ".git/HEAD")
+			require.NoError(t, fileutils.WriteFile(fs, gitHead, []byte("upstream history"), fileperms.PublicFile))
+
+			oldPath := filepath.Join(outputDir, "stale/nested.txt")
+			if testCase.existing {
+				require.NoError(t, fileutils.MkdirAll(fs, filepath.Dir(oldPath)))
+				require.NoError(t, fileutils.WriteFile(fs, oldPath, []byte("old output"), fileperms.PublicFile))
+			}
+
+			err := moveRenderedOutput(env, workingDir, &preparedComponent{compOutputDir: outputDir}, testCase.allowOverwrite)
+			if testCase.wantErr {
+				require.ErrorContains(t, err, "use --force to overwrite")
+			} else {
+				require.NoError(t, err)
+			}
+
+			readDir := outputDir
+			if testCase.wantErr || testCase.dryRun {
+				readDir = workingDir
+			}
+
+			for name, want := range files {
+				content, err := fileutils.ReadFile(fs, filepath.Join(readDir, name))
+				require.NoError(t, err)
+				assert.Equal(t, want, string(content))
+			}
+
+			emptyExists, err := fileutils.DirExists(fs, filepath.Join(readDir, "empty"))
+			require.NoError(t, err)
+			assert.True(t, emptyExists)
+
+			if testCase.wantErr || testCase.dryRun {
+				head, err := fileutils.ReadFile(fs, gitHead)
+				require.NoError(t, err)
+				assert.Equal(t, "upstream history", string(head))
+
+				old, err := fileutils.ReadFile(fs, oldPath)
+				require.NoError(t, err)
+				assert.Equal(t, "old output", string(old))
+
+				return
+			}
+
+			for name, want := range files {
+				content, err := fileutils.ReadFile(fs, filepath.Join(workingDir, name))
+				require.NoError(t, err)
+				assert.Equal(t, want, string(content), "locked publication copies instead of moving")
+			}
+
+			for _, path := range []string{oldPath, filepath.Join(outputDir, ".git"), gitHead} {
+				exists, err := fileutils.Exists(fs, path)
+				require.NoError(t, err)
+				assert.False(t, exists)
+			}
+		})
+	}
 }
 
 func TestWriteRenderErrorMarker(t *testing.T) {
@@ -335,7 +442,7 @@ func TestWriteAliasSymlink(t *testing.T) {
 		realDir := filepath.Join(letterDir, "libxml++")
 		require.NoError(t, fileutils.MkdirAll(osFS, realDir))
 
-		err := writeAliasSymlink(osFS, realDir, "libxml++")
+		err := writeAliasSymlink(osFS, realDir, "libxml++", false)
 		require.NoError(t, err)
 
 		aliasPath := filepath.Join(letterDir, "libxml%2B%2B")
@@ -354,7 +461,7 @@ func TestWriteAliasSymlink(t *testing.T) {
 		realDir := filepath.Join(letterDir, "vim")
 		require.NoError(t, fileutils.MkdirAll(osFS, realDir))
 
-		err := writeAliasSymlink(osFS, realDir, "vim")
+		err := writeAliasSymlink(osFS, realDir, "vim", false)
 		require.NoError(t, err)
 
 		entries, err := fileutils.ReadDir(osFS, letterDir)
@@ -373,43 +480,107 @@ func TestWriteAliasSymlink(t *testing.T) {
 		aliasPath := filepath.Join(letterDir, "gtk%2B")
 		osSymlink(t, osFS, "nonexistent-target", aliasPath)
 
-		err := writeAliasSymlink(osFS, realDir, "gtk+")
+		err := writeAliasSymlink(osFS, realDir, "gtk+", false)
 		require.NoError(t, err)
 
 		assert.Equal(t, "gtk+", osReadlink(t, osFS, aliasPath), "stale symlink should be replaced")
 	})
 
-	t.Run("refuses to overwrite a non-symlink at alias path", func(t *testing.T) {
-		osFS := afero.NewOsFs()
-		root := t.TempDir()
-		letterDir := filepath.Join(root, "g")
-		realDir := filepath.Join(letterDir, "gtk+")
-		require.NoError(t, fileutils.MkdirAll(osFS, realDir))
+	const symlinkType = "symlink"
 
-		// Hypothetical collision: a real component named 'gtk%2B' already exists
-		// at the alias path. RPM names don't use '%' in practice, but the guard
-		// must protect against it.
-		collisionDir := filepath.Join(letterDir, "gtk%2B")
-		require.NoError(t, fileutils.MkdirAll(osFS, collisionDir))
+	for _, entryType := range []string{"file", "directory", symlinkType} {
+		t.Run("replaces existing "+entryType+" at alias path", func(t *testing.T) {
+			osFS := afero.NewOsFs()
+			letterDir := filepath.Join(t.TempDir(), "g")
+			realDir := filepath.Join(letterDir, "gtk+")
+			require.NoError(t, fileutils.MkdirAll(osFS, realDir))
 
-		err := writeAliasSymlink(osFS, realDir, "gtk+")
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "non-symlink")
+			aliasPath := filepath.Join(letterDir, "gtk%2B")
+			stalePath := aliasPath
 
-		// Collision dir must still exist -- the guard MUST NOT have destroyed it.
-		exists, existsErr := fileutils.DirExists(osFS, collisionDir)
-		require.NoError(t, existsErr)
-		assert.True(t, exists, "non-symlink at alias path must be preserved")
-	})
+			switch entryType {
+			case "directory":
+				stalePath = filepath.Join(aliasPath, "nested", "stale.txt")
+			case symlinkType:
+				stalePath = filepath.Join(letterDir, "old-target", "keep.txt")
+			}
+
+			require.NoError(t, fileutils.MkdirAll(osFS, filepath.Dir(stalePath)))
+			require.NoError(t, fileutils.WriteFile(osFS, stalePath, []byte("old contents"), fileperms.PublicFile))
+
+			if entryType == symlinkType {
+				osSymlink(t, osFS, "old-target", aliasPath)
+			}
+
+			require.NoError(t, writeAliasSymlink(osFS, realDir, "gtk+", true))
+			linkInfo := osLstat(t, osFS, aliasPath)
+			assert.NotZero(t, linkInfo.Mode()&os.ModeSymlink)
+			assert.Equal(t, "gtk+", osReadlink(t, osFS, aliasPath))
+
+			if entryType == symlinkType {
+				contents, err := fileutils.ReadFile(osFS, stalePath)
+				require.NoError(t, err)
+				assert.Equal(t, "old contents", string(contents), "removing an alias must not remove its target")
+			}
+		})
+	}
 
 	t.Run("no-op on filesystem without symlink support", func(t *testing.T) {
 		// MemMapFs does NOT implement afero.Linker -- function should silently no-op.
 		memFS := afero.NewMemMapFs()
 		require.NoError(t, fileutils.MkdirAll(memFS, "/SPECS/l/libxml++"))
 
-		err := writeAliasSymlink(memFS, "/SPECS/l/libxml++", "libxml++")
+		err := writeAliasSymlink(memFS, "/SPECS/l/libxml++", "libxml++", false)
 		assert.NoError(t, err, "must not fail when FS doesn't support symlinks")
 	})
+}
+
+type renderAliasTestFS struct {
+	afero.Fs
+	linked bool
+}
+
+func (fs *renderAliasTestFS) SymlinkIfPossible(_, _ string) error {
+	fs.linked = true
+
+	return nil
+}
+
+func TestWriteRenderedAlias_LockModes(t *testing.T) {
+	for _, lockless := range []bool{false, true} {
+		for _, directory := range []bool{false, true} {
+			t.Run(fmt.Sprintf("lockless=%t/directory=%t", lockless, directory), func(t *testing.T) {
+				env := testutils.NewTestEnv(t)
+				aliasFS := &renderAliasTestFS{Fs: env.TestFS}
+				env.TestFS = aliasFS
+				comp := components_testutils.NewMockComponent(gomock.NewController(t))
+				comp.EXPECT().GetName().AnyTimes().Return("libxml++")
+
+				path := "/output/l/libxml%2B%2B"
+				if directory {
+					path = filepath.Join(path, "keep.txt")
+				}
+
+				require.NoError(t, fileutils.WriteFile(aliasFS, path, []byte("keep"), fileperms.PublicFile))
+
+				writeRenderedAlias(env.Env, &preparedComponent{
+					comp: comp, compOutputDir: "/output/l/libxml++", lockless: lockless,
+				})
+
+				assert.Equal(t, lockless, aliasFS.linked)
+
+				exists, err := fileutils.Exists(aliasFS, path)
+				require.NoError(t, err)
+				assert.Equal(t, !lockless, exists)
+
+				if !lockless {
+					content, err := fileutils.ReadFile(aliasFS, path)
+					require.NoError(t, err)
+					assert.Equal(t, "keep", string(content))
+				}
+			})
+		}
+	}
 }
 
 func TestPruneOrphanRenderedDirs(t *testing.T) {
@@ -581,6 +752,275 @@ func TestWriteFailureMarkers(t *testing.T) {
 	})
 }
 
+func TestFinishComponentRender_PreservesGitMetadata(t *testing.T) {
+	for _, testCase := range []struct {
+		name      string
+		checkOnly bool
+	}{
+		{name: "normal render"},
+		{name: "check-only", checkOnly: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			comp := components_testutils.NewMockComponent(gomock.NewController(t))
+			comp.EXPECT().GetName().AnyTimes().Return("curl")
+
+			for _, root := range []string{"/staging/curl", "/output/curl"} {
+				for name, content := range map[string]string{
+					"curl.spec": "Name: curl\nVersion: 1\nRelease: 1\n", ".gitignore": "unchanged",
+				} {
+					require.NoError(t, fileutils.WriteFile(env.TestFS, filepath.Join(root, name),
+						[]byte(content), fileperms.PublicFile))
+				}
+			}
+
+			const gitHead = "/staging/curl/.git/HEAD"
+
+			require.NoError(t, fileutils.WriteFile(env.TestFS, gitHead, []byte("upstream"), fileperms.PublicFile))
+
+			prep := &preparedComponent{
+				comp: comp, specFilename: "curl.spec", compOutputDir: "/output/curl", lockless: true,
+			}
+			mockResults := map[string]*sources.ComponentMockResult{"curl": {}}
+
+			stubIncreasingRenderNEVR(t, env)
+			changed, err := finishComponentRender(env.Env, prep, mockResults, "/staging", true, testCase.checkOnly, false)
+			require.NoError(t, err)
+			assert.False(t, changed, "Git metadata alone must not count as rendered drift")
+
+			head, err := fileutils.ReadFile(env.TestFS, gitHead)
+			require.NoError(t, err)
+			assert.Equal(t, "upstream", string(head))
+
+			exists, err := fileutils.Exists(env.TestFS, "/output/curl/.git")
+			require.NoError(t, err)
+			assert.False(t, exists)
+		})
+	}
+}
+
+func TestFinishComponentRender_CheckOnlyMetadata(t *testing.T) {
+	for _, lockless := range []bool{false, true} {
+		for _, metadata := range []string{"", ".git/HEAD", noChangeRebuildMarker, "nested/" + noChangeRebuildMarker} {
+			t.Run(fmt.Sprintf("lockless=%t/%s", lockless, metadata), func(t *testing.T) {
+				env := testutils.NewTestEnv(t)
+				comp := components_testutils.NewMockComponent(gomock.NewController(t))
+				comp.EXPECT().GetName().AnyTimes().Return("curl")
+				comp.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
+					Render: projectconfig.ComponentRenderConfig{SkipFileFilter: true},
+				})
+
+				for _, root := range []string{"/staging/curl", "/output/curl"} {
+					require.NoError(t, fileutils.WriteFile(env.TestFS, filepath.Join(root, "curl.spec"),
+						[]byte("Name: curl\n"), fileperms.PublicFile))
+				}
+
+				const stagedGit = "/staging/curl/.git/HEAD"
+				require.NoError(t, fileutils.WriteFile(env.TestFS, stagedGit, []byte("upstream"), fileperms.PublicFile))
+
+				if metadata != "" {
+					require.NoError(t, fileutils.WriteFile(env.TestFS, filepath.Join("/output/curl", metadata),
+						[]byte("existing metadata"), fileperms.PublicFile))
+				}
+
+				prep := &preparedComponent{
+					comp: comp, specFilename: "curl.spec", compOutputDir: "/output/curl", lockless: lockless,
+				}
+				changed, err := finishComponentRender(env.Env, prep,
+					map[string]*sources.ComponentMockResult{"curl": {}}, "/staging", true, true, false)
+				require.NoError(t, err)
+				assert.Equal(t, metadata != "" && (!lockless || strings.HasPrefix(metadata, "nested/")), changed)
+
+				exists, err := fileutils.Exists(env.TestFS, stagedGit)
+				require.NoError(t, err)
+				assert.Equal(t, lockless, exists)
+
+				if metadata != "" {
+					content, err := fileutils.ReadFile(env.TestFS, filepath.Join("/output/curl", metadata))
+					require.NoError(t, err)
+					assert.Equal(t, "existing metadata", string(content), "check-only must not change existing output")
+				}
+			})
+		}
+	}
+}
+
+func TestFinishComponentRender_ComparisonBeforeBump(t *testing.T) {
+	for _, testCase := range []struct {
+		name            string
+		checkOnly       bool
+		drift           bool
+		autorelease     bool
+		compareFail     bool
+		noChangeRebuild bool
+		wantNoChanges   bool
+		wantChanged     bool
+	}{
+		{name: "check-only unchanged with flag", checkOnly: true, noChangeRebuild: true},
+		{name: "check-only drift", checkOnly: true, drift: true, wantChanged: true},
+		{name: "unchanged render refused", wantNoChanges: true},
+		{name: "forced static bump", noChangeRebuild: true, wantChanged: true},
+		{name: "forced autorelease no-op", autorelease: true, noChangeRebuild: true, wantChanged: true},
+		{name: "normal drift and no-op", autorelease: true, drift: true, wantChanged: true},
+		{name: "drift with flag", drift: true, noChangeRebuild: true, wantChanged: true},
+		{name: "comparison fails", compareFail: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			baseFS := env.TestFS
+			comp := components_testutils.NewMockComponent(gomock.NewController(t))
+			comp.EXPECT().GetName().AnyTimes().Return("curl")
+
+			release := "9"
+			if testCase.autorelease {
+				release = "%autorelease"
+			}
+
+			original := renderTestSpec("1", release, "* Previous entry\n")
+
+			actual := original
+			if testCase.drift {
+				actual += "\n# Stale output\n"
+			}
+
+			const (
+				stagedSpec = "/staging/curl/curl.spec"
+				outputSpec = "/output/curl/curl.spec"
+				timestamp  = "2026-11-04T22:53:27+00:00\n"
+			)
+
+			require.NoError(t, fileutils.WriteFile(baseFS, stagedSpec, []byte(original), fileperms.PublicFile))
+			require.NoError(t, fileutils.WriteFile(baseFS, outputSpec, []byte(actual), fileperms.PublicFile))
+			markerPath := filepath.Join(filepath.Dir(outputSpec), noChangeRebuildMarker)
+			require.NoError(t, fileutils.WriteFile(baseFS, markerPath, []byte("old timestamp\n"), fileperms.PublicFile))
+
+			comparisonFS := &renderComparisonFS{Fs: baseFS, path: outputSpec}
+			if testCase.compareFail {
+				comparisonFS.readErr = errors.New("comparison read failed")
+			}
+
+			env.TestFS = comparisonFS
+			called := false
+			dated := false
+			wantFinish := !testCase.checkOnly && !testCase.compareFail && !testCase.wantNoChanges
+			wantBump := wantFinish && !testCase.autorelease
+			wantMarker := wantFinish && !testCase.drift && testCase.autorelease
+
+			env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+				assert.True(t, comparisonFS.compared, "comparison must precede the bump")
+
+				called = true
+
+				assert.Equal(t, "rpmdev-bumpspec", cmd.Args[0])
+
+				markerExists, err := fileutils.Exists(baseFS, filepath.Join(filepath.Dir(stagedSpec), noChangeRebuildMarker))
+				require.NoError(t, err)
+				assert.False(t, markerExists, "static release bumps must not create a timestamp")
+
+				bumped := strings.Replace(original, "Release: 9\n", "Release: 10\n", 1)
+
+				return fileutils.WriteFile(baseFS, stagedSpec, []byte(bumped), fileperms.PublicFile)
+			}
+
+			env.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+				assert.True(t, comparisonFS.compared)
+				assert.False(t, called)
+				assert.Equal(t, []string{"date", "-Is"}, cmd.Args)
+				assert.Equal(t, filepath.Dir(stagedSpec), cmd.Dir)
+
+				dated = true
+
+				return timestamp, nil
+			}
+			if !testCase.checkOnly {
+				env.CmdFactory.RegisterCommandInSearchPath("rpmdev-bumpspec")
+
+				if testCase.autorelease {
+					env.CmdFactory.RegisterCommandInSearchPath("date")
+				}
+			}
+
+			prep := &preparedComponent{
+				comp: comp, specFilename: "curl.spec", compOutputDir: "/output/curl",
+				lockless: true, update: &locklessRenderUpdate{subject: "updated curl"},
+			}
+
+			stubIncreasingRenderNEVR(t, env)
+			result := finishOneComponent(env.Env, prep,
+				map[string]*sources.ComponentMockResult{"curl": {}}, "/staging", true, testCase.checkOnly, testCase.noChangeRebuild)
+
+			err := result.renderErr
+
+			switch {
+			case testCase.compareFail:
+				require.ErrorIs(t, err, comparisonFS.readErr)
+			case testCase.wantNoChanges:
+				require.ErrorIs(t, err, errNoRenderChanges)
+				writeFailureMarkers(baseFS, []*RenderResult{result}, true, false)
+
+				for _, failOnError := range []bool{false, true} {
+					require.ErrorIs(t, checkRenderErrors([]*RenderResult{result}, failOnError), errNoRenderChanges)
+				}
+			default:
+				require.NoError(t, err)
+			}
+
+			assert.True(t, comparisonFS.compared)
+			assert.Equal(t, wantBump, called)
+			assert.Equal(t, wantMarker, dated)
+			assert.Equal(t, testCase.wantChanged, result.Changed)
+
+			want := strings.Replace(original, "Release: 9\n", "Release: 10\n", 1)
+			if !wantFinish {
+				want = actual
+				staged, readErr := fileutils.ReadFile(baseFS, stagedSpec)
+				require.NoError(t, readErr)
+				assert.Equal(t, original, string(staged))
+			} else if !wantBump {
+				want = original
+			}
+
+			output, readErr := fileutils.ReadFile(baseFS, outputSpec)
+			require.NoError(t, readErr)
+			assert.Equal(t, want, string(output))
+
+			markerExists, readErr := fileutils.Exists(baseFS, markerPath)
+			require.NoError(t, readErr)
+			assert.Equal(t, !wantFinish || wantMarker, markerExists)
+
+			if markerExists {
+				marker, readErr := fileutils.ReadFile(baseFS, markerPath)
+				require.NoError(t, readErr)
+
+				wantTimestamp := "old timestamp\n"
+				if wantMarker {
+					wantTimestamp = timestamp
+				}
+
+				assert.Equal(t, wantTimestamp, string(marker))
+			}
+		})
+	}
+}
+
+type renderComparisonFS struct {
+	afero.Fs
+	path     string
+	compared bool
+	readErr  error
+}
+
+func (fs *renderComparisonFS) Open(name string) (afero.File, error) {
+	if name == fs.path {
+		fs.compared = true
+		if fs.readErr != nil {
+			return nil, fs.readErr
+		}
+	}
+
+	return fs.Fs.Open(name)
+}
+
 func TestDiffRenderedOutput(t *testing.T) {
 	t.Parallel()
 
@@ -593,7 +1033,7 @@ func TestDiffRenderedOutput(t *testing.T) {
 		require.NoError(t, fileutils.WriteFile(testFS, "/act/curl.spec", []byte("Name: curl"), fileperms.PublicFile))
 		require.NoError(t, fileutils.WriteFile(testFS, "/act/sources", []byte("hash"), fileperms.PublicFile))
 
-		drifted, err := diffRenderedOutput(testFS, "/exp", "/act")
+		drifted, err := diffRenderedOutput(testFS, "/exp", "/act", false)
 		require.NoError(t, err)
 		assert.False(t, drifted)
 	})
@@ -604,7 +1044,7 @@ func TestDiffRenderedOutput(t *testing.T) {
 		testFS := afero.NewMemMapFs()
 		require.NoError(t, fileutils.WriteFile(testFS, "/exp/curl.spec", []byte("x"), fileperms.PublicFile))
 
-		drifted, err := diffRenderedOutput(testFS, "/exp", "/missing")
+		drifted, err := diffRenderedOutput(testFS, "/exp", "/missing", false)
 		require.NoError(t, err)
 		assert.True(t, drifted)
 	})
@@ -616,7 +1056,7 @@ func TestDiffRenderedOutput(t *testing.T) {
 		require.NoError(t, fileutils.WriteFile(testFS, "/exp/curl.spec", []byte("v2"), fileperms.PublicFile))
 		require.NoError(t, fileutils.WriteFile(testFS, "/act/curl.spec", []byte("v1"), fileperms.PublicFile))
 
-		drifted, err := diffRenderedOutput(testFS, "/exp", "/act")
+		drifted, err := diffRenderedOutput(testFS, "/exp", "/act", false)
 		require.NoError(t, err)
 		assert.True(t, drifted)
 	})
@@ -629,10 +1069,49 @@ func TestDiffRenderedOutput(t *testing.T) {
 		require.NoError(t, fileutils.WriteFile(testFS, "/act/curl.spec", []byte("x"), fileperms.PublicFile))
 		require.NoError(t, fileutils.WriteFile(testFS, "/act/stale.patch", []byte("y"), fileperms.PublicFile))
 
-		drifted, err := diffRenderedOutput(testFS, "/exp", "/act")
+		drifted, err := diffRenderedOutput(testFS, "/exp", "/act", false)
 		require.NoError(t, err)
 		assert.True(t, drifted)
 	})
+}
+
+func TestDiffRenderedOutput_RebuildMarker(t *testing.T) {
+	t.Parallel()
+
+	for _, testCase := range []struct {
+		name, existing, working string
+		wantChanged             bool
+	}{
+		{name: "existing marker ignored", existing: noChangeRebuildMarker},
+		{name: "working marker ignored", working: noChangeRebuildMarker},
+		{name: "different markers ignored", existing: noChangeRebuildMarker, working: noChangeRebuildMarker},
+		{name: "nested existing marker compared", existing: "nested/" + noChangeRebuildMarker, wantChanged: true},
+		{name: "nested working marker compared", working: "nested/" + noChangeRebuildMarker, wantChanged: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			testFS := afero.NewMemMapFs()
+			for _, root := range []string{"/existing", "/working"} {
+				require.NoError(t, fileutils.WriteFile(testFS, filepath.Join(root, "curl.spec"),
+					[]byte("identical"), fileperms.PublicFile))
+			}
+
+			if testCase.existing != "" {
+				require.NoError(t, fileutils.WriteFile(testFS, filepath.Join("/existing", testCase.existing),
+					[]byte("timestamp\n"), fileperms.PublicFile))
+			}
+
+			if testCase.working != "" {
+				require.NoError(t, fileutils.WriteFile(testFS, filepath.Join("/working", testCase.working),
+					[]byte("working timestamp\n"), fileperms.PublicFile))
+			}
+
+			changed, err := diffRenderedOutput(testFS, "/working", "/existing", true)
+			require.NoError(t, err)
+			assert.Equal(t, testCase.wantChanged, changed)
+		})
+	}
 }
 
 func TestOutputDriftsFromMarker(t *testing.T) {

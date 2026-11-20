@@ -52,7 +52,8 @@ var sectionTypesByName = map[string]SectionType{
 
 // Spec encapsulates the contents of an RPM spec file.
 type structuralSpec struct {
-	rawLines []string
+	rawLines                  []string
+	preserveReleaseFormatting bool
 }
 
 // Line represents a single line in an RPM spec file.
@@ -137,9 +138,9 @@ func (*RawLine) GetType() ParsedLineType {
 
 // OpenSpec reads in the contents of an RPM spec file from the provided reader, returning a [Spec] object.
 // An error is returned if the reader cannot be fully read (e.g., I/O error or line exceeds buffer size).
-func openStructuralSpec(reader io.Reader) (*structuralSpec, error) {
+func openStructuralSpec(reader io.Reader, preserveReleaseFormatting bool) (*structuralSpec, error) {
 	scanner := bufio.NewScanner(reader)
-	spec := &structuralSpec{}
+	spec := &structuralSpec{preserveReleaseFormatting: preserveReleaseFormatting}
 
 	// Read each line from the reader, parsing as we go. Store all parsed lines in the spec object.
 	for scanner.Scan() {

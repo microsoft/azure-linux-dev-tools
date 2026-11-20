@@ -65,6 +65,7 @@ func ReadAllAtCommit(
 	repo *gogit.Repository,
 	commitHash string,
 	lockRelDir string,
+	ignoredComponents ...string,
 ) (map[string]ComponentLock, error) {
 	lockRelDir, err := cleanLockRelDir(lockRelDir)
 	if err != nil {
@@ -80,7 +81,7 @@ func ReadAllAtCommit(
 		return make(map[string]ComponentLock), nil
 	}
 
-	return parseLockEntries(lockSubtree, lockRelDir, commitHash)
+	return parseLockEntries(lockSubtree, lockRelDir, commitHash, ignoredComponents...)
 }
 
 // cleanLockRelDir normalizes and validates a repo-relative lock directory path.
@@ -136,8 +137,14 @@ func resolveLockSubtree(
 // parseLockEntries reads all lock files from a resolved tree.
 func parseLockEntries(
 	lockSubtree *object.Tree, lockRelDir, commitHash string,
+	ignoredComponents ...string,
 ) (map[string]ComponentLock, error) {
 	locks := make(map[string]ComponentLock)
+
+	ignored := make(map[string]bool, len(ignoredComponents))
+	for _, name := range ignoredComponents {
+		ignored[name] = true
+	}
 
 	for _, entry := range lockSubtree.Entries {
 		if !entry.Mode.IsFile() ||
@@ -147,6 +154,10 @@ func parseLockEntries(
 		}
 
 		name := strings.TrimSuffix(entry.Name, lockFileExtension)
+		if ignored[name] {
+			continue
+		}
+
 		entryPath := gopath.Join(lockRelDir, entry.Name)
 
 		file, fileErr := lockSubtree.File(entry.Name)

@@ -70,7 +70,7 @@ path = "../../specs/test-component.spec"
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			testEnv := testutils.NewTestEnvWithoutLockfile(t)
+			testEnv := testutils.NewTestEnv(t)
 
 			rootConfig := `includes = [
     "base/upstream-commits/*.toml",
@@ -93,6 +93,9 @@ release-ver = "1.0"
 				fileperms.PublicFile,
 			))
 
+			require.NoError(t, fileutils.WriteFile(testEnv.TestFS, "/project/lockless-components.txt",
+				[]byte("test-component\n"), fileperms.PublicFile))
+
 			if testCase.componentConfig != "" {
 				require.NoError(t, fileutils.WriteFile(
 					testEnv.TestFS,
@@ -110,11 +113,7 @@ release-ver = "1.0"
 				testEnv.TestInterfaces.OSEnvFactory,
 			)
 
-			// The command is only registered in lock-file-free mode, which the
-			// CLI selects by pre-parsing the global flags before registration.
-			args := []string{
-				"--without-lockfile", "component", "refresh-upstream-commit", "--all-components",
-			}
+			args := []string{"component", "refresh-upstream-commit", "--all-components"}
 
 			app.PreParseGlobalFlags(args)
 			componentcmds.OnAppInit(app)
@@ -166,6 +165,83 @@ func TestRefreshUpstreamCommits_WritesCommit(t *testing.T) {
 	require.NoError(t, loadErr)
 	assert.True(t, exists)
 	assert.Equal(t, commit, savedCommit)
+}
+
+func TestRefreshUpstreamCommits_OnlyRefreshesLocklessComponents(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	env.Config.LocklessComponents = map[string]bool{"rust-asyncband": true}
+	setupMockGit(env, "new-commit")
+	addRefreshUpstreamComponent(env, "curl")
+	addRefreshUpstreamComponent(env, "rust-asyncband")
+	store := upstreamcommit.NewStore(env.TestFS, testUpstreamCommitsDir)
+	require.NoError(t, store.Save("curl", "preserved-commit"))
+
+	results, err := componentcmds.RefreshUpstreamCommits(
+		env.Env, &componentcmds.RefreshUpstreamCommitOptions{
+			ComponentFilter: components.ComponentFilter{IncludeAllComponents: true},
+		})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, "rust-asyncband", results[0].Component)
+
+	commit, exists, err := store.Get("rust-asyncband")
+	require.NoError(t, err)
+	assert.True(t, exists)
+	assert.Equal(t, "new-commit", commit)
+	commit, exists, err = store.Get("curl")
+	require.NoError(t, err)
+	assert.True(t, exists)
+	assert.Equal(t, "preserved-commit", commit)
+}
+
+func TestRefreshUpstreamCommits_PreservesLockedPinsDuringOrphanCleanup(t *testing.T) {
+	for _, checkOnly := range []bool{false, true} {
+		t.Run(map[bool]string{false: "prune", true: "check-only"}[checkOnly], func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			addRefreshUpstreamComponent(env, "locked-upstream")
+			env.Config.Components["locked-local"] = projectconfig.ComponentConfig{
+				Name: "locked-local",
+				Spec: projectconfig.SpecSource{
+					SourceType: projectconfig.SpecSourceTypeLocal,
+					Path:       "/project/locked-local.spec",
+				},
+			}
+
+			store := upstreamcommit.NewStore(env.TestFS, testUpstreamCommitsDir)
+			for _, name := range []string{"locked-local", "locked-upstream"} {
+				require.NoError(t, store.Save(name, "preserved-commit"))
+			}
+
+			options := &componentcmds.RefreshUpstreamCommitOptions{
+				ComponentFilter: components.ComponentFilter{IncludeAllComponents: true},
+				CheckOnly:       checkOnly,
+			}
+			results, err := componentcmds.RefreshUpstreamCommits(env.Env, options)
+			require.NoError(t, err)
+			assert.Empty(t, results)
+
+			for _, name := range []string{"locked-local", "locked-upstream"} {
+				commit, exists, loadErr := store.Get(name)
+				require.NoError(t, loadErr)
+				assert.True(t, exists)
+				assert.Equal(t, "preserved-commit", commit)
+			}
+
+			require.NoError(t, store.Save("removed-component", "orphan-commit"))
+
+			_, err = componentcmds.RefreshUpstreamCommits(env.Env, options)
+			if checkOnly {
+				require.ErrorContains(t, err, "removed-component")
+				assert.NotContains(t, err.Error(), "locked-local")
+			} else {
+				require.NoError(t, err)
+			}
+
+			exists, err := store.Exists("removed-component")
+			require.NoError(t, err)
+			assert.Equal(t, checkOnly, exists)
+		})
+	}
 }
 
 func TestRefreshUpstreamCommits_ConfigOnlyChangeDoesNotChangeCommitTOML(t *testing.T) {
@@ -397,7 +473,7 @@ func TestRefreshUpstreamCommits_CheckOnly_StaleReturnsError(t *testing.T) {
 	require.Error(t, err, "stale TOML must produce a non-nil error in --check-only mode")
 	assert.Contains(t, err.Error(), "stale", "error message should mention staleness")
 	assert.Contains(t, err.Error(), "curl", "error message should name the stale component")
-	assert.Contains(t, err.Error(), "azldev --without-lockfile component refresh-upstream-commit -a",
+	assert.Contains(t, err.Error(), "azldev component refresh-upstream-commit -a",
 		"-a-scoped run should suggest the same -a invocation to refresh")
 
 	// Results slice must be returned alongside the error so structured

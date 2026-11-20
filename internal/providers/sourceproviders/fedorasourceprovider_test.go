@@ -6,6 +6,9 @@ package sourceproviders_test
 import (
 	"context"
 	"errors"
+	"os/exec"
+	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -1103,4 +1106,69 @@ func TestGetComponent_LockedCommitTakesPriorityOverConfigPin(t *testing.T) {
 
 	err = provider.GetComponent(context.Background(), mockComponent, destDir)
 	require.NoError(t, err)
+}
+
+func TestGetComponent_SingleBranchPreservesPinnedCommits(t *testing.T) {
+	for _, testCase := range []struct {
+		name       string
+		configPin  string
+		lockedPin  string
+		wantSingle bool
+		wantCommit string
+	}{
+		{name: "floating", wantSingle: true, wantCommit: "branch-head"},
+		{name: "explicit off-branch pin", configPin: testUpstreamCommit, wantCommit: testUpstreamCommit},
+		{name: "locked off-branch pin", lockedPin: testUpstreamCommit, wantCommit: testUpstreamCommit},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			gitProvider, err := git.NewGitProviderImpl(env.EventListener, env.CmdFactory)
+			require.NoError(t, err)
+			ctrl := gomock.NewController(t)
+			extractor := fedorasource_test.NewMockFedoraSourceDownloader(ctrl)
+			provider, err := sourceproviders.NewFedoraSourcesProviderImpl(
+				env.FS(), env.DryRunnable, gitProvider, extractor, testResolvedDistro(), retry.Disabled())
+			require.NoError(t, err)
+
+			config := &projectconfig.ComponentConfig{
+				Name: testPackageName,
+				Spec: projectconfig.SpecSource{UpstreamCommit: testCase.configPin},
+			}
+			if testCase.lockedPin != "" {
+				config.Locked = &projectconfig.ComponentLockData{UpstreamCommit: testCase.lockedPin}
+			}
+
+			component := components_testutils.NewMockComponent(ctrl)
+			component.EXPECT().GetName().AnyTimes().Return(testPackageName)
+			component.EXPECT().GetConfig().AnyTimes().Return(config)
+
+			cloned, checkedOut := false, false
+			env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+				if cmd.Args[1] == "clone" {
+					cloned = true
+
+					assert.Equal(t, testCase.wantSingle, slices.Contains(cmd.Args, "--single-branch"))
+					cloneDir := cmd.Args[len(cmd.Args)-1]
+
+					return fileutils.WriteFile(env.FS(), filepath.Join(cloneDir, testPackageName+".spec"),
+						[]byte("Name: "+testPackageName), fileperms.PublicFile)
+				}
+
+				checkedOut = true
+
+				assert.Equal(t, "checkout", cmd.Args[3])
+				assert.Equal(t, testCase.wantCommit, cmd.Args[4])
+
+				return nil
+			}
+			env.CmdFactory.RunAndGetOutputHandler = func(_ *exec.Cmd) (string, error) {
+				return "branch-head", nil
+			}
+
+			require.NoError(t, provider.GetComponent(t.Context(), component, destDir,
+				sourceproviders.WithSingleBranch(), sourceproviders.WithSkipLookaside()))
+			assert.True(t, cloned)
+			assert.True(t, checkedOut)
+		})
+	}
 }

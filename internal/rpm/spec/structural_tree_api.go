@@ -97,10 +97,17 @@ func (t *specTree) GetTag(pkg, name string) (string, bool) {
 
 // GetLastTag returns the last lexical tag matching name in the requested package.
 func (t *specTree) GetLastTag(pkg, name string) (string, bool) {
-	var (
-		value string
-		found bool
-	)
+	values := t.GetTags(pkg, name)
+	if len(values) == 0 {
+		return "", false
+	}
+
+	return values[len(values)-1], true
+}
+
+// GetTags returns the values of all instances of the named tag in pkg, in lexical order.
+func (t *specTree) GetTags(pkg, name string) []string {
+	var values []string
 
 	_ = t.VisitAllLines(func(secName, secPkg string, line *lineHandle) error {
 		if secPkg != pkg || !isTagBearingSection(secName) {
@@ -109,14 +116,13 @@ func (t *specTree) GetLastTag(pkg, name string) (string, bool) {
 
 		tag, tagValue, isTag := parseTagLine(line.Text)
 		if isTag && strings.EqualFold(tag, name) {
-			value = tagValue
-			found = true
+			values = append(values, tagValue)
 		}
 
 		return nil
 	})
 
-	return value, found
+	return values
 }
 
 // HasSection reports whether a section with name is present for any package.

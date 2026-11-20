@@ -274,66 +274,31 @@ func TestApp_ConcurrencyOption(t *testing.T) {
 	}
 }
 
-func TestApp_WithoutLockfileOption(t *testing.T) {
+func TestApp_RejectsRemovedWithoutLockfileFlag(t *testing.T) {
 	testCases := []struct {
-		name     string
-		args     []string
-		expected bool
+		name string
+		args []string
 	}{
-		{name: "absent", args: []string{"test-cmd"}, expected: false},
-		{name: "bare", args: []string{"--without-lockfile", "test-cmd"}, expected: true},
-		{name: "explicit true", args: []string{"--without-lockfile=true", "test-cmd"}, expected: true},
-		{name: "explicit false", args: []string{"--without-lockfile=false", "test-cmd"}, expected: false},
-		{name: "after command", args: []string{"test-cmd", "--without-lockfile"}, expected: true},
-		{name: "positional lookalike", args: []string{"test-cmd", "--", "--without-lockfile"}, expected: false},
-		{name: "prefix lookalike", args: []string{"test-cmd", "--without-lockfiles"}, expected: false},
+		{name: "bare", args: []string{"--without-lockfile", "test-cmd"}},
+		{name: "explicit true", args: []string{"--without-lockfile=true", "test-cmd"}},
+		{name: "explicit false", args: []string{"--without-lockfile=false", "test-cmd"}},
+		{name: "after command", args: []string{"test-cmd", "--without-lockfile"}},
 	}
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			app := createTestApp(t)
-
-			app.PreParseGlobalFlags(testCase.args)
-
-			assert.Equal(t, testCase.expected, app.WithoutLockfile())
-		})
-	}
-}
-
-func TestApp_WithoutLockfileOption_ReachesEnv(t *testing.T) {
-	testCases := []struct {
-		name     string
-		args     []string
-		expected bool
-	}{
-		{name: "default", args: []string{"test-cmd"}, expected: false},
-		{name: "enabled", args: []string{"--without-lockfile", "test-cmd"}, expected: true},
-		{name: "disabled", args: []string{"--without-lockfile=false", "test-cmd"}, expected: false},
-	}
-
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			app := createTestApp(t)
-
 			ran := false
 			cmd := &cobra.Command{
 				Use: "test-cmd",
-				RunE: func(cmd *cobra.Command, _ []string) error {
-					env, err := azldev.GetEnvFromCommand(cmd)
-					require.NoError(t, err)
-
-					assert.Equal(t, testCase.expected, env.WithoutLockfile())
-
+				Run: func(_ *cobra.Command, _ []string) {
 					ran = true
-
-					return nil
 				},
 			}
-
 			app.AddTopLevelCommand(cmd)
 
-			assert.Zero(t, app.Execute(testCase.args))
-			assert.True(t, ran)
+			assert.NotZero(t, app.Execute(testCase.args))
+			assert.False(t, ran)
 		})
 	}
 }
@@ -342,7 +307,7 @@ func TestApp_WithoutLockfileOption_ReachesEnv(t *testing.T) {
 // registration) and by Execute; repeated calls must not accumulate state.
 func TestApp_PreParseGlobalFlags_Idempotent(t *testing.T) {
 	app := createTestApp(t)
-	args := []string{"--without-lockfile", "--config-file", "extra.toml", "test-cmd"}
+	args := []string{"--config-file", "extra.toml", "test-cmd"}
 
 	ran := false
 	cmd := &cobra.Command{
@@ -351,7 +316,7 @@ func TestApp_PreParseGlobalFlags_Idempotent(t *testing.T) {
 			env, err := azldev.GetEnvFromCommand(cmd)
 			require.NoError(t, err)
 
-			assert.True(t, env.WithoutLockfile())
+			assert.False(t, env.WithoutLockfile())
 
 			ran = true
 
@@ -362,8 +327,6 @@ func TestApp_PreParseGlobalFlags_Idempotent(t *testing.T) {
 	app.AddTopLevelCommand(cmd)
 	app.PreParseGlobalFlags(args)
 	app.PreParseGlobalFlags(args)
-
-	assert.True(t, app.WithoutLockfile())
 
 	// Execute pre-parses the same arguments a third time; a command that only
 	// accumulated config files would fail to load its (nonexistent) extra file.

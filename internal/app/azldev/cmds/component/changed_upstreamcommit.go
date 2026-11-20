@@ -6,6 +6,7 @@ package component
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -28,9 +29,9 @@ import (
 
 // This file implements 'component changed' for lock-file-free mode. Without lock
 // files there are no stored fingerprints to compare, so the project configuration
-// is loaded independently at both refs and the resolved component build inputs are
-// compared directly. The git plumbing helpers are shared with the default
-// implementation in changed.go.
+// is loaded independently at both refs and the resolved component build inputs and
+// rendered trees are compared directly. The git plumbing helpers are shared with
+// the default implementation in changed.go.
 
 // changedComponentsFromProjectConfigs loads and compares resolved project
 // components and rendered sources between two git refs. It is the lock-file-free
@@ -85,6 +86,10 @@ func changedComponentsFromProjectConfigs(
 		return nil, fmt.Errorf("selecting components:\n%w", err)
 	}
 
+	names = slices.DeleteFunc(names, func(name string) bool {
+		return !env.ComponentWithoutLockfile(name)
+	})
+
 	return buildHistoricalResults(
 		names, fromProject, toProject, fromTree, toTree,
 		options.IncludeUnchanged, options.ComponentFilter.IncludeAllComponents,
@@ -127,42 +132,12 @@ func loadHistoricalProject(
 	tree *object.Tree,
 	projectRelDir string,
 ) (*historicalProject, error) {
-	snapshotFS := afero.NewMemMapFs()
-
-	if err := copyTreeToFS(tree, snapshotFS, snapshotRepoRoot); err != nil {
-		return nil, fmt.Errorf("materializing git tree:\n%w", err)
-	}
-
-	if err := fileutils.MkdirAll(snapshotFS, snapshotTempDir); err != nil {
-		return nil, fmt.Errorf("creating temporary config directory:\n%w", err)
-	}
-
-	projectDir := filepath.Join(snapshotRepoRoot, projectRelDir)
-
-	loadedProjectDir, config, err := projectconfig.LoadProjectConfig(
-		snapshotFS,
-		env.OSEnv(),
-		projectDir,
-		false,
-		snapshotTempDir,
-		nil,
-		env.PermissiveConfigParsing(),
-		true, /*withoutLockfile*/
-	)
+	historicalEnv, err := loadHistoricalEnv(env, tree, projectRelDir)
 	if err != nil {
-		return nil, fmt.Errorf("parsing project configuration:\n%w", err)
+		return nil, err
 	}
 
-	historicalEnv := azldev.NewEnv(env.Context(), azldev.EnvOptions{
-		ProjectDir:      loadedProjectDir,
-		Config:          config,
-		WithoutLockfile: true,
-		Interfaces: azldev.SystemInterfaces{
-			FileSystemFactory: &fixedFileSystemFactory{fs: snapshotFS},
-		},
-	})
-	historicalEnv.SetPermissiveConfigParsing(env.PermissiveConfigParsing())
-
+	config := historicalEnv.Config()
 	resolver := components.NewResolver(historicalEnv)
 
 	resolvedComponents, err := resolver.FindAllComponents()
@@ -177,7 +152,7 @@ func loadHistoricalProject(
 	}
 
 	if err := populateHistoricalComponents(
-		result, snapshotFS, historicalEnv, resolvedComponents,
+		result, historicalEnv.FS(), historicalEnv, resolvedComponents, env,
 	); err != nil {
 		return nil, err
 	}
@@ -192,6 +167,52 @@ func loadHistoricalProject(
 	}
 
 	return result, nil
+}
+
+func loadHistoricalEnv(
+	env *azldev.Env, tree *object.Tree, projectRelDir string,
+) (*azldev.Env, error) {
+	snapshotFS := afero.NewMemMapFs()
+
+	if err := copyTreeToFS(tree, snapshotFS, snapshotRepoRoot); err != nil {
+		return nil, fmt.Errorf("materializing git tree:\n%w", err)
+	}
+
+	if err := fileutils.MkdirAll(snapshotFS, snapshotTempDir); err != nil {
+		return nil, fmt.Errorf("creating temporary config directory:\n%w", err)
+	}
+
+	projectDir := filepath.Join(snapshotRepoRoot, projectRelDir)
+
+	// Historical snapshots may use config fields that this azldev no longer
+	// supports, so always parse them permissively.
+	const permissive = true
+
+	loadedProjectDir, config, err := projectconfig.LoadProjectConfig(
+		snapshotFS,
+		env.OSEnv(),
+		projectDir,
+		false,
+		snapshotTempDir,
+		nil,
+		permissive,
+		true, /*withoutLockfile*/
+	)
+	if err != nil {
+		return nil, fmt.Errorf("parsing project configuration:\n%w", err)
+	}
+
+	historicalEnv := azldev.NewEnv(env.Context(), azldev.EnvOptions{
+		ProjectDir:      loadedProjectDir,
+		Config:          config,
+		WithoutLockfile: true,
+		Interfaces: azldev.SystemInterfaces{
+			FileSystemFactory: &fixedFileSystemFactory{fs: snapshotFS},
+		},
+	})
+	historicalEnv.SetPermissiveConfigParsing(permissive)
+
+	return historicalEnv, nil
 }
 
 func populateHistoricalGroups(
@@ -225,9 +246,13 @@ func populateHistoricalComponents(
 	fs opctx.FS,
 	env *azldev.Env,
 	resolvedComponents *components.ComponentSet,
+	selectionEnv *azldev.Env,
 ) error {
 	for _, component := range resolvedComponents.Components() {
 		project.components[component.GetName()] = *component.GetConfig()
+		if !selectionEnv.ComponentWithoutLockfile(component.GetName()) {
+			continue
+		}
 
 		inputs, err := buildComponentComparisonInputs(fs, env, component.GetConfig())
 		if err != nil {
@@ -546,6 +571,22 @@ func buildHistoricalResults(
 		}
 
 		if result.ChangeType == changeTypeUnchanged {
+			fromHash, err := historicalRenderedTreeHash(fromTree, fromProject.renderedSpecsRelDir, name)
+			if err != nil {
+				return nil, fmt.Errorf("reading rendered tree for %#q at --from:\n%w", name, err)
+			}
+
+			toHash, err := historicalRenderedTreeHash(toTree, toProject.renderedSpecsRelDir, name)
+			if err != nil {
+				return nil, fmt.Errorf("reading rendered tree for %#q at --to:\n%w", name, err)
+			}
+
+			if fromHash != toHash {
+				result.ChangeType = changeTypeChanged
+			}
+		}
+
+		if result.ChangeType == changeTypeUnchanged {
 			if includeAllComponents && !includeUnchanged {
 				continue
 			}
@@ -566,6 +607,24 @@ func buildHistoricalResults(
 	}
 
 	return results, nil
+}
+
+func historicalRenderedTreeHash(tree *object.Tree, renderedDir, name string) (string, error) {
+	dir, err := components.RenderedSpecDir(renderedDir, name)
+	if err != nil {
+		return "", fmt.Errorf("resolving rendered component directory:\n%w", err)
+	}
+
+	rendered, err := tree.Tree(filepath.ToSlash(dir))
+	if errors.Is(err, object.ErrDirectoryNotFound) {
+		return "", nil
+	}
+
+	if err != nil {
+		return "", fmt.Errorf("reading rendered component directory:\n%w", err)
+	}
+
+	return rendered.Hash.String(), nil
 }
 
 // classifyHistoricalComponent compares the serialized build-relevant inputs for a

@@ -9,7 +9,11 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
+	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
+	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/sourceproviders_test"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spec"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
@@ -26,6 +30,8 @@ type fakeAutoreleaseResolver struct {
 	err          error
 	lastHostDir  string
 	lastSpecFile string
+	calls        int
+	observe      func(string, string)
 }
 
 func (f *fakeAutoreleaseResolver) CalculateRelease(
@@ -33,6 +39,11 @@ func (f *fakeAutoreleaseResolver) CalculateRelease(
 ) (string, error) {
 	f.lastHostDir = specHostDir
 	f.lastSpecFile = specFilename
+
+	f.calls++
+	if f.observe != nil {
+		f.observe(specHostDir, specFilename)
+	}
 
 	return f.output, f.err
 }
@@ -352,6 +363,115 @@ func TestAddUpstreamProvenanceMacros_PlainDistTag(t *testing.T) {
 
 	assert.Equal(t, "5.fc43", macros[fedoraUpstreamReleaseMacro],
 		"unconditional %{dist} is expanded to the Fedora dist tag")
+}
+
+func TestPrepareSources_CapturesPristineProvenance(t *testing.T) {
+	for _, testCase := range []struct {
+		name          string
+		release       string
+		override      string
+		emit          bool
+		applyOverlays bool
+		resolverErr   error
+		wantRelease   string
+		wantCalls     int
+	}{
+		{
+			name: "autorelease", release: "%autorelease -b 2", emit: true, applyOverlays: true,
+			wantRelease: "3.fc43", wantCalls: 1,
+		},
+		{
+			name: "static release", release: "5%{?dist}", emit: true, applyOverlays: true,
+			wantRelease: "5.fc43",
+		},
+		{
+			name: "explicit release override", release: "%autorelease", override: "42.fc43",
+			emit: true, applyOverlays: true, wantRelease: "42.fc43",
+		},
+		{
+			name: "provenance disabled", release: "%autorelease", applyOverlays: true,
+		},
+		{
+			name: "overlays disabled", release: "%autorelease", emit: true,
+		},
+		{
+			name: "failed resolution is not retried", release: "%autorelease", emit: true, applyOverlays: true,
+			resolverErr: errors.New("release unavailable"), wantCalls: 1,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			ctx := testctx.NewCtx()
+
+			config := upstreamCfg(testCase.emit)
+			if testCase.override != "" {
+				config.Build.Defines = map[string]string{fedoraUpstreamReleaseMacro: testCase.override}
+			}
+
+			comp := mockComponent(ctrl, "fwupd-efi", config)
+			manager := sourceproviders_test.NewMockSourceManager(ctrl)
+			manager.EXPECT().FetchComponent(gomock.Any(), comp, provenanceWorkDir, gomock.Any()).DoAndReturn(
+				func(_ context.Context, _ components.Component, dir string, _ ...sourceproviders.FetchComponentOption) error {
+					writeProvenanceSpec(t, ctx.FS(), "fwupd-efi", "1.6", testCase.release)
+
+					return fileutils.WriteFile(ctx.FS(), filepath.Join(dir, ".git/HEAD"),
+						[]byte("pinned upstream commit\n"), fileperms.PublicFile)
+				})
+
+			prepared := false
+			resolver := &fakeAutoreleaseResolver{
+				output: "Calculated release number: 3\n",
+				err:    testCase.resolverErr,
+				observe: func(dir, filename string) {
+					assert.False(t, prepared, "resolve provenance before release preparation")
+
+					version, release, err := parseSpecVersionRelease(ctx.FS(), filepath.Join(dir, filename))
+					require.NoError(t, err)
+					assert.Equal(t, "1.6", version)
+					assert.Equal(t, testCase.release, release)
+
+					head, err := fileutils.ReadFile(ctx.FS(), filepath.Join(dir, ".git/HEAD"))
+					require.NoError(t, err)
+					assert.Equal(t, "pinned upstream commit\n", string(head))
+				},
+			}
+			preparer, err := NewPreparer(manager, ctx.FS(), ctx, ctx,
+				WithGitRepo(nil, nil, "43"), WithoutSyntheticHistory(), WithSkipLookaside(),
+				WithUpstreamProvenance(".fc43"), WithAutoreleaseResolver(resolver),
+				WithFetchedSources(func(_ context.Context, _ components.Component, _ string) error {
+					assert.Equal(t, testCase.wantCalls, resolver.calls)
+
+					prepared = true
+
+					writeProvenanceSpec(t, ctx.FS(), "fwupd-efi", "99", "99%{?dist}")
+
+					return nil
+				}))
+			require.NoError(t, err)
+			require.NoError(t, preparer.PrepareSources(ctx, comp, provenanceWorkDir, testCase.applyOverlays))
+			assert.True(t, prepared)
+			assert.Equal(t, testCase.wantCalls, resolver.calls)
+
+			path := filepath.Join(provenanceWorkDir, "fwupd-efi"+MacrosFileExtension)
+			if !testCase.emit || !testCase.applyOverlays {
+				exists, err := fileutils.Exists(ctx.FS(), path)
+				require.NoError(t, err)
+				assert.False(t, exists)
+
+				return
+			}
+
+			contents, err := fileutils.ReadFile(ctx.FS(), path)
+			require.NoError(t, err)
+			assert.Contains(t, string(contents), "%fedora_upstream_version 1.6\n")
+
+			if testCase.wantRelease == "" {
+				assert.NotContains(t, string(contents), "%fedora_upstream_release ")
+			} else {
+				assert.Contains(t, string(contents), "%fedora_upstream_release "+testCase.wantRelease+"\n")
+			}
+		})
+	}
 }
 
 // upstreamCfg returns a Fedora-upstream component config with provenance

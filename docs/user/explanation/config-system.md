@@ -99,7 +99,7 @@ Component definitions are merged additively. If the same component name (e.g., `
 
 > **Note:** Slice fields (like `overlays`) are **appended**, not replaced, following the same merge behavior used by component configuration inheritance.
 
-> **Preview:** With the global `--without-lockfile` flag, component definitions merge with override semantics instead, and component validation runs only after every included file has been merged, so an individual file may hold a partial component definition. See [Preview the Lock-File-Free Mode](../how-to/preview-without-lockfile.md).
+> **Preview:** Components listed in `lockless-components.txt` beside the top-level `azldev.toml` merge with override semantics instead, and their validation runs only after every included file has been merged, so an individual file may hold a partial component definition. Unlisted components retain additive merging and per-file validation. See [Preview the Lock-File-Free Mode](../how-to/preview-without-lockfile.md).
 
 ### Component Groups and Images
 
