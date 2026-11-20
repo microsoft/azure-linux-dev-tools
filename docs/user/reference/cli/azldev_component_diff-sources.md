@@ -40,7 +40,7 @@ azldev component diff-sources [flags]
       --permissive-config[=true|false]   do not fail on unknown fields in TOML config files
   -C, --project string                   path to Azure Linux project
   -q, --quiet[=true|false]               only enable minimal output
-      --spec-editor editor               Select the RPM spec editor (legacy or structural) (default structural)
+      --spec-editor editor               Select the RPM spec editor ('structural' or deprecated 'legacy') (default structural)
       --unique-mockroot[=true|false]     use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently
   -v, --verbose[=true|false]             enable verbose output
       --without-lockfile[=true|false]    preview: track resolved upstream commits in generated config instead of lock files

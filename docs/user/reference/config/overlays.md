@@ -10,7 +10,9 @@ Overlays are defined within a component's configuration in your TOML config file
 
 ### Spec Overlays
 
-These overlays modify `.spec` files using the component command's `--spec-editor` option. The default `structural` editor preserves conditional and section structure; `--spec-editor legacy` selects the line-oriented legacy editor. The former `experimental` value remains accepted as an alias for `structural`.
+These overlays modify `.spec` files using the component command's `--spec-editor` option. The default `structural` editor preserves conditional and section structure; `--spec-editor legacy` selects the line-oriented legacy editor.
+
+The `legacy` editor is deprecated and will be removed in a future release. Explicit use emits a warning; migrate existing invocations to `structural` or omit `--spec-editor`. The former `experimental` value remains accepted as a compatibility alias for `structural`.
 
 #### Known Limitations
 

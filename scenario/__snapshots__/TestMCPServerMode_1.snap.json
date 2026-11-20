@@ -89,7 +89,7 @@
        "type": "boolean"
       },
       "spec-editor": {
-       "description": "Select the RPM spec editor (legacy or structural)",
+       "description": "Select the RPM spec editor ('structural' or deprecated 'legacy')",
        "type": "string"
       },
       "spec-path": {
@@ -210,7 +210,7 @@
        "type": "boolean"
       },
       "spec-editor": {
-       "description": "Select the RPM spec editor (legacy or structural)",
+       "description": "Select the RPM spec editor ('structural' or deprecated 'legacy')",
        "type": "string"
       },
       "spec-path": {
@@ -324,7 +324,7 @@
        "type": "string"
       },
       "spec-editor": {
-       "description": "Select the RPM spec editor (legacy or structural)",
+       "description": "Select the RPM spec editor ('structural' or deprecated 'legacy')",
        "type": "string"
       },
       "spec-path": {
@@ -428,7 +428,7 @@
        "type": "boolean"
       },
       "spec-editor": {
-       "description": "Select the RPM spec editor (legacy or structural)",
+       "description": "Select the RPM spec editor ('structural' or deprecated 'legacy')",
        "type": "string"
       },
       "spec-path": {
@@ -547,7 +547,7 @@
        "type": "boolean"
       },
       "spec-editor": {
-       "description": "Select the RPM spec editor (legacy or structural)",
+       "description": "Select the RPM spec editor ('structural' or deprecated 'legacy')",
        "type": "string"
       },
       "spec-path": {

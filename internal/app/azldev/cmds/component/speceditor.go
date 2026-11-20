@@ -76,7 +76,7 @@ func addSpecEditorOption(cmd *cobra.Command) {
 	cmd.PersistentFlags().Var(
 		newSpecEditorFlagValue(),
 		"spec-editor",
-		"Select the RPM spec editor (legacy or structural)",
+		"Select the RPM spec editor ('structural' or deprecated 'legacy')",
 	)
 }
 
