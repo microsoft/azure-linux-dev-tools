@@ -15,9 +15,8 @@ import (
 const (
 	// specEditorLegacy remains supported temporarily for backward compatibility.
 	// It is deprecated and will be removed in a future release.
-	specEditorLegacy       = "legacy"
-	specEditorStructural   = "structural"
-	specEditorExperimental = "experimental"
+	specEditorLegacy     = "legacy"
+	specEditorStructural = "structural"
 )
 
 // componentCommandOptions are shared by component subcommands that edit specs.
@@ -58,7 +57,7 @@ func (v *specEditorFlagValue) Set(value string) error {
 
 		slog.Warn("The RPM spec 'legacy' editor is deprecated and will be removed in a future release; " +
 			"use 'structural' instead")
-	case specEditorStructural, specEditorExperimental:
+	case specEditorStructural:
 		v.mode = spec.EditorStructural
 	default:
 		return fmt.Errorf(
