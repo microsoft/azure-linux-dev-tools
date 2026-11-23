@@ -5,6 +5,7 @@ package spec
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -26,6 +27,17 @@ type PatchApplicationDiagnostic struct {
 	Command     string `json:"command,omitempty"`
 	Reason      string `json:"reason"`
 }
+
+// PatchSelection describes the combined selection from vetted preparation commands.
+// When Available is false, the caller retains built-in selection.
+type PatchSelection struct {
+	All       bool
+	Numbers   []int
+	Available bool
+}
+
+// BasicPatchSelector identifies selected patches from vetted '%prep' commands.
+type BasicPatchSelector func([]string) (PatchSelection, error)
 
 const (
 	prepCommand           = "%prep"
@@ -66,6 +78,7 @@ type patchApplicationScanner struct {
 	declarations []patchDeclaration
 	// consumers holds unconditional setup/application commands with their captured uncertainty.
 	consumers []patchConsumer
+	basic     PatchSelection
 	// section is the current section keyword; empty denotes the main preamble.
 	section string
 	// depth tracks RPM conditional nesting; negative values indicate unmatched closing directives.
@@ -101,7 +114,10 @@ type patchApplicationScanner struct {
 // conditional branches, detect duplicate application, evaluate macros, or inspect
 // loaded macro files or patch contents; standard RPM macro behavior is assumed.
 // Strip levels and actual patch applicability must be verified during the build.
-func (s *Spec) AnalyzePatchApplications(patches []AddedPatch) ([]PatchApplicationDiagnostic, error) {
+// A nil selector or unavailable selection keeps basic command selection in Go.
+func (s *Spec) AnalyzePatchApplications(
+	patches []AddedPatch, selectBasic BasicPatchSelector,
+) ([]PatchApplicationDiagnostic, error) {
 	scanner := patchApplicationScanner{backend: patchBackend, redefined: make(map[string]bool)}
 
 	if err := s.Visit(func(ctx *Context) error {
@@ -121,12 +137,88 @@ func (s *Spec) AnalyzePatchApplications(patches []AddedPatch) ([]PatchApplicatio
 	var diagnostics []PatchApplicationDiagnostic
 
 	for _, patch := range patches {
-		if diagnostic := scanner.check(patch); diagnostic != nil {
+		diagnostic := scanner.checkDeclaration(patch)
+		if diagnostic == nil {
+			continue
+		}
+
+		if diagnostic.Reason == "" {
+			if selectBasic != nil {
+				if err := scanner.resolveBasicSelections(selectBasic); err != nil {
+					return nil, err
+				}
+
+				selectBasic = nil
+			}
+
+			diagnostic = scanner.checkConsumers(diagnostic)
+		}
+
+		if diagnostic != nil {
 			diagnostics = append(diagnostics, *diagnostic)
 		}
 	}
 
 	return diagnostics, nil
+}
+
+func (s *patchApplicationScanner) resolveBasicSelections(selectBasic BasicPatchSelector) error {
+	if s.prep != "" {
+		return nil
+	}
+
+	var (
+		lines    []string
+		retained []patchConsumer
+	)
+
+	for _, consumer := range s.consumers {
+		if line := consumer.basicSelectionLine(); line != "" {
+			lines = append(lines, line)
+		} else {
+			retained = append(retained, consumer)
+		}
+	}
+
+	if len(lines) == 0 {
+		return nil
+	}
+
+	selection, err := selectBasic(lines)
+	if err != nil {
+		return fmt.Errorf("resolving basic patch selections:\n%w", err)
+	}
+
+	if selection.Available {
+		s.basic = selection
+		s.consumers = retained
+	}
+
+	return nil
+}
+
+var (
+	basicPatchLine     = regexp.MustCompile(`^%patch([0-9]+|[ \t]+[0-9]+)?([ \t]+-[pP][ \t]*[0-9]+)*$`)
+	basicAutosetupLine = regexp.MustCompile(
+		`^%autosetup([ \t]+(-[cCDTv]+|-p[ \t]*[0-9]+|-[Sn][ \t]+[^ \t'"-][^ \t'"]*))*$`)
+)
+
+// basicSelectionLine admits only syntax both scanners interpret the same way.
+// rpmlint can mistake an attached '-n' value containing 'N' for '-N', or read a
+// '-P' from an argument or comment. It only recognizes a leading positional number.
+func (c *patchConsumer) basicSelectionLine() string {
+	if c.disabled || c.unresolved != "" || c.selectionUncertain {
+		return ""
+	}
+
+	line, _, _ := patchShellContext(c.command)
+	line = strings.TrimSpace(line)
+
+	if basicPatchLine.MatchString(line) || basicAutosetupLine.MatchString(line) {
+		return line
+	}
+
+	return ""
 }
 
 // scanLine routes a physical line to macro, conditional, section, declaration,
@@ -826,9 +918,9 @@ func (c *patchConsumer) selects(number int) bool {
 	return number >= c.minimum && (c.maximum < 0 || number <= c.maximum)
 }
 
-// check validates one added patch's remaining declarations and file presence
-// before checking consumers; a removed declaration needs no diagnostic.
-func (s *patchApplicationScanner) check(patch AddedPatch) *PatchApplicationDiagnostic {
+// checkDeclaration validates one added patch's remaining declarations and file
+// presence; a removed declaration needs no diagnostic.
+func (s *patchApplicationScanner) checkDeclaration(patch AddedPatch) *PatchApplicationDiagnostic {
 	var declarations []patchDeclaration
 	for _, declaration := range s.declarations {
 		if declaration.filename == patch.Filename {
@@ -854,11 +946,7 @@ func (s *patchApplicationScanner) check(patch AddedPatch) *PatchApplicationDiagn
 		diagnostic.Reason = s.declarationConflict(patch.Filename, diagnostic.PatchNumber)
 	}
 
-	if diagnostic.Reason != "" {
-		return diagnostic
-	}
-
-	return s.checkConsumers(diagnostic)
+	return diagnostic
 }
 
 // declarationConflict reports another filename sharing the added patch's known
@@ -885,6 +973,10 @@ func (s *patchApplicationScanner) checkConsumers(diagnostic *PatchApplicationDia
 		diagnostic.Reason = s.prep
 
 		return diagnostic
+	}
+
+	if s.basic.All || (diagnostic.PatchNumber >= 0 && slices.Contains(s.basic.Numbers, diagnostic.PatchNumber)) {
+		return nil
 	}
 
 	for _, consumer := range s.consumers {

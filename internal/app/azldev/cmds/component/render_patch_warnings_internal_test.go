@@ -39,6 +39,7 @@ func TestRenderPatchWarningsJSONAndPolicy(t *testing.T) {
 		args        []string
 		prep        string
 		resolved    bool
+		lintOutput  string
 		mockError   string
 		wantStatus  string
 		wantError   bool
@@ -92,7 +93,11 @@ func TestRenderPatchWarningsJSONAndPolicy(t *testing.T) {
 		},
 		{
 			name: "strict allows user-supplied strip level", args: []string{"--patch-warnings=error"},
-			prep: "%autosetup -p0", wantStatus: renderStatusOK,
+			prep: "%autosetup -p0", lintOutput: `{"all":true,"numbers":[]}`, wantStatus: renderStatusOK,
+		},
+		{
+			name: "malformed linter result fails preparation", args: []string{"--fail-on-error"},
+			prep: "%autosetup -p0", lintOutput: `{"numbers":[]}`, wantStatus: renderStatusError, wantError: true,
 		},
 		{
 			name: "strict strip level with fail-on-error still publishes",
@@ -150,6 +155,19 @@ func TestRenderPatchWarningsJSONAndPolicy(t *testing.T) {
 					addPatchWarningRenderComponent(t, testEnv, "test-patch", test.prep, test.resolved)
 					stubPatchWarningRenderMock(t, testEnv, test.mockError)
 
+					var lintCalled bool
+
+					if test.lintOutput != "" {
+						testEnv.CmdFactory.RegisterCommandInSearchPath("python3")
+						testEnv.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
+							assert.Equal(t, "python3", cmd.Args[0])
+
+							lintCalled = true
+
+							return test.lintOutput, nil
+						}
+					}
+
 					var logs bytes.Buffer
 
 					previous := slog.Default()
@@ -171,6 +189,10 @@ func TestRenderPatchWarningsJSONAndPolicy(t *testing.T) {
 						require.ErrorContains(t, err, "component(s) failed to render")
 					} else {
 						require.NoError(t, err)
+					}
+
+					if test.lintOutput != "" {
+						assert.True(t, lintCalled)
 					}
 
 					var results []RenderResult

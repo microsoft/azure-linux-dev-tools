@@ -5,6 +5,7 @@ package sources
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,7 +16,7 @@ import (
 )
 
 func (p *sourcePreparerImpl) inspectAddedPatchApplications(
-	componentName, sourcesDir, specPath string, overlays []projectconfig.ComponentOverlay,
+	ctx context.Context, componentName, sourcesDir, specPath string, overlays []projectconfig.ComponentOverlay,
 ) error {
 	additions := addedPatchOverlays(overlays)
 	if len(additions) == 0 {
@@ -69,7 +70,7 @@ func (p *sourcePreparerImpl) inspectAddedPatchApplications(
 		patches = append(patches, spec.AddedPatch{Filename: name, FileMissing: !exists})
 	}
 
-	diagnostics, err := opened.AnalyzePatchApplications(patches)
+	diagnostics, err := opened.AnalyzePatchApplications(patches, p.basicPatchSelector(ctx, componentName))
 	if err != nil {
 		return fmt.Errorf("checking added patch application in %#q:\n%w", specPath, err)
 	}

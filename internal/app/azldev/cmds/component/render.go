@@ -614,6 +614,7 @@ func prepareComponentSources(
 	// sidecar files are needed for rendering.
 	preparerOpts := append(gitRepoPreparerOptions(env, distro),
 		sources.WithSkipLookaside(),
+		sources.WithRPMLint(env),
 		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)),
 		sources.WithMockProcessor(mockProcessor),
 	)

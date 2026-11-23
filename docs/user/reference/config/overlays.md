@@ -505,6 +505,14 @@ It reports missing unconditional selection and uncertain application.
 Patch contents are not inspected: strip levels, vendor-source availability, and
 actual applicability must be verified during the build.
 
+`component render` uses the host's Python 3 and rpmlint, when installed, to
+identify selections from straightforward `%patch` and `%autosetup` commands.
+The built-in checker still handles conditional and shell context, `%autopatch`
+ranges and lists, wrappers, and arguments rpmlint does not reliably recognize.
+If Python or rpmlint is missing, render logs a warning and uses the built-in
+checker. An installed linter that fails or returns invalid data is a component
+preparation error. Dry runs use the built-in checker without starting Python.
+
 The legacy and experimental structural parsers use the same read-only analysis.
 It recognizes `%patch`, `%autopatch`, `%autosetup`, and straightforward forms of
 the following standard wrappers:

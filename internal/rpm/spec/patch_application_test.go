@@ -641,7 +641,7 @@ func runPatchApplicationTests(t *testing.T, tests []patchApplicationTestCase) {
 					opened, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(mode))
 					require.NoError(t, err)
 
-					diagnostics, err := opened.AnalyzePatchApplications([]spec.AddedPatch{{Filename: "fix.patch"}})
+					diagnostics, err := opened.AnalyzePatchApplications([]spec.AddedPatch{{Filename: "fix.patch"}}, nil)
 					require.NoError(t, err)
 
 					if test.reason == "" {
@@ -783,7 +783,7 @@ func TestAnalyzePatchApplicationsExplicitMatch(t *testing.T) {
 					lines := slices.Concat([]string{"Name: test", "Patch2202: fix.patch", "%prep"}, test.prep)
 					opened, err := spec.OpenSpec(strings.NewReader(strings.Join(lines, "\n")+"\n"), spec.WithEditor(mode))
 					require.NoError(t, err)
-					diagnostics, err := opened.AnalyzePatchApplications([]spec.AddedPatch{{Filename: "fix.patch"}})
+					diagnostics, err := opened.AnalyzePatchApplications([]spec.AddedPatch{{Filename: "fix.patch"}}, nil)
 					require.NoError(t, err)
 
 					if test.warn {
@@ -927,7 +927,7 @@ func TestAnalyzePatchApplicationsMissingSelectionMessage(t *testing.T) {
 					input := "Name: test\nPatch0: fix.patch\n%prep\n" + command + "\n"
 					opened, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(mode))
 					require.NoError(t, err)
-					diagnostics, err := opened.AnalyzePatchApplications([]spec.AddedPatch{{Filename: "fix.patch"}})
+					diagnostics, err := opened.AnalyzePatchApplications([]spec.AddedPatch{{Filename: "fix.patch"}}, nil)
 					require.NoError(t, err)
 					require.Len(t, diagnostics, 1)
 					assert.Empty(t, diagnostics[0].Command)
@@ -1143,12 +1143,12 @@ func TestAnalyzePatchApplicationsRemovedAndMissingFiles(t *testing.T) {
 			require.NoError(t, err)
 
 			patches := []spec.AddedPatch{{Filename: "fix.patch", FileMissing: true}}
-			diagnostics, err := opened.AnalyzePatchApplications(patches)
+			diagnostics, err := opened.AnalyzePatchApplications(patches, nil)
 			require.NoError(t, err)
 			require.Len(t, diagnostics, 1)
 			assert.Contains(t, diagnostics[0].Reason, "final file is missing")
 			require.NoError(t, opened.RemovePatchEntry("fix.patch"))
-			diagnostics, err = opened.AnalyzePatchApplications(patches)
+			diagnostics, err = opened.AnalyzePatchApplications(patches, nil)
 			require.NoError(t, err)
 			assert.Empty(t, diagnostics)
 		})

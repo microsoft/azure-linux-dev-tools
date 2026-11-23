@@ -169,6 +169,10 @@ the config loads, so a missing field fails fast rather than at apply time.
   unconditional application is found, including excluding manual/range commands and
   setup-only flows. An unknown patch number can be selected by unrestricted bulk
   application; numbered selections and limited ranges require a known number.
+  Render delegates straightforward `%patch` and `%autosetup` selections to host
+  rpmlint; conditionals, shell context, ranges, and wrappers are still checked in Go.
+  Missing Python or rpmlint logs a warning and uses the built-in checker;
+  an installed linter that fails is a preparation error.
   The whole prep is scanned; disabled setups and excluding
   ranges do not hide later application commands. Conditional, repeated, and augmented
   prep sections (`%prep -a` or `%prep -p`) warn as unsupported; do not blindly add

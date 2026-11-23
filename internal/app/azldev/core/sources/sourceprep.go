@@ -134,6 +134,11 @@ func WithPatchDiagnostics(sink func([]spec.PatchApplicationDiagnostic)) Preparer
 	return func(p *sourcePreparerImpl) { p.patchDiagnostics = sink }
 }
 
+// WithRPMLint uses the host linter for supported patch selections during preparation.
+func WithRPMLint(ctx opctx.Ctx) PreparerOption {
+	return func(p *sourcePreparerImpl) { p.rpmlintCtx = ctx }
+}
+
 // WithSkipLookaside returns a [PreparerOption] that skips all lookaside cache
 // downloads during source preparation. This includes both explicit source file
 // downloads ([SourceManager.FetchFiles]) and lookaside extraction during
@@ -197,6 +202,7 @@ type sourcePreparerImpl struct {
 	eventListener    opctx.EventListener
 	dryRunnable      opctx.DryRunnable
 	patchDiagnostics func([]spec.PatchApplicationDiagnostic)
+	rpmlintCtx       opctx.Ctx
 
 	// withGitRepo, when true, enables dist-git creation by preserving the
 	// upstream .git directory and generating synthetic commit history.
@@ -396,7 +402,7 @@ func (p *sourcePreparerImpl) applyOverlaysToSources(
 		macrosFileName = filepath.Base(macrosFilePath)
 	}
 
-	repackedArchives, err := p.applyOverlays(component, outputDir, macrosFileName)
+	repackedArchives, err := p.applyOverlays(ctx, component, outputDir, macrosFileName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to apply overlays for component %#q:\n%w",
 			component.GetName(), err)
@@ -409,7 +415,7 @@ func (p *sourcePreparerImpl) applyOverlaysToSources(
 // component sources. It returns the names of any archives that were repacked by
 // archive overlays.
 func (p *sourcePreparerImpl) applyOverlays(
-	component components.Component, sourcesDirPath, macrosFileName string,
+	ctx context.Context, component components.Component, sourcesDirPath, macrosFileName string,
 ) ([]string, error) {
 	event := p.eventListener.StartEvent("Applying overlays", "component", component.GetName())
 	defer event.End()
@@ -441,7 +447,7 @@ func (p *sourcePreparerImpl) applyOverlays(
 	}
 
 	if err := p.inspectAddedPatchApplications(
-		component.GetName(), sourcesDirPath, absSpecPath, allOverlays,
+		ctx, component.GetName(), sourcesDirPath, absSpecPath, allOverlays,
 	); err != nil {
 		return nil, err
 	}
