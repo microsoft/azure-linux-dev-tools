@@ -5,10 +5,8 @@ package sources
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"log/slog"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
@@ -49,17 +47,26 @@ func (p *sourcePreparerImpl) inspectAddedPatchApplications(
 	for _, overlay := range additions {
 		name := overlay.EffectiveSourceName()
 
-		content, readErr := fileutils.ReadFile(destFS, name)
-		if errors.Is(readErr, fs.ErrNotExist) && p.dryRunnable.DryRun() {
+		patchFS, patchPath := destFS, name
+
+		exists, statErr := fileutils.Exists(patchFS, patchPath)
+		if statErr == nil && !exists && p.dryRunnable.DryRun() {
 			// Dry-run file copies leave only the original overlay input available.
-			content, readErr = fileutils.ReadFile(p.fs, overlay.Source)
+			patchFS, patchPath = p.fs, overlay.Source
+			exists, statErr = fileutils.Exists(patchFS, patchPath)
 		}
 
-		if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
-			return fmt.Errorf("reading final patch %#q for diagnostics:\n%w", name, readErr)
+		if statErr != nil {
+			return fmt.Errorf("checking final patch %#q for diagnostics:\n%w", name, statErr)
 		}
 
-		patches = append(patches, spec.AddedPatch{Filename: name, Content: content, FileMissing: readErr != nil})
+		if exists {
+			if err := fileutils.ValidateFileExists(patchFS, patchPath); err != nil {
+				return fmt.Errorf("checking final patch %#q for diagnostics:\n%w", name, err)
+			}
+		}
+
+		patches = append(patches, spec.AddedPatch{Filename: name, FileMissing: !exists})
 	}
 
 	diagnostics, err := opened.AnalyzePatchApplications(patches)

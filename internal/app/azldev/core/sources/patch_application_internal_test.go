@@ -25,6 +25,7 @@ func TestAddedPatchWarningsAfterAllOverlays(t *testing.T) {
 	tests := []struct {
 		name        string
 		prep        []string
+		patch       []string
 		later       []projectconfig.ComponentOverlay
 		wantWarning string
 	}{
@@ -33,19 +34,16 @@ func TestAddedPatchWarningsAfterAllOverlays(t *testing.T) {
 		{name: "matching forge wrapper", prep: []string{"%forgeautosetup -p1"}},
 		{name: "matching go wrapper", prep: []string{"%goprep -p1"}},
 		{name: "go setup without application", prep: []string{"%goprep"}, wantWarning: "no recognized command"},
-		{name: "bare bulk nested patch", prep: []string{"%autosetup"}, wantWarning: "omits '-p'"},
+		{name: "bare bulk selection does not predict strip", prep: []string{"%autosetup"}},
+		{
+			name: "go vendor contents are not inspected", prep: []string{"%goprep -p1"},
+			patch: []string{"--- a/vendor/lib/file.c", "+++ b/vendor/lib/file.c"},
+		},
 		{
 			name: "later overlay adds application", prep: []string{"%setup -q"},
 			later: []projectconfig.ComponentOverlay{{
 				Type: projectconfig.ComponentOverlayAppendSpecLines, SectionName: "%prep",
 				Lines: []string{"%patch -P0 -p1"},
-			}},
-		},
-		{
-			name: "later overlay fixes strip", prep: []string{"%autosetup"},
-			later: []projectconfig.ComponentOverlay{{
-				Type: projectconfig.ComponentOverlaySearchAndReplaceInSpec, SectionName: "%prep",
-				Regex: "^%autosetup$", Replacement: "%autosetup -p1",
 			}},
 		},
 		{
@@ -61,17 +59,7 @@ func TestAddedPatchWarningsAfterAllOverlays(t *testing.T) {
 			}},
 			wantWarning: "final file is missing",
 		},
-		{
-			name: "later overlay changes final patch content", prep: []string{"%autosetup"},
-			later: []projectconfig.ComponentOverlay{{
-				Type: projectconfig.ComponentOverlaySearchAndReplaceInFile, Filename: "fix.patch",
-				Regex: "[ab]/lib/", Replacement: "",
-			}},
-		},
-		{
-			name: "explicit strip conflict", prep: []string{"%autosetup -p2"},
-			wantWarning: "uses '-p2'",
-		},
+		{name: "explicit strip level is not predicted", prep: []string{"%autosetup -p2"}},
 		{
 			name: "multiple directories", prep: []string{"%setup -q", "pushd lib", "%autopatch -p1", "popd"},
 			wantWarning: "working directories",
@@ -92,8 +80,14 @@ func TestAddedPatchWarningsAfterAllOverlays(t *testing.T) {
 					lines = append(lines, "%build", "make")
 					require.NoError(t, fileutils.WriteFile(ctx.FS(), "/sources/test.spec",
 						[]byte(strings.Join(lines, "\n")+"\n"), fileperms.PublicFile))
+
+					patch := test.patch
+					if patch == nil {
+						patch = []string{"--- a/lib/file.c", "+++ b/lib/file.c"}
+					}
+
 					require.NoError(t, fileutils.WriteFile(ctx.FS(), "/fix.patch",
-						[]byte("--- a/lib/file.c\n+++ b/lib/file.c\n"), fileperms.PublicFile))
+						[]byte(strings.Join(patch, "\n")+"\n"), fileperms.PublicFile))
 
 					overlays := []projectconfig.ComponentOverlay{{
 						Type: projectconfig.ComponentOverlayAddPatch, Source: "/fix.patch",
@@ -176,7 +170,7 @@ func TestPatchDiagnosticsGeneratedMacroFiles(t *testing.T) {
 		},
 		{
 			name: "configured backend is not inspected", prep: "%forgeautosetup",
-			defines: map[string]string{"__scm": "git"}, reason: "omits '-p'",
+			defines: map[string]string{"__scm": "git"},
 		},
 		{name: "changed generated file is not inspected", prep: "%forgeautosetup -p1", change: true},
 		{name: "removed generated file is not inspected", prep: "%forgeautosetup -p1", remove: true},
@@ -248,12 +242,12 @@ func TestPatchDiagnosticsReadErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "reading final spec")
 }
 
-func TestPatchDiagnosticsDryRunUsesOriginalPatch(t *testing.T) {
+func TestPatchDiagnosticsDryRunChecksOriginalPatchPresence(t *testing.T) {
 	ctx := testctx.NewCtx()
 	ctx.DryRunValue = true
 	require.NoError(t, ctx.FS().MkdirAll("/sources", fileperms.PublicDir))
 
-	lines := []string{"Name: test", "Patch7: renamed.patch", "%prep", "%autosetup", ""}
+	lines := []string{"Name: test", "Patch7: renamed.patch", "%prep", "%setup -q", ""}
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), "/sources/test.spec",
 		[]byte(strings.Join(lines, "\n")), fileperms.PublicFile))
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), "/fix.patch",
@@ -276,9 +270,24 @@ func TestPatchDiagnosticsDryRunUsesOriginalPatch(t *testing.T) {
 	assert.Contains(t, logs.String(), "patch=renamed.patch")
 	assert.Contains(t, logs.String(), "patchNumber=7")
 	assert.NotContains(t, logs.String(), "line=")
-	assert.Contains(t, logs.String(), "command=%autosetup")
-	assert.Contains(t, logs.String(), "omits '-p'")
-	assert.NotContains(t, logs.String(), "cannot be read")
+	assert.Contains(t, logs.String(), `command=""`)
+	assert.Contains(t, logs.String(), "no recognized command")
+	assert.NotContains(t, logs.String(), "final file is missing")
+}
+
+func TestPatchDiagnosticsRejectDirectoryInsteadOfPatch(t *testing.T) {
+	t.Parallel()
+
+	ctx := testctx.NewCtx()
+	require.NoError(t, ctx.FS().MkdirAll("/sources/fix.patch", fileperms.PublicDir))
+	require.NoError(t, fileutils.WriteFile(ctx.FS(), "/sources/test.spec",
+		[]byte("Name: test\nPatch0: fix.patch\n%prep\n%autosetup\n"), fileperms.PublicFile))
+	preparer := &sourcePreparerImpl{fs: ctx.FS(), dryRunnable: ctx}
+
+	err := preparer.inspectAddedPatchApplications("test", "/sources", "/sources/test.spec",
+		[]projectconfig.ComponentOverlay{{Type: projectconfig.ComponentOverlayAddPatch, Source: "/fix.patch"}})
+	require.ErrorContains(t, err, "checking final patch")
+	assert.Contains(t, err.Error(), "is a directory, expected a file")
 }
 
 func TestPatchDiagnosticsWithoutSinkRetainWarningBehavior(t *testing.T) {

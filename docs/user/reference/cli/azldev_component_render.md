@@ -21,11 +21,12 @@ lookaside cache — only spec files, patches, scripts, and other git-tracked
 sidecar files are included. Multiple components can be rendered at once.
 
 Added-patch application diagnostics are logged and included as patchWarnings
-in -O json output. Missing unconditional patch selection, uncertain application,
-and likely strip mismatches are warnings unless --patch-warnings=error promotes
-them to component errors. Conditional branches and duplicate application are not checked.
-Use --fail-on-error to exit nonzero on component failures. This is static
-analysis, not proof a patch applies.
+in -O json output. Missing unconditional patch selection and uncertain application
+are warnings unless --patch-warnings=error promotes them to component errors.
+Conditional branches and duplicate application are not checked. Patch contents
+are not inspected; strip levels and actual applicability must be verified during
+the build. Use --fail-on-error to exit nonzero on component failures. This is
+static analysis, not proof a patch applies.
 
 When rendering all components (-a), the --clean-stale flag prunes orphan
 rendered-spec directories (per-component dirs that no longer correspond to

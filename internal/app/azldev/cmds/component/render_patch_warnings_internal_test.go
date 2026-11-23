@@ -69,8 +69,8 @@ func TestRenderPatchWarningsJSONAndPolicy(t *testing.T) {
 			prep: "%setup -q\n./prepare.sh", wantStatus: renderStatusOK, wantFinding: true,
 		},
 		{
-			name: "strip mismatch warns by default", prep: "%autosetup -p0",
-			wantStatus: renderStatusOK, wantFinding: true,
+			name: "user-supplied strip level does not warn", prep: "%autosetup -p0",
+			wantStatus: renderStatusOK,
 		},
 		{
 			name: "strict rejects without command failure", args: []string{"--patch-warnings=error"},
@@ -91,18 +91,18 @@ func TestRenderPatchWarningsJSONAndPolicy(t *testing.T) {
 			wantFinding: true,
 		},
 		{
-			name: "strict rejects strip mismatch", args: []string{"--patch-warnings=error"},
-			prep: "%autosetup -p0", wantStatus: renderStatusError,
-			wantFinding: true,
+			name: "strict allows user-supplied strip level", args: []string{"--patch-warnings=error"},
+			prep: "%autosetup -p0", wantStatus: renderStatusOK,
 		},
 		{
-			name: "strict mismatch fails with fail-on-error", args: []string{"--patch-warnings=error", "--fail-on-error"},
-			prep: "%autosetup -p0", wantStatus: renderStatusError, wantError: true,
-			wantFinding: true,
+			name: "strict strip level with fail-on-error still publishes",
+			args: []string{"--patch-warnings=error", "--fail-on-error"},
+			prep: "%autosetup -p0", wantStatus: renderStatusOK,
 		},
 		{
-			name: "mismatch alone does not fail with fail-on-error", args: []string{"--fail-on-error"},
-			prep: "%autosetup -p0", wantStatus: renderStatusOK, wantFinding: true,
+			name: "strict allows bare autosetup for subdirectory patch",
+			args: []string{"--patch-warnings=error", "--fail-on-error"},
+			prep: "%autosetup", wantStatus: renderStatusOK,
 		},
 		{
 			name: "strict allows resolved final overlay", args: []string{"--patch-warnings=error"},

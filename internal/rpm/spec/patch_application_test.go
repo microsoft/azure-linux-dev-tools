@@ -20,7 +20,6 @@ type patchApplicationTestCase struct {
 	name         string
 	declarations []string
 	prep         []string
-	content      []string
 	number       int
 	reason       string
 	noPrep       bool
@@ -596,7 +595,7 @@ func TestAnalyzePatchApplicationGitHelperDependencies(t *testing.T) {
 	runPatchApplicationTests(t, tests)
 }
 
-func TestAnalyzePatchApplicationCommandsAndPaths(t *testing.T) {
+func TestAnalyzePatchApplicationCommands(t *testing.T) {
 	tests := []patchApplicationTestCase{
 		{name: "unknown option", prep: []string{"%patch -P0 --unknown"}, reason: "no recognized command"},
 		{name: "missing option value", prep: []string{"%patch -P"}, reason: "no recognized command"},
@@ -606,42 +605,15 @@ func TestAnalyzePatchApplicationCommandsAndPaths(t *testing.T) {
 		{name: "shell option value", prep: []string{"%patch -P0 -b`run`"}, reason: "shell"},
 		{name: "continued command", prep: []string{"%patch -P0 \\", "-p1"}, reason: "continued"},
 		{name: "unknown backend", prep: []string{"%autosetup -S custom"}, reason: "backend"},
-		{name: "git default strip", prep: []string{"%autosetup -S git"}},
+		{name: "git backend", prep: []string{"%autosetup -S git"}},
 		{name: "backend carries to autopatch", prep: []string{"%autosetup -N -S git", "%autopatch"}},
-		{name: "strip zero mismatch", prep: []string{"%patch0 -p0"}, reason: "uses '-p0'"},
-		{name: "strip two mismatch", prep: []string{"%patch0 -p2"}, reason: "uses '-p2'"},
-		{name: "omitted strip nested path", prep: []string{"%patch0"}, reason: "omits '-p'"},
-		{name: "omitted strip root git path", prep: []string{"%patch0"}, content: []string{"--- a/file.c", "+++ b/file.c"}},
-		{
-			name: "strip entire path", prep: []string{"%patch0 -p1"},
-			content: []string{"--- file.c", "+++ file.c"}, reason: "entire",
-		},
-		{
-			name: "plain paths strip zero", prep: []string{"%patch0 -p0"},
-			content: []string{"--- lib/file.c", "+++ lib/file.c"},
-		},
-		{
-			name: "quoted path", prep: []string{"%patch0 -p1"},
-			content: []string{`--- "a/lib/my file.c"`, `+++ "b/lib/my file.c"`},
-		},
-		{name: "new file", prep: []string{"%patch0 -p1"}, content: []string{"--- /dev/null", "+++ b/lib/file.c"}},
-		{
-			name: "go vendor needs source layout review", prep: []string{"%goprep -p1"},
-			content: []string{"--- a/vendor/lib/file.c", "+++ b/vendor/lib/file.c"},
-			reason: "patch targets 'vendor/' during goprep; verify vendor sources exist before patch application " +
-				"and are not removed or replaced afterward",
-		},
-		{
-			name:    "go vendor archive extracted after application",
-			prep:    []string{"%goprep -p1", "tar -xf %{SOURCE1}"},
-			content: []string{"--- a/vendor/lib/file.c", "+++ b/vendor/lib/file.c"},
-			reason: "patch targets 'vendor/' during goprep; verify vendor sources exist before patch application " +
-				"and are not removed or replaced afterward",
-		},
-		{
-			name: "go vendor kept", prep: []string{"%goprep -k -p1"},
-			content: []string{"--- a/vendor/lib/file.c", "+++ b/vendor/lib/file.c"},
-		},
+		{name: "literal strip zero does not affect selection", prep: []string{"%patch0 -p0"}},
+		{name: "literal strip two does not affect selection", prep: []string{"%patch0 -p2"}},
+		{name: "omitted strip does not affect selection", prep: []string{"%patch0"}},
+		{name: "bare autosetup selects all patches", prep: []string{"%autosetup"}},
+		{name: "bare autopatch selects all patches", prep: []string{"%autopatch"}},
+		{name: "go strip zero enables patching", prep: []string{"%goprep -p0"}},
+		{name: "go vendor flag does not affect selection", prep: []string{"%goprep -k -p1"}},
 	}
 
 	runPatchApplicationTests(t, tests)
@@ -669,14 +641,7 @@ func runPatchApplicationTests(t *testing.T, tests []patchApplicationTestCase) {
 					opened, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(mode))
 					require.NoError(t, err)
 
-					content := test.content
-					if content == nil {
-						content = []string{"--- a/lib/file.c", "+++ b/lib/file.c"}
-					}
-
-					diagnostics, err := opened.AnalyzePatchApplications([]spec.AddedPatch{{
-						Filename: "fix.patch", Content: []byte(strings.Join(content, "\n") + "\n"),
-					}})
+					diagnostics, err := opened.AnalyzePatchApplications([]spec.AddedPatch{{Filename: "fix.patch"}})
 					require.NoError(t, err)
 
 					if test.reason == "" {
@@ -722,7 +687,7 @@ func TestAnalyzePatchApplicationsExplicitMatch(t *testing.T) {
 			name: "LLVM conditional explicit",
 			prep: slices.Concat(llvm, []string{"%ifarch x86_64", "%patch -p1 -P2202", "%endif"}), warn: true,
 		},
-		{name: "LLVM unsafe strip", prep: append(slices.Clone(llvm), "%patch -p0 -P2202"), warn: true},
+		{name: "LLVM explicit selection independent of strip", prep: append(slices.Clone(llvm), "%patch -p0 -P2202")},
 		{name: "explicit before opaque range", prep: []string{"%patch -P2202 -p1", "%autopatch -M%{limit} -p1"}},
 		{
 			name: "quoted operators are not shell context",
@@ -818,9 +783,7 @@ func TestAnalyzePatchApplicationsExplicitMatch(t *testing.T) {
 					lines := slices.Concat([]string{"Name: test", "Patch2202: fix.patch", "%prep"}, test.prep)
 					opened, err := spec.OpenSpec(strings.NewReader(strings.Join(lines, "\n")+"\n"), spec.WithEditor(mode))
 					require.NoError(t, err)
-					diagnostics, err := opened.AnalyzePatchApplications([]spec.AddedPatch{{
-						Filename: "fix.patch", Content: []byte("--- a/lib/file.c\n+++ b/lib/file.c\n"),
-					}})
+					diagnostics, err := opened.AnalyzePatchApplications([]spec.AddedPatch{{Filename: "fix.patch"}})
 					require.NoError(t, err)
 
 					if test.warn {
@@ -918,8 +881,8 @@ func TestAnalyzePatchApplicationsUnconditionalSelection(t *testing.T) {
 			prep: []string{"%autopatch -p1", "%ifarch x86_64", "%patch0 -p1", "%endif"},
 		},
 		{
-			name: "unsafe selection does not hide later valid selection",
-			prep: []string{"%patch0 -p0", "%patch0 -p1"},
+			name: "unresolved application does not hide later valid selection",
+			prep: []string{"%patch0 -p%{strip}", "%patch0 -p1"},
 		},
 		{
 			name: "valid bulk selection does not hide earlier directory hazard",
@@ -946,43 +909,8 @@ func TestAnalyzePatchApplicationsUnconditionalSelection(t *testing.T) {
 			prep: []string{"%ifarch x86_64", "%setup -a1", "%endif", "%autosetup -p1"},
 		},
 		{
-			name: "unresolved directory does not hide strip mismatch",
-			prep: []string{"%autosetup -n %{name}-%{version} -p0"}, reason: "uses '-p0'",
-		},
-	}
-	runPatchApplicationTests(t, tests)
-}
-
-func TestAnalyzePatchApplicationsPairedHeaders(t *testing.T) {
-	tests := []patchApplicationTestCase{
-		{
-			name: "mail preamble is not a filename",
-			prep: []string{"%patch0 -p1"},
-			content: []string{
-				"Subject: Fix behavior", "", "--- Previous behavior", "Explanation.",
-				"+++ New behavior", "", "diff --git a/lib/file.c b/lib/file.c",
-				"--- a/lib/file.c", "+++ b/lib/file.c", "@@ -1 +1 @@", "-old", "+new",
-			},
-		},
-		{
-			name: "preamble does not hide strip mismatch",
-			prep: []string{"%patch0 -p2"},
-			content: []string{
-				"--- Previous behavior", "Explanation.", "--- a/file.c", "+++ b/file.c",
-			},
-			reason: "uses '-p2'",
-		},
-		{
-			name:    "standalone deletion old path is checked",
-			prep:    []string{"%patch0 -p2"},
-			content: []string{"--- a/file.c", "+++ /dev/null", "@@ -1 +0,0 @@", "-old"},
-			reason:  "uses '-p2'",
-		},
-		{
-			name:    "standalone addition new path is checked",
-			prep:    []string{"%patch0 -p2"},
-			content: []string{"--- /dev/null", "+++ b/file.c", "@@ -0,0 +1 @@", "+new"},
-			reason:  "uses '-p2'",
+			name: "macro directory does not affect literal selection",
+			prep: []string{"%autosetup -n %{name}-%{version} -p0"},
 		},
 	}
 	runPatchApplicationTests(t, tests)
@@ -1153,45 +1081,6 @@ func TestAnalyzePatchApplicationsReviewRegressions(t *testing.T) {
 			prep: []string{`echo \(cd lib\)`, "%patch0 -p1"},
 		},
 		{
-			name: "context diff hunk ranges are not file paths",
-			prep: []string{"%patch0 -p1"},
-			content: []string{
-				"*** a/file.c\t2026-01-01", "--- b/file.c\t2026-01-02",
-				"***************", "*** 1,3 ****", "  first", "! old", "  last",
-				"--- 1,3 ----", "  first", "! new", "  last",
-			},
-		},
-		{
-			name: "next context file header remains checked",
-			prep: []string{"%patch0 -p1"},
-			content: []string{
-				"*** a/first.c", "--- b/first.c", "***************",
-				"*** 1 ****", "! old", "--- 1 ----", "! new",
-				"*** second.c", "--- second.c", "***************",
-				"*** 1 ****", "! old", "--- 1 ----", "! new",
-			},
-			reason: "entire patch path",
-		},
-		{
-			name: "unified file after context diff remains checked",
-			prep: []string{"%patch0 -p1"},
-			content: []string{
-				"*** a/first.c", "--- b/first.c", "***************",
-				"*** 1 ****", "! old", "--- 1 ----", "! new",
-				"--- second.c", "+++ second.c", "@@ -1 +1 @@", "-old", "+new",
-			},
-			reason: "entire patch path",
-		},
-		{
-			name: "context header strip mismatch still warns",
-			prep: []string{"%patch0 -p2"},
-			content: []string{
-				"*** a/file.c", "--- b/file.c", "***************",
-				"*** 1 ****", "! old", "--- 1 ----", "! new",
-			},
-			reason: "uses '-p2'",
-		},
-		{
 			name:         "blank line ends continued definition before declaration",
 			declarations: []string{"%define unused() echo unused \\", "", "Patch0: fix.patch"},
 			prep:         []string{"%setup -q"}, reason: "no recognized command",
@@ -1241,33 +1130,6 @@ func TestAnalyzePatchApplicationsReviewRegressions(t *testing.T) {
 		{
 			name: "quoted parentheses are not function syntax",
 			prep: []string{`echo "()"`, "%patch0 -p1"},
-		},
-		{
-			name: "hunk lines resembling headers are not filenames",
-			prep: []string{"%patch0 -p1"},
-			content: []string{
-				"--- a/file.c", "+++ b/file.c", "@@ -1 +1 @@", "--- old comment", "+++ new comment",
-			},
-		},
-		{
-			name: "multiple hunks and files preserve header checks",
-			prep: []string{"%patch0 -p1"},
-			content: []string{
-				"--- a/first.c", "+++ b/first.c", "@@ -1 +1 @@", "--- old", "+++ new",
-				"\\ No newline at end of file",
-				"--- second.c", "+++ second.c", "@@ -1 +1 @@", "-old", "+new",
-			},
-			reason: "entire patch path",
-		},
-		{
-			name: "hunk counts handle context and zero ranges",
-			prep: []string{"%patch0 -p1"},
-			content: []string{
-				"--- a/first.c", "+++ b/first.c", "@@ -1,2 +1,2 @@", " context", "--- old", "+++ new",
-				"@@ -5,0 +6,1 @@", "+++ inserted",
-				"@@ -8,1 +8,0 @@", "--- removed",
-				"--- a/second.c", "+++ b/second.c", "@@ -1 +1 @@", "-old", "+new",
-			},
 		},
 	}
 	runPatchApplicationTests(t, tests)

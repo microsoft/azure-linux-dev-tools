@@ -12,10 +12,9 @@ import (
 	"github.com/kballard/go-shellquote"
 )
 
-// AddedPatch is an overlay-added patch, with its final contents.
+// AddedPatch identifies an overlay-added patch and whether its final file is missing.
 type AddedPatch struct {
 	Filename    string
-	Content     []byte
 	FileMissing bool
 }
 
@@ -54,12 +53,10 @@ type patchConsumer struct {
 	numbers            []int
 	minimum            int
 	maximum            int
-	strip              int
 	backend            string
 	disabled           bool
 	unresolved         string
 	selectionUncertain bool
-	removesVendor      bool
 }
 
 // Only unconditional application is analyzed. Execution uncertainty is captured
@@ -102,7 +99,8 @@ type patchApplicationScanner struct {
 // AnalyzePatchApplications inspects only added patches still declared in the
 // final spec. Both editors share this lexical visitor. It does not evaluate
 // conditional branches, detect duplicate application, evaluate macros, or inspect
-// loaded macro files; standard RPM macro behavior is assumed.
+// loaded macro files or patch contents; standard RPM macro behavior is assumed.
+// Strip levels and actual patch applicability must be verified during the build.
 func (s *Spec) AnalyzePatchApplications(patches []AddedPatch) ([]PatchApplicationDiagnostic, error) {
 	scanner := patchApplicationScanner{backend: patchBackend, redefined: make(map[string]bool)}
 
@@ -601,7 +599,7 @@ func (s *patchApplicationScanner) consumerRedefined(consumer patchConsumer) bool
 // parsePatchConsumer turns a recognized command into selection and application
 // settings, applying command-specific defaults and retaining unsupported behavior.
 func parsePatchConsumer(line, backend string) patchConsumer {
-	consumer := patchConsumer{command: line, minimum: 0, maximum: -1, strip: -1, backend: backend}
+	consumer := patchConsumer{command: line, minimum: 0, maximum: -1, backend: backend}
 
 	visible, _, _ := patchShellContext(line)
 
@@ -613,9 +611,8 @@ func parsePatchConsumer(line, backend string) patchConsumer {
 	}
 
 	consumer.macro = tokens[0]
-	consumer.removesVendor = consumer.macro == goprepCommand
 
-	consumer.disabled = consumer.macro == setupCommand
+	consumer.disabled = consumer.macro == setupCommand || consumer.macro == goprepCommand
 	if !isPatchSetup(consumer.macro) && consumer.macro != autopatchCommand && consumer.macro != setupCommand {
 		consumer.backend = patchBackend
 		if consumer.macro != patchCommand {
@@ -628,10 +625,6 @@ func parsePatchConsumer(line, backend string) patchConsumer {
 
 	if consumer.macro == patchCommand && len(consumer.numbers) == 0 {
 		consumer.numbers = []int{0}
-	}
-
-	if consumer.macro == goprepCommand {
-		consumer.disabled = consumer.strip < 0
 	}
 
 	if consumer.macro != autopatchCommand && len(consumer.numbers) > 1 {
@@ -733,8 +726,8 @@ func patchConsumerOptions(command string) (valueOptions, flagOptions string) {
 	}
 }
 
-// applyFlags handles disabled automatic patching and goprep's vendor/layout
-// behavior; other accepted flags do not change the analyzed selection.
+// applyFlags handles disabled automatic patching and unsupported goprep layouts;
+// other accepted flags do not change the analyzed selection.
 func (c *patchConsumer) applyFlags(flags string) {
 	if c.macro == autosetupCommand || c.macro == forgeautosetupCommand {
 		c.disabled = c.disabled || strings.Contains(flags, "N")
@@ -744,15 +737,12 @@ func (c *patchConsumer) applyFlags(flags string) {
 		if strings.ContainsAny(flags, "ae") {
 			c.unresolved = "multi-source or no-extraction goprep cannot be resolved"
 		}
-
-		if strings.Contains(flags, "k") {
-			c.removesVendor = false
-		}
 	}
 }
 
-// applyOption records literal selection, strip, and backend settings. Braced
-// directory-name macros remain opaque; unsupported values retain uncertainty.
+// applyOption records literal selection and backend settings, and whether '-p'
+// enables goprep patching. Other options are checked without predicting applicability.
+// Braced directory-name macros remain opaque; unsupported values retain uncertainty.
 func (c *patchConsumer) applyOption(option byte, value string) {
 	if option == 'n' {
 		value = withoutPatchExpansions(value, "%{")
@@ -791,7 +781,9 @@ func (c *patchConsumer) applyOption(option byte, value string) {
 
 	switch option {
 	case 'p':
-		c.strip = number
+		if c.macro == goprepCommand {
+			c.disabled = false
+		}
 	case 'P':
 		c.numbers = append(c.numbers, number)
 	case 'm':
@@ -866,7 +858,7 @@ func (s *patchApplicationScanner) check(patch AddedPatch) *PatchApplicationDiagn
 		return diagnostic
 	}
 
-	return s.checkConsumers(patch, diagnostic)
+	return s.checkConsumers(diagnostic)
 }
 
 // declarationConflict reports another filename sharing the added patch's known
@@ -888,9 +880,7 @@ func (s *patchApplicationScanner) declarationConflict(filename string, number in
 // checkConsumers accepts any selecting candidate without a detected problem,
 // unless preparation is unsupported; otherwise it returns a targeted warning.
 // Multiple selections are alternatives here, not duplicate-application findings.
-func (s *patchApplicationScanner) checkConsumers(
-	patch AddedPatch, diagnostic *PatchApplicationDiagnostic,
-) *PatchApplicationDiagnostic {
+func (s *patchApplicationScanner) checkConsumers(diagnostic *PatchApplicationDiagnostic) *PatchApplicationDiagnostic {
 	if s.prep != "" {
 		diagnostic.Reason = s.prep
 
@@ -902,17 +892,12 @@ func (s *patchApplicationScanner) checkConsumers(
 			continue
 		}
 
-		reason := consumer.unresolved
-		if reason == "" {
-			reason = likelyPatchStripMismatch(patch.Content, consumer)
-		}
-
-		if reason == "" {
+		if consumer.unresolved == "" {
 			return nil
 		}
 
 		if diagnostic.Reason == "" {
-			diagnostic.Command, diagnostic.Reason = consumer.command, reason
+			diagnostic.Command, diagnostic.Reason = consumer.command, consumer.unresolved
 		}
 	}
 
@@ -936,175 +921,4 @@ func (s *patchApplicationScanner) checkConsumers(
 // knownPatchBackend identifies backends whose standard behavior is modeled.
 func knownPatchBackend(backend string) bool {
 	return backend == patchBackend || backend == gitBackend || backend == "gendiff"
-}
-
-// likelyPatchStripMismatch inspects diff header paths using the consumer's strip
-// level and vendor policy; it neither validates diff contents nor applies hunks.
-func likelyPatchStripMismatch(content []byte, consumer patchConsumer) string {
-	strip := consumer.strip
-	if strip < 0 && consumer.backend == gitBackend {
-		strip = 1
-	}
-
-	oldRemaining, newRemaining := 0, 0
-	contextHunk := false
-	lines := strings.Split(string(content), "\n")
-
-	for index, line := range lines {
-		if strings.HasPrefix(line, "***************") {
-			contextHunk = true
-
-			continue
-		}
-
-		if contextHunk {
-			if !patchFileBoundary(lines, index) {
-				continue
-			}
-
-			contextHunk = false
-		}
-
-		if strings.HasPrefix(line, "@@ ") {
-			oldRemaining, newRemaining = patchHunkLineCounts(line)
-
-			continue
-		}
-
-		if oldRemaining != 0 || newRemaining != 0 {
-			oldRemaining, newRemaining = advancePatchHunk(line, oldRemaining, newRemaining)
-
-			continue
-		}
-
-		if !pairedPatchHeader(lines, index) {
-			continue
-		}
-
-		if reason := checkPatchHeaderPath(line[4:], strip, consumer.removesVendor); reason != "" {
-			return reason
-		}
-	}
-
-	return ""
-}
-
-// pairedPatchHeader excludes isolated header-like prose while preserving unified
-// pairs and the checked new-file header of a context diff.
-func pairedPatchHeader(lines []string, index int) bool {
-	switch {
-	case strings.HasPrefix(lines[index], "--- "):
-		return (index+1 < len(lines) && strings.HasPrefix(lines[index+1], "+++ ")) ||
-			(index > 0 && strings.HasPrefix(lines[index-1], "*** ") &&
-				!strings.HasSuffix(lines[index-1], " ****"))
-	case strings.HasPrefix(lines[index], "+++ "):
-		return index > 0 && strings.HasPrefix(lines[index-1], "--- ")
-	default:
-		return false
-	}
-}
-
-// advancePatchHunk consumes a unified-diff body line from its remaining old/new
-// counts, leaving metadata such as no-newline markers out of those counts.
-func advancePatchHunk(line string, oldCount, newCount int) (oldRemaining, newRemaining int) {
-	switch {
-	case strings.HasPrefix(line, " "):
-		return oldCount - 1, newCount - 1
-	case strings.HasPrefix(line, "-"):
-		return oldCount - 1, newCount
-	case strings.HasPrefix(line, "+"):
-		return oldCount, newCount - 1
-	default:
-		return oldCount, newCount
-	}
-}
-
-// patchFileBoundary recognizes the next file after a context hunk, distinguishing
-// context range markers from file headers and allowing a following unified diff.
-func patchFileBoundary(lines []string, index int) bool {
-	line := lines[index]
-
-	return strings.HasPrefix(line, "diff ") || strings.HasPrefix(line, "Index: ") ||
-		(strings.HasPrefix(line, "*** ") && !strings.HasSuffix(line, " ****")) ||
-		(strings.HasPrefix(line, "--- ") && index+1 < len(lines) && strings.HasPrefix(lines[index+1], "+++ "))
-}
-
-// patchHunkLineCounts reads unified-diff range lengths so hunk contents cannot
-// be mistaken for file headers. Malformed ranges remain opaque until the next hunk.
-func patchHunkLineCounts(line string) (oldCount, newCount int) {
-	fields := strings.Fields(line)
-	if len(fields) < 4 || fields[0] != "@@" || fields[3] != "@@" {
-		return -1, -1
-	}
-
-	counts := [2]int{1, 1}
-
-	for index, prefix := range []string{"-", "+"} {
-		rangeText, found := strings.CutPrefix(fields[index+1], prefix)
-		if !found {
-			return -1, -1
-		}
-
-		start, count, explicit := strings.Cut(rangeText, ",")
-
-		startNumber, err := strconv.Atoi(start)
-		if err != nil || startNumber < 0 {
-			return -1, -1
-		}
-
-		if explicit {
-			counts[index], err = strconv.Atoi(count)
-			if err != nil || counts[index] < 0 {
-				return -1, -1
-			}
-		}
-	}
-
-	return counts[0], counts[1]
-}
-
-// checkPatchHeaderPath decodes one diff-header filename and reports likely path
-// stripping or vendor-removal problems, ignoring timestamps and '/dev/null'.
-func checkPatchHeaderPath(header string, strip int, removesVendor bool) string {
-	filename, _, _ := strings.Cut(header, "\t")
-	if strings.HasPrefix(filename, "\"") {
-		unquoted, err := strconv.Unquote(filename)
-		if err != nil {
-			return "quoted patch paths cannot be resolved for strip verification"
-		}
-
-		filename = unquoted
-	}
-
-	if filename == "/dev/null" {
-		return ""
-	}
-
-	gitPrefix := strings.HasPrefix(filename, "a/") || strings.HasPrefix(filename, "b/")
-	if gitPrefix && strip >= 0 && strip != 1 {
-		return fmt.Sprintf("patch paths appear to need '-p1', but the command uses '-p%d'; application may fail", strip)
-	}
-
-	if strip > strings.Count(filename, "/") {
-		return fmt.Sprintf("the command uses '-p%d', which removes the entire patch path; application may fail", strip)
-	}
-
-	if strip < 0 && strings.Contains(filename, "/") && (!gitPrefix || strings.Count(filename, "/") > 1) {
-		return "patch names subdirectory files, but the command omits '-p'; application may fail"
-	}
-
-	if removesVendor && targetsTopLevelVendor(filename, strip) {
-		return "patch targets 'vendor/' during goprep; verify vendor sources exist before patch application " +
-			"and are not removed or replaced afterward"
-	}
-
-	return ""
-}
-
-// targetsTopLevelVendor checks whether stripping leaves 'vendor' as the first
-// path component, where goprep's default vendor cleanup would affect it.
-func targetsTopLevelVendor(filename string, strip int) bool {
-	parts := strings.Split(filename, "/")
-
-	return strip >= 0 && strip < len(parts) && parts[strip] == "vendor"
 }

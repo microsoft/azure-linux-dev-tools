@@ -130,8 +130,10 @@ the config loads, so a missing field fails fast rather than at apply time.
   the `source` into the component sources and registers a `PatchN` tag or `%patchlist`
   entry. It does not add application commands or change strip levels. After all
   overlays, source preparation warns if an added patch's application cannot be
-  verified or its paths suggest a strip-level mismatch. Fix the final `%prep` with
+  verified. Fix the final `%prep` with
   a spec overlay; warnings do not prove that the patch applies.
+  Patch contents are not inspected: strip levels, vendor-source availability,
+  and actual applicability must be verified during the build.
   Recognized unconditional selections take precedence over unrelated opaque flow.
   An unconditional `%patch -P2202 -p1`, selected `%autopatch -p1 2202`, or understood
   bulk `%autopatch -p1` / `%autosetup -p1` accounts for the added patch. Ordinary
@@ -145,10 +147,7 @@ the config loads, so a missing field fails fast rather than at apply time.
   candidate without a detected problem can establish selection.
   Standard `%forgeautosetup` applies patches unless `-N`; `%goprep` applies them
   only when `-p` is explicitly supplied. Custom layouts, source blocks, local
-  redefinitions, and Go vendor removal can remain unverified.
-  For a vendor-path warning, verify vendor sources exist before `%goprep` applies
-  patches and survive cleanup or later extraction. `-k` prevents cleanup, not
-  late extraction or replacement of patched files.
+  redefinitions can remain unverified.
   Relevant unconditional inline definitions and `%undefine` directives preceding
   a command are tracked. This includes `__patch`,
   `__scm_apply_patch`, and `_default_patch_flags`. Affected invocations and unresolved command arguments
@@ -161,8 +160,8 @@ the config loads, so a missing field fails fast rather than at apply time.
   Loaded macro files are not inspected or verified, whether azldev-generated or
   user-supplied, even if later overlays change or remove them. Hidden patch-macro
   and `__scm` overrides are unsupported;
-  assuming standard behavior can miss diagnostics or cause false unused-patch errors
-  and misleading strip warnings, including in strict mode. Review these cases manually.
+  assuming standard behavior can miss diagnostics or cause false unused-patch errors,
+  including in strict mode. Review these cases manually.
   Render exposes per-component `patchWarnings` with `-O json`: `filename`,
   `patchNumber` (-1 when unknown; zero is explicit), optional `command`, and
   human-readable `reason` (not a stable machine code).
@@ -173,8 +172,8 @@ the config loads, so a missing field fails fast rather than at apply time.
   The whole prep is scanned; disabled setups and excluding
   ranges do not hide later application commands. Conditional, repeated, and augmented
   prep sections (`%prep -a` or `%prep -p`) warn as unsupported; do not blindly add
-  another application command. Uncertain application and likely strip mismatches
-  remain warnings. Use `component render --patch-warnings=error --fail-on-error`
+  another application command. Uncertain application
+  remains a warning. Use `component render --patch-warnings=error --fail-on-error`
   to promote warnings to component errors and exit nonzero on component failures.
   Strict mode is not report-only: with overwriting allowed, a rejected component's
   output directory is cleared and replaced with a `RENDER_FAILED` marker.

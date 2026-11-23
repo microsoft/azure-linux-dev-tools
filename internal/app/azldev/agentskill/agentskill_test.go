@@ -102,8 +102,8 @@ func TestOverlaySkillPatchDiagnostics(t *testing.T) {
 		assert.Contains(t, doc, "--patch-warnings=error --fail-on-error")
 		assert.Contains(t, doc, "Strict mode is not report-only")
 		assert.Contains(t, doc, "output directory is cleared and replaced with a `RENDER_FAILED` marker")
-		assert.Contains(t, doc, "verify vendor sources exist before `%goprep` applies")
-		assert.Contains(t, doc, "`-k` prevents cleanup, not")
+		assert.Contains(t, doc, "Patch contents are not inspected")
+		assert.Contains(t, doc, "actual applicability must be verified during the build")
 	}
 }
 

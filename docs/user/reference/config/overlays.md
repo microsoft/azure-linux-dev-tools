@@ -501,8 +501,9 @@ description = "Rename upstream patch for clarity"
 
 After all overlays have run, source preparation (including `component render`) checks
 whether the final spec has a recognizable application command for each added patch.
-It reports missing unconditional selection, uncertain application, and likely strip-level mismatches.
-For example, a git-style patch to `a/lib/file.c` usually needs `-p1`.
+It reports missing unconditional selection and uncertain application.
+Patch contents are not inspected: strip levels, vendor-source availability, and
+actual applicability must be verified during the build.
 
 The legacy and experimental structural parsers use the same read-only analysis.
 It recognizes `%patch`, `%autopatch`, `%autosetup`, and straightforward forms of
@@ -513,22 +514,6 @@ the following standard wrappers:
 | `%forgeautosetup` | Like `%autosetup`, applies declared patches unless `-N` is supplied; honors `-p` and `-S`. |
 | `%goprep` with an explicit `-p` | Uses `%autosetup` to apply declared patches at the requested strip level, for example `%goprep -p1`. |
 | Bare `%goprep` | Only prepares sources; does not automatically apply declared patches. |
-
-**Vendor patches need source-layout review.** For a patch targeting `vendor/`,
-verify that vendor sources exist when `%goprep` applies patches and are not
-removed or replaced afterward. For example, containerd-style preparation can
-unpack a separate vendor archive only after patch application:
-
-```spec
-%goprep -p1
-tar -xf %{SOURCE1}
-```
-
-In that layout, a vendor patch cannot rely on files supplied only by the later
-extraction. The analyzer does not inspect archive contents; its warning is a
-prompt to review availability and ordering, not proof that `vendor/` is absent.
-`%goprep -k` prevents the standard vendor cleanup but does not unpack the vendor
-archive earlier or prevent later extraction from replacing patched files.
 
 **Recognized unconditional selections take precedence over unrelated opaque flow.**
 An unconditional `%patch -P2202 -p1`, selected `%autopatch -p1 2202`, or bulk
@@ -546,8 +531,8 @@ that conditional behavior or duplicate application is harmless.
 
 Each candidate retains relevant preceding unconditional directory/control-flow
 uncertainty and inline helper redefinitions. Later commands do not retroactively
-invalidate it. A candidate with unsupported setup, backend, arguments, or likely
-strip mismatch remains unverified unless another supported candidate accounts for
+invalidate it. A candidate with unsupported setup, backend, or arguments
+remains unverified unless another supported candidate accounts for
 the patch without a detected problem. Use the build to verify actual application.
 
 Only the added patch's declaration is checked. An unknown automatic or macro-based
@@ -567,7 +552,7 @@ their contents. It assumes standard patch-macro behavior; definitions hidden in
 those files, including configured `build.defines` overrides of `%setup`,
 `%autosetup`, `%autopatch`, their wrappers, or `__scm`, are not modeled.
 Later overlays that change or remove loaded files are not checked either. These cases can cause
-missed diagnostics, false unused-patch errors, or misleading strip warnings;
+missed diagnostics or false unused-patch errors;
 strict mode does not remove this limitation. Unconditional relevant macro definitions and
 `%undefine` directives preceding an invocation are tracked across sections, including
 between `%description` and `%prep`. This includes patch helpers
@@ -591,9 +576,6 @@ Shell context visible beside an expansion is still checked.
 Macro-generated definitions and conditional effects are outside the analysis.
 `_default_patch_fuzz` alone does not trigger a
 warning: actual hunk applicability is outside the analyzer's scope.
-Path checks require paired file headers, ignoring isolated header-like prose in
-mail-style patch commit messages. They skip unified- and context-diff hunk contents, even when changed source
-lines or range markers resemble `---` or `+++` file headers.
 Shell function definitions, including `name () {`
 syntax, make commands in their bodies unverified rather than treating them as
 unconditional application.
@@ -617,7 +599,7 @@ One ordinary unconditional `%prep` is supported; conditional, repeated, and augm
 sections such as `%prep -a` or `%prep -p` warn as unsupported preparation rather than
 recommending a potentially duplicate application command. An unrelated conditional
 closed before `%prep` does not make it conditional. Missing selection, ambiguous
-declarations, unsupported preparation, and likely strip mismatches are warnings
+declarations, and unsupported preparation are warnings
 by default.
 Other source-preparation callers continue to log all findings as warnings.
 
@@ -670,7 +652,7 @@ as errors and reject their components too:
 |---------|----------------|---------------|
 | No recognized unconditional selection, including an excluding manual/range flow | Warning; component can render | Component error |
 | Setup-only flow with no applying command | Warning; component can render | Component error |
-| Uncertain application or likely strip mismatch | Warning; component can render | Component error |
+| Uncertain application | Warning; component can render | Component error |
 
 Rejected components get `status: "error"` before RPM processing or publication.
 JSON results retain the diagnostics under `patchWarnings`, including findings
