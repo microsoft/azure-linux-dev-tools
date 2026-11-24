@@ -7,6 +7,7 @@ package dirdiff
 import (
 	"bytes"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -29,12 +30,16 @@ import (
 func DiffDirs(fs opctx.FS, dirA, dirB string, opts ...DiffOption) (*DiffResult, error) {
 	cfg := newDiffConfig(opts)
 
-	filesA, err := collectFiles(fs, dirA)
+	ignoredOriginal := make(map[string]bool, len(cfg.ignoredPaths)+len(cfg.ignoredOriginalPaths))
+	maps.Copy(ignoredOriginal, cfg.ignoredPaths)
+	maps.Copy(ignoredOriginal, cfg.ignoredOriginalPaths)
+
+	filesA, err := collectFiles(fs, dirA, ignoredOriginal)
 	if err != nil {
 		return nil, fmt.Errorf("failed to walk original directory %#q:\n%w", dirA, err)
 	}
 
-	filesB, err := collectFiles(fs, dirB)
+	filesB, err := collectFiles(fs, dirB, cfg.ignoredPaths)
 	if err != nil {
 		return nil, fmt.Errorf("failed to walk modified directory %#q:\n%w", dirB, err)
 	}
@@ -122,7 +127,7 @@ func mergedSortedKeys(filesA, filesB map[string]fileEntry) []string {
 // [afero.MemMapFs] does not support symlinks and will report them as regular files.
 // [afero.Walk] uses LstatIfPossible internally, so on supported filesystems symlinks
 // are correctly detected via [os.ModeSymlink] rather than being followed.
-func collectFiles(fs opctx.FS, root string) (map[string]fileEntry, error) {
+func collectFiles(fs opctx.FS, root string, ignoredPaths map[string]bool) (map[string]fileEntry, error) {
 	result := make(map[string]fileEntry)
 
 	walkErr := afero.Walk(fs, root, func(fullPath string, info os.FileInfo, err error) error {
@@ -130,19 +135,25 @@ func collectFiles(fs opctx.FS, root string) (map[string]fileEntry, error) {
 			return fmt.Errorf("error walking %#q:\n%w", fullPath, err)
 		}
 
-		mode := info.Mode()
-
-		// Skip directories — we only collect leaf entries. Symlinks to directories
-		// are not reported as IsDir() by afero.Walk (which uses LstatIfPossible),
-		// so they correctly fall through to the symlink case below.
-		if info.IsDir() {
-			return nil
-		}
-
 		relPath, relErr := filepath.Rel(root, fullPath)
 		if relErr != nil {
 			return fmt.Errorf("failed to compute relative path for %#q from %#q:\n%w", fullPath, root, relErr)
 		}
+
+		if ignoredPaths[relPath] {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+
+			return nil
+		}
+
+		// Walk reports symlinks to directories as symlinks, so only real directories are skipped.
+		if info.IsDir() {
+			return nil
+		}
+
+		mode := info.Mode()
 
 		switch {
 		case mode&os.ModeSymlink != 0:
