@@ -1,9 +1,8 @@
 # Go vendor packaging: artifact acquisition
 
-**Decision:** TOML describes how to generate a vendor archive; the downstream
-RPM `sources` manifest identifies the bytes to build with. A cached, verified
-artifact does not have to be reproducible by today's Go toolchain to be usable.
-azldev prepares the archive, not a replacement RPM spec.
+**Decision:** Regenerate the vendor archive from the prepared Go sources each
+time. TOML describes the recipe; the prepared RPM `sources` manifest records the
+digest of the resulting archive. azldev does not rewrite the published spec.
 
 ## Use cases and schema
 
@@ -22,22 +21,17 @@ origin.type = "go-vendor"
 ```
 
 Discover the output name from a supported vendor Source or specify a basename.
-Neither the recipe nor its filename override needs a duplicate manifest digest.
 Optional generation inputs include declaration-relative native settings, the
-module directory, and extra prep packages. These are not cache keys.
+module directory, and extra prep packages.
 
 ## Acquisition contract
 
-| Downstream state | Required behavior |
-|---|---|
-| Manifest pin and valid cache hit | Use the verified archive. Do not run vendor generation. |
-| Manifest pin, but no usable cached bytes | Generate from patched inputs in isolated mock and check the result against the same pin. A mismatch is an error, not permission to update the digest. |
-| No downstream pin | Generate the archive and record its digest in prepared `sources` for review. Do not mistake a same-named upstream archive for a downstream pin. |
-
-Changing a recipe alone does not supersede a valid pin. To revendor, either
-set a known desired digest or remove the old downstream entry, prepare,
-review the resulting dependencies and licenses, and record the new digest.
-An explicit filename does not authorize replacing an unrelated source.
+Source preparation, render, and source diffs generate the vendor archive after
+overlays in isolated mock. An existing archive or `sources` entry does not skip
+generation. An optional TOML `hash` (with `hash-type`) verifies the newly generated
+bytes before publication; without it, azldev records the computed digest.
+To revendor, change the generation inputs and prepare again. An explicit
+filename does not authorize replacing an unrelated source.
 
 ## Trade-off
 
