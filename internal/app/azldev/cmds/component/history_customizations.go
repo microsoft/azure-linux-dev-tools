@@ -222,6 +222,17 @@ func appendSourceFileItems(
 ) []CustomizationItem {
 	for _, sourceFile := range sourceFiles {
 		items = append(items, CustomizationItem{Kind: "source-files", Value: sourceFile.Filename})
+		if sourceFile.Origin.Type == projectconfig.OriginTypeGoVendor {
+			items = append(items, CustomizationItem{Kind: "source-files.go-vendor", Value: "enabled"})
+		}
+
+		if sourceFile.Origin.ModuleDir != "" {
+			items = append(items, CustomizationItem{Kind: "source-files.module-dir", Value: sourceFile.Origin.ModuleDir})
+		}
+
+		for _, pkg := range sourceFile.Origin.PrepPackages {
+			items = append(items, CustomizationItem{Kind: "source-files.prep-packages", Value: pkg})
+		}
 
 		if sourceFile.ReplaceUpstream {
 			items = append(items, CustomizationItem{

@@ -846,7 +846,8 @@
           "enum": [
             "download",
             "custom",
-            "overlay"
+            "overlay",
+            "go-vendor"
           ],
           "title": "Origin type",
           "description": "Type of origin for this source file"
@@ -879,6 +880,24 @@
           "type": "array",
           "title": "Inputs",
           "description": "Source-output filenames to make available next to the generation script before it runs. Only valid when origin type is 'custom'."
+        },
+        "config-file": {
+          "type": "string",
+          "title": "Vendor configuration file",
+          "description": "Native go-vendor-tools TOML relative to the declaring config. Only valid for go-vendor."
+        },
+        "module-dir": {
+          "type": "string",
+          "title": "Module directory",
+          "description": "Module directory relative to the prepared source root. Only valid for go-vendor."
+        },
+        "prep-packages": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Prep packages",
+          "description": "Additional RPM packages for private prep. Only valid for go-vendor."
         }
       },
       "additionalProperties": false,
@@ -1332,7 +1351,8 @@
     "SourceFileReference": {
       "properties": {
         "filename": {
-          "type": "string"
+          "type": "string",
+          "description": "Source basename. Optional for go-vendor to discover the vendor Source from the spec."
         },
         "hash": {
           "type": "string"
@@ -1361,10 +1381,7 @@
         }
       },
       "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "filename"
-      ]
+      "type": "object"
     },
     "SpecSource": {
       "properties": {

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -249,7 +248,7 @@ func newChangedContext(env *azldev.Env) (*changedContext, error) {
 		return nil, err
 	}
 
-	lockRelDir, err := repoRelPath(repoRoot, env.Config().Project.LockDir)
+	lockRelDir, err := git.RepoRelPath(repoRoot, env.Config().Project.LockDir)
 	if err != nil {
 		return nil, fmt.Errorf("computing repo-relative lock dir:\n%w", err)
 	}
@@ -469,7 +468,7 @@ func compareSources(
 		return false, fmt.Errorf("resolving rendered spec dir:\n%w", err)
 	}
 
-	sourcesRelPath, err := repoRelPath(repoRoot, filepath.Join(renderedDir, "sources"))
+	sourcesRelPath, err := git.RepoRelPath(repoRoot, filepath.Join(renderedDir, "sources"))
 	if err != nil {
 		return false, fmt.Errorf("computing repo-relative sources path:\n%w", err)
 	}
@@ -493,21 +492,6 @@ func compareSources(
 	default:
 		return !bytes.Equal(fromSources, toSources), nil
 	}
-}
-
-// repoRelPath computes a repo-relative path and rejects `..`-prefixed results
-// that would escape the repository root.
-func repoRelPath(repoRoot, absPath string) (string, error) {
-	relPath, err := filepath.Rel(repoRoot, absPath)
-	if err != nil {
-		return "", fmt.Errorf("computing relative path from %#q to %#q:\n%w", repoRoot, absPath, err)
-	}
-
-	if relPath == ".." || strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path %#q escapes repository root %#q", absPath, repoRoot)
-	}
-
-	return relPath, nil
 }
 
 // isFileNotFound returns true if the error indicates a missing file or

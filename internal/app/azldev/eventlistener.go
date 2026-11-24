@@ -9,11 +9,13 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 )
 
 type appEventListener struct {
+	mu          sync.Mutex
 	eventLevel  int
 	eventLogger *slog.Logger
 	quiet       bool
@@ -41,6 +43,9 @@ func NewEventListener(eventLogger *slog.Logger, quiet, verbose bool) (*appEventL
 //
 //nolint:ireturn,nolintlint // We need to return an interface because of the interface definition.
 func (el *appEventListener) StartEvent(name string, args ...any) opctx.Event {
+	el.mu.Lock()
+	defer el.mu.Unlock()
+
 	if name != "" {
 		const spacesPerLevel = 2
 

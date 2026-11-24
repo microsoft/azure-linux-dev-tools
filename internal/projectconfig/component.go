@@ -55,20 +55,22 @@ const (
 	// fields record the expected post-overlay hash, or can be omitted temporarily with
 	// '--allow-no-hashes' while source preparation computes the initial value.
 	OriginTypeOverlay OriginType = "overlay"
+
+	// OriginTypeGoVendor generates a Go vendor archive after source overlays.
+	OriginTypeGoVendor OriginType = "go-vendor"
 )
 
 // IsFetched reports whether [SourceManager.FetchFiles] downloads this origin type to disk.
-// Returns false for [OriginTypeOverlay], which obtains its file via the upstream lookaside
-// extractor in [SourceManager.FetchComponent]. All other types return true.
+// Overlay inputs come from upstream; Go vendor outputs are generated after overlays.
 func (t OriginType) IsFetched() bool {
-	return t != OriginTypeOverlay
+	return t != OriginTypeOverlay && t != OriginTypeGoVendor
 }
 
 // Origin describes where a source file comes from and how to retrieve it.
 // An origin is required for every 'source-files' entry.
 type Origin struct {
 	// Type indicates how the source file should be acquired.
-	Type OriginType `toml:"type" json:"type" jsonschema:"required,enum=download,enum=custom,enum=overlay,title=Origin type,description=Type of origin for this source file" fingerprint:"-"`
+	Type OriginType `toml:"type" json:"type" jsonschema:"required,enum=download,enum=custom,enum=overlay,enum=go-vendor,title=Origin type,description=Type of origin for this source file" fingerprint:"-"`
 	// Uri to download the source file from if origin type is 'download'. Ignored for other origin types.
 	Uri string `toml:"uri,omitempty" json:"uri,omitempty" jsonschema:"title=URI,description=URI to download the source file from if origin type is 'download',example=https://example.com/source.tar.gz" fingerprint:"-"`
 
@@ -87,6 +89,13 @@ type Origin struct {
 	// before it runs. Each entry must be a plain filename. Only valid when
 	// [Origin.Type] is 'custom'.
 	Inputs []string `toml:"inputs,omitempty" json:"inputs,omitempty" jsonschema:"title=Inputs,description=Source-output filenames to make available next to the generation script before it runs. Only valid when origin type is 'custom'."`
+
+	// ConfigFile selects native Go vendor settings relative to the declaring TOML.
+	ConfigFile string `toml:"config-file,omitempty" json:"configFile,omitempty" jsonschema:"title=Vendor configuration file,description=Native go-vendor-tools TOML relative to the declaring config. Only valid for go-vendor." fingerprint:"-"`
+	// ModuleDir selects a module relative to the final prep directory.
+	ModuleDir string `toml:"module-dir,omitempty" json:"moduleDir,omitempty" jsonschema:"title=Module directory,description=Module directory relative to the prepared source root. Only valid for go-vendor."`
+	// PrepPackages supplies tools needed by the spec's prep commands.
+	PrepPackages []string `toml:"prep-packages,omitempty" json:"prepPackages,omitempty" jsonschema:"title=Prep packages,description=Additional RPM packages for private prep. Only valid for go-vendor."`
 }
 
 // EffectiveScriptName returns the checkout-independent filename of [Origin.Script].
@@ -109,6 +118,10 @@ func (o Origin) HashInclude(field string, _ any) (bool, error) {
 		return len(o.MockPackages) > 0, nil
 	case "Inputs":
 		return len(o.Inputs) > 0, nil
+	case "ModuleDir":
+		return o.ModuleDir != "", nil
+	case "PrepPackages":
+		return len(o.PrepPackages) > 0, nil
 	}
 
 	return true, nil
@@ -120,7 +133,7 @@ type SourceFileReference struct {
 	Component ComponentReference `toml:"-" json:"-" fingerprint:"-"`
 
 	// Name of the source file; must be non-empty.
-	Filename string `toml:"filename" json:"filename"`
+	Filename string `toml:"filename,omitempty" json:"filename,omitempty" jsonschema:"description=Source basename. Optional for go-vendor to discover the vendor Source from the spec."`
 
 	// Hash of the source file, expressed as a hex string.
 	Hash string `toml:"hash,omitempty" json:"hash,omitempty"`
@@ -649,6 +662,10 @@ func (c *ComponentConfig) WithAbsolutePaths(referenceDir string) *ComponentConfi
 
 	for i := range result.SourceFiles {
 		origin := &result.SourceFiles[i].Origin
+		if origin.Type == OriginTypeGoVendor {
+			origin.ConfigFile = makeAbsolute(referenceDir, origin.ConfigFile)
+		}
+
 		if origin.Type == OriginTypeCustom {
 			origin.Script = makeAbsolute(referenceDir, origin.Script)
 		}

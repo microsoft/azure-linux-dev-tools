@@ -96,6 +96,8 @@ func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
 		// what the generated artifact contains.
 		"Origin.Type": true,
 		"Origin.Uri":  true,
+		// Native settings are hashed by content, not their checkout-specific path.
+		"Origin.ConfigFile": true,
 
 		// SourceFileReference.ReplaceReason — human documentation for why an upstream entry is
 		// being replaced. ReplaceUpstream itself remains in the fingerprint because flipping it

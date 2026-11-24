@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"slices"
 
 	gogit "github.com/go-git/go-git/v5"
@@ -16,6 +15,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/git"
 	toml "github.com/pelletier/go-toml/v2"
 )
 
@@ -178,7 +178,7 @@ func buildUpstreamCommitSyntheticCommits(
 		return nil, nil
 	}
 
-	configFileRelPath, err := filepath.Rel(projectRepoDir, configFileAbsPath)
+	configFileRelPath, err := git.RepoRelPath(projectRepoDir, configFileAbsPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute repo-relative config path for %#q:\n%w",
 			configFileAbsPath, err)

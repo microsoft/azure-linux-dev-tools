@@ -17,6 +17,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/mock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -32,6 +33,38 @@ func setupTestLogger(logBuffer *bytes.Buffer) func() {
 	return func() {
 		slog.SetDefault(previousDefaultLogger)
 	}
+}
+
+func TestEnvMockRootContext(t *testing.T) {
+	env := testutils.NewTestEnv(t).Env
+	env.SetUniqueMockRoot(true, "render")
+
+	child := env.WithMockRootComponents("curl", "zlib")
+
+	worker, cancel := child.WithCancel()
+	defer cancel()
+
+	assert.Regexp(t, `^rndr-c_2-[a-z2-7]{6}$`, mock.NewRunner(worker, "/mock.cfg").UniqueExtension())
+	assert.Regexp(t, `^rndr-[a-z2-7]{6}$`, mock.NewRunner(env, "/mock.cfg").UniqueExtension())
+
+	env.SetUniqueMockRoot(false, "render")
+	assert.Empty(t, mock.NewRunner(env, "/mock.cfg").UniqueExtension())
+	assert.NotEmpty(t, mock.NewRunner(child, "/mock.cfg").UniqueExtension())
+}
+
+func TestEnvWithContext(t *testing.T) {
+	env := testutils.NewTestEnv(t).Env
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	child := env.WithContext(ctx)
+	assert.Equal(t, env.FS(), child.FS())
+	assert.Equal(t, env.Config(), child.Config())
+	cancel()
+
+	require.ErrorIs(t, child.Err(), context.Canceled)
+	require.NoError(t, env.Err())
 }
 
 func TestNewEnv(t *testing.T) {

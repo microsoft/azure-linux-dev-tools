@@ -153,11 +153,46 @@ func TestBuildComponentSkillDocumentsRPMDevBumpspecPreview(t *testing.T) {
 	assert.NotContains(t, doc, "rpmdev-bumpspec` or RPM macros")
 }
 
+func TestSkillsDocumentUniqueMockRoots(t *testing.T) {
+	for _, name := range []string{"azldev-build-component", "azldev-mock"} {
+		t.Run(name, func(t *testing.T) {
+			doc, err := agentskill.SkillDocument(name, testParams())
+			require.NoError(t, err)
+			assert.Contains(t, doc, "--unique-mockroot")
+			assert.Contains(t, doc, "at most 24 characters")
+			assert.Contains(t, doc, "--uniqueext <extension> --shell")
+			assert.Contains(t, doc, "--disable-plugin yum_cache")
+
+			withoutLockfileDoc, err := agentskill.NewCatalog(true).SkillDocument(name, testParams())
+			require.NoError(t, err)
+			assert.Contains(t, withoutLockfileDoc, "--disable-plugin yum_cache")
+		})
+	}
+}
+
+func TestMockSkillDocumentsBootstrapCleanup(t *testing.T) {
+	doc, err := agentskill.SkillDocument("azldev-mock", testParams())
+	require.NoError(t, err)
+	assert.Contains(t, doc, "Cleanup preserves shared caches.")
+	assert.Contains(t, doc, "`mock --help` does not list `bootstrap-cache`")
+	assert.Contains(t, doc, "matching unique bootstrap directory")
+}
+
 func TestComponentTomlSkillDocumentsRPMDevBumpspecPreview(t *testing.T) {
 	doc, err := agentskill.SkillDocument("azldev-comp-toml", testParams())
 	require.NoError(t, err)
 	assert.Contains(t, doc, "The temporary `--rpmdev-bumpspec` flag")
 	assert.Contains(t, doc, "no bumpspec runtime discovery occurs")
+}
+
+func TestComponentSkillDocumentsVendorSource(t *testing.T) {
+	for _, mode := range []bool{false, true} {
+		doc, err := agentskill.NewCatalog(mode).SkillDocument("azldev-comp-toml", testParams())
+		require.NoError(t, err)
+		assert.Contains(t, doc, `origin.type = "go-vendor"`)
+		assert.Contains(t, doc, "never converts the spec")
+		assert.Contains(t, doc, "`hash` is optional output verification")
+	}
 }
 
 func TestImageSkillDocumentsSKUGroupGuidance(t *testing.T) {

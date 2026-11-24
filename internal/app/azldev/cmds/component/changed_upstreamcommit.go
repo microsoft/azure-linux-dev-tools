@@ -22,6 +22,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/git"
 	"github.com/spf13/afero"
 )
 
@@ -52,7 +53,7 @@ func changedComponentsFromProjectConfigs(
 		return nil, fmt.Errorf("resolving --to ref %#q:\n%w", options.To, err)
 	}
 
-	projectRelDir, err := repoRelPath(repoRoot, env.ProjectDir())
+	projectRelDir, err := git.RepoRelPath(repoRoot, env.ProjectDir())
 	if err != nil {
 		return nil, fmt.Errorf("resolving project directory within repository:\n%w", err)
 	}
@@ -185,7 +186,7 @@ func loadHistoricalProject(
 		return nil, err
 	}
 
-	result.renderedSpecsRelDir, err = repoRelPath(snapshotRepoRoot, config.Project.RenderedSpecsDir)
+	result.renderedSpecsRelDir, err = git.RepoRelPath(snapshotRepoRoot, config.Project.RenderedSpecsDir)
 	if err != nil {
 		return nil, fmt.Errorf("resolving rendered specs directory:\n%w", err)
 	}
@@ -297,6 +298,21 @@ func buildComponentComparisonInputs(
 		inputs.OverlaySourceHashes[strconv.Itoa(idx)] = sourceName + ":" + contentHash
 	}
 
+	for idx, ref := range component.SourceFiles {
+		identity, err := ref.Origin.VendorIdentity(fs)
+		if err != nil {
+			return inputs, fmt.Errorf("hashing vendor source settings:\n%w", err)
+		}
+
+		if identity != "" {
+			if inputs.OverlaySourceHashes == nil {
+				inputs.OverlaySourceHashes = map[string]string{}
+			}
+
+			inputs.OverlaySourceHashes["source:"+strconv.Itoa(idx)] = identity
+		}
+	}
+
 	return inputs, nil
 }
 
@@ -325,6 +341,7 @@ func normalizeComponentForComparison(component projectconfig.ComponentConfig) pr
 
 	normalized.SourceFiles = slices.Clone(component.SourceFiles)
 	for idx := range normalized.SourceFiles {
+		normalized.SourceFiles[idx].Origin.ConfigFile = ""
 		normalized.SourceFiles[idx].Origin.Type = ""
 		normalized.SourceFiles[idx].Origin.Uri = ""
 		normalized.SourceFiles[idx].ReplaceReason = ""
@@ -509,7 +526,7 @@ func projectSpecRepoRelPath(env *azldev.Env, repoRoot, specPath string) (string,
 		absolutePath = filepath.Join(env.ProjectDir(), absolutePath)
 	}
 
-	relativePath, err := repoRelPath(repoRoot, absolutePath)
+	relativePath, err := git.RepoRelPath(repoRoot, absolutePath)
 	if err != nil {
 		return "", fmt.Errorf("resolving spec path %#q:\n%w", specPath, err)
 	}

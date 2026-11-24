@@ -92,7 +92,7 @@ func MkComponentBuildEnvironment(
 	// We'll nest the build environment in a subdirectory under the work directory.
 	buildEnvDir := filepath.Join(workDir, "buildenv")
 
-	buildEnvFactory, err := buildenvfactory.NewMockRootFactoryForEnv(env)
+	buildEnvFactory, err := buildenvfactory.NewMockRootFactoryForEnv(env.WithMockRootComponents(component.Name))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create mock root factory:\n%w", err)
 	}

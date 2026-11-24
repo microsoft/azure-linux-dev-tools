@@ -4,6 +4,7 @@
 package component
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/defers"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/localrepo"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/parmap"
 	"github.com/spf13/cobra"
 )
 
@@ -201,6 +203,15 @@ func BuildComponents(
 		return nil, fmt.Errorf("failed to create work dir factory:\n%w", err)
 	}
 
+	// Unique mock roots make concurrent builds safe. Publishing to a local repo requires
+	// builds to complete in order (later components may depend on earlier ones, and
+	// publishing mutates shared repo metadata), so it stays sequential.
+	if env.UniqueMockRootEnabled() && options.LocalRepoWithPublishPath == "" && components.Len() > 1 {
+		return buildComponentsConcurrently(env, components, workDirFactory, options)
+	}
+
+	env = env.WithMockRootComponents(components.Names()...)
+
 	mockProcessor := createBuildMockProcessor(env)
 	defer destroyMockProcessor(env, mockProcessor)
 
@@ -223,12 +234,86 @@ func BuildComponents(
 	return results, err
 }
 
+// buildComponentsConcurrently builds the components in parallel, each with its own
+// mock root and mock processor. Results are returned in input order.
+func buildComponentsConcurrently(
+	env *azldev.Env,
+	comps *components.ComponentSet,
+	workDirFactory *workdir.Factory,
+	options *ComponentBuildOptions,
+) ([]ComponentBuildResults, error) {
+	workerEnv, cancel := env.WithCancel()
+	defer cancel()
+
+	progressEvent := env.StartEvent("Building components", "count", comps.Len())
+	defer progressEvent.End()
+
+	type buildOutcome struct {
+		results ComponentBuildResults
+		err     error
+	}
+
+	allComponents := comps.Components()
+	total := int64(len(allComponents))
+
+	outcomes := parmap.Map(
+		workerEnv,
+		env.CPUBoundConcurrency(),
+		allComponents,
+		func(done, _ int) { progressEvent.SetProgress(int64(done), total) },
+		func(_ context.Context, component components.Component) buildOutcome {
+			// workerEnv (captured) carries the cancellation context.
+			//nolint:contextcheck // env carries the ctx
+			componentResults, buildErr := BuildComponent(workerEnv, component, workDirFactory, options)
+			if buildErr != nil {
+				buildErr = fmt.Errorf("failed to build %q:\n%w", component.GetName(), buildErr)
+
+				if !options.ContinueOnError {
+					cancel()
+				}
+			}
+
+			return buildOutcome{results: componentResults, err: buildErr}
+		},
+	)
+
+	results := make([]ComponentBuildResults, 0, len(outcomes))
+
+	var err error
+
+	cancelled := false
+
+	for _, outcome := range outcomes {
+		if outcome.Cancelled {
+			cancelled = true
+
+			continue
+		}
+
+		err = errors.Join(err, outcome.Value.err)
+
+		results = append(results, outcome.Value.results)
+	}
+
+	if ctxErr := env.Err(); ctxErr != nil {
+		err = errors.Join(err, ctxErr)
+	}
+
+	if cancelled && err == nil {
+		err = errors.New("component builds cancelled before completion")
+	}
+
+	return results, err
+}
+
 func BuildComponent(
 	env *azldev.Env,
 	component components.Component,
 	workDirFactory *workdir.Factory,
 	options *ComponentBuildOptions,
 ) (ComponentBuildResults, error) {
+	env = env.WithMockRootComponents(component.GetName())
+
 	mockProcessor := createBuildMockProcessor(env)
 	defer destroyMockProcessor(env, mockProcessor)
 
@@ -242,6 +327,7 @@ func buildComponent(
 	mockProcessor *sources.MockProcessor,
 	options *ComponentBuildOptions,
 ) (results ComponentBuildResults, err error) {
+	env = env.WithMockRootComponents(component.GetName())
 	// Resolve the effective distro for this component before creating the source manager.
 	distro, err := sourceproviders.ResolveDistro(env, component)
 	if err != nil {
@@ -267,13 +353,17 @@ func buildComponent(
 	// Clean up the build environment before we return (unless we were asked not to do so).
 	defer defers.HandleDeferError(func() error {
 		if !options.BuildEnvPolicy.ShouldPreserve(err == nil) {
-			return buildEnv.Destroy(env)
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(env), mockProcessorCleanupTimeout)
+			defer cancel()
+
+			return buildEnv.Destroy(env.WithContext(ctx))
 		}
 
 		return nil
 	}, &err)
 
 	var preparerOpts []sources.PreparerOption
+
 	if !options.WithoutGitRepo {
 		preparerOpts = append(preparerOpts, gitRepoPreparerOptions(env, distro)...)
 	}
@@ -288,7 +378,7 @@ func buildComponent(
 
 	preparerOpts = append(preparerOpts, sources.WithMockProcessor(mockProcessor))
 
-	sourcePreparer, err := newSourcePreparer(sourceManager, env.FS(), env, env, append(
+	sourcePreparer, err := newComponentSourcePreparer(env, component, sourceManager, options.MockConfigOpts, append(
 		preparerOpts,
 		sources.WithSpecEditor(options.specEditorMode()),
 	)...)

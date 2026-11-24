@@ -42,13 +42,15 @@ type Runner struct {
 	osEnv         opctx.OSEnv
 	cmdFactory    opctx.CmdFactory
 	eventListener opctx.EventListener
+	dryRunInfo    opctx.DryRunnable
 
 	// Verbosity
 	verbose bool
 
-	mockConfigPath string
-	bindMounts     []bindMountRequest
-	enableNetwork  bool
+	mockConfigPath  string
+	uniqueExtension string
+	bindMounts      []bindMountRequest
+	enableNetwork   bool
 
 	// noPreClean requests that the root *not* be cleaned on command execution, even if mock deems
 	// it ought to be.
@@ -90,31 +92,35 @@ type bindMountRequest struct {
 // Constructs a new [Runner] that can be used to invoke mock.
 func NewRunner(ctx opctx.Ctx, mockConfigPath string) *Runner {
 	return &Runner{
-		fs:             ctx.FS(),
-		osEnv:          ctx.OSEnv(),
-		cmdFactory:     ctx,
-		eventListener:  ctx,
-		verbose:        ctx.Verbose(),
-		mockConfigPath: mockConfigPath,
+		fs:              ctx.FS(),
+		osEnv:           ctx.OSEnv(),
+		cmdFactory:      ctx,
+		eventListener:   ctx,
+		dryRunInfo:      ctx,
+		verbose:         ctx.Verbose(),
+		mockConfigPath:  mockConfigPath,
+		uniqueExtension: newUniqueExtension(ctx),
 	}
 }
 
 // Clone creates a deep copy of the provided [Runner] instance.
 func (r *Runner) Clone() *Runner {
 	return &Runner{
-		fs:             r.fs,
-		osEnv:          r.osEnv,
-		cmdFactory:     r.cmdFactory,
-		eventListener:  r.eventListener,
-		verbose:        r.verbose,
-		mockConfigPath: r.mockConfigPath,
-		bindMounts:     deep.MustCopy(r.bindMounts),
-		enableNetwork:  r.enableNetwork,
-		noPreClean:     r.noPreClean,
-		unprivileged:   r.unprivileged,
-		baseDir:        r.baseDir,
-		rootDir:        r.rootDir,
-		configOpts:     deep.MustCopy(r.configOpts),
+		fs:              r.fs,
+		osEnv:           r.osEnv,
+		cmdFactory:      r.cmdFactory,
+		eventListener:   r.eventListener,
+		dryRunInfo:      r.dryRunInfo,
+		verbose:         r.verbose,
+		mockConfigPath:  r.mockConfigPath,
+		uniqueExtension: r.uniqueExtension,
+		bindMounts:      deep.MustCopy(r.bindMounts),
+		enableNetwork:   r.enableNetwork,
+		noPreClean:      r.noPreClean,
+		unprivileged:    r.unprivileged,
+		baseDir:         r.baseDir,
+		rootDir:         r.rootDir,
+		configOpts:      deep.MustCopy(r.configOpts),
 	}
 }
 
@@ -219,6 +225,11 @@ func (r *Runner) ConfigOpts() map[string]string {
 // Retrieves the path to the mock .cfg file used by this [Runner].
 func (r *Runner) ConfigPath() string {
 	return r.mockConfigPath
+}
+
+// UniqueExtension returns the mock root extension, or empty when unique roots are disabled.
+func (r *Runner) UniqueExtension() string {
+	return r.uniqueExtension
 }
 
 // InitRoot initializes a mock root.
@@ -621,12 +632,27 @@ func (r *Runner) ScrubRoot(ctx context.Context) error {
 
 	mockArgs := r.getBaseArgs()
 
-	if r.baseDir != "" {
+	var bootstrapPath string
+
+	if r.uniqueExtension != "" {
+		bootstrapPath, err = r.bootstrapCleanupPath(ctx)
+		if err != nil {
+			return err
+		}
+	}
+
+	if r.baseDir != "" && r.uniqueExtension == "" {
 		// Lie about the cache topdir so that mock doesn't delete our *actual* shared cache.
 		mockArgs = append(mockArgs, "--config-opts", "cache_topdir="+r.baseDir)
 		mockArgs = append(mockArgs, "--scrub", "all")
 	} else {
 		mockArgs = append(mockArgs, "--scrub", "chroot")
+	}
+
+	// A unique extension gives the bootstrap root a unique name too, so it would never be reused
+	// or cleaned up by a later invocation.
+	if r.uniqueExtension != "" && bootstrapPath == "" {
+		mockArgs = append(mockArgs, "--scrub", "bootstrap")
 	}
 
 	cmd := exec.CommandContext(ctx, MockBinary, mockArgs...)
@@ -643,6 +669,94 @@ func (r *Runner) ScrubRoot(ctx context.Context) error {
 	err = extcmd.Run(ctx)
 	if err != nil {
 		return fmt.Errorf("mock failed to scrub root:\n%w", err)
+	}
+
+	if bootstrapPath != "" {
+		return r.removeBootstrapRoot(ctx, bootstrapPath)
+	}
+
+	return nil
+}
+
+// bootstrapCleanupPath returns the unique bootstrap directory to remove manually, or an empty
+// string when mock supports scrubbing the bootstrap without deleting its shared cache.
+func (r *Runner) bootstrapCleanupPath(ctx context.Context) (string, error) {
+	// Dry runs cannot discover capabilities or paths; only preview the wrapped scrub command.
+	if r.dryRunInfo.DryRun() {
+		return "", nil
+	}
+
+	cmd, err := r.cmdFactory.Command(exec.CommandContext(ctx, MockBinary, "--help"))
+	if err != nil {
+		return "", fmt.Errorf("failed to create command to query mock capabilities:\n%w", err)
+	}
+
+	help, err := cmd.RunAndGetOutput(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to query mock capabilities:\n%w", err)
+	}
+
+	if strings.Contains(help, "bootstrap-cache") {
+		return "", nil
+	}
+
+	// Query the canonical root directory, ignoring custom '--rootdir' settings: mock always
+	// places the bootstrap beside this directory, even when the main root is elsewhere.
+	probe := r.Clone()
+
+	probe.rootDir = ""
+	if probe.configOpts == nil {
+		probe.configOpts = make(map[string]string)
+	}
+
+	probe.configOpts["rootdir"] = "{{basedir}}/{{root}}"
+
+	rootPath, err := probe.GetRootPath(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to locate unique mock bootstrap root:\n%w", err)
+	}
+
+	rootPath = filepath.Clean(rootPath)
+	rootName := filepath.Base(rootPath)
+	suffix := "-" + r.uniqueExtension
+
+	if !filepath.IsAbs(rootPath) || strings.ContainsAny(rootPath, "\r\n") ||
+		!strings.HasSuffix(rootName, suffix) || len(rootName) <= len(suffix) {
+		return "", fmt.Errorf("refusing to derive bootstrap root from unexpected mock root path %#q", rootPath)
+	}
+
+	bootstrapName := strings.TrimSuffix(rootName, suffix) + "-bootstrap" + suffix
+
+	return filepath.Join(filepath.Dir(rootPath), bootstrapName), nil
+}
+
+func (r *Runner) removeBootstrapRoot(ctx context.Context, bootstrapPath string) error {
+	exists, err := fileutils.Exists(r.fs, bootstrapPath)
+	if err != nil {
+		return fmt.Errorf("failed to check mock bootstrap root %#q:\n%w", bootstrapPath, err)
+	}
+
+	if !exists {
+		return nil
+	}
+
+	// Mock has exited and finalized both roots, unmounting their filesystems. The bootstrap
+	// contains root-owned files, so remove only its validated unique directory with sudo.
+	if !r.cmdFactory.CommandInSearchPath("sudo") {
+		return fmt.Errorf("sudo required to remove unique mock bootstrap root %#q", bootstrapPath)
+	}
+
+	rawCmd := exec.CommandContext(ctx, "sudo", "rm", "--recursive", "--force", "--one-file-system", "--", bootstrapPath)
+	rawCmd.Stdout = os.Stdout
+	rawCmd.Stderr = os.Stderr
+
+	cmd, err := r.cmdFactory.Command(rawCmd)
+	if err != nil {
+		return fmt.Errorf("failed to create command to remove mock bootstrap root:\n%w", err)
+	}
+
+	if err := cmd.Run(ctx); err != nil {
+		return fmt.Errorf("failed to remove mock bootstrap root %#q:\n%w", bootstrapPath, err)
 	}
 
 	return nil
@@ -665,7 +779,11 @@ func (r *Runner) getBaseArgs() (args []string) {
 	}
 
 	args = append(args, "-r", r.mockConfigPath)
+
 	args = append(args, "--configdir", filepath.Dir(r.mockConfigPath))
+	if r.uniqueExtension != "" {
+		args = append(args, "--uniqueext", r.uniqueExtension, "--disable-plugin", "yum_cache")
+	}
 
 	if r.baseDir != "" {
 		args = append(args, "--config-opts", "basedir="+r.baseDir)

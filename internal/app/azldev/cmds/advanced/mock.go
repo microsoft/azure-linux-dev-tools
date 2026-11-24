@@ -6,6 +6,7 @@ package advanced
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/buildenvfactory"
@@ -142,6 +143,8 @@ running smoke tests. Packages can be pre-installed into the chroot using
 
 // Builds RPMs from sources, using options.
 func BuildRPMS(env *azldev.Env, options *BuildRPMOptions) (results interface{}, err error) {
+	env = env.WithMockRootComponents(filepath.Base(options.SRPMPath))
+
 	runner, err := makeMockRunner(env, &options.MockCmdOptions)
 	if err != nil {
 		return results, err
@@ -167,6 +170,13 @@ func BuildRPMS(env *azldev.Env, options *BuildRPMOptions) (results interface{}, 
 
 // Executes an interactive shell within a mock root. Uses the provided [ShellOptions] to configure the shell.
 func RunShell(env *azldev.Env, options *ShellOptions, extraArgs []string) error {
+	packages := make([]string, len(options.PackagesToAdd))
+	for idx, pkg := range options.PackagesToAdd {
+		packages[idx] = filepath.Base(pkg)
+	}
+
+	env = env.WithMockRootComponents(packages...)
+
 	runner, err := makeMockRunner(env, &options.MockCmdOptions)
 	if err != nil {
 		return err
@@ -180,6 +190,12 @@ func RunShell(env *azldev.Env, options *ShellOptions, extraArgs []string) error 
 		err = runner.InstallPackages(env, options.PackagesToAdd)
 		if err != nil {
 			return fmt.Errorf("failed to install packages in mock root (%v): %w", options.PackagesToAdd, err)
+		}
+	} else if runner.UniqueExtension() != "" {
+		// A unique root is brand new, and mock requires an initialized root for shell mode.
+		err = runner.InitRoot(env)
+		if err != nil {
+			return fmt.Errorf("failed to initialize mock root: %w", err)
 		}
 	}
 
