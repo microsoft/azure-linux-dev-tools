@@ -126,5 +126,27 @@ func downloadDistGitSources(env *azldev.Env, component components.Component, dir
 		}
 	}
 
+	return validateDistGitSources(env, component.GetName(), dir, lines)
+}
+
+// validateDistGitSources checks every source payload against the committed
+// 'sources' manifest. Payloads fetched from the working configuration may differ
+// from the committed dist-git when the component was not rendered and committed
+// after a source change.
+func validateDistGitSources(
+	env *azldev.Env, name, dir string, lines []fedorasource.SourcesFileLine,
+) error {
+	for _, line := range lines {
+		if line.Entry == nil {
+			continue
+		}
+
+		if err := fileutils.ValidateFileHash(env, env.FS(), line.Entry.HashType,
+			filepath.Join(dir, line.Entry.Filename), line.Entry.Hash); err != nil {
+			return fmt.Errorf("dist-git source %#q does not match the committed 'sources' manifest; "+
+				"render and commit component %#q before building:\n%w", line.Entry.Filename, name, err)
+		}
+	}
+
 	return nil
 }

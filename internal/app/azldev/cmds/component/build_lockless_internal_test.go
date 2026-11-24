@@ -31,11 +31,16 @@ func TestDownloadDistGitSources_ConfiguredOrigins(t *testing.T) {
 	for _, testCase := range []struct {
 		name           string
 		manifest       bool
+		staleManifest  bool
 		disableOrigins bool
 		custom         bool
 		wantError      string
 	}{
 		{name: "download with manifest", manifest: true},
+		{
+			name: "payload differs from committed manifest", manifest: true, staleManifest: true,
+			wantError: "does not match the committed 'sources' manifest",
+		},
 		{name: "download without manifest"},
 		{name: "origins disabled", manifest: true, disableOrigins: true, wantError: "disable-origins is enabled"},
 		{name: "custom origin dispatched", manifest: true, custom: true, wantError: "generation script"},
@@ -63,11 +68,16 @@ func TestDownloadDistGitSources_ConfiguredOrigins(t *testing.T) {
 			require.NoError(t, fileutils.MkdirAll(env.FS(), dir))
 
 			if testCase.manifest {
+				manifestDigest := digest
+				if testCase.staleManifest {
+					manifestDigest = strings.Repeat("0", len(digest))
+				}
+
 				require.NoError(t, fileutils.WriteFile(env.FS(), filepath.Join(dir, "sources"),
-					[]byte("SHA256 ("+filename+") = "+digest+"\n"), fileperms.PublicFile))
+					[]byte("SHA256 ("+filename+") = "+manifestDigest+"\n"), fileperms.PublicFile))
 			}
 
-			if testCase.wantError == "" {
+			if testCase.wantError == "" || testCase.staleManifest {
 				gock.New("https://origin.invalid").Get("/source").Reply(200).BodyString(payload)
 				t.Cleanup(gock.OffAll)
 			}

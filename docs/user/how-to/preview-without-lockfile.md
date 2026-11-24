@@ -113,7 +113,9 @@ Locked queries continue to read working-tree rendered files, including uncommitt
 `component build` fetches configured source files through the normal source manager,
 including custom generation. Download-origin fallback is enabled unless
 `disable-origins` is set. It then downloads any remaining payloads listed in the extracted
-`sources` manifest from lookaside and builds the SRPM with Mock's `rpmautospec`
+`sources` manifest from lookaside. Every payload must match its hash in the
+committed `sources` manifest; a mismatch, such as a changed source hash that
+was not yet rendered and committed, fails the build. It then builds the SRPM with Mock's `rpmautospec`
 plugin enabled and the extracted repository passed as `--sources`. This requires Mock 5.3 or newer and
 rpmautospec available from the build distro's package repositories.
 Mock's rpmautospec plugin must be installed on the host as well; enabling an
