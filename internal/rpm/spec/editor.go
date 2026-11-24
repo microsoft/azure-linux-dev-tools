@@ -6,6 +6,7 @@ package spec
 import (
 	"fmt"
 	"io"
+	"strings"
 	"time"
 )
 
@@ -22,7 +23,8 @@ const (
 )
 
 type editorOptions struct {
-	mode EditorMode
+	mode                      EditorMode
+	preserveReleaseFormatting bool
 }
 
 // OpenOption configures [OpenSpec].
@@ -32,6 +34,14 @@ type OpenOption func(*editorOptions)
 func WithEditor(mode EditorMode) OpenOption {
 	return func(options *editorOptions) {
 		options.mode = mode
+	}
+}
+
+// WithPreservedReleaseFormatting retains existing Release tag casing and spacing
+// when updating its value.
+func WithPreservedReleaseFormatting() OpenOption {
+	return func(options *editorOptions) {
+		options.preserveReleaseFormatting = true
 	}
 }
 
@@ -47,6 +57,7 @@ type specEditor interface {
 	VisitTagsPackage(string, func(*TagLine, *Context) error) error
 	SetTag(string, string, string) error
 	UpdateExistingTag(string, string, string) error
+	UpdateExistingTagFunc(string, string, func(string) (string, error)) error
 	RemoveTag(string, string, string) error
 	RemoveTagsMatching(string, func(string, string) bool) (int, error)
 	AddTag(string, string, string) error
@@ -65,11 +76,25 @@ type specEditor interface {
 	RemoveSubpackage(string) error
 	GetTag(string, string) (string, error)
 	GetLastTag(string, string) (string, error)
+	GetTags(string, string) ([]string, error)
 }
 
 // Spec is the public facade for a configuration-selected RPM spec editor.
 type Spec struct {
 	editor specEditor
+}
+
+func updatedTagLine(original, tag, value string, preserveReleaseFormatting bool) string {
+	if preserveReleaseFormatting && strings.EqualFold(tag, "Release") {
+		prefix, rest, found := strings.Cut(original, ":")
+		if found {
+			spacing := rest[:len(rest)-len(strings.TrimLeft(rest, " \t"))]
+
+			return prefix + ":" + spacing + value
+		}
+	}
+
+	return fmt.Sprintf("%s: %s", tag, value)
 }
 
 func (s *Spec) activeEditor() specEditor {
@@ -95,9 +120,9 @@ func OpenSpec(reader io.Reader, options ...OpenOption) (*Spec, error) {
 
 	switch config.mode {
 	case EditorLegacy, "":
-		editor, err = openLegacySpec(reader)
+		editor, err = openLegacySpec(reader, config.preserveReleaseFormatting)
 	case EditorStructural:
-		editor, err = openStructuralSpec(reader)
+		editor, err = openStructuralSpec(reader, config.preserveReleaseFormatting)
 	default:
 		return nil, fmt.Errorf("unknown spec editor %#q", config.mode)
 	}
@@ -165,6 +190,15 @@ func (s *Spec) SetTag(pkg, tag, value string) error {
 //nolint:wrapcheck // Preserve errors returned by the selected editor.
 func (s *Spec) UpdateExistingTag(pkg, tag, value string) error {
 	return s.activeEditor().UpdateExistingTag(pkg, tag, value)
+}
+
+// UpdateExistingTagFunc updates every matching tag in the specified package to the
+// value returned by update for that tag's current value. It stops at the first
+// error returned by update. Returns [ErrNoSuchTag] if no matching tag exists.
+//
+//nolint:wrapcheck // Preserve errors returned by the selected editor.
+func (s *Spec) UpdateExistingTagFunc(pkg, tag string, update func(current string) (string, error)) error {
+	return s.activeEditor().UpdateExistingTagFunc(pkg, tag, update)
 }
 
 // RemoveTag removes matching tags from the specified package.
@@ -276,6 +310,14 @@ func (s *Spec) RemoveSubpackage(pkg string) error {
 //nolint:wrapcheck // Preserve errors returned by the selected editor.
 func (s *Spec) GetTag(pkg, tag string) (string, error) {
 	return s.activeEditor().GetTag(pkg, tag)
+}
+
+// GetTags returns the values of every matching tag in the specified package, in
+// spec order. Returns [ErrNoSuchTag] if no matching tag exists.
+//
+//nolint:wrapcheck // Preserve errors returned by the selected editor.
+func (s *Spec) GetTags(pkg, tag string) ([]string, error) {
+	return s.activeEditor().GetTags(pkg, tag)
 }
 
 // GetLastTag returns the final matching tag in the specified package.

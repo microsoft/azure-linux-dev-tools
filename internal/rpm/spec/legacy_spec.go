@@ -13,7 +13,8 @@ import (
 )
 
 type legacySpec struct {
-	rawLines []string
+	rawLines                  []string
+	preserveReleaseFormatting bool
 }
 
 type parseState struct {
@@ -32,9 +33,9 @@ func newParseState() parseState {
 
 // OpenSpec reads in the contents of an RPM spec file from the provided reader, returning a [Spec] object.
 // An error is returned if the reader cannot be fully read (e.g., I/O error or line exceeds buffer size).
-func openLegacySpec(reader io.Reader) (*legacySpec, error) {
+func openLegacySpec(reader io.Reader, preserveReleaseFormatting bool) (*legacySpec, error) {
 	scanner := bufio.NewScanner(reader)
-	spec := &legacySpec{}
+	spec := &legacySpec{preserveReleaseFormatting: preserveReleaseFormatting}
 
 	// Read each line from the reader, parsing as we go. Store all parsed lines in the spec object.
 	for scanner.Scan() {
