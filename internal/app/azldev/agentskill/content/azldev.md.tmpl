@@ -34,6 +34,69 @@ images assemble RPMs into bootable artifacts.
 
 ## Common commands
 
+`lockless-components.txt` beside the top-level `azldev.toml` selects the lockless
+workflow per component for all commands. Listed components ignore locks and use
+generated upstream-commit TOML instead. All others use locks.
+`azldev comp make-lockless` adds selected exact names to that list if needed,
+then runs the refresh pipeline. The list is written in lexical order, one name
+per line without blank lines or duplicates. Existing names and lock files are retained.
+Already-listed components are still refreshed; a refresh failure leaves the list updated.
+
+Lockless rendering runs with uncommitted or untracked files anywhere in the repository;
+working-tree inputs (TOML, overlays, local sources) are used as-is. The previous render
+baseline (committed rendered spec, changelog, and Version, plus the upstream commit
+from committed TOML history) is always read from committed files only.
+
+For listed upstream components, rendering writes macros, applies overlays,
+and updates `sources`, then prepares the changelog before Release.
+Overlay edits stay uncommitted in the upstream checkout; only while host `rpmautospec`
+queries it (first render or version change of an `%autorelease` spec) are they
+temporarily amended into the upstream HEAD commit (keeping its committer and date),
+after which the original HEAD is restored.
+Version detection and carryover use the post-overlay spec, so a `Version:`
+overlay can enable or disable carryover, and overlays cannot override the
+prepared release or changelog.
+Non-autorelease rendering then runs host `rpmdev-bumpspec`, without synthetic history or its legacy
+release adjustment. A temporary process-local RPM wrapper sets `_sourcedir` and `_specdir`
+to the spec directory without changing `HOME` or editing the user's `.rpmmacros`;
+it is removed after the invocation, including on failure. Lockless rendering
+preserves the existing spaces and tabs after `Release:` when editing its value, and
+compares output before the final release bump; `--check-only` stops before that bump.
+Unchanged lockless renders require `--no-change-rebuild`; otherwise rendering errors
+without replacing existing output. For unchanged autorelease components (upstream or local),
+the flag records host `date -Is` output in `.no-change-rebuild`.
+Upstream non-autorelease rebuilds proceed without a timestamp marker.
+Unchanged local non-autorelease components must manually update their release and changelog,
+even with `--no-change-rebuild`. Comparison
+ignores this root marker in both existing output and the working upstream checkout.
+Lockless failures never write `RENDER_FAILED`. Before replacement, output is
+untouched; failures after replacement starts clear the component directory and
+use Git to restore committed output, or leave no directory if none existed.
+Recovery discards uncommitted changes in that directory and keeps no backups.
+Before removing existing lockless output, host `rpmspec` compares source-package NEVRs.
+The package name must match. The new NEVR must be equal or higher for a final autorelease spec;
+non-autorelease requires a higher NEVR. Invalid values fail with both NEVRs shown.
+Validation errors leave existing output untouched and fail even without `--fail-on-error`.
+First renders, `--check-only`, and dry runs skip this replacement-time check.
+`--no-change-rebuild` never bypasses the NEVR check.
+It never uses mock or `rpmautospec process-distgit`; RPM macros remain unexpanded.
+It retains all prepared dist-git files except `.git`, without file filtering or
+`spectool` queries, and replaces that component's output directory.
+Rendering never stages or commits; commit the rendered output yourself, because the
+next render's baseline reflects only committed output.
+For upstream non-autorelease specs, `rpmdev-bumpspec -c` receives the
+`--commit-message` text (default: detected from project commits), followed by one `- `-prefixed line per upstream change.
+Autorelease skips `rpmdev-bumpspec`. Rendering never prompts for a message. Without `--commit-message`, the text is the
+subjects of project commits since the last render that changed the component's
+`comp changed` inputs (oldest first), or `Initial import from upstream.` for a first
+render. Changed output with no such commit, or uncommitted changes to those inputs,
+fail the render. An unchanged render with `--no-change-rebuild` uses `No-change rebuild.`.
+Install `rpmdevtools`. `--check-only` stops before bumping or replacing output.
+Local lockless components skip upstream carryover; Release and changelog remain unchanged.
+They exclude the TOML defining the local spec path, while retaining other TOML sidecars.
+They participate in unchanged-render checks.
+Locked components retain their existing render behavior.
+
 Top-level commands in this build:
 
 {{ range .TopLevelCommands }}- `azldev {{ .Name }}` — {{ .Short }}
@@ -47,11 +110,44 @@ Everyday tasks (add `-q -O json` when scripting):
 | Add a component | `azldev comp add` |
 | Build a component | `azldev comp build -p <name>` |
 | Render specs | `azldev comp render -p <name>` (or `-a`) |
+| Extract committed dist-git history | `azldev comp dist-git-repo <name> -o <directory>` |
 | Refresh a lock | `azldev comp update -p <name>` |
+| Refresh a lockless component | `azldev comp refresh-upstream-commit -p <name>` |
 | List / build images | `azldev image list` / `azldev image build` |
 
 `comp` is an alias for `component`. Always confirm current syntax with
 `azldev <command> --help`.
+
+`comp dist-git-repo` requires exactly one component name, `--output-dir` (`-o`),
+and git-filter-repo. It clones the local project's current branch with
+`--single-branch --no-local`, then filters
+`{{ .RenderedSpecsDir }}/<lowercase-first-letter>/<name>` into the repository root.
+Only committed rendered files/history are exported; it does not fetch upstream.
+Existing output requires `--force`, which deletes it after preflight checks.
+
+For lockless components, `comp query` extracts committed rendered history into
+temporary dist-git repositories and processes it with rpmautospec in Mock before
+querying. Uncommitted rendered edits are ignored; locked queries still read the
+working tree. Lockless `comp prepare-sources` writes directly to `--output-dir`
+using render-style preparation. Current TOML and file inputs use the working tree,
+including modified and untracked files. Release/changelog baselines use only
+committed component dist-git files; edits in the existing dist-git directory are
+ignored. Nonempty output requires `--force`; failures can
+leave partial output. It downloads/generates sources before inline macro setup and
+overlays. Lockless specs use `%define` entries, with no separate macros file,
+load directive, or generated `Source9999`; locked specs retain their macros file.
+Archive overlays run before spec and
+loose-file overlays. It does not compare
+rendered output, apply a final render release bump, or commit. It reads render history from
+`project.rendered-specs-dir` using `<lowercase-first-letter>/<component>`, never
+from `--output-dir`. It never generates synthetic history. `--without-git`
+removes `.git` after successful preparation, preserving it on failure.
+It supports `--skip-overlays`, `--skip-sources`, and `--allow-no-hashes`.
+Skipping overlays also skips inline macro setup and `sources` metadata updates;
+skipping sources also skips archive overlays. Missing hashes cannot be computed
+when source acquisition is skipped.
+Use `comp dist-git-repo` for committed history extraction.
+`comp history` continues to skip lockless components.
 
 The hidden `advanced` group (`adv`) contains specialist integrations such as MCP and
 mock helpers; it is intentionally omitted from normal help.
@@ -65,6 +161,7 @@ mock helpers; it is intentionally omitted from normal help.
 - Build, iterate, and debug a component — read the `azldev-build-component` skill.
 - Build, boot, and register images — read the `azldev-image` skill.
 - Refresh a lock and finalize for a PR — read the `azldev-update-component` skill.
+- Refresh a lockless component — read the `azldev-refresh-upstream-commit` skill.
 - Remove a component — read the `azldev-remove-component` skill.
 - Test built RPMs in a chroot — read the `azldev-mock` skill.
 
@@ -72,7 +169,7 @@ mock helpers; it is intentionally omitted from normal help.
 
 - **Never edit generated output** — rendered specs and the output/work/log dirs are
   produced by azldev. Change the source config and re-render.
-- **Re-run `azldev comp update` before opening a PR** — the lock fingerprint covers
+- **For locked components, re-run `azldev comp update` before opening a PR** — the lock fingerprint covers
   the whole component config, and lock / rendered-spec CI checks run on committed state.
 - **Every overlay needs a `description`** explaining why the change is needed.
 
