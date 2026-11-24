@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx/opctx_test"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/externalcmd"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/git"
@@ -30,7 +31,6 @@ const (
 	testRepoBranch         = "test"
 	testRepoSubDir         = "repo"
 	testRepoReadmeFile     = "README"
-	testRepoContribFile    = "CONTRIBUTING.md"
 	testGitDir             = ".git"
 	nonExistentRepoURL     = "https://github.com/nonexistent/repository-does-not-exist-12345.git"
 	errMsgEmptyURL         = "repository URL cannot be empty"
@@ -115,19 +115,22 @@ func TestClone(t *testing.T) {
 }
 
 func TestCloneWithBranch(t *testing.T) {
-	ctrl := gomock.NewController(t)
-
-	cmdFactory, err := externalcmd.NewCmdFactory(
-		opctx_test.NewNoOpMockDryRunnable(ctrl),
-		opctx_test.NewNoOpMockEventListener(ctrl),
-	)
+	env := testutils.NewTestEnv(t)
+	provider, err := git.NewGitProviderImpl(env.EventListener, env.CmdFactory)
 	require.NoError(t, err)
 
-	provider, err := git.NewGitProviderImpl(opctx_test.NewNoOpMockEventListener(ctrl), cmdFactory)
-	require.NoError(t, err)
+	const destDir = "/working/repo"
 
-	tempDir := t.TempDir()
-	destDir := filepath.Join(tempDir, testRepoSubDir)
+	called := false
+	env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+		called = true
+
+		assert.Equal(t, []string{
+			"git", "clone", "--branch", testRepoBranch, testRepoURL, destDir,
+		}, cmd.Args)
+
+		return nil
+	}
 
 	err = provider.Clone(
 		context.Background(),
@@ -137,9 +140,28 @@ func TestCloneWithBranch(t *testing.T) {
 	)
 
 	require.NoError(t, err)
-	assert.DirExists(t, destDir)
-	assert.DirExists(t, filepath.Join(destDir, testGitDir))
-	assert.FileExists(t, filepath.Join(destDir, testRepoContribFile))
+	assert.True(t, called)
+}
+
+func TestCloneWithSingleBranch(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	provider, err := git.NewGitProviderImpl(env.EventListener, env.CmdFactory)
+	require.NoError(t, err)
+
+	called := false
+	env.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+		called = true
+
+		assert.Equal(t, []string{
+			"git", "clone", "--branch", testRepoBranch, "--single-branch", testRepoURL, "/working/repo",
+		}, cmd.Args)
+
+		return nil
+	}
+
+	require.NoError(t, provider.Clone(t.Context(), testRepoURL, "/working/repo",
+		git.WithGitBranch(testRepoBranch), git.WithSingleBranch()))
+	assert.True(t, called)
 }
 
 func TestCloneNonExistentRepo(t *testing.T) {

@@ -522,18 +522,26 @@ func TestSourceManager_FetchComponent_LocalComponent_WithSkipLookaside(t *testin
 		[]byte("Name: test-component\nVersion: 1.0\n"), fileperms.PrivateFile))
 	require.NoError(t, fileutils.WriteFile(env.TestFS, specDir+"/sources",
 		[]byte("SHA512 (big-source.tar.gz) = abc123def456\n"), fileperms.PrivateFile))
+	require.NoError(t, fileutils.WriteFile(env.TestFS, specDir+"/definition.toml",
+		[]byte("[components.test-component.spec]\ntype = 'local'\npath = 'test-component.spec'\n"),
+		fileperms.PublicFile))
 
 	sourceManager, err := sourceproviders.NewSourceManager(env.Env, testDefaultDistro())
 	require.NoError(t, err)
 
 	// With SkipLookaside, downloadLookasideSources is not called and the fetch succeeds.
-	err = sourceManager.FetchComponent(t.Context(), component, testDestDir, sourceproviders.WithSkipLookaside())
+	err = sourceManager.FetchComponent(t.Context(), component, testDestDir,
+		sourceproviders.WithSkipLookaside(), sourceproviders.WithSkipLocalSpecConfig())
 	require.NoError(t, err)
 
 	// Spec was copied to destination (FetchLocalComponent still ran).
 	specExists, err := fileutils.Exists(env.TestFS, filepath.Join(testDestDir, "test-component.spec"))
 	require.NoError(t, err)
 	assert.True(t, specExists, "spec file should exist in destination")
+
+	configExists, err := fileutils.Exists(env.TestFS, filepath.Join(testDestDir, "definition.toml"))
+	require.NoError(t, err)
+	assert.False(t, configExists, "defining local spec TOML must not be copied")
 
 	// Source tarball was NOT downloaded (lookaside was skipped).
 	tarballExists, err := fileutils.Exists(env.TestFS, filepath.Join(testDestDir, "big-source.tar.gz"))
