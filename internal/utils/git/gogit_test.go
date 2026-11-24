@@ -7,12 +7,90 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	gogit "github.com/go-git/go-git/v6"
+	formatcfg "github.com/go-git/go-git/v6/plumbing/format/config"
+	"github.com/go-git/go-git/v6/plumbing/object"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/git"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestOpenProjectRepoLinkedWorktree(t *testing.T) {
+	// PlainOpen uses the OS filesystem, so exercise actual linked-worktree metadata.
+	for _, relative := range []bool{false, true} {
+		name := "absolute"
+		if relative {
+			name = "relative"
+		}
+
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			mainDir := filepath.Join(root, "main")
+			linkedDir := filepath.Join(root, "linked")
+			metadataDir := filepath.Join(mainDir, ".git", "worktrees", "linked")
+
+			mainRepo, err := gogit.PlainInit(mainDir, false)
+			require.NoError(t, err)
+			t.Cleanup(func() { assert.NoError(t, mainRepo.Close()) })
+
+			worktree, err := mainRepo.Worktree()
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(filepath.Join(mainDir, "tracked"), []byte("content\n"), fileperms.PrivateFile))
+
+			_, err = worktree.Add("tracked")
+			require.NoError(t, err)
+			hash, err := worktree.Commit("initial", &gogit.CommitOptions{
+				Author: &object.Signature{Name: "Test", Email: "test@example.com", When: time.Unix(1, 0)},
+			})
+			require.NoError(t, err)
+
+			if relative {
+				cfg, configErr := mainRepo.Config()
+				require.NoError(t, configErr)
+
+				cfg.Core.RepositoryFormatVersion = formatcfg.Version1
+				cfg.Raw.Section("extensions").SetOption("relativeWorktrees", "true")
+				require.NoError(t, mainRepo.SetConfig(cfg))
+			}
+
+			require.NoError(t, os.MkdirAll(filepath.Join(linkedDir, "nested"), fileperms.PrivateDir))
+			require.NoError(t, os.MkdirAll(metadataDir, fileperms.PrivateDir))
+			gitDirLink := metadataDir
+
+			reverseLink := filepath.Join(linkedDir, ".git")
+			if relative {
+				gitDirLink, err = filepath.Rel(linkedDir, metadataDir)
+				require.NoError(t, err)
+				reverseLink, err = filepath.Rel(metadataDir, reverseLink)
+				require.NoError(t, err)
+			}
+
+			require.NoError(t, os.WriteFile(
+				filepath.Join(linkedDir, ".git"), []byte("gitdir: "+gitDirLink+"\n"), fileperms.PrivateFile))
+			require.NoError(t, os.WriteFile(
+				filepath.Join(metadataDir, "gitdir"), []byte(reverseLink+"\n"), fileperms.PrivateFile))
+			require.NoError(t, os.WriteFile(filepath.Join(metadataDir, "commondir"), []byte("../..\n"), fileperms.PrivateFile))
+			require.NoError(t, os.WriteFile(
+				filepath.Join(metadataDir, "HEAD"), []byte(hash.String()+"\n"), fileperms.PrivateFile))
+
+			linkedRepo, err := git.OpenProjectRepo(filepath.Join(linkedDir, "nested"))
+			require.NoError(t, err)
+			t.Cleanup(func() { assert.NoError(t, linkedRepo.Close()) })
+
+			head, err := linkedRepo.Head()
+			require.NoError(t, err)
+			assert.Equal(t, hash, head.Hash())
+			_, err = linkedRepo.CommitObject(hash)
+			require.NoError(t, err)
+			linkedWorktree, err := linkedRepo.Worktree()
+			require.NoError(t, err)
+			assert.Equal(t, filepath.Clean(linkedDir), filepath.Clean(linkedWorktree.Filesystem().Root()))
+		})
+	}
+}
 
 func TestRepoRelPath(t *testing.T) {
 	tempDir := t.TempDir()

@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	gogit "github.com/go-git/go-git/v5"
+	gogit "github.com/go-git/go-git/v6"
 )
 
 // OpenProjectRepo opens a go-git repository from a path within the project,
@@ -21,8 +21,7 @@ import (
 func OpenProjectRepo(path string) (*gogit.Repository, error) {
 	//nolint:wrapcheck // thin wrapper; callers add their own context.
 	return gogit.PlainOpenWithOptions(path, &gogit.PlainOpenOptions{
-		DetectDotGit:          true,
-		EnableDotGitCommonDir: true,
+		DetectDotGit: true,
 	})
 }
 

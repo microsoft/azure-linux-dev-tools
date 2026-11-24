@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	gogit "github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	gogit "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
@@ -722,7 +722,7 @@ func openProjectRepoForConfigFile(
 		return nil, "", fmt.Errorf("failed to get project worktree:\n%w", err)
 	}
 
-	return repo, worktree.Filesystem.Root(), nil
+	return repo, worktree.Filesystem().Root(), nil
 }
 
 // readLockFileAtHEAD reads the lock file at the repository's HEAD commit.

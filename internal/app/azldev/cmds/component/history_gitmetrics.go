@@ -45,7 +45,7 @@ func newHistoryContext(env *azldev.Env) (*historyContext, error) {
 	}
 
 	return &historyContext{
-		repoRoot: worktree.Filesystem.Root(),
+		repoRoot: worktree.Filesystem().Root(),
 		lockDir:  cfg.Project.LockDir,
 	}, nil
 }

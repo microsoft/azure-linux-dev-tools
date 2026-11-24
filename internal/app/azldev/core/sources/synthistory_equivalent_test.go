@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	memfs "github.com/go-git/go-billy/v5/memfs"
-	gogit "github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/storage/memory"
+	memfs "github.com/go-git/go-billy/v6/memfs"
+	gogit "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/storage/memory"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -42,7 +42,7 @@ func TestCommitInterleavedHistory_EquivalentUpstreamBranch(t *testing.T) {
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
 			memFS := memfs.New()
-			repo, err := gogit.Init(memory.NewStorage(), memFS)
+			repo, err := gogit.Init(memory.NewStorage(), gogit.WithWorkTree(memFS))
 			require.NoError(t, err)
 			worktree, err := repo.Worktree()
 			require.NoError(t, err)

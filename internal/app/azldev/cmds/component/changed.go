@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"sort"
 
-	gogit "github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	gogit "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
@@ -238,7 +238,7 @@ func openChangedRepo(env *azldev.Env) (*gogit.Repository, string, error) {
 		return nil, "", fmt.Errorf("getting project worktree:\n%w", err)
 	}
 
-	return repo, worktree.Filesystem.Root(), nil
+	return repo, worktree.Filesystem().Root(), nil
 }
 
 // newChangedContext opens the project repository and resolves paths.
