@@ -46,7 +46,6 @@ azldev completion fish [flags]
   -q, --quiet[=true|false]               only enable minimal output
       --unique-mockroot[=true|false]     use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently
   -v, --verbose[=true|false]             enable verbose output
-      --without-lockfile[=true|false]    preview: track resolved upstream commits in generated config instead of lock files
 ```
 
 ### SEE ALSO

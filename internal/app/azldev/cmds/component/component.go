@@ -38,16 +38,9 @@ components defined in the project configuration.`,
 	testOnAppInit(app, cmd)
 	metadataOnAppInit(app, cmd)
 
-	// The global lock-file-free mode replaces the lock-file commands with hidden
-	// no-ops, so help, docs, and MCP tools offer only commands that apply.
-	if app.WithoutLockfile() {
-		legacyOnAppInit(app, cmd)
-	} else {
-		historyOnAppInit(app, cmd)
-		queryOnAppInit(app, cmd)
-		updateOnAppInit(app, cmd)
-	}
-
+	historyOnAppInit(app, cmd)
+	queryOnAppInit(app, cmd)
+	updateOnAppInit(app, cmd)
 	refreshUpstreamCommitOnAppInit(app, cmd)
 	makeLocklessOnAppInit(app, cmd)
 

@@ -71,7 +71,7 @@ func NewTestEnv(t *testing.T) *TestEnv {
 // NewTestEnvWithoutLockfile creates a [TestEnv] configured for azldev's
 // lock-file-free mode: no lock directory is configured and the environment
 // reports [azldev.Env.WithoutLockfile], so lock population and lock validation
-// are skipped exactly as they are under the global '--without-lockfile' flag.
+// are skipped for every component via an internal environment override.
 func NewTestEnvWithoutLockfile(t *testing.T) *TestEnv {
 	t.Helper()
 

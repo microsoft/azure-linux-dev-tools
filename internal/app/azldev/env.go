@@ -36,8 +36,8 @@ type EnvOptions struct {
 
 	// WithoutLockfile selects the preview lock-file-free mode, in which
 	// component state is tracked by generated upstream-commit config instead
-	// of per-component lock files. Set from the global '--without-lockfile'
-	// flag; false selects the default lock-file behavior.
+	// of per-component lock files. Used for internal historical comparisons;
+	// CLI operations select their modes from the project's component list.
 	WithoutLockfile bool
 
 	// Injected dependencies.
