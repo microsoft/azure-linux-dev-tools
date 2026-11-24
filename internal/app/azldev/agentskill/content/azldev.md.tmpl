@@ -90,7 +90,7 @@ Autorelease skips `rpmdev-bumpspec`. Rendering never prompts for a message. With
 subjects of project commits since the last render that changed the component's
 `comp changed` inputs (oldest first), or `Initial import from upstream.` for a first
 render. Changed output with no such commit, or uncommitted changes to those inputs,
-fail the render. An unchanged render with `--no-change-rebuild` uses `No-change rebuild.`.
+fail the render even without `--fail-on-error`, leaving existing output untouched. An unchanged render with `--no-change-rebuild` uses `No-change rebuild.`.
 Install `rpmdevtools`. `--check-only` stops before bumping or replacing output.
 Local lockless components skip upstream carryover; Release and changelog remain unchanged.
 They exclude the TOML defining the local spec path, while retaining other TOML sidecars.

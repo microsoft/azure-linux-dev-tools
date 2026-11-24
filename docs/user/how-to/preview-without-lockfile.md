@@ -449,6 +449,9 @@ detected from the project's git history:
 - Uncommitted changes that alter the component's inputs fail the render;
   commit them or pass `--commit-message`.
 
+These detection failures return a failing exit status even without
+`--fail-on-error`, and leave existing output untouched.
+
 Changes only under the rendered-specs directory are ignored. Upstream change
 lines are always appended. You can also edit the generated changelog entry
 before committing.

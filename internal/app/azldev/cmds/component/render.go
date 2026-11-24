@@ -379,12 +379,23 @@ func sortRenderResults(results []*RenderResult) {
 	})
 }
 
-// checkRenderErrors reports no-change refusals and NEVR validation errors regardless of failOnError, and
-// other error or cancelled results only when failOnError is set.
+// alwaysFatalRenderErrors are lockless render refusals that fail the command
+// even without '--fail-on-error', since the rendered output was left unchanged.
+//
+//nolint:gochecknoglobals // Read-only list of sentinel errors.
+var alwaysFatalRenderErrors = []error{
+	errNoRenderChanges,
+	errRenderNEVRValidation,
+	errNoComponentCommits,
+	errUncommittedComponentChanges,
+}
+
+// checkRenderErrors reports [alwaysFatalRenderErrors] regardless of failOnError,
+// and other error or cancelled results only when failOnError is set.
 func checkRenderErrors(results []*RenderResult, failOnError bool) error {
 	var (
 		errCount, cancelledCount int
-		noChangeErrors           []error
+		fatalErrors              []error
 	)
 
 	for _, result := range results {
@@ -392,8 +403,10 @@ func checkRenderErrors(results []*RenderResult, failOnError bool) error {
 			continue
 		}
 
-		if errors.Is(result.renderErr, errNoRenderChanges) || errors.Is(result.renderErr, errRenderNEVRValidation) {
-			noChangeErrors = append(noChangeErrors, fmt.Errorf("%#q: %w", result.Component, result.renderErr))
+		if slices.ContainsFunc(alwaysFatalRenderErrors, func(target error) bool {
+			return errors.Is(result.renderErr, target)
+		}) {
+			fatalErrors = append(fatalErrors, fmt.Errorf("%#q: %w", result.Component, result.renderErr))
 		}
 
 		switch result.Status {
@@ -412,8 +425,8 @@ func checkRenderErrors(results []*RenderResult, failOnError bool) error {
 	slog.Error("Some components failed to render",
 		"errorCount", errCount, "cancelledCount", cancelledCount)
 
-	if len(noChangeErrors) > 0 {
-		return errors.Join(noChangeErrors...)
+	if len(fatalErrors) > 0 {
+		return errors.Join(fatalErrors...)
 	}
 
 	if failOnError {

@@ -175,7 +175,7 @@ The final host `rpmdev-bumpspec -c` comment is the `--commit-message` text
 subjects of project commits since the last render that changed the component's
 `comp changed` inputs (oldest first), or `Initial import from upstream.` for a first
 render. Changed output with no such commit, or uncommitted changes to those inputs,
-fail the render. An unchanged render with `--no-change-rebuild` uses `No-change rebuild.`.
+fail the render even without `--fail-on-error`, leaving existing output untouched. An unchanged render with `--no-change-rebuild` uses `No-change rebuild.`.
 All prepared dist-git files except `.git` are retained,
 without file filtering or `spectool` queries. Synthetic history and its
 legacy release adjustment are skipped during lockless rendering.

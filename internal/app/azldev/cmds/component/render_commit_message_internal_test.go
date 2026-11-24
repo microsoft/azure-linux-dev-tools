@@ -272,3 +272,20 @@ func TestResolveLocklessMessage(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckRenderErrors_ChangelogDetectionAlwaysFails(t *testing.T) {
+	for _, sentinel := range []error{errNoComponentCommits, errUncommittedComponentChanges} {
+		err := fmt.Errorf("detecting changelog text for %#q:\n%w", "curl", sentinel)
+
+		for _, failOnError := range []bool{false, true} {
+			require.ErrorIs(t, checkRenderErrors([]*RenderResult{{
+				Component: "curl", Status: renderStatusError, renderErr: err,
+			}}, failOnError), sentinel)
+		}
+	}
+
+	// Other errors still fail only with '--fail-on-error'.
+	other := []*RenderResult{{Component: "curl", Status: renderStatusError, renderErr: assert.AnError}}
+	require.NoError(t, checkRenderErrors(other, false))
+	require.Error(t, checkRenderErrors(other, true))
+}
