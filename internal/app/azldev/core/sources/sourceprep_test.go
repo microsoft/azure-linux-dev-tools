@@ -4,12 +4,14 @@
 package sources_test
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components/components_testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
@@ -26,6 +28,42 @@ import (
 )
 
 const testOutputDir = "/output"
+
+func TestPrepareSources_FetchedSourcesRunBeforeOverlays(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+	manager := sourceproviders_test.NewMockSourceManager(ctrl)
+	ctx := testctx.NewCtx()
+
+	component.EXPECT().GetName().AnyTimes().Return("curl")
+	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
+		Overlays: []projectconfig.ComponentOverlay{{
+			Type:  projectconfig.ComponentOverlayAppendSpecLines,
+			Lines: []string{"# overlay runs last"},
+		}},
+	})
+	manager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ components.Component, dir string, _ ...sourceproviders.FetchComponentOption) error {
+			return fileutils.WriteFile(ctx.FS(), filepath.Join(dir, "curl.spec"),
+				[]byte("Name: curl\nRelease: 1\n"), fileperms.PublicFile)
+		})
+	preparer, err := sources.NewPreparer(manager, ctx.FS(), ctx, ctx,
+		sources.WithSkipLookaside(),
+		sources.WithFetchedSources(func(_ context.Context, _ components.Component, dir string) error {
+			path := filepath.Join(dir, "curl.spec")
+			content, err := fileutils.ReadFile(ctx.FS(), path)
+			require.NoError(t, err)
+			assert.NotContains(t, string(content), "overlay runs last")
+
+			return fileutils.WriteFile(ctx.FS(), path, append(content, []byte("# release prepared\n")...),
+				fileperms.PublicFile)
+		}))
+	require.NoError(t, err)
+	require.NoError(t, preparer.PrepareSources(ctx, component, testOutputDir, true))
+	content, err := fileutils.ReadFile(ctx.FS(), testOutputDir+"/curl.spec")
+	require.NoError(t, err)
+	assert.Contains(t, string(content), "# release prepared\n# overlay runs last")
+}
 
 func TestNewPreparer(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -152,7 +190,9 @@ func TestPrepareSources_ArchiveOverlayRehashesSourcesEntry(t *testing.T) {
 
 	component.EXPECT().GetName().AnyTimes().Return(componentName)
 	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
+		Build: projectconfig.ComponentBuildConfig{Defines: map[string]string{"prepare_fixture": "ready"}},
 		Overlays: []projectconfig.ComponentOverlay{
+			{Type: projectconfig.ComponentOverlaySetSpecTag, Tag: "Summary", Value: "Overlaid"},
 			{
 				Type:     projectconfig.ComponentOverlayRemoveFile,
 				Archive:  archiveName,
@@ -170,14 +210,26 @@ func TestPrepareSources_ArchiveOverlayRehashesSourcesEntry(t *testing.T) {
 		},
 	})
 
-	// The archive and 'sources' file already exist on disk; the source manager
-	// only needs to provide the spec file (FetchFiles is a no-op download).
-	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, outputDir).Return(nil)
+	// The archive and 'sources' file stand in for acquired upstream payloads.
+	sourceManager.EXPECT().FetchFiles(gomock.Any(), component, outputDir).DoAndReturn(
+		func(_ context.Context, _ components.Component, _ string) error {
+			content, err := fileutils.ReadFile(ctx.FS(), specPath)
+			require.NoError(t, err)
+			assert.NotContains(t, string(content), "%{load:")
+			assert.NotContains(t, string(content), "Summary: Overlaid")
+
+			hash, err := fileutils.ComputeFileHash(ctx.FS(), fileutils.HashTypeMD5, archivePath)
+			require.NoError(t, err)
+			assert.Equal(t, originalHash, hash, "archive overlays must follow acquisition")
+
+			return nil
+		})
+
 	sourceManager.EXPECT().FetchComponent(gomock.Any(), component, outputDir, gomock.Any()).DoAndReturn(
 		func(_ interface{}, _ interface{}, dir string, _ ...sourceproviders.FetchComponentOption) error {
 			return fileutils.WriteFile(
 				ctx.FS(), filepath.Join(dir, componentName+".spec"),
-				[]byte("# test spec"), fileperms.PublicFile)
+				[]byte("Name: test-component\nVersion: 1.0\nRelease: 1\nSummary: Original\n"), fileperms.PublicFile)
 		},
 	)
 
@@ -207,6 +259,15 @@ func TestPrepareSources_ArchiveOverlayRehashesSourcesEntry(t *testing.T) {
 	assert.Equal(t, fileutils.HashTypeSHA512, entry.HashType, "configured post-overlay hash type must be used")
 	assert.Equal(t, repackedHash, entry.Hash, "'sources' entry must record the repacked archive's hash")
 	assert.NotEqual(t, originalHash, entry.Hash, "'sources' entry hash must have been updated")
+
+	extractedDir := t.TempDir()
+	require.NoError(t, archive.ExtractAuto(archivePath, extractedDir))
+	assert.FileExists(t, filepath.Join(extractedDir, "pkg-1.0/keep.txt"))
+	assert.NoFileExists(t, filepath.Join(extractedDir, "pkg-1.0/remove-me.txt"))
+
+	specContent, err := fileutils.ReadFile(ctx.FS(), specPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(specContent), "Summary: Overlaid")
 }
 
 func TestPrepareSources_ArchiveOverlayAssociationValidation(t *testing.T) {
@@ -344,12 +405,14 @@ func TestPrepareSources_WithSkipLookaside_SkipsFetchFiles(t *testing.T) {
 			}
 
 			assert.True(t, resolved.SkipLookaside, "FetchComponent should receive SkipLookaside option")
+			assert.True(t, resolved.SingleBranch, "lockless preparation should opt into single-branch cloning")
 
 			return fileutils.WriteFile(ctx.FS(), outputSpecPath, []byte("# test spec"), fileperms.PublicFile)
 		},
 	)
 
-	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx, sources.WithSkipLookaside())
+	preparer, err := sources.NewPreparer(sourceManager, ctx.FS(), ctx, ctx,
+		sources.WithSkipLookaside(), sources.WithoutLockfileHistory())
 	require.NoError(t, err)
 
 	err = preparer.PrepareSources(ctx, component, testOutputDir, true /*applyOverlays?*/)
@@ -433,8 +496,87 @@ func TestPrepareSources_WritesMacrosFile(t *testing.T) {
 	assert.Contains(t, specStr, "Source9999")
 }
 
-// Tests for GenerateMacrosFileContents - these test content generation in isolation.
+func TestPrepareSources_InlinesLocklessMacros(t *testing.T) {
+	for _, testCase := range []struct {
+		name         string
+		skipOverlays bool
+		removeAll    bool
+	}{
+		{name: "configured macros"},
+		{name: "all macros undefined", removeAll: true},
+		{name: "overlays skipped", skipOverlays: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			ctx := testctx.NewCtx()
+			ctrl := gomock.NewController(t)
+			component := components_testutils.NewMockComponent(ctrl)
+			manager := sourceproviders_test.NewMockSourceManager(ctrl)
 
+			config := projectconfig.ComponentConfig{
+				Build: projectconfig.ComponentBuildConfig{
+					With: []string{"feature", "removed"}, Without: []string{"legacy"},
+					Defines: map[string]string{
+						"empty": "", "late": "%{version}", "words": "two words",
+					},
+					Undefines: []string{"_with_removed"},
+				},
+			}
+			if testCase.removeAll {
+				config.Build.Undefines = append(config.Build.Undefines,
+					"_with_feature", "_without_legacy", "empty", "late", "words")
+			}
+
+			component.EXPECT().GetName().AnyTimes().Return("my-package")
+			component.EXPECT().GetConfig().AnyTimes().Return(&config)
+			manager.EXPECT().FetchFiles(gomock.Any(), component, testOutputDir).Return(nil)
+			specPath := filepath.Join(testOutputDir, "my-package.spec")
+			manager.EXPECT().FetchComponent(gomock.Any(), component, testOutputDir, gomock.Any()).DoAndReturn(
+				func(_ context.Context, _ components.Component, _ string, _ ...sourceproviders.FetchComponentOption) error {
+					return fileutils.WriteFile(ctx.FS(), specPath, []byte("Name: my-package\nVersion: 1\n"),
+						fileperms.PublicFile)
+				})
+
+			preparer, err := sources.NewPreparer(manager, ctx.FS(), ctx, ctx, sources.WithoutLockfileHistory())
+			require.NoError(t, err)
+			require.NoError(t, preparer.PrepareSources(ctx, component, testOutputDir, !testCase.skipOverlays))
+			content, err := fileutils.ReadFile(ctx.FS(), specPath)
+			require.NoError(t, err)
+
+			specText := string(content)
+			assert.NotContains(t, specText, "%{load:")
+			assert.NotContains(t, specText, "Source9999")
+
+			exists, err := fileutils.Exists(ctx.FS(), filepath.Join(testOutputDir, "my-package"+sources.MacrosFileExtension))
+			require.NoError(t, err)
+			assert.False(t, exists)
+
+			if testCase.removeAll || testCase.skipOverlays {
+				assert.NotContains(t, specText, "%define ")
+
+				return
+			}
+
+			last := -1
+
+			for _, line := range []string{
+				"%define _with_feature 1\n",
+				"%define _without_legacy 1\n",
+				"%define empty %{nil}\n",
+				"%define late %{version}\n",
+				"%define words two words\n",
+				"Name: my-package\n",
+			} {
+				index := strings.Index(specText, line)
+				assert.Greater(t, index, last, "expected ordered inline definition %q", line)
+				last = index
+			}
+
+			assert.NotContains(t, specText, "_with_removed")
+		})
+	}
+}
+
+// Tests for GenerateMacrosFileContents - these test content generation in isolation.
 func TestGenerateMacrosFileContents_EmptyConfig(t *testing.T) {
 	contents := sources.GenerateMacrosFileContents(projectconfig.ComponentBuildConfig{})
 

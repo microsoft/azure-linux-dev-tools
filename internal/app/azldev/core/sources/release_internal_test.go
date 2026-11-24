@@ -211,6 +211,53 @@ func TestTryBumpStaticRelease_AutoreleaseSkips(t *testing.T) {
 	require.NoError(t, preparer.tryBumpStaticRelease(comp, filepath.Join(testSourcesDir, "test-pkg"), 3))
 }
 
+func TestSourcePreparer_ReleaseFormattingByLockMode(t *testing.T) {
+	for _, editor := range []spec.EditorMode{spec.EditorLegacy, spec.EditorStructural} {
+		for _, mode := range []struct {
+			name             string
+			lockless         bool
+			preserveExplicit bool
+		}{
+			{name: "locked"},
+			{name: "lockless", lockless: true},
+			{name: "explicit", preserveExplicit: true},
+		} {
+			t.Run(fmt.Sprintf("%s/%s", editor, mode.name), func(t *testing.T) {
+				ctx := newBumpspecCtx()
+
+				preparer := &sourcePreparerImpl{
+					fs: ctx.FS(), dryRunnable: ctx, specEditor: editor, withoutLockfile: mode.lockless,
+				}
+				if mode.preserveExplicit {
+					WithPreservedReleaseFormatting()(preparer)
+				}
+
+				specPath := writeTestSpec(t, ctx.FS(), "curl", "Name: curl\nVersion: 1\nrelease:\t 1%{?dist}\n")
+				overlay := projectconfig.ComponentOverlay{
+					Type: projectconfig.ComponentOverlayUpdateSpecTag, Tag: "Release", Value: "2%{?dist}",
+				}
+				require.NoError(t, preparer.applyOverlayList([]projectconfig.ComponentOverlay{overlay},
+					filepath.Dir(specPath), specPath))
+
+				prefix := "Release: "
+				if mode.lockless || mode.preserveExplicit {
+					prefix = "release:\t "
+				}
+
+				content, err := fileutils.ReadFile(ctx.FS(), specPath)
+				require.NoError(t, err)
+				assert.Contains(t, string(content), "\n"+prefix+"2%{?dist}\n")
+
+				comp := mockReleaseComponent(gomock.NewController(t), "curl", projectconfig.ReleaseCalculationStatic)
+				require.NoError(t, preparer.tryBumpStaticRelease(comp, filepath.Dir(specPath), 1))
+				content, err = fileutils.ReadFile(ctx.FS(), specPath)
+				require.NoError(t, err)
+				assert.Contains(t, string(content), "\n"+prefix+"3%{?dist}\n")
+			})
+		}
+	}
+}
+
 func TestTryBumpStaticRelease_StaticBumps(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	memFS := afero.NewMemMapFs()

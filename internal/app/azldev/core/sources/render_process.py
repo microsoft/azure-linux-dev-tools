@@ -40,7 +40,9 @@ from pathlib import Path
 EXPECTED_ARG_COUNT = 3
 
 
-def process_component(staging_dir: str, name: str, spec_filename: str) -> dict[str, str | None]:
+def process_component(
+    staging_dir: str, name: str, spec_filename: str, *, skip_spectool: bool = False
+) -> dict[str, str | None]:
     """Run rpmautospec + spectool for a single component, returning a result dict.
 
     Trust boundary: name and spec_filename are validated by BatchProcess in
@@ -64,6 +66,9 @@ def process_component(staging_dir: str, name: str, spec_filename: str) -> dict[s
             "specFiles": "",
             "error": f"rpmautospec failed: {rpa_result.stderr.strip()}",
         }
+
+    if skip_spectool:
+        return {"name": name, "specFiles": "", "error": None}
 
     # spectool: list source and patch files.
     st_result = subprocess.run(
@@ -120,6 +125,7 @@ def main() -> int:
                 staging_dir,
                 comp["name"],
                 comp["specFilename"],
+                skip_spectool=comp.get("skipSpectool", False),
             ): comp["name"]
             for comp in inputs
         }
