@@ -55,6 +55,9 @@ Example output:
 > per-package entry in its `packages` map — it does **not** mean "the component
 > whose spec produces this package". Packages that get their configuration only
 > from the project default or a package-group will show an empty Component.
+>
+> This differs under `--rpm-file`, where **Component** is the source package that produced
+> the row — see [Row uniqueness](#row-uniqueness-a-package-name-may-appear-more-than-once).
 
 ## Look Up Specific Packages
 
@@ -87,6 +90,42 @@ azldev package list --rpm-file rpm_source_map.json
 The output includes a `type` column to distinguish SRPMs (`srpm`) from binary RPMs (`rpm`).
 SRPM entries use the component's `srpm-channel`; binary RPM entries use the full
 publish-channel resolution stack.
+
+### Row uniqueness: a package name may appear more than once
+
+Rows are unique by **`(packageName, type, component)`**, not by package name alone.
+
+More than one component can produce a binary RPM of the same name, and those components may
+publish to different channels. When a source map lists such a name under several
+`sourcePackageName` values, each pair is reported separately, resolved against the component
+that produced it:
+
+```json
+[
+  {
+    "packageName": "rubygem-bundler",
+    "type": "rpm",
+    "component": "ruby",
+    "publishChannel": "rpm-base"
+  },
+  {
+    "packageName": "rubygem-bundler",
+    "type": "rpm",
+    "component": "rubygem-bundler",
+    "publishChannel": "rpm-sdk"
+  }
+]
+```
+
+Both rows are correct: the binary shipped by `ruby` belongs on `rpm-base`, the one shipped by
+the standalone `rubygem-bundler` component belongs on `rpm-sdk`.
+
+**Scripting consumers must key on the pair.** Loading this output into a map keyed by
+`packageName` silently discards one producer, and which one survives depends on iteration
+order — the same input can then yield different answers in different runs.
+
+Exact duplicate pairs — the same `packageName` under the same `sourcePackageName` — are
+collapsed to one row, so repeating an entry in the source map does not duplicate output.
 
 > **Note:** `--rpm-file` is mutually exclusive with `-a`, `-p`, and `--synthesize-debug-packages`.
 
