@@ -19,8 +19,7 @@ import (
 // configuration may implicitly depend on the contents of the temporary directory.
 //
 // Lockless component definitions merge with override semantics and are validated
-// once the whole project is assembled. The global mode overrides the component list
-// and leaves the project's lock directory unset.
+// once the whole project is assembled. The global mode overrides the component list.
 func LoadProjectConfig(
 	fs opctx.FS,
 	osEnv opctx.OSEnv,
@@ -105,13 +104,6 @@ func LoadProjectConfig(
 
 	// Apply project-relative defaults for any unset path fields.
 	config.Project.ApplyProjectDefaults(projectDir)
-
-	// Lock-file-free mode never reads or writes lock files, so the lock directory
-	// is left unset. A project may still declare 'lock-dir' for compatibility with
-	// azldev's default mode; the value is simply ignored here.
-	if withoutLockfile {
-		config.Project.LockDir = ""
-	}
 
 	return projectDir, config, nil
 }

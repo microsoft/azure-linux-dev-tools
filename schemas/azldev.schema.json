@@ -345,7 +345,7 @@
         "skip-file-filter": {
           "type": "boolean",
           "title": "Skip file filter",
-          "description": "Disable post-render file filtering for specs with unexpandable macros in Source/Patch tags"
+          "description": "Disable post-render file filtering for locked components with unexpandable macros in Source/Patch tags. Lockless rendering always preserves all prepared files except .git."
         }
       },
       "additionalProperties": false,

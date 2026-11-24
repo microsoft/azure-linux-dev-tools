@@ -262,7 +262,7 @@ func TestLoadProjectConfig_LockDirByMode(t *testing.T) {
 		expected        string
 	}{
 		{name: "default mode", withoutLockfile: false, expected: filepath.Join(testProjectDir, "legacy-locks")},
-		{name: "lock-file-free mode", withoutLockfile: true, expected: ""},
+		{name: "lock-file-free mode", withoutLockfile: true, expected: filepath.Join(testProjectDir, "legacy-locks")},
 	}
 
 	for _, testCase := range testCases {
