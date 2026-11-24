@@ -4,7 +4,6 @@
 package component_test
 
 import (
-	"slices"
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
@@ -30,12 +29,11 @@ func TestOnAppInit(t *testing.T) {
 
 func TestOnAppInit_CommandsByMode(t *testing.T) {
 	testCases := []struct {
-		name            string
-		args            []string
-		refreshExpected bool
+		name string
+		args []string
 	}{
-		{name: "default mode", args: nil, refreshExpected: false},
-		{name: "lock-file-free mode", args: []string{"--without-lockfile"}, refreshExpected: true},
+		{name: "default mode", args: nil},
+		{name: "lock-file-free mode", args: []string{"--without-lockfile"}},
 	}
 
 	for _, testCase := range testCases {
@@ -49,8 +47,7 @@ func TestOnAppInit_CommandsByMode(t *testing.T) {
 			commandNames, err := app.CommandNames("component")
 			require.NoError(t, err)
 
-			assert.Equal(t, testCase.refreshExpected,
-				slices.Contains(commandNames, "refresh-upstream-commit"))
+			assert.Contains(t, commandNames, "refresh-upstream-commit")
 
 			// The lock-file command names stay reachable in lock-file-free mode,
 			// where they are registered as hidden no-ops for compatibility.

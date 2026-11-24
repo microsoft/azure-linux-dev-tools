@@ -55,6 +55,10 @@ files before component-specific TOML configuration so subsequent commands use
 the generated commit unless the component configuration explicitly overrides
 it.
 
+Only components listed in lockless-components.txt
+beside the top-level azldev.toml are refreshed. Other components are skipped
+and their generated TOML files are preserved.
+
 All TOML configuration is resolved before the source type is checked. Selected
 components whose effective spec.type is not "upstream" do not contact an
 upstream provider, and any generated upstream-commit TOML for them is removed.
@@ -76,19 +80,19 @@ The --check-only flag runs the full pipeline but does NOT write TOML files or
 prune orphans. The command exits 0 when nothing would change and exits 1 when
 any component is stale or any generated TOML would be pruned. Intended for CI gates.`,
 		Example: `  # Refresh all components
-  azldev --without-lockfile component refresh-upstream-commit -a
+  azldev component refresh-upstream-commit -a
 
   # Refresh a single component
-  azldev --without-lockfile component refresh-upstream-commit -p curl
+  azldev component refresh-upstream-commit -p curl
 
   # Refresh components in a group
-  azldev --without-lockfile component refresh-upstream-commit -g core
+  azldev component refresh-upstream-commit -g core
 
   # Write generated files to a custom directory
-  azldev --without-lockfile component refresh-upstream-commit -a --upstream-commits-dir config/commits
+  azldev component refresh-upstream-commit -a --upstream-commits-dir config/commits
 
   # CI gate: exit 0 if commit TOMLs are current, 1 if anything would change
-  azldev --without-lockfile component refresh-upstream-commit -a --check-only -q`,
+  azldev component refresh-upstream-commit -a --check-only -q`,
 		RunE: azldev.RunFuncWithExtraArgs(func(env *azldev.Env, args []string) (interface{}, error) {
 			options.ComponentFilter.ComponentNamePatterns = append(
 				args, options.ComponentFilter.ComponentNamePatterns...,
@@ -135,6 +139,8 @@ func RefreshUpstreamCommits(
 	env *azldev.Env, options *RefreshUpstreamCommitOptions,
 ) ([]RefreshUpstreamCommitResult, error) {
 	resolver := components.NewResolver(env)
+	options.ComponentFilter.SkipLockValidation = true
+	resolver.SuppressLockWarnings = true
 
 	resolved, err := resolver.FindComponents(&options.ComponentFilter)
 	if err != nil {
@@ -165,7 +171,9 @@ func RefreshUpstreamCommits(
 	// selected component has an upstream identity. Non-upstream components
 	// never contact a provider; an existing generated pin is marked for
 	// removal instead.
-	upstreamComps, results, inspectErr := inspectSelectedComponents(allComps, store)
+	upstreamComps, results, inspectErr := inspectSelectedComponents(
+		componentsForLockMode(env, allComps, true), store,
+	)
 	if inspectErr != nil {
 		return results, inspectErr
 	}
@@ -202,7 +210,7 @@ func RefreshUpstreamCommits(
 	// spec-glob-discovered components that aren't in config directly.
 	// Generated TOMLs are version controlled, so pruning is safe even if the
 	// resolved set is empty (e.g., all components removed from config).
-	wouldPrune, orphanErr := handleOrphanConfigs(store, allComps, options)
+	wouldPrune, orphanErr := handleOrphanConfigs(env, store, allComps, options)
 	if orphanErr != nil {
 		return filterRefreshDisplayResults(results), orphanErr
 	}
@@ -279,12 +287,21 @@ func excludePendingRemovals(
 // touching disk. Returns (nil, nil) when not running with --all-components,
 // since orphan handling is scoped to whole-set updates.
 func handleOrphanConfigs(
+	env *azldev.Env,
 	store *upstreamcommit.Store,
 	comps []components.Component,
 	options *RefreshUpstreamCommitOptions,
 ) ([]string, error) {
+	var ignored []string
+
+	for _, comp := range comps {
+		if !env.ComponentWithoutLockfile(comp.GetName()) {
+			ignored = append(ignored, comp.GetName())
+		}
+	}
+
 	return handleOrphans(
-		upstreamCommitOrphanStore{store: store},
+		upstreamCommitOrphanStore{store: store, ignored: ignored},
 		comps,
 		options.ComponentFilter.IncludeAllComponents,
 		options.CheckOnly,
@@ -297,13 +314,14 @@ func handleOrphanConfigs(
 
 // upstreamCommitOrphanStore adapts [upstreamcommit.Store] to [orphanStore].
 type upstreamCommitOrphanStore struct {
-	store *upstreamcommit.Store
+	store   *upstreamcommit.Store
+	ignored []string
 }
 
 func (s upstreamCommitOrphanStore) findOrphans(
 	resolved map[string]projectconfig.ComponentConfig,
 ) ([]string, error) {
-	orphans, err := s.store.FindOrphans(resolved)
+	orphans, err := s.store.FindOrphans(resolved, s.ignored...)
 	if err != nil {
 		return nil, fmt.Errorf("finding orphan upstream commit TOMLs:\n%w", err)
 	}
@@ -314,7 +332,7 @@ func (s upstreamCommitOrphanStore) findOrphans(
 func (s upstreamCommitOrphanStore) pruneOrphans(
 	resolved map[string]projectconfig.ComponentConfig,
 ) (int, error) {
-	pruned, err := s.store.PruneOrphans(resolved)
+	pruned, err := s.store.PruneOrphans(resolved, s.ignored...)
 	if err != nil {
 		return 0, fmt.Errorf("pruning orphan upstream commit TOMLs:\n%w", err)
 	}
@@ -358,7 +376,7 @@ func refreshCheckOnlyResult(
 	}
 
 	return display, fmt.Errorf("upstream commit TOML files are stale; %s. "+
-		"Run 'azldev --without-lockfile component refresh-upstream-commit -a' to refresh",
+		"Run 'azldev component refresh-upstream-commit -a' to refresh",
 		strings.Join(parts, "; "))
 }
 
