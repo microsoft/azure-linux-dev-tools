@@ -95,7 +95,9 @@ plan = "/plans/all"
 
 - **`source`** pins the repository that holds the **plan**. azldev clones this
   repo at `ref` (a full 40-char commit SHA) and treats it as the fmf/plan root.
-- **`plan`** is the absolute fmf plan name to run (e.g. `/plans/all`).
+- **`plan`** is the absolute fmf plan name to run (e.g. `/plans/all`). azldev
+  matches it exactly. tmt itself treats plan names as regular expressions, so
+  without anchoring `/plans/tests` would also select a sibling `/plans/tests-10m`.
 
 **Both are optional.** When a component has no catalog entry at all (common for
 packages whose upstream dist-git already ships `plans/`/`tests/`), `azldev

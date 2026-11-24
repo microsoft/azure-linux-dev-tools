@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -780,7 +781,7 @@ func componentTMTArgs(
 	// enabled plan it finds — the same default Fedora's own Testing Farm uses,
 	// instead of a fixed guessed name.
 	if config.Plan != "" {
-		args = append(args, "plan", "--name", config.Plan)
+		args = append(args, "plan", "--name", exactPlanNamePattern(config.Plan))
 	} else {
 		args = append(args, "plan")
 	}
@@ -831,8 +832,18 @@ func resolvedPlanHardwareArgs(
 	return mergePlanHardwareArgs(hardware)
 }
 
+// exactPlanNamePattern returns a regular expression matching only the plan
+// named plan. TMT treats plan names passed to 'run plan --name' and to
+// 'plan export' as regular expressions searched anywhere in each plan's name,
+// so a bare '/plans/tests' also selects a sibling such as '/plans/tests-10m'.
+func exactPlanNamePattern(plan string) string {
+	return "^" + regexp.QuoteMeta(plan) + "$"
+}
+
 func exportedPlanHardware(env *azldev.Env, repoDir string, tmtProgramPath string, plan string) (map[string]any, error) {
-	output, err := runHostCommandOutput(env, repoDir, tmtProgramPath, "plan", "export", plan, "--how", "json")
+	output, err := runHostCommandOutput(
+		env, repoDir, tmtProgramPath, "plan", "export", exactPlanNamePattern(plan), "--how", "json",
+	)
 	if err != nil {
 		return nil, err
 	}

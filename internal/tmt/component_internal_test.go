@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -678,7 +679,7 @@ func TestComponentTMTArgsPreservesNativePlanSteps(t *testing.T) {
 
 	assert.Equal(t, []string{
 		"run", "--all", "--keep", "--workdir-root", "/work/tmt",
-		"plan", "--name", "/plans/smoke",
+		"plan", "--name", "^/plans/smoke$",
 		"provision", "--how", "virtual", "--become", "--image", "/path/to/image.qcow2",
 		"--hardware", "memory >= 4 GB", "--hardware", "boot.method = uefi",
 		"prepare", "--insert", "--how", "install", "--name", tmtCandidateRPMPrepareStepName,
@@ -703,7 +704,7 @@ func TestComponentTMTArgsVirtualProvisioner(t *testing.T) {
 
 	assert.Equal(t, []string{
 		"run", "--all", "--keep", "--workdir-root", "/work/tmt",
-		"plan", "--name", "/plans/smoke",
+		"plan", "--name", "^/plans/smoke$",
 		"provision", "--how", "virtual", "--become", "--image", "/path/to/image.qcow2",
 		"--hardware", "boot.method = uefi",
 		"prepare", "--insert", "--how", "install", "--name", tmtCandidateRPMPrepareStepName,
@@ -726,7 +727,7 @@ func TestComponentTMTArgsLocalProvisioner(t *testing.T) {
 
 	assert.Equal(t, []string{
 		"run", "--all", "--keep", "--workdir-root", "/work/tmt",
-		"plan", "--name", "/plans/smoke",
+		"plan", "--name", "^/plans/smoke$",
 		"provision", "--how", "local", "--become",
 		"prepare", "--insert", "--how", "install", "--name", tmtCandidateRPMPrepareStepName,
 		"--package", "/rpms/component.rpm",
@@ -752,6 +753,84 @@ func TestComponentTMTArgsOmitsNameWhenPlanIsEmpty(t *testing.T) {
 		"prepare", "--insert", "--how", "install", "--name", tmtCandidateRPMPrepareStepName,
 		"--package", "/rpms/component.rpm",
 	}, args)
+}
+
+func TestExactPlanNamePattern(t *testing.T) {
+	for _, testCase := range []struct {
+		plan    string
+		pattern string
+		matches []string
+		rejects []string
+	}{
+		{
+			// A plan whose name is a prefix of a sibling plan, as in Fedora's
+			// selinux-policy dist-git ('/plans/tests' and '/plans/tests-10m').
+			plan:    "/plans/tests",
+			pattern: "^/plans/tests$",
+			matches: []string{"/plans/tests"},
+			rejects: []string{"/plans/tests-10m", "/plans/tests/extra", "/old/plans/tests"},
+		},
+		{
+			plan:    "/plans/c++.v1",
+			pattern: `^/plans/c\+\+\.v1$`,
+			matches: []string{"/plans/c++.v1"},
+			rejects: []string{"/plans/cv1", "/plans/c++xv1"},
+		},
+	} {
+		t.Run(testCase.plan, func(t *testing.T) {
+			pattern := exactPlanNamePattern(testCase.plan)
+			assert.Equal(t, testCase.pattern, pattern)
+
+			compiled := regexp.MustCompile(pattern)
+
+			for _, name := range testCase.matches {
+				assert.True(t, compiled.MatchString(name), "pattern %q must match %q", pattern, name)
+			}
+
+			for _, name := range testCase.rejects {
+				assert.False(t, compiled.MatchString(name), "pattern %q must not match %q", pattern, name)
+			}
+		})
+	}
+}
+
+func TestComponentTMTArgsAnchorsPlanName(t *testing.T) {
+	args := componentTMTArgs(
+		tmtConfig{Plan: "/plans/tests"},
+		"/work/tmt",
+		tmtProvisionLocal,
+		"",
+		nil,
+		[]string{"/rpms/component.rpm"},
+	)
+
+	nameIndex := slices.Index(args, "--name")
+	require.GreaterOrEqual(t, nameIndex, 0)
+	require.Less(t, nameIndex+1, len(args))
+	assert.Equal(t, "^/plans/tests$", args[nameIndex+1])
+	assert.NotContains(t, args, "/plans/tests")
+}
+
+func TestExportedPlanHardwareRequestsOnlyTheNamedPlan(t *testing.T) {
+	testEnv := testutils.NewTestEnv(t)
+
+	var exportArgs []string
+
+	testEnv.CmdFactory.RunAndGetOutputHandler = func(command *exec.Cmd) (string, error) {
+		exportArgs = command.Args[1:]
+
+		// Even when tmt returns a sibling plan, only the exact name is used.
+		return `[
+			{"name": "/plans/tests-10m", "provision": [{"hardware": {"memory": ">= 8 GB"}}]},
+			{"name": "/plans/tests", "provision": [{"hardware": {"memory": ">= 4 GB"}}]}
+		]`, nil
+	}
+
+	hardware, err := exportedPlanHardware(testEnv.Env, "/work/repo", "/work/tmt/venv/bin/tmt", "/plans/tests")
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"plan", "export", "^/plans/tests$", "--how", "json"}, exportArgs)
+	assert.Equal(t, map[string]any{"memory": ">= 4 GB"}, hardware)
 }
 
 func TestOverrideTMTPlanCopiesRatherThanMutatesSharedMap(t *testing.T) {

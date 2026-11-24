@@ -62,7 +62,7 @@ installs the RPMs passed through `--rpm` before the plan runs.
 | Field | TOML Key | Type | Description |
 |-------|----------|------|-------------|
 | Source | `source` | table (`git-url`, `ref`) | Git repository containing the plan. Optional; when omitted, the test source must instead be supplied directly with `--source-dir`. When present, `ref` must be a full 40-character hex commit SHA. |
-| Plan | `plan` | string | Absolute TMT plan name to run. Optional; when omitted, tmt discovers and runs every enabled plan it finds (see [TMT Tests & fmf Metadata](../../explanation/tmt-tests.md)). `--provision virtual` always requires an explicit plan (via this field or `--plan`), since hardware export is resolved per-plan. |
+| Plan | `plan` | string | Absolute TMT plan name to run, matched exactly: azldev anchors it before passing it to tmt, which otherwise treats plan names as regular expressions (so `/plans/tests` would also select `/plans/tests-10m`). Optional; when omitted, tmt discovers and runs every enabled plan it finds (see [TMT Tests & fmf Metadata](../../explanation/tmt-tests.md)). `--provision virtual` always requires an explicit plan (via this field or `--plan`), since hardware export is resolved per-plan. |
 
 For example, define a plan as follows:
 
