@@ -31,6 +31,7 @@ components defined in the project configuration.`,
 	buildOnAppInit(app, cmd)
 	changedOnAppInit(app, cmd)
 	diffSourcesOnAppInit(app, cmd)
+	distGitRepoOnAppInit(app, cmd)
 	listOnAppInit(app, cmd)
 	prepareOnAppInit(app, cmd)
 	renderOnAppInit(app, cmd)
