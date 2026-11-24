@@ -22,6 +22,41 @@ import (
 
 const testLockDir = "/project/locks"
 
+func TestUpdateComponents_SkipsLocklessAndPreservesTheirLocks(t *testing.T) {
+	env := testutils.NewTestEnv(t)
+	env.Config.LocklessComponents = map[string]bool{"rust-asyncband": true}
+	setupMockGit(env, "resolved-commit")
+	addUpstreamComponent(env, "curl")
+	addUpstreamComponent(env, "rust-asyncband")
+
+	ignoredLock := []byte("corrupt unused lock")
+	require.NoError(t, fileutils.WriteFile(env.TestFS, testLockDir+"/rust-asyncband.lock",
+		ignoredLock, fileperms.PublicFile))
+
+	results, err := componentcmds.UpdateComponents(env.Env, &componentcmds.UpdateComponentOptions{
+		ComponentFilter: components.ComponentFilter{IncludeAllComponents: true},
+	})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, "curl", results[0].Component)
+
+	lock, err := env.Env.LockStore().Get("curl")
+	require.NoError(t, err)
+	assert.Equal(t, "resolved-commit", lock.UpstreamCommit)
+
+	results, err = componentcmds.UpdateComponents(env.Env, &componentcmds.UpdateComponentOptions{
+		ComponentFilter: components.ComponentFilter{IncludeAllComponents: true},
+		Bump:            true,
+	})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, "curl", results[0].Component)
+
+	unchanged, err := fileutils.ReadFile(env.TestFS, testLockDir+"/rust-asyncband.lock")
+	require.NoError(t, err)
+	assert.Equal(t, ignoredLock, unchanged)
+}
+
 func TestNewUpdateCmd(t *testing.T) {
 	cmd := componentcmds.NewUpdateCmd()
 	require.NotNil(t, cmd)
