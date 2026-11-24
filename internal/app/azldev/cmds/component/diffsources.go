@@ -192,8 +192,11 @@ func diffSourcesPreparerOptions(
 		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)),
 		sources.WithSpecEditor(options.specEditorMode()),
 	}
+	// Lockless components render build macros as inline '%define' lines and
+	// preserve 'Release' formatting; show the same spec edits here. No dist-git
+	// is created, so no synthetic history is generated.
 	if env.ComponentWithoutLockfile(componentName) {
-		preparerOpts = append(preparerOpts, sources.WithPreservedReleaseFormatting())
+		preparerOpts = append(preparerOpts, sources.WithoutLockfileHistory())
 	}
 
 	return preparerOpts

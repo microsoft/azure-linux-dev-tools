@@ -214,13 +214,11 @@ func TestTryBumpStaticRelease_AutoreleaseSkips(t *testing.T) {
 func TestSourcePreparer_ReleaseFormattingByLockMode(t *testing.T) {
 	for _, editor := range []spec.EditorMode{spec.EditorLegacy, spec.EditorStructural} {
 		for _, mode := range []struct {
-			name             string
-			lockless         bool
-			preserveExplicit bool
+			name     string
+			lockless bool
 		}{
 			{name: "locked"},
 			{name: "lockless", lockless: true},
-			{name: "explicit", preserveExplicit: true},
 		} {
 			t.Run(fmt.Sprintf("%s/%s", editor, mode.name), func(t *testing.T) {
 				ctx := newBumpspecCtx()
@@ -228,10 +226,6 @@ func TestSourcePreparer_ReleaseFormattingByLockMode(t *testing.T) {
 				preparer := &sourcePreparerImpl{
 					fs: ctx.FS(), dryRunnable: ctx, specEditor: editor, withoutLockfile: mode.lockless,
 				}
-				if mode.preserveExplicit {
-					WithPreservedReleaseFormatting()(preparer)
-				}
-
 				specPath := writeTestSpec(t, ctx.FS(), "curl", "Name: curl\nVersion: 1\nrelease:\t 1%{?dist}\n")
 				overlay := projectconfig.ComponentOverlay{
 					Type: projectconfig.ComponentOverlayUpdateSpecTag, Tag: "Release", Value: "2%{?dist}",
@@ -240,7 +234,7 @@ func TestSourcePreparer_ReleaseFormattingByLockMode(t *testing.T) {
 					filepath.Dir(specPath), specPath))
 
 				prefix := "Release: "
-				if mode.lockless || mode.preserveExplicit {
+				if mode.lockless {
 					prefix = "release:\t "
 				}
 
