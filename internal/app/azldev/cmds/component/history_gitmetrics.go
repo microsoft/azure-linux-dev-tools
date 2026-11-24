@@ -25,7 +25,7 @@ type historyContext struct {
 }
 
 // newHistoryContext opens the project repository once just to resolve the
-// worktree root, then discards it: go-git's *Repository is not safe to
+// worktree root, then closes it: go-git's *Repository is not safe to
 // share across goroutines (see synthistory.go which always opens a fresh
 // repo per component). Per-worker repos are reopened inline.
 func newHistoryContext(env *azldev.Env) (*historyContext, error) {
@@ -38,6 +38,8 @@ func newHistoryContext(env *azldev.Env) (*historyContext, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening project repository:\n%w", err)
 	}
+
+	defer git.CloseRepo(repo)
 
 	worktree, err := repo.Worktree()
 	if err != nil {
@@ -344,6 +346,8 @@ func populateLockMetrics(
 		if openErr != nil {
 			return nil, fmt.Errorf("opening project repository:\n%w", openErr)
 		}
+
+		defer git.CloseRepo(repo)
 
 		return sources.FindFingerprintChanges(env.Context(), env, repo, ctx.repoRoot, lockRelPath)
 	}()

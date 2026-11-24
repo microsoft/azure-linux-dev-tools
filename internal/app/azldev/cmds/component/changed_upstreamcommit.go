@@ -43,6 +43,8 @@ func changedComponentsFromProjectConfigs(
 		return nil, err
 	}
 
+	defer git.CloseRepo(repo)
+
 	fromHash, err := resolveCommitHash(repo, options.From)
 	if err != nil {
 		return nil, fmt.Errorf("resolving --from ref %#q:\n%w", options.From, err)

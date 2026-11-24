@@ -577,6 +577,8 @@ func buildSyntheticCommits(
 		return nil, "", nil
 	}
 
+	defer git.CloseRepo(projectRepo)
+
 	// Compute the lock file path relative to the git repository root.
 	lockFileAbsPath, err := lockfile.LockPath(lockDir, componentName)
 	if err != nil {
@@ -719,6 +721,8 @@ func openProjectRepoForConfigFile(
 
 	worktree, err := repo.Worktree()
 	if err != nil {
+		git.CloseRepo(repo)
+
 		return nil, "", fmt.Errorf("failed to get project worktree:\n%w", err)
 	}
 

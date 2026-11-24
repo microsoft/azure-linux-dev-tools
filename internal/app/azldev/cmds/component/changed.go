@@ -174,6 +174,8 @@ func changedComponentsFromLocks(
 		return nil, err
 	}
 
+	defer git.CloseRepo(ctx.repo)
+
 	fromHash, err := resolveCommitHash(ctx.repo, options.From)
 	if err != nil {
 		return nil, fmt.Errorf("resolving --from ref %#q:\n%w", options.From, err)
@@ -235,6 +237,8 @@ func openChangedRepo(env *azldev.Env) (*gogit.Repository, string, error) {
 
 	worktree, err := repo.Worktree()
 	if err != nil {
+		git.CloseRepo(repo)
+
 		return nil, "", fmt.Errorf("getting project worktree:\n%w", err)
 	}
 
@@ -250,6 +254,8 @@ func newChangedContext(env *azldev.Env) (*changedContext, error) {
 
 	lockRelDir, err := git.RepoRelPath(repoRoot, env.Config().Project.LockDir)
 	if err != nil {
+		git.CloseRepo(repo)
+
 		return nil, fmt.Errorf("computing repo-relative lock dir:\n%w", err)
 	}
 

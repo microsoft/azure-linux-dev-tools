@@ -178,6 +178,8 @@ func buildUpstreamCommitSyntheticCommits(
 		return nil, nil
 	}
 
+	defer git.CloseRepo(projectRepo)
+
 	configFileRelPath, err := git.RepoRelPath(projectRepoDir, configFileAbsPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute repo-relative config path for %#q:\n%w",
