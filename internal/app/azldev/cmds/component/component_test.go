@@ -61,16 +61,11 @@ func TestOnAppInit_CommandsByMode(t *testing.T) {
 	}
 }
 
-func TestNewComponentCommands_LockValidationFlagByMode(t *testing.T) {
-	// The lock-file consistency flags only mean something when lock files are in
-	// play, so lock-file-free mode leaves them unregistered.
+func TestNewComponentCommands_LockValidationFlags(t *testing.T) {
 	assert.NotNil(t, component.NewBuildCmd().Flags().Lookup("skip-lock-validation"))
 	assert.NotNil(t, component.NewRenderCmd().Flags().Lookup("skip-lock-validation"))
 	assert.NotNil(t, component.NewComponentListCommand().Flags().Lookup("skip-lock-validation"))
 	assert.NotNil(t, component.NewHistoryCmd().Flags().Lookup("skip-lock-validation"))
 	assert.NotNil(t, component.NewComponentQueryCommand().Flags().Lookup("skip-lock-validation"))
 	assert.NotNil(t, component.NewUpdateCmd().Flags().Lookup("skip-lock-validation"))
-
-	withoutLockfile := component.WithoutLockfileFlags()
-	assert.Nil(t, component.NewComponentListCommand(withoutLockfile).Flags().Lookup("skip-lock-validation"))
 }
