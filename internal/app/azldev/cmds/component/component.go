@@ -49,6 +49,7 @@ components defined in the project configuration.`,
 	}
 
 	refreshUpstreamCommitOnAppInit(app, cmd)
+	makeLocklessOnAppInit(app, cmd)
 
 	return cmd
 }
