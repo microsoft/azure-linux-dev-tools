@@ -364,7 +364,7 @@ func buildComponent(
 
 	var preparerOpts []sources.PreparerOption
 	if !options.WithoutGitRepo {
-		preparerOpts = append(preparerOpts, gitRepoPreparerOptions(env, distro)...)
+		preparerOpts = append(preparerOpts, gitRepoPreparerOptionsForMode(env, distro, env.WithoutLockfile())...)
 	}
 
 	if options.RPMDevBumpspec {

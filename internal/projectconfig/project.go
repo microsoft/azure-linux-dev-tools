@@ -61,6 +61,8 @@ type ProjectConfig struct {
 	RootConfigFilePath string `toml:"-" json:"-"`
 	// Map from component names to groups they belong to; not serialized.
 	GroupsByComponent map[string][]string `toml:"-" json:"-"`
+	// LocklessComponents is the project-root component selection; not serialized.
+	LocklessComponents map[string]bool `toml:"-" json:"-"`
 }
 
 // Constructs a default (empty) project configuration.
@@ -86,23 +88,16 @@ func (cfg *ProjectConfig) Validate() error {
 	return cfg.validate(false)
 }
 
-// validate checks the assembled project configuration. In lock-file-free mode the
-// component definitions are validated here rather than per config file, because
-// override merging lets a single file hold a partial definition.
+// validate checks the assembled project configuration. Lockless component
+// definitions are validated here because a single file may be partial.
 func (cfg *ProjectConfig) validate(withoutLockfile bool) error {
 	err := projectConfigValidator.Struct(cfg)
 	if err != nil {
 		return fmt.Errorf("config error:\n%w", err)
 	}
 
-	if withoutLockfile {
-		if err := validateComponentStructs(cfg.Components); err != nil {
-			return err
-		}
-
-		if err := validateComponentConfigs(cfg.Components, true); err != nil {
-			return err
-		}
+	if err := cfg.validateLocklessComponents(withoutLockfile); err != nil {
+		return err
 	}
 
 	if err := validateComponentGroupMembership(cfg.ComponentGroups, cfg.Components); err != nil {
@@ -145,6 +140,22 @@ func (cfg *ProjectConfig) validate(withoutLockfile bool) error {
 	}
 
 	return nil
+}
+
+func (cfg *ProjectConfig) validateLocklessComponents(withoutLockfile bool) error {
+	lockless := make(map[string]ComponentConfig)
+
+	for name, component := range cfg.Components {
+		if withoutLockfile || cfg.LocklessComponents[name] {
+			lockless[name] = component
+		}
+	}
+
+	if err := validateComponentStructs(lockless); err != nil {
+		return err
+	}
+
+	return validateComponentConfigs(lockless, true)
 }
 
 // validateImages runs the image-scoped validations: capabilities, architectures,

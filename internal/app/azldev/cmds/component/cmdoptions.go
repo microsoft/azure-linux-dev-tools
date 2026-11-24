@@ -43,11 +43,11 @@ func newCmdOptions(opts ...CmdOption) cmdOptions {
 // addComponentFilterOptions registers the component selection flags, including the
 // lock-file flags that only apply in azldev's default mode.
 func addComponentFilterOptions(
-	cmd *cobra.Command, filter *components.ComponentFilter, options cmdOptions,
+	cmd *cobra.Command, filter *components.ComponentFilter, opts ...cmdOptions,
 ) {
 	components.AddComponentFilterOptionsToCommand(cmd, filter)
 
-	if !options.withoutLockfile {
+	if len(opts) == 0 || !opts[0].withoutLockfile {
 		components.AddLockValidationFlagToCommand(cmd, filter)
 	}
 }

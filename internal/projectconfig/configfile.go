@@ -127,13 +127,17 @@ func (f ConfigFile) Validate() error {
 	return nil
 }
 
-// validateNonComponentFields validates every field except the component
-// definitions. Lock-file-free mode merges component definitions across config
-// files with override semantics, so a single file may legitimately be
-// incomplete; components are validated once the whole project is assembled.
-func (f ConfigFile) validateNonComponentFields() error {
+// validateForLockModes defers validation of partial lockless definitions until
+// the project is assembled, while validating locked definitions immediately.
+func (f ConfigFile) validateForLockModes(options loadOptions) error {
 	components := f.Components
-	f.Components = nil
+	f.Components = make(map[string]ComponentConfig)
+
+	for name, component := range components {
+		if !options.componentWithoutLockfile(name) {
+			f.Components[name] = component
+		}
+	}
 
 	if err := f.Validate(); err != nil {
 		return err
@@ -142,6 +146,10 @@ func (f ConfigFile) validateNonComponentFields() error {
 	// Source-file entries are atomic slice elements rather than partial nested
 	// definitions, so validate them before their script paths become absolute.
 	for componentName, component := range components {
+		if !options.componentWithoutLockfile(componentName) {
+			continue
+		}
+
 		if err := validateSourceFiles(component.SourceFiles, componentName, false); err != nil {
 			return err
 		}
