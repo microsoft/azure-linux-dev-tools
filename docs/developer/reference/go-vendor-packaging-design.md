@@ -1,96 +1,49 @@
-# Go vendor packaging: one-page design
+# Go vendor packaging: artifact acquisition
 
-**Status:** Design comparison, not approval to replace the current implementation.
-“Current” describes this branch, including pending review fixes.
+**Decision:** TOML describes how to generate a vendor archive; the downstream
+RPM `sources` manifest identifies the bytes to build with. A cached, verified
+artifact does not have to be reproducible by today's Go toolchain to be usable.
+azldev prepares the archive, not a replacement RPM spec.
 
-## Goal and requirements
+## Use cases and schema
 
-Bundle application dependencies while preserving package-specific RPM behavior.
-`prepare-sources` must produce all build inputs, including the vendor archive;
-builds must consume those inputs without downloading Go modules. Configuration
-should survive version upgrades without embedding versioned filenames, Source
-numbers, import paths, or spec line numbers. Preserve unrelated dependencies,
-patches, subpackages, and reviewed licensing. Generate in an isolated environment,
-fail on ambiguous layouts, and record/verify archive hashes. Changes to source,
-patches, native vendor settings, or toolchain must be accounted for when assessing
-reproducibility; a generated checksum alone does not guarantee reproducibility.
-
-## Use cases and current gaps
-
-| Use case | Current behavior and gap |
-|---|---|
-| Fedora, already vendored: **containerd** | Regenerates a recognized vendor Source after patched `%prep`; preserves native configuration and verifies licensing. Containerd was exercised end-to-end. Recognition requires specific extraction/license macros; changing module layout or replacing a lookaside-backed config is rejected. Dependency overrides/hooks can regenerate patched content; directly patching the old vendor archive is not sufficient because regeneration replaces it. |
-| Fedora, not vendored: **Go applications**; requested example **rust-uutils** | Converts supported Go application specs to vendor extraction, offline module builds, and license handling. Complex macros/subpackages require overlays. **rust-uutils is Rust:** it needs Cargo vendoring, Cargo build integration, and Rust license handling; neither this Go implementation nor a Go tarball provider covers it. |
-| Downstream-only: **Telegraf** (assuming “telgraf”) | Local specs can use the same Go conversion pipeline when their layout is supported. A downstream-owned spec could instead consume a stable vendor Source directly. This particular package has not been validated; local-source, patch-order, and offline-build coverage remains necessary. |
-
-## Current design and schema
-
-```toml
-[components.containerd.go-vendor]
-enabled = true
-config-file = "go-vendor-tools.toml" # optional; omission reuses upstream settings
-```
-
-Additional fields are `module-dir` and `prep-packages`. Custom native settings
-live in a separate declaration-relative file, replace rather than merge upstream
-settings, and participate in fingerprints.
-
-The pipeline fetches sources, applies overlays, plans a narrowly scoped spec
-adaptation, runs private `%prep`, and invokes `go-vendor-tools` for generation and
-licensing. It publishes the archive, spec/config, and `sources` digest.
-`internal/govendor` separates execution from spec planning, but still requires a
-prepared RPM spec. Render/diff also regenerate, so they require downloads.
-Generated files cannot also be declared in `source-files`.
-
-## Alternative: automatic tarball through `source-files`
-
-**Proposed syntax and defaults only; this origin is not implemented:**
+* **Already vendored (Fedora containerd):** reuse the archive name that the
+  effective spec expects, rather than pinning a versioned filename in TOML.
+* **Unbundled Fedora Go application:** use a packaging overlay to consume the
+  vendor archive, remove obsolete build requirements, and install licenses.
+  A Rust application such as `rust-uutils` needs Cargo tooling instead.
+* **Azure Linux local spec (for example, Telegraf):** the maintained spec can
+  reference a stable `filename = "vendor.tar.bz2"` directly.
 
 ```toml
 [[components.containerd.source-files]]
-hash-type = "SHA512"
-# filename = "vendor.tar.bz2" # optional override of automatic discovery
-# hash = "<expected digest>" # optional output verification
 origin.type = "go-vendor"
-origin.config-file = "go-vendor-tools.toml"
+# origin.config-file = "go-vendor-tools.toml"
 ```
 
-Filename discovery is default behavior, not a separate field: resolve the unique
-vendor Source from the effective spec and expand RPM macros. An explicit
-`filename` overrides discovery; require it when no unique target can be resolved.
-New/downstream specs can reference a stable `vendor.tar.bz2`. Regeneration owns
-the discovered vendor output; an explicit filename that replaces another existing
-source remains subject to existing collision/replacement safeguards. Native
-settings stay in the sidecar; origin options reuse `module-dir`/`prep-packages`.
+Discover the output name from a supported vendor Source or specify a basename.
+Neither the recipe nor its filename override needs a duplicate manifest digest.
+Optional generation inputs include declaration-relative native settings, the
+module directory, and extra prep packages. These are not cache keys.
 
-For this generated origin, `hash` is optional: azldev computes the archive digest
-and records it in `sources`. A supplied hash must match; omission records output
-identity but does not detect unexpected changes between regenerations. This is an
-intentional exception to current `source-files` preparation, which generally
-requires hashes unless bootstrapping with `--allow-no-hashes`.
+## Acquisition contract
 
-This needs more than a new provider switch: `FetchFiles` currently runs **before**
-overlays. Defer vendor generation until patched inputs are prepared, excluding
-its own output from fetching/prep to break the dependency cycle. Reuse the narrow
-temporary-prep planner for recognized specs; reject unsupported extraction rather
-than invent a general shell interpreter. Generate from patched module files,
-apply vendor-specific changes through generation hooks, validate licensing and
-regular-file outputs, then publish the final digest. Never silently refresh a
-configured expected hash. Extend origin validation, schema,
-fingerprints, deferred scheduling, and replacement/render handling together.
-
-## Trade-offs and recommendation
-
-| Current combined feature | Tarball-only alternative |
+| Downstream state | Required behavior |
 |---|---|
-| Low-effort opt-in for supported Go specs. | Smaller spec-mutation surface, reusable source artifact. |
-| azldev maintains conversion and licensing rules. | Maintainers own extraction, dependency removal, offline flags, bundled-license installation, and spec updates through overlays/local specs. |
-| Handles generation and consumption together. | Tarball existence does **not** prove the RPM consumes it; offline-build and licensing checks remain required. |
+| Manifest pin and valid cache hit | Use the verified archive. Do not run vendor generation. |
+| Manifest pin, but no usable cached bytes | Generate from patched inputs in isolated mock and check the result against the same pin. A mismatch is an error, not permission to update the digest. |
+| No downstream pin | Generate the archive and record its digest in prepared `sources` for review. Do not mistake a same-named upstream archive for a downstream pin. |
 
-**Recommendation:** retain the current bounded converter for now. If artifact-only
-generation is prioritized, reuse its backend behind a deferred `go-vendor` origin,
-with spec conversion remaining an optional adapter; reject simultaneous ownership
-of one archive by both configurations. Validate containerd regeneration, a genuinely
-unbundled Go application, and a downstream local package before migration. Treat
-Cargo support as separate work. This reduces azldev's responsibilities only by
-moving packaging work to maintainers, not by eliminating it.
+Changing a recipe alone does not supersede a valid pin. To revendor, either
+set a known desired digest or remove the old downstream entry, prepare,
+review the resulting dependencies and licenses, and record the new digest.
+An explicit filename does not authorize replacing an unrelated source.
+
+## Trade-off
+
+Compared with automatic spec conversion, archive-only generation keeps
+upstream build scripts, subpackages, dependencies, and license policy under
+maintainer control. The cost is that the maintainer must ensure the spec
+extracts and actually uses the archive offline. Generation may adapt a *private*
+prep copy to avoid consuming the archive it is about to produce; it does not
+publish those edits. See [Generate a Go vendor source archive](../../user/how-to/vendor-go-application.md).
