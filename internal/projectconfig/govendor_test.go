@@ -35,11 +35,11 @@ func TestGoVendorOriginValidation(t *testing.T) {
 		"traversal":    {Type: projectconfig.OriginTypeGoVendor, ModuleDir: "../bad"},
 		"package":      {Type: projectconfig.OriginTypeGoVendor, PrepPackages: []string{"--bad"}},
 		"uri":          {Type: projectconfig.OriginTypeGoVendor, Uri: "https://example.com"},
-		"wrong origin": {Type: projectconfig.OriginTypeOverlay, ConfigFile: "vendor.toml"},
+		"wrong origin": {Type: projectconfig.OriginTypeURI, Uri: "https://example.com", ConfigFile: "vendor.toml"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			file := projectconfig.ConfigFile{Components: map[string]projectconfig.ComponentConfig{
-				"app": {SourceFiles: []projectconfig.SourceFileReference{{Origin: origin}}},
+				"app": {SourceFiles: []projectconfig.SourceFileReference{{Filename: "vendor.tar.gz", Origin: origin}}},
 			}}
 			require.Error(t, file.Validate())
 		})

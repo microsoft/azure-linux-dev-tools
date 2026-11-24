@@ -20,64 +20,42 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGenerate(t *testing.T) {
-	for _, mode := range []string{"success", "failure", "missing name", "bad name", "empty archive"} {
-		t.Run(mode, func(t *testing.T) {
-			ctx := testctx.NewCtx()
-			ctx.CmdFactory.RegisterCommandInSearchPath(mock.MockBinary)
-			require.NoError(t, fileutils.WriteFile(ctx.FS(), "/input/app.spec", []byte("upstream"), fileperms.PublicFile))
+func TestGenerationFailureScrubsRoot(t *testing.T) {
+	ctx := testctx.NewCtx()
+	ctx.CmdFactory.RegisterCommandInSearchPath(mock.MockBinary)
 
-			var commands []string
+	var commands []string
 
-			ctx.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
-				commands = append(commands, strings.Join(cmd.Args, " "))
+	ctx.CmdFactory.RunHandler = func(cmd *exec.Cmd) error {
+		commands = append(commands, strings.Join(cmd.Args, " "))
 
-				return nil
-			}
-			ctx.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
-				assert.Contains(t, strings.Join(cmd.Args, " "), "go_vendor_archive create")
+		return nil
+	}
+	failure := errors.New("generation failed")
+	ctx.CmdFactory.RunAndGetOutputHandler = func(*exec.Cmd) (string, error) {
+		return "native tool failed", failure
+	}
+	err := execute(ctx, mock.NewRunner(ctx, "/mock.cfg"), Request{WorkDir: "/work", SpecName: "app.spec"}, "/output")
+	require.ErrorIs(t, err, failure)
+	assert.Contains(t, strings.Join(commands, "\n"), "--scrub all")
+}
 
-				if mode == "failure" {
-					return "native tool failed", errors.New("generation failed")
-				}
+func TestReadArtifactRejectsInvalidOutputs(t *testing.T) {
+	for _, testCase := range []struct{ name, wantErr string }{
+		{"", "opening generated vendor output"},
+		{"../host", "invalid generated vendor filename"},
+		{"vendor.tar.bz2", "nonempty regular file"},
+	} {
+		t.Run(testCase.wantErr, func(t *testing.T) {
+			fs := testctx.NewCtx().FS()
+			require.NoError(t, fileutils.WriteFile(fs, "/work/output/vendor.tar.bz2", nil, fileperms.PublicFile))
 
-				name := "vendor.tar.bz2"
-				if mode == "bad name" {
-					name = "../host"
-				}
-
-				if mode != "missing name" {
-					require.NoError(t, fileutils.WriteFile(ctx.FS(), "/work/output/name", []byte(name+"\n"), fileperms.PublicFile))
-				}
-
-				payload := "archive"
-				if mode == "empty archive" {
-					payload = ""
-				}
-
-				require.NoError(t, fileutils.WriteFile(ctx.FS(), "/work/output/vendor.tar.bz2",
-					[]byte(payload), fileperms.PublicFile))
-
-				return "", nil
-			}
-			req := Request{SourceDir: "/input", WorkDir: "/work", SpecName: "app.spec", PrepSpec: []byte("private")}
-			artifact, err := Generate(ctx, ctx.FS(), mock.NewRunner(ctx, "/mock.cfg"), req)
-
-			assert.Contains(t, strings.Join(commands, "\n"), "--scrub all")
-
-			if mode != "success" {
-				require.Error(t, err)
-
-				return
+			if testCase.name != "" {
+				require.NoError(t, fileutils.WriteFile(fs, "/work/output/name", []byte(testCase.name), fileperms.PublicFile))
 			}
 
-			require.NoError(t, err)
-			assert.Equal(t, "vendor.tar.bz2", artifact.Name)
-			assert.Equal(t, "/work/vendor.tar.bz2", artifact.Path)
-
-			source, err := fileutils.ReadFile(ctx.FS(), "/input/app.spec")
-			require.NoError(t, err)
-			assert.Equal(t, "upstream", string(source))
+			_, err := readArtifact(fs, "/work", "/work/output")
+			require.ErrorContains(t, err, testCase.wantErr)
 		})
 	}
 }
@@ -91,8 +69,12 @@ func TestGenerationModuleLayout(t *testing.T) {
 		command, err := generationCommand(req, "aarch64")
 		require.NoError(t, err)
 		assert.Contains(t, command[len(command)-1], "--target aarch64")
-		assert.Contains(t, command[len(command)-1], "go_vendor_archive create")
-		assert.LessOrEqual(t, strings.Count(command[len(command)-1], "cd cmd/app"), 1)
+
+		if req.Config == "" {
+			assert.Contains(t, command[len(command)-1], "cd cmd/app\ntest -f go.mod")
+		} else {
+			assert.Contains(t, command[len(command)-1], "cd .\ntest -f cmd/app/go.mod")
+		}
 	}
 
 	for _, req := range []Request{

@@ -279,6 +279,7 @@ func (p *sourcePreparerImpl) resolveVendorTarget(
 			return err
 		}
 	}
+
 	if _, found := existing[ref.Filename]; automatic && found {
 		ref.ReplaceUpstream = true
 		ref.ReplaceReason = "Regenerate the discovered Go vendor Source"

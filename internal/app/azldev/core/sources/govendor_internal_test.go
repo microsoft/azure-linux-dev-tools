@@ -99,14 +99,19 @@ func TestGoVendorSourcePreparation(t *testing.T) {
 			ctx.CmdFactory.RunAndGetOutputHandler = func(cmd *exec.Cmd) (string, error) {
 				assert.Contains(t, strings.Join(cmd.Args, " "), "go_vendor_archive create")
 
-				matches, err := fileutils.Glob(ctx.FS(), "/tmp/azldev-vendor-*/output/config.toml")
+				matches, err := fileutils.Glob(ctx.FS(), "/project/build/vendor/azldev-vendor-*/output/config.toml")
 				require.NoError(t, err)
 				require.Len(t, matches, 1)
+				assert.NotContains(t, matches[0], "*")
 				directory := filepath.Dir(matches[0])
 				prep, err := fileutils.ReadFile(ctx.FS(), filepath.Join(filepath.Dir(directory), "sources", "app.spec"))
 				require.NoError(t, err)
 				assert.NotContains(t, string(prep), "tar -xf %{S:5}")
 				assert.NotContains(t, string(prep), "Source5:")
+
+				if mode == newSource {
+					assert.Contains(t, string(prep), "%{shescape:vendor.tar.bz2}")
+				}
 
 				history, err := fileutils.ReadFile(ctx.FS(), filepath.Join(filepath.Dir(directory), "sources", ".git", "HEAD"))
 				require.NoError(t, err)
@@ -120,7 +125,7 @@ func TestGoVendorSourcePreparation(t *testing.T) {
 				return "", nil
 			}
 			preparer, err := NewPreparer(manager, ctx.FS(), ctx, ctx,
-				WithGoVendorRunner(mock.NewRunner(ctx, "/mock.cfg")), WithSkipLookaside())
+				WithGoVendorRunner(mock.NewRunner(ctx, "/mock.cfg").WithBaseDir("/project/build/vendor")), WithSkipLookaside())
 			require.NoError(t, err)
 
 			if mode == "diff" {
@@ -240,15 +245,4 @@ func TestVendorFingerprintUsesDeclaredInputs(t *testing.T) {
 	restored := vendorFingerprintConfig(&effective, declared)
 	assert.Equal(t, declared.SourceFiles, restored.SourceFiles)
 	assert.Equal(t, "generated", effective.SourceFiles[1].Hash, "must not mutate runtime manifest inputs")
-}
-
-func TestVendorScratchUsesProjectWorkDir(t *testing.T) {
-	ctx := newMockProcessorTestCtx()
-	preparer := &sourcePreparerImpl{
-		fs: ctx.FS(), goVendorRunner: mock.NewRunner(ctx, "/mock.cfg").WithBaseDir("/project/build/vendor"),
-	}
-	path, err := preparer.vendorScratchDir()
-	require.NoError(t, err)
-	assert.True(t, strings.HasPrefix(path, "/project/build/vendor/azldev-vendor-"))
-	assert.NotContains(t, path, "*")
 }

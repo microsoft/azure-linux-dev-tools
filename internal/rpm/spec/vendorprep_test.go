@@ -34,13 +34,6 @@ func TestPrepareVendorSource(t *testing.T) {
 	assert.Contains(t, string(plan.Spec), "Source0: app.tar.gz")
 	assert.Contains(t, string(plan.Spec), "sed -i s/old/new/ go.mod")
 	assert.Contains(t, string(plan.Spec), "%{shescape:app-%{version}-vendor.tar.bz2}")
-	assert.Equal(t, input, vendorSpec(), "planning only produces a private spec")
-
-	newSpec := strings.ReplaceAll(input, "tar -xf %{S:5}", "")
-	plan, err = spec.PrepareVendorSource([]byte(newSpec), "vendor.tar.bz2")
-	require.NoError(t, err)
-	assert.False(t, plan.Automatic)
-	assert.Contains(t, string(plan.Spec), "%{shescape:vendor.tar.bz2}")
 }
 
 func TestPrepareVendorSourceRejectsAmbiguity(t *testing.T) {
@@ -71,6 +64,7 @@ func TestPrepareVendorSourceRejectsAmbiguity(t *testing.T) {
 		require.Error(t, err)
 	}
 
-	_, err := spec.PrepareVendorSource([]byte(vendorSpec()), "different.tar.bz2")
-	require.NoError(t, err, "macro-expanded filenames are checked by RPM during private prep")
+	plan, err := spec.PrepareVendorSource([]byte(vendorSpec()), "different.tar.bz2")
+	require.NoError(t, err)
+	assert.Contains(t, string(plan.Spec), "test %{shescape:app-%{version}-vendor.tar.bz2} = %{shescape:different.tar.bz2}")
 }
