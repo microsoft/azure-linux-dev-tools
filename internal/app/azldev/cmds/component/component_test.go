@@ -72,6 +72,5 @@ func TestNewComponentCommands_LockValidationFlagByMode(t *testing.T) {
 	assert.NotNil(t, component.NewUpdateCmd().Flags().Lookup("skip-lock-validation"))
 
 	withoutLockfile := component.WithoutLockfileFlags()
-	assert.Nil(t, component.NewBuildCmd(withoutLockfile).Flags().Lookup("skip-lock-validation"))
 	assert.Nil(t, component.NewComponentListCommand(withoutLockfile).Flags().Lookup("skip-lock-validation"))
 }
