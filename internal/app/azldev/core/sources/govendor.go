@@ -150,25 +150,8 @@ func (p *sourcePreparerImpl) publishVendorSource(
 	}
 
 	ref.Hash = digest
-	if err := p.validateVendorTarget(component, directory, ref, automatic); err != nil {
+	if err := p.resolveVendorTarget(component, directory, &ref, automatic); err != nil {
 		return ref, err
-	}
-
-	manifest, err := p.readSourcesFileIfExists(filepath.Join(directory, fedorasource.SourcesFileName))
-	if err != nil {
-		return ref, err
-	}
-
-	lines, err := fedorasource.ReadSourcesFile(manifest)
-	if err != nil {
-		return ref, fmt.Errorf("reading vendor source manifest:\n%w", err)
-	}
-
-	for _, line := range lines {
-		if automatic && line.Entry != nil && line.Entry.Filename == ref.Filename {
-			ref.ReplaceUpstream = true
-			ref.ReplaceReason = "Regenerate the discovered Go vendor Source"
-		}
 	}
 
 	return ref, p.copyVendorArchive(directory, ref.Filename, artifact.Path)
@@ -258,8 +241,8 @@ func (p *sourcePreparerImpl) vendorSettings(
 	return string(data), nil
 }
 
-func (p *sourcePreparerImpl) validateVendorTarget(
-	component components.Component, directory string, ref projectconfig.SourceFileReference, automatic bool,
+func (p *sourcePreparerImpl) resolveVendorTarget(
+	component components.Component, directory string, ref *projectconfig.SourceFileReference, automatic bool,
 ) error {
 	for _, other := range component.GetConfig().SourceFiles {
 		if other.Origin.Type != projectconfig.OriginTypeGoVendor && other.Filename == ref.Filename {
@@ -292,9 +275,13 @@ func (p *sourcePreparerImpl) validateVendorTarget(
 	}
 
 	if !automatic || ref.ReplaceUpstream {
-		_, _, _, err := p.processSourceRef(ref, existing, component.GetName(), directory)
-
-		return err
+		if _, _, _, err := p.processSourceRef(*ref, existing, component.GetName(), directory); err != nil {
+			return err
+		}
+	}
+	if _, found := existing[ref.Filename]; automatic && found {
+		ref.ReplaceUpstream = true
+		ref.ReplaceReason = "Regenerate the discovered Go vendor Source"
 	}
 
 	return nil
