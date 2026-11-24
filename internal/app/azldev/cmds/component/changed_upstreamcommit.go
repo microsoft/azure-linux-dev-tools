@@ -5,6 +5,7 @@ package component
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
@@ -30,8 +30,8 @@ import (
 // This file implements 'component changed' for lock-file-free mode. Without lock
 // files there are no stored fingerprints to compare, so the project configuration
 // is loaded independently at both refs and the resolved component build inputs and
-// rendered trees are compared directly. The git plumbing helpers are shared with
-// the default implementation in changed.go.
+// rendered trees are compared directly. Committed trees are read with the
+// system's git program.
 
 // changedComponentsFromProjectConfigs loads and compares resolved project
 // components and rendered sources between two git refs. It is the lock-file-free
@@ -39,17 +39,17 @@ import (
 func changedComponentsFromProjectConfigs(
 	env *azldev.Env, options *ChangedComponentOptions,
 ) ([]ChangedResult, error) {
-	repo, repoRoot, err := openChangedRepo(env)
+	repo, repoRoot, err := openLocklessRepo(env)
 	if err != nil {
 		return nil, err
 	}
 
-	fromHash, err := resolveCommitHash(repo, options.From)
+	fromHash, err := repo.ResolveCommit(env, options.From)
 	if err != nil {
 		return nil, fmt.Errorf("resolving --from ref %#q:\n%w", options.From, err)
 	}
 
-	toHash, err := resolveCommitHash(repo, options.To)
+	toHash, err := repo.ResolveCommit(env, options.To)
 	if err != nil {
 		return nil, fmt.Errorf("resolving --to ref %#q:\n%w", options.To, err)
 	}
@@ -59,12 +59,12 @@ func changedComponentsFromProjectConfigs(
 		return nil, fmt.Errorf("resolving project directory within repository:\n%w", err)
 	}
 
-	fromTree, err := resolveTree(repo, fromHash)
+	fromTree, err := repo.Tree(env, fromHash)
 	if err != nil {
 		return nil, fmt.Errorf("resolving tree for --from:\n%w", err)
 	}
 
-	toTree, err := resolveTree(repo, toHash)
+	toTree, err := repo.Tree(env, toHash)
 	if err != nil {
 		return nil, fmt.Errorf("resolving tree for --to:\n%w", err)
 	}
@@ -91,7 +91,7 @@ func changedComponentsFromProjectConfigs(
 	})
 
 	return buildHistoricalResults(
-		names, fromProject, toProject, fromTree, toTree,
+		env, names, fromProject, toProject, fromTree, toTree,
 		options.IncludeUnchanged, options.ComponentFilter.IncludeAllComponents,
 	)
 }
@@ -129,7 +129,7 @@ type componentComparisonInputs struct {
 
 func loadHistoricalProject(
 	env *azldev.Env,
-	tree *object.Tree,
+	tree *git.Tree,
 	projectRelDir string,
 ) (*historicalProject, error) {
 	historicalEnv, err := loadHistoricalEnv(env, tree, projectRelDir)
@@ -170,7 +170,7 @@ func loadHistoricalProject(
 }
 
 func loadHistoricalEnv(
-	env *azldev.Env, tree *object.Tree, projectRelDir string,
+	env *azldev.Env, tree *git.Tree, projectRelDir string,
 ) (*azldev.Env, error) {
 	return loadHistoricalEnvExcept(env, tree, projectRelDir, "")
 }
@@ -178,11 +178,11 @@ func loadHistoricalEnv(
 // loadHistoricalEnvExcept loads the project configuration from tree, without
 // materializing files under the repo-relative directory skipDir (when nonempty).
 func loadHistoricalEnvExcept(
-	env *azldev.Env, tree *object.Tree, projectRelDir, skipDir string,
+	env *azldev.Env, tree *git.Tree, projectRelDir, skipDir string,
 ) (*azldev.Env, error) {
 	snapshotFS := afero.NewMemMapFs()
 
-	if err := copyTreeToFSExcept(tree, snapshotFS, snapshotRepoRoot, skipDir); err != nil {
+	if err := copyTreeToFSExcept(env, tree, snapshotFS, snapshotRepoRoot, skipDir); err != nil {
 		return nil, fmt.Errorf("materializing git tree:\n%w", err)
 	}
 
@@ -381,34 +381,27 @@ func normalizeComponentForComparison(component projectconfig.ComponentConfig) pr
 	return normalized
 }
 
-func copyTreeToFS(tree *object.Tree, fs opctx.FS, destinationRoot string) error {
-	return copyTreeToFSExcept(tree, fs, destinationRoot, "")
+func copyTreeToFS(ctx context.Context, tree *git.Tree, fs opctx.FS, destinationRoot string) error {
+	return copyTreeToFSExcept(ctx, tree, fs, destinationRoot, "")
 }
 
 // copyTreeToFSExcept copies tree to destinationRoot, skipping files under the
 // tree-relative directory skipDir (when nonempty).
-func copyTreeToFSExcept(tree *object.Tree, fs opctx.FS, destinationRoot, skipDir string) error {
-	files := tree.Files()
+func copyTreeToFSExcept(
+	ctx context.Context, tree *git.Tree, fs opctx.FS, destinationRoot, skipDir string,
+) error {
+	skip := func(name string) bool { return pathWithinDir(name, skipDir) }
 
-	err := files.ForEach(func(file *object.File) error {
-		if pathWithinDir(file.Name, skipDir) {
-			return nil
-		}
-
-		content, err := file.Contents()
-		if err != nil {
-			return fmt.Errorf("reading %#q:\n%w", file.Name, err)
-		}
-
-		destinationPath := filepath.Join(destinationRoot, filepath.FromSlash(file.Name))
+	err := tree.ForEachFile(ctx, skip, func(name string, content []byte) error {
+		destinationPath := filepath.Join(destinationRoot, filepath.FromSlash(name))
 		if err := fileutils.MkdirAll(fs, filepath.Dir(destinationPath)); err != nil {
-			return fmt.Errorf("creating parent directory for %#q:\n%w", file.Name, err)
+			return fmt.Errorf("creating parent directory for %#q:\n%w", name, err)
 		}
 
 		if err := fileutils.WriteFile(
-			fs, destinationPath, []byte(content), fileperms.PublicFile,
+			fs, destinationPath, content, fileperms.PublicFile,
 		); err != nil {
-			return fmt.Errorf("writing %#q:\n%w", file.Name, err)
+			return fmt.Errorf("writing %#q:\n%w", name, err)
 		}
 
 		return nil
@@ -579,9 +572,10 @@ func sortedComponentNames(names map[string]bool) []string {
 }
 
 func buildHistoricalResults(
+	ctx context.Context,
 	names []string,
 	fromProject, toProject *historicalProject,
-	fromTree, toTree *object.Tree,
+	fromTree, toTree *git.Tree,
 	includeUnchanged, includeAllComponents bool,
 ) ([]ChangedResult, error) {
 	results := make([]ChangedResult, 0, len(names))
@@ -595,12 +589,12 @@ func buildHistoricalResults(
 		}
 
 		if result.ChangeType == changeTypeUnchanged {
-			fromHash, err := historicalRenderedTreeHash(fromTree, fromProject.renderedSpecsRelDir, name)
+			fromHash, err := historicalRenderedTreeHash(ctx, fromTree, fromProject.renderedSpecsRelDir, name)
 			if err != nil {
 				return nil, fmt.Errorf("reading rendered tree for %#q at --from:\n%w", name, err)
 			}
 
-			toHash, err := historicalRenderedTreeHash(toTree, toProject.renderedSpecsRelDir, name)
+			toHash, err := historicalRenderedTreeHash(ctx, toTree, toProject.renderedSpecsRelDir, name)
 			if err != nil {
 				return nil, fmt.Errorf("reading rendered tree for %#q at --to:\n%w", name, err)
 			}
@@ -616,6 +610,7 @@ func buildHistoricalResults(
 			}
 		} else {
 			result.SourcesChange, err = compareHistoricalSources(
+				ctx,
 				fromTree,
 				toTree,
 				fromProject.renderedSpecsRelDir,
@@ -633,14 +628,14 @@ func buildHistoricalResults(
 	return results, nil
 }
 
-func historicalRenderedTreeHash(tree *object.Tree, renderedDir, name string) (string, error) {
+func historicalRenderedTreeHash(ctx context.Context, tree *git.Tree, renderedDir, name string) (string, error) {
 	dir, err := components.RenderedSpecDir(renderedDir, name)
 	if err != nil {
 		return "", fmt.Errorf("resolving rendered component directory:\n%w", err)
 	}
 
-	rendered, err := tree.Tree(filepath.ToSlash(dir))
-	if errors.Is(err, object.ErrDirectoryNotFound) {
+	rendered, err := tree.Subtree(ctx, filepath.ToSlash(dir))
+	if errors.Is(err, git.ErrPathNotFound) {
 		return "", nil
 	}
 
@@ -648,7 +643,7 @@ func historicalRenderedTreeHash(tree *object.Tree, renderedDir, name string) (st
 		return "", fmt.Errorf("reading rendered component directory:\n%w", err)
 	}
 
-	return rendered.Hash.String(), nil
+	return rendered.Hash(), nil
 }
 
 // classifyHistoricalComponent compares the serialized build-relevant inputs for a
@@ -693,7 +688,8 @@ func classifyHistoricalComponent(
 
 // compareHistoricalSources compares the rendered sources file between two git trees.
 func compareHistoricalSources(
-	fromTree, toTree *object.Tree,
+	ctx context.Context,
+	fromTree, toTree *git.Tree,
 	fromRenderedSpecsRelDir, toRenderedSpecsRelDir, name string,
 ) (bool, error) {
 	fromRenderedDir, err := components.RenderedSpecDir(fromRenderedSpecsRelDir, name)
@@ -709,8 +705,8 @@ func compareHistoricalSources(
 	fromSourcesPath := filepath.Join(fromRenderedDir, "sources")
 	toSourcesPath := filepath.Join(toRenderedDir, "sources")
 
-	fromSources, fromNotFound, fromErr := readFileFromTreeSafe(fromTree, fromSourcesPath)
-	toSources, toNotFound, toErr := readFileFromTreeSafe(toTree, toSourcesPath)
+	fromSources, fromNotFound, fromErr := readGitTreeFileSafe(ctx, fromTree, fromSourcesPath)
+	toSources, toNotFound, toErr := readGitTreeFileSafe(ctx, toTree, toSourcesPath)
 
 	if fromErr != nil {
 		return false, fmt.Errorf("reading sources at --from:\n%w", fromErr)
@@ -728,6 +724,21 @@ func compareHistoricalSources(
 	default:
 		return !bytes.Equal(fromSources, toSources), nil
 	}
+}
+
+// readGitTreeFileSafe reads a file from a git tree, distinguishing
+// file-not-found from other errors.
+func readGitTreeFileSafe(ctx context.Context, tree *git.Tree, relPath string) ([]byte, bool, error) {
+	content, err := tree.ReadFile(ctx, filepath.ToSlash(relPath))
+	if errors.Is(err, git.ErrPathNotFound) {
+		return nil, true, nil
+	}
+
+	if err != nil {
+		return nil, false, fmt.Errorf("reading %#q from tree:\n%w", relPath, err)
+	}
+
+	return content, false, nil
 }
 
 // pathWithinDir reports whether the slash-separated relative path is dir or is

@@ -16,9 +16,6 @@ import (
 	"strconv"
 	"strings"
 
-	gogit "github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
@@ -65,7 +62,7 @@ type lastRender struct {
 	// commit is the last project commit that changed the rendered output.
 	commit         string
 	spec           string
-	tree           *object.Tree
+	tree           *git.Tree
 	previous       string
 	current        string
 	previousBranch string
@@ -79,8 +76,19 @@ type renderAutorelease interface {
 	ExpandRelease(ctx context.Context, dir, filename string) (string, error)
 }
 
-//nolint:gochecknoglobals // Replaced by isolated render tests to open an in-memory project repository.
-var openRenderRepo = openChangedRepo
+//nolint:gochecknoglobals // Replaced by isolated render tests to open a test project repository.
+var openRenderRepo = openLocklessRepo
+
+// openLocklessRepo opens the project's git repository with the system's git
+// program and returns it together with its worktree root.
+func openLocklessRepo(env *azldev.Env) (*git.Repo, string, error) {
+	repo, err := git.OpenRepo(env, env, env.ProjectDir())
+	if err != nil {
+		return nil, "", fmt.Errorf("opening project repository:\n%w", err)
+	}
+
+	return repo, repo.Root(), nil
+}
 
 func validateRenderComponents(comps []components.Component) error {
 	if len(comps) == 0 {
@@ -241,7 +249,7 @@ func amendOverlaidUpstream(env *azldev.Env, dir string) (bool, error) {
 
 func prepareLocklessRenderOutput(
 	env *azldev.Env, outputDir string,
-) (repo *gogit.Repository, update *locklessRenderUpdate, err error) {
+) (repo *git.Repo, update *locklessRenderUpdate, err error) {
 	repo, root, err := openRenderRepo(env)
 	if err != nil {
 		return nil, nil, err
@@ -256,26 +264,26 @@ func prepareLocklessRenderOutput(
 }
 
 func readLastRender(
-	env *azldev.Env, repo *gogit.Repository, root, path, name string,
+	env *azldev.Env, repo *git.Repo, root, path, name string,
 ) (lastRender, error) {
 	var history lastRender
 
-	head, err := repo.Head()
-	if errors.Is(err, plumbing.ErrReferenceNotFound) {
-		return history, nil
-	}
-
+	head, err := repo.Head(env)
 	if err != nil {
 		return history, fmt.Errorf("reading project HEAD:\n%w", err)
 	}
 
-	tree, err := resolveTree(repo, head.Hash().String())
-	if err != nil {
-		return history, err
+	if head == "" {
+		return history, nil
 	}
 
-	history.tree, err = tree.Tree(path)
-	if errors.Is(err, object.ErrDirectoryNotFound) {
+	tree, err := repo.Tree(env, head)
+	if err != nil {
+		return history, fmt.Errorf("reading tree for commit %#q:\n%w", head, err)
+	}
+
+	history.tree, err = tree.Subtree(env, path)
+	if errors.Is(err, git.ErrPathNotFound) {
 		return history, nil
 	}
 
@@ -283,18 +291,15 @@ func readLastRender(
 		return history, fmt.Errorf("reading committed dist-git directory:\n%w", err)
 	}
 
-	file, err := tree.File(filepath.ToSlash(filepath.Join(path, name+".spec")))
+	spec, err := tree.ReadFile(env, filepath.ToSlash(filepath.Join(path, name+".spec")))
 	if err != nil {
 		return history, fmt.Errorf("reading committed spec:\n%w", err)
 	}
 
-	history.spec, err = file.Contents()
-	if err != nil {
-		return history, fmt.Errorf("reading committed spec contents:\n%w", err)
-	}
+	history.spec = string(spec)
 
 	lastHash, err := git.RunInDir(env, env, root,
-		"--literal-pathspecs", "log", "-1", "--format=%H", "--end-of-options", head.Hash().String(), "--", path+"/")
+		"--literal-pathspecs", "log", "-1", "--format=%H", "--end-of-options", head, "--", path+"/")
 	if err != nil {
 		return history, fmt.Errorf("finding last render commit:\n%w", err)
 	}
@@ -305,18 +310,18 @@ func readLastRender(
 
 	history.commit = lastHash
 
-	last, err := repo.CommitObject(plumbing.NewHash(lastHash))
+	lastTree, err := repo.Tree(env, lastHash)
 	if err != nil {
 		return history, fmt.Errorf("reading last render commit:\n%w", err)
 	}
 
-	err = readRenderedUpstreamCommits(env, root, name, last, &history)
+	err = readRenderedUpstreamCommits(env, root, name, lastTree, &history)
 
 	return history, err
 }
 
 func readRenderedUpstreamCommits(
-	env *azldev.Env, root, name string, last *object.Commit, history *lastRender,
+	env *azldev.Env, root, name string, lastTree *git.Tree, history *lastRender,
 ) error {
 	projectPath, err := git.RepoRelPath(root, env.ProjectDir())
 	if err != nil {
@@ -328,11 +333,7 @@ func readRenderedUpstreamCommits(
 		return fmt.Errorf("reading current render upstream commit:\n%w", err)
 	}
 
-	lastTree, err := last.Tree()
-	if err == nil {
-		history.previous, history.previousBranch, err = renderUpstreamCommit(env, lastTree, projectPath, name)
-	}
-
+	history.previous, history.previousBranch, err = renderUpstreamCommit(env, lastTree, projectPath, name)
 	if err != nil {
 		slog.Warn("Cannot read last render upstream commit; treating upstream as changed",
 			"component", name, "error", err)
@@ -345,7 +346,7 @@ func readRenderedUpstreamCommits(
 }
 
 func renderUpstreamCommit(
-	env *azldev.Env, tree *object.Tree, projectPath, name string,
+	env *azldev.Env, tree *git.Tree, projectPath, name string,
 ) (commit string, branch string, err error) {
 	historicalEnv, err := loadHistoricalEnv(env, tree, projectPath)
 	if err != nil {
@@ -780,7 +781,7 @@ func locklessChangelog(
 	}
 
 	if history.spec != "" && !renderedAutoreleaseMarker.MatchString(history.spec) {
-		return committedUnprocessedChangelog(history)
+		return committedUnprocessedChangelog(env, history)
 	}
 
 	if history.spec == "" {
@@ -823,7 +824,9 @@ func committedChangelogSection(content string) (changelog string, found bool, er
 // from a committed spec that rpmautospec did not process: the committed
 // 'changelog' file for an '%autorelease' spec, or the committed '%changelog'
 // section body for a static Release spec.
-func committedUnprocessedChangelog(history lastRender) (changelog string, write bool, err error) {
+func committedUnprocessedChangelog(
+	ctx context.Context, history lastRender,
+) (changelog string, write bool, err error) {
 	previous, err := spec.OpenSpec(strings.NewReader(history.spec))
 	if err != nil {
 		return "", false, fmt.Errorf("parsing committed autorelease spec:\n%w", err)
@@ -842,17 +845,12 @@ func committedUnprocessedChangelog(history lastRender) (changelog string, write 
 		return "", false, errors.New("missing committed dist-git tree for 'changelog'")
 	}
 
-	file, err := history.tree.File("changelog")
+	content, err := history.tree.ReadFile(ctx, "changelog")
 	if err != nil {
 		return "", false, fmt.Errorf("reading committed 'changelog':\n%w", err)
 	}
 
-	changelog, err = file.Contents()
-	if err != nil {
-		return "", false, fmt.Errorf("reading committed 'changelog' contents:\n%w", err)
-	}
-
-	return changelog, true, nil
+	return string(content), true, nil
 }
 
 func stripChangelogBoundaryComments(changelog string) string {
@@ -915,7 +913,7 @@ func committedRenderSnapshot(
 	}(snapshot)
 
 	if history.tree != nil {
-		if err := copyTreeToFS(history.tree, env.FS(), snapshot); err != nil {
+		if err := copyTreeToFS(env, history.tree, env.FS(), snapshot); err != nil {
 			return "", fmt.Errorf("copying committed dist-git snapshot:\n%w", err)
 		}
 	}

@@ -18,6 +18,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/git"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -69,12 +70,12 @@ func newDetectorTest(
 		repoCommits = append(repoCommits, testRepoCommit{files: commit.files})
 	}
 
-	repo, hashes := testRepoWithCommits(t, repoCommits)
+	goGitRepo, repo, hashes := testNativeRepoWithCommits(t, repoCommits)
 	env := testutils.NewTestEnvWithoutLockfile(t)
 	env.Config.Project.RenderedSpecsDir = filepath.Join(detectorTestRoot, "SPECS")
 
 	head := hashes[len(hashes)-1]
-	headFiles := detectorTreeFiles(t, repo, head)
+	headFiles := detectorTreeFiles(t, goGitRepo, head)
 
 	for path, content := range headFiles {
 		if _, changed := working[path]; !changed {
@@ -89,7 +90,7 @@ func newDetectorTest(
 	}
 
 	originalOpen := openRenderRepo
-	openRenderRepo = func(_ *azldev.Env) (*gogit.Repository, string, error) {
+	openRenderRepo = func(_ *azldev.Env) (*git.Repo, string, error) {
 		return repo, detectorTestRoot, nil
 	}
 
@@ -112,7 +113,7 @@ func newDetectorTest(
 			return strings.Join(lines, "\n"), nil
 		case "diff-tree":
 			return strings.Join(detectorChangedPaths(
-				detectorTreeFiles(t, repo, args[5]), detectorTreeFiles(t, repo, args[6])), "\x00"), nil
+				detectorTreeFiles(t, goGitRepo, args[5]), detectorTreeFiles(t, goGitRepo, args[6])), "\x00"), nil
 		case "diff":
 			return strings.Join(detectorChangedPaths(headFiles, working), "\x00"), nil
 		case "ls-files":

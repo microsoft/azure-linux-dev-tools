@@ -147,14 +147,15 @@ func TestBuildHistoricalResults_RenderOnlyChanges(t *testing.T) {
 				fromPath = "README.md"
 			}
 
-			repo, fromRef, toRef := testRepoWithTwoCommits(t,
-				map[string][]byte{fromPath: []byte("before")},
-				map[string][]byte{testCase.path: []byte("after")},
-			)
+			_, repo, hashes := testNativeRepoWithCommits(t, []testRepoCommit{
+				{files: map[string][]byte{fromPath: []byte("before")}},
+				{files: map[string][]byte{testCase.path: []byte("after")}},
+			})
+			fromRef, toRef := hashes[0], hashes[1]
 
-			fromTree, err := resolveTree(repo, fromRef)
+			fromTree, err := repo.Tree(t.Context(), fromRef)
 			require.NoError(t, err)
-			toTree, err := resolveTree(repo, toRef)
+			toTree, err := repo.Tree(t.Context(), toRef)
 			require.NoError(t, err)
 
 			if testCase.reverse {
@@ -169,7 +170,7 @@ func TestBuildHistoricalResults_RenderOnlyChanges(t *testing.T) {
 			}
 
 			results, err := buildHistoricalResults(
-				[]string{"curl"}, project, project, fromTree, toTree, false, true,
+				t.Context(), []string{"curl"}, project, project, fromTree, toTree, false, true,
 			)
 			require.NoError(t, err)
 
@@ -187,19 +188,20 @@ func TestBuildHistoricalResults_RenderOnlyChanges(t *testing.T) {
 }
 
 func TestBuildHistoricalResults_UnchangedRenderedTree(t *testing.T) {
-	repo, fromRef, toRef := testRepoWithTwoCommits(t,
-		map[string][]byte{
+	_, repo, hashes := testNativeRepoWithCommits(t, []testRepoCommit{
+		{files: map[string][]byte{
 			"SPECS/c/curl/sources": []byte("SHA512 (curl-1.tar.gz) = aaa"),
-		},
-		map[string][]byte{
+		}},
+		{files: map[string][]byte{
 			"SPECS/c/curl/sources": []byte("SHA512 (curl-1.tar.gz) = aaa"),
 			"README.md":            []byte("unrelated change"),
-		},
-	)
+		}},
+	})
+	fromRef, toRef := hashes[0], hashes[1]
 
-	fromTree, err := resolveTree(repo, fromRef)
+	fromTree, err := repo.Tree(t.Context(), fromRef)
 	require.NoError(t, err)
-	toTree, err := resolveTree(repo, toRef)
+	toTree, err := repo.Tree(t.Context(), toRef)
 	require.NoError(t, err)
 
 	inputs := map[string]componentComparisonInputs{
@@ -215,7 +217,7 @@ func TestBuildHistoricalResults_UnchangedRenderedTree(t *testing.T) {
 	}
 
 	results, err := buildHistoricalResults(
-		[]string{"curl"}, fromProject, toProject, fromTree, toTree,
+		t.Context(), []string{"curl"}, fromProject, toProject, fromTree, toTree,
 		true, true,
 	)
 	require.NoError(t, err)
@@ -306,7 +308,7 @@ build = { defines = { feature = "enabled" } }
 upstream-commit = "abcdef1234567"
 `)
 
-	repo, hashes := testRepoWithCommits(t, []testRepoCommit{
+	_, repo, hashes := testNativeRepoWithCommits(t, []testRepoCommit{
 		{files: map[string][]byte{
 			"azldev.toml":                       rootConfig,
 			"config/components.toml":            componentConfig,
@@ -314,7 +316,7 @@ upstream-commit = "abcdef1234567"
 		}},
 	})
 
-	tree, err := resolveTree(repo, hashes[0])
+	tree, err := repo.Tree(t.Context(), hashes[0])
 	require.NoError(t, err)
 
 	testEnv := testutils.NewTestEnvWithoutLockfile(t)
@@ -350,10 +352,10 @@ upstream-commit = "abcdef1234567"
 type = "local"
 path = "unavailable/curl.spec"
 `)
-	repo, hashes := testRepoWithCommits(t, []testRepoCommit{
+	_, repo, hashes := testNativeRepoWithCommits(t, []testRepoCommit{
 		{files: map[string][]byte{"azldev.toml": rootConfig}},
 	})
-	tree, err := resolveTree(repo, hashes[0])
+	tree, err := repo.Tree(t.Context(), hashes[0])
 	require.NoError(t, err)
 	env := testutils.NewTestEnv(t)
 	env.Config.LocklessComponents = map[string]bool{"rust-asyncband": true}
@@ -383,10 +385,10 @@ description = "Removed config table"
 type = "upstream"
 upstream-commit = "abcdef1234567"
 `)
-	repo, hashes := testRepoWithCommits(t, []testRepoCommit{
+	_, repo, hashes := testNativeRepoWithCommits(t, []testRepoCommit{
 		{files: map[string][]byte{"azldev.toml": rootConfig}},
 	})
-	tree, err := resolveTree(repo, hashes[0])
+	tree, err := repo.Tree(t.Context(), hashes[0])
 	require.NoError(t, err)
 
 	testEnv := testutils.NewTestEnvWithoutLockfile(t)

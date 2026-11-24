@@ -16,7 +16,6 @@ import (
 	"strings"
 	"testing"
 
-	gogit "github.com/go-git/go-git/v5"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components/components_testutils"
@@ -30,6 +29,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spec"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/git"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -82,7 +82,7 @@ release-ver = "3"
 dist-git-branch = "f42"
 `)
 	oldSpec := renderTestSpec("1", "9%{?dist}", "* Previous\n- Keep exactly\n")
-	repo, hashes := testRepoWithCommits(t, []testRepoCommit{
+	goGitRepo, repo, hashes := testNativeRepoWithCommits(t, []testRepoCommit{
 		{files: map[string][]byte{
 			"azldev.toml": root,
 			"component.toml": []byte("[components.curl.spec]\ntype = 'upstream'\n" +
@@ -97,7 +97,7 @@ dist-git-branch = "f42"
 		}},
 		{files: map[string][]byte{"README": []byte("unrelated later commit")}},
 	})
-	worktree, err := repo.Worktree()
+	worktree, err := goGitRepo.Worktree()
 	require.NoError(t, err)
 	dirty, err := worktree.Filesystem.Create("SPECS/c/curl/curl.spec")
 	require.NoError(t, err)
@@ -121,11 +121,9 @@ dist-git-branch = "f42"
 	require.NoError(t, err)
 	assert.Equal(t, oldSpec, history.spec)
 	require.NotNil(t, history.tree)
-	committed, err := history.tree.File("curl.spec")
+	content, err := history.tree.ReadFile(t.Context(), "curl.spec")
 	require.NoError(t, err)
-	content, err := committed.Contents()
-	require.NoError(t, err)
-	assert.Equal(t, oldSpec, content)
+	assert.Equal(t, oldSpec, string(content))
 	assert.Equal(t, "aaaaaaa", history.previous)
 	assert.Equal(t, "ccccccc", history.current)
 	assert.Equal(t, "f40", history.previousBranch)
@@ -147,7 +145,7 @@ func TestReadLastRender_NativeHistoryErrors(t *testing.T) {
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			previous := renderTestSpec("1", "9", "old\n")
-			repo, hashes := testRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{
+			_, repo, hashes := testNativeRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{
 				renderPath + "/curl.spec": []byte(previous),
 			}}})
 			env := testutils.NewTestEnv(t)
@@ -234,7 +232,7 @@ dist-git-branch = "f40"
 				files["historical-locks/curl.lock"] = []byte(testCase.lock)
 			}
 
-			repo, hashes := testRepoWithCommits(t, []testRepoCommit{
+			goGitRepo, repo, hashes := testNativeRepoWithCommits(t, []testRepoCommit{
 				{files: files},
 				{files: map[string][]byte{
 					"components.toml": []byte(component + "upstream-commit = 'ddddddd'\n"),
@@ -245,7 +243,7 @@ dist-git-branch = "f40"
 					"current-locks/curl.lock":    []byte("version = 1\nupstream-commit = 'current-lock'\n"),
 				}},
 			})
-			worktree, err := repo.Worktree()
+			worktree, err := goGitRepo.Worktree()
 			require.NoError(t, err)
 			dirty, err := worktree.Filesystem.Create("historical-locks/curl.lock")
 			require.NoError(t, err)
@@ -539,7 +537,7 @@ upstream-commit = "aaaaaaa"
 				files["SPECS/c/curl/curl.spec"] = []byte(renderTestSpec("1", "1", "old\n"))
 			}
 
-			repo, hashes := testRepoWithCommits(t, []testRepoCommit{{files: files}})
+			_, repo, hashes := testNativeRepoWithCommits(t, []testRepoCommit{{files: files}})
 			env := testutils.NewTestEnv(t)
 			env.CmdFactory.RunAndGetOutputHandler = func(_ *exec.Cmd) (string, error) {
 				return hashes[0], nil
@@ -752,10 +750,10 @@ func testCommittedAutoreleaseHistory(t *testing.T) lastRender {
 			"## START: rpmautospec generated changelog\n"+carriedAutoreleaseChangelog+
 				"## END: rpmautospec generated changelog\n") +
 		"%files\n/file\n"
-	repo, commits := testRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{
+	_, repo, commits := testNativeRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{
 		"curl.spec": []byte(content), "macros.inc": []byte("committed macro definitions"),
 	}}})
-	tree, err := resolveTree(repo, commits[0])
+	tree, err := repo.Tree(t.Context(), commits[0])
 	require.NoError(t, err)
 
 	return lastRender{spec: content, tree: tree, previous: "old", current: "old"}
@@ -962,10 +960,10 @@ func TestPrepareLocklessSpec_UnprocessedAutorelease(t *testing.T) {
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			committed := renderTestSpec("1", testCase.previous, "%autochangelog\n")
-			repo, hashes := testRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{
+			_, repo, hashes := testNativeRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{
 				"curl.spec": []byte(committed), "changelog": []byte(changelog),
 			}}})
-			tree, err := resolveTree(repo, hashes[0])
+			tree, err := repo.Tree(t.Context(), hashes[0])
 			require.NoError(t, err)
 
 			env := testutils.NewTestEnv(t)
@@ -1074,8 +1072,8 @@ func TestPrepareLocklessSpec_UnprocessedAutoreleaseFailure(t *testing.T) {
 				files["changelog"] = []byte("committed changelog")
 			}
 
-			repo, hashes := testRepoWithCommits(t, []testRepoCommit{{files: files}})
-			tree, err := resolveTree(repo, hashes[0])
+			_, repo, hashes := testNativeRepoWithCommits(t, []testRepoCommit{{files: files}})
+			tree, err := repo.Tree(t.Context(), hashes[0])
 			require.NoError(t, err)
 
 			if testCase.missingTree {
@@ -1242,9 +1240,11 @@ func TestPrepareComponentSources_LocalLocklessKeepsSpecAndSetsCommitState(t *tes
 		Spec: projectconfig.SpecSource{SourceType: projectconfig.SpecSourceTypeLocal},
 	})
 
-	repo, _ := testRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{"README": []byte("local project")}}})
+	_, repo, _ := testNativeRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{
+		"README": []byte("local project"),
+	}}})
 	originalRepo := openRenderRepo
-	openRenderRepo = func(_ *azldev.Env) (*gogit.Repository, string, error) { return repo, renderTestProjectRoot, nil }
+	openRenderRepo = func(_ *azldev.Env) (*git.Repo, string, error) { return repo, renderTestProjectRoot, nil }
 
 	t.Cleanup(func() { openRenderRepo = originalRepo })
 
@@ -1419,12 +1419,12 @@ upstream-commit = "aaaaaaa"
 `
 			)
 
-			repo, hashes := testRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{
+			_, repo, hashes := testNativeRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{
 				"azldev.toml":            []byte(rootConfig),
 				"SPECS/c/curl/curl.spec": []byte(renderTestSpec("1", "9", oldChangelog)),
 			}}})
 			originalOpen := openRenderRepo
-			openRenderRepo = func(_ *azldev.Env) (*gogit.Repository, string, error) {
+			openRenderRepo = func(_ *azldev.Env) (*git.Repo, string, error) {
 				return repo, "/project", nil
 			}
 			manager := sourceproviders_test.NewMockSourceManager(ctrl)
@@ -1526,9 +1526,9 @@ func TestPrepareComponentSources_LocklessSkipsSyntheticHistory(t *testing.T) {
 	for _, release := range []string{"7%{?dist}", "%autorelease -b 9"} {
 		t.Run(release, func(t *testing.T) {
 			env := testutils.NewTestEnv(t)
-			repo, _ := testRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{"README": []byte("local")}}})
+			_, repo, _ := testNativeRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{"README": []byte("local")}}})
 			originalRepo := openRenderRepo
-			openRenderRepo = func(_ *azldev.Env) (*gogit.Repository, string, error) { return repo, renderTestProjectRoot, nil }
+			openRenderRepo = func(_ *azldev.Env) (*git.Repo, string, error) { return repo, renderTestProjectRoot, nil }
 
 			t.Cleanup(func() { openRenderRepo = originalRepo })
 			ctrl := gomock.NewController(t)
@@ -1955,10 +1955,10 @@ func releaseTestSubpackage(header, release string) string {
 
 func TestPrepareLocklessSpec_ReleaseTagRule(t *testing.T) {
 	unprocessed := releaseTestSpec("1", "Release: %autorelease -b 5\n")
-	unprocessedRepo, unprocessedCommits := testRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{
+	_, unprocessedRepo, unprocessedCommits := testNativeRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{
 		"curl.spec": []byte(unprocessed), "changelog": []byte("committed changelog"),
 	}}})
-	unprocessedTree, err := resolveTree(unprocessedRepo, unprocessedCommits[0])
+	unprocessedTree, err := unprocessedRepo.Tree(t.Context(), unprocessedCommits[0])
 	require.NoError(t, err)
 
 	staticSubpackages := []string{

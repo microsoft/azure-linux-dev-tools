@@ -49,6 +49,7 @@ type renderMessageDetector struct {
 
 	mutex         sync.Mutex
 	initialized   bool
+	repo          *git.Repo
 	root          string
 	projectRelDir string
 	skipDir       string
@@ -108,11 +109,12 @@ func (d *renderMessageDetector) initialize() error {
 		return nil
 	}
 
-	_, root, err := openRenderRepo(d.env)
+	repo, root, err := openRenderRepo(d.env)
 	if err != nil {
 		return err
 	}
 
+	d.repo = repo
 	d.root = root
 
 	d.projectRelDir, err = git.RepoRelPath(root, d.env.ProjectDir())
@@ -317,14 +319,9 @@ func (d *renderMessageDetector) snapshotEnv(commit string) (*azldev.Env, error) 
 }
 
 func (d *renderMessageDetector) loadCommitEnv(commit string) (*azldev.Env, error) {
-	repo, _, err := openRenderRepo(d.env)
+	tree, err := d.repo.Tree(d.env, commit)
 	if err != nil {
-		return nil, err
-	}
-
-	tree, err := resolveTree(repo, commit)
-	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("reading tree for commit %#q:\n%w", commit, err)
 	}
 
 	snapshotEnv, err := loadHistoricalEnvExcept(d.env, tree, d.projectRelDir, d.skipDir)

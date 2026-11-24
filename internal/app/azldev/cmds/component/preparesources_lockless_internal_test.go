@@ -25,6 +25,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spec"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/git"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -95,9 +96,9 @@ func TestLocklessPrepareSourcesPreparesDirectlyInOutput(t *testing.T) {
 				env.Config.Components["curl"] = config
 			}
 
-			repo, _ := testRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{"README": []byte("project")}}})
+			_, repo, _ := testNativeRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{"README": []byte("project")}}})
 			originalRepo, originalPreparer := openRenderRepo, newSourcePreparer
-			openRenderRepo = func(_ *azldev.Env) (*gogit.Repository, string, error) {
+			openRenderRepo = func(_ *azldev.Env) (*git.Repo, string, error) {
 				return repo, renderTestProjectRoot, nil
 			}
 
@@ -318,7 +319,7 @@ func TestLocklessPrepareSourcesUsesWorkingInputs(t *testing.T) {
 		t.Run("inputs/"+inputDir, func(t *testing.T) {
 			env, repo, hashes := locklessWorkingInputsFixture(t, inputDir)
 			originalRepo, originalPreparer := openRenderRepo, newSourcePreparer
-			openRenderRepo = func(_ *azldev.Env) (*gogit.Repository, string, error) {
+			openRenderRepo = func(_ *azldev.Env) (*git.Repo, string, error) {
 				return repo, renderTestProjectRoot, nil
 			}
 
@@ -370,14 +371,12 @@ func TestLocklessPrepareSourcesUsesWorkingInputs(t *testing.T) {
 			assert.Equal(t, "ccccccc", history.current)
 			assert.Equal(t, "f40", history.previousBranch)
 			assert.Equal(t, "f42", history.currentBranch)
-			helper, err := history.tree.File("macros.inc")
+			content, err := history.tree.ReadFile(t.Context(), "macros.inc")
 			require.NoError(t, err)
-			content, err := helper.Contents()
-			require.NoError(t, err)
-			assert.Equal(t, "committed helper", content)
+			assert.Equal(t, "committed helper", string(content))
 
-			_, err = history.tree.File("untracked.txt")
-			require.Error(t, err)
+			_, err = history.tree.ReadFile(t.Context(), "untracked.txt")
+			require.ErrorIs(t, err, git.ErrPathNotFound)
 
 			manager := sourceproviders_test.NewMockSourceManager(gomock.NewController(t))
 			manager.EXPECT().FetchComponent(gomock.Any(), gomock.Any(), "/external/output", gomock.Any()).DoAndReturn(
@@ -423,7 +422,7 @@ func TestLocklessPrepareSourcesUsesWorkingInputs(t *testing.T) {
 
 func locklessWorkingInputsFixture(
 	t *testing.T, inputDir string,
-) (env *testutils.TestEnv, repo *gogit.Repository, hashes []string) {
+) (env *testutils.TestEnv, repo *git.Repo, hashes []string) {
 	t.Helper()
 
 	const (
@@ -452,7 +451,10 @@ source = 'input.txt'
 	)
 
 	root := "includes = [\"component.toml\", \"pins/*.toml\"]\n" + project
-	repo, hashes = testRepoWithCommits(t, []testRepoCommit{
+
+	var goGitRepo *gogit.Repository
+
+	goGitRepo, repo, hashes = testNativeRepoWithCommits(t, []testRepoCommit{
 		{files: map[string][]byte{
 			"azldev.toml":             []byte(root),
 			"lockless-components.txt": []byte("curl\n"),
@@ -468,9 +470,9 @@ source = 'input.txt'
 		}},
 	})
 	env = testutils.NewTestEnv(t)
-	tree, err := resolveTree(repo, hashes[1])
+	tree, err := repo.Tree(t.Context(), hashes[1])
 	require.NoError(t, err)
-	require.NoError(t, copyTreeToFS(tree, env.FS(), "/project"))
+	require.NoError(t, copyTreeToFS(t.Context(), tree, env.FS(), "/project"))
 
 	workingComponent := strings.Replace(component, "version = '1'", "version = '3'", 1)
 	workingComponent = strings.Replace(workingComponent, "'committed'", "'working'", 1)
@@ -484,7 +486,7 @@ source = 'input.txt'
 		"specs/c/curl/macros.inc":                 []byte("uncommitted helper"),
 		"specs/c/curl/untracked.txt":              []byte("untracked dist-git sidecar"),
 	}
-	worktree, err := repo.Worktree()
+	worktree, err := goGitRepo.Worktree()
 	require.NoError(t, err)
 
 	for path, content := range working {
@@ -617,9 +619,9 @@ func runLocklessPrepareFlagFixture(
 	}
 
 	env.Config.Components["curl"] = config
-	repo, _ := testRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{"README": []byte("project")}}})
+	_, repo, _ := testNativeRepoWithCommits(t, []testRepoCommit{{files: map[string][]byte{"README": []byte("project")}}})
 	originalRepo, originalPreparer := openRenderRepo, newSourcePreparer
-	openRenderRepo = func(_ *azldev.Env) (*gogit.Repository, string, error) {
+	openRenderRepo = func(_ *azldev.Env) (*git.Repo, string, error) {
 		return repo, renderTestProjectRoot, nil
 	}
 
@@ -694,9 +696,9 @@ func TestLocklessPrepareSourcesUsesConfiguredRenderHistory(t *testing.T) {
 				files[testCase.historyPath+"/Curl.spec"] = []byte(renderTestSpec("1", "9", ""))
 			}
 
-			repo, hashes := testRepoWithCommits(t, []testRepoCommit{{files: files}})
+			_, repo, hashes := testNativeRepoWithCommits(t, []testRepoCommit{{files: files}})
 			originalRepo := openRenderRepo
-			openRenderRepo = func(_ *azldev.Env) (*gogit.Repository, string, error) {
+			openRenderRepo = func(_ *azldev.Env) (*git.Repo, string, error) {
 				return repo, renderTestProjectRoot, nil
 			}
 

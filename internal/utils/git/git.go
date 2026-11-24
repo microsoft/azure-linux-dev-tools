@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os/exec"
 	"strings"
@@ -243,6 +244,19 @@ func WithMetadataOnly() GitOptions {
 func RunInDir(
 	ctx context.Context, cmdFactory opctx.CmdFactory, dir string, args ...string,
 ) (string, error) {
+	output, err := runInDirRaw(ctx, cmdFactory, dir, nil, args...)
+	if err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(output), nil
+}
+
+// runInDirRaw executes a git command in the given directory with the given
+// stdin (when non-nil) and returns its untrimmed stdout output.
+func runInDirRaw(
+	ctx context.Context, cmdFactory opctx.CmdFactory, dir string, stdin io.Reader, args ...string,
+) (string, error) {
 	var stderr bytes.Buffer
 
 	fullArgs := make([]string, 0, len(args)+2) //nolint:mnd // 2 accounts for "-C" and dir.
@@ -250,6 +264,7 @@ func RunInDir(
 	fullArgs = append(fullArgs, args...)
 
 	rawCmd := exec.CommandContext(ctx, "git", fullArgs...)
+	rawCmd.Stdin = stdin
 	rawCmd.Stderr = &stderr
 
 	cmd, err := cmdFactory.Command(rawCmd)
@@ -263,5 +278,5 @@ func RunInDir(
 			strings.Join(fullArgs, " "), stderr.String(), err)
 	}
 
-	return strings.TrimSpace(output), nil
+	return output, nil
 }
