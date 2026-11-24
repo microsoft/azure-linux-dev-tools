@@ -27,8 +27,9 @@ overlays before it stay applied.
 
    Read the rendered spec (under `{{ .RenderedSpecsDir }}/`) to confirm the change
    landed where you intended, and iterate until it is correct.
-3. Finalize the upstream commit and changelog with the normal end-of-work refresh (see the
-   `azldev-refresh-upstream-commit` skill): refresh the generated config, commit, then re-render and amend.
+3. Finalize with the normal end-of-work refresh (see the `azldev-refresh-upstream-commit`
+   skill): refresh the generated config, commit the config changes (their subjects become the
+   changelog entry, or pass `--commit-message`), render, then commit the rendered output.
 
 Config errors reference the offending overlay by its `description`, so give every
 overlay a short, specific `description`.
