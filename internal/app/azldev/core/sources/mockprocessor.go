@@ -91,9 +91,10 @@ type ComponentInput struct {
 
 // ComponentMockResult holds the mock processing result for one component.
 type ComponentMockResult struct {
-	Name      string   // Component name
-	SpecFiles []string // Files listed by spectool (basenames/relative paths)
-	Error     error    // Non-nil if rpmautospec or spectool failed for this component
+	RawSpecFiles string   // Includes the RPM Source numbers for vendor filename discovery.
+	Name         string   // Component name
+	SpecFiles    []string // Files listed by spectool (basenames/relative paths)
+	Error        error    // Non-nil if rpmautospec or spectool failed for this component
 }
 
 // validateInputs validates all component inputs before batch processing.
@@ -445,6 +446,7 @@ func parseBatchJSON(stdout string, inputs []ComponentInput) ([]ComponentMockResu
 		}
 
 		results[idx].SpecFiles = spectool.ParseSpectoolOutput(compResult.SpecFiles)
+		results[idx].RawSpecFiles = compResult.SpecFiles
 	}
 
 	return results, nil

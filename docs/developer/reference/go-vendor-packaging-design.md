@@ -26,10 +26,13 @@ module directory, and extra prep packages.
 
 ## Acquisition contract
 
-Source preparation, render, and source diffs generate the vendor archive after
+Source preparation, builds, and source diffs generate the vendor archive after
 overlays in isolated mock. An existing archive or `sources` entry does not skip
 generation. An optional TOML `hash` (with `hash-type`) verifies the newly generated
 bytes before publication; without it, azldev records the computed digest.
+Routine render requires that digest in TOML and writes it to `sources` without
+creating an archive or starting a vendor chroot. Filename discovery reuses the
+existing batched RPM metadata lookup.
 To revendor, change the generation inputs and prepare again. An explicit
 filename does not authorize replacing an unrelated source.
 

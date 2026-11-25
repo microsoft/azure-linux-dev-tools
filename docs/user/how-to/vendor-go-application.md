@@ -11,6 +11,9 @@ Rust packages need Cargo vendoring, not this Go provider.
 ```toml
 [[components.containerd.source-files]]
 origin.type = "go-vendor"
+# For render, copy these values from the prepared archive's `sources` entry:
+# hash-type = "SHA512"
+# hash = "<reviewed digest>"
 # Optional native settings, relative to this TOML:
 origin.config-file = "go-vendor-tools.toml"
 ```
@@ -65,14 +68,16 @@ checkout paths. Native `general.go_mod_dir` is honored; a conflicting component
 origin `module-dir` fails. Hooks execute inside the generation chroot with
 `GVT_CWD` pointing at staged dist-git. Treat settings and hooks as trusted build code.
 
-`hash` is optional specifically for `go-vendor`: azldev computes and records the
-generated digest in `sources` (SHA-512 by default, or configured `hash-type`).
+For initial preparation, omit `hash`: azldev computes and records the generated
+digest in `sources` (SHA-512 by default, or configured `hash-type`).
 A configured hash is an expected result and must match **before** publication.
 Without one, checksums identify each output but do not detect unexpected changes
 between regenerations. Generation is not cached by archive name or configured hash.
 
 ```sh
 azldev component prepare-sources -p example -o prepared --without-git
+# Copy the vendor digest and algorithm from prepared/sources into the
+# component's source-files entry as hash and hash-type before rendering.
 azldev component diff-sources -p example
 azldev component render -p example
 ```
@@ -90,7 +95,9 @@ generation. Do not patch the old vendor archive using archive overlays: use nati
 dependency overrides/hooks instead. Ensure prep does not apply the same module
 patch twice when rebuilding with the regenerated module files.
 
-Render and source diffs also regenerate and need network access. Render retains
-the updated manifest, not lookaside payloads. Validate upgrades with source diffs,
+Source diffs regenerate the archive. Render instead requires the TOML pin and
+writes it to the manifest without downloading or generating vendor inputs. For
+automatic filenames it reuses the normal batched RPM metadata expansion. Render
+does not verify archive bytes; preparation and builds do. Validate upgrades with source diffs,
 license review, and an offline RPM build; supported syntax does not guarantee
 arbitrary upstream packaging will continue to work.

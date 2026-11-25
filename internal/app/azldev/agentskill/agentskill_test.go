@@ -191,7 +191,7 @@ func TestComponentSkillDocumentsVendorSource(t *testing.T) {
 		require.NoError(t, err)
 		assert.Contains(t, doc, `origin.type = "go-vendor"`)
 		assert.Contains(t, doc, "never converts the spec")
-		assert.Contains(t, doc, "`hash` is optional output verification")
+		assert.Contains(t, doc, "render writes the pin without generation")
 	}
 }
 

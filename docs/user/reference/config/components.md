@@ -396,6 +396,8 @@ Four origin types are supported.
 [[components.containerd.source-files]]
 origin.type = "go-vendor"
 origin.config-file = "go-vendor-tools.toml"
+hash-type = "SHA512"
+hash = "<reviewed archive digest from prepare-sources>"
 ```
 
 This origin generates only a tarball; it never converts the published spec.
@@ -404,7 +406,7 @@ See [Generate a Go vendor source archive](../../how-to/vendor-go-application.md)
 | Key | Default | Meaning |
 |-----|---------|---------|
 | `filename` | Discover from the unique secondary Source extraction in `%prep` | Optional plain basename override; explicit collisions use the normal replacement rules. |
-| `hash` | Compute and record | Optional expected output digest; a mismatch fails before publication. |
+| `hash` | Compute on initial preparation | Required for render. Preparation/build verify the generated archive if pinned; a mismatch fails before publication. |
 | `hash-type` | `SHA512` | Output digest algorithm (`SHA256` or `SHA512`). |
 | `origin.config-file` | Reuse upstream sidecar/tool defaults | Native TOML relative to the declaring file; replaces settings rather than merging, and is fingerprinted by content. |
 | `origin.module-dir` | Final `%prep` directory | Relative module directory; native `general.go_mod_dir` must not conflict. |
@@ -412,7 +414,8 @@ See [Generate a Go vendor source archive](../../how-to/vendor-go-application.md)
 
 One Go vendor source is supported per component. Automatic discovery can replace
 the discovered vendor manifest entry without replacement fields. Generation runs
-after overlays and requires source downloads during prepare, render, and diff.
+after overlays during prepare, build, and diff. Render writes the configured
+`hash-type` and `hash` to `sources` without downloading or generating the archive.
 Maintainers own extraction, offline build settings, and licensing in the spec.
 
 #### `"download"` — fetch from a URI

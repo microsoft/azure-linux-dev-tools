@@ -17,8 +17,8 @@ subdirectories based on the first character of their name (e.g., specs/c/curl,
 specs/v/vim).
 
 Render normally skips lookaside archives, retaining specs and git-tracked sidecars.
-Go-vendor source-files require downloads and regeneration; only the manifest,
-not archive payloads, is rendered. Multiple components can be rendered at once.
+Go vendor sources are rendered from their configured digests without generating
+the archive. Multiple components can be rendered at once.
 
 When rendering all components (-a), the --clean-stale flag prunes orphan
 rendered-spec directories (per-component dirs that no longer correspond to

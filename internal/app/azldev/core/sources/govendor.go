@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
+	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/govendor"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource"
@@ -25,6 +26,78 @@ import (
 // WithGoVendorRunner supplies the distro's isolated archive-generation environment.
 func WithGoVendorRunner(runner *mock.Runner) PreparerOption {
 	return func(p *sourcePreparerImpl) { p.goVendorRunner = runner }
+}
+
+// WithRenderManifest defers vendor entries until the normal render batch has expanded Source tags.
+func WithRenderManifest() PreparerOption {
+	return func(p *sourcePreparerImpl) { p.skipLookaside, p.renderManifest = true, true }
+}
+
+func (p *sourcePreparerImpl) needsVendorInputs(config *projectconfig.ComponentConfig) bool {
+	return !p.renderManifest && config.HasGoVendorSources()
+}
+
+// RenderVendorPin merges the reviewed pin into the manifest without fetching or generating an archive.
+func RenderVendorPin(fs opctx.FS, comp components.Component, specPath, rawSpecFiles string) error {
+	for _, ref := range comp.GetConfig().SourceFiles {
+		if ref.Origin.Type != projectconfig.OriginTypeGoVendor {
+			continue
+		}
+
+		data, err := fileutils.ReadFile(fs, specPath)
+		if err != nil {
+			return fmt.Errorf("reading vendor spec:\n%w", err)
+		}
+
+		plan, err := spec.PrepareVendorSource(data, ref.Filename)
+		if err != nil {
+			return fmt.Errorf("identifying vendor Source:\n%w", err)
+		}
+
+		if plan.SourceNumber != "" {
+			name, err := expandedVendorFilename(rawSpecFiles, plan.SourceNumber)
+			if err != nil {
+				return err
+			}
+
+			if ref.Filename != "" && ref.Filename != name {
+				return fmt.Errorf("configured filename %#q does not match vendor Source %#q", ref.Filename, name)
+			}
+
+			ref.Filename = name
+		}
+
+		preparer := sourcePreparerImpl{fs: fs, skipLookaside: true}
+
+		dir := filepath.Dir(specPath)
+		if err := preparer.resolveVendorTarget(comp, dir, &ref, plan.Automatic); err != nil {
+			return err
+		}
+
+		config := *comp.GetConfig()
+		config.SourceFiles = []projectconfig.SourceFileReference{ref}
+		_, err = preparer.updateSourcesFile(vendorComponent{Component: comp, config: config}, dir, nil)
+
+		return err
+	}
+
+	return nil
+}
+
+func expandedVendorFilename(output, number string) (string, error) {
+	for _, line := range strings.Split(output, "\n") {
+		tag, value, ok := strings.Cut(line, ":")
+		if ok && strings.EqualFold(tag, "Source"+number) {
+			name := strings.TrimSpace(value)
+			if err := fileutils.ValidateFilename(name); err != nil || strings.Contains(name, "%") {
+				return "", fmt.Errorf("invalid expanded vendor Source%s filename %#q", number, name)
+			}
+
+			return name, nil
+		}
+	}
+
+	return "", fmt.Errorf("vendor Source%s missing from expanded spec", number)
 }
 
 type vendorComponent struct {

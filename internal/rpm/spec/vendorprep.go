@@ -15,9 +15,10 @@ import (
 
 // VendorPrep describes a private prep spec, never a replacement published spec.
 type VendorPrep struct {
-	Spec       []byte
-	ConfigName string
-	Automatic  bool
+	SourceNumber string
+	Spec         []byte
+	ConfigName   string
+	Automatic    bool
 }
 
 var (
@@ -81,7 +82,7 @@ func PrepareVendorSource(data []byte, filename string) (*VendorPrep, error) {
 
 	return &VendorPrep{
 		Spec:       []byte(strings.Join(serializeTree(root), "\n") + "\n"),
-		ConfigName: configName, Automatic: filename == "",
+		ConfigName: configName, Automatic: filename == "", SourceNumber: number,
 	}, nil
 }
 

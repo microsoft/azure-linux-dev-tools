@@ -201,6 +201,7 @@ type sourcePreparerImpl struct {
 
 	goVendorRunner  *mock.Runner
 	vendorFetchOnly bool
+	renderManifest  bool
 
 	// cmdFactory is used to shell out to git for fingerprint change detection
 	// in the project repository. Set via [WithGitRepo].
@@ -308,7 +309,7 @@ func (p *sourcePreparerImpl) PrepareSources(
 	}
 
 	declaredConfig := component.GetConfig()
-	vendor := declaredConfig.HasGoVendorSources()
+	vendor := p.needsVendorInputs(declaredConfig)
 	p = p.withVendorDownloads(vendor)
 
 	// Fetch the component first (spec, sidecar files, and upstream source tarballs).
@@ -1120,6 +1121,15 @@ func (p *sourcePreparerImpl) buildSourceEntries(
 	appendLines := make([]string, 0, len(sourceFiles))
 
 	for index := range sourceFiles {
+		if p.renderManifest && sourceFiles[index].Origin.Type == projectconfig.OriginTypeGoVendor {
+			if sourceFiles[index].Hash == "" || sourceFiles[index].HashType == "" {
+				return nil, errors.New("render requires 'hash' and 'hash-type' for 'go-vendor'; " +
+					"run 'component prepare-sources' and pin the digest from its 'sources' file")
+			}
+			// The existing render batch expands the RPM Source filename after this stage.
+			continue
+		}
+
 		formatted, isReplacement, resolvedRef, err := p.processSourceRef(
 			sourceFiles[index], existingByName, componentName, outputDir)
 		if err != nil {

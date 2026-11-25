@@ -65,8 +65,8 @@ subdirectories based on the first character of their name (e.g., specs/c/curl,
 specs/v/vim).
 
 Render normally skips lookaside archives, retaining specs and git-tracked sidecars.
-Go-vendor source-files require downloads and regeneration; only the manifest,
-not archive payloads, is rendered. Multiple components can be rendered at once.
+Go vendor sources are rendered from their configured digests without generating
+the archive. Multiple components can be rendered at once.
 
 When rendering all components (-a), the --clean-stale flag prunes orphan
 rendered-spec directories (per-component dirs that no longer correspond to
@@ -536,7 +536,7 @@ func prepareComponentSources(
 	// WithSkipLookaside avoids expensive tarball downloads — only spec +
 	// sidecar files are needed for rendering.
 	preparerOpts := append(gitRepoPreparerOptions(env, distro),
-		sources.WithSkipLookaside(),
+		sources.WithRenderManifest(),
 		sources.WithUpstreamProvenance(sources.FedoraDistTag(distro.Ref.Name, distro.Version.ReleaseVer)),
 		sources.WithMockProcessor(mockProcessor),
 	)
@@ -545,7 +545,7 @@ func prepareComponentSources(
 		preparerOpts = append(preparerOpts, sources.WithRPMDevBumpspec(env, env.WorkDir(), ""))
 	}
 
-	preparer, err := newComponentSourcePreparer(env, comp, sourceManager, nil, append(
+	preparer, err := newSourcePreparer(sourceManager, env.FS(), env, env, append(
 		preparerOpts,
 		sources.WithSpecEditor(specEditor),
 	)...)
@@ -768,12 +768,12 @@ func finishComponentRender(
 		return false, fmt.Errorf("filtering unreferenced files for %#q:\n%w", componentName, filterErr)
 	}
 
-	// Remove .git directory — must not appear in rendered output.
 	if prep.comp.GetConfig().HasGoVendorSources() {
-		if err := removeVendorRenderPayloads(env.FS(), componentDir); err != nil {
-			return false, err
+		if err := sources.RenderVendorPin(env.FS(), prep.comp, specPath, mockResult.RawSpecFiles); err != nil {
+			return false, fmt.Errorf("rendering vendor source for %#q:\n%w", componentName, err)
 		}
 	}
+	// Remove .git directory — must not appear in rendered output.
 	// rpmautospec already read it during the batch mock phase.
 	gitDir := filepath.Join(componentDir, ".git")
 	if removeErr := env.FS().RemoveAll(gitDir); removeErr != nil {
