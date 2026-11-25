@@ -183,9 +183,11 @@ func TestRenderVendorPin(t *testing.T) {
 	ctx := newMockProcessorTestCtx()
 	comp := components_testutils.NewMockComponent(gomock.NewController(t))
 	comp.EXPECT().GetName().AnyTimes().Return("app")
+
 	ref := projectconfig.SourceFileReference{Origin: projectconfig.Origin{Type: projectconfig.OriginTypeGoVendor}}
 	config := &projectconfig.ComponentConfig{SourceFiles: []projectconfig.SourceFileReference{ref}}
 	comp.EXPECT().GetConfig().AnyTimes().Return(config)
+
 	preparer := sourcePreparerImpl{fs: ctx.FS()}
 	WithRenderManifest()(&preparer)
 	require.False(t, preparer.needsVendorInputs(config))
@@ -200,11 +202,13 @@ func TestRenderVendorPin(t *testing.T) {
 		[]byte("Name: app\nSource7: %{name}-%{version}-vendor.tar.gz\n%prep\ntar -xf %{S:7}\n"), fileperms.PublicFile))
 	entry := fedorasource.FormatSourcesEntry("app-2-vendor.tar.gz", fileutils.HashTypeSHA512, strings.Repeat("a", 128))
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), "/staged/sources", []byte(entry+"\n"), fileperms.PublicFile))
+
 	_, err = preparer.updateSourcesFile(comp, "/staged", nil)
 	require.NoError(t, err)
 	require.NoError(t, RenderVendorPin(ctx.FS(), comp, "/staged/app.spec", "Source7: app-2-vendor.tar.gz"))
 	manifest, err := fileutils.ReadFile(ctx.FS(), "/staged/sources")
 	require.NoError(t, err)
+
 	want := fedorasource.FormatSourcesEntry("app-2-vendor.tar.gz", fileutils.HashTypeSHA512, pin)
 	assert.Equal(t, want+"\n", string(manifest))
 }
