@@ -638,26 +638,96 @@ Name: value
 }
 
 func TestUpdateExistingTagUpdatesRepeatedConditionalTags(t *testing.T) {
-	specFile, err := spec.OpenSpec(strings.NewReader(`Name: example
-%if 0
-Release: 1
-%else
-Release: 2
-%endif
-`), spec.WithEditor(spec.EditorStructural))
-	require.NoError(t, err)
+	for _, editor := range []spec.EditorMode{spec.EditorLegacy, spec.EditorStructural} {
+		t.Run(string(editor), func(t *testing.T) {
+			for _, formatting := range []struct {
+				name     string
+				preserve bool
+			}{{name: "default"}, {name: "preserved", preserve: true}} {
+				t.Run(formatting.name, func(t *testing.T) {
+					for _, method := range []string{"update", "set"} {
+						t.Run(method, func(t *testing.T) {
+							input := []string{
+								"Name: example", "%if 0", "release:        1", "%else", "Release:\t 2", "%endif",
+							}
 
-	require.NoError(t, specFile.UpdateExistingTag("", "Release", "3%{?dist}"))
+							options := []spec.OpenOption{spec.WithEditor(editor)}
+							if formatting.preserve {
+								options = append(options, spec.WithPreservedReleaseFormatting())
+							}
 
-	var actual bytes.Buffer
-	require.NoError(t, specFile.Serialize(&actual))
-	assert.Equal(t, `Name: example
-%if 0
-Release: 3%{?dist}
-%else
-Release: 3%{?dist}
-%endif
-`, actual.String())
+							specFile, err := spec.OpenSpec(strings.NewReader(strings.Join(input, "\n")+"\n"), options...)
+							require.NoError(t, err)
+
+							if method == "update" {
+								err = specFile.UpdateExistingTag("", "Release", "3%{?dist}")
+							} else {
+								err = specFile.SetTag("", "Release", "3%{?dist}")
+							}
+
+							require.NoError(t, err)
+
+							var actual bytes.Buffer
+							require.NoError(t, specFile.Serialize(&actual))
+
+							input[2], input[4] = "Release: 3%{?dist}", "Release: 3%{?dist}"
+							if formatting.preserve {
+								input[2], input[4] = "release:        3%{?dist}", "Release:\t 3%{?dist}"
+							}
+
+							assert.Equal(t, strings.Join(input, "\n")+"\n", actual.String())
+						})
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestUpdateExistingTagFuncUpdatesEachTag(t *testing.T) {
+	errUpdate := errors.New("update failed")
+
+	for _, editor := range []spec.EditorMode{spec.EditorLegacy, spec.EditorStructural} {
+		t.Run(string(editor), func(t *testing.T) {
+			input := []string{
+				"Name: example", "%if 0", "Release:        1", "%else", "Release:\t 2.%{snap}", "%endif",
+			}
+
+			specFile, err := spec.OpenSpec(strings.NewReader(strings.Join(input, "\n")+"\n"),
+				spec.WithEditor(editor), spec.WithPreservedReleaseFormatting())
+			require.NoError(t, err)
+
+			releases, err := specFile.GetTags("", "Release")
+			require.NoError(t, err)
+			assert.Equal(t, []string{"1", "2.%{snap}"}, releases)
+
+			var seen []string
+
+			require.NoError(t, specFile.UpdateExistingTagFunc("", "Release", func(current string) (string, error) {
+				seen = append(seen, current)
+
+				return "1" + current, nil
+			}))
+			assert.Equal(t, []string{"1", "2.%{snap}"}, seen)
+
+			var actual bytes.Buffer
+			require.NoError(t, specFile.Serialize(&actual))
+
+			input[2], input[4] = "Release:        11", "Release:\t 12.%{snap}"
+			assert.Equal(t, strings.Join(input, "\n")+"\n", actual.String())
+
+			err = specFile.UpdateExistingTagFunc("", "Release", func(string) (string, error) {
+				return "", errUpdate
+			})
+			require.ErrorIs(t, err, errUpdate)
+
+			_, err = specFile.GetTags("", "Epoch")
+			require.ErrorIs(t, err, spec.ErrNoSuchTag)
+			require.ErrorIs(t, specFile.UpdateExistingTagFunc("", "Epoch", func(string) (string, error) {
+				return "1", nil
+			}), spec.ErrNoSuchTag)
+		})
+	}
 }
 
 func TestRemoveTag(t *testing.T) {

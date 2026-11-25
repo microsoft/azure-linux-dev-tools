@@ -48,8 +48,10 @@ func init() {
 	}
 }
 
-// All runs the tests, builds the code, and runs the default checks.
+// All builds the code, runs tests and default checks in parallel, then generates docs.
 func All() error {
-	mg.SerialDeps(magebuild.Build, magebuild.Unit, mg.F(magecheckfix.Check, magecheckfix.TargetDefault), magescenario.Scenario, magebuild.Docs)
+	mg.SerialDeps(magebuild.Build)
+	mg.Deps(magebuild.Unit, mg.F(magecheckfix.Check, magecheckfix.TargetDefault), magescenario.Scenario)
+	mg.SerialDeps(magebuild.Docs)
 	return nil
 }

@@ -206,7 +206,7 @@ func prepareRPMDevBumpspecHome(ctx opctx.Ctx, request RPMDevBumpspecRequest) err
 		return fmt.Errorf("failed to create isolated RPM wrapper directory %#q:\n%w", filepath.Dir(rpmWrapperPath), err)
 	}
 
-	if err := fileutils.WriteFile(ctx.FS(), rpmWrapperPath, []byte(rpmdevBumpspecWrapper(request)),
+	if err := fileutils.WriteFile(ctx.FS(), rpmWrapperPath, []byte(GenerateRPMDevBumpspecWrapper(request)),
 		fileperms.PublicExecutable); err != nil {
 		return fmt.Errorf("failed to create isolated RPM wrapper %#q:\n%w", rpmWrapperPath, err)
 	}
@@ -214,7 +214,9 @@ func prepareRPMDevBumpspecHome(ctx opctx.Ctx, request RPMDevBumpspecRequest) err
 	return nil
 }
 
-func rpmdevBumpspecWrapper(request RPMDevBumpspecRequest) string {
+// GenerateRPMDevBumpspecWrapper generates an RPM wrapper with request-local spec
+// and build context. RPMDEV_BUMPSPEC_ORIGINAL_PATH must contain the original PATH.
+func GenerateRPMDevBumpspecWrapper(request RPMDevBumpspecRequest) string {
 	args := append([]string{"rpm"}, rpmdevBumpspecContextArgs(request)...)
 
 	quoted := make([]string, len(args))

@@ -26,10 +26,12 @@ type LockReader interface {
 	LockDir() string
 	// ValidateConsistency checks lock files against the resolved component
 	// configs. Returns sorted lists of components with missing/stale locks
-	// and orphan component names.
+	// and orphan component names. ignoredComponents are exempt from lock
+	// validation but still count as configured components for orphan detection.
 	ValidateConsistency(
 		components map[string]projectconfig.ComponentConfig,
 		checkOrphans bool,
+		ignoredComponents ...string,
 	) (missingOrStale, orphans []string, err error)
 }
 
@@ -210,8 +212,9 @@ func (s *Store) Remove(componentName string) error {
 func (s *Store) ValidateConsistency(
 	components map[string]projectconfig.ComponentConfig,
 	checkOrphans bool,
+	ignoredComponents ...string,
 ) (missingOrStale, orphans []string, err error) {
-	return validateConsistency(s.fs, s.lockDir, components, checkOrphans)
+	return validateConsistency(s.fs, s.lockDir, components, checkOrphans, ignoredComponents...)
 }
 
 // FindOrphanLockFiles returns component names that have lock files but no

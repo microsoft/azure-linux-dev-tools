@@ -34,9 +34,18 @@ func (s *structuralSpec) SetTag(packageName string, tag string, value string) (e
 
 // UpdateExistingTag replaces every instance of the named tag in the given
 // package with the provided value. If no such tag exists, it returns an error.
-func (s *structuralSpec) UpdateExistingTag(packageName string, tag string, value string) (err error) {
+func (s *structuralSpec) UpdateExistingTag(packageName string, tag string, value string) error {
 	slog.Debug("Updating tag in spec", "package", packageName, "tag", tag, "newValue", value)
 
+	return s.UpdateExistingTagFunc(packageName, tag, func(string) (string, error) { return value, nil })
+}
+
+// UpdateExistingTagFunc replaces the value of every instance of the named tag in the given
+// package with the value returned by update for that instance's current value. If no such
+// tag exists, it returns an error.
+func (s *structuralSpec) UpdateExistingTagFunc(
+	packageName string, tag string, update func(current string) (string, error),
+) (err error) {
 	tagToCompareAgainst := strings.ToLower(tag)
 
 	var updated bool
@@ -47,12 +56,17 @@ func (s *structuralSpec) UpdateExistingTag(packageName string, tag string, value
 				return nil
 			}
 
-			parsedTag, _, isTag := parseTagLine(line.Text)
+			parsedTag, current, isTag := parseTagLine(line.Text)
 			if !isTag || strings.ToLower(parsedTag) != tagToCompareAgainst {
 				return nil
 			}
 
-			line.Replace(fmt.Sprintf("%s: %s", tag, value))
+			value, updateErr := update(current)
+			if updateErr != nil {
+				return updateErr
+			}
+
+			line.Replace(updatedTagLine(line.Text, tag, value, s.preserveReleaseFormatting))
 
 			updated = true
 
@@ -190,6 +204,27 @@ func (s *structuralSpec) GetTag(packageName string, tag string) (string, error) 
 	}
 
 	return foundValue, nil
+}
+
+// GetTags returns the values of all instances of the named tag in the given
+// package, in spec order. Returns [ErrNoSuchTag] if the tag does not exist.
+func (s *structuralSpec) GetTags(packageName string, tag string) ([]string, error) {
+	var values []string
+
+	err := s.inspectTree(func(tree *specTree) error {
+		values = tree.GetTags(packageName, tag)
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if len(values) == 0 {
+		return nil, fmt.Errorf("tag %#q not found in package %#q:\n%w", tag, packageName, ErrNoSuchTag)
+	}
+
+	return values, nil
 }
 
 // GetLastTag returns the value of the final lexical instance of the named tag

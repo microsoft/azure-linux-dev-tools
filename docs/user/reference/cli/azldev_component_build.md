@@ -16,6 +16,12 @@ are placed in structured subdirectories under the project output directory:
   out/rpms/            - binary RPMs with no channel configured (or channel="none")
   out/rpms/<channel>/  - binary RPMs moved to their configured publish channel subdirectory
 
+For lockless components, build instead extracts committed rendered dist-git
+history using git-filter-repo, downloads lookaside sources, and builds the SRPM
+with mock's rpmautospec plugin (mock 5.3+). Uncommitted rendered changes are
+ignored. '--without-git' and '--rpmdev-bumpspec' are unsupported for lockless
+components. '--no-check' skips the binary build's package checks normally.
+
 The publish channel for each package is resolved from the project's package
 configuration (package groups and per-component overrides). See 'azldev package'
 for details.
@@ -81,7 +87,6 @@ azldev component build [flags]
       --spec-editor editor               Select the RPM spec editor (legacy or experimental) (default legacy)
       --unique-mockroot[=true|false]     use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently
   -v, --verbose[=true|false]             enable verbose output
-      --without-lockfile[=true|false]    preview: track resolved upstream commits in generated config instead of lock files
 ```
 
 ### SEE ALSO

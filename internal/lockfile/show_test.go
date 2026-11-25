@@ -152,6 +152,19 @@ func TestShowAtCommit(t *testing.T) {
 func TestReadAllAtCommit(t *testing.T) {
 	const lockDir = "locks"
 
+	t.Run("ignored corrupt locks are not read", func(t *testing.T) {
+		testFS := memfs.New()
+		repo, err := gogit.Init(memory.NewStorage(), testFS)
+		require.NoError(t, err)
+		commitFile(t, repo, testFS, "locks/curl.lock", validLockTOML, "add curl lock")
+		hash := commitFile(t, repo, testFS, "locks/rust-asyncband.lock", "invalid TOML", "add unused lock")
+
+		locks, err := lockfile.ReadAllAtCommit(repo, hash, lockDir, "rust-asyncband")
+		require.NoError(t, err)
+		require.Len(t, locks, 1)
+		assert.Contains(t, locks, "curl")
+	})
+
 	t.Run("reads all locks", func(t *testing.T) {
 		testFS := memfs.New()
 		repo, err := gogit.Init(memory.NewStorage(), testFS)

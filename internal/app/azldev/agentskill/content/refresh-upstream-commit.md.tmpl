@@ -1,0 +1,202 @@
+---
+name: {{ .Name }}
+description: {{ printf "%q" .Description }}
+---
+
+# Refresh component upstream commits
+
+`azldev comp refresh-upstream-commit` (`comp` is an alias for `component`) resolves one or more
+components at the distro snapshot and writes normal component TOML under
+`{{ .UpstreamCommitsDir }}/`.
+
+The project config must include `{{ .UpstreamCommitsDir }}/*.toml` **before**
+the component-specific TOML configuration so subsequent commands load the
+generated commit pins and the component definition supplies the remaining
+`spec` fields. If `--upstream-commits-dir` selects another directory, change
+the include pattern to match while preserving that ordering.
+
+The command uses the fully merged component configuration. It resolves and
+writes a pin only when the selected component's effective `spec.type` is
+`upstream`; for other source types, it removes any existing generated pin
+without contacting an upstream provider.
+It loads configuration permissively so a stale generated pin cannot block
+cleanup after a component is removed or converted to another source type.
+Other configuration validation failures are still reported as warnings.
+
+## When to run `refresh-upstream-commit`
+
+| Situation | Run `refresh-upstream-commit`? |
+| --- | --- |
+| Adding a new upstream component | **Yes** — first, to generate its upstream commit TOML |
+| Finalizing overlay, build config, or metadata changes | No — these do not affect the resolved commit |
+| Changing source resolution (commit pin, upstream distro/version, or snapshot) | **Yes** — also mid-workflow (see below) |
+| Iterating on overlays / build config / metadata | No — render uses uncommitted inputs directly |
+| Just reading or building existing components | No |
+
+Refresh a single component with `-p <name>`. Use `-a` (all components) only for
+coordinated mass refreshes (e.g. a new distro snapshot) or when investigating
+commit drift across many components — it is slow. For day-to-day work use `-p`.
+Add `-O json` for machine-readable output when debugging.
+
+## Finalizing component changes
+
+Select this workflow by listing the component's exact name in
+`lockless-components.txt` beside the top-level `azldev.toml`.
+Alternatively, `azldev comp make-lockless` adds selected exact names if needed
+and runs this refresh pipeline. It accepts `-p`, `-g`, `-a`, or positional names,
+writes the list in lexical order, one name per line without blank lines or duplicates,
+preserves existing names and lock files, and refreshes already-listed components.
+A refresh failure leaves the updated list in place; fix the failure and rerun.
+Refresh skips unlisted components and preserves their generated TOML files.
+
+Rendering runs with uncommitted or untracked files anywhere in the repository and
+uses working-tree inputs (TOML, overlays, local sources) as-is. The previous render
+baseline (committed rendered spec, changelog, and Version) is read from committed
+files only. For upstream components, the upstream changes text compares the
+pin from fully parsed committed TOML at the last render commit with the current
+working-tree pin, so a refreshed pin does not need to be committed first.
+Local lockless components exclude the TOML defining the local spec path and
+participate in unchanged-render checks. Their Release and changelog remain unchanged.
+
+```sh
+azldev comp render -p <name>
+git add <changed-component-config-and-source-paths> \
+	{{ .UpstreamCommitsDir }}/<name>.toml \
+	{{ .RenderedSpecsDir }}/<first-char>/<name>/
+git commit -m "fix(<name>): ..."
+```
+
+Rendering clones only the effective upstream distro's `dist-git-branch`, keeping
+its full history rather than making a shallow clone. If the last render's
+committed TOML resolves to a different branch and the pins differ, rendering
+fetches that historical branch before comparing commits, without switching the
+working checkout.
+If the old pin cannot be resolved, rendering fetches that specific commit hash
+from `origin` and checks again. If it remains unavailable, rendering continues
+with `update to upstream <component-name> commit <current-hash>` as the upstream
+changes text, even when the historical branch fetch failed. Other Git log errors
+remain fatal.
+
+With `build.emit-upstream-provenance`, rendering captures Fedora provenance
+immediately after checking out the pinned upstream commit, before
+release/changelog carryover or bumping. Host `rpmautospec calculate-release`
+runs here only for an upstream `%autorelease` whose `fedora_upstream_release`
+is not already supplied by `build.defines`. The captured values are reused
+when emitting inline `%define` entries; that step never repeats the provenance query.
+
+After reading render history and collecting upstream changes, rendering emits
+inline macros, applies overlays, and updates `sources`. It then
+prepares the changelog before Release from the post-overlay spec, before
+comparison and the final `rpmdev-bumpspec`. Overlay edits stay uncommitted in the upstream checkout;
+only while host `rpmautospec` queries it (first render or version change of an
+`%autorelease` spec) are they temporarily amended into the upstream HEAD commit,
+keeping its committer and date, after which the original HEAD is restored.
+Release edits preserve the existing spaces and tabs after `Release:`.
+Version detection and carryover use the post-overlay spec, so a `Version:`
+overlay can enable or disable carryover.
+Overlays cannot override the prepared release and changelog.
+Rendering compares output before the final release bump; `--check-only` stops before that bump.
+Unchanged lockless renders require `--no-change-rebuild`; otherwise rendering errors
+without replacing existing output. For unchanged autorelease components (upstream or local),
+the flag records host `date -Is` output in `.no-change-rebuild`.
+Upstream non-autorelease rebuilds proceed without a timestamp marker.
+Unchanged local non-autorelease components must manually update their release and changelog,
+even with `--no-change-rebuild`. Comparison
+ignores this root marker in both existing output and the working upstream checkout.
+Lockless failures never write `RENDER_FAILED`. Before replacement, output is
+untouched; failures after replacement starts clear the component directory and
+use Git to restore committed output, or leave no directory if none existed.
+Recovery discards uncommitted changes in that directory and keeps no backups.
+Before removing existing lockless output, host `rpmspec` compares source-package NEVRs.
+The package name must match. The new NEVR must be equal or higher for a final autorelease spec;
+non-autorelease requires a higher NEVR. Invalid values fail with both NEVRs shown.
+Validation errors leave existing output untouched and fail even without `--fail-on-error`.
+First renders, `--check-only`, and dry runs skip this replacement-time check.
+`--no-change-rebuild` never bypasses the NEVR check.
+The comparison ignores the root `.git` without traversing or removing it.
+
+Changelog handling precedes release preparation and is independent of version
+changes. Static specs retain the committed inline `%changelog` section.
+An initial `%autorelease` render generates the complete upstream changelog on
+the host. Legacy-marker output supplies its committed inline `%changelog` body
+as the working `changelog`, removing leading and trailing `##` comment lines
+while preserving interior comments and whitespace. A previous static-Release
+render supplies its inline `%changelog` body as the working `changelog` when
+upstream now uses `%autorelease`; without a `%changelog` section, the working
+file is left as-is. Modern autorelease output
+replaces the working `changelog` with the committed file byte-for-byte.
+A missing committed `changelog` fails rendering.
+
+After overlays, the spec must have exactly one `Release:` tag in its main package
+and at most one per subpackage. Tags inside `%if` conditionals count;
+commented-out lines do not. Otherwise rendering fails, naming the package and
+its tag count; use overlays to remove or comment out the extra `Release:` lines.
+
+Rendering then compares the spec's `Version:` with the
+committed spec, independently of upstream pin changes. When either tag uses
+macros, both are expanded with host `rpmspec` in their own spec context, so a
+changed macro definition counts as a version change.
+Static release carryover runs only when committed output exists and the version
+is unchanged. Otherwise the release comes only from upstream: committed
+`Release:` tags are neither read nor validated, the working static release and
+`baserelease` definition are unchanged, and `%autorelease` tags get the base
+calculated from the upstream checkout, even for rpmautospec-processed output.
+There is no later restoration of the original upstream release.
+
+For an unchanged version, the committed spec must follow the same `Release:` rule.
+For static specs, release carryover checks the committed main `Release:` value. If it uses
+the `baserelease` macro, rendering copies the committed `%global baserelease`
+or `%define baserelease` line over the upstream definition without changing
+the upstream `Release:` value. Missing or ambiguous definitions fail rendering.
+Otherwise, it copies the committed main `Release:` value. Each static subpackage
+`Release:` is carried from the committed subpackage of the same name, or keeps its
+upstream value when that subpackage has none. No temporary release-bump
+probe is performed. An initial `%autorelease` render calculates its base release
+on the host. Initial autorelease handling does not depend on version changes.
+For an unchanged version with existing output
+marked by a line starting with `## RPMAUTOSPEC:` and containing `autorelease`,
+an `%autorelease` upstream spec inherits the leading integer of the committed,
+macro-expanded Release as `-b`. Expansion uses the committed files on the host.
+Without that legacy marker, an existing `%autorelease` spec carries its
+base only when the version is unchanged. For unchanged versions, it carries the
+committed `-b` value into the working macro; an omitted `-b` stays omitted,
+removing any working base option rather than adding `-b 1`.
+An invalid numeric base fails release carryover, which requires no host release query.
+When the version changes, rendering calculates the upstream numeric base and sets `-b`,
+as for initial output. The committed changelog is still carried over, not regenerated.
+The resulting base applies to every `%autorelease` `Release:` tag, including
+subpackages; static subpackage values in an `%autorelease` spec stay as upstream.
+
+A calculated base of `1` omits `-b`, removing any working base option while preserving
+other macro options. This includes legacy expansion. Unchanged-version modern output
+still carries an explicitly committed `-b 1` as-is.
+
+The final host `rpmdev-bumpspec -c` comment is the `--commit-message` text
+(default: detected from project commits), followed by one `- `-prefixed line per upstream change. Autorelease skips
+`rpmdev-bumpspec`. Rendering never prompts for a message. Without `--commit-message`, the text is the
+subjects of project commits since the last render that changed the component's
+`comp changed` inputs (oldest first), or `Initial import from upstream.` for a first
+render. Changed output with no such commit, or uncommitted changes to those inputs,
+fail the render even without `--fail-on-error`, leaving existing output untouched. An unchanged render with `--no-change-rebuild` uses `No-change rebuild.`.
+All prepared dist-git files except `.git` are retained,
+without file filtering or `spectool` queries. Synthetic history and its
+legacy release adjustment are skipped during lockless rendering.
+Lockless rendering never uses mock or `rpmautospec process-distgit`; the output
+retains `%autorelease`, `%autochangelog`, and other RPM macros unexpanded, and
+preserves the `changelog` sidecar.
+
+When the last render's configuration has no `spec.upstream-commit`, its
+committed lock file can supply the old pin if that commit's top-level
+`lockless-components.txt` is absent or does not list the component. The current
+render still requires a configured pin.
+
+Rendering then replaces `{{ .RenderedSpecsDir }}/<first-char>/<name>/`. It never
+stages or commits anything; commit the rendered output yourself, because the next
+render's baseline reflects only committed output. Install host `rpmdevtools`,
+`rpm-build`, and `rpmautospec` as needed. `--check-only` never replaces output or
+creates rebuild timestamps.
+
+For source-resolution changes, run `refresh-upstream-commit` first and review the
+generated pin, then follow the sequence above.
+
+Generated by `azldev docs agent`; do not hand-edit.

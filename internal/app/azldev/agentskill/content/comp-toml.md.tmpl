@@ -31,7 +31,7 @@ Add sub-tables only for what you change. The fields you will reach for most:
 | `overlays` / `overlay-files` | targeted spec/source edits (see the `azldev-overlays` skill) |
 | `build.defines` / `build.with` / `build.without` | RPM macro and bcond build tweaks |
 | `release.calculation` | how the `Release` tag is managed |
-| `render.skip-file-filter` | rendering edge-case escape hatch |
+| `render.skip-file-filter` | locked-rendering edge-case escape hatch |
 
 ## Spec source
 
@@ -86,19 +86,50 @@ calculation = "manual"
 ```
 
 The temporary `--rpmdev-bumpspec` flag on `comp build`, `comp render`, and
-`comp prepare-sources` opts into transactional host handling while Azure Linux
+`comp prepare-sources` opts into transactional host handling for locked components while Azure Linux
 migrates. Only that path requires `rpmdev-bumpspec`, `rpmdev-packager`, `rpm`,
 `rpmspec`, and Python with its RPM module. It preserves the fixed team
 identity/comment/datestamp and strict source-EVR transaction checks; locks and
 synthetic history still determine the number and order of bumps. Without the
 flag, no bumpspec runtime discovery occurs and the legacy static calculation is
-used. `%autorelease` behavior is unchanged on either path.
+used for locked components. Lockless builds reject this flag and use Mock's
+rpmautospec plugin with committed dist-git history; lockless `comp prepare-sources`
+writes directly to `--output-dir` and downloads/generates sources before inline macro
+setup, then applies archive overlays before spec/loose-file overlays. Lockless specs
+use `%define` entries without a macros file, load directive, or generated `Source9999`.
+Locked specs retain their separate macros file. Nonempty output
+requires `--force`; failures can leave partial output. It does not commit changes.
+It reads history from `project.rendered-specs-dir`, not
+`--output-dir`, without generating synthetic history. `--without-git` removes `.git`
+after successful preparation, preserving it on failure.
+It supports `--skip-overlays`, `--skip-sources`, and `--allow-no-hashes`.
+The lockless upstream render workflow always runs
+host `rpmdev-bumpspec -c` only for non-autorelease specs, with the
+`--commit-message` text (default: detected from project commits) followed by one
+`- `-prefixed line per upstream change.
+It never prompts and never stages or commits; commit the rendered output yourself.
+Uncommitted inputs are used as-is, but the previous render baseline is read from
+committed files only.
+Lockless rendering skips synthetic history and its legacy release adjustment.
 
 ## Render configuration
 
-`render.skip-file-filter = true` keeps all source and patch files during render.
-azldev normally prunes files not referenced by the rendered spec; set this only for
+Local lockless components skip upstream carryover; Release and changelog remain unchanged.
+They exclude the TOML defining the local spec path, retain other TOML sidecars,
+and participate in unchanged-render checks.
+
+azldev reads `lockless-components.txt` beside the top-level `azldev.toml`.
+Listed component names use the lockless workflow for every command;
+all others use lock files. A missing or empty list means all components use
+locks. List every component to use a fully lockless workflow.
+Use `comp refresh-upstream-commit` for listed components and `comp update`
+for unlisted components; each command skips the other mode.
+
+`render.skip-file-filter = true` keeps all source and patch files during locked render.
+Locked rendering normally prunes files not referenced by the rendered spec; set this only for
 the rare spec whose `Source`/`Patch` filenames use macros the filter cannot expand.
+Lockless rendering always retains all prepared dist-git files except `.git`,
+without file filtering or `spectool` queries; this setting has no effect on it.
 
 ## File organization
 

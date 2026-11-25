@@ -5,11 +5,13 @@ package component
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"path/filepath"
 	"time"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
 )
 
@@ -21,6 +23,24 @@ const buildProvenanceMockSubdir = "azldev-provenance-mock"
 // mockProcessorCleanupTimeout bounds how long boundary cleanup may spend
 // scrubbing the mock chroot, so a hung scrub can't block command shutdown.
 const mockProcessorCleanupTimeout = 5 * time.Minute
+
+func renderMockProcessor(env *azldev.Env, comps []components.Component) (*sources.MockProcessor, error) {
+	for _, comp := range comps {
+		if env.ComponentWithoutLockfile(comp.GetName()) {
+			continue
+		}
+
+		processor := createMockProcessor(env)
+		if processor == nil {
+			return nil, errors.New(
+				"mock config required for locked rendering; ensure the project has a valid distro with mock config")
+		}
+
+		return processor, nil
+	}
+
+	return nil, nil //nolint:nilnil // All-lockless renders do not need a mock processor.
+}
 
 // createMockProcessor creates a lazily initialized [sources.MockProcessor]
 // using the project/build distro's mock config. Source providers may use a

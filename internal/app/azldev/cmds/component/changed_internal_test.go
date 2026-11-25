@@ -5,6 +5,7 @@ package component
 
 import (
 	"fmt"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -12,10 +13,14 @@ import (
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/storage/memory"
+	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx/opctx_test"
 	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/externalcmd"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/git"
 	"github.com/pelletier/go-toml/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 const (
@@ -39,13 +44,52 @@ func testRepoWithCommits(
 ) (*gogit.Repository, []string) {
 	t.Helper()
 
-	require.NotEmpty(t, commits, "need at least one commit")
-
-	memFS := memfs.New()
-	storer := memory.NewStorage()
-
-	repo, err := gogit.Init(storer, memFS)
+	repo, err := gogit.Init(memory.NewStorage(), memfs.New())
 	require.NoError(t, err)
+
+	return repo, commitTestRepoFiles(t, repo, commits)
+}
+
+// testNativeRepoWithCommits creates an on-disk git repo with N sequential
+// commits. Returns the go-git handle (for modifying the worktree), a
+// [git.Repo] that reads the repo with the git program, and the commit hashes
+// (oldest first). The test is skipped if git is not installed.
+func testNativeRepoWithCommits(
+	t *testing.T,
+	commits []testRepoCommit,
+) (*gogit.Repository, *git.Repo, []string) {
+	t.Helper()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+
+	dir := t.TempDir()
+
+	repo, err := gogit.PlainInit(dir, false)
+	require.NoError(t, err)
+
+	hashes := commitTestRepoFiles(t, repo, commits)
+
+	ctrl := gomock.NewController(t)
+	cmdFactory, err := externalcmd.NewCmdFactory(
+		opctx_test.NewNoOpMockDryRunnable(ctrl),
+		opctx_test.NewNoOpMockEventListener(ctrl),
+	)
+	require.NoError(t, err)
+
+	native, err := git.OpenRepo(t.Context(), cmdFactory, dir)
+	require.NoError(t, err)
+
+	return repo, native, hashes
+}
+
+// commitTestRepoFiles writes and commits each of commits to repo in order.
+// Returns the commit hashes (oldest first).
+func commitTestRepoFiles(t *testing.T, repo *gogit.Repository, commits []testRepoCommit) []string {
+	t.Helper()
+
+	require.NotEmpty(t, commits, "need at least one commit")
 
 	worktree, err := repo.Worktree()
 	require.NoError(t, err)
@@ -61,7 +105,7 @@ func testRepoWithCommits(
 		}
 
 		for path, content := range commit.files {
-			f, fErr := memFS.Create(path)
+			f, fErr := worktree.Filesystem.Create(path)
 			require.NoError(t, fErr)
 
 			_, fErr = f.Write(content)
@@ -81,7 +125,7 @@ func testRepoWithCommits(
 		hashes = append(hashes, hash.String())
 	}
 
-	return repo, hashes
+	return hashes
 }
 
 // testRepoWithTwoCommits is a convenience wrapper around testRepoWithCommits.

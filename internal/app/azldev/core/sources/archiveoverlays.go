@@ -15,7 +15,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/rootfs"
 )
 
-// applyArchiveOverlays groups archive overlays by target archive and processes
+// ApplyArchiveOverlays groups archive overlays by target archive and processes
 // them in order. Multiple overlays targeting the same archive are batched into
 // a single extract/modify/repack cycle. File removals inside the archive reuse
 // the same machinery as loose-file overlays ([applyNonSpecOverlay]).
@@ -23,7 +23,7 @@ import (
 // It returns the names of the archives that were actually repacked. In dry-run
 // mode no archive is repacked, so the returned slice is empty even when archive
 // overlays were present.
-func applyArchiveOverlays(
+func ApplyArchiveOverlays(
 	dryRunnable opctx.DryRunnable,
 	eventListener opctx.EventListener,
 	sourcesDirPath string,

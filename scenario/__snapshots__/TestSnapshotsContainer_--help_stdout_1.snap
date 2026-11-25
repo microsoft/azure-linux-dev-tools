@@ -39,7 +39,6 @@ Flags:
       --unique-mockroot[=true|false]     use unique mock roots labeled with the action, components, and a random suffix (at most 24 characters); allows 'component build' to build multiple components concurrently
   -v, --verbose[=true|false]             enable verbose output
       --version[=true|false]             version for azldev
-      --without-lockfile[=true|false]    preview: track resolved upstream commits in generated config instead of lock files
 
 Use "azldev [command] --help" for more information about a command.
 Use "azldev advanced --help" for additional tools (mock, mcp, wget).
