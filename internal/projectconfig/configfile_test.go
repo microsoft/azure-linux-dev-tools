@@ -10,6 +10,7 @@ import (
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
+	"github.com/pelletier/go-toml/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1526,6 +1527,46 @@ func TestValidateCustomSourceRef_MissingScript(t *testing.T) {
 	assert.Contains(t, err.Error(), "script")
 	assert.Contains(t, err.Error(), "gen.tar.gz")
 	assert.Contains(t, err.Error(), "comp")
+}
+
+func TestProjectConfigFileValidation_OriginUserAgent(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		origin  string
+		wantErr string
+	}{
+		{
+			name:   "download",
+			origin: `type = "download", uri = "https://example.com/src", user-agent = "test-client/1.0 (example)"`,
+		},
+		{
+			name: "custom", origin: `type = "custom", script = "gen.sh", user-agent = "test-client/1.0"`,
+			wantErr: "'user-agent' is only valid when origin type is 'download'",
+		},
+		{
+			name: "invalid value", origin: `type = "download", uri = "https://example.com/src", user-agent = "bad\nvalue"`,
+			wantErr: "control characters are not allowed",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			var config projectconfig.ConfigFile
+			require.NoError(t, toml.Unmarshal([]byte(`
+[[components.comp.source-files]]
+filename = "src.tar.gz"
+origin = { `+testCase.origin+` }
+`), &config))
+
+			err := config.Validate()
+			if testCase.wantErr != "" {
+				require.ErrorContains(t, err, testCase.wantErr)
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, "test-client/1.0 (example)", config.Components["comp"].SourceFiles[0].Origin.UserAgent)
+		})
+	}
 }
 
 func TestValidateCustomSourceRef_ScriptOnDownloadOrigin(t *testing.T) {

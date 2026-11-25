@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/downloader"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/downloader/downloader_test"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
@@ -98,7 +99,7 @@ func TestExtractSourcesFromRepo(t *testing.T) {
 		gomock.Any(),
 		testExpectedURL1,
 		filepath.Join(testRepoDir, testTarballFile),
-	).DoAndReturn(func(_ context.Context, _ string, destPath string) error {
+	).DoAndReturn(func(_ context.Context, _ string, destPath string, _ ...downloader.DownloadOption) error {
 		// Create a file with content that matches the expected SHA512 hash
 		return afero.WriteFile(ctx.FS(), destPath, []byte("test content for tarball"), testFilePerms)
 	})
@@ -107,7 +108,7 @@ func TestExtractSourcesFromRepo(t *testing.T) {
 		gomock.Any(),
 		testExpectedURL2,
 		filepath.Join(testRepoDir, testPatchFile),
-	).DoAndReturn(func(_ context.Context, _ string, destPath string) error {
+	).DoAndReturn(func(_ context.Context, _ string, destPath string, _ ...downloader.DownloadOption) error {
 		// Create a file with content that matches the expected SHA256 hash
 		return afero.WriteFile(ctx.FS(), destPath, []byte("test patch content"), testFilePerms)
 	})
@@ -181,7 +182,7 @@ func TestExtractSourcesFromRepoHashMismatch(t *testing.T) {
 
 	// Mock downloader creates a file with WRONG content (hash mismatch)
 	mockDownloader.EXPECT().Download(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, _ string, destPath string) error {
+		DoAndReturn(func(_ context.Context, _ string, destPath string, _ ...downloader.DownloadOption) error {
 			// Create a file with content that does NOT match the expected hash
 			return afero.WriteFile(ctx.FS(), destPath, []byte("wrong content"), testFilePerms)
 		})

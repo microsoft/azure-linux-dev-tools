@@ -725,6 +725,19 @@ func validateOrigin(origin Origin, filename string, componentName string) error 
 			filename, componentName)
 	}
 
+	if origin.UserAgent != "" && origin.Type != OriginTypeURI {
+		return fmt.Errorf(
+			"source file %#q in component %#q has 'user-agent' set; "+
+				"'user-agent' is only valid when origin type is 'download'",
+			filename, componentName)
+	}
+
+	if strings.IndexFunc(origin.UserAgent, func(r rune) bool { return r < ' ' || r == '\x7f' }) >= 0 {
+		return fmt.Errorf(
+			"invalid 'user-agent' for source file %#q, component %#q: control characters are not allowed",
+			filename, componentName)
+	}
+
 	switch origin.Type {
 	case OriginTypeURI:
 		if origin.Uri == "" {

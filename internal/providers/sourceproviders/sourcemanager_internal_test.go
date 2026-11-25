@@ -5,15 +5,18 @@ package sourceproviders
 
 import (
 	"context"
+	"net/http"
 	"path/filepath"
 	"testing"
 
+	"github.com/h2non/gock"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components/components_testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource/fedorasource_test"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/downloader"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/downloader/downloader_test"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
@@ -92,7 +95,7 @@ func TestFetchSourceFile_ConfiguredSourceReplacesExistingFile(t *testing.T) {
 			if testCase.downloadURL != "" {
 				httpDownloader.EXPECT().
 					Download(gomock.Any(), testCase.downloadURL, filepath.Join(destDir, filename)).
-					DoAndReturn(func(_ context.Context, _, destPath string) error {
+					DoAndReturn(func(_ context.Context, _, destPath string, _ ...downloader.DownloadOption) error {
 						return fileutils.WriteFile(ctx.FS(), destPath, nil, fileperms.PublicFile)
 					})
 			}
@@ -142,6 +145,48 @@ func TestFetchSourceFile_ConfiguredSourceReplacesExistingFile(t *testing.T) {
 			assert.Empty(t, content)
 		})
 	}
+}
+
+func TestFetchSourceFile_UserAgentOnlyOnConfiguredOrigin(t *testing.T) {
+	const (
+		filename  = "source.tar.gz"
+		emptyHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+		originURI = "https://origin.example.com/source.tar.gz"
+	)
+
+	gock.New("https://cache.example.com").
+		Get("/pkg/" + filename + "/sha256/" + emptyHash + "/" + filename).
+		AddMatcher(func(req *http.Request, _ *gock.Request) (bool, error) {
+			return req.Header.Get("User-Agent") == "", nil
+		}).
+		Reply(http.StatusNotFound)
+	gock.New(originURI).MatchHeader("User-Agent", `^test-client/1\.0$`).Reply(http.StatusOK)
+	t.Cleanup(gock.OffAll)
+
+	ctx := testctx.NewCtx()
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+	component.EXPECT().GetName().Return("pkg")
+	component.EXPECT().GetConfig().Return(&projectconfig.ComponentConfig{})
+
+	httpDownloader, err := downloader.NewHTTPDownloader(ctx, ctx, ctx.FS())
+	require.NoError(t, err)
+
+	manager := &sourceManager{
+		dryRunnable:      ctx,
+		fs:               ctx.FS(),
+		lookasideBaseURI: "https://cache.example.com/$pkg/$filename/$hashtype/$hash/$filename",
+		retryConfig:      retry.Disabled(),
+	}
+	ref := &projectconfig.SourceFileReference{
+		Filename: filename,
+		Hash:     emptyHash,
+		HashType: fileutils.HashTypeSHA256,
+		Origin:   projectconfig.Origin{Type: projectconfig.OriginTypeURI, Uri: originURI, UserAgent: "test-client/1.0"},
+	}
+
+	require.NoError(t, manager.fetchSourceFile(t.Context(), httpDownloader, component, ref, "/output"))
+	assert.True(t, gock.IsDone(), "both lookaside and origin requests must match")
 }
 
 func TestFetchedSourceFilenames(t *testing.T) {
