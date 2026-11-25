@@ -1545,7 +1545,7 @@ func TestProjectConfigFileValidation_OriginUserAgent(t *testing.T) {
 		},
 		{
 			name: "invalid value", origin: `type = "download", uri = "https://example.com/src", user-agent = "bad\nvalue"`,
-			wantErr: "control characters are not allowed",
+			wantErr: "not a valid HTTP header value",
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {

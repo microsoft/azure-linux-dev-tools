@@ -154,20 +154,26 @@ func TestFetchSourceFile_UserAgentOnlyOnConfiguredOrigin(t *testing.T) {
 		originURI = "https://origin.example.com/source.tar.gz"
 	)
 
+	noUserAgentOverride := func(req *http.Request, _ *gock.Request) (bool, error) {
+		// The transport supplies the default only if no User-Agent header was set.
+		_, overridden := req.Header["User-Agent"]
+
+		return !overridden, nil
+	}
 	gock.New("https://cache.example.com").
 		Get("/pkg/" + filename + "/sha256/" + emptyHash + "/" + filename).
-		AddMatcher(func(req *http.Request, _ *gock.Request) (bool, error) {
-			return req.Header.Get("User-Agent") == "", nil
-		}).
+		AddMatcher(noUserAgentOverride).
+		Times(2).
 		Reply(http.StatusNotFound)
 	gock.New(originURI).MatchHeader("User-Agent", `^test-client/1\.0$`).Reply(http.StatusOK)
+	gock.New(originURI).AddMatcher(noUserAgentOverride).Reply(http.StatusOK)
 	t.Cleanup(gock.OffAll)
 
 	ctx := testctx.NewCtx()
 	ctrl := gomock.NewController(t)
 	component := components_testutils.NewMockComponent(ctrl)
-	component.EXPECT().GetName().Return("pkg")
-	component.EXPECT().GetConfig().Return(&projectconfig.ComponentConfig{})
+	component.EXPECT().GetName().Return("pkg").Times(2)
+	component.EXPECT().GetConfig().Return(&projectconfig.ComponentConfig{}).Times(2)
 
 	httpDownloader, err := downloader.NewHTTPDownloader(ctx, ctx, ctx.FS())
 	require.NoError(t, err)
@@ -186,7 +192,10 @@ func TestFetchSourceFile_UserAgentOnlyOnConfiguredOrigin(t *testing.T) {
 	}
 
 	require.NoError(t, manager.fetchSourceFile(t.Context(), httpDownloader, component, ref, "/output"))
-	assert.True(t, gock.IsDone(), "both lookaside and origin requests must match")
+
+	ref.Origin.UserAgent = ""
+	require.NoError(t, manager.fetchSourceFile(t.Context(), httpDownloader, component, ref, "/output"))
+	assert.True(t, gock.IsDone(), "lookaside and origin requests must match with and without an override")
 }
 
 func TestFetchedSourceFilenames(t *testing.T) {

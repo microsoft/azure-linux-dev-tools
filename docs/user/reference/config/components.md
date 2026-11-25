@@ -395,7 +395,7 @@ Three origin types are supported.
 | TOML key | Type | Required | Description |
 |----------|------|----------|-------------|
 | `uri` | string | Yes | URI to fetch if the file isn't available from the lookaside cache. |
-| `user-agent` | string | No | Overrides Go's default HTTP `User-Agent` for this origin download. It does not affect lookaside or other source files. |
+| `user-agent` | string | No | Overrides Go's default HTTP `User-Agent` for this origin download. If omitted or empty, Go's default is used. It does not affect lookaside or other source files. |
 
 ```toml
 [[components.shim.source-files]]
