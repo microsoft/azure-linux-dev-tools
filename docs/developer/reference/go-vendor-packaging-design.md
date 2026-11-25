@@ -6,8 +6,8 @@ digest of the resulting archive. azldev does not rewrite the published spec.
 
 ## Use cases and schema
 
-* **Already vendored (Fedora containerd):** reuse the archive name that the
-  effective spec expects, rather than pinning a versioned filename in TOML.
+* **Already vendored (Fedora containerd):** name the archive explicitly and
+  declare replacement when reusing an upstream manifest entry.
 * **Unbundled Fedora Go application:** use a packaging overlay to consume the
   vendor archive, remove obsolete build requirements, and install licenses.
   A Rust application such as `rust-uutils` needs Cargo tooling instead.
@@ -16,11 +16,14 @@ digest of the resulting archive. azldev does not rewrite the published spec.
 
 ```toml
 [[components.containerd.source-files]]
+filename = "containerd-2.3.5-vendor.tar.bz2"
+replace-upstream = true
+replace-reason = "Regenerate the existing vendor source"
 origin.type = "go-vendor"
 # origin.config-file = "go-vendor-tools.toml"
 ```
 
-Discover the output name from a supported vendor Source or specify a basename.
+The configured basename is the output identity; the spec does not supply it.
 Optional generation inputs include declaration-relative native settings, the
 module directory, and extra prep packages.
 
@@ -31,8 +34,7 @@ overlays in isolated mock. An existing archive or `sources` entry does not skip
 generation. An optional TOML `hash` (with `hash-type`) verifies the newly generated
 bytes before publication; without it, azldev records the computed digest.
 Routine render requires that digest in TOML and writes it to `sources` without
-creating an archive or starting a vendor chroot. Filename discovery reuses the
-existing batched RPM metadata lookup.
+creating an archive or starting a vendor chroot.
 To revendor, change the generation inputs and prepare again. An explicit
 filename does not authorize replacing an unrelated source.
 

@@ -26,11 +26,11 @@ import (
 
 // Request contains an isolated private spec and the effective native tool settings.
 type Request struct {
-	SourceDir, WorkDir, SpecName string
-	PrepSpec                     []byte
-	Config                       string
-	ModuleDir                    string
-	Packages                     []string
+	SourceDir, WorkDir, SpecName, Filename string
+	PrepSpec                               []byte
+	Config                                 string
+	ModuleDir                              string
+	Packages                               []string
 }
 
 // Artifact is a host-owned copy of the generated tarball.
@@ -51,7 +51,7 @@ func Generate(ctx context.Context, fs opctx.FS, base *mock.Runner, req Request) 
 		return Artifact{}, err
 	}
 
-	return readArtifact(fs, req.WorkDir, output)
+	return readArtifact(fs, req.WorkDir, output, req.Filename)
 }
 
 func stage(fs opctx.FS, req Request) (string, error) {
@@ -142,26 +142,14 @@ func execute(ctx context.Context, base *mock.Runner, req Request, output string)
 	return nil
 }
 
-func readArtifact(fs opctx.FS, workDir, output string) (Artifact, error) {
-	var artifact Artifact
-	// Copy opened regular files, never following chroot-controlled symlinks.
-	nameFile := filepath.Join(workDir, "name")
-	if err := collect(fs, filepath.Join(output, "name"), nameFile); err != nil {
-		return artifact, err
+func readArtifact(fs opctx.FS, workDir, output, name string) (Artifact, error) {
+	artifact := Artifact{Name: name}
+	if err := fileutils.ValidateFilename(name); err != nil {
+		return artifact, fmt.Errorf("invalid vendor filename:\n%w", err)
 	}
 
-	name, err := fileutils.ReadFile(fs, nameFile)
-	if err != nil {
-		return artifact, fmt.Errorf("reading generated vendor name:\n%w", err)
-	}
-
-	artifact.Name = strings.TrimSpace(string(name))
-	if err := fileutils.ValidateFilename(artifact.Name); err != nil {
-		return artifact, fmt.Errorf("invalid generated vendor filename:\n%w", err)
-	}
-
-	if strings.ContainsAny(artifact.Name, "%\r\n") || !archiveFilename(artifact.Name) {
-		return artifact, fmt.Errorf("unsupported generated vendor filename %#q", artifact.Name)
+	if strings.ContainsAny(name, "%\r\n") || !archiveFilename(name) {
+		return artifact, fmt.Errorf("unsupported vendor filename %#q", name)
 	}
 
 	artifact.Path = filepath.Join(workDir, artifact.Name)
@@ -226,15 +214,13 @@ func generationCommand(req Request, arch string) ([]string, error) {
 		quote("rpmautospec", "process-distgit", req.SpecName, req.SpecName),
 		quote(prep...),
 		"IFS= read -r root < /tmp/azldev-vendor/azldev-vendor-root",
-		"IFS= read -r name < /tmp/azldev-vendor/azldev-vendor-name",
-		`case "$name" in ""|*/*|*%*|.*) echo 'Invalid vendor filename' >&2; exit 1;; esac`,
 		`cd "$root"`,
 		"cd " + quote(module),
 		quote("test", "-f", filepath.Join(config.General.ModuleDir, "go.mod")),
 		`root=$(pwd -P)`,
 		"cd /azldev-vendor-sources",
-		`go_vendor_archive create --config /azldev-vendor-output/config.toml --output "/azldev-vendor-output/$name" "$root"`,
-		`printf '%s\n' "$name" > /azldev-vendor-output/name`,
+		quote("go_vendor_archive", "create", "--config", "/azldev-vendor-output/config.toml",
+			"--output", filepath.Join("/azldev-vendor-output", req.Filename)) + ` "$root"`,
 	}
 
 	return []string{"bash", "-euo", "pipefail", "-c", strings.Join(lines, "\n")}, nil

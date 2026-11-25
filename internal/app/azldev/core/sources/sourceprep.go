@@ -1126,8 +1126,6 @@ func (p *sourcePreparerImpl) buildSourceEntries(
 				return nil, errors.New("render requires 'hash' and 'hash-type' for 'go-vendor'; " +
 					"run 'component prepare-sources' and pin the digest from its 'sources' file")
 			}
-			// The existing render batch expands the RPM Source filename after this stage.
-			continue
 		}
 
 		formatted, isReplacement, resolvedRef, err := p.processSourceRef(

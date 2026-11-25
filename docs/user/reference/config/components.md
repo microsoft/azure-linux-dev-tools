@@ -379,7 +379,7 @@ The `[[components.<name>.source-files]]` array defines additional source files t
 
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
-| Filename | `filename` | string | Conditional | Name of the file in the sources directory; optional discovery for `go-vendor`. |
+| Filename | `filename` | string | **Yes** | Plain basename of the file in the sources directory. |
 | Hash | `hash` | string | Conditional | Expected hash. Optional for `go-vendor`; otherwise required unless `--allow-no-hashes` is passed to `prep-sources`. |
 | Hash type | `hash-type` | string | Conditional | Hash algorithm (`"SHA256"`, `"SHA512"`). Required with `hash`; defaults to `"SHA512"` when auto-computed. |
 | Origin | `origin` | [Origin](#origin) | **Yes** | How to obtain the file |
@@ -394,8 +394,10 @@ Four origin types are supported.
 
 ```toml
 [[components.containerd.source-files]]
+filename = "containerd-2.3.5-vendor.tar.bz2"
+replace-upstream = true
+replace-reason = "Regenerate the existing vendor source"
 origin.type = "go-vendor"
-origin.config-file = "go-vendor-tools.toml"
 hash-type = "SHA512"
 hash = "<reviewed archive digest from prepare-sources>"
 ```
@@ -405,15 +407,15 @@ See [Generate a Go vendor source archive](../../how-to/vendor-go-application.md)
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `filename` | Discover from the unique secondary Source extraction in `%prep` | Optional plain basename override; explicit collisions use the normal replacement rules. |
+| `filename` | Required | Plain output basename; not inferred from the spec. |
 | `hash` | Compute on initial preparation | Required for render. Preparation/build verify the generated archive if pinned; a mismatch fails before publication. |
 | `hash-type` | `SHA512` | Output digest algorithm (`SHA256` or `SHA512`). |
 | `origin.config-file` | Reuse upstream sidecar/tool defaults | Native TOML relative to the declaring file; replaces settings rather than merging, and is fingerprinted by content. |
 | `origin.module-dir` | Final `%prep` directory | Relative module directory; native `general.go_mod_dir` must not conflict. |
 | `origin.prep-packages` | `[]` | Additional generation-chroot RPM prerequisites. |
 
-One Go vendor source is supported per component. Automatic discovery can replace
-the discovered vendor manifest entry without replacement fields. Generation runs
+One Go vendor source is supported per component. Existing upstream manifest
+entries require `replace-upstream` and `replace-reason`. Generation runs
 after overlays during prepare, build, and diff. Render writes the configured
 `hash-type` and `hash` to `sources` without downloading or generating the archive.
 Maintainers own extraction, offline build settings, and licensing in the spec.

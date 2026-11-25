@@ -25,9 +25,8 @@ func vendorSpec() string {
 
 func TestPrepareVendorSource(t *testing.T) {
 	input := vendorSpec()
-	plan, err := spec.PrepareVendorSource([]byte(input), "")
+	plan, err := spec.PrepareVendorSource([]byte(input), "app-1-vendor.tar.bz2")
 	require.NoError(t, err)
-	assert.True(t, plan.Automatic)
 	assert.Equal(t, "go-vendor-tools.toml", plan.ConfigName)
 	assert.NotContains(t, string(plan.Spec), "Source5:")
 	assert.NotContains(t, string(plan.Spec), "tar -xf %{S:5}")
@@ -45,23 +44,21 @@ func TestPrepareVendorSourceRejectsAmbiguity(t *testing.T) {
 		"flags":             strings.ReplaceAll(vendorSpec(), "tar -xf", "tar -xjf"),
 		"opaque prep macro": strings.ReplaceAll(vendorSpec(), "%autosetup -p1", "%unpack_secondary"),
 		"braced prep macro": strings.ReplaceAll(vendorSpec(), "%autosetup -p1", "%{unpack_secondary}"),
-		"no extraction":     strings.ReplaceAll(vendorSpec(), "tar -xf %{S:5}", ""),
 		"missing source":    strings.ReplaceAll(vendorSpec(), "%{S:5}", "%{S:6}"),
 		"conditional source": strings.ReplaceAll(vendorSpec(), "Source5: app-%{version}-vendor.tar.bz2",
 			"%if 1\nSource5: app-%{version}-vendor.tar.bz2\n%endif"),
 		"duplicate source": strings.ReplaceAll(vendorSpec(), "Source5:", "Source0:"),
-		"release filename": strings.ReplaceAll(vendorSpec(), "app-%{version}-vendor", "app-%{release}-vendor"),
 		"config macro":     strings.ReplaceAll(vendorSpec(), "go-vendor-tools.toml", "%{name}.toml"),
 		"conflicting config": strings.ReplaceAll(vendorSpec(), "%files",
 			"%go_vendor_license_check -c %{S:1}\n%files"),
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := spec.PrepareVendorSource([]byte(input), "")
+			_, err := spec.PrepareVendorSource([]byte(input), "vendor.tar.bz2")
 			require.Error(t, err)
 		})
 	}
 
-	for _, name := range []string{"../outside.tar.gz", "%{name}.tar.gz", "bad\nname"} {
+	for _, name := range []string{"", "../outside.tar.gz", "%{name}.tar.gz", "bad\nname"} {
 		_, err := spec.PrepareVendorSource([]byte(vendorSpec()), name)
 		require.Error(t, err)
 	}

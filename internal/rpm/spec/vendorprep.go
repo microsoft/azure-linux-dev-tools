@@ -15,10 +15,8 @@ import (
 
 // VendorPrep describes a private prep spec, never a replacement published spec.
 type VendorPrep struct {
-	SourceNumber string
-	Spec         []byte
-	ConfigName   string
-	Automatic    bool
+	Spec       []byte
+	ConfigName string
 }
 
 var (
@@ -31,14 +29,12 @@ var (
 // PrepareVendorSource removes only the selected vendor input from private prep.
 // The caller remains responsible for the original spec's archive consumption.
 func PrepareVendorSource(data []byte, filename string) (*VendorPrep, error) {
-	if filename != "" {
-		if err := fileutils.ValidateFilename(filename); err != nil {
-			return nil, fmt.Errorf("validating vendor filename:\n%w", err)
-		}
+	if err := fileutils.ValidateFilename(filename); err != nil {
+		return nil, fmt.Errorf("validating vendor filename:\n%w", err)
+	}
 
-		if strings.ContainsAny(filename, "%\r\n") {
-			return nil, errors.New("vendor 'filename' must be a basename without RPM macros or newlines")
-		}
+	if strings.ContainsAny(filename, "%\r\n") {
+		return nil, errors.New("vendor 'filename' must be a basename without RPM macros or newlines")
 	}
 
 	root, err := parseTree(strings.Split(strings.TrimSuffix(string(data), "\n"), "\n"))
@@ -58,12 +54,12 @@ func PrepareVendorSource(data []byte, filename string) (*VendorPrep, error) {
 		return nil, err
 	}
 
-	candidates, err := vendorExtractions(prep, sources, filename == "")
+	candidates, err := vendorExtractions(prep, sources)
 	if err != nil {
 		return nil, err
 	}
 
-	number, archive, err := selectVendorSource(sources, candidates, filename)
+	number, err := selectVendorSource(sources, candidates, filename)
 	if err != nil {
 		return nil, err
 	}
@@ -79,23 +75,16 @@ func PrepareVendorSource(data []byte, filename string) (*VendorPrep, error) {
 		}
 	}
 
-	appendVendorOutputCommands(prep, archive, filename, sources[number])
+	if number != "" {
+		prep.AppendLines([]string{"test %{shescape:" + sources[number] + "} = %{shescape:" + filename + "}"})
+	}
+
+	prep.AppendLines([]string{`pwd -P > "%{_topdir}/azldev-vendor-root"`})
 
 	return &VendorPrep{
 		Spec:       []byte(strings.Join(serializeTree(root), "\n") + "\n"),
-		ConfigName: configName, Automatic: filename == "", SourceNumber: number,
+		ConfigName: configName,
 	}, nil
-}
-
-func appendVendorOutputCommands(prep *sectionHandle, archive, filename, selectedSource string) {
-	if filename != "" && selectedSource != "" {
-		prep.AppendLines([]string{"test %{shescape:" + selectedSource + "} = %{shescape:" + filename + "}"})
-	}
-
-	prep.AppendLines([]string{
-		`pwd -P > "%{_topdir}/azldev-vendor-root"`,
-		"printf '%%s\\n' %{shescape:" + archive + `} > "%{_topdir}/azldev-vendor-name"`,
-	})
 }
 
 func vendorSourceTags(tree *specTree) (sources map[string]string, configNumber string, err error) {
@@ -130,7 +119,7 @@ func vendorSourceTags(tree *specTree) (sources map[string]string, configNumber s
 	return sources, configNumber, err
 }
 
-func vendorExtractions(prep *sectionHandle, sources map[string]string, automatic bool) ([]string, error) {
+func vendorExtractions(prep *sectionHandle, sources map[string]string) ([]string, error) {
 	var candidates []string
 
 	err := prep.VisitLines(func(line *lineHandle) error {
@@ -143,8 +132,8 @@ func vendorExtractions(prep *sectionHandle, sources map[string]string, automatic
 			return errors.New("secondary setup extraction requires an explicit prep overlay for vendor generation")
 		}
 
-		if automatic && strings.HasPrefix(text, "%") && !knownPrepMacro.MatchString(text) {
-			return fmt.Errorf("cannot discover vendor Source through opaque prep macro %#q; make extraction explicit", text)
+		if strings.HasPrefix(text, "%") && !knownPrepMacro.MatchString(text) {
+			return fmt.Errorf("opaque vendor prep macro %#q; make extraction explicit", text)
 		}
 
 		match := vendorExtraction.FindStringSubmatch(text)
@@ -170,38 +159,21 @@ func vendorExtractions(prep *sectionHandle, sources map[string]string, automatic
 
 func selectVendorSource(
 	sources map[string]string, candidates []string, filename string,
-) (number, archive string, err error) {
-	if len(candidates) > 1 || (filename == "" && len(candidates) != 1) {
-		return "", "", errors.New("cannot discover a unique vendor Source; set 'filename' and simplify prep extraction")
+) (string, error) {
+	if len(candidates) > 1 {
+		return "", errors.New("ambiguous vendor extraction; simplify prep with an overlay")
 	}
 
-	archive = filename
-
-	if len(candidates) == 1 {
-		number = candidates[0]
-		if filename == "" {
-			archive = sources[number]
-		} else if !strings.Contains(sources[number], "%") && sources[number] != filename {
-			return "", "", errors.New("explicit vendor filename does not match the extracted Source")
-		}
+	if len(candidates) == 0 {
+		return vendorSourceWithFilename(sources, filename)
 	}
 
-	if strings.Contains(archive, "://") || strings.ContainsAny(archive, "\r\n") {
-		return "", "", errors.New("vendor Source must be a local archive filename")
+	number := candidates[0]
+	if !strings.Contains(sources[number], "%") && sources[number] != filename {
+		return "", errors.New("configured vendor filename does not match the extracted Source")
 	}
 
-	if strings.Contains(archive, "%{release}") {
-		return "", "", errors.New("release-dependent vendor filenames require a stable Source overlay")
-	}
-
-	if filename != "" && number == "" {
-		number, err = vendorSourceWithFilename(sources, filename)
-		if err != nil {
-			return "", "", err
-		}
-	}
-
-	return number, archive, nil
+	return number, nil
 }
 
 func vendorSourceWithFilename(sources map[string]string, filename string) (string, error) {

@@ -37,7 +37,7 @@ Add sub-tables only for what you change. The fields you will reach for most:
 
 For generated Go dependencies, add a `source-files` entry with
 `origin.type = "go-vendor"`. This generates only a tarball, never converts the spec.
-Omit `filename` to discover a unique vendor Source; set a stable basename for new
+Set `filename` explicitly and reference that basename in the effective spec for
 packaging. Bootstrap with `prepare-sources`, then pin `hash` and `hash-type` for render.
 Native settings belong in `origin.config-file`, relative to the declaring TOML.
 Use `origin.module-dir` and `origin.prep-packages` only when needed. Generation

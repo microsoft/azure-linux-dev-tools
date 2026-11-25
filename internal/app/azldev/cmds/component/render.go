@@ -768,11 +768,6 @@ func finishComponentRender(
 		return false, fmt.Errorf("filtering unreferenced files for %#q:\n%w", componentName, filterErr)
 	}
 
-	if prep.comp.GetConfig().HasGoVendorSources() {
-		if err := sources.RenderVendorPin(env.FS(), prep.comp, specPath, mockResult.RawSpecFiles); err != nil {
-			return false, fmt.Errorf("rendering vendor source for %#q:\n%w", componentName, err)
-		}
-	}
 	// Remove .git directory — must not appear in rendered output.
 	// rpmautospec already read it during the batch mock phase.
 	gitDir := filepath.Join(componentDir, ".git")

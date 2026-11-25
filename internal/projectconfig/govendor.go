@@ -111,8 +111,8 @@ func validateVendorSourceCount(refs []SourceFileReference) error {
 }
 
 func validateSourceFilename(ref SourceFileReference) error {
-	if ref.Origin.Type == OriginTypeGoVendor && ref.Filename == "" {
-		return nil
+	if ref.Origin.Type == OriginTypeGoVendor && strings.Contains(ref.Filename, "%") {
+		return errors.New("vendor filename must not contain RPM macros")
 	}
 
 	if err := fileutils.ValidateFilename(ref.Filename); err != nil {

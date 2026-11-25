@@ -26,7 +26,7 @@ import (
 func TestGoVendorSourcePreparation(t *testing.T) {
 	const newSource = "new"
 	for _, mode := range []string{
-		"discover", newSource, "expected hash", "mismatch", "collision", "diff", "skip overlays",
+		"replace", newSource, "expected hash", "mismatch", "collision", "diff", "skip overlays",
 	} {
 		t.Run(mode, func(t *testing.T) {
 			ctx := newMockProcessorTestCtx()
@@ -37,8 +37,10 @@ func TestGoVendorSourcePreparation(t *testing.T) {
 			ref := projectconfig.SourceFileReference{Origin: projectconfig.Origin{
 				Type: projectconfig.OriginTypeGoVendor, ConfigFile: "/project/vendor.toml",
 			}}
-			if mode == newSource || mode == "collision" {
-				ref.Filename = "vendor.tar.bz2"
+
+			ref.Filename = "vendor.tar.bz2"
+			if mode != newSource && mode != "collision" {
+				ref.ReplaceUpstream, ref.ReplaceReason = true, "regenerate dependencies"
 			}
 
 			if mode == "mismatch" {
@@ -109,18 +111,12 @@ func TestGoVendorSourcePreparation(t *testing.T) {
 				assert.NotContains(t, string(prep), "tar -xf %{S:5}")
 				assert.NotContains(t, string(prep), "Source5:")
 
-				if mode == newSource {
-					assert.Contains(t, string(prep), "%{shescape:vendor.tar.bz2}")
-				}
-
 				history, err := fileutils.ReadFile(ctx.FS(), filepath.Join(filepath.Dir(directory), "sources", ".git", "HEAD"))
 				require.NoError(t, err)
 				assert.Equal(t, "history", string(history))
 
-				for name, content := range map[string]string{"name": "vendor.tar.bz2\n", "vendor.tar.bz2": payload} {
-					require.NoError(t, fileutils.WriteFile(ctx.FS(), filepath.Join(directory, name),
-						[]byte(content), fileperms.PublicFile))
-				}
+				require.NoError(t, fileutils.WriteFile(ctx.FS(), filepath.Join(directory, ref.Filename),
+					[]byte(payload), fileperms.PublicFile))
 
 				return "", nil
 			}
@@ -184,7 +180,9 @@ func TestRenderVendorPin(t *testing.T) {
 	comp := components_testutils.NewMockComponent(gomock.NewController(t))
 	comp.EXPECT().GetName().AnyTimes().Return("app")
 
-	ref := projectconfig.SourceFileReference{Origin: projectconfig.Origin{Type: projectconfig.OriginTypeGoVendor}}
+	ref := projectconfig.SourceFileReference{
+		Filename: "app-2-vendor.tar.gz", Origin: projectconfig.Origin{Type: projectconfig.OriginTypeGoVendor},
+	}
 	config := &projectconfig.ComponentConfig{SourceFiles: []projectconfig.SourceFileReference{ref}}
 	comp.EXPECT().GetConfig().AnyTimes().Return(config)
 
@@ -204,8 +202,11 @@ func TestRenderVendorPin(t *testing.T) {
 	require.NoError(t, fileutils.WriteFile(ctx.FS(), "/staged/sources", []byte(entry+"\n"), fileperms.PublicFile))
 
 	_, err = preparer.updateSourcesFile(comp, "/staged", nil)
+	require.ErrorContains(t, err, "conflicts")
+
+	config.SourceFiles[0].ReplaceUpstream, config.SourceFiles[0].ReplaceReason = true, "regenerate dependencies"
+	_, err = preparer.updateSourcesFile(comp, "/staged", nil)
 	require.NoError(t, err)
-	require.NoError(t, RenderVendorPin(ctx.FS(), comp, "/staged/app.spec", "Source7: app-2-vendor.tar.gz"))
 	manifest, err := fileutils.ReadFile(ctx.FS(), "/staged/sources")
 	require.NoError(t, err)
 

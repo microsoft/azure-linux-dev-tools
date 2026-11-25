@@ -13,7 +13,6 @@ import (
 	"strings"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
-	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/govendor"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource"
@@ -28,76 +27,13 @@ func WithGoVendorRunner(runner *mock.Runner) PreparerOption {
 	return func(p *sourcePreparerImpl) { p.goVendorRunner = runner }
 }
 
-// WithRenderManifest defers vendor entries until the normal render batch has expanded Source tags.
+// WithRenderManifest renders declared vendor pins without downloading sources or generating payloads.
 func WithRenderManifest() PreparerOption {
 	return func(p *sourcePreparerImpl) { p.skipLookaside, p.renderManifest = true, true }
 }
 
 func (p *sourcePreparerImpl) needsVendorInputs(config *projectconfig.ComponentConfig) bool {
 	return !p.renderManifest && config.HasGoVendorSources()
-}
-
-// RenderVendorPin merges the reviewed pin into the manifest without fetching or generating an archive.
-func RenderVendorPin(fs opctx.FS, comp components.Component, specPath, rawSpecFiles string) error {
-	for _, ref := range comp.GetConfig().SourceFiles {
-		if ref.Origin.Type != projectconfig.OriginTypeGoVendor {
-			continue
-		}
-
-		data, err := fileutils.ReadFile(fs, specPath)
-		if err != nil {
-			return fmt.Errorf("reading vendor spec:\n%w", err)
-		}
-
-		plan, err := spec.PrepareVendorSource(data, ref.Filename)
-		if err != nil {
-			return fmt.Errorf("identifying vendor Source:\n%w", err)
-		}
-
-		if plan.SourceNumber != "" {
-			name, err := expandedVendorFilename(rawSpecFiles, plan.SourceNumber)
-			if err != nil {
-				return err
-			}
-
-			if ref.Filename != "" && ref.Filename != name {
-				return fmt.Errorf("configured filename %#q does not match vendor Source %#q", ref.Filename, name)
-			}
-
-			ref.Filename = name
-		}
-
-		preparer := sourcePreparerImpl{fs: fs, skipLookaside: true}
-
-		dir := filepath.Dir(specPath)
-		if err := preparer.resolveVendorTarget(comp, dir, &ref, plan.Automatic); err != nil {
-			return err
-		}
-
-		config := *comp.GetConfig()
-		config.SourceFiles = []projectconfig.SourceFileReference{ref}
-		_, err = preparer.updateSourcesFile(vendorComponent{Component: comp, config: config}, dir, nil)
-
-		return err
-	}
-
-	return nil
-}
-
-func expandedVendorFilename(output, number string) (string, error) {
-	for _, line := range strings.Split(output, "\n") {
-		tag, value, ok := strings.Cut(line, ":")
-		if ok && strings.EqualFold(tag, "Source"+number) {
-			name := strings.TrimSpace(value)
-			if err := fileutils.ValidateFilename(name); err != nil || strings.Contains(name, "%") {
-				return "", fmt.Errorf("invalid expanded vendor Source%s filename %#q", number, name)
-			}
-
-			return name, nil
-		}
-	}
-
-	return "", fmt.Errorf("vendor Source%s missing from expanded spec", number)
 }
 
 type vendorComponent struct {
@@ -116,7 +52,7 @@ func vendorFingerprintConfig(
 
 	result := *effective
 	result.SourceFiles = slices.Clone(effective.SourceFiles)
-	// Generated hashes and discovered names are outputs, not declared build inputs.
+	// Generated hashes are outputs, not declared build inputs.
 	for index, ref := range declared.SourceFiles {
 		if ref.Origin.Type == projectconfig.OriginTypeGoVendor && index < len(result.SourceFiles) {
 			result.SourceFiles[index] = ref
@@ -193,21 +129,20 @@ func (p *sourcePreparerImpl) generateVendorSource(
 	defer fileutils.RemoveAllAndUpdateErrorIfNil(p.fs, scratch, &err)
 
 	artifact, err := govendor.Generate(ctx, p.fs, p.goVendorRunner, govendor.Request{
-		SourceDir: directory, WorkDir: scratch, SpecName: filepath.Base(specPath),
+		SourceDir: directory, WorkDir: scratch, Filename: ref.Filename, SpecName: filepath.Base(specPath),
 		PrepSpec: plan.Spec, Config: settings, ModuleDir: ref.Origin.ModuleDir, Packages: ref.Origin.PrepPackages,
 	})
 	if err != nil {
 		return ref, fmt.Errorf("running vendor generation:\n%w", err)
 	}
 
-	return p.publishVendorSource(component, directory, ref, artifact, plan.Automatic)
+	return p.publishVendorSource(component, directory, ref, artifact)
 }
 
 func (p *sourcePreparerImpl) publishVendorSource(
 	component components.Component, directory string, ref projectconfig.SourceFileReference,
-	artifact govendor.Artifact, automatic bool,
+	artifact govendor.Artifact,
 ) (projectconfig.SourceFileReference, error) {
-	ref.Filename = artifact.Name
 	if ref.HashType == "" {
 		ref.HashType = fileutils.HashTypeSHA512
 	}
@@ -223,7 +158,7 @@ func (p *sourcePreparerImpl) publishVendorSource(
 	}
 
 	ref.Hash = digest
-	if err := p.resolveVendorTarget(component, directory, &ref, automatic); err != nil {
+	if err := p.resolveVendorTarget(component, directory, ref); err != nil {
 		return ref, err
 	}
 
@@ -315,7 +250,7 @@ func (p *sourcePreparerImpl) vendorSettings(
 }
 
 func (p *sourcePreparerImpl) resolveVendorTarget(
-	component components.Component, directory string, ref *projectconfig.SourceFileReference, automatic bool,
+	component components.Component, directory string, ref projectconfig.SourceFileReference,
 ) error {
 	for _, other := range component.GetConfig().SourceFiles {
 		if other.Origin.Type != projectconfig.OriginTypeGoVendor && other.Filename == ref.Filename {
@@ -333,30 +268,24 @@ func (p *sourcePreparerImpl) resolveVendorTarget(
 		return fmt.Errorf("parsing vendor target manifest:\n%w", err)
 	}
 
-	existing := map[string]fedorasource.SourcesFileEntry{}
-
-	for _, line := range lines {
-		if line.Entry != nil {
-			existing[line.Entry.Filename] = *line.Entry
-		}
-	}
-
 	for _, overlay := range component.GetConfig().Overlays {
 		if overlay.Archive == ref.Filename {
 			return errors.New("archive overlays cannot target regenerated vendor output; use native generation hooks")
 		}
 	}
 
-	if !automatic || ref.ReplaceUpstream {
-		if _, _, _, err := p.processSourceRef(*ref, existing, component.GetName(), directory); err != nil {
-			return err
+	if !ref.ReplaceUpstream {
+		exists, err := fileutils.Exists(p.fs, filepath.Join(directory, ref.Filename))
+		if err != nil {
+			return fmt.Errorf("checking vendor destination:\n%w", err)
+		}
+
+		if exists {
+			return fmt.Errorf("vendor output %#q conflicts with an existing source", ref.Filename)
 		}
 	}
 
-	if _, found := existing[ref.Filename]; automatic && found {
-		ref.ReplaceUpstream = true
-		ref.ReplaceReason = "Regenerate the discovered Go vendor Source"
-	}
+	_, err = p.buildSourceEntries([]projectconfig.SourceFileReference{ref}, lines, component.GetName(), directory)
 
-	return nil
+	return err
 }

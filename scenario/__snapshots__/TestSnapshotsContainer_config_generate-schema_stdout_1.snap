@@ -1352,7 +1352,7 @@
       "properties": {
         "filename": {
           "type": "string",
-          "description": "Source basename. Optional for go-vendor to discover the vendor Source from the spec."
+          "description": "Source file basename."
         },
         "hash": {
           "type": "string"
@@ -1381,7 +1381,10 @@
         }
       },
       "additionalProperties": false,
-      "type": "object"
+      "type": "object",
+      "required": [
+        "filename"
+      ]
     },
     "SpecSource": {
       "properties": {

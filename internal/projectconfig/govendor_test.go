@@ -17,7 +17,6 @@ import (
 
 func TestGoVendorOriginValidation(t *testing.T) {
 	for name, ref := range map[string]projectconfig.SourceFileReference{
-		"discovered": {Origin: projectconfig.Origin{Type: projectconfig.OriginTypeGoVendor}},
 		"explicit": {Filename: "vendor.tar.bz2", Origin: projectconfig.Origin{
 			Type:       projectconfig.OriginTypeGoVendor,
 			ConfigFile: "vendor.toml", ModuleDir: "cmd/app", PrepPackages: []string{"patch"},
@@ -30,6 +29,13 @@ func TestGoVendorOriginValidation(t *testing.T) {
 			require.NoError(t, file.Validate())
 		})
 	}
+
+	missing := projectconfig.ConfigFile{Components: map[string]projectconfig.ComponentConfig{
+		"app": {SourceFiles: []projectconfig.SourceFileReference{
+			{Origin: projectconfig.Origin{Type: projectconfig.OriginTypeGoVendor}},
+		}},
+	}}
+	require.ErrorContains(t, missing.Validate(), "filename")
 
 	for name, origin := range map[string]projectconfig.Origin{
 		"traversal":    {Type: projectconfig.OriginTypeGoVendor, ModuleDir: "../bad"},

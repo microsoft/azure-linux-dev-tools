@@ -133,7 +133,7 @@ type SourceFileReference struct {
 	Component ComponentReference `toml:"-" json:"-" fingerprint:"-"`
 
 	// Name of the source file; must be non-empty.
-	Filename string `toml:"filename,omitempty" json:"filename,omitempty" jsonschema:"description=Source basename. Optional for go-vendor to discover the vendor Source from the spec."`
+	Filename string `toml:"filename" json:"filename" jsonschema:"required,description=Source file basename."`
 
 	// Hash of the source file, expressed as a hex string.
 	Hash string `toml:"hash,omitempty" json:"hash,omitempty"`

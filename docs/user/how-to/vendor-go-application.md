@@ -10,22 +10,22 @@ Rust packages need Cargo vendoring, not this Go provider.
 
 ```toml
 [[components.containerd.source-files]]
+filename = "containerd-2.3.5-vendor.tar.bz2"
 origin.type = "go-vendor"
+replace-upstream = true
+replace-reason = "Regenerate the existing vendor source from patched inputs"
 # For render, copy these values from the prepared archive's `sources` entry:
 # hash-type = "SHA512"
 # hash = "<reviewed digest>"
 # Optional native settings, relative to this TOML:
-origin.config-file = "go-vendor-tools.toml"
+# origin.config-file = "vendor-tools.toml"
 ```
 
-By default, azldev finds the single unconditional
-`tar -xf %{S:N}` or `tar -xf %{SOURCEN}` in `%prep` referencing a secondary Source,
-then asks RPM to expand its filename. Source numbers and package versions are not
-embedded in the config. Ambiguous/conditional extraction, secondary setup
-extraction (`-a`/`-b`), opaque prep macro commands during automatic discovery,
-and release-dependent archive filenames fail rather than
-guessing. Use a narrowly scoped prep/Source overlay to make these layouts explicit.
-The discovered vendor archive's existing `sources` entry is replaced automatically.
+The output basename must be declared in TOML, never inferred from an upstream
+Source. The spec must reference that name to consume the archive. During private
+prep azldev can omit a single unconditional `tar -xf %{S:N}` (or
+`tar -xf %{SOURCEN}`) and its matching Source. Ambiguous layouts require a prep
+overlay. Replacing an upstream manifest entry requires explicit replacement intent.
 Upstream lookaside fetching may still download the old vendor payload before
 regeneration; private prep never consumes it.
 
@@ -39,7 +39,7 @@ origin.module-dir = "cmd/example" # optional; relative to the final prep directo
 origin.prep-packages = ["patch"] # optional tools needed by prep
 ```
 
-`filename` overrides discovery and is required when no unique target is found.
+`filename` is required for every vendor archive.
 Use a stable name in the maintained spec. An explicit filename colliding with an
 upstream `sources` entry follows the existing `replace-upstream`/`replace-reason`
 rules; no implicit replacement of arbitrary explicit targets is allowed.
@@ -97,8 +97,7 @@ dependency overrides/hooks instead. Ensure prep does not apply the same module
 patch twice when rebuilding with the regenerated module files.
 
 Source diffs regenerate the archive. Render instead requires the TOML pin and
-writes it to the manifest without downloading or generating vendor inputs. For
-automatic filenames it reuses the normal batched RPM metadata expansion. Render
+writes it under the configured filename without downloading or generating vendor inputs. Render
 does not verify archive bytes; preparation and builds do. Validate upgrades with source diffs,
 license review, and an offline RPM build; supported syntax does not guarantee
 arbitrary upstream packaging will continue to work.

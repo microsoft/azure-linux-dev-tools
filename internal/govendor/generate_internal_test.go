@@ -53,19 +53,15 @@ func TestGenerationFailureScrubsRoot(t *testing.T) {
 
 func TestReadArtifactRejectsInvalidOutputs(t *testing.T) {
 	for _, testCase := range []struct{ name, wantErr string }{
-		{"", "opening generated vendor output"},
-		{"../host", "invalid generated vendor filename"},
+		{"", "invalid vendor filename"},
+		{"../host", "invalid vendor filename"},
 		{"vendor.tar.bz2", "nonempty regular file"},
 	} {
 		t.Run(testCase.wantErr, func(t *testing.T) {
 			fs := testctx.NewCtx().FS()
 			require.NoError(t, fileutils.WriteFile(fs, "/work/output/vendor.tar.bz2", nil, fileperms.PublicFile))
 
-			if testCase.name != "" {
-				require.NoError(t, fileutils.WriteFile(fs, "/work/output/name", []byte(testCase.name), fileperms.PublicFile))
-			}
-
-			_, err := readArtifact(fs, "/work", "/work/output")
+			_, err := readArtifact(fs, "/work", "/work/output", testCase.name)
 			require.ErrorContains(t, err, testCase.wantErr)
 		})
 	}
