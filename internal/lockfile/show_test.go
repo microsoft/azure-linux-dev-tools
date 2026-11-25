@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-billy/v5/memfs"
-	gogit "github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/storage/memory"
+	"github.com/go-git/go-billy/v6"
+	"github.com/go-git/go-billy/v6/memfs"
+	gogit "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/storage/memory"
 	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -59,7 +59,7 @@ func TestShowAtCommit(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		fs := memfs.New()
-		repo, err := gogit.Init(memory.NewStorage(), fs)
+		repo, err := gogit.Init(memory.NewStorage(), gogit.WithWorkTree(fs))
 		require.NoError(t, err)
 
 		commitHash := commitFile(t, repo, fs, testLockRelPath, validLockTOML, "add lock")
@@ -75,7 +75,7 @@ func TestShowAtCommit(t *testing.T) {
 
 	t.Run("reads correct version at each commit", func(t *testing.T) {
 		testFS := memfs.New()
-		repo, err := gogit.Init(memory.NewStorage(), testFS)
+		repo, err := gogit.Init(memory.NewStorage(), gogit.WithWorkTree(testFS))
 		require.NoError(t, err)
 
 		versions := []string{
@@ -102,7 +102,7 @@ func TestShowAtCommit(t *testing.T) {
 
 	t.Run("file not found", func(t *testing.T) {
 		fs := memfs.New()
-		repo, err := gogit.Init(memory.NewStorage(), fs)
+		repo, err := gogit.Init(memory.NewStorage(), gogit.WithWorkTree(fs))
 		require.NoError(t, err)
 
 		commitHash := commitFile(t, repo, fs, "other/file.txt", "data", "init")
@@ -114,7 +114,7 @@ func TestShowAtCommit(t *testing.T) {
 
 	t.Run("invalid TOML", func(t *testing.T) {
 		fs := memfs.New()
-		repo, err := gogit.Init(memory.NewStorage(), fs)
+		repo, err := gogit.Init(memory.NewStorage(), gogit.WithWorkTree(fs))
 		require.NoError(t, err)
 
 		commitHash := commitFile(t, repo, fs, testLockRelPath, "not valid toml {{{", "bad lock")
@@ -126,7 +126,7 @@ func TestShowAtCommit(t *testing.T) {
 
 	t.Run("wrong version", func(t *testing.T) {
 		fs := memfs.New()
-		repo, err := gogit.Init(memory.NewStorage(), fs)
+		repo, err := gogit.Init(memory.NewStorage(), gogit.WithWorkTree(fs))
 		require.NoError(t, err)
 
 		commitHash := commitFile(t, repo, fs, testLockRelPath, "version = 99\n", "bad version")
@@ -138,7 +138,7 @@ func TestShowAtCommit(t *testing.T) {
 
 	t.Run("bad commit hash", func(t *testing.T) {
 		fs := memfs.New()
-		repo, err := gogit.Init(memory.NewStorage(), fs)
+		repo, err := gogit.Init(memory.NewStorage(), gogit.WithWorkTree(fs))
 		require.NoError(t, err)
 
 		commitFile(t, repo, fs, testLockRelPath, validLockTOML, "init")
@@ -154,7 +154,7 @@ func TestReadAllAtCommit(t *testing.T) {
 
 	t.Run("reads all locks", func(t *testing.T) {
 		testFS := memfs.New()
-		repo, err := gogit.Init(memory.NewStorage(), testFS)
+		repo, err := gogit.Init(memory.NewStorage(), gogit.WithWorkTree(testFS))
 		require.NoError(t, err)
 
 		commitFile(t, repo, testFS, "locks/curl.lock", validLockTOML, "add curl lock")
@@ -173,7 +173,7 @@ func TestReadAllAtCommit(t *testing.T) {
 
 	t.Run("empty when no lock dir", func(t *testing.T) {
 		testFS := memfs.New()
-		repo, err := gogit.Init(memory.NewStorage(), testFS)
+		repo, err := gogit.Init(memory.NewStorage(), gogit.WithWorkTree(testFS))
 		require.NoError(t, err)
 
 		commitHash := commitFile(t, repo, testFS, "other/file.txt", "data", "init")
@@ -185,7 +185,7 @@ func TestReadAllAtCommit(t *testing.T) {
 
 	t.Run("skips non-lock files", func(t *testing.T) {
 		testFS := memfs.New()
-		repo, err := gogit.Init(memory.NewStorage(), testFS)
+		repo, err := gogit.Init(memory.NewStorage(), gogit.WithWorkTree(testFS))
 		require.NoError(t, err)
 
 		commitFile(t, repo, testFS, "locks/curl.lock", validLockTOML, "add lock")
@@ -199,7 +199,7 @@ func TestReadAllAtCommit(t *testing.T) {
 
 	t.Run("skips dot-prefixed lock files", func(t *testing.T) {
 		testFS := memfs.New()
-		repo, err := gogit.Init(memory.NewStorage(), testFS)
+		repo, err := gogit.Init(memory.NewStorage(), gogit.WithWorkTree(testFS))
 		require.NoError(t, err)
 
 		commitFile(t, repo, testFS, "locks/curl.lock", validLockTOML, "add lock")
@@ -213,7 +213,7 @@ func TestReadAllAtCommit(t *testing.T) {
 
 	t.Run("error on unparseable lock", func(t *testing.T) {
 		testFS := memfs.New()
-		repo, err := gogit.Init(memory.NewStorage(), testFS)
+		repo, err := gogit.Init(memory.NewStorage(), gogit.WithWorkTree(testFS))
 		require.NoError(t, err)
 
 		commitHash := commitFile(t, repo, testFS, "locks/bad.lock", "not valid {{{", "add bad")
@@ -225,7 +225,7 @@ func TestReadAllAtCommit(t *testing.T) {
 
 	t.Run("reads root-level locks with dot dir", func(t *testing.T) {
 		testFS := memfs.New()
-		repo, err := gogit.Init(memory.NewStorage(), testFS)
+		repo, err := gogit.Init(memory.NewStorage(), gogit.WithWorkTree(testFS))
 		require.NoError(t, err)
 
 		commitHash := commitFile(t, repo, testFS, "curl.lock", validLockTOML, "add root lock")
@@ -238,7 +238,7 @@ func TestReadAllAtCommit(t *testing.T) {
 
 	t.Run("normalizes ./locks to locks", func(t *testing.T) {
 		testFS := memfs.New()
-		repo, err := gogit.Init(memory.NewStorage(), testFS)
+		repo, err := gogit.Init(memory.NewStorage(), gogit.WithWorkTree(testFS))
 		require.NoError(t, err)
 
 		commitHash := commitFile(t, repo, testFS, "locks/curl.lock", validLockTOML, "add lock")
@@ -250,7 +250,7 @@ func TestReadAllAtCommit(t *testing.T) {
 
 	t.Run("rejects absolute path", func(t *testing.T) {
 		testFS := memfs.New()
-		repo, err := gogit.Init(memory.NewStorage(), testFS)
+		repo, err := gogit.Init(memory.NewStorage(), gogit.WithWorkTree(testFS))
 		require.NoError(t, err)
 
 		commitFile(t, repo, testFS, "locks/curl.lock", validLockTOML, "add lock")
@@ -262,7 +262,7 @@ func TestReadAllAtCommit(t *testing.T) {
 
 	t.Run("rejects path traversal", func(t *testing.T) {
 		testFS := memfs.New()
-		repo, err := gogit.Init(memory.NewStorage(), testFS)
+		repo, err := gogit.Init(memory.NewStorage(), gogit.WithWorkTree(testFS))
 		require.NoError(t, err)
 
 		commitFile(t, repo, testFS, "locks/curl.lock", validLockTOML, "add lock")

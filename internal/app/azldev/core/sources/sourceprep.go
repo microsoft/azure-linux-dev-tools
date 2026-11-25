@@ -14,9 +14,9 @@ import (
 	"time"
 	"unicode"
 
-	gogit "github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/filemode"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	gogit "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/filemode"
+	"github.com/go-git/go-git/v6/plumbing/object"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/fingerprint"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
@@ -28,6 +28,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/dirdiff"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/git"
 	"github.com/samber/lo"
 )
 
@@ -500,21 +501,23 @@ func (p *sourcePreparerImpl) collectOverlays(
 // initSourcesRepo initializes a new git repository in sourcesDirPath, stages all files,
 // and creates an initial commit. This is used for components that don't have an upstream
 // dist-git so that synthetic commits can still be layered on top.
-func initSourcesRepo(sourcesDirPath string) (*gogit.Repository, error) {
+func initSourcesRepo(sourcesDirPath string) error {
 	slog.Info("Initializing git repository for sources", "path", sourcesDirPath)
 
 	repo, err := gogit.PlainInit(sourcesDirPath, false)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize git repository at %#q:\n%w", sourcesDirPath, err)
+		return fmt.Errorf("failed to initialize git repository at %#q:\n%w", sourcesDirPath, err)
 	}
+
+	defer git.CloseRepo(repo)
 
 	worktree, err := repo.Worktree()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get worktree:\n%w", err)
+		return fmt.Errorf("failed to get worktree:\n%w", err)
 	}
 
 	if err := worktree.AddWithOptions(&gogit.AddOptions{All: true}); err != nil {
-		return nil, fmt.Errorf("failed to stage files:\n%w", err)
+		return fmt.Errorf("failed to stage files:\n%w", err)
 	}
 
 	_, err = worktree.Commit("Initial sources", &gogit.CommitOptions{
@@ -524,10 +527,10 @@ func initSourcesRepo(sourcesDirPath string) (*gogit.Repository, error) {
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create initial commit:\n%w", err)
+		return fmt.Errorf("failed to create initial commit:\n%w", err)
 	}
 
-	return repo, nil
+	return nil
 }
 
 // trySyntheticHistory attempts to create synthetic git commits on top of the
@@ -575,7 +578,7 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 		slog.Info("No .git directory in sources; initializing repository",
 			"component", componentName)
 
-		if _, err := initSourcesRepo(sourcesDirPath); err != nil {
+		if err := initSourcesRepo(sourcesDirPath); err != nil {
 			return fmt.Errorf("failed to initialize sources repository:\n%w", err)
 		}
 	}
@@ -585,6 +588,8 @@ func (p *sourcePreparerImpl) trySyntheticHistory(
 	if err != nil {
 		return fmt.Errorf("failed to open sources repository at %#q:\n%w", sourcesDirPath, err)
 	}
+
+	defer git.CloseRepo(sourcesRepo)
 
 	// Strip bogus submodule entries from the index before staging. Some upstream
 	// repos have gitlink entries without .gitmodules that break go-git's staging.

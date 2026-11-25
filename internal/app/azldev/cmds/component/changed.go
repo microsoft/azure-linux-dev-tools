@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"sort"
 
-	gogit "github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	gogit "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
@@ -174,6 +174,8 @@ func changedComponentsFromLocks(
 		return nil, err
 	}
 
+	defer git.CloseRepo(ctx.repo)
+
 	fromHash, err := resolveCommitHash(ctx.repo, options.From)
 	if err != nil {
 		return nil, fmt.Errorf("resolving --from ref %#q:\n%w", options.From, err)
@@ -235,10 +237,12 @@ func openChangedRepo(env *azldev.Env) (*gogit.Repository, string, error) {
 
 	worktree, err := repo.Worktree()
 	if err != nil {
+		git.CloseRepo(repo)
+
 		return nil, "", fmt.Errorf("getting project worktree:\n%w", err)
 	}
 
-	return repo, worktree.Filesystem.Root(), nil
+	return repo, worktree.Filesystem().Root(), nil
 }
 
 // newChangedContext opens the project repository and resolves paths.
@@ -250,6 +254,8 @@ func newChangedContext(env *azldev.Env) (*changedContext, error) {
 
 	lockRelDir, err := git.RepoRelPath(repoRoot, env.Config().Project.LockDir)
 	if err != nil {
+		git.CloseRepo(repo)
+
 		return nil, fmt.Errorf("computing repo-relative lock dir:\n%w", err)
 	}
 

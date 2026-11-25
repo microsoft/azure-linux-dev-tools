@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6/plumbing/object"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
 	"github.com/microsoft/azure-linux-dev-tools/internal/global/opctx"
@@ -42,6 +42,8 @@ func changedComponentsFromProjectConfigs(
 	if err != nil {
 		return nil, err
 	}
+
+	defer git.CloseRepo(repo)
 
 	fromHash, err := resolveCommitHash(repo, options.From)
 	if err != nil {

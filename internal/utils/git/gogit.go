@@ -7,23 +7,30 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 
-	gogit "github.com/go-git/go-git/v5"
+	gogit "github.com/go-git/go-git/v6"
 )
 
 // OpenProjectRepo opens a go-git repository from a path within the project,
 // detecting the .git directory and supporting linked worktrees. Use this for
 // opening the project-config repo (not source checkouts, which may have
-// different options).
+// different options). The caller owns the returned repository and must close it.
 func OpenProjectRepo(path string) (*gogit.Repository, error) {
 	//nolint:wrapcheck // thin wrapper; callers add their own context.
 	return gogit.PlainOpenWithOptions(path, &gogit.PlainOpenOptions{
-		DetectDotGit:          true,
-		EnableDotGitCommonDir: true,
+		DetectDotGit: true,
 	})
+}
+
+// CloseRepo releases repository resources without masking an operation error.
+func CloseRepo(repo *gogit.Repository) {
+	if err := repo.Close(); err != nil {
+		slog.Warn("Failed to close git repository", "error", err)
+	}
 }
 
 const maxSymlinkHops = 255

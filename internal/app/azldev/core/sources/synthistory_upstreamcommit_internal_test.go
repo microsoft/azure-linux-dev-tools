@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-git/go-billy/v5"
-	memfs "github.com/go-git/go-billy/v5/memfs"
-	gogit "github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/storage/memory"
+	"github.com/go-git/go-billy/v6"
+	memfs "github.com/go-git/go-billy/v6/memfs"
+	gogit "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/storage/memory"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -52,7 +52,7 @@ func writeGeneratedCommit(
 func TestUpstreamCommitAtCommit(t *testing.T) {
 	memFS := memfs.New()
 
-	repo, err := gogit.Init(memory.NewStorage(), memFS)
+	repo, err := gogit.Init(memory.NewStorage(), gogit.WithWorkTree(memFS))
 	require.NoError(t, err)
 
 	const relPath = "base/upstream-commits/curl.toml"
@@ -77,7 +77,7 @@ func TestUpstreamCommitAtCommit(t *testing.T) {
 func TestUpstreamCommitAtCommit_UnknownComponent(t *testing.T) {
 	memFS := memfs.New()
 
-	repo, err := gogit.Init(memory.NewStorage(), memFS)
+	repo, err := gogit.Init(memory.NewStorage(), gogit.WithWorkTree(memFS))
 	require.NoError(t, err)
 
 	const relPath = "base/upstream-commits/curl.toml"

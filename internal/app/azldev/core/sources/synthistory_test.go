@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	memfs "github.com/go-git/go-billy/v5/memfs"
-	gogit "github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/storage/memory"
+	memfs "github.com/go-git/go-billy/v6/memfs"
+	gogit "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/storage/memory"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/sources"
 	"github.com/microsoft/azure-linux-dev-tools/internal/lockfile"
 	"github.com/stretchr/testify/assert"
@@ -24,7 +24,7 @@ func TestCommitInterleavedHistory_AllOnTop(t *testing.T) {
 	memFS := memfs.New()
 	storer := memory.NewStorage()
 
-	repo, err := gogit.Init(storer, memFS)
+	repo, err := gogit.Init(storer, gogit.WithWorkTree(memFS))
 	require.NoError(t, err)
 
 	worktree, err := repo.Worktree()
@@ -123,7 +123,7 @@ func TestCommitInterleavedHistory_Interleaved(t *testing.T) {
 	memFS := memfs.New()
 	storer := memory.NewStorage()
 
-	repo, err := gogit.Init(storer, memFS)
+	repo, err := gogit.Init(storer, gogit.WithWorkTree(memFS))
 	require.NoError(t, err)
 
 	worktree, err := repo.Worktree()
@@ -239,7 +239,7 @@ func TestCommitInterleavedHistory_MultipleCyclesAutoreleaseLifecycle(t *testing.
 	memFS := memfs.New()
 	storer := memory.NewStorage()
 
-	repo, err := gogit.Init(storer, memFS)
+	repo, err := gogit.Init(storer, gogit.WithWorkTree(memFS))
 	require.NoError(t, err)
 
 	worktree, err := repo.Worktree()
@@ -364,7 +364,7 @@ func TestCommitInterleavedHistory_SingleCommit(t *testing.T) {
 	memFS := memfs.New()
 	storer := memory.NewStorage()
 
-	repo, err := gogit.Init(storer, memFS)
+	repo, err := gogit.Init(storer, gogit.WithWorkTree(memFS))
 	require.NoError(t, err)
 
 	worktree, err := repo.Worktree()
@@ -441,7 +441,7 @@ func TestCommitInterleavedHistory_OrphanUpstreamCommit(t *testing.T) {
 	memFS := memfs.New()
 	storer := memory.NewStorage()
 
-	repo, err := gogit.Init(storer, memFS)
+	repo, err := gogit.Init(storer, gogit.WithWorkTree(memFS))
 	require.NoError(t, err)
 
 	worktree, err := repo.Worktree()
@@ -520,7 +520,7 @@ func TestCommitInterleavedHistory_LocalComponent(t *testing.T) {
 	memFS := memfs.New()
 	storer := memory.NewStorage()
 
-	repo, err := gogit.Init(storer, memFS)
+	repo, err := gogit.Init(storer, gogit.WithWorkTree(memFS))
 	require.NoError(t, err)
 
 	worktree, err := repo.Worktree()
@@ -629,7 +629,7 @@ func TestCommitInterleavedHistory_MergeCommitInUpstream(t *testing.T) {
 	memFS := memfs.New()
 	storer := memory.NewStorage()
 
-	repo, err := gogit.Init(storer, memFS)
+	repo, err := gogit.Init(storer, gogit.WithWorkTree(memFS))
 	require.NoError(t, err)
 
 	worktree, err := repo.Worktree()

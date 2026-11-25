@@ -99,6 +99,10 @@ filenames and contents, and the effective distro release version. Documentation,
 publishing, test-selection, scheduling-hint, snapshot-time, and checkout-path-only
 fields do not mark a component as changed.
 
+Project repositories may be linked Git worktrees, including worktrees created
+with relative paths. History-aware operations read the linked worktree's HEAD
+and shared repository objects.
+
 ## Emit Agent Files for the Preview Mode
 
 `azldev docs agent install` emits the content for the mode it runs in, so pass the

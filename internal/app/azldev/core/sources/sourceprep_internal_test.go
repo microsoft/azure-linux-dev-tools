@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	gogit "github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/filemode"
-	"github.com/go-git/go-git/v5/plumbing/format/index"
-	"github.com/go-git/go-git/v5/storage/memory"
+	gogit "github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/filemode"
+	"github.com/go-git/go-git/v6/plumbing/format/index"
+	"github.com/go-git/go-git/v6/storage/memory"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
@@ -30,7 +30,7 @@ func TestRemoveSubmoduleEntries_StripsGitlinks(t *testing.T) {
 
 	// Initialize a repo with in-memory storage only; this test exercises the
 	// index/storer and uses memFS separately for directory cleanup assertions.
-	repo, err := gogit.Init(storer, nil)
+	repo, err := gogit.Init(storer)
 	require.NoError(t, err)
 
 	// Manually build an index with a normal file entry and a submodule entry.
@@ -84,7 +84,7 @@ func TestRemoveSubmoduleEntries_NoOpWithoutSubmodules(t *testing.T) {
 	memFS := afero.NewMemMapFs()
 	storer := memory.NewStorage()
 
-	repo, err := gogit.Init(storer, nil)
+	repo, err := gogit.Init(storer)
 	require.NoError(t, err)
 
 	// Index with only normal entries.
@@ -121,7 +121,7 @@ func TestRemoveSubmoduleEntries_PreservesNormalEntriesWithMixedModes(t *testing.
 	memFS := afero.NewMemMapFs()
 	storer := memory.NewStorage()
 
-	repo, err := gogit.Init(storer, nil)
+	repo, err := gogit.Init(storer)
 	require.NoError(t, err)
 
 	// Mix of regular files, executable, and submodule entries.
