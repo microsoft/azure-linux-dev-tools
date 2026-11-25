@@ -94,7 +94,13 @@ func execute(ctx context.Context, base *mock.Runner, req Request, output string)
 		return err
 	}
 
-	runner := base.Clone().WithBaseDir(filepath.Join(req.WorkDir, "mock")).EnableNetwork().WithUnprivileged()
+	runner := base.Clone().WithRootDir("").WithBaseDir(filepath.Join(req.WorkDir, "mock")).
+		EnableNetwork().WithUnprivileged()
+	// Initialization and cleanup must use the same private root, regardless of the build's location overrides.
+	for _, key := range []string{"root", "rootdir", "basedir"} {
+		delete(runner.ConfigOpts(), key)
+	}
+
 	runner.AddBindMount(filepath.Join(req.WorkDir, "sources"), "/azldev-vendor-sources").
 		AddBindMount(output, "/azldev-vendor-output")
 

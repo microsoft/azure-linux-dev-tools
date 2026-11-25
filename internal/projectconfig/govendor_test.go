@@ -46,6 +46,21 @@ func TestGoVendorOriginValidation(t *testing.T) {
 	}
 }
 
+func TestGoVendorSourceCountAfterInheritance(t *testing.T) {
+	ref := projectconfig.SourceFileReference{Origin: projectconfig.Origin{Type: projectconfig.OriginTypeGoVendor}}
+	group := projectconfig.ComponentConfig{SourceFiles: []projectconfig.SourceFileReference{ref}}
+	groups := map[string]projectconfig.ComponentGroupConfig{"group": {DefaultComponentConfig: group}}
+	comp := projectconfig.ComponentConfig{Name: "app"}
+	empty := projectconfig.ComponentConfig{}
+	_, err := projectconfig.ResolveComponentConfig(comp, empty, empty, groups, []string{"group"})
+	require.NoError(t, err)
+
+	ref.Filename = "second.tar.gz"
+	comp.SourceFiles = []projectconfig.SourceFileReference{ref}
+	_, err = projectconfig.ResolveComponentConfig(comp, empty, empty, groups, []string{"group"})
+	require.ErrorContains(t, err, "only one 'go-vendor' source")
+}
+
 func TestGoVendorSettingsFingerprint(t *testing.T) {
 	ctx := testctx.NewCtx()
 	config := projectconfig.ComponentConfig{SourceFiles: []projectconfig.SourceFileReference{{

@@ -626,6 +626,10 @@ func ResolveComponentConfig(
 		return ComponentConfig{}, fmt.Errorf("failed to apply component config:\n%w", err)
 	}
 
+	if err := validateVendorSourceCount(merged.SourceFiles); err != nil {
+		return ComponentConfig{}, fmt.Errorf("invalid resolved sources for %#q:\n%w", comp.Name, err)
+	}
+
 	merged.resolveLocalCustomScriptPaths()
 
 	return merged, nil

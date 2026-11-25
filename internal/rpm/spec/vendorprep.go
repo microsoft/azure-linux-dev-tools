@@ -25,6 +25,7 @@ var (
 	vendorExtraction = regexp.MustCompile(`^tar\s+-xf\s+%\{(?:S:|SOURCE)([0-9]+)\}\s*$`)
 	vendorConfigRef  = regexp.MustCompile(`^%go_vendor_license_\w+\s+-c\s+%\{(?:S:|SOURCE)([0-9]+)\}\s*$`)
 	secondarySetup   = regexp.MustCompile(`%(?:\{[!?]*)?(?:(?:auto)?setup|goprep)\b.*\s-[a-zA-Z]*[ab]`)
+	knownPrepMacro   = regexp.MustCompile(`^%(?:setup|autosetup|goprep|autopatch|patch[0-9]*)(?:\s|$)`)
 )
 
 // PrepareVendorSource removes only the selected vendor input from private prep.
@@ -57,7 +58,7 @@ func PrepareVendorSource(data []byte, filename string) (*VendorPrep, error) {
 		return nil, err
 	}
 
-	candidates, err := vendorExtractions(prep, sources)
+	candidates, err := vendorExtractions(prep, sources, filename == "")
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +130,7 @@ func vendorSourceTags(tree *specTree) (sources map[string]string, configNumber s
 	return sources, configNumber, err
 }
 
-func vendorExtractions(prep *sectionHandle, sources map[string]string) ([]string, error) {
+func vendorExtractions(prep *sectionHandle, sources map[string]string, automatic bool) ([]string, error) {
 	var candidates []string
 
 	err := prep.VisitLines(func(line *lineHandle) error {
@@ -140,6 +141,10 @@ func vendorExtractions(prep *sectionHandle, sources map[string]string) ([]string
 
 		if secondarySetup.MatchString(text) {
 			return errors.New("secondary setup extraction requires an explicit prep overlay for vendor generation")
+		}
+
+		if automatic && strings.HasPrefix(text, "%") && !knownPrepMacro.MatchString(text) {
+			return fmt.Errorf("cannot discover vendor Source through opaque prep macro %#q; make extraction explicit", text)
 		}
 
 		match := vendorExtraction.FindStringSubmatch(text)

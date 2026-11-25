@@ -35,9 +35,20 @@ func TestGenerationFailureScrubsRoot(t *testing.T) {
 	ctx.CmdFactory.RunAndGetOutputHandler = func(*exec.Cmd) (string, error) {
 		return "native tool failed", failure
 	}
-	err := execute(ctx, mock.NewRunner(ctx, "/mock.cfg"), Request{WorkDir: "/work", SpecName: "app.spec"}, "/output")
+	base := mock.NewRunner(ctx, "/mock.cfg").WithRootDir("/shared/root").WithConfigOpts(map[string]string{
+		"root": "/shared/name", "basedir": "/shared/base", "rootdir": "/shared/build", "target_arch": "aarch64",
+	})
+	err := execute(ctx, base, Request{WorkDir: "/work", SpecName: "app.spec"}, "/output")
 	require.ErrorIs(t, err, failure)
 	assert.Contains(t, strings.Join(commands, "\n"), "--scrub all")
+
+	for _, command := range commands {
+		assert.NotContains(t, command, "/shared/")
+		assert.Contains(t, command, "basedir=/work/mock")
+		assert.Contains(t, command, "target_arch=aarch64")
+	}
+
+	assert.Equal(t, "/shared/base", base.ConfigOpts()["basedir"])
 }
 
 func TestReadArtifactRejectsInvalidOutputs(t *testing.T) {

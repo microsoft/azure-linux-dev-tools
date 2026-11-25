@@ -38,13 +38,15 @@ func TestPrepareVendorSource(t *testing.T) {
 
 func TestPrepareVendorSourceRejectsAmbiguity(t *testing.T) {
 	for name, input := range map[string]string{
-		"missing prep":   strings.ReplaceAll(vendorSpec(), "%prep", "%check"),
-		"multiple":       strings.ReplaceAll(vendorSpec(), "tar -xf %{S:5}", "tar -xf %{S:5}\ntar -xf %{S:8}"),
-		"secondary":      strings.ReplaceAll(vendorSpec(), "%autosetup -p1", "%autosetup -a 5"),
-		"conditional":    strings.ReplaceAll(vendorSpec(), "tar -xf %{S:5}", "%if 1\ntar -xf %{S:5}\n%endif"),
-		"flags":          strings.ReplaceAll(vendorSpec(), "tar -xf", "tar -xjf"),
-		"no extraction":  strings.ReplaceAll(vendorSpec(), "tar -xf %{S:5}", ""),
-		"missing source": strings.ReplaceAll(vendorSpec(), "%{S:5}", "%{S:6}"),
+		"missing prep":      strings.ReplaceAll(vendorSpec(), "%prep", "%check"),
+		"multiple":          strings.ReplaceAll(vendorSpec(), "tar -xf %{S:5}", "tar -xf %{S:5}\ntar -xf %{S:8}"),
+		"secondary":         strings.ReplaceAll(vendorSpec(), "%autosetup -p1", "%autosetup -a 5"),
+		"conditional":       strings.ReplaceAll(vendorSpec(), "tar -xf %{S:5}", "%if 1\ntar -xf %{S:5}\n%endif"),
+		"flags":             strings.ReplaceAll(vendorSpec(), "tar -xf", "tar -xjf"),
+		"opaque prep macro": strings.ReplaceAll(vendorSpec(), "%autosetup -p1", "%unpack_secondary"),
+		"braced prep macro": strings.ReplaceAll(vendorSpec(), "%autosetup -p1", "%{unpack_secondary}"),
+		"no extraction":     strings.ReplaceAll(vendorSpec(), "tar -xf %{S:5}", ""),
+		"missing source":    strings.ReplaceAll(vendorSpec(), "%{S:5}", "%{S:6}"),
 		"conditional source": strings.ReplaceAll(vendorSpec(), "Source5: app-%{version}-vendor.tar.bz2",
 			"%if 1\nSource5: app-%{version}-vendor.tar.bz2\n%endif"),
 		"duplicate source": strings.ReplaceAll(vendorSpec(), "Source5:", "Source0:"),

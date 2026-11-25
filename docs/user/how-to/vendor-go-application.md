@@ -22,7 +22,8 @@ By default, azldev finds the single unconditional
 `tar -xf %{S:N}` or `tar -xf %{SOURCEN}` in `%prep` referencing a secondary Source,
 then asks RPM to expand its filename. Source numbers and package versions are not
 embedded in the config. Ambiguous/conditional extraction, secondary setup
-extraction (`-a`/`-b`), and release-dependent archive filenames fail rather than
+extraction (`-a`/`-b`), opaque prep macro commands during automatic discovery,
+and release-dependent archive filenames fail rather than
 guessing. Use a narrowly scoped prep/Source overlay to make these layouts explicit.
 The discovered vendor archive's existing `sources` entry is replaced automatically.
 Upstream lookaside fetching may still download the old vendor payload before
