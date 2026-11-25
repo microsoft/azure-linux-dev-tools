@@ -566,6 +566,8 @@ type renderAutospecStub struct {
 	err    error
 	base   string
 	expand func(string, string) (string, error)
+	// version, if set, expands Version for the spec in the given directory.
+	version func(dir string) (string, error)
 	// onUpstreamQuery, if set, runs before each query against the upstream checkout.
 	onUpstreamQuery func(call string)
 }
@@ -596,6 +598,15 @@ func (s *renderAutospecStub) CalculateRelease(_ context.Context, dir, filename s
 	s.calls = append(s.calls, "complete-release")
 
 	return s.expand(dir, filename)
+}
+
+func (s *renderAutospecStub) ExpandVersion(_ context.Context, dir, _ string) (string, error) {
+	s.calls = append(s.calls, "expand-version")
+	if s.version == nil {
+		return "", errors.New("unexpected Version expansion")
+	}
+
+	return s.version(dir)
 }
 
 func (s *renderAutospecStub) ExpandRelease(_ context.Context, dir, filename string) (string, error) {
@@ -1588,6 +1599,45 @@ func TestPrepareComponentSources_LocklessSkipsSyntheticHistory(t *testing.T) {
 			content, err = fileutils.ReadFile(env.TestFS, "/staging/curl/.git/HEAD")
 			require.NoError(t, err)
 			assert.Equal(t, "upstream history", string(content))
+		})
+	}
+}
+
+func TestLocklessVersionChanged_ExpandsMacros(t *testing.T) {
+	const (
+		dir     = "/work/upstream"
+		rawTag  = "%{version_alsa_lib}"
+		oldSpec = "%define version_alsa_lib 1.2.16.1\nName: alsa-lib\nVersion: " + rawTag + "\n"
+	)
+
+	for _, testCase := range []struct {
+		name, upstream string
+		want           bool
+	}{
+		{name: "macro definition changed", upstream: "1.2.17", want: true},
+		{name: "macro definition unchanged", upstream: "1.2.16.1"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := testutils.NewTestEnv(t)
+			require.NoError(t, fileutils.MkdirAll(env.FS(), dir))
+
+			stub := &renderAutospecStub{version: func(queried string) (string, error) {
+				if queried == dir {
+					return testCase.upstream, nil
+				}
+
+				content, err := fileutils.ReadFile(env.FS(), filepath.Join(queried, "alsa-lib.spec"))
+				require.NoError(t, err)
+				require.Equal(t, oldSpec, string(content))
+
+				return "1.2.16.1", nil
+			}}
+
+			changed, err := locklessVersionChanged(env.Env, stub, dir, "alsa-lib.spec", rawTag,
+				lastRender{spec: oldSpec})
+			require.NoError(t, err)
+			assert.Equal(t, testCase.want, changed)
+			assert.Equal(t, []string{"expand-version", "expand-version"}, stub.calls)
 		})
 	}
 }

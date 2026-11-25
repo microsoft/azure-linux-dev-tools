@@ -74,6 +74,7 @@ type renderAutorelease interface {
 	CalculateBaseRelease(ctx context.Context, dir, filename string) (string, error)
 	CalculateRelease(ctx context.Context, dir, filename string) (string, error)
 	ExpandRelease(ctx context.Context, dir, filename string) (string, error)
+	ExpandVersion(ctx context.Context, dir, filename string) (string, error)
 }
 
 //nolint:gochecknoglobals // Replaced by isolated render tests to open a test project repository.
@@ -453,7 +454,7 @@ func prepareLocklessSpec(
 		return fmt.Errorf("reading upstream Version:\n%w", err)
 	}
 
-	versionChanged, err := locklessVersionChanged(version, history)
+	versionChanged, err := locklessVersionChanged(env, autospec, dir, filepath.Base(path), version, history)
 	if err != nil {
 		return err
 	}
@@ -926,7 +927,12 @@ func committedRenderSnapshot(
 	return snapshot, nil
 }
 
-func locklessVersionChanged(version string, history lastRender) (bool, error) {
+// locklessVersionChanged reports whether the upstream Version differs from the
+// committed one. Tags using macros are expanded in their own spec context, so a
+// changed macro definition is detected even when the raw tag text is identical.
+func locklessVersionChanged(
+	env *azldev.Env, autospec renderAutorelease, dir, filename, version string, history lastRender,
+) (changed bool, err error) {
 	if history.spec == "" {
 		return true, nil
 	}
@@ -941,7 +947,27 @@ func locklessVersionChanged(version string, history lastRender) (bool, error) {
 		return false, fmt.Errorf("reading committed Version:\n%w", err)
 	}
 
-	return oldVersion != version, nil
+	if !strings.Contains(oldVersion, "%") && !strings.Contains(version, "%") {
+		return oldVersion != version, nil
+	}
+
+	newExpanded, err := autospec.ExpandVersion(env, dir, filename)
+	if err != nil {
+		return false, fmt.Errorf("querying upstream Version:\n%w", err)
+	}
+
+	snapshot, err := committedRenderSnapshot(env, dir, filename, history)
+	if err != nil {
+		return false, err
+	}
+	defer fileutils.RemoveAllAndUpdateErrorIfNil(env.FS(), snapshot, &err)
+
+	oldExpanded, err := autospec.ExpandVersion(env, snapshot, filename)
+	if err != nil {
+		return false, fmt.Errorf("querying committed Version:\n%w", err)
+	}
+
+	return oldExpanded != newExpanded, nil
 }
 
 var autoreleaseBaseArg = regexp.MustCompile(`(^|\s)-b(?:\s+|=)?[0-9]+`)

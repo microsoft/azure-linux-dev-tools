@@ -133,7 +133,9 @@ commented-out lines do not. Otherwise rendering fails, naming the package and
 its tag count; use overlays to remove or comment out the extra `Release:` lines.
 
 Rendering then compares the spec's `Version:` with the
-committed spec, independently of upstream pin changes.
+committed spec, independently of upstream pin changes. When either tag uses
+macros, both are expanded with host `rpmspec` in their own spec context, so a
+changed macro definition counts as a version change.
 Static release carryover runs only when committed output exists and the version
 is unchanged. Otherwise the release comes only from upstream: committed
 `Release:` tags are neither read nor validated, the working static release and

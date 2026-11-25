@@ -316,7 +316,10 @@ error naming the package and its tag count; use overlays to remove or comment
 out the extra `Release:` lines.
 
 The version is compared first: the post-overlay `Version:` is compared with the
-committed spec's `Version:`, independently of upstream pin changes. When the
+committed spec's `Version:`, independently of upstream pin changes. When either
+tag uses macros, such as `Version: %{version_alsa_lib}`, both are expanded with
+host `rpmspec` in their own spec context, so a changed macro definition counts as
+a version change. When the
 version **changes** (or there is no committed output), the release comes only
 from the new upstream spec: no committed `Release:` value is read or validated,
 static releases and the `baserelease` definition are left as supplied by
