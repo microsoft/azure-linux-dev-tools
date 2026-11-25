@@ -550,7 +550,7 @@ func (p *sourcePreparerImpl) applyArchiveOverlayGroup(
 		return nil, nil
 	}
 
-	repackedArchives, err := applyArchiveOverlays(
+	repackedArchives, err := ApplyArchiveOverlays(
 		p.dryRunnable, p.eventListener, sourcesDirPath, archiveOverlays,
 	)
 	if err != nil {
@@ -1573,7 +1573,7 @@ func (p *sourcePreparerImpl) resolveSpecPath(
 
 // applyOverlayList applies a list of overlays to the component sources sequentially.
 // Archive-scoped overlays (see [projectconfig.ComponentOverlay.ModifiesArchive]) are
-// skipped here; they are handled separately by [applyArchiveOverlays], which batches
+// skipped here; they are handled separately by [ApplyArchiveOverlays], which batches
 // extraction and repacking per archive.
 func (p *sourcePreparerImpl) applyOverlayList(
 	overlays []projectconfig.ComponentOverlay, sourcesDirPath, absSpecPath string,

@@ -4,7 +4,9 @@
 package component
 
 import (
+	"context"
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -12,13 +14,21 @@ import (
 	"testing"
 
 	"github.com/h2non/gock"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components"
+	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/components/components_testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/testutils"
 	"github.com/microsoft/azure-linux-dev-tools/internal/app/azldev/core/workdir"
+	"github.com/microsoft/azure-linux-dev-tools/internal/global/testctx"
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
+	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
+	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource"
+	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/sourceproviders_test"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/mock"
+	"github.com/microsoft/azure-linux-dev-tools/internal/utils/archive"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 func TestDownloadDistGitSources_ConfiguredOrigins(t *testing.T) {
@@ -97,6 +107,61 @@ func TestDownloadDistGitSources_ConfiguredOrigins(t *testing.T) {
 			require.Equal(t, payload, string(content))
 		})
 	}
+}
+
+func TestRestoreOverlaidArchives(t *testing.T) {
+	const archiveName = "stb.tar.gz"
+
+	ctx := testctx.NewCtx(testctx.WithHostFS())
+	staging := t.TempDir()
+	writeTreeFile := func(rel string) {
+		path := filepath.Join(staging, "stb", rel)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), fileperms.PublicDir))
+		require.NoError(t, os.WriteFile(path, []byte(rel), fileperms.PrivateFile))
+	}
+	writeTreeFile("stb.h")
+	writeTreeFile("tests/oversample.exe")
+
+	upstream := filepath.Join(t.TempDir(), archiveName)
+	require.NoError(t, archive.CreateDeterministicArchive(upstream, staging, archive.CompressionGzip))
+
+	ctrl := gomock.NewController(t)
+	component := components_testutils.NewMockComponent(ctrl)
+	component.EXPECT().GetName().AnyTimes().Return("stb")
+	component.EXPECT().GetConfig().AnyTimes().Return(&projectconfig.ComponentConfig{
+		SourceFiles: []projectconfig.SourceFileReference{{
+			Filename: archiveName, Origin: projectconfig.Origin{Type: projectconfig.OriginTypeOverlay},
+		}},
+		Overlays: []projectconfig.ComponentOverlay{{
+			Type: projectconfig.ComponentOverlayRemoveFile, Archive: archiveName, Filename: "tests/oversample.exe",
+		}},
+	})
+
+	manager := sourceproviders_test.NewMockSourceManager(ctrl)
+	manager.EXPECT().FetchComponent(gomock.Any(), component, gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ components.Component, dir string, _ ...sourceproviders.FetchComponentOption) error {
+			return fileutils.CopyFile(ctx, ctx.FS(), upstream, filepath.Join(dir, archiveName),
+				fileutils.CopyFileOptions{})
+		})
+
+	dir := filepath.Join(t.TempDir(), "dist-git")
+	require.NoError(t, os.MkdirAll(dir, fileperms.PublicDir))
+
+	lines, err := fedorasource.ReadSourcesFile("SHA512 (" + archiveName + ") = 00\n")
+	require.NoError(t, err)
+	require.NoError(t, restoreOverlaidArchives(ctx, manager, component, dir, lines))
+
+	extracted := t.TempDir()
+	require.NoError(t, archive.ExtractAuto(filepath.Join(dir, archiveName), extracted))
+	require.FileExists(t, filepath.Join(extracted, "stb", "stb.h"))
+	require.NoFileExists(t, filepath.Join(extracted, "stb", "tests", "oversample.exe"))
+
+	entries, err := os.ReadDir(filepath.Dir(dir))
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "temporary upstream checkout must be removed")
+
+	// An archive already in the dist-git checkout is left alone.
+	require.NoError(t, restoreOverlaidArchives(ctx, manager, component, dir, lines))
 }
 
 func TestLocklessBuildRejectsSyntheticHistoryFlags(t *testing.T) {

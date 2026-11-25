@@ -28,8 +28,9 @@ Use `--unique-mockroot` to isolate mock roots. azldev also passes
 
 For lockless components, build uses committed rendered dist-git history extracted
 with git-filter-repo; render and commit first. It fetches configured sources through
-the source manager (including download/custom origins), then remaining lookaside payloads,
-fails if any payload's hash differs from the committed `sources` manifest, and builds the SRPM with Mock's rpmautospec plugin (Mock 5.3+), then builds binary RPMs.
+the source manager (including download/custom origins), rebuilds archives modified by
+archive overlays from the pinned upstream archive, then downloads remaining lookaside payloads.
+It fails if any payload's hash differs from the committed `sources` manifest, then builds the SRPM with Mock's rpmautospec plugin (Mock 5.3+), then builds binary RPMs.
 Build macros are inline `%define` entries in the committed spec, not passed again
 as Mock command-line overrides. Lockless rendering adds no macros file, load
 directive, or `Source9999` entry. Locked components retain their macros file.
