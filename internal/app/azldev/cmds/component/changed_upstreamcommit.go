@@ -298,6 +298,21 @@ func buildComponentComparisonInputs(
 		inputs.OverlaySourceHashes[strconv.Itoa(idx)] = sourceName + ":" + contentHash
 	}
 
+	for idx, ref := range component.SourceFiles {
+		identity, err := ref.Origin.VendorIdentity(fs)
+		if err != nil {
+			return inputs, fmt.Errorf("hashing vendor source settings:\n%w", err)
+		}
+
+		if identity != "" {
+			if inputs.OverlaySourceHashes == nil {
+				inputs.OverlaySourceHashes = map[string]string{}
+			}
+
+			inputs.OverlaySourceHashes["source:"+strconv.Itoa(idx)] = identity
+		}
+	}
+
 	return inputs, nil
 }
 
@@ -326,6 +341,7 @@ func normalizeComponentForComparison(component projectconfig.ComponentConfig) pr
 
 	normalized.SourceFiles = slices.Clone(component.SourceFiles)
 	for idx := range normalized.SourceFiles {
+		normalized.SourceFiles[idx].Origin.ConfigFile = ""
 		normalized.SourceFiles[idx].Origin.Type = ""
 		normalized.SourceFiles[idx].Origin.Uri = ""
 		normalized.SourceFiles[idx].ReplaceReason = ""

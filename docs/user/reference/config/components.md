@@ -379,8 +379,8 @@ The `[[components.<name>.source-files]]` array defines additional source files t
 
 | Field | TOML Key | Type | Required | Description |
 |-------|----------|------|----------|-------------|
-| Filename | `filename` | string | **Yes** | Name of the file in the sources directory |
-| Hash | `hash` | string | Conditional | Expected hash. Required unless `--allow-no-hashes` is passed to `prep-sources` (which computes and prints the hash). |
+| Filename | `filename` | string | **Yes** | Plain basename of the file in the sources directory. |
+| Hash | `hash` | string | Conditional | Expected hash. Optional for `go-vendor`; otherwise required unless `--allow-no-hashes` is passed to `prep-sources`. |
 | Hash type | `hash-type` | string | Conditional | Hash algorithm (`"SHA256"`, `"SHA512"`). Required with `hash`; defaults to `"SHA512"` when auto-computed. |
 | Origin | `origin` | [Origin](#origin) | **Yes** | How to obtain the file |
 | Replace upstream | `replace-upstream` | bool | No | Replace the same-named entry in the upstream `sources` file. The upstream entry must exist. Requires `replace-reason`. |
@@ -388,7 +388,37 @@ The `[[components.<name>.source-files]]` array defines additional source files t
 
 ### Origin
 
-Three origin types are supported.
+Four origin types are supported.
+
+#### `"go-vendor"` — generate a Go dependency archive
+
+```toml
+[[components.containerd.source-files]]
+filename = "containerd-2.3.5-vendor.tar.bz2"
+replace-upstream = true
+replace-reason = "Regenerate the existing vendor source"
+origin.type = "go-vendor"
+hash-type = "SHA512"
+hash = "<reviewed archive digest from prepare-sources>"
+```
+
+This origin generates only a tarball; it never converts the published spec.
+See [Generate a Go vendor source archive](../../how-to/vendor-go-application.md).
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `filename` | Required | Plain output basename; not inferred from the spec. |
+| `hash` | Compute on initial preparation | Required for render. Preparation/build verify the generated archive if pinned; a mismatch fails before publication. |
+| `hash-type` | `SHA512` | Output digest algorithm (`SHA256` or `SHA512`). |
+| `origin.config-file` | Reuse upstream sidecar/tool defaults | Native TOML relative to the declaring file; replaces settings rather than merging, and is fingerprinted by content. |
+| `origin.module-dir` | Final `%prep` directory | Relative module directory; native `general.go_mod_dir` must not conflict. |
+| `origin.prep-packages` | `[]` | Additional generation-chroot RPM prerequisites. |
+
+One Go vendor source is supported per component. Existing upstream manifest
+entries require `replace-upstream` and `replace-reason`. Generation runs
+after overlays during prepare, build, and diff. Render writes the configured
+`hash-type` and `hash` to `sources` without downloading or generating the archive.
+Maintainers own extraction, offline build settings, and licensing in the spec.
 
 #### `"download"` — fetch from a URI
 

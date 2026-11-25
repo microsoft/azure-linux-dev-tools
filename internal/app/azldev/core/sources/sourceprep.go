@@ -24,6 +24,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders"
 	"github.com/microsoft/azure-linux-dev-tools/internal/providers/sourceproviders/fedorasource"
+	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/mock"
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spec"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/dirdiff"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileperms"
@@ -198,6 +199,10 @@ type sourcePreparerImpl struct {
 	// source preparation. Git-tracked files are still fetched.
 	skipLookaside bool
 
+	goVendorRunner  *mock.Runner
+	vendorFetchOnly bool
+	renderManifest  bool
+
 	// cmdFactory is used to shell out to git for fingerprint change detection
 	// in the project repository. Set via [WithGitRepo].
 	cmdFactory opctx.CmdFactory
@@ -303,20 +308,12 @@ func (p *sourcePreparerImpl) PrepareSources(
 		}
 	}
 
-	// Preserve the upstream .git directory only when dist-git creation is
-	// requested via --with-git. This is required so that overlay commits can be
-	// appended on top of the upstream commit log during synthetic history generation.
-	var fetchOpts []sourceproviders.FetchComponentOption
-	if applyOverlays && p.withGitRepo {
-		fetchOpts = append(fetchOpts, sourceproviders.WithPreserveGitDir())
-	}
-
-	if p.skipLookaside {
-		fetchOpts = append(fetchOpts, sourceproviders.WithSkipLookaside())
-	}
+	declaredConfig := component.GetConfig()
+	vendor := p.needsVendorInputs(declaredConfig)
+	p = p.withVendorDownloads(vendor)
 
 	// Fetch the component first (spec, sidecar files, and upstream source tarballs).
-	err := p.sourceManager.FetchComponent(ctx, component, outputDir, fetchOpts...)
+	err := p.sourceManager.FetchComponent(ctx, component, outputDir, p.componentFetchOptions(vendor, applyOverlays)...)
 	if err != nil {
 		return fmt.Errorf("failed to fetch sources for component %#q:\n%w",
 			component.GetName(), err)
@@ -332,12 +329,23 @@ func (p *sourcePreparerImpl) PrepareSources(
 
 	fingerprintConfig := component.GetConfig()
 
+	var repackedArchives []string
+
 	if applyOverlays {
-		repackedArchives, err := p.applyOverlaysToSources(ctx, component, outputDir)
+		repackedArchives, err = p.applyOverlaysToSources(ctx, component, outputDir)
 		if err != nil {
 			return err
 		}
+	}
 
+	if p.generatesVendor(vendor) {
+		component, err = p.prepareVendorSources(ctx, component, outputDir)
+		if err != nil {
+			return fmt.Errorf("preparing Go vendor source:\n%w", err)
+		}
+	}
+
+	if applyOverlays || p.generatesVendor(vendor) {
 		fingerprintConfig, err = p.updateSourcesFile(component, outputDir, repackedArchives)
 		if err != nil {
 			return fmt.Errorf("failed to update 'sources' file for component %#q:\n%w",
@@ -350,11 +358,53 @@ func (p *sourcePreparerImpl) PrepareSources(
 	}
 
 	// Record the changes as synthetic git history when dist-git creation is enabled.
+	fingerprintConfig = vendorFingerprintConfig(fingerprintConfig, declaredConfig)
+
 	if p.withGitRepo {
 		if err := p.trySyntheticHistory(ctx, component, fingerprintConfig, outputDir); err != nil {
 			return fmt.Errorf("failed to generate synthetic history for component %#q:\n%w",
 				component.GetName(), err)
 		}
+	}
+
+	return p.removePrivateVendorHistory(outputDir, vendor)
+}
+
+func (p *sourcePreparerImpl) withVendorDownloads(vendor bool) *sourcePreparerImpl {
+	if !vendor {
+		return p
+	}
+
+	effective := *p
+	effective.skipLookaside = false
+
+	return &effective
+}
+
+func (p *sourcePreparerImpl) generatesVendor(vendor bool) bool {
+	return vendor && !p.vendorFetchOnly
+}
+
+func (p *sourcePreparerImpl) componentFetchOptions(vendor, applyOverlays bool) []sourceproviders.FetchComponentOption {
+	var options []sourceproviders.FetchComponentOption
+	if (applyOverlays && p.withGitRepo) || vendor {
+		options = append(options, sourceproviders.WithPreserveGitDir())
+	}
+
+	if p.skipLookaside {
+		options = append(options, sourceproviders.WithSkipLookaside())
+	}
+
+	return options
+}
+
+func (p *sourcePreparerImpl) removePrivateVendorHistory(directory string, vendor bool) error {
+	if !vendor || p.withGitRepo || p.vendorFetchOnly || p.dryRunnable.DryRun() {
+		return nil
+	}
+
+	if err := p.fs.RemoveAll(filepath.Join(directory, ".git")); err != nil {
+		return fmt.Errorf("removing private vendor history:\n%w", err)
 	}
 
 	return nil
@@ -752,7 +802,10 @@ func (p *sourcePreparerImpl) DiffSources(
 	defer fileutils.RemoveAllAndUpdateErrorIfNil(p.fs, originalDir, &err)
 
 	// Prepare sources without applying overlays, to get the original tree.
-	if err := p.PrepareSources(ctx, component, originalDir, false /* applyOverlays */); err != nil {
+	fetcher := *p
+
+	fetcher.vendorFetchOnly = true
+	if err := fetcher.PrepareSources(ctx, component, originalDir, false /* applyOverlays */); err != nil {
 		return nil, err
 	}
 
@@ -777,6 +830,10 @@ func (p *sourcePreparerImpl) DiffSources(
 	// rewrite a 'sources' file.
 	if _, err := p.applyOverlaysToSources(ctx, component, overlaidDir); err != nil {
 		return nil, fmt.Errorf("failed to apply overlays for component %#q:\n%w", component.GetName(), err)
+	}
+
+	if _, err := p.prepareVendorSources(ctx, component, overlaidDir); err != nil {
+		return nil, err
 	}
 
 	// Diff the original tree against the overlaid tree.
@@ -1064,6 +1121,13 @@ func (p *sourcePreparerImpl) buildSourceEntries(
 	appendLines := make([]string, 0, len(sourceFiles))
 
 	for index := range sourceFiles {
+		if p.renderManifest && sourceFiles[index].Origin.Type == projectconfig.OriginTypeGoVendor {
+			if sourceFiles[index].Hash == "" || sourceFiles[index].HashType == "" {
+				return nil, errors.New("render requires 'hash' and 'hash-type' for 'go-vendor'; " +
+					"run 'component prepare-sources' and pin the digest from its 'sources' file")
+			}
+		}
+
 		formatted, isReplacement, resolvedRef, err := p.processSourceRef(
 			sourceFiles[index], existingByName, componentName, outputDir)
 		if err != nil {

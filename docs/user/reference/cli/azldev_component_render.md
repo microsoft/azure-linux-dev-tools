@@ -16,9 +16,9 @@ Within the output directory, components are organized into letter-prefixed
 subdirectories based on the first character of their name (e.g., specs/c/curl,
 specs/v/vim).
 
-Unlike prepare-sources, render skips downloading source tarballs from the
-lookaside cache — only spec files, patches, scripts, and other git-tracked
-sidecar files are included. Multiple components can be rendered at once.
+Render normally skips lookaside archives, retaining specs and git-tracked sidecars.
+Go vendor sources are rendered from their configured digests without generating
+the archive. Multiple components can be rendered at once.
 
 When rendering all components (-a), the --clean-stale flag prunes orphan
 rendered-spec directories (per-component dirs that no longer correspond to

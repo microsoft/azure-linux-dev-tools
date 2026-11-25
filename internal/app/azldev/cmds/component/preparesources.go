@@ -143,7 +143,7 @@ func PrepareComponentSources(env *azldev.Env, options *PrepareSourcesOptions) er
 
 	preparerOpts := buildPreparerOptions(env, distro, options)
 
-	preparer, err := newSourcePreparer(sourceManager, env.FS(), env, env, append(
+	preparer, err := newComponentSourcePreparer(env, component, sourceManager, nil, append(
 		preparerOpts,
 		sources.WithSpecEditor(options.specEditorMode()),
 	)...)

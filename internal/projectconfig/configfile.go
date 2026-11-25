@@ -530,8 +530,12 @@ func validateSourceFiles(
 ) error {
 	seen := make(map[string]bool, len(sourceFiles))
 
+	if err := validateVendorSourceCount(sourceFiles); err != nil {
+		return err
+	}
+
 	for _, ref := range sourceFiles {
-		if err := fileutils.ValidateFilename(ref.Filename); err != nil {
+		if err := validateSourceFilename(ref); err != nil {
 			return fmt.Errorf("invalid filename %#q for source file in component %#q:\n%w", ref.Filename, componentName, err)
 		}
 
@@ -718,6 +722,10 @@ func validateCustomSourceInputs(
 // For [OriginTypeURI] ('download'), the [Origin.Uri] field must be a valid URI with a scheme.
 // For [OriginTypeOverlay] ('overlay'), no URI is used; the archive is already on disk.
 func validateOrigin(origin Origin, filename string, componentName string) error {
+	if err := validateGoVendorOrigin(origin); err != nil {
+		return fmt.Errorf("invalid source origin for component %#q:\n%w", componentName, err)
+	}
+
 	if origin.Type == "" {
 		return fmt.Errorf(
 			"missing 'origin' for source file %#q, component %#q; "+
@@ -758,7 +766,7 @@ func validateOrigin(origin Origin, filename string, componentName string) error 
 				filename, componentName)
 		}
 
-	case OriginTypeOverlay:
+	case OriginTypeOverlay, OriginTypeGoVendor:
 		if origin.Uri != "" {
 			return fmt.Errorf(
 				"unexpected 'uri' for source file %#q, component %#q; "+

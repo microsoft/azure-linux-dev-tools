@@ -149,6 +149,8 @@ func TestCustomizationCollectorsCoverEveryFingerprintableField(t *testing.T) {
 		"Origin.Script":       "source-files.script",
 		"Origin.MockPackages": "source-files.mock-packages",
 		"Origin.Inputs":       "source-files.inputs",
+		"Origin.ModuleDir":    "source-files.module-dir",
+		"Origin.PrepPackages": "source-files.prep-packages",
 	}
 
 	actualFields := make(map[string]bool)
