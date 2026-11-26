@@ -1733,3 +1733,60 @@ upstream-distro = { name = "fedora", version = "rawhide" }
 	require.NotNil(t, component.UpstreamCommitConfigFile())
 	assert.Equal(t, "/project/component.toml", component.UpstreamCommitConfigFile().sourcePath)
 }
+
+func TestLoadAndResolveProjectConfig_TmtDistGit(t *testing.T) {
+	const mainFile = "includes = [\"include.toml\"]\n[components.a]\n[components.b]\n"
+
+	tests := []struct {
+		name         string
+		main, extra  string
+		wantEnabled  []string
+		wantErr      error
+		wantAnyError bool
+	}{
+		{
+			name:        "merged across files",
+			main:        mainFile + "[tmt.dist-git]\nenabled-components = [\"a\"]\n",
+			extra:       "[tmt.dist-git]\nenabled-components = [\"b\"]\n",
+			wantEnabled: []string{"a", "b"},
+		},
+		{
+			name:    "undefined component",
+			main:    mainFile + "[tmt.dist-git]\nenabled-components = [\"missing\"]\n",
+			extra:   "",
+			wantErr: ErrUndefinedTmtDistGitComponent,
+		},
+		{
+			name:         "duplicate across files",
+			main:         mainFile + "[tmt.dist-git]\nenabled-components = [\"a\"]\n",
+			extra:        "[tmt.dist-git]\nenabled-components = [\"a\"]\n",
+			wantAnyError: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := testctx.NewCtx()
+			require.NoError(t, fileutils.MkdirAll(ctx.FS(), "/project"))
+			require.NoError(t, fileutils.WriteFile(ctx.FS(), testConfigPath, []byte(test.main), fileperms.PrivateFile))
+			require.NoError(t, fileutils.WriteFile(ctx.FS(), "/project/include.toml", []byte(test.extra), fileperms.PrivateFile))
+
+			config, err := loadAndResolveProjectConfig(ctx.FS(), loadOptions{}, testConfigPath)
+
+			if test.wantErr != nil {
+				require.ErrorIs(t, err, test.wantErr)
+
+				return
+			}
+
+			if test.wantAnyError {
+				require.Error(t, err)
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, test.wantEnabled, config.Tmt.DistGit.EnabledComponents)
+		})
+	}
+}

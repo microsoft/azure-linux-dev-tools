@@ -488,6 +488,11 @@
           "title": "Tests",
           "description": "Definitions of individual tests"
         },
+        "tmt": {
+          "$ref": "#/$defs/TmtDiscoveryConfig",
+          "title": "TMT discovery",
+          "description": "Project-wide TMT discovery metadata"
+        },
         "test-groups": {
           "additionalProperties": {
             "$ref": "#/$defs/TestGroup"
@@ -1679,6 +1684,32 @@
           "uniqueItems": true,
           "title": "SKU groups",
           "description": "SKU groups used by external test orchestration"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "TmtDiscoveryConfig": {
+      "properties": {
+        "dist-git": {
+          "$ref": "#/$defs/TmtDistGitConfig",
+          "title": "Dist-git TMT discovery",
+          "description": "Opt-in metadata for component-owned dist-git TMT tests"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "TmtDistGitConfig": {
+      "properties": {
+        "enabled-components": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "uniqueItems": true,
+          "title": "Enabled components",
+          "description": "Source component names opted into dist-git TMT discovery"
         }
       },
       "additionalProperties": false,

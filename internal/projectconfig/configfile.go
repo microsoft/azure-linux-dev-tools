@@ -71,6 +71,8 @@ type ConfigFile struct {
 	// Definitions of individual tests (new schema, [tests.X]).
 	Tests map[string]TestDefinition `toml:"tests,omitempty" validate:"dive" jsonschema:"title=Tests,description=Definitions of individual tests"`
 
+	Tmt *TmtDiscoveryConfig `toml:"tmt,omitempty" jsonschema:"title=TMT discovery,description=Project-wide TMT discovery metadata"`
+
 	// Definitions of test groups (new schema, [test-groups.X]).
 	TestGroups map[string]TestGroup `toml:"test-groups,omitempty" validate:"dive" jsonschema:"title=Test Groups,description=Definitions of named bundles of tests"`
 
@@ -84,6 +86,31 @@ type ConfigFile struct {
 	// that the config file's relative paths are based from.
 	sourcePath string `toml:"-"`
 	dir        string `toml:"-" validate:"dir"`
+}
+
+// TmtDiscoveryConfig holds project-wide TMT discovery metadata ([tmt]).
+type TmtDiscoveryConfig struct {
+	DistGit *TmtDistGitConfig `toml:"dist-git,omitempty" json:"distGit,omitempty" jsonschema:"title=Dist-git TMT discovery,description=Opt-in metadata for component-owned dist-git TMT tests"`
+}
+
+// TmtDistGitConfig lists the components whose dist-git TMT tests are enabled ([tmt.dist-git]).
+type TmtDistGitConfig struct {
+	EnabledComponents []string `toml:"enabled-components,omitempty" json:"enabledComponents,omitempty" validate:"unique,dive,required" jsonschema:"title=Enabled components,description=Source component names opted into dist-git TMT discovery,uniqueItems=true"`
+}
+
+// validateTmtDistGit rejects enabled components that are not defined in the project.
+func validateTmtDistGit(tmt *TmtDiscoveryConfig, components map[string]ComponentConfig) error {
+	if tmt == nil || tmt.DistGit == nil {
+		return nil
+	}
+
+	for _, name := range tmt.DistGit.EnabledComponents {
+		if _, ok := components[name]; !ok {
+			return fmt.Errorf("%w: %#q", ErrUndefinedTmtDistGitComponent, name)
+		}
+	}
+
+	return nil
 }
 
 // SourcePath returns the absolute path to the config file on disk.

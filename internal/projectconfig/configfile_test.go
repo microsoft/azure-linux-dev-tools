@@ -10,12 +10,34 @@ import (
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/projectconfig"
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
+	"github.com/pelletier/go-toml/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestProjectConfigFileValidation_EmptyFile(t *testing.T) {
 	file := projectconfig.ConfigFile{}
+	assert.NoError(t, file.Validate())
+}
+
+func TestProjectConfigFileValidation_TmtDistGit(t *testing.T) {
+	var file projectconfig.ConfigFile
+
+	decoder := toml.NewDecoder(bytes.NewBufferString(`[tmt.dist-git]
+enabled-components = ["bash", "hostname", "selinux-policy", "util-linux"]
+`)).DisallowUnknownFields()
+	require.NoError(t, decoder.Decode(&file))
+	require.NoError(t, file.Validate())
+	require.NotNil(t, file.Tmt)
+	require.NotNil(t, file.Tmt.DistGit)
+	assert.Equal(t, []string{"bash", "hostname", "selinux-policy", "util-linux"}, file.Tmt.DistGit.EnabledComponents)
+
+	for _, names := range [][]string{{"bash", "bash"}, {""}} {
+		file.Tmt.DistGit.EnabledComponents = names
+		require.Error(t, file.Validate())
+	}
+
+	file.Tmt.DistGit.EnabledComponents = nil
 	assert.NoError(t, file.Validate())
 }
 

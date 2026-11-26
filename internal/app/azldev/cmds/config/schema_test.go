@@ -103,6 +103,31 @@ func TestSchema_TestGroupMembersAreClosed(t *testing.T) {
 	assert.NotContains(t, props, "group", "test-group members must not expose group")
 }
 
+func TestSchema_TmtDistGitEnabledComponents(t *testing.T) {
+	schemaText, err := config.GenerateAzlDevTOMLJSONSchema()
+	require.NoError(t, err)
+
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal([]byte(schemaText), &schema))
+	defs := mustSchemaMap(t, schema["$defs"], "$defs")
+	root := mustSchemaMap(t, defs["ConfigFile"], "ConfigFile")
+	rootProps := mustSchemaMap(t, root["properties"], "ConfigFile properties")
+	tmt := mustSchemaMap(t, rootProps["tmt"], "tmt")
+	assert.Equal(t, "#/$defs/TmtDiscoveryConfig", tmt["$ref"])
+	discovery := mustSchemaMap(t, defs["TmtDiscoveryConfig"], "TmtDiscoveryConfig")
+	discoveryProps := mustSchemaMap(t, discovery["properties"], "TmtDiscoveryConfig properties")
+	distGit := mustSchemaMap(t, discoveryProps["dist-git"], "dist-git")
+	assert.Equal(t, "#/$defs/TmtDistGitConfig", distGit["$ref"])
+	distGitConfig := mustSchemaMap(t, defs["TmtDistGitConfig"], "TmtDistGitConfig")
+	props := mustSchemaMap(t, distGitConfig["properties"], "TmtDistGitConfig properties")
+	components := mustSchemaMap(t, props["enabled-components"], "enabled-components")
+	assert.Equal(t, "array", components["type"])
+	assert.Equal(t, true, components["uniqueItems"])
+	items := mustSchemaMap(t, components["items"], "enabled-components items")
+	assert.Equal(t, "string", items["type"])
+	assert.Equal(t, false, distGitConfig["additionalProperties"])
+}
+
 // mustSchemaMap asserts that value is a JSON object and returns it.
 func mustSchemaMap(t *testing.T, value any, name string) map[string]any {
 	t.Helper()

@@ -15,6 +15,7 @@ All config files share the same schema — there is no distinction between a "ro
 | `component-groups` | map of objects | Named groups of components with shared defaults | [Component Groups](component-groups.md) |
 | `images` | map of objects | Image definitions (VMs, containers) | [Images](images.md) |
 | `tests` | map of objects | Named test definitions (new-shape, parse-only) | [Tests and Test Groups](tests.md) |
+| `tmt` | object | Project-wide TMT metadata, such as components with dist-git tests enabled | [Tests — Dist-git TMT Tests](tests.md#dist-git-tmt-tests) |
 | `test-groups` | map of objects | Named bundles of test references (new-shape, parse-only) | [Tests and Test Groups](tests.md) |
 | `sku-groups` | map of objects | Named Azure VM size lists for image test fan-out | [Tests — SKU Groups](tests.md#sku-groups) |
 | `vm-skus` | map of objects | Per-VM-size metadata for external test orchestration | [Tests — VM SKUs](tests.md#vm-skus) |
