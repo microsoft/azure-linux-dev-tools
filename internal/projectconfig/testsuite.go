@@ -49,6 +49,8 @@ var (
 	ErrSKUGroupNotAllowed = errors.New("sku-groups not allowed outside image test references")
 	// ErrDuplicateVMSKU is returned when duplicate conflicting [vm-skus] entries are found.
 	ErrDuplicateVMSKU = errors.New("duplicate VM SKU")
+	// ErrUndefinedTmtDistGitComponent is returned when [tmt.dist-git] enables a component that is not defined.
+	ErrUndefinedTmtDistGitComponent = errors.New("undefined component in tmt.dist-git.enabled-components")
 	// ErrUnknownTestType is returned for unrecognized test types.
 	ErrUnknownTestType = errors.New("unknown test type")
 	// ErrMissingTestField is returned when a required test config field is missing.

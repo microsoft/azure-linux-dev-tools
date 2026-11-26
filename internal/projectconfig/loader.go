@@ -154,6 +154,8 @@ func mergeConfigFile(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile, options 
 		return err
 	}
 
+	mergeTmt(resolvedCfg, loadedCfg)
+
 	if err := mergeTestGroups(resolvedCfg, loadedCfg); err != nil {
 		return err
 	}
@@ -392,6 +394,21 @@ func mergeTests(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) error {
 	}
 
 	return nil
+}
+
+// mergeTmt appends the dist-git enabled components from a loaded config file; the
+// merged list is checked for duplicates and unknown components during validation.
+func mergeTmt(resolvedCfg *ProjectConfig, loadedCfg *ConfigFile) {
+	if loadedCfg.Tmt == nil || loadedCfg.Tmt.DistGit == nil {
+		return
+	}
+
+	if resolvedCfg.Tmt == nil {
+		resolvedCfg.Tmt = &TmtDiscoveryConfig{DistGit: &TmtDistGitConfig{}}
+	}
+
+	distGit := resolvedCfg.Tmt.DistGit
+	distGit.EnabledComponents = append(distGit.EnabledComponents, loadedCfg.Tmt.DistGit.EnabledComponents...)
 }
 
 // mergeTestGroups merges named test groups from a loaded config file into the

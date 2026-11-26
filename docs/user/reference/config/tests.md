@@ -78,6 +78,23 @@ plan = "/plans/example"
 After associating `example-tmt` with a component, run it locally with
 `azldev component test <component> --image-path <image.qcow2> --rpm <package.rpm>`.
 
+### Dist-git TMT Tests
+
+The top-level `[tmt.dist-git]` section lists components whose own dist-git TMT
+tests are enabled. Listed components need no `[tests.<name>]` entry: the test
+source is the component's prepared sources (see
+[`azldev component prepare-sources`](../cli/azldev_component_prepare-sources.md)),
+and consumers read the list from `azldev config dump`.
+
+```toml
+[tmt.dist-git]
+enabled-components = ["bash", "util-linux"]
+```
+
+| Field | TOML Key | Type | Description |
+|-------|----------|------|-------------|
+| Enabled components | `enabled-components` | string array | Names of defined components. Entries must be unique across all config files; an undefined component is an error. |
+
 ### Pytest Fields
 
 The `[tests.<name>.pytest]` subtable configures a pytest run. azldev validates

@@ -48,6 +48,9 @@ type ProjectConfig struct {
 	// Definitions of individual tests.
 	Tests map[string]TestDefinition `toml:"tests,omitempty" json:"tests,omitempty" jsonschema:"title=Tests,description=Mapping of test names to configurations"`
 
+	// Project-wide TMT discovery metadata.
+	Tmt *TmtDiscoveryConfig `toml:"tmt,omitempty" json:"tmt,omitempty" jsonschema:"title=TMT discovery,description=Project-wide TMT discovery metadata"`
+
 	// Definitions of named test groups.
 	TestGroups map[string]TestGroup `toml:"test-groups,omitempty" json:"testGroups,omitempty" jsonschema:"title=Test Groups,description=Mapping of test group names to configurations"`
 
@@ -118,6 +121,10 @@ func (cfg *ProjectConfig) validate(withoutLockfile bool) error {
 	}
 
 	if err := validateNewTestReferences(cfg.Tests, cfg.TestGroups, cfg.Components, cfg.Images); err != nil {
+		return err
+	}
+
+	if err := validateTmtDistGit(cfg.Tmt, cfg.Components); err != nil {
 		return err
 	}
 
