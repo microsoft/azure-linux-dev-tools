@@ -859,6 +859,11 @@
             "https://example.com/source.tar.gz"
           ]
         },
+        "user-agent": {
+          "type": "string",
+          "title": "User-Agent",
+          "description": "Optional HTTP User-Agent for the configured download origin only."
+        },
         "script": {
           "type": "string",
           "title": "Script",
