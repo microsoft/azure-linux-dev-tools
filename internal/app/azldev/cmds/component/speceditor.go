@@ -5,6 +5,7 @@ package component
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/microsoft/azure-linux-dev-tools/internal/rpm/spec"
 	"github.com/spf13/cobra"
@@ -12,8 +13,10 @@ import (
 )
 
 const (
-	specEditorLegacy       = "legacy"
-	specEditorExperimental = "experimental"
+	// specEditorLegacy remains supported temporarily for backward compatibility.
+	// It is deprecated and will be removed in a future release.
+	specEditorLegacy     = "legacy"
+	specEditorStructural = "structural"
 )
 
 // componentCommandOptions are shared by component subcommands that edit specs.
@@ -23,7 +26,7 @@ type componentCommandOptions struct {
 
 func (o componentCommandOptions) specEditorMode() spec.EditorMode {
 	if o.SpecEditor == "" {
-		return spec.EditorLegacy
+		return spec.EditorStructural
 	}
 
 	return o.SpecEditor
@@ -36,12 +39,12 @@ type specEditorFlagValue struct {
 var _ pflag.Value = (*specEditorFlagValue)(nil)
 
 func newSpecEditorFlagValue() *specEditorFlagValue {
-	return &specEditorFlagValue{mode: spec.EditorLegacy}
+	return &specEditorFlagValue{mode: spec.EditorStructural}
 }
 
 func (v *specEditorFlagValue) String() string {
 	if v.mode == spec.EditorStructural {
-		return specEditorExperimental
+		return specEditorStructural
 	}
 
 	return specEditorLegacy
@@ -51,12 +54,15 @@ func (v *specEditorFlagValue) Set(value string) error {
 	switch value {
 	case specEditorLegacy:
 		v.mode = spec.EditorLegacy
-	case specEditorExperimental:
+
+		slog.Warn("The RPM spec 'legacy' editor is deprecated and will be removed in a future release; " +
+			"use 'structural' instead")
+	case specEditorStructural:
 		v.mode = spec.EditorStructural
 	default:
 		return fmt.Errorf(
 			"unsupported RPM spec editor %#q; expected %#q or %#q",
-			value, specEditorLegacy, specEditorExperimental,
+			value, specEditorLegacy, specEditorStructural,
 		)
 	}
 
@@ -71,19 +77,19 @@ func addSpecEditorOption(cmd *cobra.Command) {
 	cmd.PersistentFlags().Var(
 		newSpecEditorFlagValue(),
 		"spec-editor",
-		"Select the RPM spec editor (legacy or experimental)",
+		"Select the RPM spec editor ('structural' or deprecated 'legacy')",
 	)
 }
 
 func specEditorFromCommand(cmd *cobra.Command) spec.EditorMode {
 	flag := cmd.Flags().Lookup("spec-editor")
 	if flag == nil {
-		return spec.EditorLegacy
+		return spec.EditorStructural
 	}
 
 	value, ok := flag.Value.(*specEditorFlagValue)
 	if !ok {
-		return spec.EditorLegacy
+		return spec.EditorStructural
 	}
 
 	return value.mode

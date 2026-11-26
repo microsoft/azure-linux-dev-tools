@@ -37,7 +37,12 @@ Patch2: other.patch
 		expectedTags []string
 	}{
 		{
-			name:         "default legacy editor",
+			name:         "default structural editor",
+			expectedTags: []string{"Name", "Version", "Patch0", "Summary", "Patch1", "Summary", "Patch2"},
+		},
+		{
+			name:         "legacy editor",
+			options:      []spec.OpenOption{spec.WithEditor(spec.EditorLegacy)},
 			expectedTags: []string{"Name", "Version", "Patch0", "Summary", "Patch1", "Summary", "Patch2"},
 		},
 		{
@@ -115,24 +120,36 @@ Patch1: devel.patch
 `
 
 	tests := []struct {
-		name         string
-		packageName  string
-		options      []spec.OpenOption
-		expectedTags []string
+		name           string
+		packageName    string
+		options        []spec.OpenOption
+		expectedTags   []string
+		mutate         bool
+		expectMutation bool
 	}{
 		{
-			name:         "default legacy editor filters package",
+			name:           "default structural editor filters package",
+			packageName:    "devel",
+			expectedTags:   []string{"Summary", "Patch1"},
+			mutate:         true,
+			expectMutation: true,
+		},
+		{
+			name:         "legacy editor filters package",
 			packageName:  "devel",
+			options:      []spec.OpenOption{spec.WithEditor(spec.EditorLegacy)},
 			expectedTags: []string{"Summary", "Patch1"},
 		},
 		{
-			name:         "structural editor filters package and mutates it",
-			packageName:  "devel",
-			options:      []spec.OpenOption{spec.WithEditor(spec.EditorStructural)},
-			expectedTags: []string{"Summary", "Patch1"},
+			name:           "structural editor filters package and mutates it",
+			packageName:    "devel",
+			options:        []spec.OpenOption{spec.WithEditor(spec.EditorStructural)},
+			expectedTags:   []string{"Summary", "Patch1"},
+			mutate:         true,
+			expectMutation: true,
 		},
 		{
-			name:        "default legacy editor ignores unknown package",
+			name:        "unknown package",
 			packageName: "missing",
 		},
 	}
@@ -147,7 +164,7 @@ Patch1: devel.patch
 			require.NoError(t, specFile.VisitTagsPackage(
 				testCase.packageName, func(tagLine *spec.TagLine, ctx *spec.Context) error {
 					tags = append(tags, tagLine.Tag)
-					if testCase.name == "structural editor filters package and mutates it" && tagLine.Tag == "Summary" {
+					if testCase.mutate && tagLine.Tag == "Summary" {
 						ctx.ReplaceLine("Summary: Structural mutation")
 					}
 
@@ -155,7 +172,7 @@ Patch1: devel.patch
 				}))
 			assert.Equal(t, testCase.expectedTags, tags)
 
-			if testCase.options != nil {
+			if testCase.expectMutation {
 				var actual bytes.Buffer
 				require.NoError(t, specFile.Serialize(&actual))
 				assert.Contains(t, actual.String(), "Summary: Structural mutation")
@@ -325,7 +342,10 @@ func TestVisitPreservesMutationsBeforeVisitorError(t *testing.T) {
 		name    string
 		options []spec.OpenOption
 	}{
-		{name: "legacy editor"},
+		{
+			name:    "legacy editor",
+			options: []spec.OpenOption{spec.WithEditor(spec.EditorLegacy)},
+		},
 		{
 			name:    "structural editor",
 			options: []spec.OpenOption{spec.WithEditor(spec.EditorStructural)},

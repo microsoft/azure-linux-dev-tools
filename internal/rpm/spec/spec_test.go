@@ -83,14 +83,14 @@ func TestSpecZeroValueUsesLegacyEditor(t *testing.T) {
 	assert.Equal(t, strings.Join(lines, "\n")+"\n", output.String())
 }
 
-func TestOpenSpecStructuralEditorDoesNotUseZeroValueFallback(t *testing.T) {
+func TestOpenSpecDefaultsToStructuralEditor(t *testing.T) {
 	input := strings.Join([]string{
 		"Name: main",
 		`%global hidden() \`,
 		"Name: macro-body",
 	}, "\n") + "\n"
 
-	specification, err := spec.OpenSpec(strings.NewReader(input), spec.WithEditor(spec.EditorStructural))
+	specification, err := spec.OpenSpec(strings.NewReader(input))
 	require.NoError(t, err)
 
 	var tags []string

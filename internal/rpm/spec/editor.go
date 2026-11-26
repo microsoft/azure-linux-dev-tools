@@ -16,6 +16,8 @@ const (
 	elseDirective = "%else"
 
 	// EditorLegacy uses the established line-oriented editor.
+	// Deprecated: EditorLegacy is deprecated and will be removed in a future
+	// release. Use EditorStructural unless legacy behavior is explicitly required.
 	EditorLegacy EditorMode = "legacy"
 	// EditorStructural uses the lossless structural editor.
 	EditorStructural EditorMode = "structural"
@@ -80,10 +82,10 @@ func (s *Spec) activeEditor() specEditor {
 	return s.editor
 }
 
-// OpenSpec reads a spec and selects its editor once. With no option, it preserves
-// the established legacy behavior.
+// OpenSpec reads a spec and selects its editor once. With no option, it uses
+// the structural editor.
 func OpenSpec(reader io.Reader, options ...OpenOption) (*Spec, error) {
-	config := editorOptions{mode: EditorLegacy}
+	config := editorOptions{mode: EditorStructural}
 	for _, option := range options {
 		option(&config)
 	}

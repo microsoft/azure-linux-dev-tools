@@ -185,6 +185,14 @@ func TestComponentTomlSkillDocumentsRPMDevBumpspecPreview(t *testing.T) {
 	assert.Contains(t, doc, "no bumpspec runtime discovery occurs")
 }
 
+func TestOverlaysSkillDocumentsSpecEditorDeprecation(t *testing.T) {
+	doc, err := agentskill.SkillDocument("azldev-overlays", testParams())
+	require.NoError(t, err)
+	assert.Contains(t, doc, "The structural editor is the default")
+	assert.Contains(t, doc, "The `legacy` editor is deprecated")
+	assert.Contains(t, doc, "The former `experimental` value is no longer accepted")
+}
+
 func TestImageSkillDocumentsSKUGroupGuidance(t *testing.T) {
 	doc, err := agentskill.SkillDocument("azldev-image", testParams())
 	require.NoError(t, err)

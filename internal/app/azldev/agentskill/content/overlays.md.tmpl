@@ -33,6 +33,13 @@ overlays before it stay applied.
 Config errors reference the offending overlay by its `description`, so give every
 overlay a short, specific `description`.
 
+## Spec editor selection
+
+The structural editor is the default. It preserves conditional and section structure
+more reliably than the line-oriented editor. The `legacy` editor is deprecated and
+emits a warning when selected with `--spec-editor legacy`; it will be removed in a
+future release. The former `experimental` value is no longer accepted.
+
 ## Diagnose common failures
 
 Start with `azldev comp diff-sources -p <name>` to see the exact overlay effect.
