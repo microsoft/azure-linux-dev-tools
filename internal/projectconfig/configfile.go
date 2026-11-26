@@ -111,6 +111,10 @@ func (f ConfigFile) Validate() error {
 		}
 	}
 
+	if err := f.validateOverlayFilesByScope(); err != nil {
+		return err
+	}
+
 	// Validate component group metadata.
 	if err := validateComponentGroupMetadata(f.ComponentGroups); err != nil {
 		return err
@@ -163,6 +167,12 @@ func validateComponentConfigs(
 	customScriptPathsResolved bool,
 ) error {
 	for componentName, component := range components {
+		if err := validateOverlayFilesEntries(
+			component.OverlayFiles, validateComponentOverlayFilesEntry,
+		); err != nil {
+			return fmt.Errorf("invalid 'overlay-files' for component %#q:\n%w", componentName, err)
+		}
+
 		for i, overlay := range component.Overlays {
 			err := overlay.Validate()
 			if err != nil {
@@ -510,6 +520,82 @@ func dedupTestRefSKUGroups(
 		desc := testRefDesc(scope, idx, kind, refValue, skuGroup)
 		if err := checkDuplicateTestRef(seen, testName, skuGroup, desc); err != nil {
 			return err
+		}
+	}
+
+	return nil
+}
+
+// validateOverlayFilesByScope restricts default 'overlay-files' lists to project scope.
+//
+// Distro-version and component-group defaults must omit the field, including empty lists.
+// Project defaults accept plain patterns and may substitute component names with '{component}'.
+func (f ConfigFile) validateOverlayFilesByScope() error {
+	if f.DefaultComponentConfig != nil {
+		if err := validateOverlayFilesEntries(
+			f.DefaultComponentConfig.OverlayFiles, validateProjectOverlayFilesEntry,
+		); err != nil {
+			return fmt.Errorf("invalid project 'default-component-config':\n%w", err)
+		}
+	}
+
+	for distroName, distro := range f.Distros {
+		for versionName, version := range distro.Versions {
+			if version.DefaultComponentConfig.OverlayFiles != nil {
+				return fmt.Errorf(
+					"%w: 'overlay-files' is not allowed in 'default-component-config' for distro %#q version %#q",
+					ErrInvalidOverlayFilesEntry, distroName, versionName,
+				)
+			}
+		}
+	}
+
+	for groupName, group := range f.ComponentGroups {
+		if group.DefaultComponentConfig.OverlayFiles != nil {
+			return fmt.Errorf(
+				"%w: 'overlay-files' is not allowed in 'default-component-config' for component group %#q",
+				ErrInvalidOverlayFilesEntry, groupName,
+			)
+		}
+	}
+
+	return nil
+}
+
+// overlayFilesValidator validates a single 'overlay-files' entry against
+// the placeholder rules of a particular config scope.
+type overlayFilesValidator func(entry string) error
+
+// validateProjectOverlayFilesEntry validates entries in the project-level
+// default-component-config. Legacy plain globs remain valid; entries containing
+// '{component}' substitute the resolved component's name and must obey the placeholder rules.
+func validateProjectOverlayFilesEntry(entry string) error {
+	if !hasOverlayFilesPlaceholder(entry) {
+		return nil
+	}
+
+	return validateOverlayFilesPlaceholder(entry)
+}
+
+// validateComponentOverlayFilesEntry validates plain globs at component scope,
+// where '{component}' is forbidden.
+func validateComponentOverlayFilesEntry(entry string) error {
+	if !hasOverlayFilesPlaceholder(entry) {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"%w: %q is only allowed in project-level 'default-component-config' entries; entry %#q",
+		ErrInvalidOverlayFilesEntry, OverlayFilesComponentPlaceholder, entry,
+	)
+}
+
+// validateOverlayFilesEntries runs validate against each entry in overlayFiles,
+// annotating the returned error with the offending index.
+func validateOverlayFilesEntries(overlayFiles []string, validate overlayFilesValidator) error {
+	for idx, entry := range overlayFiles {
+		if err := validate(entry); err != nil {
+			return fmt.Errorf("'overlay-files'[%d]: %w", idx, err)
 		}
 	}
 

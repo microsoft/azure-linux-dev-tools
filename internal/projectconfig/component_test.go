@@ -612,13 +612,9 @@ func TestResolveComponentConfig(t *testing.T) {
 		assert.Equal(t, "comp-commit", resolved.Spec.UpstreamCommit)
 	})
 
-	t.Run("component empty overlay files clears group defaults", func(t *testing.T) {
-		groups := map[string]projectconfig.ComponentGroupConfig{
-			"core": {
-				DefaultComponentConfig: projectconfig.ComponentConfig{
-					OverlayFiles: []string{"overlays/*.overlay.toml"},
-				},
-			},
+	t.Run("component empty overlay files clears project defaults", func(t *testing.T) {
+		projectDefaults := projectconfig.ComponentConfig{
+			OverlayFiles: []string{"overlays/*.overlay.toml"},
 		}
 		comp := projectconfig.ComponentConfig{
 			Name:         "curl",
@@ -626,7 +622,7 @@ func TestResolveComponentConfig(t *testing.T) {
 		}
 
 		resolved, err := projectconfig.ResolveComponentConfig(
-			comp, projectconfig.ComponentConfig{}, distroDefaults, groups, []string{"core"},
+			comp, projectDefaults, distroDefaults, nil, nil,
 		)
 		require.NoError(t, err)
 		require.NotNil(t, resolved.OverlayFiles)
