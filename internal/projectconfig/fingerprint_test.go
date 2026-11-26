@@ -90,12 +90,13 @@ func TestAllFingerprintedFieldsHaveDecision(t *testing.T) {
 		// Excluding this prevents a snapshot bump from marking all upstream components as changed.
 		"DistroReference.Snapshot": true,
 
-		// Origin.Type and Origin.Uri — download location metadata, not build inputs.
+		// Origin.Type, Origin.Uri, and Origin.UserAgent — download metadata, not build inputs.
 		// The file content is already captured by Filename + Hash; changing a CDN URL should not
 		// trigger a rebuild. Script and MockPackages remain fingerprinted because they determine
 		// what the generated artifact contains.
-		"Origin.Type": true,
-		"Origin.Uri":  true,
+		"Origin.Type":      true,
+		"Origin.Uri":       true,
+		"Origin.UserAgent": true,
 
 		// SourceFileReference.ReplaceReason — human documentation for why an upstream entry is
 		// being replaced. ReplaceUpstream itself remains in the fingerprint because flipping it

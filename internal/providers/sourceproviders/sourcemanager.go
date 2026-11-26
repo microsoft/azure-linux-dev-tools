@@ -542,7 +542,8 @@ func (m *sourceManager) fetchFromDownloadOrigin(
 			"origin", fileRef.Origin.Uri,
 			"destination", destPath)
 
-		err := m.downloadAndValidate(ctx, httpDownloader, fileRef.Origin.Uri, destPath, fileRef)
+		err := m.downloadAndValidate(ctx, httpDownloader, fileRef.Origin.Uri, destPath, fileRef,
+			downloader.WithUserAgent(fileRef.Origin.UserAgent))
 		if err != nil {
 			return fmt.Errorf("failed to retrieve source file %#q:\n%w", fileRef.Filename, err)
 		}
@@ -577,11 +578,12 @@ func (m *sourceManager) downloadAndValidate(
 	sourceURL string,
 	destPath string,
 	fileRef *projectconfig.SourceFileReference,
+	opts ...downloader.DownloadOption,
 ) error {
 	err := retry.Do(ctx, m.retryConfig, func() error {
 		_ = m.fs.Remove(destPath)
 
-		downloadErr := httpDownloader.Download(ctx, sourceURL, destPath)
+		downloadErr := httpDownloader.Download(ctx, sourceURL, destPath, opts...)
 		if downloadErr != nil {
 			return fmt.Errorf("failed to download %#q from %#q:\n%w",
 				fileRef.Filename, sourceURL, downloadErr)

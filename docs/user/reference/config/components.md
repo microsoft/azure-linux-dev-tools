@@ -392,7 +392,10 @@ Three origin types are supported.
 
 #### `"download"` — fetch from a URI
 
-`origin = { type = "download", uri = "https://..." }`. The `uri` field is required.
+| TOML key | Type | Required | Description |
+|----------|------|----------|-------------|
+| `uri` | string | Yes | URI to fetch if the file isn't available from the lookaside cache. |
+| `user-agent` | string | No | Overrides Go's default HTTP `User-Agent` for this origin download. If omitted or empty, Go's default is used. It does not affect lookaside or other source files. |
 
 ```toml
 [[components.shim.source-files]]
@@ -400,6 +403,17 @@ filename  = "shimx64.efi"
 hash      = "7741013d9a24ce554bf6a9df6b776a57b114055e..."
 hash-type = "SHA512"
 origin    = { type = "download", uri = "https://example.com/repo/.../shimx64.efi" }
+```
+
+For example, the Azure Linux `objectweb-asm` 9.11.1 archive can be fetched from
+OW2 by setting a User-Agent on just that source:
+
+```toml
+[[components.objectweb-asm.source-files]]
+filename = "objectweb-asm-9.11.1.tar.gz"
+hash = "c3beec48018735409bff295c177f4debaab972be3a08ef14557c3d2f8da0cfa2c01dc61d8b52d9ad051e9bff59c5bf9348a4e159c2d82dd0dc66ef9498470609"
+hash-type = "SHA512"
+origin = { type = "download", uri = "https://gitlab.ow2.org/asm/asm/-/archive/ASM_9_11_1/asm-ASM_9_11_1.tar.gz", user-agent = "curl/8.15.0" }
 ```
 
 #### `"custom"` — generate via a mock script

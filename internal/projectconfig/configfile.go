@@ -14,6 +14,7 @@ import (
 	"github.com/microsoft/azure-linux-dev-tools/internal/utils/fileutils"
 	"github.com/pelletier/go-toml/v2"
 	"github.com/samber/lo"
+	"golang.org/x/net/http/httpguts"
 )
 
 // Default schema URI for this config file. Useful for capable editors to provide Intellisense and validation.
@@ -722,6 +723,19 @@ func validateOrigin(origin Origin, filename string, componentName string) error 
 		return fmt.Errorf(
 			"missing 'origin' for source file %#q, component %#q; "+
 				"an origin is required for all source file entries",
+			filename, componentName)
+	}
+
+	if origin.UserAgent != "" && origin.Type != OriginTypeURI {
+		return fmt.Errorf(
+			"source file %#q in component %#q has 'user-agent' set; "+
+				"'user-agent' is only valid when origin type is 'download'",
+			filename, componentName)
+	}
+
+	if !httpguts.ValidHeaderFieldValue(origin.UserAgent) {
+		return fmt.Errorf(
+			"invalid 'user-agent' for source file %#q, component %#q: not a valid HTTP header value",
 			filename, componentName)
 	}
 

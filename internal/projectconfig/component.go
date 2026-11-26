@@ -71,6 +71,8 @@ type Origin struct {
 	Type OriginType `toml:"type" json:"type" jsonschema:"required,enum=download,enum=custom,enum=overlay,title=Origin type,description=Type of origin for this source file" fingerprint:"-"`
 	// Uri to download the source file from if origin type is 'download'. Ignored for other origin types.
 	Uri string `toml:"uri,omitempty" json:"uri,omitempty" jsonschema:"title=URI,description=URI to download the source file from if origin type is 'download',example=https://example.com/source.tar.gz" fingerprint:"-"`
+	// UserAgent overrides the HTTP User-Agent for requests to the download origin.
+	UserAgent string `toml:"user-agent,omitempty" json:"userAgent,omitempty" jsonschema:"title=User-Agent,description=Optional HTTP User-Agent for the configured download origin only." fingerprint:"-"`
 
 	// Script is the plain filename, with no path separators, of a shell script run inside a mock
 	// chroot to generate this source file.

@@ -23,11 +23,25 @@ import (
 // [Downloader] defines an interface for downloading files from a given URI to a specified destination path.
 type Downloader interface {
 	// Download downloads a file from the specified URI and saves it to the destination path.
-	Download(ctx context.Context, uri string, destPath string) error
+	Download(ctx context.Context, uri string, destPath string, opts ...DownloadOption) error
 
 	// FetchStream initiates fetching the specified URI and returns it as an io.ReadCloser.
 	// The caller is responsible for closing the returned io.ReadCloser.
 	FetchStream(ctx context.Context, uri string) (io.ReadCloser, error)
+}
+
+type downloadOptions struct {
+	userAgent string
+}
+
+// [DownloadOption] configures an individual file download.
+type DownloadOption func(*downloadOptions)
+
+// WithUserAgent overrides the default HTTP User-Agent for a download when non-empty.
+func WithUserAgent(userAgent string) DownloadOption {
+	return func(options *downloadOptions) {
+		options.userAgent = userAgent
+	}
 }
 
 // [HTTPDownloader] implements the [Downloader] interface.
@@ -66,7 +80,7 @@ func NewHTTPDownloader(
 }
 
 // Downloads a file from the location specified by the URI, saving it to destPath.
-func (h *HTTPDownloader) Download(ctx context.Context, uri string, destPath string) error {
+func (h *HTTPDownloader) Download(ctx context.Context, uri string, destPath string, opts ...DownloadOption) error {
 	if h.dryRunInfo.DryRun() {
 		slog.Info("Dry run; would download file", "uri", uri, "dest", destPath)
 
@@ -89,7 +103,12 @@ func (h *HTTPDownloader) Download(ctx context.Context, uri string, destPath stri
 		return fmt.Errorf("failed to create file writer for %#q:\n%w", destPath, err)
 	}
 
-	err = h.getFileUsingWriter(ctx, event, uri, writer)
+	var options downloadOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
+
+	err = h.getFileUsingWriter(ctx, event, uri, writer, options)
 	if err != nil {
 		return fmt.Errorf("failed to download to %#q:\n%w", destPath, err)
 	}
@@ -117,7 +136,7 @@ func (h *HTTPDownloader) FetchStream(ctx context.Context, uri string) (io.ReadCl
 	defer event.End()
 
 	//nolint: bodyclose // We don't close the body here because the caller is expected to do so.
-	response, err := h.getFileData(ctx, uri)
+	response, err := h.getFileData(ctx, uri, downloadOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch %#q:\n%w", uri, err)
 	}
@@ -126,10 +145,10 @@ func (h *HTTPDownloader) FetchStream(ctx context.Context, uri string) (io.ReadCl
 }
 
 func (h *HTTPDownloader) getFileUsingWriter(
-	ctx context.Context, event opctx.Event, uri string, out io.Writer,
+	ctx context.Context, event opctx.Event, uri string, out io.Writer, options downloadOptions,
 ) error {
 	//nolint: bodyclose // We close the body inside 'HandleDeferError'
-	resp, err := h.getFileData(ctx, uri)
+	resp, err := h.getFileData(ctx, uri, options)
 	if err != nil {
 		return fmt.Errorf("failed to fetch %#q:\n%w", uri, err)
 	}
@@ -143,15 +162,18 @@ func (h *HTTPDownloader) getFileUsingWriter(
 	return nil
 }
 
-func (*HTTPDownloader) getFileData(ctx context.Context, uri string) (*http.Response, error) {
+func (*HTTPDownloader) getFileData(ctx context.Context, uri string, options downloadOptions) (*http.Response, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, uri, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request to download %#q:\n%w", uri, err)
 	}
 
-	// Set headers to bypass anti-bot measures that may block automated requests.
+	if options.userAgent != "" {
+		request.Header.Set("User-Agent", options.userAgent)
+	}
+
 	request.Header.Set("Accept", "*/*")
-	// Without this header, there's a change a compressed file will be transparently decompressed
+	// Without this header, there's a chance a compressed file will be transparently decompressed
 	// for us. When that happens, the hash won't match anymore.
 	request.Header.Set("Accept-Encoding", "identity")
 

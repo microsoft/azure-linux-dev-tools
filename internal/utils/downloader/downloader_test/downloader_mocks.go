@@ -18,6 +18,7 @@ import (
 	io "io"
 	reflect "reflect"
 
+	downloader "github.com/microsoft/azure-linux-dev-tools/internal/utils/downloader"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -46,17 +47,22 @@ func (m *MockDownloader) EXPECT() *MockDownloaderMockRecorder {
 }
 
 // Download mocks base method.
-func (m *MockDownloader) Download(ctx context.Context, uri, destPath string) error {
+func (m *MockDownloader) Download(ctx context.Context, uri, destPath string, opts ...downloader.DownloadOption) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Download", ctx, uri, destPath)
+	varargs := []any{ctx, uri, destPath}
+	for _, a := range opts {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "Download", varargs...)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Download indicates an expected call of Download.
-func (mr *MockDownloaderMockRecorder) Download(ctx, uri, destPath any) *gomock.Call {
+func (mr *MockDownloaderMockRecorder) Download(ctx, uri, destPath any, opts ...any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Download", reflect.TypeOf((*MockDownloader)(nil).Download), ctx, uri, destPath)
+	varargs := append([]any{ctx, uri, destPath}, opts...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Download", reflect.TypeOf((*MockDownloader)(nil).Download), varargs...)
 }
 
 // FetchStream mocks base method.
